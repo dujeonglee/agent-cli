@@ -1,9 +1,9 @@
 """
 Agentic Loop CLI — Typer + Rich
-ReAct 패턴, 텍스트 파싱 방식 (tool call API 미사용)
+ReAct pattern, text parsing (no tool call API)
 
-지원 LLM : Anthropic / OpenAI-compatible / Ollama
-지원 Tool : read_file / write_file / edit_file / shell
+Supported LLM : Anthropic / OpenAI-compatible / Ollama
+Supported Tool : read_file / write_file / edit_file / shell
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ app     = typer.Typer(help="Agentic Loop CLI — ReAct text parsing, no tool-cal
 console = Console()
 
 # ─────────────────────────────────────────────
-# 색상 테마
+# Color Theme
 # ─────────────────────────────────────────────
 C = {
     "thought":     "cyan",
@@ -52,7 +52,7 @@ ICONS = {
 }
 
 # ─────────────────────────────────────────────
-# Rich 렌더 헬퍼
+# Rich Render Helpers
 # ─────────────────────────────────────────────
 def render_header(provider: str, model: str, max_iter: int) -> None:
     console.print()
@@ -104,7 +104,7 @@ def render_raw(text: str, iteration: int, verbose: bool) -> None:
     if not verbose:
         console.print(
             f"  [{C['muted']}]{ICONS['raw']} RAW LLM RESPONSE  iter {iteration}  "
-            f"[dim](--verbose 로 확인)[/dim][/]"
+            f"[dim](use --verbose to view)[/dim][/]"
         )
         return
     console.print(Panel(
@@ -135,7 +135,7 @@ def tool_read_file(args: dict) -> str:
     try:
         return Path(path).read_text(encoding="utf-8")
     except Exception as e:
-        raise RuntimeError(f"read_file 실패: {e}")
+        raise RuntimeError(f"read_file failed: {e}")
 
 
 def tool_write_file(args: dict) -> str:
@@ -145,13 +145,13 @@ def tool_write_file(args: dict) -> str:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        return f"파일 저장 완료: {path} ({len(content)} bytes)"
+        return f"File saved: {path} ({len(content)} bytes)"
     except Exception as e:
-        raise RuntimeError(f"write_file 실패: {e}")
+        raise RuntimeError(f"write_file failed: {e}")
 
 
 def tool_edit_file(args: dict) -> str:
-    """old_str → new_str 치환 (정확히 1회 매칭)"""
+    """Replace old_str with new_str (exactly one match required)"""
     path    = args.get("path", "")
     old_str = args.get("old_str", "")
     new_str = args.get("new_str", "")
@@ -159,16 +159,16 @@ def tool_edit_file(args: dict) -> str:
         text = Path(path).read_text(encoding="utf-8")
         count = text.count(old_str)
         if count == 0:
-            raise RuntimeError("old_str 를 파일에서 찾을 수 없습니다.")
+            raise RuntimeError("old_str not found in file.")
         if count > 1:
-            raise RuntimeError(f"old_str 가 {count}회 발견됩니다. 더 구체적으로 지정하세요.")
+            raise RuntimeError(f"old_str found {count} times. Please be more specific.")
         result = text.replace(old_str, new_str, 1)
         Path(path).write_text(result, encoding="utf-8")
-        return f"편집 완료: {path}"
+        return f"Edit complete: {path}"
     except RuntimeError:
         raise
     except Exception as e:
-        raise RuntimeError(f"edit_file 실패: {e}")
+        raise RuntimeError(f"edit_file failed: {e}")
 
 
 def tool_shell(args: dict) -> str:
@@ -188,11 +188,11 @@ def tool_shell(args: dict) -> str:
             parts.append(f"[stderr]\n{err}")
         if result.returncode != 0:
             parts.append(f"[exit code: {result.returncode}]")
-        return "\n".join(parts) if parts else "(출력 없음)"
+        return "\n".join(parts) if parts else "(no output)"
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"명령 타임아웃 ({timeout}s)")
+        raise RuntimeError(f"Command timed out ({timeout}s)")
     except Exception as e:
-        raise RuntimeError(f"shell 실패: {e}")
+        raise RuntimeError(f"shell failed: {e}")
 
 
 TOOLS: dict[str, callable] = {
@@ -203,17 +203,17 @@ TOOLS: dict[str, callable] = {
 }
 
 TOOL_SCHEMAS = {
-    "read_file":  '{"path": "읽을 파일 경로"}',
-    "write_file": '{"path": "저장 경로", "content": "파일 내용"}',
-    "edit_file":  '{"path": "파일 경로", "old_str": "바꿀 내용", "new_str": "새 내용"}',
-    "shell":      '{"command": "실행할 쉘 명령", "timeout": 30}',
+    "read_file":  '{"path": "file path to read"}',
+    "write_file": '{"path": "file path to save", "content": "file content"}',
+    "edit_file":  '{"path": "file path", "old_str": "text to replace", "new_str": "new text"}',
+    "shell":      '{"command": "shell command to run", "timeout": 30}',
 }
 
 TOOL_DESCS = {
-    "read_file":  "파일 내용을 읽어 반환합니다.",
-    "write_file": "지정한 경로에 파일을 생성하거나 덮어씁니다.",
-    "edit_file":  "파일 내의 old_str를 new_str로 정확히 한 번 치환합니다.",
-    "shell":      "쉘 명령을 실행하고 stdout/stderr를 반환합니다.",
+    "read_file":  "Read and return file contents.",
+    "write_file": "Create or overwrite a file at the given path.",
+    "edit_file":  "Replace old_str with new_str exactly once in the file.",
+    "shell":      "Run a shell command and return stdout/stderr.",
 }
 
 
@@ -378,7 +378,7 @@ def run_loop(
 
         render_status("running", f"Calling LLM...", iteration)
 
-        # ── 1. LLM 호출
+        # ── 1. Call LLM
         try:
             llm_text = caller(
                 messages=messages,
@@ -388,13 +388,13 @@ def run_loop(
                 api_key=api_key,
             )
         except Exception as e:
-            render_step("error", f"LLM 호출 실패: {e}", iteration)
+            render_step("error", f"LLM call failed: {e}", iteration)
             render_status("error", str(e))
             return
 
         render_raw(llm_text, iteration, verbose)
 
-        # ── 2. 파싱
+        # ── 2. Parse
         parsed = parse_react(llm_text)
 
         if parsed["thought"]:
@@ -407,7 +407,7 @@ def run_loop(
             console.print()
             return
 
-        # ── 4. Tool 실행
+        # ── 4. Execute Tool
         if parsed["action"]:
             tool_name  = parsed["action"]
             tool_input = parsed["action_input"] or {}
@@ -419,8 +419,8 @@ def run_loop(
             tool_fn = TOOLS.get(tool_name)
             if tool_fn is None:
                 observation = (
-                    f"STATUS: error\nERROR: 알 수 없는 tool '{tool_name}'\n"
-                    f"HINT: 사용 가능한 tool: {', '.join(TOOLS)}"
+                    f"STATUS: error\nERROR: Unknown tool '{tool_name}'\n"
+                    f"HINT: Available tools: {', '.join(TOOLS)}"
                 )
             else:
                 render_status("running", f"Executing {tool_name}...", iteration)
@@ -430,12 +430,12 @@ def run_loop(
                 except Exception as e:
                     observation = (
                         f"STATUS: error\nERROR: {e}\n"
-                        f"HINT: 파라미터를 확인하고 다시 시도하세요."
+                        f"HINT: Check parameters and try again."
                     )
 
             render_step("observation", observation, iteration)
 
-            # ── 5. Observation을 message history에 주입
+            # ── 5. Inject Observation into message history
             messages.append({"role": "assistant", "content": llm_text})
             messages.append({
                 "role": "user",
@@ -445,13 +445,13 @@ def run_loop(
         else:
             render_step(
                 "error",
-                f"파싱 실패: Action 또는 Final Answer를 찾을 수 없습니다.\n\n{llm_text}",
+                f"Parse failed: Could not find Action or Final Answer.\n\n{llm_text}",
                 iteration,
             )
             render_status("error", "Parse error")
             return
 
-    render_step("error", f"최대 반복 횟수({max_iter})에 도달했습니다.", iteration)
+    render_step("error", f"Maximum iterations ({max_iter}) reached.", iteration)
     render_status("error", f"Max iterations ({max_iter}) reached")
     console.print()
 
@@ -467,7 +467,7 @@ PROVIDER_DEFAULTS = {
 
 @app.command()
 def main(
-    query: str = typer.Argument(..., help="실행할 태스크"),
+    query: str = typer.Argument(..., help="Task to execute"),
 
     provider: str = typer.Option(
         "ollama", "--provider", "-p",
@@ -475,44 +475,66 @@ def main(
     ),
     model: Optional[str] = typer.Option(
         None, "--model", "-m",
-        help="모델 ID (미지정 시 provider 기본값 사용)",
+        help="Model ID (uses provider default if not specified)",
     ),
     base_url: Optional[str] = typer.Option(
         None, "--base-url",
-        help="API base URL (미지정 시 provider 기본값 사용)",
+        help="API base URL (uses provider default if not specified)",
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key",
-        help="API 키 (미지정 시 환경변수 자동 탐색)",
+        help="API key (auto-detects from environment if not specified)",
     ),
     max_iter: int = typer.Option(
         10, "--max-iter", "-n",
-        help="최대 반복 횟수",
+        help="Maximum iterations",
     ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v",
-        help="RAW LLM 응답 출력",
+        help="Show raw LLM response",
     ),
 ):
     """
-    ReAct 패턴 Agentic Loop.
+    ReAct pattern Agentic Loop.
 
     \b
-    예시:
-      agent "현재 디렉토리의 파일 목록을 확인하고 README.md 내용을 읽어줘"
-      agent "test.py 파일을 만들고 hello world를 출력하는 코드를 작성해줘" -p ollama -m qwen3:8b
+    Examples:
+      agent "List files in the current directory and read README.md"
+      agent "Create test.py with a hello world program" -p ollama -m qwen3:8b
       agent "..." -p anthropic --api-key sk-ant-...
+      agent "/sh ls -la"              # Run shell command directly without LLM
     """
+    # ── /sh prefix: Run shell command directly without LLM
+    if query.startswith("/sh ") or query == "/sh":
+        cmd = query[3:].strip()
+        if not cmd:
+            console.print(f"[{C['error']}]No command to execute.[/]")
+            raise typer.Exit(1)
+        console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, timeout=30,
+            )
+            if result.stdout:
+                console.print(result.stdout, end="", highlight=False)
+            if result.stderr:
+                console.print(f"[{C['error']}]{result.stderr}[/]", end="")
+            if result.returncode != 0:
+                console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
+        except subprocess.TimeoutExpired:
+            console.print(f"[{C['error']}]Command timed out (30s)[/]")
+        raise typer.Exit(0)
+
     if provider not in LLM_CALLERS:
-        console.print(f"[red]지원하지 않는 provider: {provider}[/red]")
-        console.print(f"사용 가능: {', '.join(LLM_CALLERS)}")
+        console.print(f"[red]Unsupported provider: {provider}[/red]")
+        console.print(f"Available: {', '.join(LLM_CALLERS)}")
         raise typer.Exit(1)
 
     default_url, default_model = PROVIDER_DEFAULTS[provider]
     resolved_url     = base_url or default_url
     resolved_model   = model    or default_model
 
-    # API key 탐색 순서: --api-key → 환경변수 → "" (Ollama는 불필요)
+    # API key lookup: --api-key → env var → "" (not needed for Ollama)
     if api_key is None:
         env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
         api_key = os.environ.get(env_map.get(provider, ""), "")
