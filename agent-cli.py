@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -50,6 +51,23 @@ ICONS = {
     "error":       "⚠ ",
     "raw":         "📄",
 }
+
+# ─────────────────────────────────────────────
+# Shell Command Auto-detection
+# ─────────────────────────────────────────────
+def is_shell_command(text: str) -> bool:
+    """Check if the first token of *text* looks like a shell command."""
+    first_token = text.split()[0] if text.strip() else ""
+    if not first_token:
+        return False
+    # Check if executable exists on PATH
+    if shutil.which(first_token) is not None:
+        return True
+    # Handle path-style commands like ./script.sh or /usr/bin/env
+    if first_token.startswith("./") or first_token.startswith("/"):
+        return True
+    return False
+
 
 # ─────────────────────────────────────────────
 # Rich Render Helpers
@@ -351,6 +369,107 @@ def parse_react(text: str) -> dict:
 
 
 # ─────────────────────────────────────────────
+# CONTEXT MANAGER
+# ─────────────────────────────────────────────
+COMPRESS_PROMPT = textwrap.dedent("""
+    Summarize the following conversation concisely.
+    Preserve all key facts, decisions, tool results, and context
+    needed to continue the conversation. Drop verbose tool outputs
+    and redundant reasoning. Reply with ONLY the summary.
+""").strip()
+
+DEFAULT_MAX_CONTEXT_CHARS = 50_000          # ~12 500 tokens
+
+
+class ContextManager:
+    """Manages conversation message history with automatic compression.
+
+    When the total character count of messages exceeds *max_context_chars*,
+    older messages are compressed into a single summary message via the LLM,
+    while the most recent *keep_recent* message pairs are preserved verbatim.
+    """
+
+    def __init__(
+        self,
+        caller,
+        model: str,
+        base_url: str,
+        api_key: str,
+        system: str,
+        max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+        keep_recent: int = 4,
+    ):
+        self.caller    = caller
+        self.model     = model
+        self.base_url  = base_url
+        self.api_key   = api_key
+        self.system    = system
+        self.max_context_chars = max_context_chars
+        self.keep_recent       = keep_recent
+        self.messages: list[dict] = []
+        self._summary: str | None = None
+
+    # ── public helpers ──────────────────────────
+
+    def add(self, role: str, content: str) -> None:
+        self.messages.append({"role": role, "content": content})
+        if self._total_chars() > self.max_context_chars:
+            self._compress()
+
+    def get_messages(self) -> list[dict]:
+        msgs: list[dict] = []
+        if self._summary:
+            msgs.append({
+                "role": "user",
+                "content": f"[Previous conversation summary]\n{self._summary}",
+            })
+            msgs.append({
+                "role": "assistant",
+                "content": "Understood. I have the context from our previous conversation.",
+            })
+        msgs.extend(self.messages)
+        return msgs
+
+    # ── internals ───────────────────────────────
+
+    def _total_chars(self) -> int:
+        extra = len(self._summary) if self._summary else 0
+        return extra + sum(len(m["content"]) for m in self.messages)
+
+    def _compress(self) -> None:
+        # Keep the last *keep_recent* messages untouched
+        keep = self.keep_recent * 2          # pairs of user+assistant
+        if len(self.messages) <= keep:
+            return                            # nothing old enough to compress
+
+        old_msgs  = self.messages[:-keep]
+        kept_msgs = self.messages[-keep:]
+
+        # Build text to summarize
+        parts = []
+        if self._summary:
+            parts.append(f"[Prior summary]\n{self._summary}")
+        for m in old_msgs:
+            parts.append(f"{m['role'].upper()}: {m['content']}")
+        text_to_summarize = "\n\n".join(parts)
+
+        render_status("running", "Compressing context...")
+        try:
+            summary = self.caller(
+                messages=[{"role": "user", "content": text_to_summarize}],
+                system=COMPRESS_PROMPT,
+                model=self.model,
+                base_url=self.base_url,
+                api_key=self.api_key,
+            )
+            self._summary = summary
+            self.messages = kept_msgs
+            render_status("done", f"Context compressed ({len(summary)} chars)")
+        except Exception as e:
+            render_status("error", f"Context compression failed: {e}")
+
+
+# ─────────────────────────────────────────────
 # AGENTIC LOOP
 # ─────────────────────────────────────────────
 def run_loop(
@@ -361,14 +480,24 @@ def run_loop(
     api_key: str,
     max_iter: int,
     verbose: bool,
-) -> None:
+    ctx: ContextManager | None = None,
+) -> str | None:
+    """Run one agentic loop. Returns the final answer string, or None."""
     render_header(provider, model, max_iter)
     render_status("running", "Initializing loop...")
     console.print()
 
-    system   = build_system_prompt()
-    messages = [{"role": "user", "content": query}]
-    caller   = LLM_CALLERS[provider]
+    system = build_system_prompt()
+    caller = LLM_CALLERS[provider]
+
+    # If a ContextManager is provided, add the query and use its buffer;
+    # otherwise fall back to a plain list (single-shot mode).
+    if ctx is not None:
+        ctx.add("user", query)
+        messages = ctx.get_messages()
+    else:
+        messages = [{"role": "user", "content": query}]
+
     iteration = 0
 
     while iteration < max_iter:
@@ -390,7 +519,7 @@ def run_loop(
         except Exception as e:
             render_step("error", f"LLM call failed: {e}", iteration)
             render_status("error", str(e))
-            return
+            return None
 
         render_raw(llm_text, iteration, verbose)
 
@@ -405,7 +534,9 @@ def run_loop(
             render_step("final", parsed["final"], iteration)
             render_status("done", "Loop completed successfully", iteration)
             console.print()
-            return
+            if ctx is not None:
+                ctx.add("assistant", llm_text)
+            return parsed["final"]
 
         # ── 4. Execute Tool
         if parsed["action"]:
@@ -442,6 +573,11 @@ def run_loop(
                 "content": f"Observation: {observation}\n\nContinue with the next step.",
             })
 
+            # Mirror into ContextManager so it persists across turns
+            if ctx is not None:
+                ctx.add("assistant", llm_text)
+                ctx.add("user", f"Observation: {observation}\n\nContinue with the next step.")
+
         else:
             render_step(
                 "error",
@@ -449,11 +585,12 @@ def run_loop(
                 iteration,
             )
             render_status("error", "Parse error")
-            return
+            return None
 
     render_step("error", f"Maximum iterations ({max_iter}) reached.", iteration)
     render_status("error", f"Max iterations ({max_iter}) reached")
     console.print()
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -465,8 +602,26 @@ PROVIDER_DEFAULTS = {
     "ollama":    ("http://localhost:11434",            "qwen3:32b"),
 }
 
+def _resolve_provider(provider, model, base_url, api_key):
+    """Shared provider resolution for both commands."""
+    if provider not in LLM_CALLERS:
+        console.print(f"[red]Unsupported provider: {provider}[/red]")
+        console.print(f"Available: {', '.join(LLM_CALLERS)}")
+        raise typer.Exit(1)
+
+    default_url, default_model = PROVIDER_DEFAULTS[provider]
+    resolved_url   = base_url or default_url
+    resolved_model = model    or default_model
+
+    if api_key is None:
+        env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+        api_key = os.environ.get(env_map.get(provider, ""), "")
+
+    return resolved_url, resolved_model, api_key
+
+
 @app.command()
-def main(
+def run(
     query: str = typer.Argument(..., help="Task to execute"),
 
     provider: str = typer.Option(
@@ -495,14 +650,14 @@ def main(
     ),
 ):
     """
-    ReAct pattern Agentic Loop.
+    ReAct pattern Agentic Loop (single-shot).
 
     \b
     Examples:
-      agent "List files in the current directory and read README.md"
-      agent "Create test.py with a hello world program" -p ollama -m qwen3:8b
-      agent "..." -p anthropic --api-key sk-ant-...
-      agent "/sh ls -la"              # Run shell command directly without LLM
+      agent run "List files in the current directory and read README.md"
+      agent run "Create test.py with a hello world" -p ollama -m qwen3:8b
+      agent run "..." -p anthropic --api-key sk-ant-...
+      agent run "/sh ls -la"           # Run shell command directly without LLM
     """
     # ── /sh prefix: Run shell command directly without LLM
     if query.startswith("/sh ") or query == "/sh":
@@ -525,19 +680,9 @@ def main(
             console.print(f"[{C['error']}]Command timed out (30s)[/]")
         raise typer.Exit(0)
 
-    if provider not in LLM_CALLERS:
-        console.print(f"[red]Unsupported provider: {provider}[/red]")
-        console.print(f"Available: {', '.join(LLM_CALLERS)}")
-        raise typer.Exit(1)
-
-    default_url, default_model = PROVIDER_DEFAULTS[provider]
-    resolved_url     = base_url or default_url
-    resolved_model   = model    or default_model
-
-    # API key lookup: --api-key → env var → "" (not needed for Ollama)
-    if api_key is None:
-        env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
-        api_key = os.environ.get(env_map.get(provider, ""), "")
+    resolved_url, resolved_model, api_key = _resolve_provider(
+        provider, model, base_url, api_key,
+    )
 
     run_loop(
         query    = query,
@@ -548,6 +693,137 @@ def main(
         max_iter = max_iter,
         verbose  = verbose,
     )
+
+
+@app.command()
+def chat(
+    provider: str = typer.Option(
+        "ollama", "--provider", "-p",
+        help="LLM provider: anthropic | openai | ollama",
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", "-m",
+        help="Model ID (uses provider default if not specified)",
+    ),
+    base_url: Optional[str] = typer.Option(
+        None, "--base-url",
+        help="API base URL (uses provider default if not specified)",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key",
+        help="API key (auto-detects from environment if not specified)",
+    ),
+    max_iter: int = typer.Option(
+        10, "--max-iter", "-n",
+        help="Maximum iterations per turn",
+    ),
+    max_context: int = typer.Option(
+        DEFAULT_MAX_CONTEXT_CHARS, "--max-context",
+        help="Max context size in chars before compression",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v",
+        help="Show raw LLM response",
+    ),
+):
+    """
+    Interactive chat with persistent context and automatic compression.
+
+    \b
+    Commands inside chat:
+      /quit, /exit   — end the session
+      /clear         — reset conversation context
+      /sh <cmd>      — run a shell command directly
+    """
+    resolved_url, resolved_model, api_key = _resolve_provider(
+        provider, model, base_url, api_key,
+    )
+
+    caller = LLM_CALLERS[provider]
+    system = build_system_prompt()
+    ctx = ContextManager(
+        caller=caller,
+        model=resolved_model,
+        base_url=resolved_url,
+        api_key=api_key,
+        system=system,
+        max_context_chars=max_context,
+    )
+
+    console.print()
+    console.print(Panel(
+        Text("Interactive Chat Mode", justify="center", style="bold bright_cyan"),
+        subtitle=Text(
+            f"provider={provider}  model={resolved_model}  "
+            f"max_context={max_context}  /quit to exit",
+            style=C["muted"], justify="center",
+        ),
+        border_style="bright_cyan",
+        box=box.DOUBLE_EDGE,
+        padding=(0, 2),
+    ))
+    console.print()
+
+    turn = 0
+    while True:
+        try:
+            query = console.input(f"[bold bright_cyan]You:[/] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print(f"\n[{C['muted']}]Session ended.[/]")
+            break
+
+        if not query:
+            continue
+
+        # ── in-chat commands
+        if query in ("/quit", "/exit"):
+            console.print(f"[{C['muted']}]Session ended.[/]")
+            break
+
+        if query == "/clear":
+            ctx = ContextManager(
+                caller=caller,
+                model=resolved_model,
+                base_url=resolved_url,
+                api_key=api_key,
+                system=system,
+                max_context_chars=max_context,
+            )
+            console.print(f"[{C['accent']}]Context cleared.[/]")
+            turn = 0
+            continue
+
+        if query.startswith("/sh "):
+            cmd = query[4:].strip()
+            if cmd:
+                console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
+                try:
+                    result = subprocess.run(
+                        cmd, shell=True, capture_output=True, text=True, timeout=30,
+                    )
+                    if result.stdout:
+                        console.print(result.stdout, end="", highlight=False)
+                    if result.stderr:
+                        console.print(f"[{C['error']}]{result.stderr}[/]", end="")
+                except subprocess.TimeoutExpired:
+                    console.print(f"[{C['error']}]Command timed out (30s)[/]")
+            continue
+
+        turn += 1
+        console.print(Rule(
+            f"[{C['muted']}]TURN {turn}[/]", style=C["muted"],
+        ))
+
+        run_loop(
+            query    = query,
+            provider = provider,
+            model    = resolved_model,
+            base_url = resolved_url,
+            api_key  = api_key,
+            max_iter = max_iter,
+            verbose  = verbose,
+            ctx      = ctx,
+        )
 
 
 if __name__ == "__main__":
