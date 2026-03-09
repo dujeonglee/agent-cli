@@ -1,6 +1,6 @@
 """
 Agentic Loop CLI — Typer + Rich
-ReAct pattern, text parsing (no tool call API)
+ReAct pattern, JSON response format (no tool call API)
 
 Supported LLM : Anthropic / OpenAI-compatible / Ollama
 Supported Tool : read_file / write_file / edit_file / shell
@@ -27,7 +27,7 @@ from rich.text import Text
 # ─────────────────────────────────────────────
 # App / Console
 # ─────────────────────────────────────────────
-app     = typer.Typer(help="Agentic Loop CLI — ReAct text parsing, no tool-call API")
+app     = typer.Typer(help="Agentic Loop CLI — ReAct JSON format, no tool-call API")
 console = Console()
 
 # ─────────────────────────────────────────────
@@ -82,7 +82,7 @@ def render_header(provider: str, model: str, max_iter: int) -> None:
         t,
         subtitle=Text(
             f"provider={provider}  model={model}  max_iter={iter_label}  "
-            "ReAct·TextParsing·NoToolAPI",
+            "ReAct·JSONFormat·NoToolAPI",
             style=C["muted"], justify="center",
         ),
         border_style="bright_cyan",
@@ -248,27 +248,25 @@ def build_system_prompt() -> str:
         You are an AI assistant that solves tasks step-by-step using available tools.
 
         ## Response Format (STRICT)
-        Always respond in exactly one of these two formats:
+        You MUST respond with a single JSON object and nothing else.
+        No markdown fences, no extra text — ONLY the JSON object.
 
         Format A — use a tool:
-        Thought: [reasoning]
-        Action: [tool_name]
-        Action Input: [JSON]
+        {{"thought": "your reasoning", "action": "tool_name", "action_input": {{...}}}}
 
         Format B — final answer:
-        Thought: [reasoning]
-        Final Answer: [complete answer]
+        {{"thought": "your reasoning", "final_answer": "your complete answer"}}
 
         ## Available Tools
         {tool_block}
 
         ## Rules
-        1. Always start with "Thought:"
-        2. Action Input must be valid JSON
-        3. If Observation shows STATUS: error, fix parameters and retry
+        1. Always include "thought" in your JSON
+        2. "action_input" must match the tool's input schema
+        3. If observation shows error, fix parameters and retry
         4. Respond in the same language as the user
-        5. Do NOT write "Observation:" — that is injected by the system
-        6. Output ONLY the format above, nothing else
+        5. Do NOT include "observation" — that is injected by the system
+        6. Output ONLY valid JSON, nothing else
     """).strip()
 
 
@@ -333,52 +331,40 @@ LLM_CALLERS = {
 
 
 # ─────────────────────────────────────────────
-# REACT PARSER
+# REACT JSON PARSER
 # ─────────────────────────────────────────────
-def _clean_final_answer(text: str) -> str:
-    """Remove format-template artifacts the LLM sometimes echoes back."""
-    # Strip leading markdown fences and template placeholders like:
-    #   ```\nThought: [reasoning ...]\nFinal Answer: [complete ...]\n```
-    cleaned = re.sub(
-        r"^[\s`]*Thought:\s*\[.*?\]\s*\n\s*Final Answer:\s*\[.*?\]\s*[\s`]*",
-        "",
-        text,
-        flags=re.I,
-    ).strip()
-    return cleaned if cleaned else text
-
-
 def parse_react(text: str) -> dict:
+    """Parse the LLM response as a JSON object.
+
+    Returns a dict with keys: thought, action, action_input, final, raw.
+    On parse failure all fields except *raw* are None.
+    """
     result = {"thought": None, "action": None, "action_input": None, "final": None, "raw": text}
 
-    m = re.search(r"Thought:\s*([\s\S]*?)(?=\n(?:Action:|Final Answer:)|$)", text, re.I)
-    if m:
-        result["thought"] = m.group(1).strip()
+    # Strip markdown fences if the LLM wraps JSON in ```json ... ```
+    stripped = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.I)
+    stripped = re.sub(r"\s*```\s*$", "", stripped)
 
-    m = re.search(r"Final Answer:\s*([\s\S]+)$", text, re.I)
-    if m:
-        result["final"] = _clean_final_answer(m.group(1).strip())
+    # Try parsing directly
+    data = None
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        # Fallback: extract the first { ... } block
+        m = re.search(r"\{[\s\S]*\}", stripped)
+        if m:
+            try:
+                data = json.loads(m.group())
+            except json.JSONDecodeError:
+                pass
+
+    if not isinstance(data, dict):
         return result
 
-    m = re.search(r"Action:\s*([^\n]+)", text, re.I)
-    if m:
-        result["action"] = m.group(1).strip()
-
-    m = re.search(r"Action Input:\s*([\s\S]+?)(?=\n\n|$)", text, re.I)
-    if m:
-        raw_input = m.group(1).strip()
-        try:
-            result["action_input"] = json.loads(raw_input)
-        except json.JSONDecodeError:
-            json_match = re.search(r"\{[\s\S]*\}", raw_input)
-            if json_match:
-                try:
-                    result["action_input"] = json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    result["action_input"] = raw_input
-            else:
-                result["action_input"] = raw_input
-
+    result["thought"] = data.get("thought")
+    result["final"] = data.get("final_answer")
+    result["action"] = data.get("action")
+    result["action_input"] = data.get("action_input")
     return result
 
 
@@ -568,10 +554,10 @@ def run_loop(
                     iteration,
                 )
                 nudge = (
-                    "You provided a Final Answer, but the task requires you to "
+                    "You provided a final_answer, but the task requires you to "
                     "actually USE a tool (e.g. write_file, shell) to complete it. "
-                    "Do NOT put file contents in the Final Answer. "
-                    "Instead, use the appropriate tool now."
+                    "Do NOT put file contents in final_answer. "
+                    "Instead, respond with {\"thought\": ..., \"action\": ..., \"action_input\": ...}."
                 )
                 messages.append({"role": "assistant", "content": llm_text})
                 messages.append({"role": "user", "content": nudge})
@@ -618,27 +604,25 @@ def run_loop(
 
             # ── 5. Inject Observation into message history
             messages.append({"role": "assistant", "content": llm_text})
-            messages.append({
-                "role": "user",
-                "content": f"Observation: {observation}\n\nContinue with the next step.",
-            })
+            obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
+            messages.append({"role": "user", "content": obs_msg})
 
             # Mirror into ContextManager so it persists across turns
             if ctx is not None:
                 ctx.add("assistant", llm_text)
-                ctx.add("user", f"Observation: {observation}\n\nContinue with the next step.")
+                ctx.add("user", obs_msg)
 
         else:
-            # ── Retry once with a format reminder
-            render_status("running", "Response did not follow ReAct format, retrying...", iteration)
+            # ── Retry with a format reminder
+            render_status("running", "Response is not valid JSON, retrying...", iteration)
             retry_msg = (
-                "Your response did not follow the required format. "
-                "You MUST respond in one of these two formats:\n\n"
-                "Format A (use a tool):\n"
-                "Thought: [reasoning]\nAction: [tool_name]\nAction Input: [JSON]\n\n"
-                "Format B (final answer):\n"
-                "Thought: [reasoning]\nFinal Answer: [answer]\n\n"
-                "Please try again with the correct format."
+                "Your response was not valid JSON. "
+                "You MUST respond with a single JSON object and nothing else.\n\n"
+                'Format A (use a tool):\n'
+                '{"thought": "reasoning", "action": "tool_name", "action_input": {...}}\n\n'
+                'Format B (final answer):\n'
+                '{"thought": "reasoning", "final_answer": "answer"}\n\n'
+                "Output ONLY the JSON object, no markdown fences or extra text."
             )
             messages.append({"role": "assistant", "content": llm_text})
             messages.append({"role": "user", "content": retry_msg})
