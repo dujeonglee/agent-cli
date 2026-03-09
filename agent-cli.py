@@ -645,7 +645,7 @@ def run_loop(
             if ctx is not None:
                 ctx.add("assistant", llm_text)
                 ctx.add("user", retry_msg)
-            # Don't count this as a wasted iteration — continue the loop
+            iteration -= 1  # Don't count format retries as iterations
 
     render_step("error", f"Maximum iterations ({max_iter}) reached.", iteration)
     render_status("error", f"Max iterations ({max_iter}) reached")
