@@ -1,0 +1,532 @@
+"""
+Agentic Loop CLI — Typer + Rich
+ReAct 패턴, 텍스트 파싱 방식 (tool call API 미사용)
+
+지원 LLM : Anthropic / OpenAI-compatible / Ollama
+지원 Tool : read_file / write_file / edit_file / shell
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import textwrap
+from pathlib import Path
+from typing import Optional
+
+import requests
+import typer
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.text import Text
+
+# ─────────────────────────────────────────────
+# App / Console
+# ─────────────────────────────────────────────
+app     = typer.Typer(help="Agentic Loop CLI — ReAct text parsing, no tool-call API")
+console = Console()
+
+# ─────────────────────────────────────────────
+# 색상 테마
+# ─────────────────────────────────────────────
+C = {
+    "thought":     "cyan",
+    "action":      "green",
+    "observation": "medium_purple",
+    "final":       "yellow",
+    "error":       "red",
+    "raw":         "grey50",
+    "muted":       "grey46",
+    "accent":      "bright_cyan",
+}
+ICONS = {
+    "thought":     "💭",
+    "action":      "⚡",
+    "observation": "👁 ",
+    "final":       "✅",
+    "error":       "⚠ ",
+    "raw":         "📄",
+}
+
+# ─────────────────────────────────────────────
+# Rich 렌더 헬퍼
+# ─────────────────────────────────────────────
+def render_header(provider: str, model: str, max_iter: int) -> None:
+    console.print()
+    t = Text(justify="center")
+    t.append("AGENTIC LOOP", style="bold bright_cyan")
+    t.append("  ·  Typer + Rich", style="grey50")
+    console.print(Panel(
+        t,
+        subtitle=Text(
+            f"provider={provider}  model={model}  max_iter={max_iter}  "
+            "ReAct·TextParsing·NoToolAPI",
+            style=C["muted"], justify="center",
+        ),
+        border_style="bright_cyan",
+        box=box.DOUBLE_EDGE,
+        padding=(0, 2),
+    ))
+    console.print()
+
+
+def render_step(
+    step_type: str,
+    content: str,
+    iteration: int,
+    tool_name: str | None = None,
+    tool_input: str | None = None,
+) -> None:
+    color = C[step_type]
+    header = Text()
+    header.append(f"{ICONS[step_type]} {step_type.upper()}", style=f"bold {color}")
+    header.append(f"  iter {iteration}", style=C["muted"])
+
+    if step_type == "action" and tool_name:
+        body = Text()
+        body.append(tool_name, style=f"bold {color}")
+        body.append("\n")
+        body.append(tool_input or "", style="bright_green")
+    else:
+        body = Text(content, style="white")
+
+    console.print(Panel(
+        body,
+        title=header, title_align="left",
+        border_style=color, box=box.ROUNDED, padding=(0, 1),
+    ))
+
+
+def render_raw(text: str, iteration: int, verbose: bool) -> None:
+    if not verbose:
+        console.print(
+            f"  [{C['muted']}]{ICONS['raw']} RAW LLM RESPONSE  iter {iteration}  "
+            f"[dim](--verbose 로 확인)[/dim][/]"
+        )
+        return
+    console.print(Panel(
+        Text(text, style=C["raw"]),
+        title=Text(f"{ICONS['raw']} RAW LLM RESPONSE  iter {iteration}", style=C["raw"]),
+        title_align="left",
+        border_style=C["raw"], box=box.ROUNDED, padding=(0, 1),
+    ))
+
+
+def render_iter_sep(iteration: int) -> None:
+    console.print(Rule(
+        f"[{C['muted']}]ITERATION {iteration}[/]", style=C["muted"],
+    ))
+
+
+def render_status(state: str, message: str, iteration: int = 0) -> None:
+    dot = {"running": "bright_cyan", "done": "green", "error": "red"}.get(state, "grey50")
+    it  = f"  [bright_cyan]ITER {iteration}[/]" if iteration else ""
+    console.print(f"[{dot}]●[/] {message}{it}", highlight=False)
+
+
+# ─────────────────────────────────────────────
+# TOOLS
+# ─────────────────────────────────────────────
+def tool_read_file(args: dict) -> str:
+    path = args.get("path", "")
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except Exception as e:
+        raise RuntimeError(f"read_file 실패: {e}")
+
+
+def tool_write_file(args: dict) -> str:
+    path    = args.get("path", "")
+    content = args.get("content", "")
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return f"파일 저장 완료: {path} ({len(content)} bytes)"
+    except Exception as e:
+        raise RuntimeError(f"write_file 실패: {e}")
+
+
+def tool_edit_file(args: dict) -> str:
+    """old_str → new_str 치환 (정확히 1회 매칭)"""
+    path    = args.get("path", "")
+    old_str = args.get("old_str", "")
+    new_str = args.get("new_str", "")
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+        count = text.count(old_str)
+        if count == 0:
+            raise RuntimeError("old_str 를 파일에서 찾을 수 없습니다.")
+        if count > 1:
+            raise RuntimeError(f"old_str 가 {count}회 발견됩니다. 더 구체적으로 지정하세요.")
+        result = text.replace(old_str, new_str, 1)
+        Path(path).write_text(result, encoding="utf-8")
+        return f"편집 완료: {path}"
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"edit_file 실패: {e}")
+
+
+def tool_shell(args: dict) -> str:
+    cmd     = args.get("command", "")
+    timeout = int(args.get("timeout", 30))
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True,
+            text=True, timeout=timeout,
+        )
+        out = result.stdout.strip()
+        err = result.stderr.strip()
+        parts = []
+        if out:
+            parts.append(out)
+        if err:
+            parts.append(f"[stderr]\n{err}")
+        if result.returncode != 0:
+            parts.append(f"[exit code: {result.returncode}]")
+        return "\n".join(parts) if parts else "(출력 없음)"
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"명령 타임아웃 ({timeout}s)")
+    except Exception as e:
+        raise RuntimeError(f"shell 실패: {e}")
+
+
+TOOLS: dict[str, callable] = {
+    "read_file":  tool_read_file,
+    "write_file": tool_write_file,
+    "edit_file":  tool_edit_file,
+    "shell":      tool_shell,
+}
+
+TOOL_SCHEMAS = {
+    "read_file":  '{"path": "읽을 파일 경로"}',
+    "write_file": '{"path": "저장 경로", "content": "파일 내용"}',
+    "edit_file":  '{"path": "파일 경로", "old_str": "바꿀 내용", "new_str": "새 내용"}',
+    "shell":      '{"command": "실행할 쉘 명령", "timeout": 30}',
+}
+
+TOOL_DESCS = {
+    "read_file":  "파일 내용을 읽어 반환합니다.",
+    "write_file": "지정한 경로에 파일을 생성하거나 덮어씁니다.",
+    "edit_file":  "파일 내의 old_str를 new_str로 정확히 한 번 치환합니다.",
+    "shell":      "쉘 명령을 실행하고 stdout/stderr를 반환합니다.",
+}
+
+
+# ─────────────────────────────────────────────
+# SYSTEM PROMPT
+# ─────────────────────────────────────────────
+def build_system_prompt() -> str:
+    tool_block = "\n".join(
+        f"- {name}: {TOOL_DESCS[name]}\n  Input JSON: {TOOL_SCHEMAS[name]}"
+        for name in TOOLS
+    )
+    return textwrap.dedent(f"""
+        You are an AI assistant that solves tasks step-by-step using available tools.
+
+        ## Response Format (STRICT)
+        Always respond in exactly one of these two formats:
+
+        Format A — use a tool:
+        Thought: [reasoning]
+        Action: [tool_name]
+        Action Input: [JSON]
+
+        Format B — final answer:
+        Thought: [reasoning]
+        Final Answer: [complete answer]
+
+        ## Available Tools
+        {tool_block}
+
+        ## Rules
+        1. Always start with "Thought:"
+        2. Action Input must be valid JSON
+        3. If Observation shows STATUS: error, fix parameters and retry
+        4. Respond in the same language as the user
+        5. Do NOT write "Observation:" — that is injected by the system
+        6. Output ONLY the format above, nothing else
+    """).strip()
+
+
+# ─────────────────────────────────────────────
+# LLM ADAPTERS
+# ─────────────────────────────────────────────
+def call_anthropic(
+    messages: list[dict],
+    system: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+) -> str:
+    url     = base_url.rstrip("/") + "/messages"
+    headers = {
+        "Content-Type":      "application/json",
+        "x-api-key":         api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    body = {"model": model, "max_tokens": 2048, "system": system, "messages": messages}
+    r = requests.post(url, headers=headers, json=body, timeout=120)
+    r.raise_for_status()
+    return r.json()["content"][0]["text"]
+
+
+def call_openai(
+    messages: list[dict],
+    system: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+) -> str:
+    url     = base_url.rstrip("/") + "/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    msgs    = [{"role": "system", "content": system}] + messages
+    body    = {"model": model, "max_tokens": 2048, "messages": msgs}
+    r = requests.post(url, headers=headers, json=body, timeout=120)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def call_ollama(
+    messages: list[dict],
+    system: str,
+    model: str,
+    base_url: str,
+    **_,
+) -> str:
+    url  = base_url.rstrip("/") + "/api/chat"
+    msgs = [{"role": "system", "content": system}] + messages
+    body = {"model": model, "stream": False, "messages": msgs}
+    r = requests.post(url, json=body, timeout=300)
+    r.raise_for_status()
+    return r.json()["message"]["content"]
+
+
+LLM_CALLERS = {
+    "anthropic": call_anthropic,
+    "openai":    call_openai,
+    "ollama":    call_ollama,
+}
+
+
+# ─────────────────────────────────────────────
+# REACT PARSER
+# ─────────────────────────────────────────────
+def parse_react(text: str) -> dict:
+    result = {"thought": None, "action": None, "action_input": None, "final": None, "raw": text}
+
+    m = re.search(r"Thought:\s*([\s\S]*?)(?=\n(?:Action:|Final Answer:)|$)", text, re.I)
+    if m:
+        result["thought"] = m.group(1).strip()
+
+    m = re.search(r"Final Answer:\s*([\s\S]+)$", text, re.I)
+    if m:
+        result["final"] = m.group(1).strip()
+        return result
+
+    m = re.search(r"Action:\s*([^\n]+)", text, re.I)
+    if m:
+        result["action"] = m.group(1).strip()
+
+    m = re.search(r"Action Input:\s*([\s\S]+?)(?=\n\n|$)", text, re.I)
+    if m:
+        raw_input = m.group(1).strip()
+        try:
+            result["action_input"] = json.loads(raw_input)
+        except json.JSONDecodeError:
+            json_match = re.search(r"\{[\s\S]*\}", raw_input)
+            if json_match:
+                try:
+                    result["action_input"] = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    result["action_input"] = raw_input
+            else:
+                result["action_input"] = raw_input
+
+    return result
+
+
+# ─────────────────────────────────────────────
+# AGENTIC LOOP
+# ─────────────────────────────────────────────
+def run_loop(
+    query: str,
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    max_iter: int,
+    verbose: bool,
+) -> None:
+    render_header(provider, model, max_iter)
+    render_status("running", "Initializing loop...")
+    console.print()
+
+    system   = build_system_prompt()
+    messages = [{"role": "user", "content": query}]
+    caller   = LLM_CALLERS[provider]
+    iteration = 0
+
+    while iteration < max_iter:
+        iteration += 1
+        if iteration > 1:
+            render_iter_sep(iteration)
+
+        render_status("running", f"Calling LLM...", iteration)
+
+        # ── 1. LLM 호출
+        try:
+            llm_text = caller(
+                messages=messages,
+                system=system,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+            )
+        except Exception as e:
+            render_step("error", f"LLM 호출 실패: {e}", iteration)
+            render_status("error", str(e))
+            return
+
+        render_raw(llm_text, iteration, verbose)
+
+        # ── 2. 파싱
+        parsed = parse_react(llm_text)
+
+        if parsed["thought"]:
+            render_step("thought", parsed["thought"], iteration)
+
+        # ── 3. Final Answer
+        if parsed["final"]:
+            render_step("final", parsed["final"], iteration)
+            render_status("done", "Loop completed successfully", iteration)
+            console.print()
+            return
+
+        # ── 4. Tool 실행
+        if parsed["action"]:
+            tool_name  = parsed["action"]
+            tool_input = parsed["action_input"] or {}
+            input_str  = json.dumps(tool_input, ensure_ascii=False, indent=2) \
+                         if isinstance(tool_input, dict) else str(tool_input)
+
+            render_step("action", "", iteration, tool_name=tool_name, tool_input=input_str)
+
+            tool_fn = TOOLS.get(tool_name)
+            if tool_fn is None:
+                observation = (
+                    f"STATUS: error\nERROR: 알 수 없는 tool '{tool_name}'\n"
+                    f"HINT: 사용 가능한 tool: {', '.join(TOOLS)}"
+                )
+            else:
+                render_status("running", f"Executing {tool_name}...", iteration)
+                try:
+                    obs = tool_fn(tool_input if isinstance(tool_input, dict) else {})
+                    observation = f"STATUS: success\nRESULT:\n{obs}"
+                except Exception as e:
+                    observation = (
+                        f"STATUS: error\nERROR: {e}\n"
+                        f"HINT: 파라미터를 확인하고 다시 시도하세요."
+                    )
+
+            render_step("observation", observation, iteration)
+
+            # ── 5. Observation을 message history에 주입
+            messages.append({"role": "assistant", "content": llm_text})
+            messages.append({
+                "role": "user",
+                "content": f"Observation: {observation}\n\nContinue with the next step.",
+            })
+
+        else:
+            render_step(
+                "error",
+                f"파싱 실패: Action 또는 Final Answer를 찾을 수 없습니다.\n\n{llm_text}",
+                iteration,
+            )
+            render_status("error", "Parse error")
+            return
+
+    render_step("error", f"최대 반복 횟수({max_iter})에 도달했습니다.", iteration)
+    render_status("error", f"Max iterations ({max_iter}) reached")
+    console.print()
+
+
+# ─────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────
+PROVIDER_DEFAULTS = {
+    "anthropic": ("https://api.anthropic.com/v1",    "claude-sonnet-4-20250514"),
+    "openai":    ("https://api.openai.com/v1",        "gpt-4o"),
+    "ollama":    ("http://localhost:11434",            "qwen3:32b"),
+}
+
+@app.command()
+def main(
+    query: str = typer.Argument(..., help="실행할 태스크"),
+
+    provider: str = typer.Option(
+        "ollama", "--provider", "-p",
+        help="LLM provider: anthropic | openai | ollama",
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", "-m",
+        help="모델 ID (미지정 시 provider 기본값 사용)",
+    ),
+    base_url: Optional[str] = typer.Option(
+        None, "--base-url",
+        help="API base URL (미지정 시 provider 기본값 사용)",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key",
+        help="API 키 (미지정 시 환경변수 자동 탐색)",
+    ),
+    max_iter: int = typer.Option(
+        10, "--max-iter", "-n",
+        help="최대 반복 횟수",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v",
+        help="RAW LLM 응답 출력",
+    ),
+):
+    """
+    ReAct 패턴 Agentic Loop.
+
+    \b
+    예시:
+      agent "현재 디렉토리의 파일 목록을 확인하고 README.md 내용을 읽어줘"
+      agent "test.py 파일을 만들고 hello world를 출력하는 코드를 작성해줘" -p ollama -m qwen3:8b
+      agent "..." -p anthropic --api-key sk-ant-...
+    """
+    if provider not in LLM_CALLERS:
+        console.print(f"[red]지원하지 않는 provider: {provider}[/red]")
+        console.print(f"사용 가능: {', '.join(LLM_CALLERS)}")
+        raise typer.Exit(1)
+
+    default_url, default_model = PROVIDER_DEFAULTS[provider]
+    resolved_url     = base_url or default_url
+    resolved_model   = model    or default_model
+
+    # API key 탐색 순서: --api-key → 환경변수 → "" (Ollama는 불필요)
+    if api_key is None:
+        env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+        api_key = os.environ.get(env_map.get(provider, ""), "")
+
+    run_loop(
+        query    = query,
+        provider = provider,
+        model    = resolved_model,
+        base_url = resolved_url,
+        api_key  = api_key,
+        max_iter = max_iter,
+        verbose  = verbose,
+    )
+
+
+if __name__ == "__main__":
+    app()
