@@ -334,6 +334,19 @@ LLM_CALLERS = {
 # ─────────────────────────────────────────────
 # REACT PARSER
 # ─────────────────────────────────────────────
+def _clean_final_answer(text: str) -> str:
+    """Remove format-template artifacts the LLM sometimes echoes back."""
+    # Strip leading markdown fences and template placeholders like:
+    #   ```\nThought: [reasoning ...]\nFinal Answer: [complete ...]\n```
+    cleaned = re.sub(
+        r"^[\s`]*Thought:\s*\[.*?\]\s*\n\s*Final Answer:\s*\[.*?\]\s*[\s`]*",
+        "",
+        text,
+        flags=re.I,
+    ).strip()
+    return cleaned if cleaned else text
+
+
 def parse_react(text: str) -> dict:
     result = {"thought": None, "action": None, "action_input": None, "final": None, "raw": text}
 
@@ -343,7 +356,7 @@ def parse_react(text: str) -> dict:
 
     m = re.search(r"Final Answer:\s*([\s\S]+)$", text, re.I)
     if m:
-        result["final"] = m.group(1).strip()
+        result["final"] = _clean_final_answer(m.group(1).strip())
         return result
 
     m = re.search(r"Action:\s*([^\n]+)", text, re.I)
@@ -366,6 +379,18 @@ def parse_react(text: str) -> dict:
                 result["action_input"] = raw_input
 
     return result
+
+
+# Keywords in user queries that imply tool usage is required
+_ACTION_KEYWORDS = re.compile(
+    r"\b(write|create|save|make|generate|edit|modify|update|delete|remove|run|execute)\b",
+    re.I,
+)
+
+
+def _needs_tool_action(query: str) -> bool:
+    """Heuristic: does the user query imply a side-effect (file write, shell, etc.)?"""
+    return bool(_ACTION_KEYWORDS.search(query))
 
 
 # ─────────────────────────────────────────────
@@ -499,6 +524,7 @@ def run_loop(
         messages = [{"role": "user", "content": query}]
 
     iteration = 0
+    tools_called: list[str] = []          # track which tools were actually used
 
     while iteration < max_iter:
         iteration += 1
@@ -531,6 +557,28 @@ def run_loop(
 
         # ── 3. Final Answer
         if parsed["final"]:
+            # Fulfillment guard: if the task required tool actions (write, create,
+            # etc.) but no tool was ever called, reject the final answer and ask
+            # the LLM to actually perform the action.
+            if not tools_called and _needs_tool_action(query):
+                render_status(
+                    "running",
+                    "Final answer given but task requires tool action — sending back...",
+                    iteration,
+                )
+                nudge = (
+                    "You provided a Final Answer, but the task requires you to "
+                    "actually USE a tool (e.g. write_file, shell) to complete it. "
+                    "Do NOT put file contents in the Final Answer. "
+                    "Instead, use the appropriate tool now."
+                )
+                messages.append({"role": "assistant", "content": llm_text})
+                messages.append({"role": "user", "content": nudge})
+                if ctx is not None:
+                    ctx.add("assistant", llm_text)
+                    ctx.add("user", nudge)
+                continue
+
             render_step("final", parsed["final"], iteration)
             render_status("done", "Loop completed successfully", iteration)
             console.print()
@@ -547,6 +595,7 @@ def run_loop(
 
             render_step("action", "", iteration, tool_name=tool_name, tool_input=input_str)
 
+            tools_called.append(tool_name)
             tool_fn = TOOLS.get(tool_name)
             if tool_fn is None:
                 observation = (
