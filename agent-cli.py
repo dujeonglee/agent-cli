@@ -718,6 +718,11 @@ def run(
       agent run "Create test.py with a hello world" -p ollama -m qwen3:8b
       agent run "..." -p anthropic --api-key sk-ant-...
       agent run "/sh ls -la"           # Run shell command directly without LLM
+
+    \b
+    vLLM support:
+      vLLM exposes an OpenAI-compatible API, so use -p openai with --base-url:
+      agent run "..." -p openai --base-url http://localhost:8000/v1 -m your-model
     """
     # ── /sh prefix: Run shell command directly without LLM
     if query.startswith("/sh ") or query == "/sh":
@@ -811,6 +816,11 @@ def chat(
       /quit, /exit   — end the session
       /clear         — reset conversation context
       /sh <cmd>      — run a shell command directly
+
+    \b
+    vLLM support:
+      vLLM exposes an OpenAI-compatible API, so use -p openai with --base-url:
+      agent chat -p openai --base-url http://localhost:8000/v1 -m your-model
     """
     resolved_url, resolved_model, api_key = _resolve_provider(
         provider, model, base_url, api_key,
