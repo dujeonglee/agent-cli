@@ -288,7 +288,7 @@ def call_anthropic(
         "anthropic-version": "2023-06-01",
     }
     body = {"model": model, "max_tokens": 2048, "system": system, "messages": messages}
-    r = requests.post(url, headers=headers, json=body, timeout=120)
+    r = requests.post(url, headers=headers, json=body, timeout=600)
     r.raise_for_status()
     return r.json()["content"][0]["text"]
 
@@ -304,7 +304,7 @@ def call_openai(
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     msgs    = [{"role": "system", "content": system}] + messages
     body    = {"model": model, "max_tokens": 2048, "messages": msgs}
-    r = requests.post(url, headers=headers, json=body, timeout=120)
+    r = requests.post(url, headers=headers, json=body, timeout=600)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
@@ -319,7 +319,7 @@ def call_ollama(
     url  = base_url.rstrip("/") + "/api/chat"
     msgs = [{"role": "system", "content": system}] + messages
     body = {"model": model, "stream": False, "messages": msgs}
-    r = requests.post(url, json=body, timeout=300)
+    r = requests.post(url, json=body, timeout=600)
     r.raise_for_status()
     return r.json()["message"]["content"]
 
@@ -579,13 +579,23 @@ def run_loop(
                 ctx.add("user", f"Observation: {observation}\n\nContinue with the next step.")
 
         else:
-            render_step(
-                "error",
-                f"Parse failed: Could not find Action or Final Answer.\n\n{llm_text}",
-                iteration,
+            # ── Retry once with a format reminder
+            render_status("running", "Response did not follow ReAct format, retrying...", iteration)
+            retry_msg = (
+                "Your response did not follow the required format. "
+                "You MUST respond in one of these two formats:\n\n"
+                "Format A (use a tool):\n"
+                "Thought: [reasoning]\nAction: [tool_name]\nAction Input: [JSON]\n\n"
+                "Format B (final answer):\n"
+                "Thought: [reasoning]\nFinal Answer: [answer]\n\n"
+                "Please try again with the correct format."
             )
-            render_status("error", "Parse error")
-            return None
+            messages.append({"role": "assistant", "content": llm_text})
+            messages.append({"role": "user", "content": retry_msg})
+            if ctx is not None:
+                ctx.add("assistant", llm_text)
+                ctx.add("user", retry_msg)
+            # Don't count this as a wasted iteration — continue the loop
 
     render_step("error", f"Maximum iterations ({max_iter}) reached.", iteration)
     render_status("error", f"Max iterations ({max_iter}) reached")
@@ -669,6 +679,23 @@ def run(
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True, timeout=30,
+            )
+            if result.stdout:
+                console.print(result.stdout, end="", highlight=False)
+            if result.stderr:
+                console.print(f"[{C['error']}]{result.stderr}[/]", end="")
+            if result.returncode != 0:
+                console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
+        except subprocess.TimeoutExpired:
+            console.print(f"[{C['error']}]Command timed out (30s)[/]")
+        raise typer.Exit(0)
+
+    # ── Auto-detect shell commands (e.g. "ls", "git status")
+    if is_shell_command(query):
+        console.print(f"[{C['action']}]⚡ SHELL:[/] {query}")
+        try:
+            result = subprocess.run(
+                query, shell=True, capture_output=True, text=True, timeout=30,
             )
             if result.stdout:
                 console.print(result.stdout, end="", highlight=False)
@@ -807,6 +834,23 @@ def chat(
                         console.print(f"[{C['error']}]{result.stderr}[/]", end="")
                 except subprocess.TimeoutExpired:
                     console.print(f"[{C['error']}]Command timed out (30s)[/]")
+            continue
+
+        # ── Auto-detect shell commands (e.g. "ls", "git status")
+        if is_shell_command(query):
+            console.print(f"[{C['action']}]⚡ SHELL:[/] {query}")
+            try:
+                result = subprocess.run(
+                    query, shell=True, capture_output=True, text=True, timeout=30,
+                )
+                if result.stdout:
+                    console.print(result.stdout, end="", highlight=False)
+                if result.stderr:
+                    console.print(f"[{C['error']}]{result.stderr}[/]", end="")
+                if result.returncode != 0:
+                    console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
+            except subprocess.TimeoutExpired:
+                console.print(f"[{C['error']}]Command timed out (30s)[/]")
             continue
 
         turn += 1
