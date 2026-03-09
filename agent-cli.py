@@ -77,10 +77,11 @@ def render_header(provider: str, model: str, max_iter: int) -> None:
     t = Text(justify="center")
     t.append("AGENTIC LOOP", style="bold bright_cyan")
     t.append("  ·  Typer + Rich", style="grey50")
+    iter_label = str(max_iter) if max_iter > 0 else "∞"
     console.print(Panel(
         t,
         subtitle=Text(
-            f"provider={provider}  model={model}  max_iter={max_iter}  "
+            f"provider={provider}  model={model}  max_iter={iter_label}  "
             "ReAct·TextParsing·NoToolAPI",
             style=C["muted"], justify="center",
         ),
@@ -526,7 +527,7 @@ def run_loop(
     iteration = 0
     tools_called: list[str] = []          # track which tools were actually used
 
-    while iteration < max_iter:
+    while max_iter <= 0 or iteration < max_iter:
         iteration += 1
         if iteration > 1:
             render_iter_sep(iteration)
@@ -700,8 +701,8 @@ def run(
         help="API key (auto-detects from environment if not specified)",
     ),
     max_iter: int = typer.Option(
-        10, "--max-iter", "-n",
-        help="Maximum iterations",
+        0, "--max-iter", "-n",
+        help="Maximum iterations (0 = unlimited)",
     ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v",
@@ -790,8 +791,8 @@ def chat(
         help="API key (auto-detects from environment if not specified)",
     ),
     max_iter: int = typer.Option(
-        10, "--max-iter", "-n",
-        help="Maximum iterations per turn",
+        0, "--max-iter", "-n",
+        help="Maximum iterations per turn (0 = unlimited)",
     ),
     max_context: int = typer.Option(
         DEFAULT_MAX_CONTEXT_CHARS, "--max-context",
