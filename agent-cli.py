@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import zlib
 from pathlib import Path
 from typing import Optional
 
@@ -148,12 +149,64 @@ def render_status(state: str, message: str, iteration: int = 0) -> None:
 
 
 # ─────────────────────────────────────────────
+# HASHLINE
+# ─────────────────────────────────────────────
+_NIBBLE = "ZPMQVRWSNKTXJBYH"
+_DICT = [f"{_NIBBLE[i >> 4]}{_NIBBLE[i & 0x0F]}" for i in range(256)]
+_RE_SIGNIFICANT = re.compile(r"[\w\d]", re.UNICODE)
+
+
+def compute_line_hash(idx: int, line: str) -> str:
+    """Return a 2-char hash tag for *line* at 1-based *idx*."""
+    line = line.rstrip("\r\n").rstrip()
+    seed = 0 if _RE_SIGNIFICANT.search(line) else idx
+    # CRC32 seeded by XOR-ing the seed into the content bytes
+    data = line.encode("utf-8")
+    h = zlib.crc32(data, seed) & 0xFF
+    return _DICT[h]
+
+
+def format_hashlines(text: str) -> str:
+    """Format file content with hashline tags: LINE#HASH:content"""
+    lines = text.split("\n")
+    out = []
+    for i, line in enumerate(lines, 1):
+        tag = compute_line_hash(i, line)
+        out.append(f"{i}#{tag}:{line}")
+    return "\n".join(out)
+
+
+def _parse_ref(ref: str) -> tuple[int, str]:
+    """Parse a hashline ref like '5#VR' → (5, 'VR')."""
+    m = re.match(r"^(\d+)#([A-Z]{2})$", ref)
+    if not m:
+        raise RuntimeError(f"Invalid hashline ref: '{ref}'. Expected format: LINE#HASH (e.g. 5#VR)")
+    return int(m.group(1)), m.group(2)
+
+
+def _verify_ref(lines: list[str], ref: str) -> int:
+    """Verify a hashline ref against actual content. Return 0-based index."""
+    line_num, expected_hash = _parse_ref(ref)
+    if line_num < 1 or line_num > len(lines):
+        raise RuntimeError(f"Line {line_num} out of range (file has {len(lines)} lines)")
+    actual_hash = compute_line_hash(line_num, lines[line_num - 1])
+    if actual_hash != expected_hash:
+        raise RuntimeError(
+            f"Hash mismatch at line {line_num}: expected {expected_hash}, "
+            f"got {actual_hash}. The file may have changed. "
+            f"Re-read the file to get current hashline tags."
+        )
+    return line_num - 1  # 0-based
+
+
+# ─────────────────────────────────────────────
 # TOOLS
 # ─────────────────────────────────────────────
 def tool_read_file(args: dict) -> str:
     path = args.get("path", "")
     try:
-        return Path(path).read_text(encoding="utf-8")
+        text = Path(path).read_text(encoding="utf-8")
+        return format_hashlines(text)
     except Exception as e:
         raise RuntimeError(f"read_file failed: {e}")
 
@@ -171,24 +224,85 @@ def tool_write_file(args: dict) -> str:
 
 
 def tool_edit_file(args: dict) -> str:
-    """Replace old_str with new_str (exactly one match required)"""
-    path    = args.get("path", "")
-    old_str = args.get("old_str", "")
-    new_str = args.get("new_str", "")
+    """Apply hashline-based edits to a file.
+
+    Each edit has: op (replace|append|prepend), pos, end (optional), lines.
+    Hash refs are verified before any mutation.
+    """
+    path  = args.get("path", "")
+    edits = args.get("edits", [])
+    if not edits:
+        raise RuntimeError("No edits provided.")
     try:
         text = Path(path).read_text(encoding="utf-8")
-        count = text.count(old_str)
-        if count == 0:
-            raise RuntimeError("old_str not found in file.")
-        if count > 1:
-            raise RuntimeError(f"old_str found {count} times. Please be more specific.")
-        result = text.replace(old_str, new_str, 1)
-        Path(path).write_text(result, encoding="utf-8")
-        return f"Edit complete: {path}"
-    except RuntimeError:
-        raise
     except Exception as e:
-        raise RuntimeError(f"edit_file failed: {e}")
+        raise RuntimeError(f"edit_file: cannot read '{path}': {e}")
+
+    file_lines = text.split("\n")
+
+    # Pre-validate all refs before mutating
+    for edit in edits:
+        op  = edit.get("op", "")
+        pos = edit.get("pos")
+        end = edit.get("end")
+        if op not in ("replace", "append", "prepend"):
+            raise RuntimeError(f"Unknown edit op: '{op}'. Use replace|append|prepend.")
+        if pos:
+            _verify_ref(file_lines, pos)
+        if end:
+            _verify_ref(file_lines, end)
+
+    # Sort edits bottom-up so earlier splices don't shift later indices
+    def _sort_key(edit):
+        pos = edit.get("pos")
+        if pos:
+            n, _ = _parse_ref(pos)
+            return -n
+        return 0
+
+    sorted_edits = sorted(edits, key=_sort_key)
+
+    for edit in sorted_edits:
+        op       = edit["op"]
+        pos      = edit.get("pos")
+        end      = edit.get("end")
+        new_lines = edit.get("lines")
+        if isinstance(new_lines, str):
+            new_lines = new_lines.split("\n")
+        if new_lines is None:
+            new_lines = []
+
+        if op == "replace":
+            if not pos:
+                raise RuntimeError("replace requires 'pos'.")
+            start_idx = _verify_ref(file_lines, pos)
+            if end:
+                end_idx = _verify_ref(file_lines, end)
+                file_lines[start_idx:end_idx + 1] = new_lines
+            else:
+                file_lines[start_idx:start_idx + 1] = new_lines
+
+        elif op == "append":
+            if pos:
+                idx = _verify_ref(file_lines, pos)
+                file_lines[idx + 1:idx + 1] = new_lines
+            else:
+                file_lines.extend(new_lines)
+
+        elif op == "prepend":
+            if pos:
+                idx = _verify_ref(file_lines, pos)
+                file_lines[idx:idx] = new_lines
+            else:
+                file_lines[0:0] = new_lines
+
+    result = "\n".join(file_lines)
+    try:
+        Path(path).write_text(result, encoding="utf-8")
+    except Exception as e:
+        raise RuntimeError(f"edit_file: cannot write '{path}': {e}")
+
+    return f"Edit complete: {path} ({len(file_lines)} lines)"
 
 
 def tool_shell(args: dict) -> str:
@@ -225,14 +339,14 @@ TOOLS: dict[str, callable] = {
 TOOL_SCHEMAS = {
     "read_file":  '{"path": "file path to read"}',
     "write_file": '{"path": "file path to save", "content": "file content"}',
-    "edit_file":  '{"path": "file path", "old_str": "text to replace", "new_str": "new text"}',
+    "edit_file":  '{"path": "file path", "edits": [{"op": "replace|append|prepend", "pos": "LINE#HASH", "end": "LINE#HASH (optional, for range replace)", "lines": ["new lines"]}]}',
     "shell":      '{"command": "shell command to run", "timeout": 30}',
 }
 
 TOOL_DESCS = {
-    "read_file":  "Read and return file contents.",
-    "write_file": "Create or overwrite a file at the given path.",
-    "edit_file":  "Replace old_str with new_str exactly once in the file.",
+    "read_file":  "Read file contents. Lines are tagged as LINE#HASH:content for editing.",
+    "write_file": "Create or overwrite a file at the given path with raw content.",
+    "edit_file":  "Edit a file using hashline refs from read_file. Ops: replace (pos, optional end for range), append (insert after pos), prepend (insert before pos). lines=[] or null to delete.",
     "shell":      "Run a shell command and return stdout/stderr.",
 }
 
@@ -305,6 +419,24 @@ def build_system_prompt(include_delegate: bool = False) -> str:
 
         ## Available Tools
         {tool_block}
+
+        ## Hashline Editing
+        read_file returns lines tagged as LINE#HASH:content, e.g.:
+          1#VR:def hello():
+          2#KT:    return "world"
+          3#ZZ:
+
+        To edit, use edit_file with hashline refs copied EXACTLY from read_file output.
+        - replace single line:  {{"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}}
+        - replace range:        {{"op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}}
+        - delete lines:         {{"op": "replace", "pos": "2#KT", "lines": []}}
+        - insert after:         {{"op": "append", "pos": "1#VR", "lines": ["    # new comment"]}}
+        - insert before:        {{"op": "prepend", "pos": "1#VR", "lines": ["# header"]}}
+        - append to EOF:        {{"op": "append", "lines": ["# end of file"]}}
+
+        IMPORTANT: Always read the file first to get current hashline tags.
+        If a hash mismatch error occurs, re-read the file and retry with fresh tags.
+        Use write_file only for creating NEW files, not for editing existing ones.
         {delegate_rules}
         ## Rules
         1. Always include "thought" in your JSON
