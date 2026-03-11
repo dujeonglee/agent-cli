@@ -3,7 +3,7 @@ Agentic Loop CLI — Typer + Rich
 ReAct pattern, JSON response format (no tool call API)
 
 Supported LLM : Anthropic / OpenAI-compatible / Ollama
-Supported Tool : read_file / write_file / edit_file / shell
+Supported Tool : read_file / write_file / edit_file / shell / delegate
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 from typing import Optional
@@ -235,15 +236,60 @@ TOOL_DESCS = {
     "shell":      "Run a shell command and return stdout/stderr.",
 }
 
+# ─────────────────────────────────────────────
+# DELEGATE (subagent)
+# ─────────────────────────────────────────────
+_VAGUE_REFS = re.compile(
+    r"\b(it|this|that|these|those|above|previous|earlier|the same)\b", re.I,
+)
+
+def _validate_subtask(task: str) -> str | None:
+    """Return an error string if *task* looks under-specified, else None."""
+    if len(task.split()) < 5:
+        return (
+            "Task is too short. The subagent has NO context from this conversation. "
+            "Include all necessary details: file paths, specific instructions, etc."
+        )
+    if _VAGUE_REFS.search(task):
+        return (
+            "Task contains vague references (e.g. 'it', 'this', 'above') that the "
+            "subagent cannot resolve. Rewrite with explicit, self-contained details."
+        )
+    return None
+
+
+DELEGATE_SCHEMA = '{"task": "fully self-contained task description"}'
+DELEGATE_DESC = (
+    "Delegate a self-contained subtask to an independent subagent. "
+    "The subagent has NO context from this conversation — the task "
+    "description must include ALL necessary details (file paths, content, "
+    "specific instructions). Do NOT reference prior conversation."
+)
+
 
 # ─────────────────────────────────────────────
 # SYSTEM PROMPT
 # ─────────────────────────────────────────────
-def build_system_prompt() -> str:
+def build_system_prompt(include_delegate: bool = False) -> str:
     tool_block = "\n".join(
         f"- {name}: {TOOL_DESCS[name]}\n  Input JSON: {TOOL_SCHEMAS[name]}"
         for name in TOOLS
     )
+    if include_delegate:
+        tool_block += f"\n- delegate: {DELEGATE_DESC}\n  Input JSON: {DELEGATE_SCHEMA}"
+
+    delegate_rules = ""
+    if include_delegate:
+        delegate_rules = textwrap.dedent("""
+            ## Delegation Rules
+            - Only delegate tasks that are fully independent and self-contained
+            - The subagent has NO memory of this conversation
+            - Include ALL details: file paths, content, specific instructions
+            - NEVER use pronouns or references to prior context in the task
+            - Good: "Read /tmp/data.csv and count the number of rows"
+            - Bad: "Analyze the file we discussed earlier"
+        """)
+
     return textwrap.dedent(f"""
         You are an AI assistant that solves tasks step-by-step using available tools.
 
@@ -259,7 +305,7 @@ def build_system_prompt() -> str:
 
         ## Available Tools
         {tool_block}
-
+        {delegate_rules}
         ## Rules
         1. Always include "thought" in your JSON
         2. "action_input" must match the tool's input schema
@@ -493,13 +539,19 @@ def run_loop(
     max_iter: int,
     verbose: bool,
     ctx: ContextManager | None = None,
+    quiet: bool = False,
+    depth: int = 0,
+    max_depth: int = 2,
+    delegate_timeout: int = 300,
 ) -> str | None:
     """Run one agentic loop. Returns the final answer string, or None."""
-    render_header(provider, model, max_iter)
-    render_status("running", "Initializing loop...")
-    console.print()
+    include_delegate = depth < max_depth
+    if not quiet:
+        render_header(provider, model, max_iter)
+        render_status("running", "Initializing loop...")
+        console.print()
 
-    system = build_system_prompt()
+    system = build_system_prompt(include_delegate=include_delegate)
     caller = LLM_CALLERS[provider]
 
     # If a ContextManager is provided, add the query and use its buffer;
@@ -510,15 +562,20 @@ def run_loop(
     else:
         messages = [{"role": "user", "content": query}]
 
+    # Build available tool names for error hints
+    available_tools = list(TOOLS)
+    if include_delegate:
+        available_tools.append("delegate")
+
     iteration = 0
     tools_called: list[str] = []          # track which tools were actually used
 
     while max_iter <= 0 or iteration < max_iter:
         iteration += 1
-        if iteration > 1:
-            render_iter_sep(iteration)
-
-        render_status("running", f"Calling LLM...", iteration)
+        if not quiet:
+            if iteration > 1:
+                render_iter_sep(iteration)
+            render_status("running", f"Calling LLM...", iteration)
 
         # ── 1. Call LLM
         try:
@@ -530,16 +587,18 @@ def run_loop(
                 api_key=api_key,
             )
         except Exception as e:
-            render_step("error", f"LLM call failed: {e}", iteration)
-            render_status("error", str(e))
+            if not quiet:
+                render_step("error", f"LLM call failed: {e}", iteration)
+                render_status("error", str(e))
             return None
 
-        render_raw(llm_text, iteration, verbose)
+        if not quiet:
+            render_raw(llm_text, iteration, verbose)
 
         # ── 2. Parse
         parsed = parse_react(llm_text)
 
-        if parsed["thought"]:
+        if not quiet and parsed["thought"]:
             render_step("thought", parsed["thought"], iteration)
 
         # ── 3. Final Answer
@@ -548,11 +607,12 @@ def run_loop(
             # etc.) but no tool was ever called, reject the final answer and ask
             # the LLM to actually perform the action.
             if not tools_called and _needs_tool_action(query):
-                render_status(
-                    "running",
-                    "Final answer given but task requires tool action — sending back...",
-                    iteration,
-                )
+                if not quiet:
+                    render_status(
+                        "running",
+                        "Final answer given but task requires tool action — sending back...",
+                        iteration,
+                    )
                 nudge = (
                     "You provided a final_answer, but the task requires you to "
                     "actually USE a tool (e.g. write_file, shell) to complete it. "
@@ -566,9 +626,10 @@ def run_loop(
                     ctx.add("user", nudge)
                 continue
 
-            render_step("final", parsed["final"], iteration)
-            render_status("done", "Loop completed successfully", iteration)
-            console.print()
+            if not quiet:
+                render_step("final", parsed["final"], iteration)
+                render_status("done", "Loop completed successfully", iteration)
+                console.print()
             if ctx is not None:
                 ctx.add("assistant", llm_text)
             return parsed["final"]
@@ -580,27 +641,74 @@ def run_loop(
             input_str  = json.dumps(tool_input, ensure_ascii=False, indent=2) \
                          if isinstance(tool_input, dict) else str(tool_input)
 
-            render_step("action", "", iteration, tool_name=tool_name, tool_input=input_str)
+            if not quiet:
+                render_step("action", "", iteration, tool_name=tool_name, tool_input=input_str)
 
             tools_called.append(tool_name)
-            tool_fn = TOOLS.get(tool_name)
-            if tool_fn is None:
-                observation = (
-                    f"STATUS: error\nERROR: Unknown tool '{tool_name}'\n"
-                    f"HINT: Available tools: {', '.join(TOOLS)}"
-                )
-            else:
-                render_status("running", f"Executing {tool_name}...", iteration)
-                try:
-                    obs = tool_fn(tool_input if isinstance(tool_input, dict) else {})
-                    observation = f"STATUS: success\nRESULT:\n{obs}"
-                except Exception as e:
-                    observation = (
-                        f"STATUS: error\nERROR: {e}\n"
-                        f"HINT: Check parameters and try again."
-                    )
 
-            render_step("observation", observation, iteration)
+            # ── Handle delegate tool
+            if tool_name == "delegate" and include_delegate:
+                task_str = tool_input.get("task", "") if isinstance(tool_input, dict) else ""
+                validation_err = _validate_subtask(task_str)
+                if validation_err:
+                    observation = f"STATUS: error\nERROR: {validation_err}"
+                else:
+                    if not quiet:
+                        render_status("running", f"Delegating subtask (depth {depth + 1})...", iteration)
+                    # Spawn subagent as a subprocess
+                    cmd = [
+                        sys.executable, os.path.abspath(__file__),
+                        "run", task_str,
+                        "--provider", provider,
+                        "--model", model,
+                        "--base-url", base_url,
+                        "--api-key", api_key or "",
+                        "--max-depth", str(max_depth),
+                        "--depth", str(depth + 1),
+                        "--delegate-timeout", str(delegate_timeout),
+                        "--quiet",
+                    ]
+                    if max_iter > 0:
+                        cmd.extend(["--max-iter", str(max_iter)])
+                    try:
+                        result = subprocess.run(
+                            cmd, capture_output=True, text=True,
+                            timeout=delegate_timeout,
+                        )
+                        stdout = result.stdout.strip()
+                        stderr = result.stderr.strip()
+                        if result.returncode == 0 and stdout:
+                            observation = f"STATUS: success\nRESULT:\n{stdout}"
+                        else:
+                            err_detail = stderr or stdout or "Subagent returned no output"
+                            observation = f"STATUS: error\nERROR: {err_detail}"
+                    except subprocess.TimeoutExpired:
+                        observation = (
+                            f"STATUS: error\nERROR: Subagent timed out ({delegate_timeout}s)"
+                        )
+
+            # ── Handle regular tools
+            else:
+                tool_fn = TOOLS.get(tool_name)
+                if tool_fn is None:
+                    observation = (
+                        f"STATUS: error\nERROR: Unknown tool '{tool_name}'\n"
+                        f"HINT: Available tools: {', '.join(available_tools)}"
+                    )
+                else:
+                    if not quiet:
+                        render_status("running", f"Executing {tool_name}...", iteration)
+                    try:
+                        obs = tool_fn(tool_input if isinstance(tool_input, dict) else {})
+                        observation = f"STATUS: success\nRESULT:\n{obs}"
+                    except Exception as e:
+                        observation = (
+                            f"STATUS: error\nERROR: {e}\n"
+                            f"HINT: Check parameters and try again."
+                        )
+
+            if not quiet:
+                render_step("observation", observation, iteration)
 
             # ── 5. Inject Observation into message history
             messages.append({"role": "assistant", "content": llm_text})
@@ -614,7 +722,8 @@ def run_loop(
 
         else:
             # ── Retry with a format reminder
-            render_status("running", "Response is not valid JSON, retrying...", iteration)
+            if not quiet:
+                render_status("running", "Response is not valid JSON, retrying...", iteration)
             retry_msg = (
                 "Your response was not valid JSON. "
                 "You MUST respond with a single JSON object and nothing else.\n\n"
@@ -631,9 +740,10 @@ def run_loop(
                 ctx.add("user", retry_msg)
             iteration -= 1  # Don't count format retries as iterations
 
-    render_step("error", f"Maximum iterations ({max_iter}) reached.", iteration)
-    render_status("error", f"Max iterations ({max_iter}) reached")
-    console.print()
+    if not quiet:
+        render_step("error", f"Maximum iterations ({max_iter}) reached.", iteration)
+        render_status("error", f"Max iterations ({max_iter}) reached")
+        console.print()
     return None
 
 
@@ -688,9 +798,25 @@ def run(
         0, "--max-iter", "-n",
         help="Maximum iterations (0 = unlimited)",
     ),
+    max_depth: int = typer.Option(
+        2, "--max-depth",
+        help="Maximum subagent nesting depth",
+    ),
+    delegate_timeout: int = typer.Option(
+        300, "--delegate-timeout",
+        help="Timeout in seconds for subagent delegation",
+    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v",
         help="Show raw LLM response",
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", hidden=True,
+        help="Output only the final answer (used internally by subagents)",
+    ),
+    depth: int = typer.Option(
+        0, "--depth", hidden=True,
+        help="Current nesting depth (used internally by subagents)",
     ),
 ):
     """
@@ -750,7 +876,7 @@ def run(
         provider, model, base_url, api_key,
     )
 
-    run_loop(
+    answer = run_loop(
         query    = query,
         provider = provider,
         model    = resolved_model,
@@ -758,7 +884,15 @@ def run(
         api_key  = api_key,
         max_iter = max_iter,
         verbose  = verbose,
+        quiet    = quiet,
+        depth    = depth,
+        max_depth = max_depth,
+        delegate_timeout = delegate_timeout,
     )
+
+    # In quiet mode, print only the final answer to stdout (for subagent capture)
+    if quiet and answer:
+        print(answer)
 
 
 @app.command()
@@ -782,6 +916,14 @@ def chat(
     max_iter: int = typer.Option(
         0, "--max-iter", "-n",
         help="Maximum iterations per turn (0 = unlimited)",
+    ),
+    max_depth: int = typer.Option(
+        2, "--max-depth",
+        help="Maximum subagent nesting depth",
+    ),
+    delegate_timeout: int = typer.Option(
+        300, "--delegate-timeout",
+        help="Timeout in seconds for subagent delegation",
     ),
     max_context: int = typer.Option(
         DEFAULT_MAX_CONTEXT_CHARS, "--max-context",
@@ -911,6 +1053,8 @@ def chat(
             max_iter = max_iter,
             verbose  = verbose,
             ctx      = ctx,
+            max_depth = max_depth,
+            delegate_timeout = delegate_timeout,
         )
 
 
