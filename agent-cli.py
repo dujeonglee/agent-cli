@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -54,21 +53,6 @@ ICONS = {
     "raw":         "📄",
 }
 
-# ─────────────────────────────────────────────
-# Shell Command Auto-detection
-# ─────────────────────────────────────────────
-def is_shell_command(text: str) -> bool:
-    """Check if the first token of *text* looks like a shell command."""
-    first_token = text.split()[0] if text.strip() else ""
-    if not first_token:
-        return False
-    # Check if executable exists on PATH
-    if shutil.which(first_token) is not None:
-        return True
-    # Handle path-style commands like ./script.sh or /usr/bin/env
-    if first_token.startswith("./") or first_token.startswith("/"):
-        return True
-    return False
 
 
 # ─────────────────────────────────────────────
@@ -987,23 +971,6 @@ def run(
             console.print(f"[{C['error']}]Command timed out (30s)[/]")
         raise typer.Exit(0)
 
-    # ── Auto-detect shell commands (e.g. "ls", "git status")
-    if not quiet and is_shell_command(query):
-        console.print(f"[{C['action']}]⚡ SHELL:[/] {query}")
-        try:
-            result = subprocess.run(
-                query, shell=True, capture_output=True, text=True, timeout=30,
-            )
-            if result.stdout:
-                console.print(result.stdout, end="", highlight=False)
-            if result.stderr:
-                console.print(f"[{C['error']}]{result.stderr}[/]", end="")
-            if result.returncode != 0:
-                console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
-        except subprocess.TimeoutExpired:
-            console.print(f"[{C['error']}]Command timed out (30s)[/]")
-        raise typer.Exit(0)
-
     resolved_url, resolved_model, api_key = _resolve_provider(
         provider, model, base_url, api_key,
     )
@@ -1152,23 +1119,6 @@ def chat(
                         console.print(f"[{C['error']}]{result.stderr}[/]", end="")
                 except subprocess.TimeoutExpired:
                     console.print(f"[{C['error']}]Command timed out (30s)[/]")
-            continue
-
-        # ── Auto-detect shell commands (e.g. "ls", "git status")
-        if is_shell_command(query):
-            console.print(f"[{C['action']}]⚡ SHELL:[/] {query}")
-            try:
-                result = subprocess.run(
-                    query, shell=True, capture_output=True, text=True, timeout=30,
-                )
-                if result.stdout:
-                    console.print(result.stdout, end="", highlight=False)
-                if result.stderr:
-                    console.print(f"[{C['error']}]{result.stderr}[/]", end="")
-                if result.returncode != 0:
-                    console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
-            except subprocess.TimeoutExpired:
-                console.print(f"[{C['error']}]Command timed out (30s)[/]")
             continue
 
         turn += 1
