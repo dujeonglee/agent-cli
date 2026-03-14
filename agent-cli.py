@@ -967,7 +967,7 @@ def run(
       agent run "..." -p openai --base-url http://localhost:8000/v1 -m your-model
     """
     # ── /sh prefix: Run shell command directly without LLM
-    if query.startswith("/sh ") or query == "/sh":
+    if not quiet and (query.startswith("/sh ") or query == "/sh"):
         cmd = query[3:].strip()
         if not cmd:
             console.print(f"[{C['error']}]No command to execute.[/]")
@@ -988,7 +988,7 @@ def run(
         raise typer.Exit(0)
 
     # ── Auto-detect shell commands (e.g. "ls", "git status")
-    if is_shell_command(query):
+    if not quiet and is_shell_command(query):
         console.print(f"[{C['action']}]⚡ SHELL:[/] {query}")
         try:
             result = subprocess.run(
