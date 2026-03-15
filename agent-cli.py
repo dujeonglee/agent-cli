@@ -448,7 +448,7 @@ def call_anthropic(
         "x-api-key":         api_key,
         "anthropic-version": "2023-06-01",
     }
-    body = {"model": model, "max_tokens": 2048, "system": system, "messages": messages}
+    body = {"model": model, "max_tokens": 4096, "system": system, "messages": messages}
     r = requests.post(url, headers=headers, json=body, timeout=600)
     r.raise_for_status()
     return r.json()["content"][0]["text"]
@@ -464,7 +464,7 @@ def call_openai(
     url     = base_url.rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     msgs    = [{"role": "system", "content": system}] + messages
-    body    = {"model": model, "max_tokens": 2048, "messages": msgs,
+    body    = {"model": model, "max_tokens": 4096, "messages": msgs,
                "response_format": {"type": "json_object"}}
     r = requests.post(url, headers=headers, json=body, timeout=600)
     r.raise_for_status()
@@ -553,7 +553,7 @@ COMPRESS_PROMPT = textwrap.dedent("""
     and redundant reasoning. Reply with ONLY the summary.
 """).strip()
 
-DEFAULT_MAX_CONTEXT_CHARS = 50_000          # ~12 500 tokens
+DEFAULT_MAX_CONTEXT_CHARS = 512_000         # ~128 000 tokens
 
 
 class ContextManager:
