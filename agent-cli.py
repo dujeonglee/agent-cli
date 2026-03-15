@@ -464,7 +464,8 @@ def call_openai(
     url     = base_url.rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     msgs    = [{"role": "system", "content": system}] + messages
-    body    = {"model": model, "max_tokens": 2048, "messages": msgs}
+    body    = {"model": model, "max_tokens": 2048, "messages": msgs,
+               "response_format": {"type": "json_object"}}
     r = requests.post(url, headers=headers, json=body, timeout=600)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
@@ -479,7 +480,7 @@ def call_ollama(
 ) -> str:
     url  = base_url.rstrip("/") + "/api/chat"
     msgs = [{"role": "system", "content": system}] + messages
-    body = {"model": model, "stream": False, "messages": msgs}
+    body = {"model": model, "stream": False, "messages": msgs, "format": "json"}
     r = requests.post(url, json=body, timeout=600)
     r.raise_for_status()
     return r.json()["message"]["content"]
