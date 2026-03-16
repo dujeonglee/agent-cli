@@ -17,6 +17,7 @@ import zlib
 from pathlib import Path
 from typing import Optional
 
+import json5
 import requests
 import typer
 from rich import box
@@ -569,22 +570,30 @@ def _extract_first_object(text: str) -> str | None:
 
 
 def _lenient_json(text: str) -> dict | None:
-    """Try json.loads, then brace-balanced extraction as fallback."""
+    """Try json.loads → json5.loads → brace-balanced extraction as fallback.
+
+    json5 handles trailing commas, single quotes, unquoted keys,
+    // comments, etc. that small models often produce.
+    """
     text = text.strip()
-    try:
-        result = json.loads(text)
-        if isinstance(result, dict):
-            return result
-    except json.JSONDecodeError:
-        pass
-    fragment = _extract_first_object(text)
-    if fragment:
+    # 1) Strict JSON
+    for loader in (json.loads, json5.loads):
         try:
-            result = json.loads(fragment)
+            result = loader(text)
             if isinstance(result, dict):
                 return result
-        except json.JSONDecodeError:
+        except Exception:
             pass
+    # 2) Brace-balanced extraction → retry with both loaders
+    fragment = _extract_first_object(text)
+    if fragment:
+        for loader in (json.loads, json5.loads):
+            try:
+                result = loader(fragment)
+                if isinstance(result, dict):
+                    return result
+            except Exception:
+                pass
     return None
 
 
