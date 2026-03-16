@@ -392,14 +392,50 @@ def build_system_prompt(include_delegate: bool = False) -> str:
         You are an AI assistant that solves tasks step-by-step using available tools.
 
         ## Response Format (STRICT)
-        You MUST respond with a single JSON object and nothing else.
-        No markdown fences, no extra text — ONLY the JSON object.
+        Every response MUST use this XML structure. No exceptions.
 
-        Format A — use a tool:
-        {{"thought": "your reasoning", "action": "tool_name", "action_input": {{...}}}}
+        To use a tool:
+        <thinking>
+        your reasoning here — free text, no escaping needed
+        </thinking>
+        <action>
+        {{"name": "tool_name", "input": {{...}}}}
+        </action>
 
-        Format B — final answer:
-        {{"thought": "your reasoning", "final_answer": "your complete answer"}}
+        To give a final answer:
+        <thinking>
+        your reasoning here — free text, no escaping needed
+        </thinking>
+        <final>
+        your complete answer here — free text
+        </final>
+
+        ## Format Rules
+        1. <thinking> is REQUIRED in every response
+        2. Use EITHER <action> OR <final> — never both, never neither
+        3. <action> content must be valid JSON with "name" (string) and "input" (object) keys
+        4. Do NOT output anything outside the XML tags
+        5. Do NOT use markdown fences inside tags
+        6. Respond in the same language as the user
+        7. Do NOT include <observation> — that is injected by the system
+
+        ## Examples
+
+        Example 1 — use a tool:
+        <thinking>
+        The user wants to read a file. I'll use read_file with the given path.
+        </thinking>
+        <action>
+        {{"name": "read_file", "input": {{"path": "/tmp/hello.py"}}}}
+        </action>
+
+        Example 2 — final answer:
+        <thinking>
+        I have all the information needed. The answer is clear.
+        </thinking>
+        <final>
+        The file /tmp/hello.py contains 42 lines.
+        </final>
 
         ## Available Tools
         {tool_block}
@@ -422,13 +458,6 @@ def build_system_prompt(include_delegate: bool = False) -> str:
         If a hash mismatch error occurs, re-read the file and retry with fresh tags.
         Use write_file only for creating NEW files, not for editing existing ones.
         {delegate_rules}
-        ## Rules
-        1. Always include "thought" in your JSON
-        2. "action_input" must match the tool's input schema
-        3. If observation shows error, fix parameters and retry
-        4. Respond in the same language as the user
-        5. Do NOT include "observation" — that is injected by the system
-        6. Output ONLY valid JSON, nothing else
     """).strip()
 
 
@@ -494,41 +523,146 @@ LLM_CALLERS = {
 
 
 # ─────────────────────────────────────────────
-# REACT JSON PARSER
+# REACT XML PARSER
 # ─────────────────────────────────────────────
-def parse_react(text: str) -> dict:
-    """Parse the LLM response as a JSON object.
+_XML_TAG_RE = re.compile(
+    r"<(thinking|action|final)>(.*?)</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
 
-    Returns a dict with keys: thought, action, action_input, final, raw.
-    On parse failure all fields except *raw* are None.
-    """
-    result = {"thought": None, "action": None, "action_input": None, "final": None, "raw": text}
 
-    # Strip markdown fences if the LLM wraps JSON in ```json ... ```
+def _extract_tags(text: str) -> dict[str, str]:
+    """Extract XML tags from text → {tag_name: content}."""
+    return {
+        m.group(1).lower(): m.group(2).strip()
+        for m in _XML_TAG_RE.finditer(text)
+    }
+
+
+def _extract_first_object(text: str) -> str | None:
+    """Track nesting to extract the first complete { ... } block."""
+    depth = 0
+    start = None
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                return text[start: i + 1]
+    return None
+
+
+def _lenient_json(text: str) -> dict | None:
+    """Try json.loads, then brace-balanced extraction as fallback."""
+    text = text.strip()
+    try:
+        result = json.loads(text)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+    fragment = _extract_first_object(text)
+    if fragment:
+        try:
+            result = json.loads(fragment)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _parse_action_content(content: str) -> tuple[str | None, dict | None, str | None]:
+    """Parse JSON inside <action> tag. Returns (tool_name, tool_input, error_msg)."""
+    data = _lenient_json(content)
+    if not isinstance(data, dict):
+        return None, None, "<action> content is not a valid JSON object."
+    # Accept both "name"/"action" keys for compatibility
+    name = data.get("name") or data.get("action")
+    inp = data.get("input") or data.get("action_input") or {}
+    if not name:
+        return None, None, '<action> JSON is missing the "name" key.'
+    if not isinstance(inp, dict):
+        return None, None, f'"input" value is not a dict: {type(inp).__name__}'
+    return name, inp, None
+
+
+def _fallback_json_parse(text: str) -> dict:
+    """Fallback for models that ignore XML and send raw JSON."""
+    base: dict = {
+        "thought": None, "action": None, "action_input": None,
+        "final": None, "raw": text, "error": None,
+    }
     stripped = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.I)
     stripped = re.sub(r"\s*```\s*$", "", stripped)
-
-    # Try parsing directly
-    data = None
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
-        # Fallback: extract the first { ... } block
-        m = re.search(r"\{[\s\S]*\}", stripped)
-        if m:
-            try:
-                data = json.loads(m.group())
-            except json.JSONDecodeError:
-                pass
-
+    data = _lenient_json(stripped)
     if not isinstance(data, dict):
-        return result
+        base["error"] = "No XML tags found and JSON parsing also failed."
+        return base
+    base["thought"] = data.get("thought")
+    base["final"] = data.get("final_answer")
+    base["action"] = data.get("action")
+    raw_input = data.get("action_input")
+    base["action_input"] = raw_input if isinstance(raw_input, dict) else {}
+    return base
 
-    result["thought"] = data.get("thought")
-    result["final"] = data.get("final_answer")
-    result["action"] = data.get("action")
-    result["action_input"] = data.get("action_input")
-    return result
+
+def parse_react(text: str) -> dict:
+    """XML tag-based parser with JSON fallback.
+
+    Returns a dict with keys: thought, action, action_input, final, raw, error.
+    - error is None on success, or a string describing the parse/validation failure.
+    """
+    base: dict = {
+        "thought": None, "action": None, "action_input": None,
+        "final": None, "raw": text, "error": None,
+    }
+
+    tags = _extract_tags(text)
+
+    # No <thinking> tag → fall back to raw JSON parsing (backward compat)
+    if "thinking" not in tags:
+        return _fallback_json_parse(text)
+
+    base["thought"] = tags["thinking"]
+    has_action = "action" in tags
+    has_final = "final" in tags
+
+    if has_action and has_final:
+        base["error"] = "<action> and <final> cannot both be present."
+        return base
+    if not has_action and not has_final:
+        base["error"] = "Missing <action> or <final> tag."
+        return base
+
+    if has_action:
+        name, inp, err = _parse_action_content(tags["action"])
+        if err:
+            base["error"] = err
+            return base
+        base["action"] = name
+        base["action_input"] = inp
+        return base
+
+    # has_final
+    base["final"] = tags["final"]
+    return base
 
 
 # Keywords in user queries that imply tool usage is required
@@ -686,6 +820,8 @@ def run_loop(
 
     iteration = 0
     tools_called: list[str] = []          # track which tools were actually used
+    format_retries = 0
+    MAX_FORMAT_RETRIES = 4
 
     while max_iter <= 0 or iteration < max_iter:
         iteration += 1
@@ -715,6 +851,44 @@ def run_loop(
         # ── 2. Parse
         parsed = parse_react(llm_text)
 
+        # ── 2a. Parse/validation error → retry with XML format reminder
+        if parsed.get("error"):
+            format_retries += 1
+            if format_retries > MAX_FORMAT_RETRIES:
+                if not quiet:
+                    render_step("error", f"Format retry limit ({MAX_FORMAT_RETRIES}) exceeded.", iteration)
+                return None
+            if not quiet:
+                render_status("running", f"Parse error — retrying: {parsed['error']}", iteration)
+            retry_msg = (
+                "Your response could not be parsed.\n"
+                f"Reason: {parsed['error']}\n\n"
+                "You MUST respond using this exact XML structure:\n\n"
+                "To use a tool:\n"
+                "<thinking>\nyour reasoning\n</thinking>\n"
+                "<action>\n"
+                '{"name": "tool_name", "input": {...}}\n'
+                "</action>\n\n"
+                "To give a final answer:\n"
+                "<thinking>\nyour reasoning\n</thinking>\n"
+                "<final>\nyour answer\n</final>\n\n"
+                "Rules:\n"
+                "- <thinking> is required\n"
+                "- Use EITHER <action> OR <final>, never both\n"
+                '- <action> must contain JSON with "name" and "input" keys\n'
+                "- Nothing outside the XML tags\n"
+            )
+            messages.append({"role": "assistant", "content": llm_text})
+            messages.append({"role": "user", "content": retry_msg})
+            if ctx is not None:
+                ctx.add("assistant", llm_text)
+                ctx.add("user", retry_msg)
+            iteration -= 1  # Don't count format retries as iterations
+            continue
+
+        # Reset format retry counter on successful parse
+        format_retries = 0
+
         if not quiet and parsed["thought"]:
             render_step("thought", parsed["thought"], iteration)
 
@@ -731,10 +905,10 @@ def run_loop(
                         iteration,
                     )
                 nudge = (
-                    "You provided a final_answer, but the task requires you to "
+                    "You provided a <final> answer, but the task requires you to "
                     "actually USE a tool (e.g. write_file, shell) to complete it. "
-                    "Do NOT put file contents in final_answer. "
-                    "Instead, respond with {\"thought\": ..., \"action\": ..., \"action_input\": ...}."
+                    "Do NOT put file contents in <final>. "
+                    "Instead, use <action> with the appropriate tool."
                 )
                 messages.append({"role": "assistant", "content": llm_text})
                 messages.append({"role": "user", "content": nudge})
@@ -829,7 +1003,10 @@ def run_loop(
 
             # ── 5. Inject Observation into message history
             messages.append({"role": "assistant", "content": llm_text})
-            obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
+            obs_msg = (
+                f"<observation>\n{observation}\n</observation>\n\n"
+                "Continue with the next step using the XML format."
+            )
             messages.append({"role": "user", "content": obs_msg})
 
             # Mirror into ContextManager so it persists across turns
@@ -837,25 +1014,10 @@ def run_loop(
                 ctx.add("assistant", llm_text)
                 ctx.add("user", obs_msg)
 
-        else:
-            # ── Retry with a format reminder
-            if not quiet:
-                render_status("running", "Response is not valid JSON, retrying...", iteration)
-            retry_msg = (
-                "Your response was not valid JSON. "
-                "You MUST respond with a single JSON object and nothing else.\n\n"
-                'Format A (use a tool):\n'
-                '{"thought": "reasoning", "action": "tool_name", "action_input": {...}}\n\n'
-                'Format B (final answer):\n'
-                '{"thought": "reasoning", "final_answer": "answer"}\n\n'
-                "Output ONLY the JSON object, no markdown fences or extra text."
-            )
-            messages.append({"role": "assistant", "content": llm_text})
-            messages.append({"role": "user", "content": retry_msg})
-            if ctx is not None:
-                ctx.add("assistant", llm_text)
-                ctx.add("user", retry_msg)
-            iteration -= 1  # Don't count format retries as iterations
+        # Note: parse errors are handled above (parsed["error"] check).
+        # If we reach here with no final and no action, it means the fallback
+        # parser returned successfully but with empty fields — treat as no-op.
+        # This shouldn't happen in practice.
 
     if not quiet:
         render_step("error", f"Maximum iterations ({max_iter}) reached.", iteration)
