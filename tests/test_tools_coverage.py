@@ -230,7 +230,137 @@ class TestDelegate:
         monkeypatch.setattr(sys, "argv", ["agent-cli"])
         monkeypatch.setattr(sys, "frozen", False, raising=False)
         cmd = _build_subprocess_cmd(["run", "test task"])
-        assert "-m" in cmd or "agent-cli" in str(cmd)
+        assert "-m" in cmd
+
+    def test_build_cmd_wrapper_mode(self, monkeypatch):
+        import sys
+
+        monkeypatch.setattr(sys, "argv", ["agent-cli.py"])
+        cmd = _build_subprocess_cmd(["run", "test task"])
+        assert "agent-cli.py" in cmd
+
+    def test_build_cmd_frozen(self, monkeypatch):
+        import sys
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        cmd = _build_subprocess_cmd(["run", "test"])
+        assert cmd[0] == sys.executable
+
+
+class TestToolDelegate:
+    def test_rejects_vague_task(self):
+        from agent_cli.tools.delegate import tool_delegate
+
+        with pytest.raises(RuntimeError, match="Delegation rejected"):
+            tool_delegate(
+                args={"task": "Fix it"},
+                provider="ollama",
+                model="test",
+                base_url="http://localhost:11434",
+                api_key="",
+            )
+
+    @pytest.fixture()
+    def mock_subprocess(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        mock_run = MagicMock()
+        monkeypatch.setattr("agent_cli.tools.delegate.subprocess.run", mock_run)
+        return mock_run
+
+    def test_success(self, mock_subprocess):
+        from agent_cli.tools.delegate import tool_delegate
+
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stdout = "Task completed successfully"
+        mock_subprocess.return_value.stderr = ""
+
+        result = tool_delegate(
+            args={
+                "task": "Read /tmp/data.csv and count the number of rows then report"
+            },
+            provider="ollama",
+            model="test-model",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        assert "STATUS: success" in result
+        assert "Task completed" in result
+
+    def test_failure(self, mock_subprocess):
+        from agent_cli.tools.delegate import tool_delegate
+
+        mock_subprocess.return_value.returncode = 1
+        mock_subprocess.return_value.stdout = ""
+        mock_subprocess.return_value.stderr = "Error occurred"
+
+        result = tool_delegate(
+            args={
+                "task": "Read /tmp/data.csv and count the number of rows then report"
+            },
+            provider="ollama",
+            model="test-model",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        assert "STATUS: error" in result
+        assert "Error occurred" in result
+
+    def test_timeout(self, mock_subprocess):
+        import subprocess as sp
+        from agent_cli.tools.delegate import tool_delegate
+
+        mock_subprocess.side_effect = sp.TimeoutExpired(cmd="test", timeout=5)
+
+        with pytest.raises(RuntimeError, match="timed out"):
+            tool_delegate(
+                args={
+                    "task": "Read /tmp/data.csv and count the number of rows then report"
+                },
+                provider="ollama",
+                model="test-model",
+                base_url="http://localhost:11434",
+                api_key="",
+                timeout=5,
+            )
+
+    def test_api_key_appended(self, mock_subprocess):
+        from agent_cli.tools.delegate import tool_delegate
+
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stdout = "done"
+        mock_subprocess.return_value.stderr = ""
+
+        tool_delegate(
+            args={
+                "task": "Read /tmp/data.csv and count the number of rows then report"
+            },
+            provider="openai",
+            model="gpt-4o",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test-key",
+        )
+        cmd = mock_subprocess.call_args[0][0]
+        assert "--api-key" in cmd
+        assert "sk-test-key" in cmd
+
+    def test_no_output(self, mock_subprocess):
+        from agent_cli.tools.delegate import tool_delegate
+
+        mock_subprocess.return_value.returncode = 1
+        mock_subprocess.return_value.stdout = ""
+        mock_subprocess.return_value.stderr = ""
+
+        result = tool_delegate(
+            args={
+                "task": "Read /tmp/data.csv and count the number of rows then report"
+            },
+            provider="ollama",
+            model="test",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        assert "(no output)" in result
 
 
 class TestExecuteTool:
