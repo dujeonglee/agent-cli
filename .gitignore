@@ -19,3 +19,4 @@ htmlcov/
 
 # Agent-CLI
 .agent-cli/
+.claude/
