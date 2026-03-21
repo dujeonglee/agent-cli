@@ -193,12 +193,17 @@ def _detect_openai_compat_capabilities(
 ) -> ModelCapabilities | None:
     """Detect capabilities for OpenAI-compatible servers (vLLM, LM Studio, mlx-lm).
 
-    Probes the model with a simple prompt to detect thinking support.
-    Context window is not available via standard OpenAI API, so uses conservative defaults.
+    Step 1: GET /v1/models for context window (max_model_len — vLLM, etc.)
+    Step 2: Probe with simple prompt for thinking support
     """
     try:
-        # Probe for thinking support
-        url = f"{base_url.rstrip('/')}/chat/completions"
+        base = base_url.rstrip("/")
+
+        # Step 1: Try to get context window from /v1/models
+        context_window = _detect_openai_context_window(base, model)
+
+        # Step 2: Probe for thinking support
+        url = f"{base}/chat/completions"
         r = requests.post(
             url,
             json={
@@ -216,7 +221,6 @@ def _detect_openai_compat_capabilities(
 
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-        # Check for thinking tags
         supports_thinking = False
         thinking_format = ""
         match = _THINKING_TAG_PATTERN.search(content)
@@ -224,10 +228,12 @@ def _detect_openai_compat_capabilities(
             supports_thinking = True
             thinking_format = match.group(1).lower()
 
+        max_output = min(context_window // 4, 4096)
+
         return ModelCapabilities(
-            context_window=4096,  # Conservative — OpenAI API doesn't expose this
-            max_output_tokens=2048,
-            supports_structured_output=False,  # Can't assume without testing
+            context_window=context_window,
+            max_output_tokens=max_output,
+            supports_structured_output=False,
             supports_tool_calling=False,
             supports_thinking=supports_thinking,
             thinking_budget=4096 if supports_thinking else 0,
@@ -236,3 +242,31 @@ def _detect_openai_compat_capabilities(
         )
     except Exception:
         return None
+
+
+def _detect_openai_context_window(base_url: str, model: str) -> int:
+    """Try to get context window from /v1/models endpoint.
+
+    vLLM returns max_model_len. Other servers may not.
+    Returns detected value or 4096 default.
+    """
+    try:
+        r = requests.get(f"{base_url}/models", timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        for m in data.get("data", []):
+            if m.get("id") == model:
+                # vLLM: max_model_len
+                ctx = m.get("max_model_len")
+                if isinstance(ctx, int) and ctx > 0:
+                    return ctx
+                # Some servers: context_length
+                ctx = m.get("context_length")
+                if isinstance(ctx, int) and ctx > 0:
+                    return ctx
+                break
+    except Exception:
+        pass
+
+    return 4096  # conservative default

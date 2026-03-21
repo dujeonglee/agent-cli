@@ -186,15 +186,27 @@ class TestOllamaRuntimeDetection:
 
 
 class TestOpenAICompatRuntimeDetection:
+    @patch("agent_cli.providers.compat.requests.get")
     @patch("agent_cli.providers.compat.requests.post")
-    def test_detects_thinking_model(self, mock_post):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
+    def test_detects_thinking_with_context(self, mock_post, mock_get):
+        """vLLM: /v1/models returns max_model_len + probe detects thinking."""
+        # GET /v1/models → context window
+        models_resp = MagicMock()
+        models_resp.status_code = 200
+        models_resp.json.return_value = {
+            "data": [{"id": "local-model", "max_model_len": 32768}],
+        }
+        models_resp.raise_for_status.return_value = None
+        mock_get.return_value = models_resp
+
+        # POST /chat/completions → thinking probe
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
             "choices": [{"message": {"content": "<think>reasoning</think>\nHello!"}}],
         }
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
+        probe_resp.raise_for_status.return_value = None
+        mock_post.return_value = probe_resp
 
         from agent_cli.providers.compat import _detect_openai_compat_capabilities
 
@@ -202,18 +214,23 @@ class TestOpenAICompatRuntimeDetection:
             "http://localhost:8080/v1", "local-model"
         )
         assert caps is not None
+        assert caps.context_window == 32768
         assert caps.supports_thinking is True
         assert caps.thinking_format == "think"
 
+    @patch("agent_cli.providers.compat.requests.get")
     @patch("agent_cli.providers.compat.requests.post")
-    def test_detects_non_thinking_model(self, mock_post):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "Hello! How can I help?"}}],
+    def test_fallback_context_when_no_models_api(self, mock_post, mock_get):
+        """Server without /v1/models → conservative 4096 default."""
+        mock_get.side_effect = Exception("Not found")
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "choices": [{"message": {"content": "Hello!"}}],
         }
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
+        probe_resp.raise_for_status.return_value = None
+        mock_post.return_value = probe_resp
 
         from agent_cli.providers.compat import _detect_openai_compat_capabilities
 
@@ -221,14 +238,35 @@ class TestOpenAICompatRuntimeDetection:
             "http://localhost:8080/v1", "local-model"
         )
         assert caps is not None
+        assert caps.context_window == 4096  # default
         assert caps.supports_thinking is False
-        assert caps.thinking_format == ""
 
+    @patch("agent_cli.providers.compat.requests.get")
     @patch("agent_cli.providers.compat.requests.post")
-    def test_returns_none_on_error(self, mock_post):
+    def test_returns_none_on_probe_error(self, mock_post, mock_get):
+        mock_get.side_effect = Exception("Connection refused")
         mock_post.side_effect = Exception("Connection refused")
 
         from agent_cli.providers.compat import _detect_openai_compat_capabilities
 
         caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "model")
         assert caps is None
+
+    @patch("agent_cli.providers.compat.requests.get")
+    def test_context_window_detection(self, mock_get):
+        """Test _detect_openai_context_window directly."""
+        models_resp = MagicMock()
+        models_resp.status_code = 200
+        models_resp.json.return_value = {
+            "data": [
+                {"id": "other-model", "max_model_len": 8192},
+                {"id": "target-model", "max_model_len": 65536},
+            ],
+        }
+        models_resp.raise_for_status.return_value = None
+        mock_get.return_value = models_resp
+
+        from agent_cli.providers.compat import _detect_openai_context_window
+
+        ctx = _detect_openai_context_window("http://localhost:8080/v1", "target-model")
+        assert ctx == 65536
