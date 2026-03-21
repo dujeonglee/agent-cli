@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
 import re
 
 import requests
@@ -71,6 +70,12 @@ def get_capabilities(
     return DEFAULT_CAPABILITIES
 
 
+def clear_capabilities_cache() -> None:
+    """Clear the runtime capabilities cache (useful for testing)."""
+    global _capabilities_cache
+    _capabilities_cache = {}
+
+
 def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
     """Save runtime-detected capabilities to ~/.agent-cli/models.json (new models only)."""
     entry = {
@@ -98,6 +103,18 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
         supports_strict_schema=entry.get("supports_strict_schema", False),
         thinking_format=entry.get("thinking_format", ""),
     )
+
+
+# Compiled patterns for efficiency
+_ACTION_KEYWORDS = re.compile(
+    r"\b(write|create|save|make|generate|edit|modify|update|delete|remove|run|execute)\b",
+    re.I,
+)
+_THINKING_TAGS = ["think", "thinking", "reasoning", "reflection"]
+_THINKING_TAG_PATTERN = re.compile(
+    r"<(" + "|".join(_THINKING_TAGS) + r")>",
+    re.I,
+)
 
 
 def _detect_runtime_capabilities(
@@ -145,16 +162,11 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
             supports_strict_schema=False,
             thinking_format=thinking_format,
         )
-    except Exception:
+    except Exception as e:
+        import sys
+
+        print(f"[warn] Ollama detection failed for {model}: {e}", file=sys.stderr)
         return None
-
-
-# Known thinking block tags to detect in probe response
-_THINKING_TAGS = ["think", "thinking", "reasoning", "reflection"]
-_THINKING_TAG_PATTERN = re.compile(
-    r"<(" + "|".join(_THINKING_TAGS) + r")>",
-    re.I,
-)
 
 
 def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:
@@ -250,7 +262,13 @@ def _detect_openai_compat_capabilities(
             supports_strict_schema=False,
             thinking_format=thinking_format,
         )
-    except Exception:
+    except Exception as e:
+        import sys
+
+        print(
+            f"[warn] OpenAI-compat detection failed for {model}: {e}",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -280,3 +298,8 @@ def _detect_openai_context_window(base_url: str, model: str) -> int:
         pass
 
     return 4096  # conservative default
+
+
+def needs_tool_action(query: str) -> bool:
+    """Check if a query likely needs tool action based on action keywords."""
+    return bool(_ACTION_KEYWORDS.search(query))

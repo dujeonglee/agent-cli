@@ -8,6 +8,8 @@ import subprocess
 def tool_shell(args: dict) -> str:
     """Run a shell command and return stdout/stderr."""
     cmd = args.get("command", "")
+    if not cmd or not cmd.strip():
+        raise RuntimeError("Empty command. Provide a shell command to execute.")
     timeout = int(args.get("timeout", 30))
     try:
         result = subprocess.run(

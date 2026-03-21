@@ -39,8 +39,9 @@ def repair_json(text: str) -> dict | None:
 
 def _extract_json_block(text: str) -> str:
     """Find the outermost { ... } block in the text."""
-    text = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.I)
-    text = re.sub(r"\s*```\s*$", "", text)
+    from agent_cli.parsing.react_parser import _strip_markdown_fences
+
+    text = _strip_markdown_fences(text)
 
     start = text.find("{")
     if start == -1:
@@ -168,7 +169,7 @@ def _fix_missing_brackets(text: str) -> str:
             if stack and stack[-1] == ch:
                 stack.pop()
 
-    while stack:
-        text += stack.pop()
+    if stack:
+        text += "".join(reversed(stack))
 
     return text

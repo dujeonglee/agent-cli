@@ -39,10 +39,12 @@ class ContextManager:
 
         self.messages: list[dict] = []
         self._summary: str | None = None
+        self._msg_chars: int = 0  # Running character count for O(1) add()
 
     def add(self, role: str, content: str) -> None:
         """Add a message and trigger compression if needed."""
         self.messages.append({"role": role, "content": content})
+        self._msg_chars += len(content)
         if self._total_chars() > self.max_context_chars:
             self._compress()
 
@@ -76,7 +78,7 @@ class ContextManager:
 
     def _total_chars(self) -> int:
         extra = len(self._summary) if self._summary else 0
-        return extra + sum(len(m["content"]) for m in self.messages)
+        return extra + self._msg_chars
 
     def _compress(self) -> None:
         """Compress older messages into a structured summary."""
@@ -112,12 +114,13 @@ class ContextManager:
             )
             self._summary = response.content
             self.messages = kept_msgs
+            self._msg_chars = sum(len(m["content"]) for m in kept_msgs)
         except Exception as e:
-            # Compression failed — keep messages as-is to avoid data loss
+            # Compression failed — temporarily raise threshold to avoid retry loop
             import sys
 
             print(f"[warn] Context compression failed: {e}", file=sys.stderr)
-            pass
+            self.max_context_chars = int(self.max_context_chars * 1.5)
 
     def _serialize_messages(self, messages: list[dict]) -> str:
         """Serialize messages to text format for summarization (pi-mono pattern)."""

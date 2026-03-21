@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 from typing import Any
+
+import json
+
+from dataclasses import dataclass
 
 
 @dataclass
@@ -84,6 +86,102 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
 }
 
 
+DELEGATE_TOOL_SCHEMA = ToolSchema(
+    name="delegate",
+    description=(
+        "Delegate a self-contained subtask to an independent subagent. "
+        "The subagent has NO context from this conversation — the task "
+        "description must include ALL necessary details."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "Fully self-contained task description",
+            },
+        },
+        "required": ["task"],
+    },
+)
+
+
+def _convert_tools(
+    tool_names: list[str],
+    include_delegate: bool,
+    formatter,
+) -> list[dict]:
+    """Shared logic for converting tool schemas to provider-specific format."""
+    schemas = [TOOL_SCHEMAS[n] for n in tool_names if n in TOOL_SCHEMAS]
+    if include_delegate:
+        schemas.append(DELEGATE_TOOL_SCHEMA)
+    return [formatter(s) for s in schemas]
+
+
+def convert_to_anthropic_tools(
+    tool_names: list[str], include_delegate: bool = False
+) -> list[dict]:
+    """Convert tool schemas to Anthropic API tool format."""
+    return _convert_tools(
+        tool_names,
+        include_delegate,
+        lambda s: {
+            "name": s.name,
+            "description": s.description,
+            "input_schema": s.parameters,
+        },
+    )
+
+
+def convert_to_openai_tools(
+    tool_names: list[str], include_delegate: bool = False
+) -> list[dict]:
+    """Convert tool schemas to OpenAI API tool format."""
+    return _convert_tools(
+        tool_names,
+        include_delegate,
+        lambda s: {
+            "type": "function",
+            "function": {
+                "name": s.name,
+                "description": s.description,
+                "parameters": s.parameters,
+            },
+        },
+    )
+
+
+def get_tool_descriptions(
+    tool_names: list[str] | None = None,
+    include_delegate: bool = False,
+) -> str:
+    """Generate tool description text for system prompt.
+
+    Args:
+        tool_names: Filter to specific tools. None = all tools.
+        include_delegate: Whether to include delegate tool.
+    """
+    names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
+    lines = []
+    for name in names:
+        schema = TOOL_SCHEMAS.get(name)
+        if schema is None:
+            continue
+        params_str = json.dumps(
+            {
+                k: v.get("description", v.get("type", ""))
+                for k, v in schema.parameters.get("properties", {}).items()
+            },
+        )
+        lines.append(f"- {name}: {schema.description}\n  Input JSON: {params_str}")
+    if include_delegate:
+        lines.append(
+            f"- delegate: {DELEGATE_TOOL_SCHEMA.description}\n"
+            f'  Input JSON: {{"task": "fully self-contained task description"}}'
+        )
+    return "\n".join(lines)
+
+
 def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | None]:
     """Validate action_input against tool schema.
 
@@ -146,6 +244,7 @@ def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | 
     return True, None
 
 
+# Type mapping for validation
 _TYPE_MAP = {
     "string": str,
     "integer": int,
@@ -181,97 +280,3 @@ def _try_coerce(value: Any, expected_type: str) -> Any | None:
     if expected_type == "string" and isinstance(value, (int, float)):
         return str(value)
     return None
-
-
-DELEGATE_TOOL_SCHEMA = ToolSchema(
-    name="delegate",
-    description=(
-        "Delegate a self-contained subtask to an independent subagent. "
-        "The subagent has NO context from this conversation — the task "
-        "description must include ALL necessary details."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "task": {
-                "type": "string",
-                "description": "Fully self-contained task description",
-            },
-        },
-        "required": ["task"],
-    },
-)
-
-
-def convert_to_anthropic_tools(
-    tool_names: list[str], include_delegate: bool = False
-) -> list[dict]:
-    """Convert tool schemas to Anthropic API tool format."""
-    tools = []
-    for name in tool_names:
-        schema = TOOL_SCHEMAS.get(name)
-        if schema is None:
-            continue
-        tools.append(
-            {
-                "name": schema.name,
-                "description": schema.description,
-                "input_schema": schema.parameters,
-            }
-        )
-    if include_delegate:
-        tools.append(
-            {
-                "name": DELEGATE_TOOL_SCHEMA.name,
-                "description": DELEGATE_TOOL_SCHEMA.description,
-                "input_schema": DELEGATE_TOOL_SCHEMA.parameters,
-            }
-        )
-    return tools
-
-
-def convert_to_openai_tools(
-    tool_names: list[str], include_delegate: bool = False
-) -> list[dict]:
-    """Convert tool schemas to OpenAI API tool format."""
-    tools = []
-    for name in tool_names:
-        schema = TOOL_SCHEMAS.get(name)
-        if schema is None:
-            continue
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": schema.name,
-                    "description": schema.description,
-                    "parameters": schema.parameters,
-                },
-            }
-        )
-    if include_delegate:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": DELEGATE_TOOL_SCHEMA.name,
-                    "description": DELEGATE_TOOL_SCHEMA.description,
-                    "parameters": DELEGATE_TOOL_SCHEMA.parameters,
-                },
-            }
-        )
-    return tools
-
-
-def get_tool_descriptions() -> str:
-    """Generate tool description text for system prompt."""
-    lines = []
-    for name, schema in TOOL_SCHEMAS.items():
-        params_str = json.dumps(
-            {
-                k: v.get("description", v.get("type", ""))
-                for k, v in schema.parameters.get("properties", {}).items()
-            },
-        )
-        lines.append(f"- {name}: {schema.description}\n  Input: {params_str}")
-    return "\n".join(lines)

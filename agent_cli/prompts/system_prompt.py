@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 
 from agent_cli.constants import SMALL_MODEL_CONTEXT
 
 from agent_cli.providers.compat import ModelCapabilities
-from agent_cli.tools.registry import TOOL_SCHEMAS
+from agent_cli.tools.registry import get_tool_descriptions
 
 BASE_ROLE_PROMPT = """\
 You are an AI assistant that solves tasks step-by-step using available tools.
@@ -84,23 +83,7 @@ def _format_tool_block(
     include_delegate: bool = False,
 ) -> str:
     """Generate tool descriptions for the system prompt."""
-    lines = []
-    for name in active_tools:
-        schema = TOOL_SCHEMAS.get(name)
-        if schema is None:
-            continue
-        params = json.dumps(
-            {
-                k: v.get("description", v.get("type", ""))
-                for k, v in schema.parameters.get("properties", {}).items()
-            },
-        )
-        lines.append(f"- {name}: {schema.description}\n  Input JSON: {params}")
-
-    if include_delegate:
-        lines.append(f"- delegate: {DELEGATE_DESC}\n  Input JSON: {DELEGATE_SCHEMA}")
-
-    return "\n".join(lines)
+    return get_tool_descriptions(active_tools, include_delegate)
 
 
 PLAN_GENERATION_TEMPLATE = """\

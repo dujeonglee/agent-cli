@@ -65,8 +65,8 @@ def _load_registry() -> dict[str, Any]:
                 merged["models"].update(data.get("models", {}))
                 # Merge provider_defaults
                 merged["provider_defaults"].update(data.get("provider_defaults", {}))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[warn] Failed to load {p}: {e}", file=sys.stderr)
 
     _cached_registry = merged
     return _cached_registry

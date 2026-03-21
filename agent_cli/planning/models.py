@@ -64,5 +64,11 @@ class Plan:
     @classmethod
     def load(cls, path: str | Path) -> Plan:
         """Load plan from JSON file."""
-        text = Path(path).read_text(encoding="utf-8")
-        return cls.from_dict(json.loads(text))
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+            data = json.loads(text)
+            if "goal" not in data:
+                raise ValueError("Missing 'goal' field in plan file")
+            return cls.from_dict(data)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            raise RuntimeError(f"Invalid plan file {path}: {e}") from e

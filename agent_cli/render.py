@@ -122,13 +122,15 @@ def render_status(state: str, message: str, iteration: int = 0) -> None:
 
 
 # ── Model info rendering ─────────────────────────
+YES_MARK = "✓"
+NO_MARK = "✗"
 
 
 def render_model_detected(
     model: str, capabilities, provider: str, saved_path: str
 ) -> None:
     """Display detailed model info when newly detected at runtime."""
-    yes, no = "✓", "✗"
+    yes, no = YES_MARK, NO_MARK
     thinking_info = (
         f"{yes} (budget: {capabilities.thinking_budget:,}, format: {capabilities.thinking_format})"
         if capabilities.supports_thinking
@@ -163,7 +165,7 @@ def render_model_detected(
 
 def render_model_loaded(model: str, capabilities) -> None:
     """Display one-line model summary when loading from registry."""
-    yes, no = "✓", "✗"
+    yes, no = YES_MARK, NO_MARK
     thinking = f"thinking={yes}" if capabilities.supports_thinking else f"thinking={no}"
     console.print(
         f"[{C['accent']}]●[/] Model: {model} "

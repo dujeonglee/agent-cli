@@ -11,7 +11,7 @@ from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.render import console, C, render_plan_progress, render_status
 from agent_cli.tools import TOOLS
 
-# Tool RAG: keyword → tool mapping
+# Tool RAG: keyword → tool mapping (includes Korean for multilingual support)
 _TOOL_KEYWORDS = {
     "read_file": re.compile(r"\b(read|읽|view|show|check|inspect|examine)\b", re.I),
     "write_file": re.compile(r"\b(write|create|생성|작성|new file|save to)\b", re.I),

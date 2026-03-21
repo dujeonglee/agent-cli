@@ -55,8 +55,9 @@ def _extract_numbered_steps(text: str) -> list[PlanStep]:
 def _extract_from_json(text: str) -> list[PlanStep]:
     """Try to parse plan from JSON response."""
     # Strip markdown fences
-    cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.I)
-    cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+    from agent_cli.parsing.react_parser import _strip_markdown_fences
+
+    cleaned = _strip_markdown_fences(text)
 
     try:
         data = json.loads(cleaned)

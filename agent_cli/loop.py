@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 from agent_cli.constants import OBS_SUCCESS, OBS_ERROR, OBS_ERROR_HINT
 
@@ -12,7 +11,7 @@ from agent_cli.context.overflow import check_preemptive_overflow, is_context_ove
 from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.compat import ModelCapabilities, needs_tool_action
 from agent_cli.render import (
     render_header,
     render_iter_sep,
@@ -24,15 +23,6 @@ from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
 from agent_cli.tools.registry import convert_to_anthropic_tools, convert_to_openai_tools
 from agent_cli.tools.truncation import get_truncation_config, truncate_output
-
-_ACTION_KEYWORDS = re.compile(
-    r"\b(write|create|save|make|generate|edit|modify|update|delete|remove|run|execute)\b",
-    re.I,
-)
-
-
-def _needs_tool_action(query: str) -> bool:
-    return bool(_ACTION_KEYWORDS.search(query))
 
 
 def run_loop(
@@ -152,36 +142,19 @@ def run_loop(
                         else str(tool_input),
                     )
 
-                # Execute tool
-                if tool_name == "delegate" and include_delegate:
-                    try:
-                        obs = tool_delegate(
-                            args=tool_input
-                            if isinstance(tool_input, dict)
-                            else {"task": str(tool_input)},
-                            provider=provider_name,
-                            model=model,
-                            base_url=base_url,
-                            api_key=api_key,
-                            timeout=delegate_timeout,
-                        )
-                    except Exception as e:
-                        obs = OBS_ERROR.format(error=e)
-                elif tool_name in tools_list:
-                    valid, err = validate_tool_input(tool_name, tool_input)
-                    if not valid:
-                        obs = OBS_ERROR.format(error=err)
-                    else:
-                        try:
-                            raw = execute_tool(tool_name, tool_input)
-                            cfg = get_truncation_config(capabilities, tool_name)
-                            obs = OBS_SUCCESS.format(result=truncate_output(raw, cfg))
-                        except Exception as e:
-                            obs = OBS_ERROR_HINT.format(
-                                error=e, hint="Check parameters and try again."
-                            )
-                else:
-                    obs = OBS_ERROR.format(error=f"Unknown tool '{tool_name}'")
+                # Execute tool (shared logic)
+                obs = _execute_single_tool(
+                    tool_name,
+                    tool_input,
+                    tools_list,
+                    include_delegate,
+                    capabilities,
+                    provider_name,
+                    model,
+                    base_url,
+                    api_key,
+                    delegate_timeout,
+                )
 
                 if not quiet:
                     render_step("observation", obs, iteration)
@@ -214,7 +187,7 @@ def run_loop(
                 render_step("final", parsed.final_answer, iteration)
 
             # Fulfillment guard
-            if not tools_called and _needs_tool_action(query):
+            if not tools_called and needs_tool_action(query):
                 nudge = (
                     "You provided a final_answer, but the task likely requires "
                     "tool actions (file operations, shell commands, etc.). "
@@ -245,49 +218,20 @@ def run_loop(
                     else str(tool_input),
                 )
 
-            # Delegate
-            if tool_name == "delegate" and include_delegate:
-                try:
-                    observation = tool_delegate(
-                        args=tool_input
-                        if isinstance(tool_input, dict)
-                        else {"task": str(tool_input)},
-                        provider=provider_name,
-                        model=model,
-                        base_url=base_url,
-                        api_key=api_key,
-                        timeout=delegate_timeout,
-                    )
-                except Exception as e:
-                    observation = OBS_ERROR_HINT.format(
-                        error=e, hint="Check task description and try again."
-                    )
-                tools_called.append("delegate")
-
-            # Regular tool
-            elif tool_name in tools_list:
-                # Validate input
-                valid, err = validate_tool_input(tool_name, tool_input)
-                if not valid:
-                    observation = OBS_ERROR_HINT.format(
-                        error=err, hint="Fix action_input and retry."
-                    )
-                else:
-                    try:
-                        raw_output = execute_tool(tool_name, tool_input)
-                        trunc_cfg = get_truncation_config(capabilities, tool_name)
-                        truncated = truncate_output(raw_output, trunc_cfg)
-                        observation = OBS_SUCCESS.format(result=truncated)
-                    except Exception as e:
-                        observation = OBS_ERROR_HINT.format(
-                            error=e, hint="Check parameters and try again."
-                        )
-                tools_called.append(tool_name)
-            else:
-                avail = ", ".join(TOOLS) + (", delegate" if include_delegate else "")
-                observation = OBS_ERROR.format(
-                    error=f"Unknown tool '{tool_name}'. Available: {avail}"
-                )
+            # Execute tool (shared logic)
+            observation = _execute_single_tool(
+                tool_name,
+                tool_input,
+                tools_list,
+                include_delegate,
+                capabilities,
+                provider_name,
+                model,
+                base_url,
+                api_key,
+                delegate_timeout,
+            )
+            tools_called.append(tool_name)
 
             if not quiet:
                 render_step("observation", observation, iteration)
@@ -325,6 +269,53 @@ def run_loop(
     if not quiet:
         render_status("error", f"Max iterations ({max_iter}) reached.")
     return None
+
+
+def _execute_single_tool(
+    tool_name: str,
+    tool_input,
+    tools_list: list[str],
+    include_delegate: bool,
+    capabilities: ModelCapabilities,
+    provider_name: str = "",
+    model: str = "",
+    base_url: str = "",
+    api_key: str = "",
+    delegate_timeout: int = 300,
+) -> str:
+    """Execute a single tool and return observation string. Shared by both paths."""
+    if tool_name == "delegate" and include_delegate:
+        try:
+            return tool_delegate(
+                args=tool_input
+                if isinstance(tool_input, dict)
+                else {"task": str(tool_input)},
+                provider=provider_name,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                timeout=delegate_timeout,
+            )
+        except Exception as e:
+            return OBS_ERROR_HINT.format(
+                error=e, hint="Check task description and try again."
+            )
+
+    if tool_name in tools_list:
+        valid, err = validate_tool_input(tool_name, tool_input)
+        if not valid:
+            return OBS_ERROR_HINT.format(error=err, hint="Fix action_input and retry.")
+        try:
+            raw = execute_tool(tool_name, tool_input)
+            cfg = get_truncation_config(capabilities, tool_name)
+            return OBS_SUCCESS.format(result=truncate_output(raw, cfg))
+        except Exception as e:
+            return OBS_ERROR_HINT.format(
+                error=e, hint="Check parameters and try again."
+            )
+
+    avail = ", ".join(TOOLS) + (", delegate" if include_delegate else "")
+    return OBS_ERROR.format(error=f"Unknown tool '{tool_name}'. Available: {avail}")
 
 
 def _format_tool_call_messages(

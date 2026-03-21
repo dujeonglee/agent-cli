@@ -113,11 +113,13 @@ def _try_json_parse(text: str) -> dict | None:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Try extracting first { ... } block
-    m = re.search(r"\{[\s\S]*\}", stripped)
-    if m:
+    # Try extracting first { ... } block using balanced brace extraction
+    from agent_cli.parsing.json_repair import _extract_json_block
+
+    extracted = _extract_json_block(stripped)
+    if extracted != stripped:
         try:
-            data = json.loads(m.group())
+            data = json.loads(extracted)
             if isinstance(data, dict):
                 return data
         except (json.JSONDecodeError, ValueError):

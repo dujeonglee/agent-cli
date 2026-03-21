@@ -9,8 +9,9 @@ import re
 import zlib
 from pathlib import Path
 
-# Hashline constants
+# Hashline constants: 16-char alphabet for CRC32-to-2-char hash encoding
 _NIBBLE = "ZPMQVRWSNKTXJBYH"
+# Lookup table: maps byte 0-255 to 2-char hash tag (e.g. "VR", "KT")
 _DICT = [f"{_NIBBLE[i >> 4]}{_NIBBLE[i & 0x0F]}" for i in range(256)]
 _RE_SIGNIFICANT = re.compile(r"[\w\d]", re.UNICODE)
 
