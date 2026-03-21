@@ -6,7 +6,6 @@ import pytest
 from agent_cli.config import reload_registry
 from agent_cli.providers.compat import (
     DEFAULT_CAPABILITIES,
-    ModelCapabilities,
     get_capabilities,
     _detect_ollama_capabilities,
 )
@@ -72,14 +71,22 @@ class TestGetCapabilities:
 class TestOllamaRuntimeDetection:
     @patch("agent_cli.providers.compat.requests.post")
     def test_detects_capabilities(self, mock_post):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
+        show_resp = MagicMock()
+        show_resp.status_code = 200
+        show_resp.json.return_value = {
             "model_info": {"llama.context_length": 8192},
             "details": {"family": "llama", "parameter_size": "8B"},
         }
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
+        show_resp.raise_for_status.return_value = None
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "message": {"content": "Hello!"},
+        }
+        probe_resp.raise_for_status.return_value = None
+
+        mock_post.side_effect = [show_resp, probe_resp]
 
         caps = _detect_ollama_capabilities("http://localhost:11434", "llama3.1:8b-custom")
         assert caps is not None
@@ -90,14 +97,24 @@ class TestOllamaRuntimeDetection:
 
     @patch("agent_cli.providers.compat.requests.post")
     def test_detects_thinking_model(self, mock_post):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
+        """Probe-based detection: /api/show for metadata, /api/chat for thinking."""
+        show_resp = MagicMock()
+        show_resp.status_code = 200
+        show_resp.json.return_value = {
             "model_info": {"llama.context_length": 32768},
             "details": {"family": "qwen3"},
         }
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
+        show_resp.raise_for_status.return_value = None
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "message": {"content": "<think>\nLet me think...\n</think>\nHello!"},
+        }
+        probe_resp.raise_for_status.return_value = None
+
+        # First call = /api/show, second call = /api/chat (probe)
+        mock_post.side_effect = [show_resp, probe_resp]
 
         caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3:14b")
         assert caps is not None
@@ -106,16 +123,49 @@ class TestOllamaRuntimeDetection:
         assert caps.thinking_format == "think"
 
     @patch("agent_cli.providers.compat.requests.post")
+    def test_detects_non_thinking_model(self, mock_post):
+        """Probe returns no thinking tags → non-thinking model."""
+        show_resp = MagicMock()
+        show_resp.status_code = 200
+        show_resp.json.return_value = {
+            "model_info": {"llama.context_length": 8192},
+            "details": {"family": "llama"},
+        }
+        show_resp.raise_for_status.return_value = None
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "message": {"content": "Hello! How can I help you?"},
+        }
+        probe_resp.raise_for_status.return_value = None
+
+        mock_post.side_effect = [show_resp, probe_resp]
+
+        caps = _detect_ollama_capabilities("http://localhost:11434", "llama3:8b")
+        assert caps is not None
+        assert caps.supports_thinking is False
+        assert caps.thinking_format == ""
+
+    @patch("agent_cli.providers.compat.requests.post")
     def test_detects_non_llama_architecture(self, mock_post):
         """Should detect context_length from any architecture prefix (e.g. qwen3next)."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
+        show_resp = MagicMock()
+        show_resp.status_code = 200
+        show_resp.json.return_value = {
             "model_info": {"qwen3next.context_length": 262144},
             "details": {"family": "qwen3next"},
         }
-        mock_resp.raise_for_status.return_value = None
-        mock_post.return_value = mock_resp
+        show_resp.raise_for_status.return_value = None
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "message": {"content": "<think>reasoning</think>\nHello"},
+        }
+        probe_resp.raise_for_status.return_value = None
+
+        mock_post.side_effect = [show_resp, probe_resp]
 
         caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3-coder-next:q8_0")
         assert caps is not None
@@ -125,4 +175,46 @@ class TestOllamaRuntimeDetection:
     def test_returns_none_on_error(self, mock_post):
         mock_post.side_effect = Exception("Connection refused")
         caps = _detect_ollama_capabilities("http://localhost:11434", "unknown")
+        assert caps is None
+
+
+class TestOpenAICompatRuntimeDetection:
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_detects_thinking_model(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "<think>reasoning</think>\nHello!"}}],
+        }
+        mock_resp.raise_for_status.return_value = None
+        mock_post.return_value = mock_resp
+
+        from agent_cli.providers.compat import _detect_openai_compat_capabilities
+        caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "local-model")
+        assert caps is not None
+        assert caps.supports_thinking is True
+        assert caps.thinking_format == "think"
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_detects_non_thinking_model(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "Hello! How can I help?"}}],
+        }
+        mock_resp.raise_for_status.return_value = None
+        mock_post.return_value = mock_resp
+
+        from agent_cli.providers.compat import _detect_openai_compat_capabilities
+        caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "local-model")
+        assert caps is not None
+        assert caps.supports_thinking is False
+        assert caps.thinking_format == ""
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_returns_none_on_error(self, mock_post):
+        mock_post.side_effect = Exception("Connection refused")
+
+        from agent_cli.providers.compat import _detect_openai_compat_capabilities
+        caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "model")
         assert caps is None

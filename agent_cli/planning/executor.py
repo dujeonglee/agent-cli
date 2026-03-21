@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from agent_cli.loop import run_loop
 from agent_cli.planning.models import Plan

@@ -1,5 +1,4 @@
 """Tests for provider adapters (mocked HTTP)."""
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest

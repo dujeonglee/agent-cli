@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 from agent_cli.constants import CHARS_PER_TOKEN, CONTEXT_RESERVE_RATIO
-from agent_cli.context.overflow import check_preemptive_overflow
-from agent_cli.context.token_estimator import estimate_tokens, estimate_tokens_from_messages
+from agent_cli.context.token_estimator import estimate_tokens_from_messages
 from agent_cli.prompts.compression_prompt import (
     INCREMENTAL_UPDATE_PROMPT,
     SUMMARIZATION_PROMPT,
 )
-from agent_cli.providers.base import LLMProvider, LLMResponse
+from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
 
 

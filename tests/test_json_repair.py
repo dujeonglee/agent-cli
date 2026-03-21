@@ -1,5 +1,4 @@
 """Tests for agent_cli.parsing.json_repair."""
-import pytest
 
 from agent_cli.parsing.json_repair import repair_json
 

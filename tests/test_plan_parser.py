@@ -1,5 +1,4 @@
 """Tests for parsing/plan_parser."""
-import pytest
 
 from agent_cli.parsing.plan_parser import parse_plan_steps
 

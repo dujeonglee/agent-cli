@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from pathlib import Path
 
 from agent_cli.tools.read_file import _parse_ref, _verify_ref, compute_line_hash

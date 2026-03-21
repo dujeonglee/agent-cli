@@ -1,5 +1,4 @@
 """Tests for plan generation prompt."""
-import pytest
 
 from agent_cli.prompts.system_prompt import build_plan_generation_prompt
 from agent_cli.providers.compat import ModelCapabilities

@@ -1,5 +1,4 @@
 """Tests for tools/truncation."""
-import pytest
 
 from agent_cli.tools.truncation import (
     TruncationConfig,

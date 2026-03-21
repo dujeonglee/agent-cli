@@ -225,9 +225,12 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 | `.agent-cli/models.json` | 프로젝트 로컬 오버라이드 (우선) | 안 함 (읽기만) |
 | `~/.agent-cli/models.json` | 사용자 전역 설정 | 새 모델 자동 저장 |
 
-- 미등록 모델은 Ollama `/api/show`로 자동 감지 → `~/.agent-cli/models.json`에 저장
+- 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json`에 저장
+  - Ollama: `/api/show` (메타데이터) + 프로브 (thinking 감지)
+  - OpenAI 호환: 프로브 (thinking 감지)
+  - Thinking 감지: "Say hello" 프롬프트 → 응답에 `<think>` 태그 확인 (하드코딩 없이 자동)
 - 이미 등록된 모델은 덮어쓰지 않음 (사용자 설정 보호)
-- 다음 실행 시 저장된 설정에서 로딩 (API 재호출 없음)
+- 다음 실행 시 저장된 설정에서 로딩 (프로브 재실행 없음)
 
 | 필드 | 설명 |
 |------|------|

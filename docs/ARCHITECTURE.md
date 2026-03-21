@@ -605,8 +605,20 @@ Thinking 블록 처리 플로우:
 ### 8.4 능력치 조회 우선순위 (`providers/compat.py`)
 
 1. `models.json` 정적 설정 (병합된 결과)
-2. 런타임 감지 (Ollama `/api/show` 쿼리) → **`~/.agent-cli/models.json`에 자동 저장**
+2. 런타임 감지 → **`~/.agent-cli/models.json`에 자동 저장**
+   - Ollama: `/api/show` (메타데이터) + `/api/chat` (thinking 프로브)
+   - OpenAI 호환: `/chat/completions` (thinking 프로브)
 3. `DEFAULT_CAPABILITIES` (context_window=4096, 모든 기능 비활성)
+
+### 8.6 Thinking 감지 방식
+
+하드코딩 패턴 매칭이 아닌 **프로브 기반 감지**:
+1. 모델에 "Say hello." 프롬프트 전송
+2. 응답에 `<think>`, `<thinking>`, `<reasoning>`, `<reflection>` 태그가 포함되어 있는지 확인
+3. 태그가 있으면 → `supports_thinking=True`, `thinking_format=태그명`
+4. 결과를 `~/.agent-cli/models.json`에 저장 → 다음 실행 시 프로브 불필요
+
+새 모델이 추가되어도 코드 수정 없이 자동 감지됩니다.
 
 ### 8.5 모델 정보 출력
 

@@ -1,5 +1,4 @@
 """Tests for context/overflow."""
-import pytest
 
 from agent_cli.context.overflow import is_context_overflow, check_preemptive_overflow
 from agent_cli.providers.compat import ModelCapabilities

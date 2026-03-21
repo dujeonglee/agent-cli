@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import re
+
 import requests
 
 from agent_cli.config import get_model_entry, save_model_entry
@@ -103,57 +105,137 @@ def _detect_runtime_capabilities(
     """Detect model capabilities at runtime via provider API."""
     if provider == "ollama":
         return _detect_ollama_capabilities(base_url, model)
+    elif provider == "openai":
+        return _detect_openai_compat_capabilities(base_url, model)
     return None
 
 
 def _detect_ollama_capabilities(
     base_url: str, model: str
 ) -> ModelCapabilities | None:
-    """Query Ollama /api/show for model info."""
+    """Query Ollama /api/show for model info, then probe for thinking support."""
     try:
+        # Step 1: Get model metadata
         url = f"{base_url.rstrip('/')}/api/show"
         r = requests.post(url, json={"model": model}, timeout=10)
         r.raise_for_status()
         data = r.json()
 
-        # Extract model parameters
+        # Extract context length (architecture-agnostic)
         model_info = data.get("model_info", {})
-        # Context length: search for any key ending with ".context_length"
-        # Different architectures use different prefixes:
-        #   llama.context_length, qwen3next.context_length, gemma.context_length, etc.
-        context_length = 4096  # default
+        context_length = 4096
         for key, value in model_info.items():
             if key.endswith(".context_length") or key == "context_length":
                 if isinstance(value, int) and value > 0:
                     context_length = value
                     break
 
-        # Detect parameter count from details
-        details = data.get("details", {})
-        param_size = details.get("parameter_size", "")
-
-        # Estimate max_output_tokens (conservative: 25% of context)
         max_output = min(context_length // 4, 4096)
 
-        # Heuristic: Ollama models generally support JSON format
-        supports_structured = True
-
-        # Detect thinking support and format from model family
-        family = details.get("family", "").lower()
-        model_lower = model.lower()
-        supports_thinking = any(
-            t in model_lower for t in ("qwen3", "deepseek-r1", "thinking")
+        # Step 2: Probe for thinking support by sending a simple prompt
+        supports_thinking, thinking_format = _probe_thinking_support(
+            base_url, model
         )
         thinking_budget = 4096 if supports_thinking else 0
-        thinking_format = "think" if supports_thinking else ""
 
         return ModelCapabilities(
             context_window=context_length,
             max_output_tokens=max_output,
-            supports_structured_output=supports_structured,
+            supports_structured_output=True,
             supports_tool_calling=False,
             supports_thinking=supports_thinking,
             thinking_budget=thinking_budget,
+            supports_strict_schema=False,
+            thinking_format=thinking_format,
+        )
+    except Exception:
+        return None
+
+
+# Known thinking block tags to detect in probe response
+_THINKING_TAGS = ["think", "thinking", "reasoning", "reflection"]
+_THINKING_TAG_PATTERN = re.compile(
+    r"<(" + "|".join(_THINKING_TAGS) + r")>",
+    re.I,
+)
+
+
+def _probe_thinking_support(
+    base_url: str, model: str
+) -> tuple[bool, str]:
+    """Send a simple prompt and check if the model produces thinking blocks.
+
+    Returns (supports_thinking, thinking_format).
+    """
+    try:
+        url = f"{base_url.rstrip('/')}/api/chat"
+        r = requests.post(
+            url,
+            json={
+                "model": model,
+                "stream": False,
+                "messages": [
+                    {"role": "user", "content": "Say hello."},
+                ],
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        content = r.json().get("message", {}).get("content", "")
+
+        # Check for thinking tags in response
+        match = _THINKING_TAG_PATTERN.search(content)
+        if match:
+            return True, match.group(1).lower()
+
+        return False, ""
+    except Exception:
+        return False, ""
+
+
+def _detect_openai_compat_capabilities(
+    base_url: str, model: str
+) -> ModelCapabilities | None:
+    """Detect capabilities for OpenAI-compatible servers (vLLM, LM Studio, mlx-lm).
+
+    Probes the model with a simple prompt to detect thinking support.
+    Context window is not available via standard OpenAI API, so uses conservative defaults.
+    """
+    try:
+        # Probe for thinking support
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        r = requests.post(
+            url,
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": "Say hello."},
+                ],
+                "max_tokens": 512,
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        # Check for thinking tags
+        supports_thinking = False
+        thinking_format = ""
+        match = _THINKING_TAG_PATTERN.search(content)
+        if match:
+            supports_thinking = True
+            thinking_format = match.group(1).lower()
+
+        return ModelCapabilities(
+            context_window=4096,  # Conservative — OpenAI API doesn't expose this
+            max_output_tokens=2048,
+            supports_structured_output=False,  # Can't assume without testing
+            supports_tool_calling=False,
+            supports_thinking=supports_thinking,
+            thinking_budget=4096 if supports_thinking else 0,
             supports_strict_schema=False,
             thinking_format=thinking_format,
         )

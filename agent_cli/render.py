@@ -175,7 +175,6 @@ _STATUS_COLORS = {
 
 def render_plan(plan) -> None:
     """Display plan with status indicators."""
-    from agent_cli.planning.models import Plan  # avoid circular import
 
     t = Text(justify="center")
     t.append(f"PLAN · {len(plan.steps)} steps", style="bold bright_cyan")

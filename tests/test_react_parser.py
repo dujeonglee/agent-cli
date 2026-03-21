@@ -1,7 +1,6 @@
 """Tests for agent_cli.parsing.react_parser."""
-import pytest
 
-from agent_cli.parsing.react_parser import parse_react, ReActResult
+from agent_cli.parsing.react_parser import parse_react
 
 
 class TestStage1DirectParse:

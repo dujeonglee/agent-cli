@@ -1,5 +1,4 @@
 """Tests for tools/registry."""
-import pytest
 
 from agent_cli.tools.registry import (
     validate_tool_input,

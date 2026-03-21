@@ -1,5 +1,4 @@
 """Tests for prompts/system_prompt."""
-import pytest
 
 from agent_cli.prompts.system_prompt import build_system_prompt, SMALL_MODEL_HINTS
 from agent_cli.providers.compat import ModelCapabilities

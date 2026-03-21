@@ -12,8 +12,8 @@ from agent_cli.loop import run_loop
 from agent_cli.parsing.react_parser import parse_react
 from agent_cli.planning.executor import execute_plan
 from agent_cli.planning.generator import generate_plan
-from agent_cli.planning.models import Plan, PlanStep
-from agent_cli.providers.compat import DEFAULT_CAPABILITIES, get_capabilities
+from agent_cli.planning.models import Plan
+from agent_cli.providers.compat import get_capabilities
 from tests.conftest import OLLAMA_BASE_URL
 
 
@@ -202,11 +202,22 @@ class TestRuntimeCapabilityDetection:
         caps = get_capabilities(
             integration_model, provider="ollama", base_url=OLLAMA_BASE_URL
         )
-        # Should detect actual context window, not fall back to 4096 default
         assert caps.context_window > 0
-        # Runtime detection should give us something different from defaults
-        # (unless this model happens to have exactly 4096 context)
         assert caps.context_window >= 4096
+
+
+class TestProbeBasedThinkingDetection:
+    def test_thinking_detection_matches_actual(self, integration_model, ollama_provider, model_capabilities):
+        """Probe-based thinking detection should produce consistent results."""
+        from agent_cli.providers.compat import _probe_thinking_support
+
+        supports, fmt = _probe_thinking_support(OLLAMA_BASE_URL, integration_model)
+
+        # Result should be consistent with what get_capabilities returned
+        assert model_capabilities.supports_thinking == supports
+        if supports:
+            assert fmt in ("think", "thinking", "reasoning", "reflection")
+            assert model_capabilities.thinking_format == fmt
 
 
 class TestPlanPersistence:
