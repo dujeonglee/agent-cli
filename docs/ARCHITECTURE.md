@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-03-21
+> 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: ~3,700 LOC (36 Python 파일) + ~2,400 LOC 테스트 (19 파일)
-> 총 테스트: 193 유닛 + 33 통합 = 226개
+> 총 소스: 4,117 LOC (41 Python 파일) + 2,682 LOC 테스트 (20 파일)
+> 총 테스트: 215 유닛 + 39 통합 = 254개
 
 ---
 
@@ -42,22 +42,23 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (2)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (4)    python -m agent_cli 진입점
-├── main.py                  (453)  CLI 명령어: run, plan, chat
-├── config.py                (78)   models.json 로딩 + 프로바이더 기본값
+├── main.py                  (560)  CLI 명령어: run, plan, chat + 공유 헬퍼
+├── config.py                (137)  models.json 로딩/저장 + 프로바이더 기본값
+├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── loop.py                  (391)  ReAct 에이전트 루프
-├── render.py                (170)  Rich 터미널 렌더링
+├── render.py                (208)  Rich 터미널 렌더링 + 모델 정보 표시
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (32)   create_provider() 팩토리
 │   ├── base.py              (35)   LLMProvider 프로토콜, LLMResponse, TokenUsage
-│   ├── compat.py            (123)  ModelCapabilities + 런타임 감지
-│   ├── anthropic.py         (86)   Anthropic Messages API (tool_use 지원)
-│   ├── openai_compat.py     (97)   OpenAI 호환 API (function calling 지원)
-│   └── ollama.py            (102)  Ollama API (constrained decoding 지원)
+│   ├── compat.py            (161)  ModelCapabilities + 런타임 감지 + 자동 저장
+│   ├── anthropic.py         (86)   Anthropic Messages API (tool_use + thinking)
+│   ├── openai_compat.py     (97)   OpenAI 호환 API (function calling + reasoning)
+│   └── ollama.py            (102)  Ollama API (constrained decoding + thinking)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
-│   ├── react_parser.py      (126)  3단계 폴백 ReAct 파서
+│   ├── react_parser.py      (161)  3단계 폴백 ReAct 파서 + thinking 분리
 │   ├── json_repair.py       (173)  깨진 JSON 복구 (6단계 파이프라인)
 │   └── plan_parser.py       (106)  계획 step 추출 (텍스트 + JSON)
 │
@@ -69,29 +70,29 @@ agent_cli/
 │   ├── edit_file.py         (153)  파일 편집 (hashline + 퍼지 매칭)
 │   ├── shell.py             (32)   셸 명령 실행
 │   ├── delegate.py          (77)   서브에이전트 위임
-│   └── truncation.py        (108)  모델 적응형 출력 압축
+│   └── truncation.py        (109)  모델 적응형 출력 압축
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (11)   re-export
 │   ├── token_estimator.py   (22)   토큰 추정 (chars/4)
 │   ├── overflow.py          (43)   프로바이더별 오버플로 감지
-│   └── manager.py           (122)  ContextManager (구조화 요약 + 증분 업데이트)
+│   └── manager.py           (127)  ContextManager (구조화 요약 + 증분 업데이트)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (179)  조건부 시스템 프롬프트 빌더
+│   ├── system_prompt.py     (181)  조건부 시스템 프롬프트 빌더
 │   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (6)    re-export
 │   ├── models.py            (18)   Skill 데이터 모델
-│   ├── loader.py            (95)   스킬 파일 검색/파싱
+│   ├── loader.py            (115)  스킬 파일 검색/파싱 (캐싱)
 │   └── executor.py          (55)   인자 치환 + run_loop 호출
 │
 └── planning/                       Planning Mode
     ├── __init__.py          (1)
     ├── models.py            (65)   Plan, PlanStep (직렬화 지원)
-    ├── generator.py         (73)   Phase 1: 계획 생성
+    ├── generator.py         (81)   Phase 1: 계획 생성 (재시도 포함)
     ├── reviewer.py          (108)  Phase 2: 대화형 검토/편집
     └── executor.py          (192)  Phase 3: 단계별 실행 (Tool RAG)
 
@@ -152,6 +153,7 @@ agent-cli.py                        하위 호환 래퍼 (4줄)
 
 ```
 config.py           → (외부만: json, pathlib)
+constants.py        → (외부만: 없음, 순수 상수)
 providers/compat.py → config
 providers/base.py   → providers/compat
 providers/*.py      → providers/base, providers/compat
@@ -167,7 +169,7 @@ context/overflow.py → context/token_estimator, providers/compat
 context/manager.py  → context/overflow, context/token_estimator,
                       prompts/compression_prompt, providers/base, providers/compat
 prompts/system_pr.  → providers/compat, tools/registry
-loop.py             → context/manager, context/overflow, parsing/react_parser,
+loop.py             → constants, context/manager, context/overflow, parsing/react_parser,
                       prompts/system_prompt, providers/base, providers/compat,
                       render, tools, tools/delegate, tools/registry, tools/truncation
 planning/generator  → parsing/plan_parser, planning/models, prompts/system_prompt,
@@ -650,9 +652,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 17 | 193 | `pytest tests/ -m "not ollama_integration"` |
-| 통합 테스트 | 1 | 33 | `pytest tests/test_integration.py` |
-| **전체** | **19** | **226** | `pytest tests/` |
+| 유닛 테스트 | 19 | 215 | `pytest tests/ -m "not ollama_integration"` |
+| 통합 테스트 | 1 | 39 | `pytest tests/test_integration.py` |
+| **전체** | **20** | **254** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 
