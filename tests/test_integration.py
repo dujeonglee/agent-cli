@@ -237,7 +237,13 @@ class TestProbeBasedThinkingDetection:
         # Result should be consistent with what get_capabilities returned
         assert model_capabilities.supports_thinking == supports
         if supports:
-            assert fmt in ("think", "thinking", "reasoning", "reflection")
+            assert fmt in (
+                "think",
+                "thinking",
+                "reasoning",
+                "reflection",
+                "thinking_field",
+            )
             assert model_capabilities.thinking_format == fmt
 
 
