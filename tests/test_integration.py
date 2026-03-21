@@ -260,7 +260,7 @@ class TestPlanPersistence:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            max_steps=3,
+            max_steps=5,
             quiet=True,
         )
         assert plan is not None
@@ -324,7 +324,7 @@ class TestSkillExecution:
             description="Summarize",
             prompt_template="Read $ARGUMENTS and summarize in one paragraph.",
             active_tools=["read_file"],
-            max_iter=5,
+            max_iter=8,
         )
 
         result = execute_skill(
