@@ -45,6 +45,7 @@ agent_cli/
 ├── main.py                  (560)  CLI 명령어: run, plan, chat + 공유 헬퍼
 ├── config.py                (137)  models.json 로딩/저장 + 프로바이더 기본값
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
+├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── loop.py                  (391)  ReAct 에이전트 루프
 ├── render.py                (208)  Rich 터미널 렌더링 + 모델 정보 표시
 │
@@ -590,17 +591,19 @@ Thinking 블록 처리 플로우:
 
 ### 8.2 파일 위치 및 정책
 
-| 위치 | 역할 | 자동 저장 |
-|------|------|----------|
-| `.agent-cli/models.json` | 프로젝트 로컬 오버라이드 (우선) | 안 함 (읽기만) |
-| `~/.agent-cli/models.json` | 사용자 전역 설정 | 새 모델 자동 저장 |
+| 우선순위 | 위치 | 역할 | 자동 저장 |
+|---------|------|------|----------|
+| 1 | `.agent-cli/models.json` | 프로젝트 로컬 오버라이드 | 안 함 (읽기만) |
+| 2 | `~/.agent-cli/models.json` | 사용자 전역 설정 | 새 모델 자동 저장 |
+| 3 | `agent_cli/default_models.json` | 패키지 기본값 | 안 함 (읽기만) |
 
 ### 8.3 설정 로딩 우선순위 (`config.py`)
 
-양쪽 파일을 병합하되, 프로젝트 로컬이 전역을 오버라이드:
-1. `~/.agent-cli/models.json` (전역) — 먼저 로딩
-2. `.agent-cli/models.json` (프로젝트 로컬) — 동일 키 덮어쓰기
-3. 하드코딩 폴백 (models.json 없어도 동작)
+3개 파일을 병합하되, 높은 우선순위가 낮은 우선순위를 오버라이드:
+1. `agent_cli/default_models.json` (패키지) — 먼저 로딩
+2. `~/.agent-cli/models.json` (전역) — 동일 키 덮어쓰기
+3. `.agent-cli/models.json` (프로젝트 로컬) — 동일 키 덮어쓰기 (최종)
+4. 하드코딩 폴백 (모든 파일 없어도 동작)
 
 ### 8.4 능력치 조회 우선순위 (`providers/compat.py`)
 

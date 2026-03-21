@@ -1,0 +1,84 @@
+{
+  "models": {
+    "qwen3:32b": {
+      "provider": "ollama",
+      "context_window": 32768,
+      "max_output_tokens": 4096,
+      "supports_structured_output": true,
+      "supports_tool_calling": false,
+      "supports_thinking": true,
+      "thinking_budget": 4096,
+      "supports_strict_schema": false,
+      "thinking_format": "think"
+    },
+    "qwen3:8b": {
+      "provider": "ollama",
+      "context_window": 8192,
+      "max_output_tokens": 2048,
+      "supports_structured_output": true,
+      "supports_tool_calling": false,
+      "supports_thinking": true,
+      "thinking_budget": 1024,
+      "supports_strict_schema": false,
+      "thinking_format": "think"
+    },
+    "llama3.1:8b": {
+      "provider": "ollama",
+      "context_window": 8192,
+      "max_output_tokens": 2048,
+      "supports_structured_output": true,
+      "supports_tool_calling": false,
+      "supports_thinking": false,
+      "thinking_budget": 0,
+      "supports_strict_schema": false,
+      "thinking_format": ""
+    },
+    "claude-sonnet-4-20250514": {
+      "provider": "anthropic",
+      "context_window": 200000,
+      "max_output_tokens": 8192,
+      "supports_structured_output": false,
+      "supports_tool_calling": true,
+      "supports_thinking": true,
+      "thinking_budget": 16384,
+      "supports_strict_schema": true,
+      "thinking_format": ""
+    },
+    "gpt-4o": {
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "supports_structured_output": true,
+      "supports_tool_calling": true,
+      "supports_thinking": false,
+      "thinking_budget": 0,
+      "supports_strict_schema": true,
+      "thinking_format": ""
+    },
+    "deepseek-r1:32b": {
+      "provider": "ollama",
+      "context_window": 32768,
+      "max_output_tokens": 4096,
+      "supports_structured_output": true,
+      "supports_tool_calling": false,
+      "supports_thinking": true,
+      "thinking_budget": 4096,
+      "supports_strict_schema": false,
+      "thinking_format": "think"
+    }
+  },
+  "provider_defaults": {
+    "ollama": {
+      "base_url": "http://localhost:11434",
+      "default_model": "qwen3:32b"
+    },
+    "openai": {
+      "base_url": "https://api.openai.com/v1",
+      "default_model": "gpt-4o"
+    },
+    "anthropic": {
+      "base_url": "https://api.anthropic.com/v1",
+      "default_model": "claude-sonnet-4-20250514"
+    }
+  }
+}

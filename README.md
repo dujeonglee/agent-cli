@@ -220,10 +220,11 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 
 ### 파일 위치 및 정책
 
-| 위치 | 역할 | 자동 저장 |
-|------|------|----------|
-| `.agent-cli/models.json` | 프로젝트 로컬 오버라이드 (우선) | 안 함 (읽기만) |
-| `~/.agent-cli/models.json` | 사용자 전역 설정 | 새 모델 자동 저장 |
+| 우선순위 | 위치 | 역할 | 자동 저장 |
+|---------|------|------|----------|
+| 1 | `.agent-cli/models.json` | 프로젝트 로컬 오버라이드 | 안 함 (읽기만) |
+| 2 | `~/.agent-cli/models.json` | 사용자 전역 설정 | 새 모델 자동 저장 |
+| 3 | `agent_cli/default_models.json` | 패키지 기본값 | 안 함 (읽기만) |
 
 - 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json`에 저장
   - Ollama: `/api/show` (메타데이터) + 프로브 (thinking 감지)
@@ -243,7 +244,7 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 | `thinking_format` | Thinking 블록 태그 (`"think"`, `""`) |
 | `supports_strict_schema` | Strict JSON Schema 모드 |
 
-**설정 우선순위**: `.agent-cli/models.json` (프로젝트) > `~/.agent-cli/models.json` (전역) > 런타임 감지 > 보수적 기본값
+**설정 우선순위**: `.agent-cli/models.json` (프로젝트) > `~/.agent-cli/models.json` (전역) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
 
 ## 도구
 

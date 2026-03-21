@@ -1,8 +1,9 @@
 """Configuration loading: models.json registry + provider defaults.
 
 Search paths (project local takes priority):
-  1. .agent-cli/models.json  (project local, read-only)
-  2. ~/.agent-cli/models.json (user global, auto-save target)
+  1. .agent-cli/models.json           (project local, read-only)
+  2. ~/.agent-cli/models.json         (user global, auto-save target)
+  3. agent_cli/default_models.json    (package defaults, read-only)
 """
 
 from __future__ import annotations
@@ -20,10 +21,11 @@ class ProviderDefaults:
     default_model: str
 
 
-# Search order: project local (priority), then user global
+# Search order: project local > user global > package defaults
 _SEARCH_PATHS = [
     Path.cwd() / ".agent-cli" / "models.json",
     Path.home() / ".agent-cli" / "models.json",
+    Path(__file__).parent / "default_models.json",
 ]
 
 # Auto-save target: always user global

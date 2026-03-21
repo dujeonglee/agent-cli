@@ -22,6 +22,9 @@ agent-cli = "agent_cli.main:app"
 [tool.setuptools.packages.find]
 include = ["agent_cli*"]
 
+[tool.setuptools.package-data]
+agent_cli = ["default_models.json"]
+
 [tool.pytest.ini_options]
 markers = [
     "ollama_integration: requires running Ollama at localhost:11434",
