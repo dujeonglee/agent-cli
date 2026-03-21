@@ -4,6 +4,7 @@ Integration test models can be changed via:
   1. Environment variable: INTEGRATION_MODELS="model1,model2"
   2. Editing DEFAULT_MODELS list below
 """
+
 from __future__ import annotations
 
 import os
@@ -15,9 +16,9 @@ import requests
 # Change these to use different models for E2E testing.
 # Or set INTEGRATION_MODELS env var (comma-separated).
 DEFAULT_MODELS = [
-    "qwen3-coder:30b",       # Thinking + coding specialized
-    "glm-4.7-flash:q8_0",    # Non-thinking general purpose
-    "qwen3.5:35b",            # Latest generation general purpose
+    "qwen3-coder:30b",  # Thinking + coding specialized
+    "glm-4.7-flash:q8_0",  # Non-thinking general purpose
+    "qwen3.5:35b",  # Latest generation general purpose
 ]
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -54,6 +55,7 @@ def _is_model_available(model: str) -> bool:
 
 # ── Fixtures ──────────────────────────────────────────────
 
+
 @pytest.fixture(scope="session")
 def ollama_available():
     """Skip all integration tests if Ollama is not running."""
@@ -89,6 +91,7 @@ def integration_model(request, ollama_available):
 def ollama_provider():
     """Real OllamaProvider instance."""
     from agent_cli.providers.ollama import OllamaProvider
+
     return OllamaProvider(OLLAMA_BASE_URL)
 
 
@@ -96,6 +99,7 @@ def ollama_provider():
 def model_capabilities(integration_model):
     """Get capabilities for integration model (runtime detection)."""
     from agent_cli.providers.compat import get_capabilities
+
     return get_capabilities(
         integration_model, provider="ollama", base_url=OLLAMA_BASE_URL
     )

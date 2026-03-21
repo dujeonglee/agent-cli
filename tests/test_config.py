@@ -1,4 +1,5 @@
 """Tests for agent_cli.config."""
+
 import json
 
 import pytest
@@ -64,10 +65,13 @@ class TestSaveModelEntry:
         monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
         monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
 
-        result = save_model_entry("new-model:7b", {
-            "context_window": 8192,
-            "max_output_tokens": 2048,
-        })
+        result = save_model_entry(
+            "new-model:7b",
+            {
+                "context_window": 8192,
+                "max_output_tokens": 2048,
+            },
+        )
 
         assert result is True
         assert target.exists()
@@ -78,15 +82,22 @@ class TestSaveModelEntry:
     def test_no_overwrite_existing(self, tmp_path, monkeypatch):
         """Existing model should NOT be overwritten."""
         target = tmp_path / "models.json"
-        target.write_text(json.dumps({
-            "models": {"existing:8b": {"context_window": 4096}},
-        }))
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {"existing:8b": {"context_window": 4096}},
+                }
+            )
+        )
         monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
         monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
 
-        result = save_model_entry("existing:8b", {
-            "context_window": 99999,  # different value
-        })
+        result = save_model_entry(
+            "existing:8b",
+            {
+                "context_window": 99999,  # different value
+            },
+        )
 
         assert result is False
         data = json.loads(target.read_text())
@@ -113,12 +124,20 @@ class TestSearchPathPriority:
         global_dir.mkdir()
         local_dir.mkdir()
 
-        global_file.write_text(json.dumps({
-            "models": {"my-model": {"context_window": 4096}},
-        }))
-        local_file.write_text(json.dumps({
-            "models": {"my-model": {"context_window": 32768}},
-        }))
+        global_file.write_text(
+            json.dumps(
+                {
+                    "models": {"my-model": {"context_window": 4096}},
+                }
+            )
+        )
+        local_file.write_text(
+            json.dumps(
+                {
+                    "models": {"my-model": {"context_window": 32768}},
+                }
+            )
+        )
 
         monkeypatch.setattr(_config, "_SEARCH_PATHS", [local_file, global_file])
         reload_registry()
@@ -132,9 +151,13 @@ class TestSearchPathPriority:
         global_file = tmp_path / "models.json"
         local_file = tmp_path / "nonexistent" / "models.json"  # doesn't exist
 
-        global_file.write_text(json.dumps({
-            "models": {"remote-model": {"context_window": 16384}},
-        }))
+        global_file.write_text(
+            json.dumps(
+                {
+                    "models": {"remote-model": {"context_window": 16384}},
+                }
+            )
+        )
 
         monkeypatch.setattr(_config, "_SEARCH_PATHS", [local_file, global_file])
         reload_registry()

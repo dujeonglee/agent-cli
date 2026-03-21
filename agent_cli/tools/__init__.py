@@ -1,4 +1,5 @@
 """Tool registry and execution."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,8 +8,16 @@ from agent_cli.tools.read_file import tool_read_file
 from agent_cli.tools.write_file import tool_write_file
 from agent_cli.tools.edit_file import tool_edit_file
 from agent_cli.tools.shell import tool_shell
-from agent_cli.tools.registry import TOOL_SCHEMAS, validate_tool_input, get_tool_descriptions
-from agent_cli.tools.truncation import truncate_output, get_truncation_config, TruncationConfig
+from agent_cli.tools.registry import (
+    TOOL_SCHEMAS,
+    validate_tool_input,
+    get_tool_descriptions,
+)
+from agent_cli.tools.truncation import (
+    truncate_output,
+    get_truncation_config,
+    TruncationConfig,
+)
 
 TOOLS: dict[str, Any] = {
     "read_file": tool_read_file,

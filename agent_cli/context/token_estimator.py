@@ -1,4 +1,5 @@
 """Token estimation using chars/4 heuristic (matches pi-mono)."""
+
 from __future__ import annotations
 
 

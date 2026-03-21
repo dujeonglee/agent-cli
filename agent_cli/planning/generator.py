@@ -1,4 +1,5 @@
 """Plan generation: Phase 1 of Planning Mode."""
+
 from __future__ import annotations
 
 from agent_cli.parsing.plan_parser import parse_plan_steps

@@ -1,4 +1,5 @@
 """Tests for agent loop (integration with mocked provider)."""
+
 import json
 from unittest.mock import MagicMock
 
@@ -12,18 +13,20 @@ from agent_cli.providers.compat import ModelCapabilities
 @pytest.fixture
 def caps():
     return ModelCapabilities(
-        context_window=32768, max_output_tokens=4096,
-        supports_structured_output=True, supports_tool_calling=False,
-        supports_thinking=False, thinking_budget=0, supports_strict_schema=False,
+        context_window=32768,
+        max_output_tokens=4096,
+        supports_structured_output=True,
+        supports_tool_calling=False,
+        supports_thinking=False,
+        thinking_budget=0,
+        supports_strict_schema=False,
     )
 
 
 def _make_provider(*responses):
     """Create a mock provider that returns responses in sequence."""
     provider = MagicMock()
-    provider.call.side_effect = [
-        LLMResponse(content=r) for r in responses
-    ]
+    provider.call.side_effect = [LLMResponse(content=r) for r in responses]
     return provider
 
 
@@ -46,15 +49,19 @@ class TestRunLoopFinalAnswer:
         test_file.write_text("hello world")
 
         provider = _make_provider(
-            json.dumps({
-                "thought": "read file",
-                "action": "read_file",
-                "action_input": {"path": str(test_file)},
-            }),
-            json.dumps({
-                "thought": "got it",
-                "final_answer": "File contains: hello world",
-            }),
+            json.dumps(
+                {
+                    "thought": "read file",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "got it",
+                    "final_answer": "File contains: hello world",
+                }
+            ),
         )
         result = run_loop(
             query="Read test.txt",
@@ -69,15 +76,19 @@ class TestRunLoopFinalAnswer:
 class TestRunLoopToolExecution:
     def test_shell_tool(self, caps):
         provider = _make_provider(
-            json.dumps({
-                "thought": "run echo",
-                "action": "shell",
-                "action_input": {"command": "echo hello"},
-            }),
-            json.dumps({
-                "thought": "done",
-                "final_answer": "Executed echo",
-            }),
+            json.dumps(
+                {
+                    "thought": "run echo",
+                    "action": "shell",
+                    "action_input": {"command": "echo hello"},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "done",
+                    "final_answer": "Executed echo",
+                }
+            ),
         )
         result = run_loop(
             query="Run echo hello",
@@ -90,15 +101,19 @@ class TestRunLoopToolExecution:
 
     def test_unknown_tool(self, caps):
         provider = _make_provider(
-            json.dumps({
-                "thought": "t",
-                "action": "nonexistent_tool",
-                "action_input": {},
-            }),
-            json.dumps({
-                "thought": "t",
-                "final_answer": "ok",
-            }),
+            json.dumps(
+                {
+                    "thought": "t",
+                    "action": "nonexistent_tool",
+                    "action_input": {},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "t",
+                    "final_answer": "ok",
+                }
+            ),
         )
         result = run_loop(
             query="Do something",
@@ -130,9 +145,27 @@ class TestRunLoopParseFailure:
 class TestRunLoopMaxIter:
     def test_returns_none_on_max_iter(self, caps):
         provider = _make_provider(
-            json.dumps({"thought": "thinking", "action": "shell", "action_input": {"command": "echo 1"}}),
-            json.dumps({"thought": "thinking", "action": "shell", "action_input": {"command": "echo 2"}}),
-            json.dumps({"thought": "thinking", "action": "shell", "action_input": {"command": "echo 3"}}),
+            json.dumps(
+                {
+                    "thought": "thinking",
+                    "action": "shell",
+                    "action_input": {"command": "echo 1"},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "thinking",
+                    "action": "shell",
+                    "action_input": {"command": "echo 2"},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "thinking",
+                    "action": "shell",
+                    "action_input": {"command": "echo 3"},
+                }
+            ),
         )
         result = run_loop(
             query="Keep going",
@@ -164,9 +197,13 @@ class TestRunLoopQuietMode:
 def caps_tc():
     """Capabilities with tool calling enabled."""
     return ModelCapabilities(
-        context_window=128000, max_output_tokens=4096,
-        supports_structured_output=True, supports_tool_calling=True,
-        supports_thinking=False, thinking_budget=0, supports_strict_schema=True,
+        context_window=128000,
+        max_output_tokens=4096,
+        supports_structured_output=True,
+        supports_tool_calling=True,
+        supports_thinking=False,
+        thinking_budget=0,
+        supports_strict_schema=True,
     )
 
 
@@ -181,15 +218,19 @@ class TestRunLoopNativeToolCalling:
             # First call: tool_use response
             LLMResponse(
                 content="I'll read the file.",
-                tool_calls=[{
-                    "id": "tu_1",
-                    "name": "read_file",
-                    "input": {"path": str(test_file)},
-                }],
+                tool_calls=[
+                    {
+                        "id": "tu_1",
+                        "name": "read_file",
+                        "input": {"path": str(test_file)},
+                    }
+                ],
             ),
             # Second call: final answer (text, no tool_calls)
             LLMResponse(
-                content=json.dumps({"thought": "got it", "final_answer": "File contains hello world"}),
+                content=json.dumps(
+                    {"thought": "got it", "final_answer": "File contains hello world"}
+                ),
                 tool_calls=None,
             ),
         ]
@@ -213,11 +254,13 @@ class TestRunLoopNativeToolCalling:
         provider.call.side_effect = [
             LLMResponse(
                 content="",
-                tool_calls=[{
-                    "id": "call_1",
-                    "name": "shell",
-                    "input": {"command": "echo hi"},
-                }],
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "name": "shell",
+                        "input": {"command": "echo hi"},
+                    }
+                ],
             ),
             LLMResponse(
                 content=json.dumps({"thought": "done", "final_answer": "Executed"}),
@@ -239,7 +282,13 @@ class TestRunLoopNativeToolCalling:
     def test_text_parsing_regression(self, caps):
         """When tool_calls=None, should fall back to text parsing."""
         provider = _make_provider(
-            json.dumps({"thought": "t", "action": "shell", "action_input": {"command": "echo hi"}}),
+            json.dumps(
+                {
+                    "thought": "t",
+                    "action": "shell",
+                    "action_input": {"command": "echo hi"},
+                }
+            ),
             json.dumps({"thought": "done", "final_answer": "ok"}),
         )
 

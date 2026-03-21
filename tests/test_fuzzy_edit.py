@@ -1,4 +1,5 @@
 """Tests for fuzzy edit matching in tools/edit_file."""
+
 import pytest
 
 from agent_cli.tools.read_file import compute_line_hash

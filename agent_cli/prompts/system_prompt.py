@@ -1,4 +1,5 @@
 """Conditional system prompt builder adapted to model capabilities."""
+
 from __future__ import annotations
 
 import json
@@ -89,8 +90,10 @@ def _format_tool_block(
         if schema is None:
             continue
         params = json.dumps(
-            {k: v.get("description", v.get("type", ""))
-             for k, v in schema.parameters.get("properties", {}).items()},
+            {
+                k: v.get("description", v.get("type", ""))
+                for k, v in schema.parameters.get("properties", {}).items()
+            },
         )
         lines.append(f"- {name}: {schema.description}\n  Input JSON: {params}")
 

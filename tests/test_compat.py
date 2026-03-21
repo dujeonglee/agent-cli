@@ -1,4 +1,5 @@
 """Tests for agent_cli.providers.compat."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -59,7 +60,9 @@ class TestGetCapabilities:
 
     def test_static_registry_takes_priority(self):
         """models.json entry should override runtime detection."""
-        caps = get_capabilities("qwen3:32b", provider="ollama", base_url="http://localhost:11434")
+        caps = get_capabilities(
+            "qwen3:32b", provider="ollama", base_url="http://localhost:11434"
+        )
         assert caps.context_window == 32768  # from models.json, not runtime
 
     def test_unregistered_with_runtime_fallback(self):
@@ -88,7 +91,9 @@ class TestOllamaRuntimeDetection:
 
         mock_post.side_effect = [show_resp, probe_resp]
 
-        caps = _detect_ollama_capabilities("http://localhost:11434", "llama3.1:8b-custom")
+        caps = _detect_ollama_capabilities(
+            "http://localhost:11434", "llama3.1:8b-custom"
+        )
         assert caps is not None
         assert caps.context_window == 8192
         assert caps.supports_structured_output is True
@@ -167,7 +172,9 @@ class TestOllamaRuntimeDetection:
 
         mock_post.side_effect = [show_resp, probe_resp]
 
-        caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3-coder-next:q8_0")
+        caps = _detect_ollama_capabilities(
+            "http://localhost:11434", "qwen3-coder-next:q8_0"
+        )
         assert caps is not None
         assert caps.context_window == 262144
 
@@ -190,7 +197,10 @@ class TestOpenAICompatRuntimeDetection:
         mock_post.return_value = mock_resp
 
         from agent_cli.providers.compat import _detect_openai_compat_capabilities
-        caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "local-model")
+
+        caps = _detect_openai_compat_capabilities(
+            "http://localhost:8080/v1", "local-model"
+        )
         assert caps is not None
         assert caps.supports_thinking is True
         assert caps.thinking_format == "think"
@@ -206,7 +216,10 @@ class TestOpenAICompatRuntimeDetection:
         mock_post.return_value = mock_resp
 
         from agent_cli.providers.compat import _detect_openai_compat_capabilities
-        caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "local-model")
+
+        caps = _detect_openai_compat_capabilities(
+            "http://localhost:8080/v1", "local-model"
+        )
         assert caps is not None
         assert caps.supports_thinking is False
         assert caps.thinking_format == ""
@@ -216,5 +229,6 @@ class TestOpenAICompatRuntimeDetection:
         mock_post.side_effect = Exception("Connection refused")
 
         from agent_cli.providers.compat import _detect_openai_compat_capabilities
+
         caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "model")
         assert caps is None

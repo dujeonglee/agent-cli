@@ -1,4 +1,5 @@
 """Ollama API provider adapter with constrained decoding support."""
+
 from __future__ import annotations
 
 import sys

@@ -75,7 +75,9 @@ class TestTypeValidation:
 
 class TestConvertToAnthropicTools:
     def test_converts_all_tools(self):
-        tools = convert_to_anthropic_tools(["read_file", "write_file", "edit_file", "shell"])
+        tools = convert_to_anthropic_tools(
+            ["read_file", "write_file", "edit_file", "shell"]
+        )
         assert len(tools) == 4
         assert all("name" in t and "input_schema" in t for t in tools)
 
@@ -104,7 +106,9 @@ class TestConvertToAnthropicTools:
 
 class TestConvertToOpenAITools:
     def test_converts_all_tools(self):
-        tools = convert_to_openai_tools(["read_file", "write_file", "edit_file", "shell"])
+        tools = convert_to_openai_tools(
+            ["read_file", "write_file", "edit_file", "shell"]
+        )
         assert len(tools) == 4
         assert all(t["type"] == "function" for t in tools)
 

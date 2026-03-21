@@ -1,4 +1,5 @@
 """Tests for context/manager."""
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -128,6 +129,8 @@ class TestSerializationTruncation:
         # Check the prompt sent to LLM for compression
         if mock_provider.call.called:
             call_args = mock_provider.call.call_args
-            messages_arg = call_args.kwargs.get("messages") or call_args[1].get("messages")
+            messages_arg = call_args.kwargs.get("messages") or call_args[1].get(
+                "messages"
+            )
             prompt_text = messages_arg[0]["content"]
             assert "truncated" in prompt_text

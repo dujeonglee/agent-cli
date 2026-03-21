@@ -1,4 +1,5 @@
 """Tests for provider adapters (mocked HTTP)."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,11 +49,13 @@ def _mock_response(json_data, status_code=200):
 class TestAnthropicProvider:
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_call_sends_correct_request(self, mock_post, caps_structured):
-        mock_post.return_value = _mock_response({
-            "content": [{"type": "text", "text": '{"thought": "hi"}'}],
-            "usage": {"input_tokens": 10, "output_tokens": 5},
-            "stop_reason": "end_turn",
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": '{"thought": "hi"}'}],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "stop_reason": "end_turn",
+            }
+        )
 
         provider = AnthropicProvider("https://api.anthropic.com/v1", "test-key")
         result = provider.call(
@@ -75,10 +78,17 @@ class TestAnthropicProvider:
 class TestOpenAICompatProvider:
     @patch("agent_cli.providers.openai_compat.requests.post")
     def test_with_structured_output(self, mock_post, caps_structured):
-        mock_post.return_value = _mock_response({
-            "choices": [{"message": {"content": '{"thought": "ok"}'}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"thought": "ok"}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        )
 
         provider = OpenAICompatProvider("https://api.openai.com/v1", "test-key")
         result = provider.call(
@@ -94,9 +104,13 @@ class TestOpenAICompatProvider:
 
     @patch("agent_cli.providers.openai_compat.requests.post")
     def test_without_structured_output(self, mock_post, caps_basic):
-        mock_post.return_value = _mock_response({
-            "choices": [{"message": {"content": "plain text"}, "finish_reason": "stop"}],
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [
+                    {"message": {"content": "plain text"}, "finish_reason": "stop"}
+                ],
+            }
+        )
 
         provider = OpenAICompatProvider("http://localhost:8080/v1", "")
         result = provider.call(
@@ -114,12 +128,14 @@ class TestOpenAICompatProvider:
 class TestOllamaProvider:
     @patch("agent_cli.providers.ollama.requests.post")
     def test_with_constrained_decoding(self, mock_post, caps_structured):
-        mock_post.return_value = _mock_response({
-            "message": {"content": '{"thought": "hi"}'},
-            "prompt_eval_count": 10,
-            "eval_count": 5,
-            "done_reason": "stop",
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "message": {"content": '{"thought": "hi"}'},
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+                "done_reason": "stop",
+            }
+        )
 
         provider = OllamaProvider("http://localhost:11434")
         result = provider.call(
@@ -136,9 +152,11 @@ class TestOllamaProvider:
 
     @patch("agent_cli.providers.ollama.requests.post")
     def test_without_constrained_decoding(self, mock_post, caps_basic):
-        mock_post.return_value = _mock_response({
-            "message": {"content": '{"thought": "hi"}'},
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "message": {"content": '{"thought": "hi"}'},
+            }
+        )
 
         provider = OllamaProvider("http://localhost:11434")
         provider.call(
@@ -168,21 +186,36 @@ def caps_tool_calling():
 class TestAnthropicToolCalling:
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_tool_use_extracted(self, mock_post, caps_tool_calling):
-        mock_post.return_value = _mock_response({
-            "content": [
-                {"type": "text", "text": "I'll read the file."},
-                {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {"path": "a.py"}},
-            ],
-            "usage": {"input_tokens": 10, "output_tokens": 5},
-            "stop_reason": "tool_use",
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "content": [
+                    {"type": "text", "text": "I'll read the file."},
+                    {
+                        "type": "tool_use",
+                        "id": "tu_1",
+                        "name": "read_file",
+                        "input": {"path": "a.py"},
+                    },
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "stop_reason": "tool_use",
+            }
+        )
 
         provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
-        tools = [{"name": "read_file", "description": "Read file", "input_schema": {"type": "object"}}]
+        tools = [
+            {
+                "name": "read_file",
+                "description": "Read file",
+                "input_schema": {"type": "object"},
+            }
+        ]
         result = provider.call(
             messages=[{"role": "user", "content": "read a.py"}],
-            system="sys", model="claude-sonnet-4-20250514",
-            capabilities=caps_tool_calling, tools=tools,
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_tool_calling,
+            tools=tools,
         )
 
         assert result.tool_calls is not None
@@ -194,17 +227,27 @@ class TestAnthropicToolCalling:
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_tools_sent_in_request(self, mock_post, caps_tool_calling):
-        mock_post.return_value = _mock_response({
-            "content": [{"type": "text", "text": "ok"}],
-            "stop_reason": "end_turn",
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+            }
+        )
 
         provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
-        tools = [{"name": "shell", "description": "Run cmd", "input_schema": {"type": "object"}}]
+        tools = [
+            {
+                "name": "shell",
+                "description": "Run cmd",
+                "input_schema": {"type": "object"},
+            }
+        ]
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="claude-sonnet-4-20250514",
-            capabilities=caps_tool_calling, tools=tools,
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_tool_calling,
+            tools=tools,
         )
 
         body = mock_post.call_args.kwargs["json"]
@@ -214,15 +257,18 @@ class TestAnthropicToolCalling:
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_no_tool_calling_regression(self, mock_post, caps_basic):
         """When supports_tool_calling=False, tool_calls should be None."""
-        mock_post.return_value = _mock_response({
-            "content": [{"type": "text", "text": '{"thought": "t"}'}],
-            "stop_reason": "end_turn",
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": '{"thought": "t"}'}],
+                "stop_reason": "end_turn",
+            }
+        )
 
         provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="claude-sonnet-4-20250514",
+            system="sys",
+            model="claude-sonnet-4-20250514",
             capabilities=caps_basic,
         )
 
@@ -234,30 +280,38 @@ class TestAnthropicToolCalling:
 class TestOpenAIToolCalling:
     @patch("agent_cli.providers.openai_compat.requests.post")
     def test_tool_calls_extracted(self, mock_post, caps_tool_calling):
-        mock_post.return_value = _mock_response({
-            "choices": [{
-                "message": {
-                    "content": None,
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "shell",
-                            "arguments": '{"command": "ls"}',
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "shell",
+                                        "arguments": '{"command": "ls"}',
+                                    },
+                                }
+                            ],
                         },
-                    }],
-                },
-                "finish_reason": "tool_calls",
-            }],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        })
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        )
 
         provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
         tools = [{"type": "function", "function": {"name": "shell", "parameters": {}}}]
         result = provider.call(
             messages=[{"role": "user", "content": "ls"}],
-            system="sys", model="gpt-4o",
-            capabilities=caps_tool_calling, tools=tools,
+            system="sys",
+            model="gpt-4o",
+            capabilities=caps_tool_calling,
+            tools=tools,
         )
 
         assert result.tool_calls is not None
@@ -268,16 +322,20 @@ class TestOpenAIToolCalling:
     @patch("agent_cli.providers.openai_compat.requests.post")
     def test_tools_sent_no_response_format(self, mock_post, caps_tool_calling):
         """When tool calling is used, response_format should NOT be set."""
-        mock_post.return_value = _mock_response({
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+        )
 
         provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
         tools = [{"type": "function", "function": {"name": "shell", "parameters": {}}}]
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="gpt-4o",
-            capabilities=caps_tool_calling, tools=tools,
+            system="sys",
+            model="gpt-4o",
+            capabilities=caps_tool_calling,
+            tools=tools,
         )
 
         body = mock_post.call_args.kwargs["json"]
@@ -287,14 +345,19 @@ class TestOpenAIToolCalling:
     @patch("agent_cli.providers.openai_compat.requests.post")
     def test_no_tool_calling_regression(self, mock_post, caps_basic):
         """When supports_tool_calling=False, should use response_format instead."""
-        mock_post.return_value = _mock_response({
-            "choices": [{"message": {"content": '{"thought":"t"}'}, "finish_reason": "stop"}],
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [
+                    {"message": {"content": '{"thought":"t"}'}, "finish_reason": "stop"}
+                ],
+            }
+        )
 
         provider = OpenAICompatProvider("http://localhost:8080/v1", "")
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="local",
+            system="sys",
+            model="local",
             capabilities=caps_basic,
         )
 
@@ -332,13 +395,16 @@ def caps_no_thinking():
 class TestThinkingBudget:
     @patch("agent_cli.providers.ollama.requests.post")
     def test_ollama_num_predict(self, mock_post, caps_thinking):
-        mock_post.return_value = _mock_response({
-            "message": {"content": '{"thought": "hi"}'},
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "message": {"content": '{"thought": "hi"}'},
+            }
+        )
         provider = OllamaProvider("http://localhost:11434")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="qwen3:32b",
+            system="sys",
+            model="qwen3:32b",
             capabilities=caps_thinking,
         )
         body = mock_post.call_args.kwargs["json"]
@@ -346,13 +412,16 @@ class TestThinkingBudget:
 
     @patch("agent_cli.providers.ollama.requests.post")
     def test_ollama_no_thinking_no_options(self, mock_post, caps_no_thinking):
-        mock_post.return_value = _mock_response({
-            "message": {"content": '{"thought": "hi"}'},
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "message": {"content": '{"thought": "hi"}'},
+            }
+        )
         provider = OllamaProvider("http://localhost:11434")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="llama3.1:8b",
+            system="sys",
+            model="llama3.1:8b",
             capabilities=caps_no_thinking,
         )
         body = mock_post.call_args.kwargs["json"]
@@ -360,14 +429,17 @@ class TestThinkingBudget:
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_thinking_param(self, mock_post, caps_thinking):
-        mock_post.return_value = _mock_response({
-            "content": [{"type": "text", "text": "ok"}],
-            "stop_reason": "end_turn",
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+            }
+        )
         provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="claude-sonnet-4-20250514",
+            system="sys",
+            model="claude-sonnet-4-20250514",
             capabilities=caps_thinking,
         )
         body = mock_post.call_args.kwargs["json"]
@@ -376,14 +448,17 @@ class TestThinkingBudget:
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_no_thinking_regression(self, mock_post, caps_no_thinking):
-        mock_post.return_value = _mock_response({
-            "content": [{"type": "text", "text": "ok"}],
-            "stop_reason": "end_turn",
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+            }
+        )
         provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="claude-sonnet-4-20250514",
+            system="sys",
+            model="claude-sonnet-4-20250514",
             capabilities=caps_no_thinking,
         )
         body = mock_post.call_args.kwargs["json"]
@@ -392,13 +467,16 @@ class TestThinkingBudget:
 
     @patch("agent_cli.providers.openai_compat.requests.post")
     def test_openai_reasoning_effort(self, mock_post, caps_thinking):
-        mock_post.return_value = _mock_response({
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+        )
         provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="o3-mini",
+            system="sys",
+            model="o3-mini",
             capabilities=caps_thinking,
         )
         body = mock_post.call_args.kwargs["json"]
@@ -406,13 +484,16 @@ class TestThinkingBudget:
 
     @patch("agent_cli.providers.openai_compat.requests.post")
     def test_openai_no_thinking_regression(self, mock_post, caps_no_thinking):
-        mock_post.return_value = _mock_response({
-            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-        })
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+        )
         provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
-            system="sys", model="gpt-4o",
+            system="sys",
+            model="gpt-4o",
             capabilities=caps_no_thinking,
         )
         body = mock_post.call_args.kwargs["json"]

@@ -1,4 +1,5 @@
 """CLI entry point: run and chat commands."""
+
 from __future__ import annotations
 
 import os
@@ -29,7 +30,11 @@ def _run_shell_inline(cmd: str) -> None:
     console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
     try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30,
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.stdout:
             console.print(result.stdout, end="", highlight=False)
@@ -103,7 +108,10 @@ def _dispatch_skill(
 
 
 def _setup_provider(
-    provider: str, model: str | None, base_url: str | None, api_key: str | None,
+    provider: str,
+    model: str | None,
+    base_url: str | None,
+    api_key: str | None,
     quiet: bool = False,
 ):
     """Resolve settings + create provider + get capabilities. Returns tuple."""
@@ -111,7 +119,10 @@ def _setup_provider(
     from agent_cli.render import render_model_detected, render_model_loaded
 
     resolved_url, resolved_model, resolved_key = _resolve_provider(
-        provider, model, base_url, api_key,
+        provider,
+        model,
+        base_url,
+        api_key,
     )
     llm_provider = create_provider(provider, resolved_url, resolved_key)
     capabilities = get_capabilities(resolved_model, provider, resolved_url)
@@ -119,6 +130,7 @@ def _setup_provider(
     if not quiet:
         if was_runtime_detected():
             from agent_cli.config import _GLOBAL_MODELS_PATH
+
             render_model_detected(
                 resolved_model, capabilities, provider, str(_GLOBAL_MODELS_PATH)
             )
@@ -132,43 +144,59 @@ def _setup_provider(
 def run(
     query: str = typer.Argument(..., help="Task to execute"),
     provider: str = typer.Option(
-        "ollama", "--provider", "-p",
+        "ollama",
+        "--provider",
+        "-p",
         help="LLM provider: anthropic | openai | ollama",
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m",
+        None,
+        "--model",
+        "-m",
         help="Model ID (uses provider default if not specified)",
     ),
     base_url: Optional[str] = typer.Option(
-        None, "--base-url",
+        None,
+        "--base-url",
         help="API base URL (uses provider default if not specified)",
     ),
     api_key: Optional[str] = typer.Option(
-        None, "--api-key",
+        None,
+        "--api-key",
         help="API key (auto-detects from environment if not specified)",
     ),
     max_iter: int = typer.Option(
-        0, "--max-iter", "-n",
+        0,
+        "--max-iter",
+        "-n",
         help="Maximum iterations (0 = unlimited)",
     ),
     max_depth: int = typer.Option(
-        2, "--max-depth",
+        2,
+        "--max-depth",
         help="Maximum subagent nesting depth",
     ),
     delegate_timeout: int = typer.Option(
-        300, "--delegate-timeout",
+        300,
+        "--delegate-timeout",
         help="Timeout in seconds for subagent delegation",
     ),
     verbose: bool = typer.Option(
-        False, "--verbose", "-v",
+        False,
+        "--verbose",
+        "-v",
         help="Show raw LLM response",
     ),
     quiet: bool = typer.Option(
-        False, "--quiet", hidden=True,
+        False,
+        "--quiet",
+        hidden=True,
         help="Output only the final answer (used internally by subagents)",
     ),
     depth: int = typer.Option(
-        0, "--depth", hidden=True,
+        0,
+        "--depth",
+        hidden=True,
         help="Current nesting depth (used internally by subagents)",
     ),
 ):
@@ -189,10 +217,18 @@ def run(
     # Skill dispatch: /skill-name args
     if query.startswith("/") and not query.startswith("/sh"):
         answer = _dispatch_skill(
-            query, llm_provider, capabilities, resolved_model,
-            provider, resolved_url, resolved_key,
-            max_iter=max_iter, verbose=verbose, quiet=quiet,
-            max_depth=max_depth, delegate_timeout=delegate_timeout,
+            query,
+            llm_provider,
+            capabilities,
+            resolved_model,
+            provider,
+            resolved_url,
+            resolved_key,
+            max_iter=max_iter,
+            verbose=verbose,
+            quiet=quiet,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
         )
         if answer is not None:
             if quiet:
@@ -225,67 +261,88 @@ def run(
 def plan(
     goal: str = typer.Argument(..., help="Planning task description"),
     provider: str = typer.Option(
-        "ollama", "--provider", "-p",
+        "ollama",
+        "--provider",
+        "-p",
         help="LLM provider: anthropic | openai | ollama",
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m",
+        None,
+        "--model",
+        "-m",
         help="Model ID (uses provider default if not specified)",
     ),
     base_url: Optional[str] = typer.Option(
-        None, "--base-url",
+        None,
+        "--base-url",
         help="API base URL (uses provider default if not specified)",
     ),
     api_key: Optional[str] = typer.Option(
-        None, "--api-key",
+        None,
+        "--api-key",
         help="API key (auto-detects from environment if not specified)",
     ),
     max_iter: int = typer.Option(
-        0, "--max-iter", "-n",
+        0,
+        "--max-iter",
+        "-n",
         help="Maximum iterations per step (0 = unlimited)",
     ),
     max_steps: int = typer.Option(
-        20, "--max-steps",
+        20,
+        "--max-steps",
         help="Maximum number of steps in plan",
     ),
     max_depth: int = typer.Option(
-        2, "--max-depth",
+        2,
+        "--max-depth",
         help="Maximum subagent nesting depth",
     ),
     delegate_timeout: int = typer.Option(
-        300, "--delegate-timeout",
+        300,
+        "--delegate-timeout",
         help="Timeout in seconds for subagent delegation",
     ),
     auto_approve: bool = typer.Option(
-        False, "--auto-approve",
+        False,
+        "--auto-approve",
         help="Skip review, execute immediately",
     ),
     plan_only: bool = typer.Option(
-        False, "--plan-only",
+        False,
+        "--plan-only",
         help="Generate plan and display, don't execute",
     ),
     plan_model: Optional[str] = typer.Option(
-        None, "--plan-model",
+        None,
+        "--plan-model",
         help="Model for plan generation (defaults to --model)",
     ),
     step_max_iter: int = typer.Option(
-        10, "--step-max-iter",
+        10,
+        "--step-max-iter",
         help="Maximum iterations per step (default: 10)",
     ),
     save_plan: Optional[str] = typer.Option(
-        None, "--save-plan",
+        None,
+        "--save-plan",
         help="Save plan to file (auto-generates path if empty)",
     ),
     resume: Optional[str] = typer.Option(
-        None, "--resume",
+        None,
+        "--resume",
         help="Resume execution from a saved plan file",
     ),
     verbose: bool = typer.Option(
-        False, "--verbose", "-v",
+        False,
+        "--verbose",
+        "-v",
         help="Show raw LLM response",
     ),
     quiet: bool = typer.Option(
-        False, "--quiet", hidden=True,
+        False,
+        "--quiet",
+        hidden=True,
     ),
 ):
     """Plan-driven execution with review and step-by-step control."""
@@ -302,7 +359,9 @@ def plan(
     # Resolve plan-model (defaults to execution model)
     if plan_model:
         plan_model_resolved = plan_model
-        plan_capabilities = get_capabilities(plan_model_resolved, provider, resolved_url)
+        plan_capabilities = get_capabilities(
+            plan_model_resolved, provider, resolved_url
+        )
     else:
         plan_model_resolved = resolved_model
         plan_capabilities = capabilities
@@ -334,6 +393,7 @@ def plan(
 
             if plan_only:
                 from agent_cli.render import render_plan as rp
+
                 rp(plan_obj)
                 if save_plan:
                     plan_obj.save(save_plan)
@@ -379,35 +439,47 @@ def plan(
 @app.command()
 def chat(
     provider: str = typer.Option(
-        "ollama", "--provider", "-p",
+        "ollama",
+        "--provider",
+        "-p",
         help="LLM provider: anthropic | openai | ollama",
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m",
+        None,
+        "--model",
+        "-m",
         help="Model ID (uses provider default if not specified)",
     ),
     base_url: Optional[str] = typer.Option(
-        None, "--base-url",
+        None,
+        "--base-url",
         help="API base URL (uses provider default if not specified)",
     ),
     api_key: Optional[str] = typer.Option(
-        None, "--api-key",
+        None,
+        "--api-key",
         help="API key (auto-detects from environment if not specified)",
     ),
     max_iter: int = typer.Option(
-        0, "--max-iter", "-n",
+        0,
+        "--max-iter",
+        "-n",
         help="Maximum iterations per turn (0 = unlimited)",
     ),
     max_depth: int = typer.Option(
-        2, "--max-depth",
+        2,
+        "--max-depth",
         help="Maximum subagent nesting depth",
     ),
     delegate_timeout: int = typer.Option(
-        300, "--delegate-timeout",
+        300,
+        "--delegate-timeout",
         help="Timeout in seconds for subagent delegation",
     ),
     verbose: bool = typer.Option(
-        False, "--verbose", "-v",
+        False,
+        "--verbose",
+        "-v",
         help="Show raw LLM response",
     ),
 ):
@@ -423,18 +495,20 @@ def chat(
     )
 
     console.print()
-    console.print(Panel(
-        Text("Interactive Chat Mode", justify="center", style="bold bright_cyan"),
-        subtitle=Text(
-            f"provider={provider}  model={resolved_model}  "
-            f"ctx_window={capabilities.context_window}  /quit to exit",
-            style=C["muted"],
-            justify="center",
-        ),
-        border_style="bright_cyan",
-        box=box.DOUBLE_EDGE,
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            Text("Interactive Chat Mode", justify="center", style="bold bright_cyan"),
+            subtitle=Text(
+                f"provider={provider}  model={resolved_model}  "
+                f"ctx_window={capabilities.context_window}  /quit to exit",
+                style=C["muted"],
+                justify="center",
+            ),
+            border_style="bright_cyan",
+            box=box.DOUBLE_EDGE,
+            padding=(0, 2),
+        )
+    )
     console.print()
 
     turn = 0
@@ -523,10 +597,17 @@ def chat(
                 continue
 
             result = _dispatch_skill(
-                query, llm_provider, capabilities, resolved_model,
-                provider, resolved_url, resolved_key,
-                max_iter=max_iter, verbose=verbose,
-                max_depth=max_depth, delegate_timeout=delegate_timeout,
+                query,
+                llm_provider,
+                capabilities,
+                resolved_model,
+                provider,
+                resolved_url,
+                resolved_key,
+                max_iter=max_iter,
+                verbose=verbose,
+                max_depth=max_depth,
+                delegate_timeout=delegate_timeout,
             )
             if result is not None:
                 turn += 1
@@ -536,13 +617,13 @@ def chat(
                 continue
 
             console.print(f"[{C['error']}]Unknown command: /{cmd_name}[/]")
-            console.print(f"[{C['muted']}]Try /skills for available skills, or /quit, /clear, /sh, /plan[/]")
+            console.print(
+                f"[{C['muted']}]Try /skills for available skills, or /quit, /clear, /sh, /plan[/]"
+            )
             continue
 
         turn += 1
-        console.print(Rule(
-            f"[{C['muted']}]TURN {turn}[/]", style=C["muted"]
-        ))
+        console.print(Rule(f"[{C['muted']}]TURN {turn}[/]", style=C["muted"]))
 
         run_loop(
             query=query,

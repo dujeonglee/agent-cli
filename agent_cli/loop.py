@@ -1,4 +1,5 @@
 """Agent loop: ReAct pattern with M1/M2 module integration."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,13 @@ from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
-from agent_cli.render import render_header, render_iter_sep, render_raw, render_status, render_step
+from agent_cli.render import (
+    render_header,
+    render_iter_sep,
+    render_raw,
+    render_status,
+    render_step,
+)
 from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
 from agent_cli.tools.registry import convert_to_anthropic_tools, convert_to_openai_tools
@@ -136,19 +143,26 @@ def run_loop(
 
                 if not quiet:
                     render_step(
-                        "action", "", iteration,
+                        "action",
+                        "",
+                        iteration,
                         tool_name=tool_name,
                         tool_input=json.dumps(tool_input, ensure_ascii=False)
-                        if isinstance(tool_input, dict) else str(tool_input),
+                        if isinstance(tool_input, dict)
+                        else str(tool_input),
                     )
 
                 # Execute tool
                 if tool_name == "delegate" and include_delegate:
                     try:
                         obs = tool_delegate(
-                            args=tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)},
-                            provider=provider_name, model=model,
-                            base_url=base_url, api_key=api_key,
+                            args=tool_input
+                            if isinstance(tool_input, dict)
+                            else {"task": str(tool_input)},
+                            provider=provider_name,
+                            model=model,
+                            base_url=base_url,
+                            api_key=api_key,
                             timeout=delegate_timeout,
                         )
                     except Exception as e:
@@ -163,7 +177,9 @@ def run_loop(
                             cfg = get_truncation_config(capabilities, tool_name)
                             obs = OBS_SUCCESS.format(result=truncate_output(raw, cfg))
                         except Exception as e:
-                            obs = OBS_ERROR_HINT.format(error=e, hint="Check parameters and try again.")
+                            obs = OBS_ERROR_HINT.format(
+                                error=e, hint="Check parameters and try again."
+                            )
                 else:
                     obs = OBS_ERROR.format(error=f"Unknown tool '{tool_name}'")
 
@@ -173,13 +189,16 @@ def run_loop(
                 tools_called.append(tool_name)
 
             # Format messages based on provider
-            new_msgs = _format_tool_call_messages(
-                provider_name, response, observations
-            )
+            new_msgs = _format_tool_call_messages(provider_name, response, observations)
             messages.extend(new_msgs)
             if ctx:
                 for m in new_msgs:
-                    ctx.add(m["role"], m.get("content", "") if isinstance(m.get("content"), str) else json.dumps(m.get("content", "")))
+                    ctx.add(
+                        m["role"],
+                        m.get("content", "")
+                        if isinstance(m.get("content"), str)
+                        else json.dumps(m.get("content", "")),
+                    )
             continue
 
         # 5. Text parsing path (Ollama, fallback)
@@ -230,7 +249,9 @@ def run_loop(
             if tool_name == "delegate" and include_delegate:
                 try:
                     observation = tool_delegate(
-                        args=tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)},
+                        args=tool_input
+                        if isinstance(tool_input, dict)
+                        else {"task": str(tool_input)},
                         provider=provider_name,
                         model=model,
                         base_url=base_url,
@@ -238,7 +259,9 @@ def run_loop(
                         timeout=delegate_timeout,
                     )
                 except Exception as e:
-                    observation = OBS_ERROR_HINT.format(error=e, hint="Check task description and try again.")
+                    observation = OBS_ERROR_HINT.format(
+                        error=e, hint="Check task description and try again."
+                    )
                 tools_called.append("delegate")
 
             # Regular tool
@@ -246,7 +269,9 @@ def run_loop(
                 # Validate input
                 valid, err = validate_tool_input(tool_name, tool_input)
                 if not valid:
-                    observation = OBS_ERROR_HINT.format(error=err, hint="Fix action_input and retry.")
+                    observation = OBS_ERROR_HINT.format(
+                        error=err, hint="Fix action_input and retry."
+                    )
                 else:
                     try:
                         raw_output = execute_tool(tool_name, tool_input)
@@ -254,7 +279,9 @@ def run_loop(
                         truncated = truncate_output(raw_output, trunc_cfg)
                         observation = OBS_SUCCESS.format(result=truncated)
                     except Exception as e:
-                        observation = OBS_ERROR_HINT.format(error=e, hint="Check parameters and try again.")
+                        observation = OBS_ERROR_HINT.format(
+                            error=e, hint="Check parameters and try again."
+                        )
                 tools_called.append(tool_name)
             else:
                 avail = ", ".join(TOOLS) + (", delegate" if include_delegate else "")
@@ -315,7 +342,10 @@ def _format_tool_call_messages(
         obs_text = "\n\n".join(o["output"] for o in observations)
         return [
             {"role": "assistant", "content": response.content or ""},
-            {"role": "user", "content": f"Observation: {obs_text}\n\nContinue. Respond with JSON only."},
+            {
+                "role": "user",
+                "content": f"Observation: {obs_text}\n\nContinue. Respond with JSON only.",
+            },
         ]
 
 
@@ -326,21 +356,25 @@ def _format_anthropic_tool_messages(response, observations: list[dict]) -> list[
     if response.content:
         assistant_content.append({"type": "text", "text": response.content})
     for tc in response.tool_calls or []:
-        assistant_content.append({
-            "type": "tool_use",
-            "id": tc["id"],
-            "name": tc["name"],
-            "input": tc["input"],
-        })
+        assistant_content.append(
+            {
+                "type": "tool_use",
+                "id": tc["id"],
+                "name": tc["name"],
+                "input": tc["input"],
+            }
+        )
 
     # Build tool result user message
     tool_results = []
     for obs in observations:
-        tool_results.append({
-            "type": "tool_result",
-            "tool_use_id": obs["tool_call"]["id"],
-            "content": obs["output"],
-        })
+        tool_results.append(
+            {
+                "type": "tool_result",
+                "tool_use_id": obs["tool_call"]["id"],
+                "content": obs["output"],
+            }
+        )
 
     return [
         {"role": "assistant", "content": assistant_content},

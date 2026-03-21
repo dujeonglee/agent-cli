@@ -2,6 +2,7 @@
 
 Covers: OpenAI, vLLM, LM Studio, mlx-lm, and any /v1/chat/completions endpoint.
 """
+
 from __future__ import annotations
 
 import json
@@ -77,11 +78,13 @@ class OpenAICompatProvider:
                     tool_input = json.loads(tc["function"]["arguments"])
                 except (json.JSONDecodeError, ValueError, KeyError):
                     tool_input = {}
-                tool_calls.append({
-                    "id": tc.get("id", ""),
-                    "name": tc["function"]["name"],
-                    "input": tool_input,
-                })
+                tool_calls.append(
+                    {
+                        "id": tc.get("id", ""),
+                        "name": tc["function"]["name"],
+                        "input": tool_input,
+                    }
+                )
 
         usage = None
         usage_data = data.get("usage")

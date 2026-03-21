@@ -1,4 +1,5 @@
 """Plan data model with serialization support."""
+
 from __future__ import annotations
 
 import json
@@ -56,7 +57,9 @@ class Plan:
         """Save plan to JSON file."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+        p.write_text(
+            json.dumps(self.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     @classmethod
     def load(cls, path: str | Path) -> Plan:

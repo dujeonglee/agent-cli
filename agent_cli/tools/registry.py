@@ -1,4 +1,5 @@
 """Tool schema registry and input validation."""
+
 from __future__ import annotations
 
 import json
@@ -72,7 +73,10 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to run"},
-                "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"},
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default 30)",
+                },
             },
             "required": ["command"],
         },
@@ -80,9 +84,7 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
 }
 
 
-def validate_tool_input(
-    tool_name: str, action_input: Any
-) -> tuple[bool, str | None]:
+def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | None]:
     """Validate action_input against tool schema.
 
     Returns (True, None) on success, (False, error_message) on failure.
@@ -90,7 +92,10 @@ def validate_tool_input(
     """
     schema = TOOL_SCHEMAS.get(tool_name)
     if schema is None:
-        return False, f"Unknown tool: '{tool_name}'. Available: {', '.join(TOOL_SCHEMAS)}"
+        return (
+            False,
+            f"Unknown tool: '{tool_name}'. Available: {', '.join(TOOL_SCHEMAS)}",
+        )
 
     # Auto-convert string to dict (common small model error)
     if isinstance(action_input, str):
@@ -207,17 +212,21 @@ def convert_to_anthropic_tools(
         schema = TOOL_SCHEMAS.get(name)
         if schema is None:
             continue
-        tools.append({
-            "name": schema.name,
-            "description": schema.description,
-            "input_schema": schema.parameters,
-        })
+        tools.append(
+            {
+                "name": schema.name,
+                "description": schema.description,
+                "input_schema": schema.parameters,
+            }
+        )
     if include_delegate:
-        tools.append({
-            "name": DELEGATE_TOOL_SCHEMA.name,
-            "description": DELEGATE_TOOL_SCHEMA.description,
-            "input_schema": DELEGATE_TOOL_SCHEMA.parameters,
-        })
+        tools.append(
+            {
+                "name": DELEGATE_TOOL_SCHEMA.name,
+                "description": DELEGATE_TOOL_SCHEMA.description,
+                "input_schema": DELEGATE_TOOL_SCHEMA.parameters,
+            }
+        )
     return tools
 
 
@@ -230,23 +239,27 @@ def convert_to_openai_tools(
         schema = TOOL_SCHEMAS.get(name)
         if schema is None:
             continue
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": schema.name,
-                "description": schema.description,
-                "parameters": schema.parameters,
-            },
-        })
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": schema.name,
+                    "description": schema.description,
+                    "parameters": schema.parameters,
+                },
+            }
+        )
     if include_delegate:
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": DELEGATE_TOOL_SCHEMA.name,
-                "description": DELEGATE_TOOL_SCHEMA.description,
-                "parameters": DELEGATE_TOOL_SCHEMA.parameters,
-            },
-        })
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": DELEGATE_TOOL_SCHEMA.name,
+                    "description": DELEGATE_TOOL_SCHEMA.description,
+                    "parameters": DELEGATE_TOOL_SCHEMA.parameters,
+                },
+            }
+        )
     return tools
 
 
@@ -255,8 +268,10 @@ def get_tool_descriptions() -> str:
     lines = []
     for name, schema in TOOL_SCHEMAS.items():
         params_str = json.dumps(
-            {k: v.get("description", v.get("type", ""))
-             for k, v in schema.parameters.get("properties", {}).items()},
+            {
+                k: v.get("description", v.get("type", ""))
+                for k, v in schema.parameters.get("properties", {}).items()
+            },
         )
         lines.append(f"- {name}: {schema.description}\n  Input: {params_str}")
     return "\n".join(lines)

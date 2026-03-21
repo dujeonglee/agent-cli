@@ -4,6 +4,7 @@ Run: pytest tests/test_integration.py -v
 Skip: pytest tests/ -m "not ollama_integration"
 Custom models: INTEGRATION_MODELS="model1,model2" pytest tests/test_integration.py -v
 """
+
 from __future__ import annotations
 
 import pytest
@@ -22,7 +23,9 @@ pytestmark = pytest.mark.ollama_integration
 
 
 class TestSimpleConversation:
-    def test_simple_question(self, integration_model, ollama_provider, model_capabilities):
+    def test_simple_question(
+        self, integration_model, ollama_provider, model_capabilities
+    ):
         """Simple question → final_answer without tool use."""
         result = run_loop(
             query="What is 2+2? Answer with just the number.",
@@ -37,7 +40,9 @@ class TestSimpleConversation:
 
 
 class TestReadFile:
-    def test_read_file_content(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_read_file_content(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Read file → tool call → content in answer."""
         test_file = tmp_path / "test_data.txt"
         test_file.write_text("UNIQUE_MARKER_XYZ789")
@@ -70,7 +75,9 @@ class TestShellCommand:
 
 
 class TestWriteFile:
-    def test_create_file(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_create_file(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Create file → write_file tool → file exists on disk."""
         target = tmp_path / "agent_output.txt"
 
@@ -89,7 +96,9 @@ class TestWriteFile:
 
 
 class TestEditFile:
-    def test_edit_file_content(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_edit_file_content(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Edit file → read_file + edit_file → content changed."""
         f = tmp_path / "edit_target.py"
         f.write_text('def greet():\n    return "OLD_VALUE"\n')
@@ -108,7 +117,9 @@ class TestEditFile:
 
 
 class TestPlanGeneration:
-    def test_generate_plan(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_generate_plan(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Plan generation → returns Plan with steps."""
         test_file = tmp_path / "readme.txt"
         test_file.write_text("This is a test readme file.\nIt has two lines.")
@@ -127,7 +138,9 @@ class TestPlanGeneration:
 
 
 class TestPlanExecution:
-    def test_plan_execute(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_plan_execute(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Plan generation + execution → result."""
         data_file = tmp_path / "data.txt"
         data_file.write_text("apple\nbanana\ncherry\n")
@@ -154,7 +167,9 @@ class TestPlanExecution:
 
 
 class TestConstrainedDecoding:
-    def test_json_response_parseable(self, integration_model, ollama_provider, model_capabilities):
+    def test_json_response_parseable(
+        self, integration_model, ollama_provider, model_capabilities
+    ):
         """Constrained decoding → valid JSON response → parseable."""
         from agent_cli.prompts.system_prompt import build_system_prompt
         from agent_cli.tools import TOOLS
@@ -164,7 +179,9 @@ class TestConstrainedDecoding:
             active_tools=list(TOOLS.keys()),
         )
         response = ollama_provider.call(
-            messages=[{"role": "user", "content": "What is 1+1? Provide final_answer."}],
+            messages=[
+                {"role": "user", "content": "What is 1+1? Provide final_answer."}
+            ],
             system=system,
             model=integration_model,
             capabilities=model_capabilities,
@@ -177,7 +194,9 @@ class TestConstrainedDecoding:
 
 
 class TestMultiStepToolUse:
-    def test_create_then_read(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_create_then_read(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Multi-step: write_file → read_file → answer."""
         target = tmp_path / "multi_step.txt"
 
@@ -207,7 +226,9 @@ class TestRuntimeCapabilityDetection:
 
 
 class TestProbeBasedThinkingDetection:
-    def test_thinking_detection_matches_actual(self, integration_model, ollama_provider, model_capabilities):
+    def test_thinking_detection_matches_actual(
+        self, integration_model, ollama_provider, model_capabilities
+    ):
         """Probe-based thinking detection should produce consistent results."""
         from agent_cli.providers.compat import _probe_thinking_support
 
@@ -221,7 +242,9 @@ class TestProbeBasedThinkingDetection:
 
 
 class TestPlanPersistence:
-    def test_save_and_resume(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_save_and_resume(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Save plan → load → done steps skipped."""
         data_file = tmp_path / "persist_test.txt"
         data_file.write_text("test content for persistence")
@@ -247,13 +270,17 @@ class TestPlanPersistence:
 
 
 class TestSkillExecution:
-    def test_review_code_skill(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_review_code_skill(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Run /review-code skill with a real file → result contains file analysis."""
         from agent_cli.skills.executor import execute_skill
         from agent_cli.skills.models import Skill
 
         test_file = tmp_path / "sample.py"
-        test_file.write_text("def add(a, b):\n    return a + b\n\ndef divide(a, b):\n    return a / b\n")
+        test_file.write_text(
+            "def add(a, b):\n    return a + b\n\ndef divide(a, b):\n    return a / b\n"
+        )
 
         skill = Skill(
             name="review-code",
@@ -274,13 +301,17 @@ class TestSkillExecution:
         assert result is not None
         assert len(result) > 10
 
-    def test_summarize_skill(self, integration_model, ollama_provider, model_capabilities, tmp_path):
+    def test_summarize_skill(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
         """Run /summarize skill → result contains summary."""
         from agent_cli.skills.executor import execute_skill
         from agent_cli.skills.models import Skill
 
         test_file = tmp_path / "readme.txt"
-        test_file.write_text("This is a test project.\nIt does math operations.\nVersion 1.0.\n")
+        test_file.write_text(
+            "This is a test project.\nIt does math operations.\nVersion 1.0.\n"
+        )
 
         skill = Skill(
             name="summarize",

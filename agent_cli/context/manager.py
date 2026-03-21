@@ -1,4 +1,5 @@
 """Context manager with structured summarization and incremental compression."""
+
 from __future__ import annotations
 
 from agent_cli.constants import CHARS_PER_TOKEN, CONTEXT_RESERVE_RATIO
@@ -49,14 +50,18 @@ class ContextManager:
         """Return messages with summary prepended if available."""
         msgs: list[dict] = []
         if self._summary:
-            msgs.append({
-                "role": "user",
-                "content": f"[Previous conversation summary]\n{self._summary}",
-            })
-            msgs.append({
-                "role": "assistant",
-                "content": "Understood. I have the context from our previous conversation.",
-            })
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": f"[Previous conversation summary]\n{self._summary}",
+                }
+            )
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": "Understood. I have the context from our previous conversation.",
+                }
+            )
         msgs.extend(self.messages)
         return msgs
 
@@ -86,9 +91,7 @@ class ContextManager:
 
         if self._summary is None:
             # First compression: full summarization
-            prompt_text = (
-                f"Conversation to summarize:\n\n{serialized}"
-            )
+            prompt_text = f"Conversation to summarize:\n\n{serialized}"
             system = SUMMARIZATION_PROMPT
         else:
             # Incremental update: add to existing summary
@@ -96,7 +99,9 @@ class ContextManager:
                 existing_summary=self._summary,
                 new_messages=serialized,
             )
-            system = "You are a summarization assistant. Follow the instructions exactly."
+            system = (
+                "You are a summarization assistant. Follow the instructions exactly."
+            )
 
         try:
             response = self.provider.call(
@@ -110,6 +115,7 @@ class ContextManager:
         except Exception as e:
             # Compression failed — keep messages as-is to avoid data loss
             import sys
+
             print(f"[warn] Context compression failed: {e}", file=sys.stderr)
             pass
 
@@ -121,6 +127,9 @@ class ContextManager:
             content = m.get("content", "")
             # Truncate very long tool results for summarization
             if len(content) > 2000:
-                content = content[:2000] + f"\n[... {len(content) - 2000} more characters truncated]"
+                content = (
+                    content[:2000]
+                    + f"\n[... {len(content) - 2000} more characters truncated]"
+                )
             parts.append(f"[{role}]: {content}")
         return "\n\n".join(parts)

@@ -8,6 +8,7 @@ Handles common issues:
 5. Unquoted keys
 6. JSON embedded in surrounding text
 """
+
 from __future__ import annotations
 
 import json
@@ -108,7 +109,7 @@ def _fix_quotes(text: str) -> str:
 def _fix_unquoted_keys(text: str) -> str:
     """Add double quotes around unquoted JSON keys."""
     return re.sub(
-        r'([{,]\s*)([a-zA-Z_]\w*)(\s*:)',
+        r"([{,]\s*)([a-zA-Z_]\w*)(\s*:)",
         r'\1"\2"\3',
         text,
     )

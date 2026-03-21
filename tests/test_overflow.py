@@ -9,9 +9,10 @@ class TestIsContextOverflow:
         assert is_context_overflow("Error: prompt is too long") is True
 
     def test_openai_pattern(self):
-        assert is_context_overflow(
-            "This model's maximum context length is 4096 tokens"
-        ) is True
+        assert (
+            is_context_overflow("This model's maximum context length is 4096 tokens")
+            is True
+        )
 
     def test_ollama_pattern(self):
         assert is_context_overflow("context length exceeded") is True
@@ -30,18 +31,26 @@ class TestIsContextOverflow:
 class TestCheckPreemptiveOverflow:
     def test_within_limit(self):
         caps = ModelCapabilities(
-            context_window=4096, max_output_tokens=512,
-            supports_structured_output=False, supports_tool_calling=False,
-            supports_thinking=False, thinking_budget=0, supports_strict_schema=False,
+            context_window=4096,
+            max_output_tokens=512,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
         )
         msgs = [{"role": "user", "content": "a" * 100}]  # ~25 tokens
         assert check_preemptive_overflow(msgs, caps) is False
 
     def test_over_limit(self):
         caps = ModelCapabilities(
-            context_window=100, max_output_tokens=50,
-            supports_structured_output=False, supports_tool_calling=False,
-            supports_thinking=False, thinking_budget=0, supports_strict_schema=False,
+            context_window=100,
+            max_output_tokens=50,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
         )
         # 4000 chars ≈ 1000 tokens, context_window=100, reserve=2048
         msgs = [{"role": "user", "content": "a" * 4000}]

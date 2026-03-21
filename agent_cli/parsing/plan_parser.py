@@ -1,4 +1,5 @@
 """Parse plan steps from LLM output."""
+
 from __future__ import annotations
 
 import json
@@ -10,9 +11,7 @@ from agent_cli.planning.models import PlanStep
 _PLAN_MARKER = re.compile(r">>>PLAN\s*\n", re.I)
 
 # Matches numbered lines: "1. desc", "1) desc", "1: desc", "- desc"
-_STEP_PATTERN = re.compile(
-    r"^\s*(?:(\d+)\s*[.):\-]\s*|[-*]\s+)(.+)$", re.MULTILINE
-)
+_STEP_PATTERN = re.compile(r"^\s*(?:(\d+)\s*[.):\-]\s*|[-*]\s+)(.+)$", re.MULTILINE)
 
 
 def parse_plan_steps(text: str) -> list[PlanStep]:
@@ -26,7 +25,7 @@ def parse_plan_steps(text: str) -> list[PlanStep]:
     # Strategy 1: >>>PLAN marker
     marker_match = _PLAN_MARKER.search(text)
     if marker_match:
-        steps = _extract_numbered_steps(text[marker_match.end():])
+        steps = _extract_numbered_steps(text[marker_match.end() :])
         if steps:
             return steps
 

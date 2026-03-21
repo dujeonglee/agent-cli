@@ -1,4 +1,5 @@
 """Multi-layer tool output truncation with model-adaptive limits."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,17 +33,11 @@ def get_truncation_config(
     direction = _TOOL_DIRECTIONS.get(tool_name, "head")
 
     if capabilities.context_window <= SMALL_MODEL_CONTEXT:
-        return TruncationConfig(
-            max_lines=50, max_bytes=2_000, direction=direction
-        )
+        return TruncationConfig(max_lines=50, max_bytes=2_000, direction=direction)
     elif capabilities.context_window <= MEDIUM_MODEL_CONTEXT:
-        return TruncationConfig(
-            max_lines=100, max_bytes=4_000, direction=direction
-        )
+        return TruncationConfig(max_lines=100, max_bytes=4_000, direction=direction)
     else:
-        return TruncationConfig(
-            max_lines=200, max_bytes=8_000, direction=direction
-        )
+        return TruncationConfig(max_lines=200, max_bytes=8_000, direction=direction)
 
 
 def truncate_output(text: str, config: TruncationConfig) -> str:
@@ -87,7 +82,7 @@ def truncate_output(text: str, config: TruncationConfig) -> str:
             # Trim to nearest newline
             nl = result.rfind("\n")
             if nl >= 0:
-                result = result[: nl]
+                result = result[:nl]
         truncated = True
 
     # Step 3: Add notice

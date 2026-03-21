@@ -1,4 +1,5 @@
 """Plan execution: Phase 3 of Planning Mode."""
+
 from __future__ import annotations
 
 import re
@@ -14,8 +15,12 @@ from agent_cli.tools import TOOLS
 _TOOL_KEYWORDS = {
     "read_file": re.compile(r"\b(read|읽|view|show|check|inspect|examine)\b", re.I),
     "write_file": re.compile(r"\b(write|create|생성|작성|new file|save to)\b", re.I),
-    "edit_file": re.compile(r"\b(edit|modify|수정|변경|update|change|replace|refactor|fix)\b", re.I),
-    "shell": re.compile(r"\b(run|execute|실행|테스트|test|install|build|command|pip|npm)\b", re.I),
+    "edit_file": re.compile(
+        r"\b(edit|modify|수정|변경|update|change|replace|refactor|fix)\b", re.I
+    ),
+    "shell": re.compile(
+        r"\b(run|execute|실행|테스트|test|install|build|command|pip|npm)\b", re.I
+    ),
 }
 
 
@@ -155,17 +160,17 @@ def _build_step_context(plan: Plan, current_idx: int) -> str:
 
 def _handle_failure(plan: Plan, step) -> str:
     """Prompt user for failure handling. Returns: 'retry' | 'skip' | 'abort'."""
-    console.print(
-        f"\n[{C['error']}]Step {step.id} failed:[/] {step.description}"
-    )
+    console.print(f"\n[{C['error']}]Step {step.id} failed:[/] {step.description}")
     if step.result:
         console.print(f"[{C['muted']}]{step.result[:200]}[/]")
 
     while True:
         try:
-            choice = console.input(
-                f"  [{C['accent']}][R]etry / [S]kip / [A]bort:[/] "
-            ).strip().lower()
+            choice = (
+                console.input(f"  [{C['accent']}][R]etry / [S]kip / [A]bort:[/] ")
+                .strip()
+                .lower()
+            )
         except (EOFError, KeyboardInterrupt):
             return "abort"
 

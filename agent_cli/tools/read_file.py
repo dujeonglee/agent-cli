@@ -2,6 +2,7 @@
 
 Hashline system: each line is tagged as LINE#HASH:content for precise editing.
 """
+
 from __future__ import annotations
 
 import re

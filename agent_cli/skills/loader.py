@@ -4,6 +4,7 @@ Search paths (project root takes priority):
   1. .agent-cli/skills/*.md  (project local)
   2. ~/.agent-cli/skills/*.md (user global)
 """
+
 from __future__ import annotations
 
 import re
@@ -61,6 +62,7 @@ def _parse_skill_file(path: Path) -> Skill | None:
         text = path.read_text(encoding="utf-8")
     except Exception as e:
         import sys
+
         print(f"[warn] Cannot read skill file {path}: {e}", file=sys.stderr)
         return None
 

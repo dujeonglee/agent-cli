@@ -6,9 +6,13 @@ from agent_cli.providers.compat import ModelCapabilities
 
 def _make_caps(ctx_window: int = 32768) -> ModelCapabilities:
     return ModelCapabilities(
-        context_window=ctx_window, max_output_tokens=4096,
-        supports_structured_output=True, supports_tool_calling=False,
-        supports_thinking=False, thinking_budget=0, supports_strict_schema=False,
+        context_window=ctx_window,
+        max_output_tokens=4096,
+        supports_structured_output=True,
+        supports_tool_calling=False,
+        supports_thinking=False,
+        thinking_budget=0,
+        supports_strict_schema=False,
     )
 
 
@@ -22,9 +26,7 @@ class TestBuildPlanGenerationPrompt:
         assert "10" in prompt
 
     def test_contains_tools(self):
-        prompt = build_plan_generation_prompt(
-            _make_caps(), ["read_file", "shell"]
-        )
+        prompt = build_plan_generation_prompt(_make_caps(), ["read_file", "shell"])
         assert "read_file" in prompt
         assert "shell" in prompt
 

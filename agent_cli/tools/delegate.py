@@ -1,4 +1,5 @@
 """Subagent delegation tool."""
+
 from __future__ import annotations
 
 import os
@@ -51,10 +52,14 @@ def tool_delegate(
         raise RuntimeError(f"Delegation rejected: {validation_err}")
 
     cmd_args = [
-        "run", task_str,
-        "--provider", provider,
-        "--model", model,
-        "--base-url", base_url,
+        "run",
+        task_str,
+        "--provider",
+        provider,
+        "--model",
+        model,
+        "--base-url",
+        base_url,
         "--quiet",
     ]
     if api_key:
@@ -63,9 +68,7 @@ def tool_delegate(
     cmd = _build_subprocess_cmd(cmd_args)
 
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
         if result.returncode == 0 and stdout:

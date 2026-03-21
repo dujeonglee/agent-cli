@@ -5,6 +5,7 @@ Stage 1: json.loads(strip_markdown(text))      -- fast path
 Stage 2: json_repair(text)                      -- fix incomplete/malformed JSON
 Stage 3: regex field extraction                  -- last resort
 """
+
 from __future__ import annotations
 
 import json
@@ -38,7 +39,7 @@ class ReActResult:
 
 def _sanitize_surrogates(text: str) -> str:
     """Remove unpaired Unicode surrogates that break JSON parsing."""
-    return re.sub(r'[\ud800-\udfff]', '', text)
+    return re.sub(r"[\ud800-\udfff]", "", text)
 
 
 def _strip_thinking_blocks(text: str) -> tuple[str, str | None]:
@@ -146,9 +147,7 @@ def _regex_extract(text: str) -> dict | None:
 
     m = re.search(r'"final_answer"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.S)
     if m:
-        result["final_answer"] = (
-            m.group(1).replace('\\"', '"').replace("\\n", "\n")
-        )
+        result["final_answer"] = m.group(1).replace('\\"', '"').replace("\\n", "\n")
 
     return result if result else None
 

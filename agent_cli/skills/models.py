@@ -1,4 +1,5 @@
 """Skill data model — Claude Code compatible format."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

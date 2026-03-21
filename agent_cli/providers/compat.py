@@ -1,4 +1,5 @@
 """Model capabilities: what each model supports."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -110,9 +111,7 @@ def _detect_runtime_capabilities(
     return None
 
 
-def _detect_ollama_capabilities(
-    base_url: str, model: str
-) -> ModelCapabilities | None:
+def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities | None:
     """Query Ollama /api/show for model info, then probe for thinking support."""
     try:
         # Step 1: Get model metadata
@@ -133,9 +132,7 @@ def _detect_ollama_capabilities(
         max_output = min(context_length // 4, 4096)
 
         # Step 2: Probe for thinking support by sending a simple prompt
-        supports_thinking, thinking_format = _probe_thinking_support(
-            base_url, model
-        )
+        supports_thinking, thinking_format = _probe_thinking_support(base_url, model)
         thinking_budget = 4096 if supports_thinking else 0
 
         return ModelCapabilities(
@@ -160,9 +157,7 @@ _THINKING_TAG_PATTERN = re.compile(
 )
 
 
-def _probe_thinking_support(
-    base_url: str, model: str
-) -> tuple[bool, str]:
+def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:
     """Send a simple prompt and check if the model produces thinking blocks.
 
     Returns (supports_thinking, thinking_format).

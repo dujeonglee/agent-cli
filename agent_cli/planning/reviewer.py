@@ -1,4 +1,5 @@
 """Plan review and editing: Phase 2 of Planning Mode."""
+
 from __future__ import annotations
 
 from agent_cli.planning.models import Plan, PlanStep
@@ -18,10 +19,14 @@ def review_plan(plan: Plan, auto_approve: bool = False) -> str:
 
     while True:
         try:
-            choice = console.input(
-                "  Approve? [bold][Y][/]es / [bold][E][/]dit / "
-                "[bold][R][/]egenerate / [bold][N][/]o: "
-            ).strip().lower()
+            choice = (
+                console.input(
+                    "  Approve? [bold][Y][/]es / [bold][E][/]dit / "
+                    "[bold][R][/]egenerate / [bold][N][/]o: "
+                )
+                .strip()
+                .lower()
+            )
         except (EOFError, KeyboardInterrupt):
             return "cancel"
 

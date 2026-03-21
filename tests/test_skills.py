@@ -1,4 +1,5 @@
 """Tests for skill system."""
+
 from __future__ import annotations
 
 import json
@@ -25,9 +26,13 @@ def _clear_skill_cache():
 @pytest.fixture
 def caps():
     return ModelCapabilities(
-        context_window=32768, max_output_tokens=4096,
-        supports_structured_output=True, supports_tool_calling=False,
-        supports_thinking=False, thinking_budget=0, supports_strict_schema=False,
+        context_window=32768,
+        max_output_tokens=4096,
+        supports_structured_output=True,
+        supports_tool_calling=False,
+        supports_thinking=False,
+        thinking_budget=0,
+        supports_strict_schema=False,
         thinking_format="",
     )
 
@@ -74,9 +79,7 @@ class TestArgumentSubstitution:
         assert "only-one-arg" in result
 
     def test_mixed_args_and_arguments(self):
-        result = substitute_arguments(
-            "Read $ARGUMENTS, focus on $1", "src/main.py"
-        )
+        result = substitute_arguments("Read $ARGUMENTS, focus on $1", "src/main.py")
         assert "src/main.py" in result
 
 
@@ -104,11 +107,7 @@ class TestSkillLoader:
     def test_parse_minimal_frontmatter(self, tmp_path):
         skill_file = tmp_path / "simple.md"
         skill_file.write_text(
-            "---\n"
-            "name: simple\n"
-            "description: A simple skill\n"
-            "---\n\n"
-            "Do $ARGUMENTS\n"
+            "---\nname: simple\ndescription: A simple skill\n---\n\nDo $ARGUMENTS\n"
         )
         skill = _parse_skill_file(skill_file)
         assert skill is not None
@@ -124,12 +123,7 @@ class TestSkillLoader:
 
     def test_filename_as_fallback_name(self, tmp_path):
         skill_file = tmp_path / "my-skill.md"
-        skill_file.write_text(
-            "---\n"
-            "description: No name field\n"
-            "---\n\n"
-            "Do something\n"
-        )
+        skill_file.write_text("---\ndescription: No name field\n---\n\nDo something\n")
         skill = _parse_skill_file(skill_file)
         assert skill is not None
         assert skill.name == "my-skill"
@@ -146,6 +140,7 @@ class TestSkillLoader:
         )
 
         import agent_cli.skills.loader as loader
+
         monkeypatch.setattr(loader, "_SEARCH_PATHS", [skills_dir])
 
         skills = load_skills()
@@ -166,6 +161,7 @@ class TestSkillLoader:
         )
 
         import agent_cli.skills.loader as loader
+
         monkeypatch.setattr(loader, "_SEARCH_PATHS", [local_dir, global_dir])
 
         skills = load_skills()
@@ -203,12 +199,18 @@ class TestSkillExecution:
         )
 
         skill = Skill(
-            name="s", description="d", prompt_template="Do $ARGUMENTS",
+            name="s",
+            description="d",
+            prompt_template="Do $ARGUMENTS",
             max_iter=7,
         )
         execute_skill(
-            skill=skill, arguments="task", provider=provider,
-            capabilities=caps, model="m", quiet=True,
+            skill=skill,
+            arguments="task",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            quiet=True,
         )
         # Skill's max_iter should be used (verified by run_loop not exceeding it)
         assert provider.call.called
@@ -218,6 +220,7 @@ class TestBuiltinSkills:
     def test_builtin_skills_loadable(self):
         """Built-in skills in .agent-cli/skills/ should be parseable."""
         from pathlib import Path
+
         skills_dir = Path(__file__).parent.parent / ".agent-cli" / "skills"
         if not skills_dir.exists():
             pytest.skip("Built-in skills directory not found")

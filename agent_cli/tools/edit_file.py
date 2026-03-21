@@ -1,4 +1,5 @@
 """Edit file tool with hashline verification and fuzzy matching."""
+
 from __future__ import annotations
 
 import re
@@ -80,9 +81,7 @@ def tool_edit_file(args: dict) -> str:
         pos = edit.get("pos")
         end = edit.get("end")
         if op not in ("replace", "append", "prepend"):
-            raise RuntimeError(
-                f"Unknown edit op: '{op}'. Use replace|append|prepend."
-            )
+            raise RuntimeError(f"Unknown edit op: '{op}'. Use replace|append|prepend.")
         if pos:
             _, was_fuzzy = fuzzy_verify_ref(file_lines, pos)
             if was_fuzzy:

@@ -1,4 +1,5 @@
 """Skill executor — substitute arguments and call run_loop."""
+
 from __future__ import annotations
 
 import re
@@ -18,7 +19,7 @@ def substitute_arguments(template: str, arguments: str) -> str:
         result = result.replace(f"${i}", arg)
 
     # Clean up unreplaced $N patterns (if more placeholders than args)
-    result = re.sub(r'\$\d+', '', result)
+    result = re.sub(r"\$\d+", "", result)
 
     return result
 

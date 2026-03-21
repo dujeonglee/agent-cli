@@ -4,6 +4,7 @@ Search paths (project local takes priority):
   1. .agent-cli/models.json  (project local, read-only)
   2. ~/.agent-cli/models.json (user global, auto-save target)
 """
+
 from __future__ import annotations
 
 import json
@@ -80,9 +81,7 @@ def get_provider_defaults(provider: str) -> ProviderDefaults:
     registry = _load_registry()
     entry = registry.get("provider_defaults", {}).get(provider, {})
 
-    fb_url, fb_model = _PROVIDER_FALLBACKS.get(
-        provider, ("http://localhost:11434", "")
-    )
+    fb_url, fb_model = _PROVIDER_FALLBACKS.get(provider, ("http://localhost:11434", ""))
 
     return ProviderDefaults(
         base_url=entry.get("base_url", fb_url),

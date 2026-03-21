@@ -1,4 +1,5 @@
 """Tests for planning module (integration with mocked provider)."""
+
 import json
 from unittest.mock import MagicMock
 
@@ -18,9 +19,13 @@ from agent_cli.providers.compat import ModelCapabilities
 @pytest.fixture
 def caps():
     return ModelCapabilities(
-        context_window=32768, max_output_tokens=4096,
-        supports_structured_output=True, supports_tool_calling=False,
-        supports_thinking=False, thinking_budget=0, supports_strict_schema=False,
+        context_window=32768,
+        max_output_tokens=4096,
+        supports_structured_output=True,
+        supports_tool_calling=False,
+        supports_thinking=False,
+        thinking_budget=0,
+        supports_strict_schema=False,
     )
 
 
@@ -70,7 +75,10 @@ class TestBuildStepContext:
     def test_first_step(self):
         plan = Plan(
             goal="Test goal",
-            steps=[PlanStep(id=1, description="Step 1"), PlanStep(id=2, description="Step 2")],
+            steps=[
+                PlanStep(id=1, description="Step 1"),
+                PlanStep(id=2, description="Step 2"),
+            ],
         )
         ctx = _build_step_context(plan, 0)
         assert "Test goal" in ctx
@@ -81,7 +89,9 @@ class TestBuildStepContext:
         plan = Plan(
             goal="Test goal",
             steps=[
-                PlanStep(id=1, description="Step 1", status="done", result="Done step 1"),
+                PlanStep(
+                    id=1, description="Step 1", status="done", result="Done step 1"
+                ),
                 PlanStep(id=2, description="Step 2"),
             ],
         )
@@ -95,12 +105,19 @@ class TestExecutePlan:
     def test_executes_all_steps(self, caps):
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(content=json.dumps({"thought": "t", "final_answer": "Step 1 done"})),
-            LLMResponse(content=json.dumps({"thought": "t", "final_answer": "Step 2 done"})),
+            LLMResponse(
+                content=json.dumps({"thought": "t", "final_answer": "Step 1 done"})
+            ),
+            LLMResponse(
+                content=json.dumps({"thought": "t", "final_answer": "Step 2 done"})
+            ),
         ]
         plan = Plan(
             goal="Test",
-            steps=[PlanStep(id=1, description="Do 1"), PlanStep(id=2, description="Do 2")],
+            steps=[
+                PlanStep(id=1, description="Do 1"),
+                PlanStep(id=2, description="Do 2"),
+            ],
         )
         result = execute_plan(
             plan=plan,
@@ -117,18 +134,25 @@ class TestExecutePlan:
         """Resume: done steps are skipped."""
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(content=json.dumps({"thought": "t", "final_answer": "Step 2 done"})),
+            LLMResponse(
+                content=json.dumps({"thought": "t", "final_answer": "Step 2 done"})
+            ),
         ]
         plan = Plan(
             goal="Test",
             steps=[
-                PlanStep(id=1, description="Do 1", status="done", result="Already done"),
+                PlanStep(
+                    id=1, description="Do 1", status="done", result="Already done"
+                ),
                 PlanStep(id=2, description="Do 2"),
             ],
         )
         result = execute_plan(
-            plan=plan, provider=provider, capabilities=caps,
-            model="test-model", quiet=True,
+            plan=plan,
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
         )
         assert result is not None
         # Provider should only be called once (for step 2)
@@ -144,8 +168,12 @@ class TestExecutePlan:
         save_file = tmp_path / "plan.json"
 
         execute_plan(
-            plan=plan, provider=provider, capabilities=caps,
-            model="test-model", quiet=True, save_path=str(save_file),
+            plan=plan,
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+            save_path=str(save_file),
         )
 
         assert save_file.exists()
@@ -185,7 +213,9 @@ class TestPlanSerialization:
         assert loaded.steps[0].result == "OK"
 
     def test_step_roundtrip(self):
-        step = PlanStep(id=3, description="Do something", status="failed", result="Error")
+        step = PlanStep(
+            id=3, description="Do something", status="failed", result="Error"
+        )
         restored = PlanStep.from_dict(step.to_dict())
         assert restored.id == 3
         assert restored.status == "failed"

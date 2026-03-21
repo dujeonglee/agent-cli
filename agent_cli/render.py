@@ -1,4 +1,5 @@
 """Rich terminal rendering helpers."""
+
 from __future__ import annotations
 
 from rich import box
@@ -36,18 +37,20 @@ def render_header(provider: str, model: str, max_iter: int) -> None:
     t.append("AGENTIC LOOP", style="bold bright_cyan")
     t.append("  ·  Typer + Rich", style="grey50")
     iter_label = str(max_iter) if max_iter > 0 else "∞"
-    console.print(Panel(
-        t,
-        subtitle=Text(
-            f"provider={provider}  model={model}  max_iter={iter_label}  "
-            "ReAct·JSONFormat·NoToolAPI",
-            style=C["muted"],
-            justify="center",
-        ),
-        border_style="bright_cyan",
-        box=box.DOUBLE_EDGE,
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            t,
+            subtitle=Text(
+                f"provider={provider}  model={model}  max_iter={iter_label}  "
+                "ReAct·JSONFormat·NoToolAPI",
+                style=C["muted"],
+                justify="center",
+            ),
+            border_style="bright_cyan",
+            box=box.DOUBLE_EDGE,
+            padding=(0, 2),
+        )
+    )
     console.print()
 
 
@@ -73,14 +76,16 @@ def render_step(
     else:
         body = Text(content, style="white")
 
-    console.print(Panel(
-        body,
-        title=header,
-        title_align="left",
-        border_style=color,
-        box=box.ROUNDED,
-        padding=(0, 1),
-    ))
+    console.print(
+        Panel(
+            body,
+            title=header,
+            title_align="left",
+            border_style=color,
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
+    )
 
 
 def render_raw(text: str, iteration: int, verbose: bool) -> None:
@@ -90,22 +95,22 @@ def render_raw(text: str, iteration: int, verbose: bool) -> None:
             f"[dim](use --verbose to view)[/dim][/]"
         )
         return
-    console.print(Panel(
-        Text(text, style=C["raw"]),
-        title=Text(
-            f"{ICONS['raw']} RAW LLM RESPONSE  iter {iteration}", style=C["raw"]
-        ),
-        title_align="left",
-        border_style=C["raw"],
-        box=box.ROUNDED,
-        padding=(0, 1),
-    ))
+    console.print(
+        Panel(
+            Text(text, style=C["raw"]),
+            title=Text(
+                f"{ICONS['raw']} RAW LLM RESPONSE  iter {iteration}", style=C["raw"]
+            ),
+            title_align="left",
+            border_style=C["raw"],
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
+    )
 
 
 def render_iter_sep(iteration: int) -> None:
-    console.print(Rule(
-        f"[{C['muted']}]ITERATION {iteration}[/]", style=C["muted"]
-    ))
+    console.print(Rule(f"[{C['muted']}]ITERATION {iteration}[/]", style=C["muted"]))
 
 
 def render_status(state: str, message: str, iteration: int = 0) -> None:
@@ -118,29 +123,42 @@ def render_status(state: str, message: str, iteration: int = 0) -> None:
 
 # ── Model info rendering ─────────────────────────
 
-def render_model_detected(model: str, capabilities, provider: str, saved_path: str) -> None:
+
+def render_model_detected(
+    model: str, capabilities, provider: str, saved_path: str
+) -> None:
     """Display detailed model info when newly detected at runtime."""
     yes, no = "✓", "✗"
-    thinking_info = f"{yes} (budget: {capabilities.thinking_budget:,}, format: {capabilities.thinking_format})" if capabilities.supports_thinking else no
+    thinking_info = (
+        f"{yes} (budget: {capabilities.thinking_budget:,}, format: {capabilities.thinking_format})"
+        if capabilities.supports_thinking
+        else no
+    )
 
     body = Text()
     body.append(f"  {model}", style="bold bright_cyan")
     body.append(f" ({provider})\n\n", style=C["muted"])
     body.append(f"  Context Window:    {capabilities.context_window:,} tokens\n")
     body.append(f"  Max Output:        {capabilities.max_output_tokens:,} tokens\n")
-    body.append(f"  Structured Output: {yes if capabilities.supports_structured_output else no}\n")
-    body.append(f"  Tool Calling:      {yes if capabilities.supports_tool_calling else no}\n")
+    body.append(
+        f"  Structured Output: {yes if capabilities.supports_structured_output else no}\n"
+    )
+    body.append(
+        f"  Tool Calling:      {yes if capabilities.supports_tool_calling else no}\n"
+    )
     body.append(f"  Thinking:          {thinking_info}\n\n")
     body.append(f"  Saved to {saved_path}", style=C["muted"])
 
-    console.print(Panel(
-        body,
-        title=Text("Model Detected", style="bold bright_cyan"),
-        title_align="left",
-        border_style="bright_cyan",
-        box=box.ROUNDED,
-        padding=(0, 1),
-    ))
+    console.print(
+        Panel(
+            body,
+            title=Text("Model Detected", style="bold bright_cyan"),
+            title_align="left",
+            border_style="bright_cyan",
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
+    )
 
 
 def render_model_loaded(model: str, capabilities) -> None:
@@ -179,12 +197,14 @@ def render_plan(plan) -> None:
     t = Text(justify="center")
     t.append(f"PLAN · {len(plan.steps)} steps", style="bold bright_cyan")
 
-    console.print(Panel(
-        t,
-        border_style="bright_cyan",
-        box=box.DOUBLE_EDGE,
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            t,
+            border_style="bright_cyan",
+            box=box.DOUBLE_EDGE,
+            padding=(0, 2),
+        )
+    )
     console.print()
 
     for step in plan.steps:

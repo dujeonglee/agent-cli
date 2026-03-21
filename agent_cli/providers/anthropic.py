@@ -1,4 +1,5 @@
 """Anthropic API provider adapter with native tool calling support."""
+
 from __future__ import annotations
 
 import requests
@@ -66,11 +67,13 @@ class AnthropicProvider:
             elif block.get("type") == "tool_use":
                 if tool_calls is None:
                     tool_calls = []
-                tool_calls.append({
-                    "id": block["id"],
-                    "name": block["name"],
-                    "input": block["input"],  # already a dict
-                })
+                tool_calls.append(
+                    {
+                        "id": block["id"],
+                        "name": block["name"],
+                        "input": block["input"],  # already a dict
+                    }
+                )
 
         usage = None
         usage_data = data.get("usage")

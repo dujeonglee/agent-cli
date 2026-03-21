@@ -90,7 +90,9 @@ class TestStage0Failure:
 
 class TestActionInputTypes:
     def test_dict_action_input(self):
-        text = '{"thought": "t", "action": "read_file", "action_input": {"path": "f.py"}}'
+        text = (
+            '{"thought": "t", "action": "read_file", "action_input": {"path": "f.py"}}'
+        )
         result = parse_react(text)
         assert isinstance(result.action_input, dict)
 
@@ -157,7 +159,9 @@ class TestThinkingBlockStripping:
         assert result.parse_stage == 1
 
     def test_think_tags_case_insensitive(self):
-        text = '<THINK>uppercase reasoning</THINK>\n{"thought": "t", "final_answer": "ok"}'
+        text = (
+            '<THINK>uppercase reasoning</THINK>\n{"thought": "t", "final_answer": "ok"}'
+        )
         result = parse_react(text)
         assert result.thinking == "uppercase reasoning"
         assert result.parse_stage == 1
