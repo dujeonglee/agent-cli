@@ -160,6 +160,10 @@ _THINKING_TAG_PATTERN = re.compile(
 def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:
     """Send a simple prompt and check if the model produces thinking blocks.
 
+    Checks two locations:
+    1. message.thinking field (Ollama API for Qwen3, Qwen3.5)
+    2. <think>/<reasoning> tags in message.content (DeepSeek-R1, etc.)
+
     Returns (supports_thinking, thinking_format).
     """
     try:
@@ -170,15 +174,21 @@ def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:
                 "model": model,
                 "stream": False,
                 "messages": [
-                    {"role": "user", "content": "Say hello."},
+                    {"role": "user", "content": "What is 2+2?"},
                 ],
             },
             timeout=30,
         )
         r.raise_for_status()
-        content = r.json().get("message", {}).get("content", "")
+        msg = r.json().get("message", {})
 
-        # Check for thinking tags in response
+        # Check 1: Ollama thinking field (Qwen3, Qwen3.5)
+        thinking_field = msg.get("thinking", "")
+        if thinking_field and len(thinking_field.strip()) > 0:
+            return True, "thinking_field"
+
+        # Check 2: Thinking tags in content (DeepSeek-R1, etc.)
+        content = msg.get("content", "")
         match = _THINKING_TAG_PATTERN.search(content)
         if match:
             return True, match.group(1).lower()
