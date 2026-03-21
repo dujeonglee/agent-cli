@@ -1,0 +1,181 @@
+"""Conditional system prompt builder adapted to model capabilities."""
+from __future__ import annotations
+
+import json
+import textwrap
+
+from agent_cli.constants import SMALL_MODEL_CONTEXT
+
+from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.tools.registry import TOOL_SCHEMAS
+
+BASE_ROLE_PROMPT = """\
+You are an AI assistant that solves tasks step-by-step using available tools.
+
+## Response Format (STRICT)
+You MUST respond with a single JSON object and nothing else.
+No markdown fences, no extra text — ONLY the JSON object.
+
+Format A — use a tool:
+{"thought": "your reasoning", "action": "tool_name", "action_input": {...}}
+
+Format B — final answer:
+{"thought": "your reasoning", "final_answer": "your complete answer"}"""
+
+HASHLINE_GUIDE = """\
+## Hashline Editing
+read_file returns lines tagged as LINE#HASH:content, e.g.:
+  1#VR:def hello():
+  2#KT:    return "world"
+  3#ZZ:
+
+To edit, use edit_file with hashline refs copied EXACTLY from read_file output.
+- replace single line:  {"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}
+- replace range:        {"op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}
+- delete lines:         {"op": "replace", "pos": "2#KT", "lines": []}
+- insert after:         {"op": "append", "pos": "1#VR", "lines": ["    # new comment"]}
+- insert before:        {"op": "prepend", "pos": "1#VR", "lines": ["# header"]}
+- append to EOF:        {"op": "append", "lines": ["# end of file"]}
+
+IMPORTANT: Always read the file first to get current hashline tags.
+If a hash mismatch error occurs, re-read the file and retry with fresh tags.
+Use write_file only for creating NEW files, not for editing existing ones."""
+
+DELEGATE_GUIDE = """\
+## Delegation Rules
+- Only delegate tasks that are fully independent and self-contained
+- The subagent has NO memory of this conversation
+- Include ALL details: file paths, content, specific instructions
+- NEVER use pronouns or references to prior context in the task
+- Good: "Read /tmp/data.csv and count the number of rows"
+- Bad: "Analyze the file we discussed earlier"
+"""
+
+DELEGATE_DESC = (
+    "Delegate a self-contained subtask to an independent subagent. "
+    "The subagent has NO context from this conversation — the task "
+    "description must include ALL necessary details."
+)
+DELEGATE_SCHEMA = '{"task": "fully self-contained task description"}'
+
+RULES = """\
+## Rules
+1. Always include "thought" in your JSON
+2. "action_input" must match the tool's input schema
+3. If observation shows error, fix parameters and retry
+4. Respond in the same language as the user
+5. Do NOT include "observation" — that is injected by the system
+6. Output ONLY valid JSON, nothing else"""
+
+SMALL_MODEL_HINTS = """\
+## Important
+Keep responses concise. Prefer short thoughts.
+When reading files, request specific line ranges if possible.
+Avoid reading entire large files."""
+
+THINKING_MODEL_HINTS = """\
+## Thinking Budget
+Keep your internal reasoning brief and focused.
+Prioritize outputting the JSON response over extended reasoning."""
+
+
+def _format_tool_block(
+    active_tools: list[str],
+    include_delegate: bool = False,
+) -> str:
+    """Generate tool descriptions for the system prompt."""
+    lines = []
+    for name in active_tools:
+        schema = TOOL_SCHEMAS.get(name)
+        if schema is None:
+            continue
+        params = json.dumps(
+            {k: v.get("description", v.get("type", ""))
+             for k, v in schema.parameters.get("properties", {}).items()},
+        )
+        lines.append(f"- {name}: {schema.description}\n  Input JSON: {params}")
+
+    if include_delegate:
+        lines.append(f"- delegate: {DELEGATE_DESC}\n  Input JSON: {DELEGATE_SCHEMA}")
+
+    return "\n".join(lines)
+
+
+PLAN_GENERATION_TEMPLATE = """\
+You are an AI assistant that creates step-by-step execution plans.
+
+Given a goal, produce a numbered plan of concrete, actionable steps.
+Each step should be a single tool action (read file, write file, edit, shell command)
+or an analysis/reasoning step.
+
+Respond with a numbered list after the >>>PLAN marker:
+
+>>>PLAN
+1. Description of step 1
+2. Description of step 2
+...
+
+Rules:
+- Each step should be independently executable
+- Steps should be ordered by dependency
+- Be specific about file paths and operations
+- Keep steps atomic — one action per step
+- Include verification steps where appropriate (e.g., run tests)
+- Maximum {max_steps} steps"""
+
+
+def build_plan_generation_prompt(
+    capabilities: ModelCapabilities,
+    active_tools: list[str],
+    include_delegate: bool = False,
+    max_steps: int = 20,
+) -> str:
+    """Build system prompt for plan generation (Phase 1)."""
+    sections = [PLAN_GENERATION_TEMPLATE.format(max_steps=max_steps)]
+
+    tool_block = _format_tool_block(active_tools, include_delegate)
+    sections.append(f"## Available Tools\n{tool_block}")
+
+    if capabilities.context_window <= SMALL_MODEL_CONTEXT:
+        sections.append(SMALL_MODEL_HINTS)
+
+    return "\n\n".join(sections)
+
+
+def build_system_prompt(
+    capabilities: ModelCapabilities,
+    active_tools: list[str],
+    include_delegate: bool = False,
+    plan_context: str | None = None,
+) -> str:
+    """Build a system prompt adapted to model capabilities and active tools."""
+    sections = [BASE_ROLE_PROMPT]
+
+    # Tool descriptions (only active tools)
+    tool_block = _format_tool_block(active_tools, include_delegate)
+    sections.append(f"## Available Tools\n{tool_block}")
+
+    # Conditional guidelines
+    if "edit_file" in active_tools:
+        sections.append(HASHLINE_GUIDE)
+
+    if include_delegate:
+        sections.append(DELEGATE_GUIDE)
+
+    if plan_context:
+        sections.append(plan_context)
+
+    sections.append(RULES)
+
+    # Small model hints
+    if capabilities.context_window <= SMALL_MODEL_CONTEXT:
+        sections.append(SMALL_MODEL_HINTS)
+
+    # Thinking model hints for small context + thinking
+    if (
+        capabilities.thinking_budget > 0
+        and capabilities.context_window <= SMALL_MODEL_CONTEXT
+    ):
+        sections.append(THINKING_MODEL_HINTS)
+
+    return "\n\n".join(sections)
