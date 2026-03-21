@@ -153,6 +153,34 @@ class TestOllamaRuntimeDetection:
         assert caps.thinking_format == ""
 
     @patch("agent_cli.providers.compat.requests.post")
+    def test_detects_thinking_via_field(self, mock_post):
+        """Probe detects thinking via message.thinking field (Qwen3, GLM)."""
+        show_resp = MagicMock()
+        show_resp.status_code = 200
+        show_resp.json.return_value = {
+            "model_info": {"qwen3moe.context_length": 262144},
+            "details": {"family": "qwen3moe"},
+        }
+        show_resp.raise_for_status.return_value = None
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "message": {
+                "content": "2 + 2 = 4",
+                "thinking": "Let me calculate step by step...",
+            },
+        }
+        probe_resp.raise_for_status.return_value = None
+
+        mock_post.side_effect = [show_resp, probe_resp]
+
+        caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3.5:35b")
+        assert caps is not None
+        assert caps.supports_thinking is True
+        assert caps.thinking_format == "thinking_field"
+
+    @patch("agent_cli.providers.compat.requests.post")
     def test_detects_non_llama_architecture(self, mock_post):
         """Should detect context_length from any architecture prefix (e.g. qwen3next)."""
         show_resp = MagicMock()

@@ -613,12 +613,16 @@ Thinking 블록 처리 플로우:
 ### 8.6 Thinking 감지 방식
 
 하드코딩 패턴 매칭이 아닌 **프로브 기반 감지**:
-1. 모델에 "Say hello." 프롬프트 전송
-2. 응답에 `<think>`, `<thinking>`, `<reasoning>`, `<reflection>` 태그가 포함되어 있는지 확인
-3. 태그가 있으면 → `supports_thinking=True`, `thinking_format=태그명`
+1. 모델에 "What is 2+2?" 프롬프트 전송
+2. 두 가지 위치에서 thinking 확인:
+   - `message.thinking` 필드 (Ollama API — Qwen3, Qwen3.5, GLM 등)
+   - `<think>`, `<thinking>`, `<reasoning>`, `<reflection>` 태그 in content (DeepSeek-R1 등)
+3. 감지되면 → `supports_thinking=True`, `thinking_format=감지방식`
 4. 결과를 `~/.agent-cli/models.json`에 저장 → 다음 실행 시 프로브 불필요
 
 새 모델이 추가되어도 코드 수정 없이 자동 감지됩니다.
+
+OpenAI 호환 서버(vLLM 등)에서는 `/v1/models` API로 context window도 감지합니다 (`max_model_len` 필드).
 
 ### 8.5 모델 정보 출력
 
