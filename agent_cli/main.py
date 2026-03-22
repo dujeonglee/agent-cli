@@ -564,7 +564,7 @@ def chat(
                 role = m["role"]
                 content = m["content"]
                 console.print(f"[{C['accent']}][{i}] {role}[/]")
-                console.print(content)
+                console.print(content, markup=False)
                 console.print()
             tokens = ctx.get_estimated_tokens()
             console.print(
