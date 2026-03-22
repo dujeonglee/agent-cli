@@ -67,6 +67,14 @@ def tool_edit_file(args: dict) -> str:
     edits = args.get("edits", [])
     if not edits:
         raise RuntimeError("No edits provided.")
+
+    # Filter out non-dict items in edits (LLM sometimes inserts ints or strings)
+    edits = [e for e in edits if isinstance(e, dict)]
+    if not edits:
+        raise RuntimeError(
+            "No valid edit operations found (each edit must be a JSON object)."
+        )
+
     try:
         text = Path(path).read_text(encoding="utf-8")
     except Exception as e:

@@ -178,6 +178,48 @@ class TestRunLoopMaxIter:
         assert result is None
 
 
+class TestRunLoopActionFinalAnswer:
+    def test_action_final_answer_dict(self, caps):
+        """LLM sends action='final_answer' with dict input — should extract answer."""
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "final_answer",
+                    "action_input": {"final_answer": "The answer is 42"},
+                }
+            )
+        )
+        result = run_loop(
+            query="What is the answer?",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "The answer is 42"
+
+    def test_action_final_answer_string(self, caps):
+        """LLM sends action='final_answer' with string input."""
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "final_answer",
+                    "action_input": "Simple answer",
+                }
+            )
+        )
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "Simple answer"
+
+
 class TestRunLoopQuietMode:
     def test_quiet_no_render(self, caps, capsys):
         provider = _make_provider(

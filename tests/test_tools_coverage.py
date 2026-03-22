@@ -201,6 +201,33 @@ class TestEditFile:
         assert "new1" in content
         assert "new2" in content
 
+    def test_non_dict_edits_filtered(self, tmp_path):
+        """LLM sometimes sends [{"op": ...}, 1, 2, 3] — non-dicts should be filtered."""
+        f = tmp_path / "test.py"
+        f.write_text("old_line\n")
+        lines = f.read_text().split("\n")
+        h1 = compute_line_hash(1, lines[0])
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [
+                    {"op": "replace", "pos": f"1#{h1}", "lines": ["new_line"]},
+                    1,
+                    2,
+                    3,
+                ],
+            }
+        )
+        assert "Edit complete" in result
+        assert "new_line" in f.read_text()
+
+    def test_all_non_dict_edits_error(self, tmp_path):
+        """If all edits are non-dict, should raise error."""
+        f = tmp_path / "test.py"
+        f.write_text("hello\n")
+        with pytest.raises(RuntimeError, match="No valid edit"):
+            tool_edit_file({"path": str(f), "edits": [1, 2, "bad"]})
+
 
 class TestDelegate:
     def test_validate_short_task(self):

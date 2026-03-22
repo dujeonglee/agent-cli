@@ -202,7 +202,22 @@ def run_loop(
 
             return parsed.final_answer
 
-        # 8. Tool execution (text parsing path)
+        # 8. Handle LLM sending action="final_answer" (common mistake)
+        if parsed.action == "final_answer":
+            answer = ""
+            if isinstance(parsed.action_input, dict):
+                answer = parsed.action_input.get(
+                    "final_answer",
+                    parsed.action_input.get("answer", str(parsed.action_input)),
+                )
+            elif isinstance(parsed.action_input, str):
+                answer = parsed.action_input
+            if answer:
+                if not quiet:
+                    render_step("final", answer, iteration)
+                return answer
+
+        # 9. Tool execution (text parsing path)
         if parsed.action:
             tool_name = parsed.action
             tool_input = parsed.action_input or {}
