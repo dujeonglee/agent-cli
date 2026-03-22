@@ -21,7 +21,7 @@ Format A — use a tool:
 Format B — final answer:
 {"thought": "your reasoning", "final_answer": "your complete answer", "progress": 100}
 
-The "progress" field is optional. It is your estimated task completion percentage (0-100)."""
+The "progress" field is optional but recommended. Estimate how much of the task you have completed (0=just started, 50=halfway, 100=done)."""
 
 HASHLINE_GUIDE = """\
 ## Hashline Editing
