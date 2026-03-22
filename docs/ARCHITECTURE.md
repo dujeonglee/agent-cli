@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,482 LOC (41 Python 파일) + 3,602 LOC 테스트 (21 파일)
-> 총 테스트: 266 유닛 + 42 통합 = 308개
+> 총 소스: 4,558 LOC (41 Python 파일) + 3,708 LOC 테스트 (21 파일)
+> 총 테스트: 269 유닛 + 42 통합 = 311개
 
 ---
 
@@ -52,7 +52,7 @@ agent_cli/
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
 │   ├── base.py              (36)   LLMProvider 프로토콜, LLMResponse, TokenUsage
-│   ├── compat.py            (305)  ModelCapabilities + 프로브 감지 + 자동 저장
+│   ├── compat.py            (299)  ModelCapabilities + 프로브 감지 + 자동 저장
 │   ├── anthropic.py         (91)   Anthropic Messages API (tool_use + thinking)
 │   ├── openai_compat.py     (102)  OpenAI 호환 API (function calling + reasoning)
 │   └── ollama.py            (105)  Ollama API (constrained decoding + thinking)

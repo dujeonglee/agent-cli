@@ -70,12 +70,6 @@ def get_capabilities(
     return DEFAULT_CAPABILITIES
 
 
-def clear_capabilities_cache() -> None:
-    """Clear the runtime capabilities cache (useful for testing)."""
-    global _capabilities_cache
-    _capabilities_cache = {}
-
-
 def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
     """Save runtime-detected capabilities to ~/.agent-cli/models.json (new models only)."""
     entry = {
