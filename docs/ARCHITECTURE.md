@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,731 LOC (42 Python 파일) + 3,851 LOC 테스트 (22 파일)
-> 총 테스트: 278 유닛 + 42 통합 = 320개
+> 총 소스: 4,740 LOC (42 Python 파일) + 3,868 LOC 테스트 (22 파일)
+> 총 테스트: 280 유닛 + 42 통합 = 322개
 
 ---
 
@@ -72,7 +72,7 @@ agent_cli/
 │   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)
 │   ├── shell.py             (35)   셸 명령 실행
 │   ├── delegate.py          (80)   서브에이전트 위임
-│   └── truncation.py        (104)  모델 적응형 출력 압축
+│   └── truncation.py        (113)  모델 적응형 출력 압축 (context 3% 비례)
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
@@ -481,11 +481,21 @@ def hello():    →    1#VR:def hello():
 
 ### 6.3 출력 압축 (`tools/truncation.py`)
 
-| context_window | max_lines | max_bytes | 방향 |
-|---------------|-----------|-----------|------|
-| ≤8,192 | 50 | 2,000 | 도구별 |
-| ≤32,768 | 100 | 4,000 | 도구별 |
-| >32,768 | 200 | 8,000 | 도구별 |
+context window의 **3%**를 tool output 한 건의 예산으로 사용합니다.
+
+```
+budget_bytes = context_window × 4 (chars/token) × 0.03
+max_bytes = clamp(budget_bytes, 2KB, 40KB)
+max_lines = clamp(budget_bytes / 40, 50, 1000)
+```
+
+| context_window | max_bytes | max_lines |
+|---------------|-----------|-----------|
+| 8K | 2,000 (min) | 50 (min) |
+| 32K | 3,932 | 98 |
+| 128K | 15,360 | 384 |
+| 262K | 31,457 | 786 |
+| 1M+ | 40,000 (max) | 1,000 (max) |
 
 방향 규칙:
 - **head** (앞부분 유지): read_file, write_file, edit_file

@@ -53,19 +53,36 @@ class TestTruncateOutput:
 
 
 class TestGetTruncationConfig:
-    def test_small_model(self):
+    def test_small_model_hits_minimum(self):
+        """Very small context → clamps to min bounds."""
         cfg = get_truncation_config(_make_caps(4096), "read_file")
-        assert cfg.max_lines == 50
         assert cfg.max_bytes == 2_000
+        assert cfg.max_lines == 50
         assert cfg.direction == "head"
 
-    def test_medium_model(self):
+    def test_medium_model_proportional(self):
+        """32K context → 3% = 3,932 bytes."""
         cfg = get_truncation_config(_make_caps(32768), "read_file")
-        assert cfg.max_lines == 100
+        assert cfg.max_bytes == 3_932  # 32768 * 4 * 0.03
+        assert cfg.max_lines == 98  # 3932 // 40
 
-    def test_large_model(self):
+    def test_large_model_proportional(self):
+        """128K context → 3% = 15,360 bytes, ~384 lines."""
         cfg = get_truncation_config(_make_caps(128000), "read_file")
-        assert cfg.max_lines == 200
+        assert cfg.max_bytes == 15_360
+        assert cfg.max_lines == 384
+
+    def test_very_large_model_hits_maximum(self):
+        """262K context → 3% = 31,457 bytes, clamped to 1000 max lines."""
+        cfg = get_truncation_config(_make_caps(262144), "read_file")
+        assert cfg.max_bytes == 31_457
+        assert cfg.max_lines == 786  # 31457 // 40
+
+    def test_huge_model_bytes_clamped(self):
+        """1M+ context → bytes clamped to 40KB max."""
+        cfg = get_truncation_config(_make_caps(1_000_000), "read_file")
+        assert cfg.max_bytes == 40_000
+        assert cfg.max_lines == 1_000
 
     def test_shell_direction(self):
         cfg = get_truncation_config(_make_caps(32768), "shell")

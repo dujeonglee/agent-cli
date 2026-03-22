@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent_cli.constants import SMALL_MODEL_CONTEXT, MEDIUM_MODEL_CONTEXT
+from agent_cli.constants import CHARS_PER_TOKEN
 from agent_cli.providers.compat import ModelCapabilities
 
 
@@ -25,19 +25,28 @@ _TOOL_DIRECTIONS = {
     "delegate": "tail",
 }
 
+# 3% of context window per tool output, with min/max bounds
+_OUTPUT_RATIO = 0.03
+_MIN_BYTES = 2_000
+_MAX_BYTES = 40_000
+_MIN_LINES = 50
+_MAX_LINES = 1_000
+_BYTES_PER_LINE = 40  # rough estimate for line count derivation
+
 
 def get_truncation_config(
     capabilities: ModelCapabilities, tool_name: str
 ) -> TruncationConfig:
-    """Get truncation config adapted to model context window."""
+    """Get truncation config proportional to model context window (3%)."""
     direction = _TOOL_DIRECTIONS.get(tool_name, "head")
 
-    if capabilities.context_window <= SMALL_MODEL_CONTEXT:
-        return TruncationConfig(max_lines=50, max_bytes=2_000, direction=direction)
-    elif capabilities.context_window <= MEDIUM_MODEL_CONTEXT:
-        return TruncationConfig(max_lines=100, max_bytes=4_000, direction=direction)
-    else:
-        return TruncationConfig(max_lines=200, max_bytes=8_000, direction=direction)
+    budget_bytes = int(capabilities.context_window * CHARS_PER_TOKEN * _OUTPUT_RATIO)
+    max_bytes = max(_MIN_BYTES, min(budget_bytes, _MAX_BYTES))
+    max_lines = max(_MIN_LINES, min(max_bytes // _BYTES_PER_LINE, _MAX_LINES))
+
+    return TruncationConfig(
+        max_lines=max_lines, max_bytes=max_bytes, direction=direction
+    )
 
 
 def truncate_output(text: str, config: TruncationConfig) -> str:
