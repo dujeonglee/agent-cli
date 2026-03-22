@@ -217,6 +217,28 @@ def render_plan(plan) -> None:
     console.print()
 
 
+def render_context_dump(messages: list[dict], iteration: int) -> None:
+    """Dump full context window contents (verbose mode, before each LLM call)."""
+    console.print(
+        Rule(
+            f"[{C['muted']}]context dump (iter {iteration}, {len(messages)} msgs)[/]",
+            style=C["muted"],
+        )
+    )
+    for i, m in enumerate(messages):
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        # Summarize content: show first 200 chars
+        if isinstance(content, str):
+            preview = content[:200].replace("\n", "\\n")
+            if len(content) > 200:
+                preview += f"... ({len(content)} chars)"
+        else:
+            preview = str(content)[:200]
+        console.print(f"  [{C['muted']}][{i}] {role}: {preview}[/]")
+    console.print(Rule(style=C["muted"]))
+
+
 def render_plan_progress(plan) -> None:
     """Display plan progress during execution."""
     for step in plan.steps:

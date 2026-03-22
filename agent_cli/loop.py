@@ -13,6 +13,7 @@ from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities, needs_tool_action
 from agent_cli.render import (
+    render_context_dump,
     render_header,
     render_iter_sep,
     render_raw,
@@ -131,6 +132,10 @@ def run_loop(
                 call_kwargs["tools"] = convert_to_openai_tools(
                     tools_list, include_delegate=include_delegate
                 )
+
+        # 3. Context dump (verbose only)
+        if verbose and not quiet:
+            render_context_dump(messages, iteration)
 
         # 3. LLM call
         try:

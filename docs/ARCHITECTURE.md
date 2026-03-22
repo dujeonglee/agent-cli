@@ -5,7 +5,7 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,685 LOC (42 Python 파일) + 3,851 LOC 테스트 (22 파일)
+> 총 소스: 4,712 LOC (42 Python 파일) + 3,851 LOC 테스트 (22 파일)
 > 총 테스트: 278 유닛 + 42 통합 = 320개
 
 ---
@@ -47,8 +47,8 @@ agent_cli/
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── input_history.py         (61)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (555)  ReAct 에이전트 루프 + _execute_single_tool
-├── render.py                (229)  Rich 터미널 렌더링 + 모델 정보 표시
+├── loop.py                  (560)  ReAct 에이전트 루프 + _execute_single_tool
+├── render.py                (251)  Rich 터미널 렌더링 + 모델 정보 표시
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
