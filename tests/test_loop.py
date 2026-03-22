@@ -326,6 +326,72 @@ class TestToolHistoryTracking:
         assert result == "ok"
 
 
+class TestRepeatedCallDetection:
+    def test_repeated_calls_stops_loop(self, caps, tmp_path):
+        """Same tool+input 3 times → loop returns None."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello")
+
+        same_call = json.dumps(
+            {
+                "thought": "read again",
+                "action": "read_file",
+                "action_input": {"path": str(test_file)},
+            }
+        )
+        provider = _make_provider(same_call, same_call, same_call)
+        result = run_loop(
+            query="Read file",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result is None
+
+    def test_different_inputs_no_stop(self, caps, tmp_path):
+        """Same tool with different inputs should NOT trigger repeat detection."""
+        f1 = tmp_path / "a.txt"
+        f2 = tmp_path / "b.txt"
+        f3 = tmp_path / "c.txt"
+        f1.write_text("a")
+        f2.write_text("b")
+        f3.write_text("c")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "r1",
+                    "action": "read_file",
+                    "action_input": {"path": str(f1)},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "r2",
+                    "action": "read_file",
+                    "action_input": {"path": str(f2)},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "r3",
+                    "action": "read_file",
+                    "action_input": {"path": str(f3)},
+                }
+            ),
+            json.dumps({"thought": "done", "final_answer": "ok"}),
+        )
+        result = run_loop(
+            query="Read files",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "ok"
+
+
 class TestRunLoopQuietMode:
     def test_quiet_no_render(self, caps, capsys):
         provider = _make_provider(

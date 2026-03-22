@@ -648,7 +648,7 @@ def chat(
         turn += 1
         console.print(Rule(f"[{C['muted']}]TURN {turn}[/]", style=C["muted"]))
 
-        run_loop(
+        result = run_loop(
             query=query,
             provider=llm_provider,
             capabilities=capabilities,
@@ -662,3 +662,12 @@ def chat(
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,
         )
+
+        if result is None:
+            console.print(
+                f"\n[{C['accent']}]Loop stopped without final answer. "
+                f"You can:[/]\n"
+                f"  - Rephrase or continue the query\n"
+                f"  - /clear to reset context\n"
+                f"  - /quit to exit"
+            )

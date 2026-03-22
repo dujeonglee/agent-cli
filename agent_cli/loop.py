@@ -197,6 +197,17 @@ def run_loop(
                     render_step("observation", obs, iteration)
                 observations.append({"tool_call": tc, "output": obs})
 
+            # Repeated call detection
+            if _detect_repeated_calls(recent_tool_history):
+                last = recent_tool_history[-1]
+                if not quiet:
+                    render_status(
+                        "error",
+                        f"Repeated call detected: {last['tool']} called "
+                        f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
+                    )
+                return None
+
             # Format messages based on provider
             new_msgs = _format_tool_call_messages(provider_name, response, observations)
             messages.extend(new_msgs)
@@ -289,6 +300,17 @@ def run_loop(
             if not quiet:
                 render_step("observation", observation, iteration)
 
+            # Repeated call detection
+            if _detect_repeated_calls(recent_tool_history):
+                last = recent_tool_history[-1]
+                if not quiet:
+                    render_status(
+                        "error",
+                        f"Repeated call detected: {last['tool']} called "
+                        f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
+                    )
+                return None
+
             # Inject observation
             obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
             messages.append({"role": "assistant", "content": llm_text})
@@ -360,12 +382,32 @@ def _execute_single_tool(
         recent_tool_history.append(
             {
                 "tool": tool_name,
+                "input": _normalize_input(tool_input),
                 "result": obs[:200],
                 "iter": iteration,
             }
         )
 
     return obs
+
+
+_REPEAT_THRESHOLD = 3  # Same tool+input N times → force exit
+
+
+def _normalize_input(tool_input) -> str:
+    """Normalize tool input to a comparable string."""
+    if isinstance(tool_input, dict):
+        return json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
+    return str(tool_input)
+
+
+def _detect_repeated_calls(history: list[dict]) -> bool:
+    """Return True if last N calls are identical (same tool + same input)."""
+    if len(history) < _REPEAT_THRESHOLD:
+        return False
+    recent = history[-_REPEAT_THRESHOLD:]
+    first = (recent[0]["tool"], recent[0]["input"])
+    return all((h["tool"], h["input"]) == first for h in recent)
 
 
 def _do_execute_tool(
