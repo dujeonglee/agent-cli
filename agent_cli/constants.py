@@ -13,7 +13,7 @@ MEDIUM_MODEL_CONTEXT = 32768
 # ── Token estimation ─────────────────────────
 CHARS_PER_TOKEN = 4
 OVERFLOW_RESERVE_TOKENS = 2048
-CONTEXT_RESERVE_RATIO = 0.75  # Reserve 25% for system prompt + current turn
+CONTEXT_RESERVE_RATIO = 0.95  # Reserve 5% for system prompt + current turn
 
 # ── Observation message templates ──────────────
 OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
