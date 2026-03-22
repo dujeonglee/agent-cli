@@ -24,6 +24,15 @@ from agent_cli.tools.delegate import tool_delegate
 from agent_cli.tools.registry import convert_to_anthropic_tools, convert_to_openai_tools
 from agent_cli.tools.truncation import get_truncation_config, truncate_output
 
+# Checkpoint: first check at N iterations, then repeat every M iterations
+# Shows last M tool calls at each checkpoint for LLM self-assessment
+_CHECKPOINT_FIRST = 50
+_CHECKPOINT_INTERVAL = 20
+assert _CHECKPOINT_FIRST >= _CHECKPOINT_INTERVAL, (
+    f"CHECKPOINT_FIRST ({_CHECKPOINT_FIRST}) must be >= "
+    f"CHECKPOINT_INTERVAL ({_CHECKPOINT_INTERVAL})"
+)
+
 
 def run_loop(
     query: str,
@@ -70,13 +79,35 @@ def run_loop(
     iteration = 0
     tools_called: list[str] = []
     overflow_retried = False
+    recent_tool_history: list[dict] = []  # [{tool, input_summary, status}]
 
     while max_iter <= 0 or iteration < max_iter:
         iteration += 1
         if not quiet:
             render_iter_sep(iteration)
 
-        # 1. Preemptive overflow check
+        # 1. Checkpoint: nudge LLM if running too long
+        if iteration >= _CHECKPOINT_FIRST and (
+            (iteration - _CHECKPOINT_FIRST) % _CHECKPOINT_INTERVAL == 0
+        ):
+            recent = recent_tool_history[-_CHECKPOINT_INTERVAL:]
+            history_summary = "\n".join(
+                f"  iter {h['iter']}: {h['tool']} → {h['result'][:100]}" for h in recent
+            )
+            checkpoint_msg = (
+                f"[CHECKPOINT] You have been running for {iteration} iterations.\n"
+                f"Recent {len(recent)} tool calls:\n{history_summary}\n\n"
+                f"If the task is complete, provide final_answer now.\n"
+                f"If you are stuck or repeating, try a different approach.\n"
+                f"If you are making progress, continue but be more efficient."
+            )
+            messages.append({"role": "user", "content": checkpoint_msg})
+            if ctx:
+                ctx.add("user", checkpoint_msg)
+            if not quiet:
+                render_status("running", f"Checkpoint at iteration {iteration}")
+
+        # 2. Preemptive overflow check
         if check_preemptive_overflow(messages, capabilities):
             if ctx:
                 render_status("running", "Compressing context (preemptive)...")
@@ -142,7 +173,7 @@ def run_loop(
                         else str(tool_input),
                     )
 
-                # Execute tool (shared logic)
+                # Execute tool (shared logic — tracks tools_called + history)
                 obs = _execute_single_tool(
                     tool_name,
                     tool_input,
@@ -154,12 +185,14 @@ def run_loop(
                     base_url,
                     api_key,
                     delegate_timeout,
+                    tools_called,
+                    recent_tool_history,
+                    iteration,
                 )
 
                 if not quiet:
                     render_step("observation", obs, iteration)
                 observations.append({"tool_call": tc, "output": obs})
-                tools_called.append(tool_name)
 
             # Format messages based on provider
             new_msgs = _format_tool_call_messages(provider_name, response, observations)
@@ -233,7 +266,7 @@ def run_loop(
                     else str(tool_input),
                 )
 
-            # Execute tool (shared logic)
+            # Execute tool (shared logic — tracks tools_called + history)
             observation = _execute_single_tool(
                 tool_name,
                 tool_input,
@@ -245,8 +278,10 @@ def run_loop(
                 base_url,
                 api_key,
                 delegate_timeout,
+                tools_called,
+                recent_tool_history,
+                iteration,
             )
-            tools_called.append(tool_name)
 
             if not quiet:
                 render_step("observation", observation, iteration)
@@ -297,8 +332,52 @@ def _execute_single_tool(
     base_url: str = "",
     api_key: str = "",
     delegate_timeout: int = 300,
+    tools_called: list[str] | None = None,
+    recent_tool_history: list[dict] | None = None,
+    iteration: int = 0,
 ) -> str:
-    """Execute a single tool and return observation string. Shared by both paths."""
+    """Execute a single tool, track history, and return observation string."""
+    obs = _do_execute_tool(
+        tool_name,
+        tool_input,
+        tools_list,
+        include_delegate,
+        capabilities,
+        provider_name,
+        model,
+        base_url,
+        api_key,
+        delegate_timeout,
+    )
+
+    # Track tool usage
+    if tools_called is not None:
+        tools_called.append(tool_name)
+    if recent_tool_history is not None:
+        recent_tool_history.append(
+            {
+                "tool": tool_name,
+                "result": obs[:200],
+                "iter": iteration,
+            }
+        )
+
+    return obs
+
+
+def _do_execute_tool(
+    tool_name: str,
+    tool_input,
+    tools_list: list[str],
+    include_delegate: bool,
+    capabilities: ModelCapabilities,
+    provider_name: str = "",
+    model: str = "",
+    base_url: str = "",
+    api_key: str = "",
+    delegate_timeout: int = 300,
+) -> str:
+    """Core tool execution logic (no tracking)."""
     if tool_name == "delegate" and include_delegate:
         try:
             return tool_delegate(
