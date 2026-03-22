@@ -248,10 +248,7 @@ def run_loop(
 
         # 7. Final answer
         if parsed.final_answer:
-            if not quiet:
-                render_step("final", parsed.final_answer, iteration)
-
-            # Fulfillment guard
+            # Fulfillment guard — check BEFORE rendering
             if not tools_called and needs_tool_action(query):
                 nudge = (
                     "You provided a final_answer, but the task likely requires "
@@ -263,8 +260,16 @@ def run_loop(
                 if ctx:
                     ctx.add("assistant", llm_text)
                     ctx.add("user", nudge)
+                if not quiet:
+                    render_status(
+                        "error",
+                        "Final answer rejected — no tool actions performed yet.",
+                        iteration,
+                    )
                 continue
 
+            if not quiet:
+                render_step("final", parsed.final_answer, iteration)
             return parsed.final_answer
 
         # 8. Handle LLM sending action="final_answer" (common mistake)
