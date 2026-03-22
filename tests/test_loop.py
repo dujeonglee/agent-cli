@@ -286,7 +286,7 @@ class TestCheckpoint:
         last_call = provider.call.call_args
         messages = last_call.kwargs.get("messages") or last_call[1].get("messages")
         checkpoint_found = any(
-            "[CHECKPOINT]" in m.get("content", "")
+            "[SYSTEM] CHECKPOINT" in m.get("content", "")
             for m in messages
             if isinstance(m.get("content"), str)
         )

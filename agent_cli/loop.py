@@ -95,11 +95,14 @@ def run_loop(
                 f"  iter {h['iter']}: {h['tool']} → {h['result'][:100]}" for h in recent
             )
             checkpoint_msg = (
-                f"[CHECKPOINT] You have been running for {iteration} iterations.\n"
-                f"Recent {len(recent)} tool calls:\n{history_summary}\n\n"
-                f"If the task is complete, provide final_answer now.\n"
-                f"If you are stuck or repeating, try a different approach.\n"
-                f"If you are making progress, continue but be more efficient."
+                f"[SYSTEM] CHECKPOINT — {iteration} iterations used.\n"
+                f"Recent tool calls:\n{history_summary}\n\n"
+                f"You MUST now do ONE of:\n"
+                f'1. Return final answer: {{"thought": "...", "final_answer": "your result"}}\n'
+                f"2. If genuinely incomplete, explain what SPECIFIC step remains and do it.\n\n"
+                f"Do NOT call echo, cat, or any tool just to confirm completion.\n"
+                f"Do NOT repeat previous tool calls.\n"
+                f"If you already completed the task, provide final_answer IMMEDIATELY."
             )
             messages.append({"role": "user", "content": checkpoint_msg})
             if ctx:
