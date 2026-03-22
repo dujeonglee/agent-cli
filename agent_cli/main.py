@@ -514,7 +514,7 @@ def chat(
     from agent_cli.input_history import make_prompt, setup as _setup_input_history
 
     _setup_input_history()
-    _prompt = make_prompt("You:", "\033[1;96m")
+    _prompt = make_prompt("You:")
 
     turn = 0
     while True:

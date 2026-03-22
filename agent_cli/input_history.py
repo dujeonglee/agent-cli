@@ -13,7 +13,6 @@ from pathlib import Path
 _HISTORY_FILE = Path.home() / ".agent-cli" / "chat_history"
 _MAX_HISTORY = 1000
 _initialized = False
-_is_libedit = "libedit" in (readline.__doc__ or "")
 
 
 def setup() -> None:
@@ -40,16 +39,9 @@ def setup() -> None:
     _initialized = True
 
 
-def make_prompt(text: str, ansi_start: str, ansi_end: str = "\033[0m") -> str:
-    """Build a readline-safe colored prompt.
-
-    GNU readline uses \\001/\\002 to mark non-printing chars so it can
-    calculate prompt width correctly.  macOS libedit does NOT support
-    these markers — they corrupt the escape sequence and break colors.
-    """
-    if _is_libedit:
-        return f"{ansi_start}{text}{ansi_end} "
-    return f"\001{ansi_start}\002{text}\001{ansi_end}\002 "
+def make_prompt(text: str) -> str:
+    """Build a plain-text prompt for readline input."""
+    return f"{text} "
 
 
 def save() -> None:

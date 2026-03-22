@@ -54,21 +54,10 @@ class TestSetup:
 
 
 class TestMakePrompt:
-    def test_libedit_no_markers(self, monkeypatch):
-        """libedit prompt has no \\001/\\002 markers."""
-        monkeypatch.setattr(ih, "_is_libedit", True)
-        result = ih.make_prompt("You:", "\033[1;96m")
-        assert "\001" not in result
-        assert "\002" not in result
-        assert "\033[1;96m" in result
-        assert "You:" in result
-
-    def test_gnu_readline_has_markers(self, monkeypatch):
-        """GNU readline prompt wraps ANSI codes in \\001/\\002."""
-        monkeypatch.setattr(ih, "_is_libedit", False)
-        result = ih.make_prompt("You:", "\033[1;96m")
-        assert "\001\033[1;96m\002" in result
-        assert "\001\033[0m\002" in result
+    def test_plain_text_prompt(self):
+        """make_prompt returns plain text with trailing space."""
+        result = ih.make_prompt("You:")
+        assert result == "You: "
 
 
 class TestSave:
