@@ -1,7 +1,7 @@
 # Agent-CLI v2 — 남은 작업
 
 > 최종 업데이트: 2026-03-22
-> 현재 상태: v2 완성 (221 유닛 + 42 통합 = 263개 테스트, CI/CD 구축)
+> 현재 상태: v2 완성 (266 유닛 + 42 통합 = 308개 테스트, 71% 라인 커버리지)
 
 ---
 
@@ -16,11 +16,13 @@
 - Planning Mode (생성→검토→실행, 영속화, --plan-model, 재시도)
 - Skill 시스템 (Claude Code 호환, .agent-cli/skills/)
 - Dynamic Tool RAG + 런타임 compat 감지 (Ollama + OpenAI 호환)
-- models.json 마이그레이션 (~/.agent-cli/ + 자동 저장)
+- models.json 마이그레이션 (~/.agent-cli/ + 자동 저장 + 패키지 기본값)
 - 모델 정보 출력 (Rich Panel / 한 줄 요약)
-- 기술 부채 제거 (중복 코드, 상수화, import 정리)
+- 기술 부채 제거 (20개 최적화 항목)
 - CI/CD (GitHub Actions: pytest + ruff)
 - E2E 통합 테스트 (3개 모델)
+- 테스트 커버리지 개선 (64% → 71%)
+- LLM edit 실패 패턴 수정 (edits 배열 필터링, action="final_answer" 처리)
 - 문서 (README.md, docs/ARCHITECTURE.md)
 
 ---
