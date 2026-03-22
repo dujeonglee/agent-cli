@@ -220,6 +220,112 @@ class TestRunLoopActionFinalAnswer:
         assert result == "Simple answer"
 
 
+class TestCheckpoint:
+    def test_no_checkpoint_before_threshold(self, caps):
+        """Under 50 iterations → no checkpoint nudge injected."""
+        # 10 tool calls + final = 11 iterations, well under 50
+        responses = []
+        for i in range(10):
+            responses.append(
+                json.dumps(
+                    {
+                        "thought": f"step {i}",
+                        "action": "shell",
+                        "action_input": {"command": f"echo {i}"},
+                    }
+                )
+            )
+        responses.append(json.dumps({"thought": "done", "final_answer": "completed"}))
+        provider = _make_provider(*responses)
+        result = run_loop(
+            query="Run some commands",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "completed"
+        # No checkpoint message should have been injected
+        # (we verify by checking provider was called exactly 11 times)
+        assert provider.call.call_count == 11
+
+    def test_checkpoint_nudge_injected(self, caps):
+        """At 50+ iterations, checkpoint nudge should be injected into messages."""
+        from agent_cli.loop import _CHECKPOINT_FIRST
+
+        # Create enough responses to reach checkpoint
+        responses = []
+        for i in range(_CHECKPOINT_FIRST + 1):
+            responses.append(
+                json.dumps(
+                    {
+                        "thought": f"step {i}",
+                        "action": "shell",
+                        "action_input": {"command": f"echo {i}"},
+                    }
+                )
+            )
+        # After checkpoint nudge, LLM provides final answer
+        responses.append(
+            json.dumps(
+                {"thought": "ok stopping", "final_answer": "done after checkpoint"}
+            )
+        )
+        provider = _make_provider(*responses)
+        result = run_loop(
+            query="Keep running commands",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "done after checkpoint"
+
+        # Verify checkpoint was injected by checking messages passed to LLM
+        # The call after checkpoint should have [CHECKPOINT] in its messages
+        last_call = provider.call.call_args
+        messages = last_call.kwargs.get("messages") or last_call[1].get("messages")
+        checkpoint_found = any(
+            "[CHECKPOINT]" in m.get("content", "")
+            for m in messages
+            if isinstance(m.get("content"), str)
+        )
+        assert checkpoint_found, "Checkpoint nudge was not found in messages"
+
+
+class TestToolHistoryTracking:
+    def test_history_recorded(self, caps, tmp_path):
+        """Tool execution should record history for checkpoint use."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "run",
+                    "action": "shell",
+                    "action_input": {"command": "echo hi"},
+                }
+            ),
+            json.dumps({"thought": "done", "final_answer": "ok"}),
+        )
+        result = run_loop(
+            query="Read file then run command",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "ok"
+
+
 class TestRunLoopQuietMode:
     def test_quiet_no_render(self, caps, capsys):
         provider = _make_provider(

@@ -290,16 +290,19 @@ class Plan:
     ▼
 ┌─── 이터레이션 루프 ────────────────────────────────────┐
 │                                                         │
-│  1. 선제 오버플로 체크                                    │
+│  1. 체크포인트 (50회 도달 후 매 20회)                       │
+│     └─ 최근 20회 도구 이력 + nudge → LLM 자기 판단          │
+│                                                         │
+│  2. 선제 오버플로 체크                                     │
 │     └─ 초과 시 → ContextManager.force_compress()         │
 │                                                         │
-│  2. 네이티브 tool 정의 준비 (Anthropic/OpenAI)             │
+│  3. 네이티브 tool 정의 준비 (Anthropic/OpenAI)             │
 │     └─ convert_to_anthropic_tools() / openai_tools()     │
 │                                                         │
-│  3. LLM 호출 → LLMResponse                              │
+│  4. LLM 호출 → LLMResponse                              │
 │     └─ 오류 시 overflow 패턴 매칭 → 압축 후 재시도 (1회)    │
 │                                                         │
-│  4. 응답 처리 분기:                                       │
+│  5. 응답 처리 분기:                                       │
 │     ├─ tool_calls 있음 → 네이티브 tool calling 경로        │
 │     │   ├─ 도구 실행 (validate + execute + truncate)      │
 │     │   ├─ 프로바이더별 메시지 포맷 (Anthropic/OpenAI)     │
