@@ -11,6 +11,7 @@ from agent_cli.tools.edit_file import (
 )
 from agent_cli.tools.read_file import (
     compute_line_hash,
+    tool_read_file,
 )
 from agent_cli.tools.delegate import _validate_subtask, _build_subprocess_cmd
 from agent_cli.tools import execute_tool
@@ -449,3 +450,63 @@ class TestPlanParserJsonExtraction:
         text = '{"plan": "1. Read file\\n2. Analyze it"}'
         steps = parse_plan_steps(text)
         assert len(steps) == 2
+
+
+class TestReadFilePartial:
+    def test_full_read(self, tmp_path):
+        f = tmp_path / "test.py"
+        f.write_text("line1\nline2\nline3\nline4\nline5")
+        result = tool_read_file({"path": str(f)})
+        assert "1#" in result
+        assert "5#" in result
+
+    def test_line_start(self, tmp_path):
+        f = tmp_path / "test.py"
+        f.write_text("aaa\nbbb\nccc\nddd\neee")
+        result = tool_read_file({"path": str(f), "line_start": 3})
+        assert "ccc" in result
+        assert "ddd" in result
+        assert "eee" in result
+        assert "aaa" not in result
+
+    def test_line_start_and_end(self, tmp_path):
+        f = tmp_path / "test.py"
+        f.write_text("aaa\nbbb\nccc\nddd\neee")
+        result = tool_read_file({"path": str(f), "line_start": 2, "line_end": 4})
+        assert "bbb" in result
+        assert "ddd" in result
+        assert "aaa" not in result
+        assert "eee" not in result
+
+    def test_line_numbers_preserved(self, tmp_path):
+        f = tmp_path / "test.py"
+        f.write_text("aaa\nbbb\nccc\nddd\neee")
+        result = tool_read_file({"path": str(f), "line_start": 3})
+        # First line in result should be line 3, not line 1
+        assert result.startswith("3#")
+
+    def test_string_line_start_coerced(self, tmp_path):
+        """LLMs sometimes send line_start as string."""
+        f = tmp_path / "test.py"
+        f.write_text("aaa\nbbb\nccc")
+        result = tool_read_file({"path": str(f), "line_start": "2"})
+        assert "bbb" in result
+        assert "aaa" not in result
+
+
+class TestTruncationReadFileGuide:
+    def test_head_truncation_includes_read_guide(self):
+        text = "\n".join(f"line{i}" for i in range(100))
+        config = TruncationConfig(
+            max_lines=10, max_bytes=100_000, direction="head", tool_name="read_file"
+        )
+        result = truncate_output(text, config)
+        assert "line_start=" in result
+
+    def test_non_read_file_no_guide(self):
+        text = "\n".join(f"line{i}" for i in range(100))
+        config = TruncationConfig(
+            max_lines=10, max_bytes=100_000, direction="head", tool_name="shell"
+        )
+        result = truncate_output(text, config)
+        assert "line_start=" not in result

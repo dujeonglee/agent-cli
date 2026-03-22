@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,740 LOC (42 Python 파일) + 3,868 LOC 테스트 (22 파일)
-> 총 테스트: 280 유닛 + 42 통합 = 322개
+> 총 소스: 4,785 LOC (42 Python 파일) + 3,929 LOC 테스트 (22 파일)
+> 총 테스트: 287 유닛 + 42 통합 = 329개
 
 ---
 
@@ -66,13 +66,13 @@ agent_cli/
 │
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (48)   TOOLS dict + execute_tool() 디스패처
-│   ├── registry.py          (282)  스키마 정의, 검증, API 형식 변환
-│   ├── read_file.py         (72)   파일 읽기 + hashline 포맷팅
+│   ├── registry.py          (291)  스키마 정의, 검증, API 형식 변환
+│   ├── read_file.py         (99)   파일 읽기 + hashline 포맷팅 + 부분 읽기
 │   ├── write_file.py        (18)   파일 생성
 │   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)
 │   ├── shell.py             (35)   셸 명령 실행
 │   ├── delegate.py          (80)   서브에이전트 위임
-│   └── truncation.py        (113)  모델 적응형 출력 압축 (context 3% 비례)
+│   └── truncation.py        (122)  모델 적응형 출력 압축 (context 3% 비례)
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export

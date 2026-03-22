@@ -63,10 +63,37 @@ def _verify_ref(lines: list[str], ref: str) -> int:
 
 
 def tool_read_file(args: dict) -> str:
-    """Read a file and return hashline-formatted content."""
+    """Read a file and return hashline-formatted content.
+
+    Supports partial reads via line_start/line_end (1-based, inclusive).
+    """
     path = args.get("path", "")
+    line_start = args.get("line_start", 0)
+    line_end = args.get("line_end", 0)
+
+    # Coerce to int (LLMs sometimes send strings)
+    try:
+        line_start = int(line_start) if line_start else 0
+        line_end = int(line_end) if line_end else 0
+    except (ValueError, TypeError):
+        line_start, line_end = 0, 0
+
     try:
         text = Path(path).read_text(encoding="utf-8")
+        all_lines = text.split("\n")
+        total = len(all_lines)
+
+        if line_start > 0:
+            start = max(0, line_start - 1)  # 1-based to 0-based
+            end = min(total, line_end) if line_end > 0 else total
+            selected = all_lines[start:end]
+            # Re-join and format with correct line numbers
+            out = []
+            for i, line in enumerate(selected, start + 1):
+                tag = compute_line_hash(i, line)
+                out.append(f"{i}#{tag}:{line}")
+            return "\n".join(out)
+
         return format_hashlines(text)
     except Exception as e:
         raise RuntimeError(f"read_file failed: {e}")

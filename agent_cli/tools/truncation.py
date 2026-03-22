@@ -14,6 +14,7 @@ class TruncationConfig:
     max_bytes: int = 8_000
     direction: str = "head"  # "head" | "tail"
     show_notice: bool = True
+    tool_name: str = ""
 
 
 # Direction rules per tool
@@ -45,7 +46,10 @@ def get_truncation_config(
     max_lines = max(_MIN_LINES, min(max_bytes // _BYTES_PER_LINE, _MAX_LINES))
 
     return TruncationConfig(
-        max_lines=max_lines, max_bytes=max_bytes, direction=direction
+        max_lines=max_lines,
+        max_bytes=max_bytes,
+        direction=direction,
+        tool_name=tool_name,
     )
 
 
@@ -108,6 +112,11 @@ def truncate_output(text: str, config: TruncationConfig) -> str:
                 f"[... truncated: showing first {shown_lines} of "
                 f"{total_lines} lines ({total_bytes} bytes total)]"
             )
+            if config.tool_name == "read_file":
+                notice += (
+                    f"\n[To read the rest, use: "
+                    f"read_file with line_start={shown_lines + 1}]"
+                )
             result = result + "\n" + notice
 
     return result
