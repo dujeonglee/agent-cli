@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from agent_cli.constants import OBS_SUCCESS, OBS_ERROR, OBS_ERROR_HINT
 
@@ -165,6 +166,15 @@ def run_loop(
 
         # 4. Native tool calling path (Anthropic/OpenAI)
         if response.tool_calls:
+            # Check if the only tool call is an echo (final answer pattern)
+            if len(response.tool_calls) == 1:
+                tc0 = response.tool_calls[0]
+                echo_answer = _try_echo_as_final(tc0["name"], tc0["input"])
+                if echo_answer:
+                    if not quiet:
+                        render_step("final", echo_answer, iteration)
+                    return echo_answer
+
             observations = []
             for tc in response.tool_calls:
                 tool_name = tc["name"]
@@ -269,7 +279,14 @@ def run_loop(
                     render_step("final", answer, iteration)
                 return answer
 
-        # 9. Tool execution (text parsing path)
+        # 9. Detect echo-as-final-answer (common small model pattern)
+        echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
+        if echo_answer:
+            if not quiet:
+                render_step("final", echo_answer, iteration)
+            return echo_answer
+
+        # 10. Tool execution (text parsing path)
         if parsed.action:
             tool_name = parsed.action
             tool_input = parsed.action_input or {}
@@ -397,6 +414,30 @@ def _execute_single_tool(
 
 
 _REPEAT_THRESHOLD = 3  # Same tool+input N times → force exit
+
+# Regex: simple echo with no pipes, redirects, subshells, or chaining
+_ECHO_FINAL_RE = re.compile(
+    r'^echo\s+["\']?(.+?)["\']?\s*$',
+    re.DOTALL,
+)
+
+
+def _try_echo_as_final(tool_name: str, tool_input) -> str | None:
+    """Detect 'echo ...' shell calls that are actually final answers.
+
+    Small models often use shell echo instead of final_answer.
+    Only matches simple echo commands with no pipes, redirects, or chaining.
+    """
+    if tool_name != "shell" or not isinstance(tool_input, dict):
+        return None
+    cmd = tool_input.get("command", "").strip()
+    # Reject if command has pipes, redirects, semicolons, &&, || etc.
+    if any(c in cmd for c in ["|", ">", "<", ";", "&&", "||", "`", "$("]):
+        return None
+    m = _ECHO_FINAL_RE.match(cmd)
+    if m:
+        return m.group(1).strip().strip("'\"")
+    return None
 
 
 def _normalize_input(tool_input) -> str:

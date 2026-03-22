@@ -78,9 +78,9 @@ class TestRunLoopToolExecution:
         provider = _make_provider(
             json.dumps(
                 {
-                    "thought": "run echo",
+                    "thought": "run pwd",
                     "action": "shell",
-                    "action_input": {"command": "echo hello"},
+                    "action_input": {"command": "pwd"},
                 }
             ),
             json.dumps(
@@ -149,21 +149,21 @@ class TestRunLoopMaxIter:
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"command": "echo 1"},
+                    "action_input": {"command": "date +%s"},
                 }
             ),
             json.dumps(
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"command": "echo 2"},
+                    "action_input": {"command": "uname -s"},
                 }
             ),
             json.dumps(
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"command": "echo 3"},
+                    "action_input": {"command": "whoami"},
                 }
             ),
         )
@@ -231,7 +231,7 @@ class TestCheckpoint:
                     {
                         "thought": f"step {i}",
                         "action": "shell",
-                        "action_input": {"command": f"echo {i}"},
+                        "action_input": {"command": f"date +step{i}"},
                     }
                 )
             )
@@ -261,7 +261,7 @@ class TestCheckpoint:
                     {
                         "thought": f"step {i}",
                         "action": "shell",
-                        "action_input": {"command": f"echo {i}"},
+                        "action_input": {"command": f"date +step{i}"},
                     }
                 )
             )
@@ -311,7 +311,7 @@ class TestToolHistoryTracking:
                 {
                     "thought": "run",
                     "action": "shell",
-                    "action_input": {"command": "echo hi"},
+                    "action_input": {"command": "whoami"},
                 }
             ),
             json.dumps({"thought": "done", "final_answer": "ok"}),
@@ -324,6 +324,73 @@ class TestToolHistoryTracking:
             quiet=True,
         )
         assert result == "ok"
+
+
+class TestEchoAsFinalAnswer:
+    def test_simple_echo_becomes_final(self, caps):
+        """echo 'Task done' → final_answer instead of shell execution."""
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "shell",
+                    "action_input": {
+                        "command": 'echo "Task completed successfully."',
+                        "timeout": 5,
+                    },
+                }
+            ),
+        )
+        result = run_loop(
+            query="Do something",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "Task completed successfully."
+
+    def test_echo_with_pipe_not_intercepted(self, caps):
+        """echo ... | grep should NOT be treated as final answer."""
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "search",
+                    "action": "shell",
+                    "action_input": {"command": "echo hello | grep h"},
+                }
+            ),
+            json.dumps({"thought": "done", "final_answer": "found"}),
+        )
+        result = run_loop(
+            query="Search",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "found"
+
+    def test_echo_with_redirect_not_intercepted(self, caps):
+        """echo ... > file should NOT be treated as final answer."""
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "write",
+                    "action": "shell",
+                    "action_input": {"command": "echo hello > out.txt"},
+                }
+            ),
+            json.dumps({"thought": "done", "final_answer": "written"}),
+        )
+        result = run_loop(
+            query="Write",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "written"
 
 
 class TestRepeatedCallDetection:
@@ -472,7 +539,7 @@ class TestRunLoopNativeToolCalling:
                     {
                         "id": "call_1",
                         "name": "shell",
-                        "input": {"command": "echo hi"},
+                        "input": {"command": "whoami"},
                     }
                 ],
             ),
@@ -500,7 +567,7 @@ class TestRunLoopNativeToolCalling:
                 {
                     "thought": "t",
                     "action": "shell",
-                    "action_input": {"command": "echo hi"},
+                    "action_input": {"command": "whoami"},
                 }
             ),
             json.dumps({"thought": "done", "final_answer": "ok"}),
