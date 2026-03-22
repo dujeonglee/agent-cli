@@ -32,6 +32,7 @@ class ReActResult:
     action: str | None = None
     action_input: dict | str | None = None
     final_answer: str | None = None
+    progress: int | None = None  # 0-100 self-assessed progress (optional)
     raw: str = ""
     parse_stage: int = 0  # 0=failed, 1=json.loads, 2=json_repair, 3=regex
     thinking: str | None = None  # Extracted thinking block content
@@ -160,3 +161,10 @@ def _populate_from_dict(result: ReActResult, data: dict) -> None:
     result.action = data.get("action")
     result.action_input = data.get("action_input")
     result.final_answer = data.get("final_answer") or data.get("final")
+    # progress is optional — coerce to int, clamp 0-100
+    raw_progress = data.get("progress")
+    if raw_progress is not None:
+        try:
+            result.progress = max(0, min(100, int(raw_progress)))
+        except (ValueError, TypeError):
+            pass

@@ -199,3 +199,35 @@ class TestThinkingBlockStripping:
         assert result.thought == "summary"
         assert result.action == "shell"
         assert result.parse_stage == 1
+
+
+class TestProgressField:
+    def test_progress_parsed(self):
+        text = '{"thought": "reading", "action": "read_file", "action_input": {"path": "a.py"}, "progress": 30}'
+        result = parse_react(text)
+        assert result.progress == 30
+
+    def test_progress_clamped_to_100(self):
+        text = '{"thought": "done", "final_answer": "ok", "progress": 150}'
+        result = parse_react(text)
+        assert result.progress == 100
+
+    def test_progress_clamped_to_0(self):
+        text = '{"thought": "start", "action": "shell", "action_input": {"command": "ls"}, "progress": -10}'
+        result = parse_react(text)
+        assert result.progress == 0
+
+    def test_progress_string_coerced(self):
+        text = '{"thought": "mid", "action": "shell", "action_input": {"command": "ls"}, "progress": "50"}'
+        result = parse_react(text)
+        assert result.progress == 50
+
+    def test_progress_absent_is_none(self):
+        text = '{"thought": "no progress", "action": "shell", "action_input": {"command": "ls"}}'
+        result = parse_react(text)
+        assert result.progress is None
+
+    def test_progress_invalid_ignored(self):
+        text = '{"thought": "bad", "action": "shell", "action_input": {"command": "ls"}, "progress": "abc"}'
+        result = parse_react(text)
+        assert result.progress is None
