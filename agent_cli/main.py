@@ -547,6 +547,24 @@ def chat(
                 _run_shell_inline(cmd)
             continue
 
+        if query == "/ctx_window":
+            msgs = ctx.get_messages()
+            console.print(
+                f"[{C['muted']}]── context window dump ({len(msgs)} messages) ──[/]"
+            )
+            for i, m in enumerate(msgs):
+                role = m["role"]
+                content = m["content"]
+                console.print(f"[{C['accent']}][{i}] {role}[/]")
+                console.print(content)
+                console.print()
+            tokens = ctx.get_estimated_tokens()
+            console.print(
+                f"[{C['muted']}]── estimated {tokens} tokens "
+                f"/ {ctx.capabilities.context_window} context window ──[/]"
+            )
+            continue
+
         if query.startswith("/plan "):
             from agent_cli.planning.executor import execute_plan
             from agent_cli.planning.generator import generate_plan

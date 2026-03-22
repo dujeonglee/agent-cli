@@ -45,7 +45,7 @@ class TestSkillModel:
             prompt_template="Review $ARGUMENTS",
         )
         assert skill.name == "review"
-        assert skill.active_tools is None
+        assert skill.allowed_tools is None
         assert skill.max_iter == 0
 
     def test_skill_with_tools(self):
@@ -53,10 +53,10 @@ class TestSkillModel:
             name="test",
             description="Generate tests",
             prompt_template="Test $ARGUMENTS",
-            active_tools=["read_file", "write_file"],
+            allowed_tools=["read_file", "write_file"],
             max_iter=10,
         )
-        assert skill.active_tools == ["read_file", "write_file"]
+        assert skill.allowed_tools == ["read_file", "write_file"]
         assert skill.max_iter == 10
 
 
@@ -66,7 +66,7 @@ class TestArgumentSubstitution:
         assert result == "Review src/auth.py now"
 
     def test_numbered_args(self):
-        result = substitute_arguments("Compare $1 with $2", "file1.py file2.py")
+        result = substitute_arguments("Compare $0 with $1", "file1.py file2.py")
         assert result == "Compare file1.py with file2.py"
 
     def test_no_args(self):
@@ -74,12 +74,12 @@ class TestArgumentSubstitution:
         assert result == "Do something with "
 
     def test_unreplaced_placeholders_cleaned(self):
-        result = substitute_arguments("Use $1 and $2 and $3", "only-one-arg")
-        assert "$3" not in result
+        result = substitute_arguments("Use $0 and $1 and $2", "only-one-arg")
+        assert "$2" not in result
         assert "only-one-arg" in result
 
     def test_mixed_args_and_arguments(self):
-        result = substitute_arguments("Read $ARGUMENTS, focus on $1", "src/main.py")
+        result = substitute_arguments("Read $ARGUMENTS, focus on $0", "src/main.py")
         assert "src/main.py" in result
 
 
@@ -90,7 +90,7 @@ class TestSkillLoader:
             "---\n"
             "name: review\n"
             "description: Review code\n"
-            "active-tools: [read_file]\n"
+            "allowed-tools: [read_file]\n"
             "max-iter: 5\n"
             "argument-hint: <file>\n"
             "---\n\n"
@@ -100,7 +100,7 @@ class TestSkillLoader:
         assert skill is not None
         assert skill.name == "review"
         assert skill.description == "Review code"
-        assert skill.active_tools == ["read_file"]
+        assert skill.allowed_tools == ["read_file"]
         assert skill.max_iter == 5
         assert "Review $ARGUMENTS" in skill.prompt_template
 
@@ -112,7 +112,7 @@ class TestSkillLoader:
         skill = _parse_skill_file(skill_file)
         assert skill is not None
         assert skill.name == "simple"
-        assert skill.active_tools is None
+        assert skill.allowed_tools is None
         assert skill.max_iter == 0
 
     def test_parse_no_frontmatter(self, tmp_path):
@@ -169,7 +169,7 @@ class TestSkillLoader:
 
 
 class TestSkillExecution:
-    def test_execute_with_active_tools(self, caps):
+    def test_execute_with_allowed_tools(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
             content=json.dumps({"thought": "reviewing", "final_answer": "looks good"})
@@ -179,7 +179,7 @@ class TestSkillExecution:
             name="review",
             description="Review",
             prompt_template="Review $ARGUMENTS",
-            active_tools=["read_file"],
+            allowed_tools=["read_file"],
             max_iter=3,
         )
         result = execute_skill(

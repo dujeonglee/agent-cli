@@ -119,6 +119,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `/sh <cmd>` | 셸 명령 실행 |
 | `/plan <goal>` | 대화 중 계획 모드 진입 |
 | `/skills` | 사용 가능한 스킬 목록 |
+| `/ctx_window` | 현재 컨텍스트 윈도우 내용 덤프 |
 | `/<skill> <args>` | 스킬 실행 |
 
 입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.
@@ -152,13 +153,13 @@ agent-cli run "/test src/utils.py"
 ---
 name: my-skill
 description: What this skill does
-active-tools: [read_file, shell]
+allowed-tools: [read_file, shell]
 max-iter: 5
 argument-hint: "<file_path>"
 ---
 
 Your custom prompt template here. Use $ARGUMENTS for user input.
-$1, $2 for individual arguments.
+$0, $1 for individual arguments (0-based).
 ```
 
 스킬 검색 경로:

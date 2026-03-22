@@ -93,7 +93,7 @@ def _parse_skill_file(path: Path) -> Skill | None:
         name=name,
         description=meta.get("description", ""),
         prompt_template=body,
-        active_tools=meta.get("active-tools"),
+        allowed_tools=meta.get("allowed-tools"),
         max_iter=int(meta.get("max-iter", 0)),
         argument_hint=meta.get("argument-hint", ""),
         source_path=str(path),

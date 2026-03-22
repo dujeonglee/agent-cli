@@ -15,7 +15,7 @@ def substitute_arguments(template: str, arguments: str) -> str:
     result = template.replace("$ARGUMENTS", arguments)
 
     args_list = arguments.split()
-    for i, arg in enumerate(args_list, 1):
+    for i, arg in enumerate(args_list):
         result = result.replace(f"${i}", arg)
 
     # Clean up unreplaced $N patterns (if more placeholders than args)
@@ -58,5 +58,5 @@ def execute_skill(
         depth=0,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
-        active_tools=skill.active_tools,
+        active_tools=skill.allowed_tools,
     )

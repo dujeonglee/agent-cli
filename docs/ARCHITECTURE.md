@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,624 LOC (42 Python 파일) + 3,796 LOC 테스트 (22 파일)
-> 총 테스트: 277 유닛 + 42 통합 = 319개
+> 총 소스: 4,634 LOC (42 Python 파일) + 3,785 LOC 테스트 (22 파일)
+> 총 테스트: 276 유닛 + 42 통합 = 318개
 
 ---
 
@@ -42,7 +42,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (646)  CLI 명령어: run, plan, chat + 공유 헬퍼
+├── main.py                  (664)  CLI 명령어: run, plan, chat + 공유 헬퍼
 ├── config.py                (138)  models.json 로딩/저장 + 프로바이더 기본값
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
@@ -818,7 +818,7 @@ agent-cli chat [options]
 ---
 name: review-code
 description: Review code for bugs and security
-active-tools: [read_file]
+allowed-tools: [read_file]
 max-iter: 5
 argument-hint: "<file_path>"
 ---
@@ -830,7 +830,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 |-----------------|------|------|
 | `name` | string | 슬래시 명령어 이름 |
 | `description` | string | 스킬 설명 |
-| `active-tools` | list[str] | 활성 도구 (미지정 시 전체) |
+| `allowed-tools` | list[str] | 허용 도구 (미지정 시 전체) |
 | `max-iter` | int | 최대 이터레이션 (미지정 시 기본값) |
 | `argument-hint` | string | 인자 힌트 |
 
@@ -839,7 +839,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 | 패턴 | 설명 |
 |------|------|
 | `$ARGUMENTS` | 전체 인자 문자열 |
-| `$1`, `$2`, ... | N번째 인자 (1-indexed) |
+| `$0`, `$1`, ... | N번째 인자 (0-indexed) |
 
 ### 13.4 스킬 검색 경로
 
@@ -863,7 +863,7 @@ load_skills() — 디스크에서 스킬 파일 검색/파싱
 substitute_arguments() — $ARGUMENTS → "src/auth.py" 치환
     │
     ▼
-run_loop(query=치환된_프롬프트, active_tools=["read_file"], max_iter=5)
+run_loop(query=치환된_프롬프트, allowed_tools=["read_file"], max_iter=5)
     │  └─ loop.py의 기존 인프라 그대로 활용
     ▼
 결과 반환
