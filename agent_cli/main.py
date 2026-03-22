@@ -64,6 +64,11 @@ def _resolve_provider(
     return resolved_url, resolved_model, api_key
 
 
+_SKILL_NOT_FOUND = (
+    object()
+)  # Sentinel to distinguish "not a skill" from "skill returned None"
+
+
 def _dispatch_skill(
     query: str,
     llm_provider,
@@ -77,8 +82,9 @@ def _dispatch_skill(
     quiet: bool = False,
     max_depth: int = 2,
     delegate_timeout: int = 300,
-) -> str | None:
-    """Dispatch a /skill-name command. Returns result or None if not a skill."""
+    ctx=None,
+):
+    """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
     from agent_cli.skills import load_skills, execute_skill
 
     skills = load_skills()
@@ -86,7 +92,7 @@ def _dispatch_skill(
     cmd_name = parts[0][1:]  # strip leading /
 
     if cmd_name not in skills:
-        return None  # Not a skill
+        return _SKILL_NOT_FOUND
 
     skill = skills[cmd_name]
     arguments = parts[1] if len(parts) > 1 else ""
@@ -104,6 +110,7 @@ def _dispatch_skill(
         quiet=quiet,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
+        ctx=ctx,
     )
 
 
@@ -230,11 +237,12 @@ def run(
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,
         )
-        if answer is not None:
-            if quiet:
-                print(answer)
-            else:
-                console.print(f"\n[{C['final']}]{answer}[/]")
+        if answer is not _SKILL_NOT_FOUND:
+            if answer is not None:
+                if quiet:
+                    print(answer)
+                else:
+                    console.print(f"\n[{C['final']}]{answer}[/]")
             return
 
     answer = run_loop(
@@ -631,18 +639,26 @@ def chat(
                 verbose=verbose,
                 max_depth=max_depth,
                 delegate_timeout=delegate_timeout,
+                ctx=ctx,
             )
-            if result is not None:
-                turn += 1
-                ctx.add("user", query)
-                ctx.add("assistant", result)
-                console.print(f"\n[{C['final']}]{result}[/]")
+            if result is _SKILL_NOT_FOUND:
+                console.print(f"[{C['error']}]Unknown command: /{cmd_name}[/]")
+                console.print(
+                    f"[{C['muted']}]Try /skills for available skills, or /quit, /clear, /sh, /plan[/]"
+                )
                 continue
 
-            console.print(f"[{C['error']}]Unknown command: /{cmd_name}[/]")
-            console.print(
-                f"[{C['muted']}]Try /skills for available skills, or /quit, /clear, /sh, /plan[/]"
-            )
+            if result is not None:
+                turn += 1
+                console.print(f"\n[{C['final']}]{result}[/]")
+            else:
+                console.print(
+                    f"\n[{C['accent']}]Skill /{cmd_name} stopped without final answer. "
+                    f"You can:[/]\n"
+                    f"  - Retry the skill with different arguments\n"
+                    f"  - /clear to reset context\n"
+                    f"  - /quit to exit"
+                )
             continue
 
         turn += 1

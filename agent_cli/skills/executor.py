@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
@@ -38,6 +39,7 @@ def execute_skill(
     quiet: bool = False,
     max_depth: int = 2,
     delegate_timeout: int = 300,
+    ctx: ContextManager | None = None,
 ) -> str | None:
     """Execute a skill by substituting arguments and calling run_loop."""
     prompt = substitute_arguments(skill.prompt_template, arguments)
@@ -59,4 +61,5 @@ def execute_skill(
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
         active_tools=skill.allowed_tools,
+        ctx=ctx,
     )

@@ -5,7 +5,7 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,712 LOC (42 Python 파일) + 3,851 LOC 테스트 (22 파일)
+> 총 소스: 4,731 LOC (42 Python 파일) + 3,851 LOC 테스트 (22 파일)
 > 총 테스트: 278 유닛 + 42 통합 = 320개
 
 ---
@@ -42,7 +42,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (673)  CLI 명령어: run, plan, chat + 공유 헬퍼
+├── main.py                  (689)  CLI 명령어: run, plan, chat + 공유 헬퍼
 ├── config.py                (138)  models.json 로딩/저장 + 프로바이더 기본값
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
@@ -89,7 +89,7 @@ agent_cli/
 │   ├── __init__.py          (7)    re-export
 │   ├── models.py            (16)   Skill 데이터 모델
 │   ├── loader.py            (117)  스킬 파일 검색/파싱 (캐싱)
-│   └── executor.py          (62)   인자 치환 + run_loop 호출
+│   └── executor.py          (65)   인자 치환 + run_loop 호출
 │
 └── planning/                       Planning Mode
     ├── __init__.py          (1)
