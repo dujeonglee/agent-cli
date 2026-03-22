@@ -511,10 +511,15 @@ def chat(
     )
     console.print()
 
+    from agent_cli.input_history import make_prompt, setup as _setup_input_history
+
+    _setup_input_history()
+    _prompt = make_prompt("You:", "\033[1;96m")
+
     turn = 0
     while True:
         try:
-            query = console.input("[bold bright_cyan]You:[/] ").strip()
+            query = input(_prompt).strip()
         except (EOFError, KeyboardInterrupt):
             console.print(f"\n[{C['muted']}]Session ended.[/]")
             break

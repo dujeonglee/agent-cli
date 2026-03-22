@@ -121,6 +121,8 @@ agent-cli chat -p ollama -m qwen3:32b
 | `/skills` | 사용 가능한 스킬 목록 |
 | `/<skill> <args>` | 스킬 실행 |
 
+입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.
+
 ## 스킬 (Prompt Skills)
 
 특정 작업에 최적화된 재사용 가능한 프롬프트 템플릿. Claude Code 스킬 포맷과 호환.
