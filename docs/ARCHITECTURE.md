@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,844 LOC (42 Python 파일) + 4,028 LOC 테스트 (22 파일)
-> 총 테스트: 296 유닛 + 42 통합 = 338개
+> 총 소스: 4,831 LOC (42 Python 파일) + 3,996 LOC 테스트 (22 파일)
+> 총 테스트: 290 유닛 + 42 통합 = 332개
 
 ---
 
@@ -47,7 +47,7 @@ agent_cli/
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── input_history.py         (61)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (609)  ReAct 에이전트 루프 + _execute_single_tool
+├── loop.py                  (606)  ReAct 에이전트 루프 + _execute_single_tool
 ├── render.py                (251)  Rich 터미널 렌더링 + 모델 정보 표시
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -60,7 +60,7 @@ agent_cli/
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
-│   ├── react_parser.py      (170)  3단계 폴백 ReAct 파서 + thinking 분리 + progress
+│   ├── react_parser.py      (162)  3단계 폴백 ReAct 파서 + thinking 분리
 │   ├── json_repair.py       (175)  깨진 JSON 복구 (6단계 파이프라인)
 │   └── plan_parser.py       (106)  계획 step 추출 (텍스트 + JSON)
 │
@@ -82,7 +82,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (168)  조건부 시스템 프롬프트 빌더
+│   ├── system_prompt.py     (166)  조건부 시스템 프롬프트 빌더
 │   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
 │
 ├── skills/                         프롬프트 스킬 시스템

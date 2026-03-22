@@ -239,12 +239,9 @@ def run_loop(
         # 5. Text parsing path (Ollama, fallback)
         parsed = parse_react(llm_text)
 
-        # 6. Thought + progress
+        # 6. Thought
         if parsed.thought and not quiet:
-            thought_text = parsed.thought
-            if parsed.progress is not None:
-                thought_text += f"\n[progress: {parsed.progress}%]"
-            render_step("thought", thought_text, iteration)
+            render_step("thought", parsed.thought, iteration)
 
         # 7. Final answer
         if parsed.final_answer:
@@ -341,13 +338,8 @@ def run_loop(
                     )
                 return None
 
-            # Inject observation + progress nudge
+            # Inject observation
             obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
-            if parsed.progress is not None and parsed.progress >= 100:
-                obs_msg += (
-                    "\n\n[SYSTEM] You reported progress=100. "
-                    "Your next response MUST be a final_answer."
-                )
             messages.append({"role": "assistant", "content": llm_text})
             messages.append({"role": "user", "content": obs_msg})
             if ctx:

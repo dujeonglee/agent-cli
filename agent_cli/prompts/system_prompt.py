@@ -16,12 +16,10 @@ You MUST respond with a single JSON object and nothing else.
 No markdown fences, no extra text — ONLY the JSON object.
 
 Format A — use a tool:
-{"thought": "your reasoning", "action": "tool_name", "action_input": {...}, "progress": 0-100}
+{"thought": "your reasoning", "action": "tool_name", "action_input": {...}}
 
 Format B — final answer:
-{"thought": "your reasoning", "final_answer": "your complete answer", "progress": 100}
-
-You MUST include the "progress" field in every response. Estimate how much of the task you have completed (0=just started, 50=halfway, 100=done)."""
+{"thought": "your reasoning", "final_answer": "your complete answer"}"""
 
 HASHLINE_GUIDE = """\
 ## Hashline Editing
