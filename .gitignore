@@ -20,3 +20,6 @@ htmlcov/
 # Agent-CLI
 .agent-cli/
 .claude/
+out.txt
+OptimizationToDo.md
+OptimizationSummary.md
