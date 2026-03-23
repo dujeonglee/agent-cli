@@ -540,14 +540,10 @@ def _extract_questions(action_input) -> list[str]:
 
 def _handle_ask(questions: list[str], quiet: bool) -> str:
     """Display questions to the user and collect responses."""
-    from agent_cli.render import C, console
-
     responses = []
     for q in questions:
-        if not quiet:
-            console.print(f"\n[{C['accent']}]Agent asks:[/] {q}")
         try:
-            answer = input("Your answer: ").strip()
+            answer = input(f"\nAgent asks: {q}\nYour answer: ").strip()
         except (EOFError, KeyboardInterrupt):
             answer = "(no response)"
         responses.append(f"Q: {q}\nA: {answer}")
