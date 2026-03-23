@@ -5,7 +5,7 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 5,247 LOC (44 Python 파일) + 4,184 LOC 테스트 (23 파일)
+> 총 소스: 5,379 LOC (44 Python 파일) + 4,184 LOC 테스트 (23 파일)
 > 총 테스트: 308 유닛 + 42 통합 = 350개
 
 ---
@@ -47,7 +47,7 @@ agent_cli/
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── input_history.py         (61)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (660)  ReAct 에이전트 루프 + _execute_single_tool
+├── loop.py                  (762)  ReAct 에이전트 루프 + _execute_single_tool
 ├── render.py                (251)  Rich 터미널 렌더링 + 모델 정보 표시
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -66,7 +66,7 @@ agent_cli/
 │
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (48)   TOOLS dict + execute_tool() 디스패처
-│   ├── registry.py          (324)  스키마 정의, 검증, API 형식 변환
+│   ├── registry.py          (339)  스키마 정의, 검증, API 형식 변환
 │   ├── read_file.py         (99)   파일 읽기 + hashline 포맷팅 + 부분 읽기
 │   ├── write_file.py        (18)   파일 생성
 │   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)
@@ -98,7 +98,7 @@ agent_cli/
     ├── models.py            (74)   Plan, PlanStep (직렬화 + 검증)
     ├── generator.py         (82)   Phase 1: 계획 생성 (재시도 포함)
     ├── reviewer.py          (113)  Phase 2: 대화형 검토/편집
-    └── executor.py          (196)  Phase 3: 단계별 실행 (Tool RAG)
+    └── executor.py          (204)  Phase 3: 단계별 실행 (Tool RAG)
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)

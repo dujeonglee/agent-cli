@@ -78,7 +78,7 @@ def execute_plan(
             console.print()
             render_status("running", f"Step {step.id}/{total}: {step.description}")
 
-        step_context = _build_step_context(plan, idx)
+        step_context = _build_step_context(plan, idx, capabilities)
         active_tools = _infer_tools_for_step(step.description)
 
         result = run_loop(
@@ -132,14 +132,22 @@ def _save_if_needed(plan: Plan, save_path: str | None) -> None:
         plan.save(save_path)
 
 
-def _build_step_context(plan: Plan, current_idx: int) -> str:
+def _build_step_context(
+    plan: Plan, current_idx: int, capabilities: ModelCapabilities | None = None
+) -> str:
     """Build context string injected into system prompt for step execution."""
+    # Step result summary length: proportional to context window (1% per step)
+    if capabilities:
+        max_summary = max(100, min(2000, capabilities.context_window // 100))
+    else:
+        max_summary = 100
+
     parts = [f'CONTEXT: You are executing a plan to: "{plan.goal}"']
 
     completed = []
     for step in plan.steps[:current_idx]:
         if step.status == "done":
-            summary = (step.result or "completed")[:100].replace("\n", " ")
+            summary = (step.result or "completed")[:max_summary].replace("\n", " ")
             completed.append(f"  {step.id}. [✓] {step.description} — {summary}")
         elif step.status == "skipped":
             completed.append(f"  {step.id}. [~] {step.description} — skipped")

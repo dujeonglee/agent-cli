@@ -62,6 +62,11 @@ def run_loop(
     """
     include_delegate = depth < max_depth
     tools_list = active_tools or list(TOOLS.keys())
+    # Virtual tools: always include "complete"; include "ask" only in chat (ctx present)
+    if "complete" not in tools_list:
+        tools_list = [*tools_list, "complete"]
+    if ctx and "ask" not in tools_list:
+        tools_list = [*tools_list, "ask"]
 
     # Load previous session context (depth 0 only)
     session_context = None
@@ -211,7 +216,29 @@ def run_loop(
                                 render_step("final", answer, iteration)
                             return answer
 
-                # 4b. Echo-as-final-answer pattern
+                # 4b. Ask tool — prompt user (native path)
+                if tc0["name"] == "ask" and isinstance(tc0["input"], dict):
+                    question = tc0["input"].get("question", "")
+                    if question:
+                        user_response = _handle_ask(question, quiet)
+                        obs_msg = f"User responded: {user_response}"
+                        new_msgs = _format_tool_call_messages(
+                            provider_name,
+                            response,
+                            [{"tool_call": tc0, "output": obs_msg}],
+                        )
+                        messages.extend(new_msgs)
+                        if ctx:
+                            for m in new_msgs:
+                                ctx.add(
+                                    m["role"],
+                                    m.get("content", "")
+                                    if isinstance(m.get("content"), str)
+                                    else json.dumps(m.get("content", "")),
+                                )
+                        continue
+
+                # 4c. Echo-as-final-answer pattern
                 echo_answer = _try_echo_as_final(tc0["name"], tc0["input"])
                 if echo_answer:
                     if not quiet:
@@ -359,7 +386,34 @@ def run_loop(
                 render_step("final", echo_answer, iteration)
             return echo_answer
 
-        # 10. Tool execution (text parsing path)
+        # 10. Ask tool — prompt user for input (text parsing path)
+        if parsed.action == "ask":
+            question = ""
+            if isinstance(parsed.action_input, dict):
+                question = parsed.action_input.get("question", "")
+            elif isinstance(parsed.action_input, str):
+                question = parsed.action_input
+            if question:
+                user_response = _handle_ask(question, quiet)
+                obs_msg = f"Observation: User responded: {user_response}\n\nContinue. Respond with JSON only."
+                messages.append({"role": "assistant", "content": llm_text})
+                messages.append({"role": "user", "content": obs_msg})
+                if ctx:
+                    ctx.add("assistant", llm_text)
+                    ctx.add("user", obs_msg)
+                if depth == 0:
+                    _log_to_session(
+                        session,
+                        {
+                            "iter": iteration,
+                            "thought": parsed.thought,
+                            "action": "ask",
+                            "observation": f"Q: {question} A: {user_response}"[:500],
+                        },
+                    )
+                continue
+
+        # 11. Tool execution (text parsing path)
         if parsed.action:
             tool_name = parsed.action
             tool_input = parsed.action_input or {}
@@ -451,6 +505,18 @@ def run_loop(
     if not quiet:
         render_status("error", f"Max iterations ({max_iter}) reached.")
     return None
+
+
+def _handle_ask(question: str, quiet: bool) -> str:
+    """Display a question to the user and collect their response."""
+    from agent_cli.render import C, console
+
+    if not quiet:
+        console.print(f"\n[{C['accent']}]Agent asks:[/] {question}")
+    try:
+        return input("Your answer: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return "(no response)"
 
 
 def _log_to_session(session, entry: dict) -> None:
