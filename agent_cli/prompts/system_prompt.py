@@ -15,11 +15,10 @@ You are an AI assistant that solves tasks step-by-step using available tools.
 You MUST respond with a single JSON object and nothing else.
 No markdown fences, no extra text — ONLY the JSON object.
 
-Format A — use a tool:
 {"thought": "your reasoning", "action": "tool_name", "action_input": {...}}
 
-Format B — final answer:
-{"thought": "your reasoning", "final_answer": "your complete answer"}"""
+When the task is complete, use the "complete" tool:
+{"thought": "summary", "action": "complete", "action_input": {"result": "your answer"}}"""
 
 HASHLINE_GUIDE = """\
 ## Hashline Editing

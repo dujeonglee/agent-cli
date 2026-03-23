@@ -31,7 +31,6 @@ class ReActResult:
     thought: str | None = None
     action: str | None = None
     action_input: dict | str | None = None
-    final_answer: str | None = None
     raw: str = ""
     parse_stage: int = 0  # 0=failed, 1=json.loads, 2=json_repair, 3=regex
     thinking: str | None = None  # Extracted thinking block content
@@ -147,10 +146,6 @@ def _regex_extract(text: str) -> dict | None:
         except (json.JSONDecodeError, ValueError):
             result["action_input"] = m.group(1)
 
-    m = re.search(r'"final_answer"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.S)
-    if m:
-        result["final_answer"] = m.group(1).replace('\\"', '"').replace("\\n", "\n")
-
     return result if result else None
 
 
@@ -159,4 +154,3 @@ def _populate_from_dict(result: ReActResult, data: dict) -> None:
     result.thought = data.get("thought")
     result.action = data.get("action")
     result.action_input = data.get("action_input")
-    result.final_answer = data.get("final_answer") or data.get("final")

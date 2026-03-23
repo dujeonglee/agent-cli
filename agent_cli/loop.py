@@ -100,11 +100,11 @@ def run_loop(
                 f"[SYSTEM] CHECKPOINT — {iteration} iterations used.\n"
                 f"Recent tool calls:\n{history_summary}\n\n"
                 f"You MUST now do ONE of:\n"
-                f'1. Return final answer: {{"thought": "...", "final_answer": "your result"}}\n'
+                f'1. Use the complete tool: {{"thought": "...", "action": "complete", "action_input": {{"result": "your result"}}}}\n'
                 f"2. If genuinely incomplete, explain what SPECIFIC step remains and do it.\n\n"
                 f"Do NOT call echo, cat, or any tool just to confirm completion.\n"
                 f"Do NOT repeat previous tool calls.\n"
-                f"If you already completed the task, provide final_answer IMMEDIATELY."
+                f"If you already completed the task, call the complete tool IMMEDIATELY."
             )
             messages.append({"role": "user", "content": checkpoint_msg})
             if ctx:
@@ -166,9 +166,28 @@ def run_loop(
 
         # 4. Native tool calling path (Anthropic/OpenAI)
         if response.tool_calls:
-            # Check if the only tool call is an echo (final answer pattern)
             if len(response.tool_calls) == 1:
                 tc0 = response.tool_calls[0]
+
+                # 4a. Complete tool → extract result and return
+                if tc0["name"] == "complete" and isinstance(tc0["input"], dict):
+                    answer = tc0["input"].get("result", "")
+                    if answer:
+                        # Fulfillment guard
+                        if not tools_called and needs_tool_action(query):
+                            if not quiet:
+                                render_status(
+                                    "error",
+                                    "Answer rejected — no tool actions performed yet.",
+                                    iteration,
+                                )
+                            # Fall through to execute as normal tool (will fail gracefully)
+                        else:
+                            if not quiet:
+                                render_step("final", answer, iteration)
+                            return answer
+
+                # 4b. Echo-as-final-answer pattern
                 echo_answer = _try_echo_as_final(tc0["name"], tc0["input"])
                 if echo_answer:
                     if not quiet:
@@ -243,43 +262,34 @@ def run_loop(
         if parsed.thought and not quiet:
             render_step("thought", parsed.thought, iteration)
 
-        # 7. Final answer
-        if parsed.final_answer:
-            # Fulfillment guard — check BEFORE rendering
-            if not tools_called and needs_tool_action(query):
-                nudge = (
-                    "You provided a final_answer, but the task likely requires "
-                    "tool actions (file operations, shell commands, etc.). "
-                    "Please use the appropriate tools first, then provide final_answer."
-                )
-                messages.append({"role": "assistant", "content": llm_text})
-                messages.append({"role": "user", "content": nudge})
-                if ctx:
-                    ctx.add("assistant", llm_text)
-                    ctx.add("user", nudge)
-                if not quiet:
-                    render_status(
-                        "error",
-                        "Final answer rejected — no tool actions performed yet.",
-                        iteration,
-                    )
-                continue
-
-            if not quiet:
-                render_step("final", parsed.final_answer, iteration)
-            return parsed.final_answer
-
-        # 8. Handle LLM sending action="final_answer" (common mistake)
-        if parsed.action == "final_answer":
+        # 7. Complete tool (text parsing path)
+        if parsed.action == "complete":
             answer = ""
             if isinstance(parsed.action_input, dict):
-                answer = parsed.action_input.get(
-                    "final_answer",
-                    parsed.action_input.get("answer", str(parsed.action_input)),
-                )
+                answer = parsed.action_input.get("result", "")
             elif isinstance(parsed.action_input, str):
                 answer = parsed.action_input
             if answer:
+                # Fulfillment guard — check BEFORE rendering
+                if not tools_called and needs_tool_action(query):
+                    nudge = (
+                        "You called the complete tool, but the task likely requires "
+                        "tool actions (file operations, shell commands, etc.). "
+                        "Please use the appropriate tools first, then call complete."
+                    )
+                    messages.append({"role": "assistant", "content": llm_text})
+                    messages.append({"role": "user", "content": nudge})
+                    if ctx:
+                        ctx.add("assistant", llm_text)
+                        ctx.add("user", nudge)
+                    if not quiet:
+                        render_status(
+                            "error",
+                            "Answer rejected — no tool actions performed yet.",
+                            iteration,
+                        )
+                    continue
+
                 if not quiet:
                     render_step("final", answer, iteration)
                 return answer
@@ -356,9 +366,8 @@ def run_loop(
             )
         retry_msg = (
             "Your response was not valid JSON. "
-            "Output ONLY a JSON object with either "
-            '{"thought": "...", "action": "...", "action_input": {...}} '
-            'or {"thought": "...", "final_answer": "..."}. '
+            "Output ONLY a JSON object: "
+            '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
             "No markdown fences, no extra text."
         )
         messages.append({"role": "assistant", "content": llm_text})
@@ -430,7 +439,7 @@ _ECHO_FINAL_RE = re.compile(
 def _try_echo_as_final(tool_name: str, tool_input) -> str | None:
     """Detect 'echo ...' shell calls that are actually final answers.
 
-    Small models often use shell echo instead of final_answer.
+    Small models often use shell echo instead of the complete tool.
     Only matches simple echo commands with no pipes, redirects, or chaining.
     """
     if tool_name != "shell" or not isinstance(tool_input, dict):

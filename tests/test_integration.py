@@ -26,7 +26,7 @@ class TestSimpleConversation:
     def test_simple_question(
         self, integration_model, ollama_provider, model_capabilities
     ):
-        """Simple question → final_answer without tool use."""
+        """Simple question → complete tool without other tool use."""
         result = run_loop(
             query="What is 2+2? Answer with just the number.",
             provider=ollama_provider,
@@ -180,7 +180,10 @@ class TestConstrainedDecoding:
         )
         response = ollama_provider.call(
             messages=[
-                {"role": "user", "content": "What is 1+1? Provide final_answer."}
+                {
+                    "role": "user",
+                    "content": "What is 1+1? Use the complete tool to answer.",
+                }
             ],
             system=system,
             model=integration_model,

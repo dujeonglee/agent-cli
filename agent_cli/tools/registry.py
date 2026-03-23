@@ -92,6 +92,20 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["command"],
         },
     ),
+    "complete": ToolSchema(
+        name="complete",
+        description="Call this tool when the task is done. Provide the final result.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "result": {
+                    "type": "string",
+                    "description": "The final result or answer",
+                },
+            },
+            "required": ["result"],
+        },
+    ),
 }
 
 

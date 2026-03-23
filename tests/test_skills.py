@@ -172,7 +172,13 @@ class TestSkillExecution:
     def test_execute_with_allowed_tools(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps({"thought": "reviewing", "final_answer": "looks good"})
+            content=json.dumps(
+                {
+                    "thought": "reviewing",
+                    "action": "complete",
+                    "action_input": {"result": "looks good"},
+                }
+            )
         )
 
         skill = Skill(
@@ -195,7 +201,13 @@ class TestSkillExecution:
     def test_execute_uses_skill_max_iter(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps({"thought": "t", "final_answer": "done"})
+            content=json.dumps(
+                {
+                    "thought": "t",
+                    "action": "complete",
+                    "action_input": {"result": "done"},
+                }
+            )
         )
 
         skill = Skill(

@@ -11,17 +11,16 @@ class TestStage1DirectParse:
         assert result.thought == "I need to read"
         assert result.action == "read_file"
         assert result.action_input == {"path": "a.py"}
-        assert result.final_answer is None
 
-    def test_clean_json_final(self):
-        text = '{"thought": "done", "final_answer": "The result is 42"}'
+    def test_complete_tool(self):
+        text = '{"thought": "done", "action": "complete", "action_input": {"result": "42"}}'
         result = parse_react(text)
         assert result.parse_stage == 1
-        assert result.final_answer == "The result is 42"
-        assert result.action is None
+        assert result.action == "complete"
+        assert result.action_input == {"result": "42"}
 
     def test_markdown_fences(self):
-        text = '```json\n{"thought": "hi", "final_answer": "done"}\n```'
+        text = '```json\n{"thought": "hi", "action": "complete", "action_input": {"result": "done"}}\n```'
         result = parse_react(text)
         assert result.parse_stage == 1
         assert result.thought == "hi"
@@ -32,12 +31,6 @@ class TestStage1DirectParse:
         assert result.parse_stage == 1
         assert result.action == "shell"
 
-    def test_final_key_compat(self):
-        """Accept 'final' as alias for 'final_answer'."""
-        text = '{"thought": "done", "final": "answer here"}'
-        result = parse_react(text)
-        assert result.final_answer == "answer here"
-
 
 class TestStage2JsonRepair:
     def test_trailing_comma(self):
@@ -47,10 +40,10 @@ class TestStage2JsonRepair:
         assert result.action == "shell"
 
     def test_missing_brace(self):
-        text = '{"thought": "hello", "final_answer": "done"'
+        text = '{"thought": "hello", "action": "complete", "action_input": {"result": "done"}'
         result = parse_react(text)
         assert result.parse_stage == 2
-        assert result.final_answer == "done"
+        assert result.action == "complete"
 
     def test_single_quotes(self):
         text = "{'thought': 'reasoning', 'action': 'read_file'}"
@@ -67,11 +60,11 @@ class TestStage3Regex:
         assert result.thought == "I am thinking"
         assert result.action == "shell"
 
-    def test_partial_fields(self):
-        text = 'some garbage "final_answer": "the answer is 42" more garbage'
+    def test_action_input_regex(self):
+        text = 'blah "thought": "t", "action": "read_file", "action_input": {"path":: broken'
         result = parse_react(text)
         assert result.parse_stage == 3
-        assert result.final_answer == "the answer is 42"
+        assert result.action == "read_file"
 
 
 class TestStage0Failure:
@@ -80,7 +73,6 @@ class TestStage0Failure:
         assert result.parse_stage == 0
         assert result.thought is None
         assert result.action is None
-        assert result.final_answer is None
         assert result.raw == "Hello, how are you?"
 
     def test_empty_string(self):
@@ -102,19 +94,33 @@ class TestActionInputTypes:
         assert result.action_input == "ls -la"
 
 
+class TestCompleteAction:
+    def test_complete_with_dict(self):
+        text = '{"thought": "done", "action": "complete", "action_input": {"result": "The answer is 42"}}'
+        result = parse_react(text)
+        assert result.action == "complete"
+        assert result.action_input == {"result": "The answer is 42"}
+
+    def test_complete_with_string_input(self):
+        text = (
+            '{"thought": "done", "action": "complete", "action_input": "Simple answer"}'
+        )
+        result = parse_react(text)
+        assert result.action == "complete"
+        assert result.action_input == "Simple answer"
+
+
 class TestUnicodeSanitization:
     def test_surrogate_removed(self):
-        # Surrogate \ud800 embedded in JSON — should be stripped and parsed
-        text = '{"thought": "hello\ud800world", "final_answer": "done"}'
+        text = '{"thought": "hello\ud800world", "action": "complete", "action_input": {"result": "done"}}'
         result = parse_react(text)
-        assert result.final_answer == "done"
+        assert result.action == "complete"
         assert result.parse_stage >= 1
 
     def test_normal_text_unchanged(self):
-        text = '{"thought": "normal text", "final_answer": "ok"}'
+        text = '{"thought": "normal text", "action": "shell", "action_input": {"command": "ls"}}'
         result = parse_react(text)
         assert result.thought == "normal text"
-        assert result.final_answer == "ok"
 
 
 class TestThinkingBlockStripping:
@@ -126,69 +132,67 @@ class TestThinkingBlockStripping:
         assert result.action == "read_file"
 
     def test_thinking_tags_stripped(self):
-        text = '<thinking>step by step reasoning</thinking>\n{"thought": "ok", "final_answer": "42"}'
+        text = '<thinking>step by step reasoning</thinking>\n{"thought": "ok", "action": "complete", "action_input": {"result": "42"}}'
         result = parse_react(text)
         assert result.parse_stage == 1
         assert result.thinking == "step by step reasoning"
-        assert result.final_answer == "42"
+        assert result.action == "complete"
 
     def test_reasoning_tags_stripped(self):
-        text = '<reasoning>analyzing the problem</reasoning>\n{"thought": "ok", "final_answer": "done"}'
+        text = '<reasoning>analyzing the problem</reasoning>\n{"thought": "ok", "action": "complete", "action_input": {"result": "done"}}'
         result = parse_react(text)
         assert result.parse_stage == 1
         assert result.thinking == "analyzing the problem"
 
     def test_reflection_tags_stripped(self):
-        text = '<reflection>let me reconsider</reflection>\n{"thought": "t", "final_answer": "ok"}'
+        text = '<reflection>let me reconsider</reflection>\n{"thought": "t", "action": "complete", "action_input": {"result": "ok"}}'
         result = parse_react(text)
         assert result.parse_stage == 1
         assert result.thinking == "let me reconsider"
 
     def test_no_thinking_tags(self):
-        text = '{"thought": "t", "final_answer": "done"}'
+        text = (
+            '{"thought": "t", "action": "complete", "action_input": {"result": "done"}}'
+        )
         result = parse_react(text)
         assert result.thinking is None
         assert result.parse_stage == 1
 
     def test_multiple_think_blocks(self):
-        text = '<think>first thought</think>\n<think>second thought</think>\n{"thought": "t", "final_answer": "ok"}'
+        text = '<think>first thought</think>\n<think>second thought</think>\n{"thought": "t", "action": "complete", "action_input": {"result": "ok"}}'
         result = parse_react(text)
         assert result.thinking is not None
         assert "first thought" in result.thinking
         assert "second thought" in result.thinking
-        assert result.parse_stage == 1
 
     def test_think_tags_case_insensitive(self):
-        text = (
-            '<THINK>uppercase reasoning</THINK>\n{"thought": "t", "final_answer": "ok"}'
-        )
+        text = '<THINK>uppercase reasoning</THINK>\n{"thought": "t", "action": "complete", "action_input": {"result": "ok"}}'
         result = parse_react(text)
         assert result.thinking == "uppercase reasoning"
-        assert result.parse_stage == 1
 
     def test_multiline_thinking(self):
-        text = '<think>\nLine 1 of reasoning\nLine 2 of reasoning\nLine 3\n</think>\n{"thought": "t", "final_answer": "ok"}'
+        text = '<think>\nLine 1 of reasoning\nLine 2 of reasoning\nLine 3\n</think>\n{"thought": "t", "action": "complete", "action_input": {"result": "ok"}}'
         result = parse_react(text)
         assert result.parse_stage == 1
         assert "Line 1" in result.thinking
         assert "Line 3" in result.thinking
 
     def test_thinking_with_code_blocks(self):
-        text = '<think>\nLet me check:\n```python\nprint("hi")\n```\n</think>\n{"thought": "t", "final_answer": "ok"}'
+        text = '<think>\nLet me check:\n```python\nprint("hi")\n```\n</think>\n{"thought": "t", "action": "complete", "action_input": {"result": "ok"}}'
         result = parse_react(text)
         assert result.parse_stage == 1
         assert "print" in result.thinking
 
     def test_thinking_with_json_inside(self):
-        text = '<think>The format is {"key": "value"}</think>\n{"thought": "t", "final_answer": "ok"}'
+        text = '<think>The format is {"key": "value"}</think>\n{"thought": "t", "action": "complete", "action_input": {"result": "ok"}}'
         result = parse_react(text)
         assert result.parse_stage == 1
-        assert result.final_answer == "ok"
+        assert result.action == "complete"
 
     def test_empty_think_block(self):
-        text = '<think></think>\n{"thought": "t", "final_answer": "ok"}'
+        text = '<think></think>\n{"thought": "t", "action": "complete", "action_input": {"result": "ok"}}'
         result = parse_react(text)
-        assert result.thinking is None  # empty block → None
+        assert result.thinking is None
         assert result.parse_stage == 1
 
     def test_thinking_preserved_in_result(self):

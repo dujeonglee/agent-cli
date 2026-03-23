@@ -10,6 +10,13 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.compat import ModelCapabilities
 
 
+def _complete(result: str) -> str:
+    """Build a complete tool JSON response."""
+    return json.dumps(
+        {"thought": "done", "action": "complete", "action_input": {"result": result}}
+    )
+
+
 @pytest.fixture
 def caps():
     return ModelCapabilities(
@@ -30,11 +37,9 @@ def _make_provider(*responses):
     return provider
 
 
-class TestRunLoopFinalAnswer:
-    def test_direct_final_answer(self, caps):
-        provider = _make_provider(
-            json.dumps({"thought": "simple question", "final_answer": "42"})
-        )
+class TestRunLoopComplete:
+    def test_direct_complete(self, caps):
+        provider = _make_provider(_complete("42"))
         result = run_loop(
             query="What is the answer?",
             provider=provider,
@@ -44,7 +49,7 @@ class TestRunLoopFinalAnswer:
         )
         assert result == "42"
 
-    def test_final_answer_after_tool(self, caps, tmp_path):
+    def test_complete_after_tool(self, caps, tmp_path):
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
@@ -56,12 +61,7 @@ class TestRunLoopFinalAnswer:
                     "action_input": {"path": str(test_file)},
                 }
             ),
-            json.dumps(
-                {
-                    "thought": "got it",
-                    "final_answer": "File contains: hello world",
-                }
-            ),
+            _complete("File contains: hello world"),
         )
         result = run_loop(
             query="Read test.txt",
@@ -71,6 +71,48 @@ class TestRunLoopFinalAnswer:
             quiet=True,
         )
         assert "hello world" in result
+
+    def test_complete_with_string_action_input(self, caps):
+        """LLM sends action_input as string instead of dict — should handle."""
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "complete",
+                    "action_input": "Simple answer",
+                }
+            )
+        )
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "Simple answer"
+
+    def test_complete_rejected_without_tools(self, caps):
+        """Fulfillment guard: complete rejected if task needs tools but none called."""
+        provider = _make_provider(
+            _complete("Created file"),  # rejected — no tools used
+            json.dumps(
+                {
+                    "thought": "write",
+                    "action": "write_file",
+                    "action_input": {"path": "/tmp/test.txt", "content": "hello"},
+                }
+            ),
+            _complete("Created file successfully"),
+        )
+        result = run_loop(
+            query="Create a new file",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert "Created file successfully" in result
 
 
 class TestRunLoopToolExecution:
@@ -83,15 +125,10 @@ class TestRunLoopToolExecution:
                     "action_input": {"command": "pwd"},
                 }
             ),
-            json.dumps(
-                {
-                    "thought": "done",
-                    "final_answer": "Executed echo",
-                }
-            ),
+            _complete("Executed command"),
         )
         result = run_loop(
-            query="Run echo hello",
+            query="Run pwd",
             provider=provider,
             capabilities=caps,
             model="test-model",
@@ -108,12 +145,7 @@ class TestRunLoopToolExecution:
                     "action_input": {},
                 }
             ),
-            json.dumps(
-                {
-                    "thought": "t",
-                    "final_answer": "ok",
-                }
-            ),
+            _complete("ok"),
         )
         result = run_loop(
             query="Do something",
@@ -129,7 +161,7 @@ class TestRunLoopParseFailure:
     def test_retry_on_bad_json(self, caps):
         provider = _make_provider(
             "This is not JSON at all",  # Will fail parsing
-            json.dumps({"thought": "ok", "final_answer": "recovered"}),
+            _complete("recovered"),
         )
         result = run_loop(
             query="What?",
@@ -178,52 +210,9 @@ class TestRunLoopMaxIter:
         assert result is None
 
 
-class TestRunLoopActionFinalAnswer:
-    def test_action_final_answer_dict(self, caps):
-        """LLM sends action='final_answer' with dict input — should extract answer."""
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "done",
-                    "action": "final_answer",
-                    "action_input": {"final_answer": "The answer is 42"},
-                }
-            )
-        )
-        result = run_loop(
-            query="What is the answer?",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-            quiet=True,
-        )
-        assert result == "The answer is 42"
-
-    def test_action_final_answer_string(self, caps):
-        """LLM sends action='final_answer' with string input."""
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "done",
-                    "action": "final_answer",
-                    "action_input": "Simple answer",
-                }
-            )
-        )
-        result = run_loop(
-            query="Q",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-            quiet=True,
-        )
-        assert result == "Simple answer"
-
-
 class TestCheckpoint:
     def test_no_checkpoint_before_threshold(self, caps):
         """Under 50 iterations → no checkpoint nudge injected."""
-        # 10 tool calls + final = 11 iterations, well under 50
         responses = []
         for i in range(10):
             responses.append(
@@ -235,7 +224,7 @@ class TestCheckpoint:
                     }
                 )
             )
-        responses.append(json.dumps({"thought": "done", "final_answer": "completed"}))
+        responses.append(_complete("completed"))
         provider = _make_provider(*responses)
         result = run_loop(
             query="Run some commands",
@@ -245,15 +234,12 @@ class TestCheckpoint:
             quiet=True,
         )
         assert result == "completed"
-        # No checkpoint message should have been injected
-        # (we verify by checking provider was called exactly 11 times)
         assert provider.call.call_count == 11
 
     def test_checkpoint_nudge_injected(self, caps):
         """At 50+ iterations, checkpoint nudge should be injected into messages."""
         from agent_cli.loop import _CHECKPOINT_FIRST
 
-        # Create enough responses to reach checkpoint
         responses = []
         for i in range(_CHECKPOINT_FIRST + 1):
             responses.append(
@@ -265,12 +251,7 @@ class TestCheckpoint:
                     }
                 )
             )
-        # After checkpoint nudge, LLM provides final answer
-        responses.append(
-            json.dumps(
-                {"thought": "ok stopping", "final_answer": "done after checkpoint"}
-            )
-        )
+        responses.append(_complete("done after checkpoint"))
         provider = _make_provider(*responses)
         result = run_loop(
             query="Keep running commands",
@@ -281,8 +262,6 @@ class TestCheckpoint:
         )
         assert result == "done after checkpoint"
 
-        # Verify checkpoint was injected by checking messages passed to LLM
-        # The call after checkpoint should have [CHECKPOINT] in its messages
         last_call = provider.call.call_args
         messages = last_call.kwargs.get("messages") or last_call[1].get("messages")
         checkpoint_found = any(
@@ -314,7 +293,7 @@ class TestToolHistoryTracking:
                     "action_input": {"command": "whoami"},
                 }
             ),
-            json.dumps({"thought": "done", "final_answer": "ok"}),
+            _complete("ok"),
         )
         result = run_loop(
             query="Read file then run command",
@@ -328,7 +307,7 @@ class TestToolHistoryTracking:
 
 class TestEchoAsFinalAnswer:
     def test_simple_echo_becomes_final(self, caps):
-        """echo 'Task done' → final_answer instead of shell execution."""
+        """echo 'Task done' → intercepted as final answer."""
         provider = _make_provider(
             json.dumps(
                 {
@@ -360,7 +339,7 @@ class TestEchoAsFinalAnswer:
                     "action_input": {"command": "echo hello | grep h"},
                 }
             ),
-            json.dumps({"thought": "done", "final_answer": "found"}),
+            _complete("found"),
         )
         result = run_loop(
             query="Search",
@@ -381,7 +360,7 @@ class TestEchoAsFinalAnswer:
                     "action_input": {"command": "echo hello > out.txt"},
                 }
             ),
-            json.dumps({"thought": "done", "final_answer": "written"}),
+            _complete("written"),
         )
         result = run_loop(
             query="Write",
@@ -447,7 +426,7 @@ class TestRepeatedCallDetection:
                     "action_input": {"path": str(f3)},
                 }
             ),
-            json.dumps({"thought": "done", "final_answer": "ok"}),
+            _complete("ok"),
         )
         result = run_loop(
             query="Read files",
@@ -461,9 +440,7 @@ class TestRepeatedCallDetection:
 
 class TestRunLoopQuietMode:
     def test_quiet_no_render(self, caps, capsys):
-        provider = _make_provider(
-            json.dumps({"thought": "t", "final_answer": "answer"})
-        )
+        provider = _make_provider(_complete("answer"))
         result = run_loop(
             query="Q",
             provider=provider,
@@ -489,14 +466,13 @@ def caps_tc():
 
 
 class TestRunLoopNativeToolCalling:
-    def test_anthropic_tool_call_then_final(self, caps_tc, tmp_path):
-        """Native tool_calls → execute → text final_answer."""
+    def test_anthropic_tool_call_then_complete(self, caps_tc, tmp_path):
+        """Native tool_calls → execute → complete tool call."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
         provider = MagicMock()
         provider.call.side_effect = [
-            # First call: tool_use response
             LLMResponse(
                 content="I'll read the file.",
                 tool_calls=[
@@ -507,12 +483,15 @@ class TestRunLoopNativeToolCalling:
                     }
                 ],
             ),
-            # Second call: final answer (text, no tool_calls)
             LLMResponse(
-                content=json.dumps(
-                    {"thought": "got it", "final_answer": "File contains hello world"}
-                ),
-                tool_calls=None,
+                content="",
+                tool_calls=[
+                    {
+                        "id": "tu_2",
+                        "name": "complete",
+                        "input": {"result": "File contains hello world"},
+                    }
+                ],
             ),
         ]
 
@@ -529,8 +508,8 @@ class TestRunLoopNativeToolCalling:
         assert "hello world" in result
         assert provider.call.call_count == 2
 
-    def test_openai_tool_call(self, caps_tc):
-        """OpenAI native tool_calls → execute → final."""
+    def test_openai_tool_call_then_complete(self, caps_tc):
+        """OpenAI native tool_calls → execute → complete."""
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -544,13 +523,19 @@ class TestRunLoopNativeToolCalling:
                 ],
             ),
             LLMResponse(
-                content=json.dumps({"thought": "done", "final_answer": "Executed"}),
-                tool_calls=None,
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_2",
+                        "name": "complete",
+                        "input": {"result": "Executed"},
+                    }
+                ],
             ),
         ]
 
         result = run_loop(
-            query="Run echo",
+            query="Run whoami",
             provider=provider,
             capabilities=caps_tc,
             model="gpt-4o",
@@ -570,11 +555,11 @@ class TestRunLoopNativeToolCalling:
                     "action_input": {"command": "whoami"},
                 }
             ),
-            json.dumps({"thought": "done", "final_answer": "ok"}),
+            _complete("ok"),
         )
 
         result = run_loop(
-            query="Run echo",
+            query="Run command",
             provider=provider,
             capabilities=caps,
             model="test-model",

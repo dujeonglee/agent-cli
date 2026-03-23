@@ -106,10 +106,22 @@ class TestExecutePlan:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
-                content=json.dumps({"thought": "t", "final_answer": "Step 1 done"})
+                content=json.dumps(
+                    {
+                        "thought": "t",
+                        "action": "complete",
+                        "action_input": {"result": "Step 1 done"},
+                    }
+                )
             ),
             LLMResponse(
-                content=json.dumps({"thought": "t", "final_answer": "Step 2 done"})
+                content=json.dumps(
+                    {
+                        "thought": "t",
+                        "action": "complete",
+                        "action_input": {"result": "Step 2 done"},
+                    }
+                )
             ),
         ]
         plan = Plan(
@@ -135,7 +147,13 @@ class TestExecutePlan:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
-                content=json.dumps({"thought": "t", "final_answer": "Step 2 done"})
+                content=json.dumps(
+                    {
+                        "thought": "t",
+                        "action": "complete",
+                        "action_input": {"result": "Step 2 done"},
+                    }
+                )
             ),
         ]
         plan = Plan(
@@ -162,7 +180,15 @@ class TestExecutePlan:
         """Plan is saved after each step when save_path is set."""
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(content=json.dumps({"thought": "t", "final_answer": "done"})),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "t",
+                        "action": "complete",
+                        "action_input": {"result": "done"},
+                    }
+                )
+            ),
         ]
         plan = Plan(goal="Test", steps=[PlanStep(id=1, description="Do 1")])
         save_file = tmp_path / "plan.json"

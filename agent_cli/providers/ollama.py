@@ -19,7 +19,6 @@ REACT_JSON_SCHEMA = {
         "thought": {"type": "string"},
         "action": {"type": "string"},
         "action_input": {},
-        "final_answer": {"type": "string"},
     },
     "required": ["thought"],
 }

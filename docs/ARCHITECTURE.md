@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,831 LOC (42 Python 파일) + 3,996 LOC 테스트 (22 파일)
-> 총 테스트: 290 유닛 + 42 통합 = 332개
+> 총 소스: 4,846 LOC (42 Python 파일) + 4,026 LOC 테스트 (22 파일)
+> 총 테스트: 291 유닛 + 42 통합 = 333개
 
 ---
 
@@ -47,7 +47,7 @@ agent_cli/
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── input_history.py         (61)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (606)  ReAct 에이전트 루프 + _execute_single_tool
+├── loop.py                  (615)  ReAct 에이전트 루프 + _execute_single_tool
 ├── render.py                (251)  Rich 터미널 렌더링 + 모델 정보 표시
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -60,13 +60,13 @@ agent_cli/
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
-│   ├── react_parser.py      (162)  3단계 폴백 ReAct 파서 + thinking 분리
+│   ├── react_parser.py      (156)  3단계 폴백 ReAct 파서 + thinking 분리
 │   ├── json_repair.py       (175)  깨진 JSON 복구 (6단계 파이프라인)
 │   └── plan_parser.py       (106)  계획 step 추출 (텍스트 + JSON)
 │
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (48)   TOOLS dict + execute_tool() 디스패처
-│   ├── registry.py          (291)  스키마 정의, 검증, API 형식 변환
+│   ├── registry.py          (305)  스키마 정의, 검증, API 형식 변환
 │   ├── read_file.py         (99)   파일 읽기 + hashline 포맷팅 + 부분 읽기
 │   ├── write_file.py        (18)   파일 생성
 │   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)
@@ -82,7 +82,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (166)  조건부 시스템 프롬프트 빌더
+│   ├── system_prompt.py     (165)  조건부 시스템 프롬프트 빌더
 │   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
 │
 ├── skills/                         프롬프트 스킬 시스템
@@ -237,9 +237,8 @@ class ModelCapabilities:
 @dataclass
 class ReActResult:
     thought: str | None = None
-    action: str | None = None
+    action: str | None = None     # "complete" = 작업 완료
     action_input: dict | str | None = None
-    final_answer: str | None = None
     raw: str = ""                # 원본 LLM 텍스트 (thinking 제거 후)
     parse_stage: int = 0         # 0=실패, 1=json.loads, 2=json_repair, 3=regex
     thinking: str | None = None  # 추출된 thinking 블록 내용
@@ -254,7 +253,7 @@ class ToolSchema:
     description: str
     parameters: dict  # JSON Schema 형태
 
-# 등록된 도구: read_file, write_file, edit_file, shell
+# 등록된 도구: read_file, write_file, edit_file, shell, complete
 # delegate는 별도 DELEGATE_TOOL_SCHEMA로 관리
 ```
 
@@ -311,7 +310,7 @@ class Plan:
 │     │                                                    │
 │     └─ tool_calls 없음 → 텍스트 파싱 경로                  │
 │         ├─ parse_react() → ReActResult                   │
-│         ├─ final_answer → fulfillment guard → 반환        │
+│         ├─ action="complete" → fulfillment guard → 반환    │
 │         ├─ action → validate + execute + truncate         │
 │         │   └─ observation 메시지 주입 → continue         │
 │         └─ 파싱 실패 → 포맷 리마인더 → continue            │
@@ -389,8 +388,7 @@ Stage 2: json_repair() — 6단계 복구 파이프라인
 Stage 3: regex 필드 추출
     │  ├─ "thought": "..." 추출
     │  ├─ "action": "..." 추출
-    │  ├─ "action_input": {...} 추출
-    │  └─ "final_answer": "..." 추출
+    │  └─ "action_input": {...} 추출
     ├─ 성공 → ReActResult (parse_stage=3)
     │
     ▼ 실패
