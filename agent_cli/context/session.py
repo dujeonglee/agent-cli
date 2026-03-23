@@ -200,12 +200,19 @@ def generate_session_summary(meta, provider, model, capabilities) -> str | None:
             system=SESSION_SUMMARY_PROMPT,
             model=model,
             capabilities=capabilities,
+            skip_json_format=True,
         )
         summary = response.content
-        save_summary(meta, summary)
+        if summary:
+            save_summary(meta, summary)
         return summary
     except Exception:
         return None
+
+
+def finalize_session(meta, provider, model, capabilities) -> None:
+    """End-of-session cleanup: generate summary and save."""
+    generate_session_summary(meta, provider, model, capabilities)
 
 
 def find_latest_summary(workspace: str | None = None) -> str | None:

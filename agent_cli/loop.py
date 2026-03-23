@@ -81,6 +81,10 @@ def run_loop(
     if not quiet:
         render_header(provider_name, model, max_iter)
 
+    # Log query to session
+    if session and depth == 0:
+        _log_to_session(session, {"iter": 0, "action": "query", "observation": query})
+
     # Message setup
     if ctx:
         ctx.add("user", query)
@@ -193,6 +197,16 @@ def run_loop(
                                 )
                             # Fall through to execute as normal tool (will fail gracefully)
                         else:
+                            # Session logging (native complete)
+                            if depth == 0:
+                                _log_to_session(
+                                    session,
+                                    {
+                                        "iter": iteration,
+                                        "action": "complete",
+                                        "observation": answer[:500],
+                                    },
+                                )
                             if not quiet:
                                 render_step("final", answer, iteration)
                             return answer
@@ -312,6 +326,18 @@ def run_loop(
                         )
                     continue
 
+                # Session logging (complete)
+                if depth == 0:
+                    _log_to_session(
+                        session,
+                        {
+                            "iter": iteration,
+                            "thought": parsed.thought,
+                            "action": "complete",
+                            "observation": answer[:500],
+                        },
+                    )
+
                 if not quiet:
                     render_step("final", answer, iteration)
                 return answer
@@ -319,6 +345,16 @@ def run_loop(
         # 9. Detect echo-as-final-answer (common small model pattern)
         echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
         if echo_answer:
+            if depth == 0:
+                _log_to_session(
+                    session,
+                    {
+                        "iter": iteration,
+                        "thought": parsed.thought,
+                        "action": "complete (echo)",
+                        "observation": echo_answer[:500],
+                    },
+                )
             if not quiet:
                 render_step("final", echo_answer, iteration)
             return echo_answer

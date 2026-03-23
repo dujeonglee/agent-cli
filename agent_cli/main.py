@@ -527,7 +527,7 @@ def chat(
     """Interactive chat with persistent context and automatic compression."""
     from agent_cli.context.session import (
         create_session,
-        generate_session_summary,
+        finalize_session,
         load_session,
         save_meta,
     )
@@ -742,7 +742,7 @@ def chat(
                 f"  - /quit to exit"
             )
 
-    # Generate session summary on exit
+    # Finalize session: generate summary and save
     console.print(f"[{C['muted']}]Generating session summary...[/]")
-    generate_session_summary(session, llm_provider, resolved_model, capabilities)
+    finalize_session(session, llm_provider, resolved_model, capabilities)
     console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
