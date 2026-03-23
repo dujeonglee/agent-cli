@@ -280,3 +280,54 @@ class TestInferToolsForStep:
         tools = _infer_tools_for_step("Read the file and run tests")
         assert "read_file" in tools
         assert "shell" in tools
+
+
+class TestStepContextScaling:
+    def test_summary_length_proportional(self):
+        """Step result summary should scale with context window."""
+        plan = Plan(
+            goal="Test",
+            steps=[
+                PlanStep(id=1, description="Do 1", status="done", result="x" * 500),
+                PlanStep(id=2, description="Do 2"),
+            ],
+        )
+        # Small model: 8K → max_summary=100
+        small_caps = ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        ctx_small = _build_step_context(plan, 1, small_caps)
+        # "x" * 500 should be truncated to 100
+        assert "x" * 101 not in ctx_small
+
+        # Large model: 262K → max_summary=2000
+        large_caps = ModelCapabilities(
+            context_window=262144,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        ctx_large = _build_step_context(plan, 1, large_caps)
+        # "x" * 500 should be fully included (500 < 2000)
+        assert "x" * 500 in ctx_large
+
+    def test_default_without_capabilities(self):
+        """Without capabilities, fallback to 100 chars."""
+        plan = Plan(
+            goal="Test",
+            steps=[
+                PlanStep(id=1, description="Do 1", status="done", result="y" * 200),
+                PlanStep(id=2, description="Do 2"),
+            ],
+        )
+        ctx = _build_step_context(plan, 1)
+        assert "y" * 101 not in ctx

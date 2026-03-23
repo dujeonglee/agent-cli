@@ -567,3 +567,71 @@ class TestRunLoopNativeToolCalling:
         )
 
         assert result == "ok"
+
+
+class TestAskTool:
+    def test_ask_collects_user_input(self, caps, monkeypatch):
+        """ask tool prompts user and returns response as observation."""
+        from agent_cli.context.manager import ContextManager
+
+        monkeypatch.setattr("builtins.input", lambda _: "yes, proceed")
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "need clarification",
+                        "action": "ask",
+                        "action_input": {"question": "Should I continue?"},
+                    }
+                )
+            ),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "user said yes",
+                        "action": "complete",
+                        "action_input": {"result": "Done after confirmation"},
+                    }
+                )
+            ),
+        ]
+        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        result = run_loop(
+            query="Do something",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+            ctx=ctx,
+        )
+        assert result == "Done after confirmation"
+        assert provider.call.call_count == 2
+
+    def test_ask_available_with_ctx(self, caps):
+        """ask tool should be in system prompt when ctx is provided."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(
+            content=json.dumps(
+                {
+                    "thought": "done",
+                    "action": "complete",
+                    "action_input": {"result": "ok"},
+                }
+            )
+        )
+        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        run_loop(
+            query="Do something",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+            ctx=ctx,
+        )
+        call_args = provider.call.call_args
+        system = call_args.kwargs.get("system", "")
+        assert "ask" in system.lower()
