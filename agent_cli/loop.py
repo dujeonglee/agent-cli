@@ -482,19 +482,36 @@ def run_loop(
                 ctx.add("user", obs_msg)
             continue
 
-        # 9. Parse failure — retry with format reminder
-        if not quiet:
-            render_status(
-                "error",
-                f"Invalid response (parse_stage={parsed.parse_stage}). Retrying...",
-                iteration,
+        # 12. Missing action or parse failure — retry with appropriate hint
+        if parsed.parse_stage > 0:
+            # JSON parsed OK but no action — LLM forgot to include action
+            if not quiet:
+                render_status(
+                    "error",
+                    "Response has no action. Retrying...",
+                    iteration,
+                )
+            retry_msg = (
+                "Your JSON was parsed but has no action. "
+                "You MUST include an action. Either use a tool: "
+                '{"thought": "...", "action": "tool_name", "action_input": {...}} '
+                "or complete the task: "
+                '{"thought": "...", "action": "complete", "action_input": {"result": "..."}}'
             )
-        retry_msg = (
-            "Your response was not valid JSON. "
-            "Output ONLY a JSON object: "
-            '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
-            "No markdown fences, no extra text."
-        )
+        else:
+            # JSON parse failed entirely
+            if not quiet:
+                render_status(
+                    "error",
+                    "Invalid JSON response. Retrying...",
+                    iteration,
+                )
+            retry_msg = (
+                "Your response was not valid JSON. "
+                "Output ONLY a JSON object: "
+                '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
+                "No markdown fences, no extra text."
+            )
         messages.append({"role": "assistant", "content": llm_text})
         messages.append({"role": "user", "content": retry_msg})
         if ctx:
