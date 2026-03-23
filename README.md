@@ -51,7 +51,9 @@ agent-cli run "/summarize README.md"
 # 도움말
 agent-cli --help
 agent-cli run --help
+agent-cli chat --help
 agent-cli plan --help
+agent-cli sessions --help
 ```
 
 ## 명령어
@@ -70,7 +72,9 @@ agent-cli run "task description" [options]
 | `--api-key` | API 키 (환경 변수 자동 감지) | |
 | `-n, --max-iter` | 최대 이터레이션 (0=무제한) | `0` |
 | `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
-| `-v, --verbose` | 원시 LLM 응답 표시 | |
+| `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
+| `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
+| `-q, --quiet` | 최소 출력 (결과만) | |
 
 ### `plan` — 계획 기반 실행
 
@@ -110,31 +114,50 @@ agent-cli plan "Complex task" --plan-model qwen3:8b --model qwen3:32b
 agent-cli chat -p ollama -m qwen3:32b
 ```
 
+| 옵션 | 설명 | 기본값 |
+|------|------|--------|
+| `-p, --provider` | `ollama` / `openai` / `anthropic` | `ollama` |
+| `-m, --model` | 모델 ID | 프로바이더 기본값 |
+| `--base-url` | API 엔드포인트 | 프로바이더 기본값 |
+| `--api-key` | API 키 (환경 변수 자동 감지) | |
+| `-n, --max-iter` | 턴당 최대 이터레이션 (0=무제한) | `0` |
+| `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
+| `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
+| `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
+| `--resume <id>` | 이전 세션 이어서 작업 | |
+
 대화 중 명령어:
 
 | 명령어 | 설명 |
 |--------|------|
-| `/quit`, `/exit` | 세션 종료 |
+| `/quit`, `/exit` | 세션 종료 (요약 생성 후 저장) |
 | `/clear` | 컨텍스트 초기화 |
 | `/sh <cmd>` | 셸 명령 실행 |
 | `/plan <goal>` | 대화 중 계획 모드 진입 |
 | `/skills` | 사용 가능한 스킬 목록 |
-| `/ctx_window` | 현재 컨텍스트 윈도우 내용 덤프 |
+| `/ctx_window` | 현재 컨텍스트 윈도우 내용 덤프 (디버깅용) |
 | `/<skill> <args>` | 스킬 실행 |
 
 입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.
 
-### 세션 관리
+### `sessions` — 세션 관리
 
 대화 이력은 `~/.agent-cli/context/`에 세션별로 자동 저장됩니다. 세션 종료 시 LLM이 요약을 생성하고, 다음 세션에 자동 주입됩니다.
 
 ```bash
-# 이전 세션 목록 확인
+# 현재 워크스페이스의 세션 목록
 agent-cli sessions
+
+# 특정 워크스페이스의 세션 목록
+agent-cli sessions --workspace /path/to/project
 
 # 이전 세션 이어서 작업
 agent-cli chat -p ollama -m qwen3:32b --resume <session_id>
 ```
+
+| 옵션 | 설명 | 기본값 |
+|------|------|--------|
+| `-w, --workspace` | 워크스페이스 경로 필터 | 현재 디렉토리 |
 
 LLM은 `read_context` 도구로 이전 세션의 세부 이력을 조회할 수 있습니다.
 
@@ -153,6 +176,9 @@ agent-cli run "/summarize README.md"
 
 # 유닛 테스트 생성
 agent-cli run "/test src/utils.py"
+
+# 코드 최적화 분석
+agent-cli run "/optimize ./agent_cli"
 
 # chat 모드에서도 사용 가능
 /review-code src/auth.py
@@ -175,6 +201,14 @@ argument-hint: "<file_path>"
 Your custom prompt template here. Use $ARGUMENTS for user input.
 $0, $1 for individual arguments (0-based).
 ```
+
+| Frontmatter 필드 | 설명 | 필수 |
+|-----------------|------|------|
+| `name` | 슬래시 명령어 이름 (미지정 시 파일명) | |
+| `description` | 스킬 설명 | ✓ |
+| `allowed-tools` | 허용 도구 리스트 (미지정 시 전체) | |
+| `max-iter` | 최대 이터레이션 (미지정 시 글로벌 설정 사용) | |
+| `argument-hint` | `/skills` 표시 시 인자 힌트 | |
 
 스킬 검색 경로:
 1. `.agent-cli/skills/*.md` (프로젝트 로컬, 우선)
@@ -265,25 +299,45 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 
 ## 도구
 
+LLM이 사용할 수 있는 도구 목록:
+
 | 도구 | 설명 |
 |------|------|
-| `read_file` | 파일 읽기 (hashline 태그 포함) |
+| `read_file` | 파일 읽기 (hashline 태그 포함, 부분 읽기 지원) |
 | `write_file` | 파일 생성/덮어쓰기 |
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
 | `delegate` | 서브에이전트에 독립 작업 위임 |
+| `read_context` | 이전 세션 이력 조회 (목록/세부) |
+| `complete` | 작업 완료 신호 (최종 결과 반환) |
 
-### Hashline 편집
+### read_file — 파일 읽기
 
-`read_file`은 각 줄에 `LINE#HASH:content` 태그를 부여합니다:
+파일을 읽고 각 줄에 `LINE#HASH:content` hashline 태그를 부여합니다.
+
+```json
+{"action": "read_file", "action_input": {"path": "src/main.py"}}
+```
+
+부분 읽기 (큰 파일에서 특정 범위만):
+
+```json
+{"action": "read_file", "action_input": {"path": "src/main.py", "line_start": 100, "line_end": 200}}
+```
+
+- `line_start`: 시작 줄 번호 (1-based, 생략 시 처음부터)
+- `line_end`: 끝 줄 번호 (1-based, inclusive, 생략 시 끝까지)
+- 큰 파일이 truncation되면 `[To read the rest, use: read_file with line_start=N]` 가이드가 표시됩니다.
+
+### edit_file — Hashline 편집
+
+`read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다:
 
 ```
 1#VR:def hello():
 2#KT:    return "world"
 3#ZZ:
 ```
-
-`edit_file`로 정밀 편집:
 
 ```json
 {"op": "replace", "pos": "2#KT", "lines": ["    return \"hello\""]}
@@ -292,6 +346,23 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 ```
 
 해시 불일치 시 퍼지 매칭으로 자동 보정합니다 (공백/따옴표/대시 정규화).
+
+### complete — 작업 완료
+
+LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 필드에 최종 답변을 담습니다.
+
+```json
+{"action": "complete", "action_input": {"result": "작업이 완료되었습니다. 파일을 생성했습니다."}}
+```
+
+### read_context — 세션 이력 조회
+
+이전 세션의 이력을 조회합니다. LLM이 과거 작업 맥락이 필요할 때 자발적으로 사용합니다.
+
+```json
+{"action": "read_context", "action_input": {"mode": "list"}}
+{"action": "read_context", "action_input": {"mode": "detail", "session_id": "1774272070"}}
+```
 
 ## 핵심 기능
 
@@ -314,7 +385,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 
 ### 컨텍스트 압축
 
-Chat 모드에서 컨텍스트 윈도우 초과 시 LLM 기반 구조화 요약으로 자동 압축합니다. 첫 압축은 전체 요약, 이후는 증분 업데이트.
+Chat 모드에서 컨텍스트 윈도우의 95%에 도달하면 LLM 기반 구조화 요약으로 자동 압축합니다. 첫 압축은 전체 요약, 이후는 증분 업데이트.
 
 ### 체크포인트 시스템
 
@@ -322,30 +393,36 @@ LLM이 도구를 반복 호출하며 `complete` 도구를 사용하지 않는 st
 
 - **50 iteration** 도달 시 첫 체크포인트 — 최근 20회 도구 호출 이력을 LLM에게 보여주고 자기 판단 요청
 - 이후 **매 20 iteration**마다 반복 체크포인트
-- LLM이 스스로 판단: 완료 → `complete` 도구 호출 / stuck → 다른 접근 시도 / 진행 중 → 더 효율적으로 계속
+- 동일 도구를 같은 파라미터로 **3회 연속** 호출 시 자동 중단
+- `echo`로 답하는 패턴 자동 감지 → `complete` 도구 호출로 변환
 
 ### 모델 적응형 출력 압축
 
-도구 출력을 모델 context window에 맞춰 자동 절단합니다:
+도구 출력을 모델 context window의 **3%**를 기준으로 자동 절단합니다:
 
-| Context Window | 최대 줄 수 | 최대 바이트 |
+| Context Window | 최대 바이트 | 최대 줄 수 |
 |---------------|-----------|-----------|
-| ≤8K | 50 | 2,000 |
-| ≤32K | 100 | 4,000 |
-| >32K | 200 | 8,000 |
+| 8K | 2,000 (최소) | 50 (최소) |
+| 32K | 3,932 | 98 |
+| 128K | 15,360 | 384 |
+| 262K | 31,457 | 786 |
+| 1M+ | 40,000 (최대) | 1,000 (최대) |
+
+`read_file`이 truncation되면 나머지를 읽을 수 있는 `line_start` 가이드가 자동 표시됩니다.
 
 ## 프로젝트 구조
 
 ```
 agent_cli/
-├── main.py              CLI 명령어 (run, plan, chat)
+├── main.py              CLI 명령어 (run, plan, chat, sessions)
 ├── loop.py              ReAct 에이전트 루프
 ├── config.py            models.json 로딩
 ├── render.py            터미널 렌더링
+├── input_history.py     readline 히스토리 영속화
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI, Ollama)
 ├── parsing/             3단계 JSON 파서 + Thinking 블록 분리
-├── tools/               도구 (read/write/edit/shell/delegate) + 출력 압축
-├── context/             컨텍스트 관리 (오버플로 감지, 압축)
+├── tools/               도구 (read/write/edit/shell/delegate/context) + 출력 압축
+├── context/             컨텍스트 관리 (오버플로 감지, 압축, 세션 영속화)
 ├── prompts/             조건부 시스템 프롬프트
 └── planning/            Planning Mode (생성→검토→실행)
 ```
