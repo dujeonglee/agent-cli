@@ -176,8 +176,7 @@ def run_loop(
                     overflow_retried = True
                     iteration -= 1
                     continue
-            if not quiet:
-                render_step("error", f"LLM call failed: {e}", iteration)
+            render_step("error", f"LLM call failed: {e}", iteration)
             return None
 
         if not quiet:
@@ -194,12 +193,11 @@ def run_loop(
                     if answer:
                         # Fulfillment guard
                         if not tools_called and needs_tool_action(query):
-                            if not quiet:
-                                render_status(
-                                    "error",
-                                    "Answer rejected — no tool actions performed yet.",
-                                    iteration,
-                                )
+                            render_status(
+                                "error",
+                                "Answer rejected — no tool actions performed yet.",
+                                iteration,
+                            )
                             # Fall through to execute as normal tool (will fail gracefully)
                         else:
                             # Session logging (native complete)
@@ -297,12 +295,11 @@ def run_loop(
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):
                 last = recent_tool_history[-1]
-                if not quiet:
-                    render_status(
-                        "error",
-                        f"Repeated call detected: {last['tool']} called "
-                        f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
-                    )
+                render_status(
+                    "error",
+                    f"Repeated call detected: {last['tool']} called "
+                    f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
+                )
                 return None
 
             # Format messages based on provider
@@ -345,12 +342,11 @@ def run_loop(
                     if ctx:
                         ctx.add("assistant", llm_text)
                         ctx.add("user", nudge)
-                    if not quiet:
-                        render_status(
-                            "error",
-                            "Answer rejected — no tool actions performed yet.",
-                            iteration,
-                        )
+                    render_status(
+                        "error",
+                        "Answer rejected — no tool actions performed yet.",
+                        iteration,
+                    )
                     continue
 
                 # Session logging (complete)
@@ -448,12 +444,11 @@ def run_loop(
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):
                 last = recent_tool_history[-1]
-                if not quiet:
-                    render_status(
-                        "error",
-                        f"Repeated call detected: {last['tool']} called "
-                        f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
-                    )
+                render_status(
+                    "error",
+                    f"Repeated call detected: {last['tool']} called "
+                    f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
+                )
                 return None
 
             # Session logging (text parsing path)
@@ -481,12 +476,11 @@ def run_loop(
         # 12. Missing action or parse failure — retry with appropriate hint
         if parsed.parse_stage > 0:
             # JSON parsed OK but no action — LLM forgot to include action
-            if not quiet:
-                render_status(
-                    "error",
-                    "Response has no action. Retrying...",
-                    iteration,
-                )
+            render_status(
+                "error",
+                "Response has no action. Retrying...",
+                iteration,
+            )
             retry_msg = (
                 "Your JSON was parsed but has no action. "
                 "You MUST include an action. Either use a tool: "
@@ -496,12 +490,11 @@ def run_loop(
             )
         else:
             # JSON parse failed entirely
-            if not quiet:
-                render_status(
-                    "error",
-                    "Invalid JSON response. Retrying...",
-                    iteration,
-                )
+            render_status(
+                "error",
+                "Invalid JSON response. Retrying...",
+                iteration,
+            )
             retry_msg = (
                 "Your response was not valid JSON. "
                 "Output ONLY a JSON object: "
