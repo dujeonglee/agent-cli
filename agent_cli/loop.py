@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from agent_cli.constants import OBS_SUCCESS, OBS_ERROR, OBS_ERROR_HINT
 
@@ -53,6 +54,7 @@ def run_loop(
     delegate_timeout: int = 300,
     active_tools: list[str] | None = None,
     plan_context: str | None = None,
+    session=None,  # SessionMeta — avoid circular import
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -61,11 +63,19 @@ def run_loop(
     include_delegate = depth < max_depth
     tools_list = active_tools or list(TOOLS.keys())
 
+    # Load previous session context (depth 0 only)
+    session_context = None
+    if session and depth == 0:
+        from agent_cli.context.session import find_latest_summary
+
+        session_context = find_latest_summary()
+
     system = build_system_prompt(
         capabilities=capabilities,
         active_tools=tools_list,
         include_delegate=include_delegate,
         plan_context=plan_context,
+        session_context=session_context,
     )
 
     if not quiet:
@@ -231,6 +241,18 @@ def run_loop(
                     render_step("observation", obs, iteration)
                 observations.append({"tool_call": tc, "output": obs})
 
+                # Session logging (native tool calling path)
+                if depth == 0:
+                    _log_to_session(
+                        session,
+                        {
+                            "iter": iteration,
+                            "action": tool_name,
+                            "action_input": _normalize_input(tool_input),
+                            "observation": obs[:500],
+                        },
+                    )
+
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):
                 last = recent_tool_history[-1]
@@ -348,6 +370,19 @@ def run_loop(
                     )
                 return None
 
+            # Session logging (text parsing path)
+            if depth == 0:
+                _log_to_session(
+                    session,
+                    {
+                        "iter": iteration,
+                        "thought": parsed.thought,
+                        "action": tool_name,
+                        "action_input": _normalize_input(tool_input),
+                        "observation": observation[:500],
+                    },
+                )
+
             # Inject observation
             obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
             messages.append({"role": "assistant", "content": llm_text})
@@ -380,6 +415,16 @@ def run_loop(
     if not quiet:
         render_status("error", f"Max iterations ({max_iter}) reached.")
     return None
+
+
+def _log_to_session(session, entry: dict) -> None:
+    """Append an iteration entry to the session log (no-op if no session)."""
+    if session is None:
+        return
+    from agent_cli.context.session import append_log
+
+    entry["ts"] = time.time()
+    append_log(session, entry)
 
 
 def _execute_single_tool(

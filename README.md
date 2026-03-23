@@ -124,6 +124,20 @@ agent-cli chat -p ollama -m qwen3:32b
 
 입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.
 
+### 세션 관리
+
+대화 이력은 `~/.agent-cli/context/`에 세션별로 자동 저장됩니다. 세션 종료 시 LLM이 요약을 생성하고, 다음 세션에 자동 주입됩니다.
+
+```bash
+# 이전 세션 목록 확인
+agent-cli sessions
+
+# 이전 세션 이어서 작업
+agent-cli chat -p ollama -m qwen3:32b --resume <session_id>
+```
+
+LLM은 `read_context` 도구로 이전 세션의 세부 이력을 조회할 수 있습니다.
+
 ## 스킬 (Prompt Skills)
 
 특정 작업에 최적화된 재사용 가능한 프롬프트 템플릿. Claude Code 스킬 포맷과 호환.

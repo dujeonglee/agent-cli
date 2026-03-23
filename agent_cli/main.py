@@ -445,6 +445,34 @@ def plan(
 
 
 @app.command()
+def sessions(
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Filter by workspace path"
+    ),
+):
+    """List previous sessions."""
+    from agent_cli.context.session import list_sessions as _list_sessions, load_summary
+
+    ws = workspace or os.getcwd()
+    session_list = _list_sessions(ws)
+    if not session_list:
+        console.print(f"[{C['muted']}]No sessions found for {ws}[/]")
+        return
+
+    console.print(f"\n[{C['accent']}]Sessions for {ws}:[/]\n")
+    for s in session_list:
+        summary = load_summary(s)
+        preview = ""
+        if summary:
+            first_line = summary.strip().split("\n")[0]
+            preview = f" — {first_line[:80]}"
+        console.print(
+            f"  [{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.created_at}{preview}[/]"
+        )
+    console.print()
+
+
+@app.command()
 def chat(
     provider: str = typer.Option(
         "ollama",
@@ -490,11 +518,34 @@ def chat(
         "-v",
         help="Show raw LLM response",
     ),
+    resume: Optional[str] = typer.Option(
+        None,
+        "--resume",
+        help="Resume a previous session by ID",
+    ),
 ):
     """Interactive chat with persistent context and automatic compression."""
+    from agent_cli.context.session import (
+        create_session,
+        generate_session_summary,
+        load_session,
+        save_meta,
+    )
+
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key = (
         _setup_provider(provider, model, base_url, api_key)
     )
+
+    # Session setup
+    if resume:
+        session = load_session(resume)
+        if not session:
+            console.print(f"[{C['error']}]Session '{resume}' not found.[/]")
+            return
+        console.print(f"[{C['accent']}]Resuming session {resume}[/]")
+    else:
+        session = create_session()
+    save_meta(session)
 
     ctx = ContextManager(
         provider=llm_provider,
@@ -662,6 +713,8 @@ def chat(
             continue
 
         turn += 1
+        if turn == 1 and not session.query:
+            session.query = query[:100]
         console.print(Rule(f"[{C['muted']}]TURN {turn}[/]", style=C["muted"]))
 
         result = run_loop(
@@ -677,6 +730,7 @@ def chat(
             ctx=ctx,
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,
+            session=session,
         )
 
         if result is None:
@@ -687,3 +741,8 @@ def chat(
                 f"  - /clear to reset context\n"
                 f"  - /quit to exit"
             )
+
+    # Generate session summary on exit
+    console.print(f"[{C['muted']}]Generating session summary...[/]")
+    generate_session_summary(session, llm_provider, resolved_model, capabilities)
+    console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")

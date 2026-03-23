@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 4,846 LOC (42 Python 파일) + 4,026 LOC 테스트 (22 파일)
-> 총 테스트: 291 유닛 + 42 통합 = 333개
+> 총 소스: 5,247 LOC (44 Python 파일) + 4,184 LOC 테스트 (23 파일)
+> 총 테스트: 308 유닛 + 42 통합 = 350개
 
 ---
 
@@ -42,12 +42,12 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (689)  CLI 명령어: run, plan, chat + 공유 헬퍼
+├── main.py                  (748)  CLI 명령어: run, plan, chat, sessions + 공유 헬퍼
 ├── config.py                (138)  models.json 로딩/저장 + 프로바이더 기본값
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── input_history.py         (61)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (615)  ReAct 에이전트 루프 + _execute_single_tool
+├── loop.py                  (660)  ReAct 에이전트 루프 + _execute_single_tool
 ├── render.py                (251)  Rich 터미널 렌더링 + 모델 정보 표시
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -66,23 +66,25 @@ agent_cli/
 │
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (48)   TOOLS dict + execute_tool() 디스패처
-│   ├── registry.py          (305)  스키마 정의, 검증, API 형식 변환
+│   ├── registry.py          (324)  스키마 정의, 검증, API 형식 변환
 │   ├── read_file.py         (99)   파일 읽기 + hashline 포맷팅 + 부분 읽기
 │   ├── write_file.py        (18)   파일 생성
 │   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)
 │   ├── shell.py             (35)   셸 명령 실행
 │   ├── delegate.py          (80)   서브에이전트 위임
+│   ├── context.py           (54)   read_context 도구 (세션 이력 조회)
 │   └── truncation.py        (122)  모델 적응형 출력 압축 (context 3% 비례)
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   └── manager.py           (138)  ContextManager (구조화 요약 + 증분 업데이트)
+│   ├── manager.py           (138)  ContextManager (구조화 요약 + 증분 업데이트)
+│   └── session.py           (218)  파일 기반 세션 영속화 (JSONL + 요약)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (165)  조건부 시스템 프롬프트 빌더
+│   ├── system_prompt.py     (169)  조건부 시스템 프롬프트 빌더
 │   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
 │
 ├── skills/                         프롬프트 스킬 시스템

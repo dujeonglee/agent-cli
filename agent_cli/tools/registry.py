@@ -106,6 +106,25 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["result"],
         },
     ),
+    "read_context": ToolSchema(
+        name="read_context",
+        description="Read context from previous sessions. "
+        "Use mode='list' to see session list, mode='detail' with session_id to read full log.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": "list or detail",
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID (required for mode=detail)",
+                },
+            },
+            "required": ["mode"],
+        },
+    ),
 }
 
 

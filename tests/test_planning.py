@@ -14,6 +14,7 @@ from agent_cli.planning.executor import (
 from agent_cli.planning.models import Plan, PlanStep
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.tools import TOOLS
 
 
 @pytest.fixture
@@ -273,7 +274,7 @@ class TestInferToolsForStep:
     def test_ambiguous_falls_back_to_all(self):
         tools = _infer_tools_for_step("Analyze the results")
         # "Analyze" doesn't match any specific tool keyword
-        assert len(tools) == 4  # all tools
+        assert len(tools) == len(TOOLS)  # all tools
 
     def test_multiple_tools(self):
         tools = _infer_tools_for_step("Read the file and run tests")
