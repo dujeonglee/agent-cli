@@ -295,7 +295,7 @@ class TestSkillExecution:
             name="review-code",
             description="Review code",
             prompt_template="Read $ARGUMENTS and review for bugs. Be brief.",
-            active_tools=["read_file"],
+            allowed_tools=["read_file"],
             max_iter=5,
         )
 
@@ -326,7 +326,7 @@ class TestSkillExecution:
             name="summarize",
             description="Summarize",
             prompt_template="Read $ARGUMENTS and summarize in one paragraph.",
-            active_tools=["read_file"],
+            allowed_tools=["read_file"],
             max_iter=8,
         )
 
