@@ -217,11 +217,11 @@ def run_loop(
                             return answer
 
                 # 4b. Ask tool — prompt user (native path)
-                if tc0["name"] == "ask" and isinstance(tc0["input"], dict):
-                    question = tc0["input"].get("question", "")
-                    if question:
-                        user_response = _handle_ask(question, quiet)
-                        obs_msg = f"User responded: {user_response}"
+                if tc0["name"] == "ask":
+                    questions = _extract_questions(tc0.get("input"))
+                    if questions:
+                        user_response = _handle_ask(questions, quiet)
+                        obs_msg = f"User responded:\n{user_response}"
                         new_msgs = _format_tool_call_messages(
                             provider_name,
                             response,
@@ -388,14 +388,10 @@ def run_loop(
 
         # 10. Ask tool — prompt user for input (text parsing path)
         if parsed.action == "ask":
-            question = ""
-            if isinstance(parsed.action_input, dict):
-                question = parsed.action_input.get("question", "")
-            elif isinstance(parsed.action_input, str):
-                question = parsed.action_input
-            if question:
-                user_response = _handle_ask(question, quiet)
-                obs_msg = f"Observation: User responded: {user_response}\n\nContinue. Respond with JSON only."
+            questions = _extract_questions(parsed.action_input)
+            if questions:
+                user_response = _handle_ask(questions, quiet)
+                obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
                 messages.append({"role": "assistant", "content": llm_text})
                 messages.append({"role": "user", "content": obs_msg})
                 if ctx:
@@ -408,7 +404,7 @@ def run_loop(
                             "iter": iteration,
                             "thought": parsed.thought,
                             "action": "ask",
-                            "observation": f"Q: {question} A: {user_response}"[:500],
+                            "observation": user_response[:500],
                         },
                     )
                 continue
@@ -524,16 +520,38 @@ def run_loop(
     return None
 
 
-def _handle_ask(question: str, quiet: bool) -> str:
-    """Display a question to the user and collect their response."""
+def _extract_questions(action_input) -> list[str]:
+    """Extract questions list from ask tool input, handling all formats."""
+    if isinstance(action_input, dict):
+        qs = action_input.get("questions") or action_input.get("question")
+    elif isinstance(action_input, str):
+        qs = action_input
+    elif isinstance(action_input, list):
+        qs = action_input
+    else:
+        return []
+    # Normalize to list
+    if isinstance(qs, str):
+        return [qs] if qs else []
+    if isinstance(qs, list):
+        return [str(q) for q in qs if q]
+    return []
+
+
+def _handle_ask(questions: list[str], quiet: bool) -> str:
+    """Display questions to the user and collect responses."""
     from agent_cli.render import C, console
 
-    if not quiet:
-        console.print(f"\n[{C['accent']}]Agent asks:[/] {question}")
-    try:
-        return input("Your answer: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return "(no response)"
+    responses = []
+    for q in questions:
+        if not quiet:
+            console.print(f"\n[{C['accent']}]Agent asks:[/] {q}")
+        try:
+            answer = input("Your answer: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            answer = "(no response)"
+        responses.append(f"Q: {q}\nA: {answer}")
+    return "\n".join(responses)
 
 
 def _log_to_session(session, entry: dict) -> None:

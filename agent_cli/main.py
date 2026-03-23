@@ -742,7 +742,7 @@ def chat(
                 f"  - /quit to exit"
             )
 
-    # Finalize session: generate summary and save
-    console.print(f"[{C['muted']}]Generating session summary...[/]")
-    finalize_session(session, llm_provider, resolved_model, capabilities)
+    # Save context window as session summary (instant, no LLM call)
+    console.print(f"[{C['muted']}]Saving session...[/]")
+    finalize_session(session, ctx)
     console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")

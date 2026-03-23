@@ -310,6 +310,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `delegate` | 서브에이전트에 독립 작업 위임 |
 | `read_context` | 이전 세션 이력 조회 (목록/세부) |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
+| `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
 
 ### read_file — 파일 읽기
 
@@ -362,6 +363,15 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 ```json
 {"action": "read_context", "action_input": {"mode": "list"}}
 {"action": "read_context", "action_input": {"mode": "detail", "session_id": "1774272070"}}
+```
+
+### ask — 사용자에게 질문 (chat 모드 전용)
+
+LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로 여러 질문을 한 번에 할 수 있습니다.
+
+```json
+{"action": "ask", "action_input": {"questions": ["어떤 파일을 수정할까요?"]}}
+{"action": "ask", "action_input": {"questions": ["파일 경로는?", "사용할 언어는?"]}}
 ```
 
 ## 핵심 기능

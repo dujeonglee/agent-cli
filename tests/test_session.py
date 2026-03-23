@@ -138,6 +138,53 @@ class TestFindLatestSummary:
         assert result == "Second session summary"
 
 
+class TestFinalizeSession:
+    def test_saves_ctx_as_summary(self, tmp_path):
+        """finalize_session saves ctx messages as summary."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.session import finalize_session
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+
+        ctx = MagicMock()
+        ctx.get_messages.return_value = [
+            {"role": "user", "content": "What is 2+2?"},
+            {
+                "role": "assistant",
+                "content": '{"thought": "math", "action": "complete"}',
+            },
+        ]
+
+        finalize_session(meta, ctx)
+
+        summary = load_summary(meta)
+        assert summary is not None
+        assert "What is 2+2?" in summary
+        assert "User" in summary or "user" in summary
+
+    def test_no_ctx_no_crash(self, tmp_path):
+        """finalize_session with ctx=None does nothing."""
+        from agent_cli.context.session import finalize_session
+
+        meta = create_session("/tmp/ws")
+        finalize_session(meta, None)  # should not raise
+        assert load_summary(meta) is None
+
+    def test_empty_ctx_no_crash(self, tmp_path):
+        """finalize_session with empty messages does nothing."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.session import finalize_session
+
+        meta = create_session("/tmp/ws")
+        ctx = MagicMock()
+        ctx.get_messages.return_value = []
+        finalize_session(meta, ctx)
+        assert load_summary(meta) is None
+
+
 class TestSubagentNoSession:
     def test_depth_zero_logs(self, tmp_path):
         """At depth=0, _log_to_session writes entries."""

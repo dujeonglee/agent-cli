@@ -157,62 +157,34 @@ def load_session(session_id: str) -> SessionMeta | None:
     return None
 
 
-SESSION_SUMMARY_PROMPT = """\
-Summarize this agent session concisely. Include:
+def _serialize_ctx_messages(messages: list[dict]) -> str:
+    """Serialize context messages to text for summary storage.
 
-## Goal
-What the user wanted to accomplish.
-
-## Actions Taken
-Key tools used and their results (be specific with file paths and commands).
-
-## Outcome
-Final result — what was accomplished or what remains.
-
-Reply with ONLY the summary. Do not continue the conversation."""
-
-
-def generate_session_summary(meta, provider, model, capabilities) -> str | None:
-    """Generate a summary of the session by asking the LLM."""
-    entries = read_log(meta)
-    if not entries:
-        return None
-
-    # Serialize log entries (skip _meta header)
+    Reuses the pattern from ContextManager._serialize_messages().
+    """
     parts = []
-    for e in entries:
-        if "_meta" in e:
-            continue
-        action = e.get("action", "?")
-        thought = e.get("thought", "")
-        obs = e.get("observation", "")[:300]
-        parts.append(f"[iter {e.get('iter', '?')}] {action}: {thought}\n  → {obs}")
-
-    if not parts:
-        return None
-
-    log_text = "\n\n".join(parts)
-    prompt = f"Session log:\n\n{log_text}"
-
-    try:
-        response = provider.call(
-            messages=[{"role": "user", "content": prompt}],
-            system=SESSION_SUMMARY_PROMPT,
-            model=model,
-            capabilities=capabilities,
-            skip_json_format=True,
-        )
-        summary = response.content
-        if summary:
-            save_summary(meta, summary)
-        return summary
-    except Exception:
-        return None
+    for m in messages:
+        role = m.get("role", "unknown").capitalize()
+        content = m.get("content", "")
+        if len(content) > 2000:
+            content = (
+                content[:2000]
+                + f"\n[... {len(content) - 2000} more characters truncated]"
+            )
+        parts.append(f"[{role}]: {content}")
+    return "\n\n".join(parts)
 
 
-def finalize_session(meta, provider, model, capabilities) -> None:
-    """End-of-session cleanup: generate summary and save."""
-    generate_session_summary(meta, provider, model, capabilities)
+def finalize_session(meta, ctx=None) -> None:
+    """Save context window as session summary (no LLM call)."""
+    if ctx is None:
+        return
+    messages = ctx.get_messages()
+    if not messages:
+        return
+    summary = _serialize_ctx_messages(messages)
+    if summary:
+        save_summary(meta, summary)
 
 
 def find_latest_summary(workspace: str | None = None) -> str | None:

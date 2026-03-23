@@ -570,8 +570,8 @@ class TestRunLoopNativeToolCalling:
 
 
 class TestAskTool:
-    def test_ask_collects_user_input(self, caps, monkeypatch):
-        """ask tool prompts user and returns response as observation."""
+    def test_ask_single_question(self, caps, monkeypatch):
+        """ask tool with single question in array."""
         from agent_cli.context.manager import ContextManager
 
         monkeypatch.setattr("builtins.input", lambda _: "yes, proceed")
@@ -583,7 +583,7 @@ class TestAskTool:
                     {
                         "thought": "need clarification",
                         "action": "ask",
-                        "action_input": {"question": "Should I continue?"},
+                        "action_input": {"questions": ["Should I continue?"]},
                     }
                 )
             ),
@@ -608,6 +608,123 @@ class TestAskTool:
         )
         assert result == "Done after confirmation"
         assert provider.call.call_count == 2
+
+    def test_ask_multiple_questions(self, caps, monkeypatch):
+        """ask tool with multiple questions — collects all answers."""
+        from agent_cli.context.manager import ContextManager
+
+        answers = iter(["file.py", "python"])
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "need info",
+                        "action": "ask",
+                        "action_input": {
+                            "questions": ["Which file?", "What language?"]
+                        },
+                    }
+                )
+            ),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "got both answers",
+                        "action": "complete",
+                        "action_input": {"result": "Processing file.py in python"},
+                    }
+                )
+            ),
+        ]
+        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        result = run_loop(
+            query="Help me",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+            ctx=ctx,
+        )
+        assert result == "Processing file.py in python"
+
+    def test_ask_string_coercion(self, caps, monkeypatch):
+        """ask tool with string input (not array) — auto-coerced to list."""
+        from agent_cli.context.manager import ContextManager
+
+        monkeypatch.setattr("builtins.input", lambda _: "42")
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "ask",
+                        "action": "ask",
+                        "action_input": {"questions": "What is the answer?"},
+                    }
+                )
+            ),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "done",
+                        "action": "complete",
+                        "action_input": {"result": "The answer is 42"},
+                    }
+                )
+            ),
+        ]
+        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+            ctx=ctx,
+        )
+        assert result == "The answer is 42"
+
+    def test_ask_legacy_question_key(self, caps, monkeypatch):
+        """ask tool with legacy 'question' key — backward compatible."""
+        from agent_cli.context.manager import ContextManager
+
+        monkeypatch.setattr("builtins.input", lambda _: "yes")
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "ask",
+                        "action": "ask",
+                        "action_input": {"question": "Continue?"},
+                    }
+                )
+            ),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "done",
+                        "action": "complete",
+                        "action_input": {"result": "ok"},
+                    }
+                )
+            ),
+        ]
+        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        result = run_loop(
+            query="Do it",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+            ctx=ctx,
+        )
+        assert result == "ok"
 
     def test_ask_available_with_ctx(self, caps):
         """ask tool should be in system prompt when ctx is provided."""

@@ -127,17 +127,18 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
     ),
     "ask": ToolSchema(
         name="ask",
-        description="Ask the user a question and wait for their response. "
+        description="Ask the user questions and wait for their responses. "
         "Use this when you need clarification or additional information.",
         parameters={
             "type": "object",
             "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "The question to ask the user",
+                "questions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of questions to ask the user",
                 },
             },
-            "required": ["question"],
+            "required": ["questions"],
         },
     ),
 }
