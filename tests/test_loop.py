@@ -114,6 +114,66 @@ class TestRunLoopComplete:
         )
         assert "Created file successfully" in result
 
+    def test_complete_empty_result_defaults(self, caps, tmp_path):
+        """complete with empty result → returns '(completed)' instead of failing."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("data")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "complete",
+                    "action_input": {"result": ""},
+                }
+            ),
+        )
+        result = run_loop(
+            query="Read file",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "(completed)"
+
+    def test_complete_missing_result_key(self, caps, tmp_path):
+        """complete with no result key → returns '(completed)'."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("data")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "complete",
+                    "action_input": {},
+                }
+            ),
+        )
+        result = run_loop(
+            query="Read file",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            quiet=True,
+        )
+        assert result == "(completed)"
+
 
 class TestRunLoopToolExecution:
     def test_shell_tool(self, caps):
@@ -752,3 +812,55 @@ class TestAskTool:
         call_args = provider.call.call_args
         system = call_args.kwargs.get("system", "")
         assert "ask" in system.lower()
+
+
+class TestExtractQuestions:
+    def test_dict_with_questions_list(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions({"questions": ["a", "b"]}) == ["a", "b"]
+
+    def test_dict_with_questions_string(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions({"questions": "single"}) == ["single"]
+
+    def test_dict_with_question_key(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions({"question": "legacy"}) == ["legacy"]
+
+    def test_string_input(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions("direct question") == ["direct question"]
+
+    def test_list_input(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions(["q1", "q2"]) == ["q1", "q2"]
+
+    def test_none_input(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions(None) == []
+
+    def test_empty_dict(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions({}) == []
+
+    def test_empty_list(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions([]) == []
+
+    def test_empty_string(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions("") == []
+
+    def test_filters_empty_items(self):
+        from agent_cli.loop import _extract_questions
+
+        assert _extract_questions(["a", "", "b"]) == ["a", "b"]

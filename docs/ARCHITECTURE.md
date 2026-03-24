@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-22
 > 버전: 2.0.0-dev
-> 총 소스: 5,460 LOC (44 Python 파일) + 4,528 LOC 테스트 (23 파일)
-> 총 테스트: 326 유닛 + 42 통합 = 368개
+> 총 소스: 5,469 LOC (44 Python 파일) + 4,804 LOC 테스트 (23 파일)
+> 총 테스트: 348 유닛 + 42 통합 = 390개
 
 ---
 
@@ -255,7 +255,8 @@ class ToolSchema:
     description: str
     parameters: dict  # JSON Schema 형태
 
-# 등록된 도구: read_file, write_file, edit_file, shell, complete
+# 등록된 도구: read_file, write_file, edit_file, shell, read_context, complete, ask
+# complete, ask: 가상 도구 (TOOLS에는 없고 TOOL_SCHEMAS에만 있음, loop에서 인터셉트)
 # delegate는 별도 DELEGATE_TOOL_SCHEMA로 관리
 ```
 
@@ -306,14 +307,21 @@ class Plan:
 │                                                         │
 │  5. 응답 처리 분기:                                       │
 │     ├─ tool_calls 있음 → 네이티브 tool calling 경로        │
+│     │   ├─ complete → fulfillment guard → 반환            │
+│     │   ├─ ask → 사용자 입력 수집 → continue              │
+│     │   ├─ echo 감지 → 자동 변환 → 반환                    │
 │     │   ├─ 도구 실행 (validate + execute + truncate)      │
+│     │   ├─ 반복 호출 3회 감지 → 중단                       │
 │     │   ├─ 프로바이더별 메시지 포맷 (Anthropic/OpenAI)     │
 │     │   └─ continue                                      │
 │     │                                                    │
 │     └─ tool_calls 없음 → 텍스트 파싱 경로                  │
 │         ├─ parse_react() → ReActResult                   │
 │         ├─ action="complete" → fulfillment guard → 반환    │
+│         ├─ echo 감지 → 자동 변환 → 반환                    │
+│         ├─ action="ask" → 사용자 입력 수집 → continue      │
 │         ├─ action → validate + execute + truncate         │
+│         │   ├─ 반복 호출 3회 감지 → 중단                   │
 │         │   └─ observation 메시지 주입 → continue         │
 │         └─ 파싱 실패 → 포맷 리마인더 → continue            │
 │                                                         │

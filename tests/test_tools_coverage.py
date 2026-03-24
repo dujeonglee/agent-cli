@@ -510,3 +510,67 @@ class TestTruncationReadFileGuide:
         )
         result = truncate_output(text, config)
         assert "line_start=" not in result
+
+
+class TestReadContextTool:
+    def test_list_no_sessions(self, tmp_path, monkeypatch):
+        import agent_cli.context.session as session_mod
+
+        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "list"})
+        assert "No previous sessions" in result
+
+    def test_list_with_sessions(self, tmp_path, monkeypatch):
+        import agent_cli.context.session as session_mod
+
+        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        from agent_cli.context.session import create_session, save_meta, save_summary
+        from agent_cli.tools.context import tool_read_context
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        save_summary(meta, "Test summary content")
+
+        result = tool_read_context({"mode": "list"})
+        assert meta.session_id in result
+        assert "Test summary" in result
+
+    def test_detail_valid_session(self, tmp_path, monkeypatch):
+        import agent_cli.context.session as session_mod
+
+        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        from agent_cli.context.session import append_log, create_session, save_meta
+        from agent_cli.tools.context import tool_read_context
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        append_log(
+            meta, {"iter": 1, "action": "shell", "thought": "run", "observation": "ok"}
+        )
+
+        result = tool_read_context({"mode": "detail", "session_id": meta.session_id})
+        assert "shell" in result
+        assert "ok" in result
+
+    def test_detail_missing_session_id(self, tmp_path, monkeypatch):
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "detail"})
+        assert "session_id is required" in result
+
+    def test_detail_nonexistent_session(self, tmp_path, monkeypatch):
+        import agent_cli.context.session as session_mod
+
+        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "detail", "session_id": "999"})
+        assert "not found" in result
+
+    def test_unknown_mode(self, tmp_path, monkeypatch):
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "invalid"})
+        assert "unknown mode" in result.lower()

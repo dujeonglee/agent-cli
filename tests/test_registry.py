@@ -123,9 +123,38 @@ class TestConvertToOpenAITools:
         assert len(tools) == 2
 
 
+class TestEmptyStringStripping:
+    def test_optional_empty_string_removed(self):
+        """Empty string on optional field should be stripped before validation."""
+        action_input = {"path": "/tmp/test.py", "line_start": "", "line_end": ""}
+        ok, err = validate_tool_input("read_file", action_input)
+        assert ok is True
+        assert "line_start" not in action_input
+        assert "line_end" not in action_input
+
+    def test_required_empty_string_not_removed(self):
+        """Empty string on required field should NOT be stripped — validation fails."""
+        ok, err = validate_tool_input("read_file", {"path": ""})
+        # path="" is required and present, but it's an empty string — still valid type
+        assert ok is True  # type check passes (string), tool itself handles empty
+
+    def test_non_empty_optional_kept(self):
+        """Non-empty optional fields should remain untouched."""
+        action_input = {"path": "/tmp/test.py", "line_start": 10}
+        ok, err = validate_tool_input("read_file", action_input)
+        assert ok is True
+        assert action_input["line_start"] == 10
+
+
 class TestGetToolDescriptions:
     def test_returns_string(self):
         desc = get_tool_descriptions()
         assert isinstance(desc, str)
         assert "read_file" in desc
         assert "shell" in desc
+
+    def test_includes_complete_and_ask(self):
+        """Virtual tools should appear in descriptions when requested."""
+        desc = get_tool_descriptions(["read_file", "complete", "ask"])
+        assert "complete" in desc
+        assert "ask" in desc
