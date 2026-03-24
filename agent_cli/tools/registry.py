@@ -283,8 +283,13 @@ def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | 
             f"Expected: {json.dumps(schema.parameters, indent=2)}"
         )
 
-    # Type validation + auto-coercion
+    # Strip empty strings from optional fields (LLMs send "" for omitted params)
     properties = schema.parameters.get("properties", {})
+    for key in list(action_input.keys()):
+        if key not in required and action_input[key] == "":
+            del action_input[key]
+
+    # Type validation + auto-coercion
     for key, value in list(action_input.items()):
         if key not in properties:
             continue
