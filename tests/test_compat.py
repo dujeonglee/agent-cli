@@ -248,6 +248,67 @@ class TestOpenAICompatRuntimeDetection:
 
     @patch("agent_cli.providers.compat.requests.get")
     @patch("agent_cli.providers.compat.requests.post")
+    def test_api_key_passed_in_headers(self, mock_post, mock_get):
+        """API key should be sent as Bearer token in detection requests."""
+        models_resp = MagicMock()
+        models_resp.status_code = 200
+        models_resp.json.return_value = {
+            "data": [{"id": "model", "max_model_len": 8192}],
+        }
+        models_resp.raise_for_status.return_value = None
+        mock_get.return_value = models_resp
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "choices": [{"message": {"content": "Hello!"}}],
+        }
+        probe_resp.raise_for_status.return_value = None
+        mock_post.return_value = probe_resp
+
+        from agent_cli.providers.compat import _detect_openai_compat_capabilities
+
+        _detect_openai_compat_capabilities(
+            "http://localhost:8080/v1", "model", api_key="test-key-123"
+        )
+
+        # Verify Authorization header in GET /v1/models
+        get_headers = mock_get.call_args.kwargs.get("headers", {})
+        assert get_headers.get("Authorization") == "Bearer test-key-123"
+
+        # Verify Authorization header in POST /chat/completions
+        post_headers = mock_post.call_args.kwargs.get("headers", {})
+        assert post_headers.get("Authorization") == "Bearer test-key-123"
+
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_no_auth_header_without_key(self, mock_post, mock_get):
+        """No Authorization header when api_key is empty."""
+        models_resp = MagicMock()
+        models_resp.status_code = 200
+        models_resp.json.return_value = {"data": []}
+        models_resp.raise_for_status.return_value = None
+        mock_get.return_value = models_resp
+
+        probe_resp = MagicMock()
+        probe_resp.status_code = 200
+        probe_resp.json.return_value = {
+            "choices": [{"message": {"content": "Hi"}}],
+        }
+        probe_resp.raise_for_status.return_value = None
+        mock_post.return_value = probe_resp
+
+        from agent_cli.providers.compat import _detect_openai_compat_capabilities
+
+        _detect_openai_compat_capabilities(
+            "http://localhost:8080/v1", "model", api_key=""
+        )
+
+        get_headers = mock_get.call_args.kwargs.get("headers", {})
+        assert "Authorization" not in get_headers
+
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
     def test_fallback_context_when_no_models_api(self, mock_post, mock_get):
         """Server without /v1/models → conservative 4096 default."""
         mock_get.side_effect = Exception("Not found")
