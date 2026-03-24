@@ -359,3 +359,52 @@ class TestOpenAICompatRuntimeDetection:
 
         ctx = _detect_openai_context_window("http://localhost:8080/v1", "target-model")
         assert ctx == 65536
+
+
+class TestPromptModelCapabilities:
+    def test_saves_user_input(self, monkeypatch, tmp_path):
+        """Interactive prompt saves capabilities to models.json."""
+        from agent_cli.main import _prompt_model_capabilities
+        import agent_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+
+        inputs = iter(["131072", "y", "8192"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        caps = _prompt_model_capabilities("test-model")
+        assert caps is not None
+        assert caps.context_window == 131072
+        assert caps.supports_thinking is True
+        assert caps.thinking_budget == 8192
+
+        # Verify saved to file
+        import json
+
+        saved = json.loads((tmp_path / "models.json").read_text())
+        assert "test-model" in saved["models"]
+        assert saved["models"]["test-model"]["context_window"] == 131072
+
+    def test_defaults_on_empty_input(self, monkeypatch, tmp_path):
+        """Empty input uses defaults."""
+        from agent_cli.main import _prompt_model_capabilities
+        import agent_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        monkeypatch.setattr("builtins.input", lambda _: "")
+
+        caps = _prompt_model_capabilities("test-model")
+        assert caps is not None
+        assert caps.context_window == 4096
+        assert caps.supports_thinking is False
+
+    def test_handles_ctrl_c(self, monkeypatch):
+        """KeyboardInterrupt returns None."""
+        from agent_cli.main import _prompt_model_capabilities
+
+        monkeypatch.setattr(
+            "builtins.input", lambda _: (_ for _ in ()).throw(KeyboardInterrupt)
+        )
+
+        caps = _prompt_model_capabilities("test-model")
+        assert caps is None

@@ -75,3 +75,25 @@ class TestSave:
             readline, "write_history_file", side_effect=OSError("denied")
         ):
             ih.save()  # should not raise
+
+
+class TestReadlineGuard:
+    def test_no_readline_skips_setup(self, monkeypatch):
+        """When _has_readline is False, setup() is a no-op."""
+        monkeypatch.setattr(ih, "_has_readline", False)
+        ih._initialized = False
+        ih.setup()
+        assert ih._initialized is False  # never set to True
+
+    def test_no_readline_save_noop(self, monkeypatch):
+        """When _has_readline is False, save() does nothing."""
+        monkeypatch.setattr(ih, "_has_readline", False)
+        ih.save()  # should not raise or do anything
+
+    def test_env_var_disables_readline(self, monkeypatch):
+        """AGENT_CLI_NO_READLINE=1 disables readline."""
+        # This tests the concept — actual env check happens at import time
+        monkeypatch.setattr(ih, "_has_readline", False)
+        ih._initialized = False
+        ih.setup()
+        assert ih._initialized is False

@@ -281,8 +281,9 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
   - Ollama: `/api/show` (메타데이터) + 프로브 (thinking 감지)
   - OpenAI 호환: 프로브 (thinking 감지)
   - Thinking 감지: 프로브 프롬프트 → `message.thinking` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동)
+- 런타임 감지도 실패하면 사용자에게 대화형으로 context window, thinking 지원 여부를 질문 → `~/.agent-cli/models.json`에 저장
 - 이미 등록된 모델은 덮어쓰지 않음 (사용자 설정 보호)
-- 다음 실행 시 저장된 설정에서 로딩 (프로브 재실행 없음)
+- 다음 실행 시 저장된 설정에서 로딩 (프로브/질문 재실행 없음)
 
 | 필드 | 설명 |
 |------|------|
@@ -462,6 +463,7 @@ pytest tests/ -v
 | `ANTHROPIC_API_KEY` | Anthropic API 키 |
 | `OPENAI_API_KEY` | OpenAI API 키 |
 | `OLLAMA_BASE_URL` | Ollama 엔드포인트 (기본: `http://localhost:11434`) |
+| `AGENT_CLI_NO_READLINE` | `1`로 설정 시 readline 비활성화 (깨진 빌드 우회) |
 | `INTEGRATION_MODELS` | 통합 테스트 모델 (쉼표 구분) |
 
 ## 라이선스
