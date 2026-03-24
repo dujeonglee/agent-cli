@@ -31,10 +31,9 @@ class OpenAICompatProvider:
         **kwargs,
     ) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         msgs = [{"role": "system", "content": system}] + messages
 
