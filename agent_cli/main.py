@@ -114,6 +114,62 @@ def _dispatch_skill(
     )
 
 
+def _prompt_model_capabilities(model: str):
+    """Interactively ask user for model capabilities when detection fails."""
+    from agent_cli.config import save_model_entry
+    from agent_cli.providers.compat import ModelCapabilities
+
+    console.print(
+        f"\n[{C['accent']}]Model '{model}' not found in registry and detection failed.[/]"
+    )
+    console.print(
+        f"[{C['muted']}]Please provide model info (saved for future use):[/]\n"
+    )
+
+    try:
+        ctx_input = input("  Context window size [4096]: ").strip()
+        context_window = int(ctx_input) if ctx_input else 4096
+
+        thinking_input = input("  Supports thinking? (y/n) [n]: ").strip().lower()
+        supports_thinking = thinking_input in ("y", "yes")
+
+        thinking_budget = 0
+        thinking_format = ""
+        if supports_thinking:
+            budget_input = input("  Thinking budget tokens [4096]: ").strip()
+            thinking_budget = int(budget_input) if budget_input else 4096
+            thinking_format = "think"
+
+        max_output = min(context_window // 4, 4096)
+
+        caps = ModelCapabilities(
+            context_window=context_window,
+            max_output_tokens=max_output,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=supports_thinking,
+            thinking_budget=thinking_budget,
+            supports_strict_schema=False,
+            thinking_format=thinking_format,
+        )
+
+        entry = {
+            "context_window": caps.context_window,
+            "max_output_tokens": caps.max_output_tokens,
+            "supports_structured_output": caps.supports_structured_output,
+            "supports_tool_calling": caps.supports_tool_calling,
+            "supports_thinking": caps.supports_thinking,
+            "thinking_budget": caps.thinking_budget,
+            "supports_strict_schema": caps.supports_strict_schema,
+            "thinking_format": caps.thinking_format,
+        }
+        save_model_entry(model, entry)
+        console.print(f"[{C['muted']}]Saved to ~/.agent-cli/models.json[/]\n")
+        return caps
+    except (EOFError, KeyboardInterrupt, ValueError):
+        return None
+
+
 def _setup_provider(
     provider: str,
     model: str | None,
@@ -122,7 +178,7 @@ def _setup_provider(
     quiet: bool = False,
 ):
     """Resolve settings + create provider + get capabilities. Returns tuple."""
-    from agent_cli.providers.compat import was_runtime_detected
+    from agent_cli.providers.compat import DEFAULT_CAPABILITIES, was_runtime_detected
     from agent_cli.render import render_model_detected, render_model_loaded
 
     resolved_url, resolved_model, resolved_key = _resolve_provider(
@@ -135,6 +191,12 @@ def _setup_provider(
     capabilities = get_capabilities(
         resolved_model, provider, resolved_url, resolved_key
     )
+
+    # Interactive fallback: ask user when detection fails
+    if capabilities == DEFAULT_CAPABILITIES and not quiet:
+        user_caps = _prompt_model_capabilities(resolved_model)
+        if user_caps:
+            capabilities = user_caps
 
     if not quiet:
         if was_runtime_detected():
