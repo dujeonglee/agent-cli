@@ -688,7 +688,7 @@ def _do_execute_tool(
                 error=e, hint="Check parameters and try again."
             )
 
-    avail = ", ".join(TOOLS) + (", delegate" if include_delegate else "")
+    avail = ", ".join(tools_list) + (", delegate" if include_delegate else "")
     return OBS_ERROR.format(error=f"Unknown tool '{tool_name}'. Available: {avail}")
 
 
