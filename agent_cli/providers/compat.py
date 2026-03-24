@@ -48,6 +48,7 @@ def get_capabilities(
     model: str,
     provider: str | None = None,
     base_url: str | None = None,
+    api_key: str = "",
 ) -> ModelCapabilities:
     """Look up capabilities with priority: models.json > runtime detection > defaults."""
     global _last_was_runtime_detected
@@ -60,7 +61,7 @@ def get_capabilities(
 
     # Priority 2: Runtime detection
     if provider and base_url:
-        detected = _detect_runtime_capabilities(provider, base_url, model)
+        detected = _detect_runtime_capabilities(provider, base_url, model, api_key)
         if detected is not None:
             _auto_save_detected(model, detected)
             _last_was_runtime_detected = True
@@ -112,13 +113,13 @@ _THINKING_TAG_PATTERN = re.compile(
 
 
 def _detect_runtime_capabilities(
-    provider: str, base_url: str, model: str
+    provider: str, base_url: str, model: str, api_key: str = ""
 ) -> ModelCapabilities | None:
     """Detect model capabilities at runtime via provider API."""
     if provider == "ollama":
         return _detect_ollama_capabilities(base_url, model)
     elif provider == "openai":
-        return _detect_openai_compat_capabilities(base_url, model)
+        return _detect_openai_compat_capabilities(base_url, model, api_key)
     return None
 
 
@@ -205,7 +206,7 @@ def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:
 
 
 def _detect_openai_compat_capabilities(
-    base_url: str, model: str
+    base_url: str, model: str, api_key: str = ""
 ) -> ModelCapabilities | None:
     """Detect capabilities for OpenAI-compatible servers (vLLM, LM Studio, mlx-lm).
 
@@ -214,9 +215,12 @@ def _detect_openai_compat_capabilities(
     """
     try:
         base = base_url.rstrip("/")
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
         # Step 1: Try to get context window from /v1/models
-        context_window = _detect_openai_context_window(base, model)
+        context_window = _detect_openai_context_window(base, model, api_key)
 
         # Step 2: Probe for thinking support
         url = f"{base}/chat/completions"
@@ -229,7 +233,7 @@ def _detect_openai_compat_capabilities(
                 ],
                 "max_tokens": 512,
             },
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             timeout=30,
         )
         r.raise_for_status()
@@ -266,14 +270,17 @@ def _detect_openai_compat_capabilities(
         return None
 
 
-def _detect_openai_context_window(base_url: str, model: str) -> int:
+def _detect_openai_context_window(base_url: str, model: str, api_key: str = "") -> int:
     """Try to get context window from /v1/models endpoint.
 
     vLLM returns max_model_len. Other servers may not.
     Returns detected value or 4096 default.
     """
     try:
-        r = requests.get(f"{base_url}/models", timeout=10)
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        r = requests.get(f"{base_url}/models", headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
 

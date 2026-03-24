@@ -132,7 +132,9 @@ def _setup_provider(
         api_key,
     )
     llm_provider = create_provider(provider, resolved_url, resolved_key)
-    capabilities = get_capabilities(resolved_model, provider, resolved_url)
+    capabilities = get_capabilities(
+        resolved_model, provider, resolved_url, resolved_key
+    )
 
     if not quiet:
         if was_runtime_detected():
