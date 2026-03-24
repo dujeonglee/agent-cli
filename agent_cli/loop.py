@@ -188,31 +188,34 @@ def run_loop(
                 tc0 = response.tool_calls[0]
 
                 # 4a. Complete tool → extract result and return
-                if tc0["name"] == "complete" and isinstance(tc0["input"], dict):
-                    answer = tc0["input"].get("result", "")
-                    if answer:
-                        # Fulfillment guard
-                        if not tools_called and needs_tool_action(query):
-                            render_status(
-                                "error",
-                                "Answer rejected — no tool actions performed yet.",
-                                iteration,
+                if tc0["name"] == "complete":
+                    answer = (
+                        tc0.get("input", {}).get("result") or "(completed)"
+                        if isinstance(tc0.get("input"), dict)
+                        else "(completed)"
+                    )
+                    # Fulfillment guard
+                    if not tools_called and needs_tool_action(query):
+                        render_status(
+                            "error",
+                            "Answer rejected — no tool actions performed yet.",
+                            iteration,
+                        )
+                        # Fall through to execute as normal tool (will fail gracefully)
+                    else:
+                        # Session logging (native complete)
+                        if depth == 0:
+                            _log_to_session(
+                                session,
+                                {
+                                    "iter": iteration,
+                                    "action": "complete",
+                                    "observation": answer[:500],
+                                },
                             )
-                            # Fall through to execute as normal tool (will fail gracefully)
-                        else:
-                            # Session logging (native complete)
-                            if depth == 0:
-                                _log_to_session(
-                                    session,
-                                    {
-                                        "iter": iteration,
-                                        "action": "complete",
-                                        "observation": answer[:500],
-                                    },
-                                )
-                            if not quiet:
-                                render_step("final", answer, iteration)
-                            return answer
+                        if not quiet:
+                            render_step("final", answer, iteration)
+                        return answer
 
                 # 4b. Ask tool — prompt user (native path)
                 if tc0["name"] == "ask":
@@ -324,46 +327,47 @@ def run_loop(
 
         # 7. Complete tool (text parsing path)
         if parsed.action == "complete":
-            answer = ""
             if isinstance(parsed.action_input, dict):
-                answer = parsed.action_input.get("result", "")
+                answer = parsed.action_input.get("result") or "(completed)"
             elif isinstance(parsed.action_input, str):
-                answer = parsed.action_input
-            if answer:
-                # Fulfillment guard — check BEFORE rendering
-                if not tools_called and needs_tool_action(query):
-                    nudge = (
-                        "You called the complete tool, but the task likely requires "
-                        "tool actions (file operations, shell commands, etc.). "
-                        "Please use the appropriate tools first, then call complete."
-                    )
-                    messages.append({"role": "assistant", "content": llm_text})
-                    messages.append({"role": "user", "content": nudge})
-                    if ctx:
-                        ctx.add("assistant", llm_text)
-                        ctx.add("user", nudge)
-                    render_status(
-                        "error",
-                        "Answer rejected — no tool actions performed yet.",
-                        iteration,
-                    )
-                    continue
+                answer = parsed.action_input or "(completed)"
+            else:
+                answer = "(completed)"
 
-                # Session logging (complete)
-                if depth == 0:
-                    _log_to_session(
-                        session,
-                        {
-                            "iter": iteration,
-                            "thought": parsed.thought,
-                            "action": "complete",
-                            "observation": answer[:500],
-                        },
-                    )
+            # Fulfillment guard — check BEFORE rendering
+            if not tools_called and needs_tool_action(query):
+                nudge = (
+                    "You called the complete tool, but the task likely requires "
+                    "tool actions (file operations, shell commands, etc.). "
+                    "Please use the appropriate tools first, then call complete."
+                )
+                messages.append({"role": "assistant", "content": llm_text})
+                messages.append({"role": "user", "content": nudge})
+                if ctx:
+                    ctx.add("assistant", llm_text)
+                    ctx.add("user", nudge)
+                render_status(
+                    "error",
+                    "Answer rejected — no tool actions performed yet.",
+                    iteration,
+                )
+                continue
 
-                if not quiet:
-                    render_step("final", answer, iteration)
-                return answer
+            # Session logging (complete)
+            if depth == 0:
+                _log_to_session(
+                    session,
+                    {
+                        "iter": iteration,
+                        "thought": parsed.thought,
+                        "action": "complete",
+                        "observation": answer[:500],
+                    },
+                )
+
+            if not quiet:
+                render_step("final", answer, iteration)
+            return answer
 
         # 9. Detect echo-as-final-answer (common small model pattern)
         echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
