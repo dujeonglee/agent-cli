@@ -14,7 +14,7 @@ from agent_cli.tools.read_file import (
     tool_read_file,
 )
 from agent_cli.tools.delegate import _validate_subtask, _build_subprocess_cmd
-from agent_cli.tools import execute_tool
+from agent_cli.tools import TOOLS, VIRTUAL_TOOLS, execute_tool
 from agent_cli.tools.truncation import truncate_output, TruncationConfig
 
 
@@ -391,10 +391,68 @@ class TestToolDelegate:
         assert "(no output)" in result
 
 
+class TestToolsRegistry:
+    """Tests for unified TOOLS dict with virtual tools."""
+
+    def test_tools_contains_all_real_tools(self):
+        real_tools = {"read_file", "write_file", "edit_file", "shell", "read_context"}
+        assert real_tools.issubset(set(TOOLS.keys()))
+
+    def test_tools_contains_virtual_tools(self):
+        assert "complete" in TOOLS
+        assert "ask" in TOOLS
+
+    def test_virtual_tools_frozenset(self):
+        assert VIRTUAL_TOOLS == frozenset({"complete", "ask"})
+        assert isinstance(VIRTUAL_TOOLS, frozenset)
+
+    def test_virtual_tools_subset_of_tools(self):
+        assert VIRTUAL_TOOLS.issubset(set(TOOLS.keys()))
+
+    def test_real_tools_excludes_virtual(self):
+        real = [t for t in TOOLS if t not in VIRTUAL_TOOLS]
+        assert "complete" not in real
+        assert "ask" not in real
+        assert len(real) == len(TOOLS) - len(VIRTUAL_TOOLS)
+
+    def test_complete_lambda_with_result(self):
+        fn = TOOLS["complete"]
+        assert fn({"result": "done"}) == "done"
+
+    def test_complete_lambda_default(self):
+        fn = TOOLS["complete"]
+        assert fn({}) == "(completed)"
+
+    def test_ask_lambda_with_question(self):
+        fn = TOOLS["ask"]
+        assert fn({"question": "what?"}) == "what?"
+
+    def test_ask_lambda_default(self):
+        fn = TOOLS["ask"]
+        assert fn({}) == "(ask)"
+
+
 class TestExecuteTool:
     def test_unknown_tool(self):
         with pytest.raises(RuntimeError, match="Unknown tool"):
             execute_tool("nonexistent_tool", {})
+
+    def test_execute_virtual_complete(self):
+        result = execute_tool("complete", {"result": "all done"})
+        assert result == "all done"
+
+    def test_execute_virtual_ask(self):
+        result = execute_tool("ask", {"question": "which file?"})
+        assert result == "which file?"
+
+    def test_error_message_includes_virtual_tools(self):
+        try:
+            execute_tool("bogus", {})
+        except RuntimeError as e:
+            msg = str(e)
+            assert "complete" in msg
+            assert "ask" in msg
+            assert "read_file" in msg
 
 
 class TestTruncationByteLimit:

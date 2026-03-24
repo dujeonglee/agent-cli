@@ -26,10 +26,17 @@ TOOLS: dict[str, Any] = {
     "edit_file": tool_edit_file,
     "shell": tool_shell,
     "read_context": tool_read_context,
+    # Virtual tools — intercepted by the loop before execute_tool
+    "complete": lambda args: args.get("result", "(completed)"),
+    "ask": lambda args: args.get("question", "(ask)"),
 }
+
+# Virtual tool names — used to exclude them where only real tools matter (e.g. planning)
+VIRTUAL_TOOLS: frozenset[str] = frozenset({"complete", "ask"})
 
 __all__ = [
     "TOOLS",
+    "VIRTUAL_TOOLS",
     "TOOL_SCHEMAS",
     "validate_tool_input",
     "get_tool_descriptions",

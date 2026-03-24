@@ -9,7 +9,7 @@ from agent_cli.planning.models import Plan
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.render import console, C, render_plan_progress, render_status
-from agent_cli.tools import TOOLS
+from agent_cli.tools import TOOLS, VIRTUAL_TOOLS
 
 # Tool RAG: keyword → tool mapping (includes Korean for multilingual support)
 _TOOL_KEYWORDS = {
@@ -37,7 +37,7 @@ def _infer_tools_for_step(description: str) -> list[str]:
 
     # Fallback: no match → all tools
     if not tools:
-        return list(TOOLS.keys())
+        return [t for t in TOOLS if t not in VIRTUAL_TOOLS]
 
     return sorted(tools)
 

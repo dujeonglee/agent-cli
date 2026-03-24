@@ -8,7 +8,7 @@ from agent_cli.prompts.system_prompt import build_plan_generation_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.render import render_status
-from agent_cli.tools import TOOLS
+from agent_cli.tools import TOOLS, VIRTUAL_TOOLS
 
 
 def generate_plan(
@@ -29,7 +29,7 @@ def generate_plan(
     """
     system = build_plan_generation_prompt(
         capabilities=capabilities,
-        active_tools=list(TOOLS.keys()),
+        active_tools=[t for t in TOOLS if t not in VIRTUAL_TOOLS],
         include_delegate=include_delegate,
         max_steps=max_steps,
     )

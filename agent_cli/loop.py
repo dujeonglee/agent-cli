@@ -62,11 +62,9 @@ def run_loop(
     """
     include_delegate = depth < max_depth
     tools_list = active_tools or list(TOOLS.keys())
-    # Virtual tools: always include "complete"; include "ask" only in chat (ctx present)
-    if "complete" not in tools_list:
-        tools_list = [*tools_list, "complete"]
-    if ctx and "ask" not in tools_list:
-        tools_list = [*tools_list, "ask"]
+    # Remove "ask" in non-interactive mode (no ctx)
+    if not ctx and "ask" in tools_list:
+        tools_list = [t for t in tools_list if t != "ask"]
 
     # Load previous session context (depth 0 only)
     session_context = None
@@ -280,7 +278,7 @@ def run_loop(
                 )
 
                 if not quiet:
-                    render_step("observation", obs, iteration)
+                    render_step("observation", obs, iteration, tool_name=tool_name)
                 observations.append({"tool_call": tc, "output": obs})
 
                 # Session logging (native tool calling path)
@@ -443,7 +441,7 @@ def run_loop(
             )
 
             if not quiet:
-                render_step("observation", observation, iteration)
+                render_step("observation", observation, iteration, tool_name=tool_name)
 
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):

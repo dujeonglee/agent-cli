@@ -14,7 +14,7 @@ from agent_cli.planning.executor import (
 from agent_cli.planning.models import Plan, PlanStep
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.compat import ModelCapabilities
-from agent_cli.tools import TOOLS
+from agent_cli.tools import TOOLS, VIRTUAL_TOOLS
 
 
 @pytest.fixture
@@ -274,12 +274,22 @@ class TestInferToolsForStep:
     def test_ambiguous_falls_back_to_all(self):
         tools = _infer_tools_for_step("Analyze the results")
         # "Analyze" doesn't match any specific tool keyword
-        assert len(tools) == len(TOOLS)  # all tools
+        assert len(tools) == len(TOOLS) - len(VIRTUAL_TOOLS)  # all real tools
 
     def test_multiple_tools(self):
         tools = _infer_tools_for_step("Read the file and run tests")
         assert "read_file" in tools
         assert "shell" in tools
+
+    def test_fallback_excludes_virtual_tools(self):
+        tools = _infer_tools_for_step("Analyze the results")
+        assert "complete" not in tools
+        assert "ask" not in tools
+
+    def test_keyword_match_excludes_virtual_tools(self):
+        tools = _infer_tools_for_step("Read and edit the config file")
+        assert "complete" not in tools
+        assert "ask" not in tools
 
 
 class TestStepContextScaling:

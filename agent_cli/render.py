@@ -62,6 +62,12 @@ def render_step(
     tool_input: str | None = None,
 ) -> None:
     color = C.get(step_type, "white")
+
+    # Observation: compact one-line status instead of full panel
+    if step_type == "observation":
+        _render_observation_compact(content, iteration, tool_name)
+        return
+
     header = Text()
     header.append(
         f"{ICONS.get(step_type, '')} {step_type.upper()}", style=f"bold {color}"
@@ -85,6 +91,41 @@ def render_step(
             box=box.ROUNDED,
             padding=(0, 1),
         )
+    )
+
+
+def _render_observation_compact(
+    content: str, iteration: int, tool_name: str | None = None
+) -> None:
+    """Render observation as a compact one-line status."""
+    first_line = content.split("\n", 1)[0].strip()
+    # Extract status from "STATUS: success" / "STATUS: error" format
+    if first_line.startswith("STATUS:"):
+        status = first_line.split(":", 1)[1].strip().lower()
+    else:
+        status = "done"
+
+    if status == "success":
+        icon, style = "✓", "green"
+    elif status == "error":
+        icon, style = "✗", "red"
+    else:
+        icon, style = "●", C["muted"]
+
+    tool_label = f" {tool_name}" if tool_name else ""
+    # For errors, append the error message for quick diagnosis
+    detail = ""
+    if status == "error":
+        for line in content.split("\n"):
+            if line.startswith("ERROR:"):
+                detail = f"  {line}"
+                break
+
+    console.print(
+        f"  [{style}]{icon}[/] [{C['muted']}]OBS iter {iteration}[/]"
+        f"[bold {style}]{tool_label}[/]"
+        f"  [{style}]{status}{detail}[/]",
+        highlight=False,
     )
 
 
