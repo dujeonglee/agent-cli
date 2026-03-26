@@ -11,11 +11,30 @@ from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.skills.models import Skill
 
 
-def substitute_arguments(template: str, arguments: str) -> str:
-    """Replace $ARGUMENTS and $1, $2, ... in template."""
-    result = template.replace("$ARGUMENTS", arguments)
+def substitute_arguments(
+    template: str,
+    arguments: str,
+    skill_dir: str = "",
+    session_id: str = "",
+) -> str:
+    """Replace $ARGUMENTS, $N, ${CLAUDE_SKILL_DIR}, ${SESSION_ID} in template."""
+    # Built-in variables
+    result = template.replace("${CLAUDE_SKILL_DIR}", skill_dir)
+    result = result.replace("${SESSION_ID}", session_id)
 
+    # $ARGUMENTS[N] bracket notation (before $ARGUMENTS replacement)
     args_list = arguments.split()
+
+    def _replace_bracket(m: re.Match) -> str:
+        idx = int(m.group(1))
+        return args_list[idx] if idx < len(args_list) else ""
+
+    result = re.sub(r"\$ARGUMENTS\[(\d+)\]", _replace_bracket, result)
+
+    # $ARGUMENTS (full string)
+    result = result.replace("$ARGUMENTS", arguments)
+
+    # $N shorthand
     for i, arg in enumerate(args_list):
         result = result.replace(f"${i}", arg)
 
@@ -42,7 +61,17 @@ def execute_skill(
     ctx: ContextManager | None = None,
 ) -> str | None:
     """Execute a skill by substituting arguments and calling run_loop."""
-    prompt = substitute_arguments(skill.prompt_template, arguments)
+    from pathlib import Path
+
+    skill_dir = str(Path(skill.source_path).parent) if skill.source_path else ""
+    session_id = (
+        str(ctx.session.session_id)
+        if ctx and hasattr(ctx, "session") and ctx.session
+        else ""
+    )
+    prompt = substitute_arguments(
+        skill.prompt_template, arguments, skill_dir=skill_dir, session_id=session_id
+    )
 
     effective_max_iter = skill.max_iter if skill.max_iter > 0 else max_iter
     effective_model = skill.model if skill.model else model

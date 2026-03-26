@@ -1,7 +1,7 @@
 # Agent-CLI v2 — 남은 작업
 
 > 최종 업데이트: 2026-03-26
-> 현재 상태: v2 완성 (390 유닛 + 42 통합 = 432개 테스트)
+> 현재 상태: v2 완성 (395 유닛 + 42 통합 = 437개 테스트)
 
 ---
 
@@ -54,9 +54,9 @@
 - [ ] 스킬 디렉토리 내 supporting files 참조 (reference.md, scripts/ 등)
 
 아직 미지원인 동적 기능:
-- [ ] `$ARGUMENTS[N]` — 0-based 인덱스 접근 (현재: `$0`, `$1` 지원)
-- [ ] `${CLAUDE_SKILL_DIR}` — 스킬 디렉토리 경로 변수
-- [ ] `${CLAUDE_SESSION_ID}` — 세션 ID 변수 (→ `${SESSION_ID}`로 대체 가능)
+- [x] `$ARGUMENTS[N]` — 0-based 인덱스 접근 (`$0`, `$1` 숏핸드도 지원)
+- [x] `${CLAUDE_SKILL_DIR}` — 스킬 디렉토리 경로 변수
+- [x] `${SESSION_ID}` — 세션 ID 변수
 - [ ] `` !`command` `` — 동적 컨텍스트 주입 (셸 명령 실행 후 결과 주입)
 
 구현 우선순위 제안:

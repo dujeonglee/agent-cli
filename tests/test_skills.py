@@ -113,6 +113,49 @@ class TestArgumentSubstitution:
         result = substitute_arguments("Read $ARGUMENTS, focus on $0", "src/main.py")
         assert "src/main.py" in result
 
+    def test_skill_dir_substitution(self):
+        """${CLAUDE_SKILL_DIR} replaced with skill directory path."""
+        result = substitute_arguments(
+            "python ${CLAUDE_SKILL_DIR}/scripts/run.py",
+            "",
+            skill_dir="/home/user/.agent-cli/skills/my-skill",
+        )
+        assert result == "python /home/user/.agent-cli/skills/my-skill/scripts/run.py"
+
+    def test_session_id_substitution(self):
+        """${SESSION_ID} replaced with current session ID."""
+        result = substitute_arguments(
+            "Log to ${SESSION_ID}.log",
+            "",
+            session_id="1774272070",
+        )
+        assert result == "Log to 1774272070.log"
+
+    def test_arguments_bracket_notation(self):
+        """$ARGUMENTS[N] replaced with nth argument."""
+        result = substitute_arguments(
+            "Migrate $ARGUMENTS[0] from $ARGUMENTS[1] to $ARGUMENTS[2]",
+            "SearchBar React Vue",
+        )
+        assert result == "Migrate SearchBar from React to Vue"
+
+    def test_arguments_bracket_out_of_range(self):
+        """$ARGUMENTS[N] out of range → cleaned up."""
+        result = substitute_arguments(
+            "Use $ARGUMENTS[0] and $ARGUMENTS[5]",
+            "only-one",
+        )
+        assert "only-one" in result
+        assert "$ARGUMENTS[5]" not in result
+
+    def test_no_skill_dir_or_session(self):
+        """Missing skill_dir/session_id → variables replaced with empty string."""
+        result = substitute_arguments(
+            "dir=${CLAUDE_SKILL_DIR} sid=${SESSION_ID}",
+            "",
+        )
+        assert result == "dir= sid="
+
 
 class TestSkillLoader:
     def test_parse_skill_file(self, tmp_path):
