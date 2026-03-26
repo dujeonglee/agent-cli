@@ -209,6 +209,29 @@ class TestSkillLoader:
         assert skill is not None
         assert skill.name == "my-skill"
 
+    def test_parse_directory_skill(self, tmp_path):
+        """skills/<name>/SKILL.md directory structure loads correctly."""
+        skill_dir = tmp_path / "review"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: review\ndescription: Review code\n---\n\nReview $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_dir / "SKILL.md")
+        assert skill is not None
+        assert skill.name == "review"
+        assert skill.description == "Review code"
+
+    def test_directory_name_as_fallback(self, tmp_path):
+        """SKILL.md without name → uses parent directory name."""
+        skill_dir = tmp_path / "my-checker"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\ndescription: Check stuff\n---\n\nCheck $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_dir / "SKILL.md")
+        assert skill is not None
+        assert skill.name == "my-checker"
+
     def test_load_skills_from_directory(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / ".agent-cli" / "skills"
         skills_dir.mkdir(parents=True)
@@ -247,6 +270,55 @@ class TestSkillLoader:
 
         skills = load_skills()
         assert skills["review"].description == "Local"
+
+    def test_load_flat_and_directory_mixed(self, tmp_path, monkeypatch):
+        """Flat *.md and <name>/SKILL.md coexist with different names."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        # Flat skill
+        (skills_dir / "flat-skill.md").write_text(
+            "---\nname: flat-skill\ndescription: Flat\n---\n\nFlat $ARGUMENTS\n"
+        )
+        # Directory skill
+        dir_skill = skills_dir / "dir-skill"
+        dir_skill.mkdir()
+        (dir_skill / "SKILL.md").write_text(
+            "---\nname: dir-skill\ndescription: Dir\n---\n\nDir $ARGUMENTS\n"
+        )
+
+        import agent_cli.skills.loader as loader
+
+        monkeypatch.setattr(loader, "_SEARCH_PATHS", [skills_dir])
+
+        skills = load_skills()
+        assert "flat-skill" in skills
+        assert "dir-skill" in skills
+        assert skills["flat-skill"].description == "Flat"
+        assert skills["dir-skill"].description == "Dir"
+
+    def test_duplicate_name_flat_and_directory_raises(self, tmp_path, monkeypatch):
+        """Same skill name in flat and directory → raises error."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        # Flat skill
+        (skills_dir / "review.md").write_text(
+            "---\nname: review\ndescription: Flat\n---\n\nFlat $ARGUMENTS\n"
+        )
+        # Directory skill with same name
+        dir_skill = skills_dir / "review"
+        dir_skill.mkdir()
+        (dir_skill / "SKILL.md").write_text(
+            "---\nname: review\ndescription: Dir\n---\n\nDir $ARGUMENTS\n"
+        )
+
+        import agent_cli.skills.loader as loader
+
+        monkeypatch.setattr(loader, "_SEARCH_PATHS", [skills_dir])
+
+        with pytest.raises(ValueError, match="review"):
+            load_skills()
 
 
 class TestSkillExecution:

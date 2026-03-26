@@ -1,7 +1,7 @@
 # Agent-CLI v2 — 남은 작업
 
 > 최종 업데이트: 2026-03-26
-> 현재 상태: v2 완성 (386 유닛 + 42 통합 = 428개 테스트)
+> 현재 상태: v2 완성 (390 유닛 + 42 통합 = 432개 테스트)
 
 ---
 
@@ -50,7 +50,7 @@
 - [ ] `hooks` (object) — 스킬 스코프 lifecycle hooks (PreToolUse, PostToolUse)
 
 아직 미지원인 디렉토리 구조:
-- [ ] `skills/<name>/SKILL.md` 디렉토리 구조 지원 (현재: `skills/*.md` 플랫 구조만)
+- [x] `skills/<name>/SKILL.md` 디렉토리 구조 지원 (플랫 + 디렉토리 공존, 중복 시 에러)
 - [ ] 스킬 디렉토리 내 supporting files 참조 (reference.md, scripts/ 등)
 
 아직 미지원인 동적 기능:

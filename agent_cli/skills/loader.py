@@ -1,8 +1,10 @@
 """Skill loader — discovers and parses skill files from disk.
 
 Search paths (project root takes priority):
-  1. .agent-cli/skills/*.md  (project local)
-  2. ~/.agent-cli/skills/*.md (user global)
+  1. .agent-cli/skills/*.md  (project local, flat)
+  2. .agent-cli/skills/<name>/SKILL.md  (project local, directory)
+  3. ~/.agent-cli/skills/*.md (user global, flat)
+  4. ~/.agent-cli/skills/<name>/SKILL.md (user global, directory)
 """
 
 from __future__ import annotations
@@ -49,9 +51,27 @@ def load_skills(use_cache: bool = True) -> dict[str, Skill]:
     for search_dir in reversed(_SEARCH_PATHS):
         if not search_dir.is_dir():
             continue
-        for md_file in sorted(search_dir.glob("*.md")):
+        # Collect all skill files: flat *.md + directory */SKILL.md
+        skill_files: list[Path] = sorted(search_dir.glob("*.md"))
+        for subdir in sorted(search_dir.iterdir()):
+            if subdir.is_dir():
+                skill_md = subdir / "SKILL.md"
+                if skill_md.is_file():
+                    skill_files.append(skill_md)
+
+        # Track sources within this search_dir for duplicate detection
+        seen: dict[str, Path] = {}
+        for md_file in skill_files:
             skill = _parse_skill_file(md_file)
             if skill:
+                if skill.name in seen:
+                    raise ValueError(
+                        f"Duplicate skill '{skill.name}' found in:\n"
+                        f"  - {seen[skill.name]}\n"
+                        f"  - {md_file}\n"
+                        f"Remove one or rename to resolve the conflict."
+                    )
+                seen[skill.name] = md_file
                 skills[skill.name] = skill
 
     _cached_skills = skills
@@ -85,8 +105,11 @@ def _parse_skill_file(path: Path) -> Skill | None:
 
     name = meta.get("name", "")
     if not name:
-        # Use filename as fallback
-        name = path.stem
+        # Use parent directory name for SKILL.md, else filename
+        if path.name == "SKILL.md":
+            name = path.parent.name
+        else:
+            name = path.stem
 
     return Skill(
         name=name,

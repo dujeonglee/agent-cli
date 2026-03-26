@@ -213,8 +213,12 @@ $0, $1 for individual arguments (0-based).
 | `argument-hint` | `/skills` 표시 시 인자 힌트 | |
 
 스킬 검색 경로:
-1. `.agent-cli/skills/*.md` (프로젝트 로컬, 우선)
-2. `~/.agent-cli/skills/*.md` (사용자 전역)
+1. `.agent-cli/skills/*.md` (프로젝트 로컬 플랫, 우선)
+2. `.agent-cli/skills/<name>/SKILL.md` (프로젝트 로컬 디렉토리)
+3. `~/.agent-cli/skills/*.md` (사용자 전역 플랫)
+4. `~/.agent-cli/skills/<name>/SKILL.md` (사용자 전역 디렉토리)
+
+같은 검색 경로 내에서 동일 이름의 플랫 파일과 디렉토리 스킬이 모두 존재하면 에러가 발생합니다.
 
 ## 프로바이더 설정
 
