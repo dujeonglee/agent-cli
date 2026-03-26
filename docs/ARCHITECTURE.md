@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-03-25
+> 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 5,515 LOC (44 Python 파일) + 4,957 LOC 테스트 (24 파일)
-> 총 테스트: 371 유닛 + 42 통합 = 413개
+> 총 소스: 5,515 LOC (44 Python 파일) + 4,993 LOC 테스트 (24 파일)
+> 총 테스트: 373 유닛 + 42 통합 = 415개
 
 ---
 
@@ -47,7 +47,7 @@ agent_cli/
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (797)  ReAct 에이전트 루프 + _execute_single_tool
+├── loop.py                  (788)  ReAct 에이전트 루프 + _execute_single_tool
 ├── render.py                (292)  Rich 터미널 렌더링 + 모델 정보 + compact observation
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -55,8 +55,8 @@ agent_cli/
 │   ├── base.py              (36)   LLMProvider 프로토콜, LLMResponse, TokenUsage
 │   ├── compat.py            (306)  ModelCapabilities + 프로브 감지 + 자동 저장
 │   ├── anthropic.py         (91)   Anthropic Messages API (tool_use + thinking)
-│   ├── openai_compat.py     (102)  OpenAI 호환 API (function calling + reasoning)
-│   └── ollama.py            (105)  Ollama API (constrained decoding + thinking)
+│   ├── openai_compat.py     (101)  OpenAI 호환 API (function calling + reasoning)
+│   └── ollama.py            (104)  Ollama API (constrained decoding + thinking)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
@@ -66,7 +66,7 @@ agent_cli/
 │
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (57)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool()
-│   ├── registry.py          (340)  스키마 정의, 검증, API 형식 변환
+│   ├── registry.py          (345)  스키마 정의, 검증, API 형식 변환
 │   ├── read_file.py         (99)   파일 읽기 + hashline 포맷팅 + 부분 읽기
 │   ├── write_file.py        (18)   파일 생성
 │   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)

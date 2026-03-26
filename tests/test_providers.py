@@ -124,6 +124,42 @@ class TestOpenAICompatProvider:
         assert "response_format" not in body
         assert result.content == "plain text"
 
+    @patch("agent_cli.providers.openai_compat.requests.post")
+    def test_api_key_sets_auth_header(self, mock_post, caps_basic):
+        """Non-empty API key → Authorization header present."""
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+        )
+        provider = OpenAICompatProvider("http://localhost:8080/v1", "my-key")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="m",
+            capabilities=caps_basic,
+        )
+        headers = mock_post.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer my-key"
+
+    @patch("agent_cli.providers.openai_compat.requests.post")
+    def test_empty_api_key_skips_auth_header(self, mock_post, caps_basic):
+        """Empty API key → no Authorization header (local servers)."""
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+        )
+        provider = OpenAICompatProvider("http://localhost:8080/v1", "")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="m",
+            capabilities=caps_basic,
+        )
+        headers = mock_post.call_args.kwargs["headers"]
+        assert "Authorization" not in headers
+
 
 class TestOllamaProvider:
     @patch("agent_cli.providers.ollama.requests.post")
