@@ -1,7 +1,7 @@
 # Agent-CLI v2 — 남은 작업
 
-> 최종 업데이트: 2026-03-24
-> 현재 상태: v2 완성 (348 유닛 + 42 통합 = 390개 테스트)
+> 최종 업데이트: 2026-03-26
+> 현재 상태: v2 완성 (380 유닛 + 42 통합 = 422개 테스트)
 
 ---
 
@@ -43,7 +43,7 @@
 아직 미지원인 Claude Code 필드:
 - [ ] `disable-model-invocation` (bool) — true면 사용자만 호출 가능 (LLM 자동 호출 금지)
 - [ ] `user-invocable` (bool) — false면 LLM만 호출 가능 (사용자 /메뉴에서 숨김)
-- [ ] `model` (string) — 스킬 실행 시 모델 오버라이드
+- [x] `model` (string) — 스킬 실행 시 모델 오버라이드
 - [ ] `effort` (string) — low / medium / high / max
 - [ ] `context` (string) — "fork"이면 독립 subagent context에서 실행
 - [ ] `agent` (string) — context: fork 시 사용할 에이전트 타입

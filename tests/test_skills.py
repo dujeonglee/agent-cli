@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unittest.mock
 from unittest.mock import MagicMock
 
 import pytest
@@ -59,6 +60,21 @@ class TestSkillModel:
         assert skill.allowed_tools == ["read_file", "write_file"]
         assert skill.max_iter == 10
 
+    def test_model_default_none(self):
+        """Skill.model defaults to None (no override)."""
+        skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
+        assert skill.model is None
+
+    def test_model_field(self):
+        """Skill.model stores the override model string."""
+        skill = Skill(
+            name="s",
+            description="d",
+            prompt_template="Do $ARGUMENTS",
+            model="qwen3:8b",
+        )
+        assert skill.model == "qwen3:8b"
+
 
 class TestArgumentSubstitution:
     def test_arguments_replaced(self):
@@ -114,6 +130,31 @@ class TestSkillLoader:
         assert skill.name == "simple"
         assert skill.allowed_tools is None
         assert skill.max_iter == 0
+
+    def test_parse_model_from_frontmatter(self, tmp_path):
+        """Frontmatter with model field → skill.model populated."""
+        skill_file = tmp_path / "with-model.md"
+        skill_file.write_text(
+            "---\n"
+            "name: with-model\n"
+            "description: Skill with model override\n"
+            "model: qwen3:8b\n"
+            "---\n\n"
+            "Do $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.model == "qwen3:8b"
+
+    def test_parse_no_model_in_frontmatter(self, tmp_path):
+        """Frontmatter without model field → skill.model is None."""
+        skill_file = tmp_path / "no-model.md"
+        skill_file.write_text(
+            "---\nname: no-model\ndescription: No model\n---\n\nDo $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.model is None
 
     def test_parse_no_frontmatter(self, tmp_path):
         skill_file = tmp_path / "bad.md"
@@ -226,6 +267,91 @@ class TestSkillExecution:
         )
         # Skill's max_iter should be used (verified by run_loop not exceeding it)
         assert provider.call.called
+
+    def test_execute_no_model_override(self, caps):
+        """skill.model=None → run_loop called with the original model."""
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(
+            content=json.dumps(
+                {
+                    "thought": "t",
+                    "action": "complete",
+                    "action_input": {"result": "ok"},
+                }
+            )
+        )
+
+        skill = Skill(
+            name="s", description="d", prompt_template="Do $ARGUMENTS", model=None
+        )
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="task",
+                provider=provider,
+                capabilities=caps,
+                model="original-model",
+                quiet=True,
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["model"] == "original-model"
+
+    def test_execute_with_model_override(self, caps):
+        """skill.model set → run_loop called with the overridden model."""
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(
+            content=json.dumps(
+                {
+                    "thought": "t",
+                    "action": "complete",
+                    "action_input": {"result": "ok"},
+                }
+            )
+        )
+
+        skill = Skill(
+            name="s",
+            description="d",
+            prompt_template="Do $ARGUMENTS",
+            model="qwen3:8b",
+        )
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="task",
+                provider=provider,
+                capabilities=caps,
+                model="original-model",
+                quiet=True,
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["model"] == "qwen3:8b"
+
+
+class TestYamlRequired:
+    def test_import_error_without_yaml(self):
+        """Loader should raise ImportError when PyYAML is not installed."""
+        import importlib
+        import sys
+
+        # Temporarily remove yaml from sys.modules and block re-import
+        saved = sys.modules.pop("yaml", None)
+        with unittest.mock.patch.dict(sys.modules, {"yaml": None}):
+            with pytest.raises(ImportError):
+                # Force reimport of loader to trigger the import
+                if "agent_cli.skills.loader" in sys.modules:
+                    del sys.modules["agent_cli.skills.loader"]
+                importlib.import_module("agent_cli.skills.loader")
+
+        # Restore
+        if saved is not None:
+            sys.modules["yaml"] = saved
+        # Re-import to restore normal state
+        if "agent_cli.skills.loader" in sys.modules:
+            del sys.modules["agent_cli.skills.loader"]
+        importlib.import_module("agent_cli.skills.loader")
 
 
 class TestBuiltinSkills:

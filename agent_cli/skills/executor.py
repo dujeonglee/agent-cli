@@ -45,12 +45,13 @@ def execute_skill(
     prompt = substitute_arguments(skill.prompt_template, arguments)
 
     effective_max_iter = skill.max_iter if skill.max_iter > 0 else max_iter
+    effective_model = skill.model if skill.model else model
 
     return run_loop(
         query=prompt,
         provider=provider,
         capabilities=capabilities,
-        model=model,
+        model=effective_model,
         provider_name=provider_name,
         base_url=base_url,
         api_key=api_key,

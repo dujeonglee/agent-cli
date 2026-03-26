@@ -208,6 +208,7 @@ $0, $1 for individual arguments (0-based).
 | `description` | 스킬 설명 | ✓ |
 | `allowed-tools` | 허용 도구 리스트 (미지정 시 전체) | |
 | `max-iter` | 최대 이터레이션 (미지정 시 글로벌 설정 사용) | |
+| `model` | 스킬 실행 시 모델 오버라이드 (미지정 시 현재 모델 사용) | |
 | `argument-hint` | `/skills` 표시 시 인자 힌트 | |
 
 스킬 검색 경로:

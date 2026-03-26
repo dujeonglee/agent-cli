@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 5,515 LOC (44 Python 파일) + 4,993 LOC 테스트 (24 파일)
-> 총 테스트: 373 유닛 + 42 통합 = 415개
+> 총 소스: 5,500 LOC (44 Python 파일) + 5,119 LOC 테스트 (24 파일)
+> 총 테스트: 380 유닛 + 42 통합 = 422개
 
 ---
 
@@ -31,6 +31,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 | `typer` | >=0.9 | CLI 프레임워크 |
 | `rich` | >=13.0 | 터미널 렌더링 (Panel, Table, Rule 등) |
 | `requests` | >=2.28 | HTTP 클라이언트 (LLM API 호출) |
+| `pyyaml` | >=6.0 | 스킬 frontmatter 파싱 |
 
 표준 라이브러리: json, re, dataclasses, pathlib, subprocess, os, sys, zlib, textwrap, unicodedata
 
@@ -89,9 +90,9 @@ agent_cli/
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
-│   ├── models.py            (16)   Skill 데이터 모델
-│   ├── loader.py            (117)  스킬 파일 검색/파싱 (캐싱)
-│   └── executor.py          (65)   인자 치환 + run_loop 호출
+│   ├── models.py            (17)   Skill 데이터 모델 (model 오버라이드 포함)
+│   ├── loader.py            (100)  스킬 파일 검색/파싱 (PyYAML 필수, 캐싱)
+│   └── executor.py          (66)   인자 치환 + model 오버라이드 + run_loop 호출
 │
 └── planning/                       Planning Mode
     ├── __init__.py          (1)
@@ -693,9 +694,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 24 | 371 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 24 | 380 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 42 | `pytest tests/test_integration.py` |
-| **전체** | **24** | **413** | `pytest tests/` |
+| **전체** | **24** | **422** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

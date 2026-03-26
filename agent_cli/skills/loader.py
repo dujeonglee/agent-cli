@@ -13,7 +13,9 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    yaml = None  # type: ignore
+    raise ImportError(
+        "PyYAML is required for skill loading. Install it with: pip install pyyaml"
+    )
 
 from agent_cli.skills.models import Skill
 
@@ -73,13 +75,10 @@ def _parse_skill_file(path: Path) -> Skill | None:
     frontmatter_text = match.group(1)
     body = match.group(2).strip()
 
-    if yaml is not None:
-        try:
-            meta = yaml.safe_load(frontmatter_text)
-        except Exception:
-            meta = _parse_simple_frontmatter(frontmatter_text)
-    else:
-        meta = _parse_simple_frontmatter(frontmatter_text)
+    try:
+        meta = yaml.safe_load(frontmatter_text)
+    except Exception:
+        return None
 
     if not isinstance(meta, dict):
         return None
@@ -96,22 +95,6 @@ def _parse_skill_file(path: Path) -> Skill | None:
         allowed_tools=meta.get("allowed-tools"),
         max_iter=int(meta.get("max-iter", 0)),
         argument_hint=meta.get("argument-hint", ""),
+        model=meta.get("model"),
         source_path=str(path),
     )
-
-
-def _parse_simple_frontmatter(text: str) -> dict:
-    """Fallback frontmatter parser when PyYAML is not available."""
-    result = {}
-    for line in text.strip().split("\n"):
-        if ":" in line:
-            key, _, value = line.partition(":")
-            key = key.strip()
-            value = value.strip()
-            # Handle list values: [a, b, c]
-            if value.startswith("[") and value.endswith("]"):
-                value = [v.strip().strip("'\"") for v in value[1:-1].split(",")]
-            elif value.isdigit():
-                value = int(value)
-            result[key] = value
-    return result

@@ -13,4 +13,5 @@ class Skill:
     allowed_tools: list[str] | None = None  # None = all tools
     max_iter: int = 0  # 0 = use default
     argument_hint: str = ""
+    model: str | None = None  # None = use caller's model
     source_path: str = ""
