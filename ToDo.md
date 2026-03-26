@@ -1,7 +1,7 @@
 # Agent-CLI v2 — 남은 작업
 
 > 최종 업데이트: 2026-03-26
-> 현재 상태: v2 완성 (380 유닛 + 42 통합 = 422개 테스트)
+> 현재 상태: v2 완성 (386 유닛 + 42 통합 = 428개 테스트)
 
 ---
 
@@ -45,7 +45,7 @@
 - [ ] `user-invocable` (bool) — false면 LLM만 호출 가능 (사용자 /메뉴에서 숨김)
 - [x] `model` (string) — 스킬 실행 시 모델 오버라이드
 - [ ] `effort` (string) — low / medium / high / max
-- [ ] `context` (string) — "fork"이면 독립 subagent context에서 실행
+- [x] `context` (string) — "fork"이면 독립 subagent context에서 실행
 - [ ] `agent` (string) — context: fork 시 사용할 에이전트 타입
 - [ ] `hooks` (object) — 스킬 스코프 lifecycle hooks (PreToolUse, PostToolUse)
 

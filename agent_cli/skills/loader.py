@@ -96,5 +96,6 @@ def _parse_skill_file(path: Path) -> Skill | None:
         max_iter=int(meta.get("max-iter", 0)),
         argument_hint=meta.get("argument-hint", ""),
         model=meta.get("model"),
+        context=meta.get("context"),
         source_path=str(path),
     )

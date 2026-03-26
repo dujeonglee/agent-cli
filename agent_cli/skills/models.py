@@ -14,4 +14,5 @@ class Skill:
     max_iter: int = 0  # 0 = use default
     argument_hint: str = ""
     model: str | None = None  # None = use caller's model
+    context: str | None = None  # "fork" = independent context
     source_path: str = ""

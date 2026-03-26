@@ -46,6 +46,7 @@ def execute_skill(
 
     effective_max_iter = skill.max_iter if skill.max_iter > 0 else max_iter
     effective_model = skill.model if skill.model else model
+    effective_ctx = None if skill.context == "fork" else ctx
 
     return run_loop(
         query=prompt,
@@ -62,5 +63,5 @@ def execute_skill(
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
         active_tools=skill.allowed_tools,
-        ctx=ctx,
+        ctx=effective_ctx,
     )

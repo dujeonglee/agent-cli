@@ -75,6 +75,21 @@ class TestSkillModel:
         )
         assert skill.model == "qwen3:8b"
 
+    def test_context_default_none(self):
+        """Skill.context defaults to None (no fork)."""
+        skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
+        assert skill.context is None
+
+    def test_context_field(self):
+        """Skill.context stores the context mode string."""
+        skill = Skill(
+            name="s",
+            description="d",
+            prompt_template="Do $ARGUMENTS",
+            context="fork",
+        )
+        assert skill.context == "fork"
+
 
 class TestArgumentSubstitution:
     def test_arguments_replaced(self):
@@ -155,6 +170,31 @@ class TestSkillLoader:
         skill = _parse_skill_file(skill_file)
         assert skill is not None
         assert skill.model is None
+
+    def test_parse_context_from_frontmatter(self, tmp_path):
+        """Frontmatter with context field → skill.context populated."""
+        skill_file = tmp_path / "forked.md"
+        skill_file.write_text(
+            "---\n"
+            "name: forked\n"
+            "description: Forked skill\n"
+            "context: fork\n"
+            "---\n\n"
+            "Do $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.context == "fork"
+
+    def test_parse_no_context_in_frontmatter(self, tmp_path):
+        """Frontmatter without context field → skill.context is None."""
+        skill_file = tmp_path / "no-ctx.md"
+        skill_file.write_text(
+            "---\nname: no-ctx\ndescription: No context\n---\n\nDo $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.context is None
 
     def test_parse_no_frontmatter(self, tmp_path):
         skill_file = tmp_path / "bad.md"
@@ -328,6 +368,50 @@ class TestSkillExecution:
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["model"] == "qwen3:8b"
+
+    def test_execute_no_context_fork(self, caps):
+        """skill.context=None → run_loop called with the original ctx."""
+        provider = MagicMock()
+        fake_ctx = MagicMock()
+
+        skill = Skill(
+            name="s", description="d", prompt_template="Do $ARGUMENTS", context=None
+        )
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="task",
+                provider=provider,
+                capabilities=caps,
+                model="m",
+                quiet=True,
+                ctx=fake_ctx,
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["ctx"] is fake_ctx
+
+    def test_execute_context_fork(self, caps):
+        """skill.context='fork' → run_loop called with ctx=None (independent)."""
+        provider = MagicMock()
+        fake_ctx = MagicMock()
+
+        skill = Skill(
+            name="s", description="d", prompt_template="Do $ARGUMENTS", context="fork"
+        )
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="task",
+                provider=provider,
+                capabilities=caps,
+                model="m",
+                quiet=True,
+                ctx=fake_ctx,
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["ctx"] is None
 
 
 class TestYamlRequired:
