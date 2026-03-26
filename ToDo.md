@@ -1,7 +1,7 @@
 # Agent-CLI v2 — 남은 작업
 
 > 최종 업데이트: 2026-03-26
-> 현재 상태: v2 완성 (414 유닛 + 42 통합 = 456개 테스트)
+> 현재 상태: v2 완성 (421 유닛 + 42 통합 = 463개 테스트)
 
 ---
 
@@ -41,8 +41,8 @@
 - [x] `max-iter` — 최대 이터레이션 (agent-cli 전용)
 
 아직 미지원인 Claude Code 필드:
-- [ ] `disable-model-invocation` (bool) — true면 사용자만 호출 가능 (LLM 자동 호출 금지)
-- [ ] `user-invocable` (bool) — false면 LLM만 호출 가능 (사용자 /메뉴에서 숨김)
+- [x] `disable-model-invocation` (bool) — true면 사용자만 호출 가능 (LLM 자동 호출 금지)
+- [x] `user-invocable` (bool) — false면 LLM만 호출 가능 (사용자 /메뉴에서 숨김)
 - [x] `model` (string) — 스킬 실행 시 모델 오버라이드
 - [ ] `effort` (string) — low / medium / high / max
 - [x] `context` (string) — "fork"이면 독립 subagent context에서 실행

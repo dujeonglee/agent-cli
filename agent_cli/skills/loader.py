@@ -122,6 +122,8 @@ def _parse_skill_file(path: Path) -> Skill | None:
         model=meta.get("model"),
         context=meta.get("context"),
         hooks=_parse_hooks(meta.get("hooks")),
+        disable_model_invocation=bool(meta.get("disable-model-invocation", False)),
+        user_invocable=bool(meta.get("user-invocable", True)),
         source_path=str(path),
     )
 

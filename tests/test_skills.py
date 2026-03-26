@@ -90,6 +90,24 @@ class TestSkillModel:
         )
         assert skill.context == "fork"
 
+    def test_invocation_defaults(self):
+        """disable_model_invocation=False, user_invocable=True by default."""
+        skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
+        assert skill.disable_model_invocation is False
+        assert skill.user_invocable is True
+
+    def test_invocation_fields(self):
+        """Invocation control fields store correctly."""
+        skill = Skill(
+            name="s",
+            description="d",
+            prompt_template="Do $ARGUMENTS",
+            disable_model_invocation=True,
+            user_invocable=False,
+        )
+        assert skill.disable_model_invocation is True
+        assert skill.user_invocable is False
+
 
 class TestArgumentSubstitution:
     def test_arguments_replaced(self):
@@ -264,6 +282,34 @@ class TestSkillLoader:
         skill = _parse_skill_file(skill_file)
         assert skill is not None
         assert skill.context is None
+
+    def test_parse_invocation_fields(self, tmp_path):
+        """Frontmatter with invocation control fields."""
+        skill_file = tmp_path / "hidden.md"
+        skill_file.write_text(
+            "---\n"
+            "name: hidden\n"
+            "description: Hidden skill\n"
+            "disable-model-invocation: true\n"
+            "user-invocable: false\n"
+            "---\n\n"
+            "Do $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.disable_model_invocation is True
+        assert skill.user_invocable is False
+
+    def test_parse_invocation_defaults(self, tmp_path):
+        """Frontmatter without invocation fields → defaults."""
+        skill_file = tmp_path / "normal.md"
+        skill_file.write_text(
+            "---\nname: normal\ndescription: Normal\n---\n\nDo $ARGUMENTS\n"
+        )
+        skill = _parse_skill_file(skill_file)
+        assert skill is not None
+        assert skill.disable_model_invocation is False
+        assert skill.user_invocable is True
 
     def test_parse_no_frontmatter(self, tmp_path):
         skill_file = tmp_path / "bad.md"
@@ -577,6 +623,58 @@ class TestYamlRequired:
         if "agent_cli.skills.loader" in sys.modules:
             del sys.modules["agent_cli.skills.loader"]
         importlib.import_module("agent_cli.skills.loader")
+
+
+class TestSkillPromptInjection:
+    def test_build_skill_descriptions_excludes_disabled(self):
+        """Skills with disable_model_invocation=True excluded from prompt."""
+        from agent_cli.skills.models import Skill
+
+        skills = {
+            "review": Skill(
+                name="review",
+                description="Review code",
+                prompt_template="Review $ARGUMENTS",
+            ),
+            "hidden": Skill(
+                name="hidden",
+                description="Hidden from LLM",
+                prompt_template="Do $ARGUMENTS",
+                disable_model_invocation=True,
+            ),
+        }
+        from agent_cli.prompts.system_prompt import build_skill_descriptions
+
+        desc = build_skill_descriptions(skills)
+        assert "/review" in desc
+        assert "/hidden" not in desc
+
+    def test_build_skill_descriptions_empty(self):
+        """No skills → empty string."""
+        from agent_cli.prompts.system_prompt import build_skill_descriptions
+
+        assert build_skill_descriptions({}) == ""
+
+
+class TestSkillsListFiltering:
+    def test_user_invocable_false_hidden(self):
+        """user_invocable=False skills should be filtered from user-facing list."""
+        skills = {
+            "visible": Skill(
+                name="visible",
+                description="Visible",
+                prompt_template="Do $ARGUMENTS",
+            ),
+            "background": Skill(
+                name="background",
+                description="Background only",
+                prompt_template="Do $ARGUMENTS",
+                user_invocable=False,
+            ),
+        }
+        user_skills = {k: v for k, v in skills.items() if v.user_invocable}
+        assert "visible" in user_skills
+        assert "background" not in user_skills
 
 
 class TestBuiltinSkills:

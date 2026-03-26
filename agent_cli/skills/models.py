@@ -16,4 +16,6 @@ class Skill:
     model: str | None = None  # None = use caller's model
     context: str | None = None  # "fork" = independent context
     hooks: dict | None = None  # parsed hook matchers per event
+    disable_model_invocation: bool = False  # True = LLM cannot auto-invoke
+    user_invocable: bool = True  # False = hidden from /skills menu
     source_path: str = ""

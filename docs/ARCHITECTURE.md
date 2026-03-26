@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 5,863 LOC (45 Python 파일) + 5,612 LOC 테스트 (25 파일)
-> 총 테스트: 414 유닛 + 42 통합 = 456개
+> 총 소스: 5,907 LOC (45 Python 파일) + 5,710 LOC 테스트 (25 파일)
+> 총 테스트: 421 유닛 + 42 통합 = 463개
 
 ---
 
@@ -86,13 +86,13 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (169)  조건부 시스템 프롬프트 빌더
+│   ├── system_prompt.py     (208)  조건부 시스템 프롬프트 빌더 + 스킬 자동 주입
 │   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
-│   ├── models.py            (19)   Skill 데이터 모델 (model/context/hooks)
-│   ├── loader.py            (134)  스킬 파일 검색/파싱 (플랫+디렉토리, PyYAML, hooks, 캐싱)
+│   ├── models.py            (21)   Skill 데이터 모델 (model/context/hooks/invocation)
+│   ├── loader.py            (136)  스킬 파일 검색/파싱 (플랫+디렉토리, PyYAML, hooks, 캐싱)
 │   └── executor.py          (121)  인자/변수/!`cmd` 치환 + model/context 오버라이드
 │
 └── planning/                       Planning Mode
@@ -695,9 +695,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 25 | 414 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 25 | 421 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 42 | `pytest tests/test_integration.py` |
-| **전체** | **25** | **456** | `pytest tests/` |
+| **전체** | **25** | **463** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

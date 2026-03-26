@@ -732,11 +732,12 @@ def chat(
 
             if cmd_name == "skills":
                 skills = _load_skills()
-                if not skills:
+                user_skills = {k: v for k, v in skills.items() if v.user_invocable}
+                if not user_skills:
                     console.print(f"[{C['muted']}]No skills found.[/]")
                 else:
                     console.print(f"\n[{C['accent']}]Available skills:[/]")
-                    for s in skills.values():
+                    for s in user_skills.values():
                         hint = f" {s.argument_hint}" if s.argument_hint else ""
                         console.print(f"  /{s.name}{hint}  — {s.description}")
                     console.print()

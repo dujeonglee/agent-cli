@@ -214,6 +214,8 @@ ${SESSION_ID} for the current session ID.
 | `model` | 스킬 실행 시 모델 오버라이드 (미지정 시 현재 모델 사용) | |
 | `context` | `fork`이면 독립 컨텍스트에서 실행 (부모 대화 히스토리 없음) | |
 | `hooks` | 스킬 스코프 lifecycle hooks (PreToolUse, PostToolUse 등) | |
+| `disable-model-invocation` | `true`이면 LLM 자동 호출 금지 (사용자만 `/명령`으로 호출 가능) | |
+| `user-invocable` | `false`이면 `/skills` 메뉴에서 숨김 (LLM만 호출 가능) | |
 | `argument-hint` | `/skills` 표시 시 인자 힌트 | |
 
 스킬 검색 경로:

@@ -166,4 +166,43 @@ def build_system_prompt(
     if session_context:
         sections.append(f"## Previous Session Context\n{session_context}")
 
+    # Inject available skills for LLM auto-invocation
+    skill_desc = build_skill_descriptions()
+    if skill_desc:
+        sections.append(skill_desc)
+
     return "\n\n".join(sections)
+
+
+def build_skill_descriptions(skills: dict | None = None) -> str:
+    """Build skill descriptions for system prompt injection.
+
+    Excludes skills with disable_model_invocation=True.
+    If skills is None, loads from disk.
+    """
+    if skills is None:
+        try:
+            from agent_cli.skills import load_skills
+
+            skills = load_skills()
+        except Exception:
+            return ""
+
+    if not skills:
+        return ""
+
+    lines = [
+        "## Available Skills",
+        "You can invoke these skills by using them as the action:",
+    ]
+    for skill in skills.values():
+        if skill.disable_model_invocation:
+            continue
+        hint = f" {skill.argument_hint}" if skill.argument_hint else " <args>"
+        lines.append(f"- `/{skill.name}{hint}` — {skill.description}")
+
+    # If all skills are disabled, return empty
+    if len(lines) <= 2:
+        return ""
+
+    return "\n".join(lines)
