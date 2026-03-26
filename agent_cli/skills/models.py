@@ -15,4 +15,5 @@ class Skill:
     argument_hint: str = ""
     model: str | None = None  # None = use caller's model
     context: str | None = None  # "fork" = independent context
+    hooks: dict | None = None  # parsed hook matchers per event
     source_path: str = ""

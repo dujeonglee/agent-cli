@@ -1,7 +1,7 @@
 # Agent-CLI v2 — 남은 작업
 
 > 최종 업데이트: 2026-03-26
-> 현재 상태: v2 완성 (399 유닛 + 42 통합 = 441개 테스트)
+> 현재 상태: v2 완성 (414 유닛 + 42 통합 = 456개 테스트)
 
 ---
 
@@ -47,7 +47,7 @@
 - [ ] `effort` (string) — low / medium / high / max
 - [x] `context` (string) — "fork"이면 독립 subagent context에서 실행
 - [ ] `agent` (string) — context: fork 시 사용할 에이전트 타입
-- [ ] `hooks` (object) — 스킬 스코프 lifecycle hooks (PreToolUse, PostToolUse)
+- [x] `hooks` (object) — 스킬 스코프 lifecycle hooks (PreToolUse, PostToolUse, PostToolUseFailure)
 
 아직 미지원인 디렉토리 구조:
 - [x] `skills/<name>/SKILL.md` 디렉토리 구조 지원 (플랫 + 디렉토리 공존, 중복 시 에러)

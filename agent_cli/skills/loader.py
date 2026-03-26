@@ -19,6 +19,7 @@ except ImportError:
         "PyYAML is required for skill loading. Install it with: pip install pyyaml"
     )
 
+from agent_cli.hooks import parse_hooks_config
 from agent_cli.skills.models import Skill
 
 # Search order: project root first (priority), then user home
@@ -120,5 +121,14 @@ def _parse_skill_file(path: Path) -> Skill | None:
         argument_hint=meta.get("argument-hint", ""),
         model=meta.get("model"),
         context=meta.get("context"),
+        hooks=_parse_hooks(meta.get("hooks")),
         source_path=str(path),
     )
+
+
+def _parse_hooks(raw) -> dict | None:
+    """Parse hooks from frontmatter into HookMatcher dicts."""
+    if not raw or not isinstance(raw, dict):
+        return None
+    parsed = parse_hooks_config(raw)
+    return parsed if parsed else None

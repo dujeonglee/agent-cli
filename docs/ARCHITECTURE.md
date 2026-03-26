@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 5,580 LOC (44 Python 파일) + 5,344 LOC 테스트 (24 파일)
-> 총 테스트: 399 유닛 + 42 통합 = 441개
+> 총 소스: 5,863 LOC (45 Python 파일) + 5,612 LOC 테스트 (25 파일)
+> 총 테스트: 414 유닛 + 42 통합 = 456개
 
 ---
 
@@ -47,8 +47,9 @@ agent_cli/
 ├── config.py                (138)  models.json 로딩/저장 + 프로바이더 기본값
 ├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
+├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (788)  ReAct 에이전트 루프 + _execute_single_tool
+├── loop.py                  (845)  ReAct 에이전트 루프 + hook 통합 + _execute_single_tool
 ├── render.py                (292)  Rich 터미널 렌더링 + 모델 정보 + compact observation
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -90,8 +91,8 @@ agent_cli/
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
-│   ├── models.py            (18)   Skill 데이터 모델 (model/context 오버라이드)
-│   ├── loader.py            (124)  스킬 파일 검색/파싱 (플랫+디렉토리, PyYAML, 캐싱)
+│   ├── models.py            (19)   Skill 데이터 모델 (model/context/hooks)
+│   ├── loader.py            (134)  스킬 파일 검색/파싱 (플랫+디렉토리, PyYAML, hooks, 캐싱)
 │   └── executor.py          (121)  인자/변수/!`cmd` 치환 + model/context 오버라이드
 │
 └── planning/                       Planning Mode
@@ -694,9 +695,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 24 | 399 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 25 | 414 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 42 | `pytest tests/test_integration.py` |
-| **전체** | **24** | **441** | `pytest tests/` |
+| **전체** | **25** | **456** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

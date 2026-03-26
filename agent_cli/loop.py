@@ -55,6 +55,7 @@ def run_loop(
     active_tools: list[str] | None = None,
     plan_context: str | None = None,
     session=None,  # SessionMeta — avoid circular import
+    hooks_config: dict | None = None,
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -275,6 +276,7 @@ def run_loop(
                     tools_called,
                     recent_tool_history,
                     iteration,
+                    hooks_config=hooks_config,
                 )
 
                 if not quiet:
@@ -438,6 +440,7 @@ def run_loop(
                 tools_called,
                 recent_tool_history,
                 iteration,
+                hooks_config=hooks_config,
             )
 
             if not quiet:
@@ -569,6 +572,7 @@ def _execute_single_tool(
     tools_called: list[str] | None = None,
     recent_tool_history: list[dict] | None = None,
     iteration: int = 0,
+    hooks_config: dict | None = None,
 ) -> str:
     """Execute a single tool, track history, and return observation string."""
     obs = _do_execute_tool(
@@ -582,6 +586,7 @@ def _execute_single_tool(
         base_url,
         api_key,
         delegate_timeout,
+        hooks_config=hooks_config,
     )
 
     # Track tool usage
@@ -654,11 +659,29 @@ def _do_execute_tool(
     base_url: str = "",
     api_key: str = "",
     delegate_timeout: int = 300,
+    hooks_config: dict | None = None,
 ) -> str:
     """Core tool execution logic (no tracking)."""
+    # PreToolUse hook
+    input_dict = (
+        tool_input if isinstance(tool_input, dict) else {"raw": str(tool_input)}
+    )
+    if hooks_config:
+        from agent_cli.hooks import run_hooks
+
+        pre_result = run_hooks(
+            "PreToolUse", tool_name, input_dict, hooks_config=hooks_config
+        )
+        if not pre_result.allowed:
+            return OBS_ERROR.format(
+                error=f"Blocked by PreToolUse hook: {pre_result.stderr or 'hook denied'}"
+            )
+        if pre_result.updated_input is not None:
+            tool_input = pre_result.updated_input
+
     if tool_name == "delegate" and include_delegate:
         try:
-            return tool_delegate(
+            obs = tool_delegate(
                 args=tool_input
                 if isinstance(tool_input, dict)
                 else {"task": str(tool_input)},
@@ -668,10 +691,14 @@ def _do_execute_tool(
                 api_key=api_key,
                 timeout=delegate_timeout,
             )
+            _run_post_hook(hooks_config, tool_name, input_dict, obs)
+            return obs
         except Exception as e:
-            return OBS_ERROR_HINT.format(
+            obs = OBS_ERROR_HINT.format(
                 error=e, hint="Check task description and try again."
             )
+            _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
+            return obs
 
     if tool_name in tools_list:
         valid, err = validate_tool_input(tool_name, tool_input)
@@ -680,14 +707,44 @@ def _do_execute_tool(
         try:
             raw = execute_tool(tool_name, tool_input)
             cfg = get_truncation_config(capabilities, tool_name)
-            return OBS_SUCCESS.format(result=truncate_output(raw, cfg))
+            obs = OBS_SUCCESS.format(result=truncate_output(raw, cfg))
+            _run_post_hook(hooks_config, tool_name, input_dict, obs)
+            return obs
         except Exception as e:
-            return OBS_ERROR_HINT.format(
-                error=e, hint="Check parameters and try again."
-            )
+            obs = OBS_ERROR_HINT.format(error=e, hint="Check parameters and try again.")
+            _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
+            return obs
 
     avail = ", ".join(tools_list) + (", delegate" if include_delegate else "")
     return OBS_ERROR.format(error=f"Unknown tool '{tool_name}'. Available: {avail}")
+
+
+def _run_post_hook(hooks_config, tool_name, input_dict, obs):
+    """Fire PostToolUse hook if configured."""
+    if hooks_config:
+        from agent_cli.hooks import run_hooks
+
+        run_hooks(
+            "PostToolUse",
+            tool_name,
+            input_dict,
+            hooks_config=hooks_config,
+            tool_result=obs,
+        )
+
+
+def _run_post_failure_hook(hooks_config, tool_name, input_dict, obs):
+    """Fire PostToolUseFailure hook if configured."""
+    if hooks_config:
+        from agent_cli.hooks import run_hooks
+
+        run_hooks(
+            "PostToolUseFailure",
+            tool_name,
+            input_dict,
+            hooks_config=hooks_config,
+            tool_result=obs,
+        )
 
 
 def _format_tool_call_messages(

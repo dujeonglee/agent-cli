@@ -213,6 +213,7 @@ ${SESSION_ID} for the current session ID.
 | `max-iter` | 최대 이터레이션 (미지정 시 글로벌 설정 사용) | |
 | `model` | 스킬 실행 시 모델 오버라이드 (미지정 시 현재 모델 사용) | |
 | `context` | `fork`이면 독립 컨텍스트에서 실행 (부모 대화 히스토리 없음) | |
+| `hooks` | 스킬 스코프 lifecycle hooks (PreToolUse, PostToolUse 등) | |
 | `argument-hint` | `/skills` 표시 시 인자 힌트 | |
 
 스킬 검색 경로:
@@ -222,6 +223,66 @@ ${SESSION_ID} for the current session ID.
 4. `~/.agent-cli/skills/<name>/SKILL.md` (사용자 전역 디렉토리)
 
 같은 검색 경로 내에서 동일 이름의 플랫 파일과 디렉토리 스킬이 모두 존재하면 에러가 발생합니다.
+
+## Hooks
+
+도구 실행 전후에 셸 명령을 자동 실행하는 lifecycle hook 시스템입니다.
+
+### 설정
+
+`.agent-cli/hooks.json`:
+
+```json
+{
+  "PreToolUse": [
+    {
+      "matcher": "shell",
+      "hooks": [
+        {"command": "./block-dangerous.sh", "timeout": 30}
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "edit_file",
+      "hooks": [
+        {"command": "ruff format $(cat | jq -r '.tool_input.path')"}
+      ]
+    }
+  ]
+}
+```
+
+### Hook 이벤트
+
+| 이벤트 | 시점 | 차단 가능 |
+|--------|------|-----------|
+| `PreToolUse` | 도구 실행 직전 | ✓ (exit 2) |
+| `PostToolUse` | 도구 성공 직후 | |
+| `PostToolUseFailure` | 도구 실패 직후 | |
+
+### 동작 방식
+
+- stdin으로 JSON 전달: `{"hook_event_name", "tool_name", "tool_input", "tool_result"}`
+- `matcher`: 도구 이름 regex (빈 문자열 = 모든 도구)
+- exit 0 = 통과, exit 2 = 차단 (PreToolUse만)
+- stdout JSON의 `updatedInput`으로 도구 인자 수정 가능 (PreToolUse만)
+
+### 스킬 내 hooks
+
+스킬 frontmatter에서도 hooks를 정의할 수 있습니다 (해당 스킬 실행 중에만 활성):
+
+```yaml
+---
+name: safe-deploy
+description: Deploy safely
+hooks:
+  PreToolUse:
+    - matcher: shell
+      hooks:
+        - command: "./validate-deploy.sh"
+---
+```
 
 ## 프로바이더 설정
 
