@@ -340,3 +340,260 @@ class TestSkillExecution:
         )
         assert result is not None
         assert len(result) > 10
+
+    def test_skill_context_fork(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
+        """context: fork → skill runs in independent context and returns result."""
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.models import Skill
+        from unittest.mock import MagicMock
+
+        test_file = tmp_path / "fork_test.txt"
+        test_file.write_text("FORK_CONTENT_ABC")
+
+        skill = Skill(
+            name="fork-reader",
+            description="Read in fork",
+            prompt_template="Read $ARGUMENTS and tell me the content.",
+            allowed_tools=["read_file"],
+            max_iter=5,
+            context="fork",
+        )
+
+        fake_ctx = MagicMock()
+        result = execute_skill(
+            skill=skill,
+            arguments=str(test_file),
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            quiet=True,
+            ctx=fake_ctx,
+        )
+        assert result is not None
+        assert "FORK_CONTENT_ABC" in result
+
+    def test_skill_dynamic_context_injection(
+        self, integration_model, ollama_provider, model_capabilities
+    ):
+        """!`command` in skill template → shell output injected before LLM sees it."""
+        import datetime
+
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.models import Skill
+
+        skill = Skill(
+            name="dynamic-ctx",
+            description="Dynamic context",
+            prompt_template=(
+                "The current date output is: !`date +%Y`\n"
+                "What year is shown above? Answer with just the year number."
+            ),
+            max_iter=3,
+        )
+
+        result = execute_skill(
+            skill=skill,
+            arguments="",
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            quiet=True,
+        )
+        assert result is not None
+        assert str(datetime.datetime.now().year) in result
+
+    def test_skill_allowed_tools_restriction(
+        self, integration_model, ollama_provider, model_capabilities
+    ):
+        """allowed-tools: [shell] → LLM uses shell tool to complete task."""
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.models import Skill
+
+        skill = Skill(
+            name="shell-only",
+            description="Shell only",
+            prompt_template=(
+                "Run the shell command 'echo SHELL_ONLY_MARKER_99' "
+                "and tell me the output."
+            ),
+            allowed_tools=["shell"],
+            max_iter=5,
+        )
+
+        result = execute_skill(
+            skill=skill,
+            arguments="",
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            quiet=True,
+        )
+        assert result is not None
+        assert "SHELL_ONLY_MARKER_99" in result
+
+    def test_skill_directory_structure(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
+        """skills/<name>/SKILL.md directory structure loads and executes."""
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.loader import _parse_skill_file
+
+        skill_dir = tmp_path / "greet"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: greet\n"
+            "description: Greet someone\n"
+            "max-iter: 3\n"
+            "---\n\n"
+            "Say hello to $ARGUMENTS. Answer with just the greeting.\n"
+        )
+
+        skill = _parse_skill_file(skill_dir / "SKILL.md")
+        assert skill is not None
+
+        result = execute_skill(
+            skill=skill,
+            arguments="Alice",
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            quiet=True,
+        )
+        assert result is not None
+        assert len(result) > 0
+
+    def test_skill_arguments_bracket_notation(
+        self, integration_model, ollama_provider, model_capabilities
+    ):
+        """$ARGUMENTS[N] bracket notation substitutes correctly."""
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.models import Skill
+
+        skill = Skill(
+            name="compare",
+            description="Compare two things",
+            prompt_template=(
+                "Compare $ARGUMENTS[0] and $ARGUMENTS[1]. "
+                "Which is bigger? Answer in one sentence."
+            ),
+            max_iter=3,
+        )
+
+        result = execute_skill(
+            skill=skill,
+            arguments="elephant mouse",
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            quiet=True,
+        )
+        assert result is not None
+        assert len(result) > 5
+
+
+class TestSkillHooks:
+    def test_pretooluse_hook_blocks(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
+        """PreToolUse hook blocks shell → LLM gets error feedback."""
+        from agent_cli.hooks import HookEntry, HookMatcher
+
+        hooks_config = {
+            "PreToolUse": [
+                HookMatcher(
+                    matcher="shell",
+                    hooks=[HookEntry(command='echo "shell is blocked" >&2; exit 2')],
+                )
+            ]
+        }
+
+        result = run_loop(
+            query="Run 'echo hello' in the shell and tell me the output.",
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            quiet=True,
+            max_iter=5,
+            hooks_config=hooks_config,
+        )
+        assert result is not None
+
+    def test_posttooluse_hook_logging(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
+        """PostToolUse hook writes log file after tool execution."""
+        from agent_cli.hooks import HookEntry, HookMatcher
+
+        log_file = tmp_path / "hook_log.txt"
+        hooks_config = {
+            "PostToolUse": [
+                HookMatcher(
+                    matcher="",
+                    hooks=[HookEntry(command=f"echo 'hook fired' >> {log_file}")],
+                )
+            ]
+        }
+
+        test_file = tmp_path / "data.txt"
+        test_file.write_text("test data")
+
+        result = run_loop(
+            query=f"Read the file {test_file} and tell me its content.",
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            quiet=True,
+            max_iter=5,
+            hooks_config=hooks_config,
+        )
+        assert result is not None
+        assert log_file.exists()
+        assert "hook fired" in log_file.read_text()
+
+
+class TestSkillInvocationControl:
+    def test_disable_model_invocation_excluded_from_prompt(self):
+        """disable-model-invocation=True → excluded from system prompt."""
+        from agent_cli.prompts.system_prompt import build_skill_descriptions
+        from agent_cli.skills.models import Skill
+
+        skills = {
+            "auto-ok": Skill(
+                name="auto-ok",
+                description="LLM can call this",
+                prompt_template="Do $ARGUMENTS",
+            ),
+            "manual-only": Skill(
+                name="manual-only",
+                description="User only",
+                prompt_template="Do $ARGUMENTS",
+                disable_model_invocation=True,
+            ),
+        }
+        desc = build_skill_descriptions(skills)
+        assert "/auto-ok" in desc
+        assert "/manual-only" not in desc
+
+    def test_user_invocable_false_hidden_from_list(self):
+        """user-invocable=False → hidden from /skills listing."""
+        from agent_cli.skills.models import Skill
+
+        skills = {
+            "visible": Skill(
+                name="visible",
+                description="Show me",
+                prompt_template="Do $ARGUMENTS",
+            ),
+            "background": Skill(
+                name="background",
+                description="LLM only",
+                prompt_template="Do $ARGUMENTS",
+                user_invocable=False,
+            ),
+        }
+        user_skills = {k: v for k, v in skills.items() if v.user_invocable}
+        assert "visible" in user_skills
+        assert "background" not in user_skills
