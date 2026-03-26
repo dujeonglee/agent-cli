@@ -156,6 +156,32 @@ class TestArgumentSubstitution:
         )
         assert result == "dir= sid="
 
+    def test_shell_injection_basic(self):
+        """!`command` replaced with command output."""
+        result = substitute_arguments("Result: !`echo hello`", "")
+        assert result == "Result: hello"
+
+    def test_shell_injection_multiple(self):
+        """Multiple !`command` patterns all replaced."""
+        result = substitute_arguments("A: !`echo aaa`\nB: !`echo bbb`", "")
+        assert "A: aaa" in result
+        assert "B: bbb" in result
+
+    def test_shell_injection_failure(self):
+        """Failed command → error message in place (no crash)."""
+        result = substitute_arguments("Output: !`nonexistent_command_xyz_12345`", "")
+        assert "Output:" in result
+        assert (
+            "[error]" in result.lower()
+            or "not found" in result.lower()
+            or "error" in result.lower()
+        )
+
+    def test_no_shell_injection(self):
+        """No !` pattern → template unchanged (except other substitutions)."""
+        result = substitute_arguments("No commands here", "")
+        assert result == "No commands here"
+
 
 class TestSkillLoader:
     def test_parse_skill_file(self, tmp_path):

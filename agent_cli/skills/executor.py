@@ -3,12 +3,34 @@
 from __future__ import annotations
 
 import re
+import subprocess
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.skills.models import Skill
+
+# Pattern for !`command` dynamic context injection
+_SHELL_INJECT_PATTERN = re.compile(r"!`([^`]+)`")
+
+
+def _execute_shell_inject(m: re.Match) -> str:
+    """Execute a shell command and return its output for template injection."""
+    cmd = m.group(1)
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
+        output = result.stdout.strip()
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            return f"[error] {cmd}: {stderr or '(exit code ' + str(result.returncode) + ')'}"
+        return output
+    except subprocess.TimeoutExpired:
+        return f"[error] {cmd}: timed out (30s)"
+    except Exception as e:
+        return f"[error] {cmd}: {e}"
 
 
 def substitute_arguments(
@@ -17,9 +39,12 @@ def substitute_arguments(
     skill_dir: str = "",
     session_id: str = "",
 ) -> str:
-    """Replace $ARGUMENTS, $N, ${CLAUDE_SKILL_DIR}, ${SESSION_ID} in template."""
+    """Replace $ARGUMENTS, $N, ${CLAUDE_SKILL_DIR}, ${SESSION_ID}, !`cmd` in template."""
+    # Dynamic context injection: !`command` → command output
+    result = _SHELL_INJECT_PATTERN.sub(_execute_shell_inject, template)
+
     # Built-in variables
-    result = template.replace("${CLAUDE_SKILL_DIR}", skill_dir)
+    result = result.replace("${CLAUDE_SKILL_DIR}", skill_dir)
     result = result.replace("${SESSION_ID}", session_id)
 
     # $ARGUMENTS[N] bracket notation (before $ARGUMENTS replacement)

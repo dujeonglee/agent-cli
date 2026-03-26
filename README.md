@@ -202,6 +202,7 @@ Your custom prompt template here. Use $ARGUMENTS for user input.
 $0, $1 or $ARGUMENTS[0], $ARGUMENTS[1] for individual arguments (0-based).
 ${CLAUDE_SKILL_DIR} for the skill's directory path.
 ${SESSION_ID} for the current session ID.
+!`command` for dynamic context injection (shell command output).
 ```
 
 | Frontmatter 필드 | 설명 | 필수 |
