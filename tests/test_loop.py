@@ -1028,3 +1028,470 @@ class TestScratchpadIntegration:
             ctx=None,
         )
         assert result == "ok"
+
+
+class TestArtifactTags:
+    """A. Tag enrichment tests."""
+
+    def test_read_file_tag_includes_filepath(self, caps, tmp_path):
+        """A1: read_file artifact has filepath in tags."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        test_file = tmp_path / "myfile.py"
+        test_file.write_text("hello")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Read",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        index = build_artifact_index(tmp_path)
+        read_artifacts = [a for a in index if "read_file" in a.tags]
+        assert len(read_artifacts) >= 1
+        assert any(
+            str(test_file) in a.tags or "myfile.py" in str(a.tags)
+            for a in read_artifacts
+        )
+
+    def test_shell_tag_tool_name_only(self, caps, tmp_path):
+        """A2: shell artifact has tool name tag only."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "run",
+                    "action": "shell",
+                    "action_input": {"command": "ls -la /tmp"},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Run",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        index = build_artifact_index(tmp_path)
+        shell_artifacts = [a for a in index if "shell" in a.tags]
+        assert len(shell_artifacts) >= 1
+
+    def test_complete_tag(self, caps, tmp_path):
+        """A4: complete artifact has 'complete' tag."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        provider = _make_provider(_complete("final"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        index = build_artifact_index(tmp_path)
+        complete_artifacts = [a for a in index if "complete" in a.tags]
+        assert len(complete_artifacts) >= 1
+
+
+class TestSkillNamePropagation:
+    """B. skill_name propagation to tags."""
+
+    def test_execute_skill_passes_skill_name(self, caps):
+        """B1: execute_skill passes skill_name to run_loop."""
+        import unittest.mock
+
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.models import Skill
+
+        skill = Skill(name="optimize", description="d", prompt_template="Do $ARGUMENTS")
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="./",
+                provider=MagicMock(),
+                capabilities=caps,
+                model="m",
+                quiet=True,
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["skill_name"] == "optimize"
+
+    def test_skill_internal_tool_has_skill_tag(self, caps, tmp_path):
+        """B2: tool inside skill has 'skill:name' tag."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        test_file = tmp_path / "src.py"
+        test_file.write_text("code")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Analyze",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+            skill_name="optimize",
+        )
+
+        index = build_artifact_index(tmp_path)
+        skill_tagged = [a for a in index if "skill:optimize" in a.tags]
+        assert len(skill_tagged) >= 1
+
+    def test_skill_internal_complete_has_skill_tag(self, caps, tmp_path):
+        """B3: complete inside skill has 'skill:name' tag."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        provider = _make_provider(_complete("done"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Do",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+            skill_name="summarize",
+        )
+
+        index = build_artifact_index(tmp_path)
+        skill_complete = [
+            a for a in index if "complete" in a.tags and "skill:summarize" in a.tags
+        ]
+        assert len(skill_complete) >= 1
+
+    def test_no_skill_name_no_skill_tag(self, caps, tmp_path):
+        """B4: normal chat has no 'skill:' tag."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        provider = _make_provider(_complete("done"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        index = build_artifact_index(tmp_path)
+        for a in index:
+            assert not any(t.startswith("skill:") for t in a.tags)
+
+
+class TestSkillSubdirectory:
+    """C+D. Skill artifacts in subdirectories + rglob index."""
+
+    def test_skill_artifacts_in_subdirectory(self, caps, tmp_path):
+        """C1: skill artifacts stored under turn_N_skillname/."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = _make_provider(_complete("done"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        # Simulate outer turn 1 first
+        ctx.begin_turn("outer query")
+
+        run_loop(
+            query="Analyze",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+            skill_name="optimize",
+        )
+
+        # Check subdirectory exists
+        artifacts_dir = tmp_path / "artifacts"
+        subdirs = [d for d in artifacts_dir.iterdir() if d.is_dir()]
+        assert any("optimize" in d.name for d in subdirs)
+
+    def test_normal_artifacts_flat(self, caps, tmp_path):
+        """C2: normal (non-skill) artifacts are flat files."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = _make_provider(_complete("done"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        artifacts_dir = tmp_path / "artifacts"
+        if artifacts_dir.exists():
+            md_files = list(artifacts_dir.glob("turn_*.md"))
+            assert len(md_files) >= 1  # flat files exist
+
+    def test_rglob_indexes_all(self, caps, tmp_path):
+        """D1: build_artifact_index finds flat + subdirectory artifacts."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        test_file = tmp_path / "f.txt"
+        test_file.write_text("data")
+
+        # Run with skill (creates subdirectory artifacts)
+        provider1 = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("skill done"),
+        )
+        ctx = ContextManager(
+            provider=provider1, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Skill work",
+            provider=provider1,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+            skill_name="review",
+        )
+
+        # Run without skill (creates flat artifacts)
+        provider2 = _make_provider(_complete("normal done"))
+        run_loop(
+            query="Normal work",
+            provider=provider2,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        index = build_artifact_index(tmp_path)
+        # Should find both flat and subdirectory artifacts
+        assert (
+            len(index) >= 3
+        )  # at least: skill read_file + skill complete + normal complete
+
+    def test_subdirectory_artifact_loadable(self, caps, tmp_path):
+        """D2: artifacts in subdirectory can be loaded by path."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index, load_artifact
+
+        provider = _make_provider(_complete("result"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Do",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+            skill_name="test-skill",
+        )
+
+        index = build_artifact_index(tmp_path)
+        for meta in index:
+            loaded_meta, body = load_artifact(meta.path)
+            assert loaded_meta.entry_id
+            assert body  # non-empty
+
+
+class TestRunSkillIntercept:
+    """E. run_skill loop-level intercept."""
+
+    def test_run_skill_with_ctx(self, caps, tmp_path):
+        """E1: run_skill passes ctx to inner run_loop."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import load_scratchpad
+        from unittest.mock import patch
+
+        from agent_cli.skills.models import Skill
+
+        mock_skills = {
+            "summarize": Skill(
+                name="summarize",
+                description="Summarize",
+                prompt_template="Summarize $ARGUMENTS. Reply with one sentence.",
+                max_iter=3,
+            )
+        }
+
+        # Outer provider: calls run_skill then complete
+        outer_provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "use skill",
+                    "action": "run_skill",
+                    "action_input": {"name": "summarize", "arguments": "test"},
+                }
+            ),
+            _complete("all done"),
+        )
+        ctx = ContextManager(
+            provider=outer_provider,
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+
+        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+            run_loop(
+                query="Summarize something",
+                provider=outer_provider,
+                capabilities=caps,
+                model="test",
+                quiet=True,
+                ctx=ctx,
+                provider_name="ollama",
+                base_url="http://localhost:11434",
+            )
+
+        # Scratchpad should exist (ctx was passed to inner loop)
+        content = load_scratchpad(tmp_path)
+        assert content  # non-empty
+
+    def test_run_skill_unknown_returns_error(self, caps, tmp_path):
+        """E3: unknown skill → error in observation, loop continues."""
+        from agent_cli.context.manager import ContextManager
+        from unittest.mock import patch
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "try skill",
+                    "action": "run_skill",
+                    "action_input": {"name": "nonexistent", "arguments": ""},
+                }
+            ),
+            _complete("ok"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+
+        with patch("agent_cli.skills.loader.load_skills", return_value={}):
+            result = run_loop(
+                query="Try",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                quiet=True,
+                ctx=ctx,
+            )
+        assert result == "ok"  # loop continued after error
+
+
+class TestRunSkillNoDuplicateArtifact:
+    """F. No duplicate artifact from outer loop for run_skill."""
+
+    def test_no_outer_end_turn_for_run_skill(self, caps, tmp_path):
+        """F1: outer loop does not call end_turn for run_skill result."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+        from unittest.mock import patch
+
+        from agent_cli.skills.models import Skill
+
+        mock_skills = {
+            "simple": Skill(
+                name="simple",
+                description="Simple",
+                prompt_template="Say hello. Use complete to answer.",
+                max_iter=2,
+            )
+        }
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "use skill",
+                    "action": "run_skill",
+                    "action_input": {"name": "simple", "arguments": ""},
+                }
+            ),
+            _complete("final"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+
+        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+            run_loop(
+                query="Do",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                quiet=True,
+                ctx=ctx,
+                provider_name="ollama",
+                base_url="http://localhost:11434",
+            )
+
+        index = build_artifact_index(tmp_path)
+        # Check no duplicate — inner loop saves its own, outer should not duplicate
+        entry_ids = [a.entry_id for a in index]
+        assert len(entry_ids) == len(set(entry_ids)), (
+            f"Duplicate artifacts: {entry_ids}"
+        )

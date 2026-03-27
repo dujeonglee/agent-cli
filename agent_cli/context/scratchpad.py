@@ -259,11 +259,23 @@ def save_artifact(
     tags: list[str] | None = None,
     summary: str = "",
     base: Path = _DEFAULT_BASE,
+    skill_name: str = "",
+    parent_turn: int = 0,
 ) -> str:
-    """Save a turn artifact with YAML frontmatter. Returns the file path."""
+    """Save a turn artifact with YAML frontmatter. Returns the file path.
+
+    If skill_name is set, artifact is stored in a subdirectory:
+      artifacts/turn_{parent_turn}_{skill_name}/turn_{turn}.md
+    """
     _ensure_dirs(base)
     entry_id = f"turn_{turn:04d}"
-    path = base / "artifacts" / f"{entry_id}.md"
+
+    if skill_name and parent_turn > 0:
+        subdir = base / "artifacts" / f"turn_{parent_turn:04d}_{skill_name}"
+        subdir.mkdir(parents=True, exist_ok=True)
+        path = subdir / f"{entry_id}.md"
+    else:
+        path = base / "artifacts" / f"{entry_id}.md"
 
     # Estimate tokens (chars/4 heuristic matching token_estimator.py)
     token_count = len(content) // 4
@@ -309,7 +321,7 @@ def build_artifact_index(base: Path = _DEFAULT_BASE) -> list[ArtifactMeta]:
         return []
 
     index = []
-    for f in sorted(artifacts_dir.glob("turn_*.md")):
+    for f in sorted(artifacts_dir.rglob("turn_*.md")):
         text = f.read_text(encoding="utf-8")
         meta_dict, _ = parse_frontmatter(text)
         if meta_dict:

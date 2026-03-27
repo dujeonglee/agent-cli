@@ -56,6 +56,7 @@ def run_loop(
     plan_context: str | None = None,
     session=None,  # SessionMeta — avoid circular import
     hooks_config: dict | None = None,
+    skill_name: str = "",
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -81,12 +82,16 @@ def run_loop(
     if session and depth == 0:
         _log_to_session(session, {"iter": 0, "action": "query", "observation": query})
 
-    # Scratchpad: auto-init on first run, begin_turn per iteration
+    # Scratchpad: auto-init on first run, set skill context if inside a skill
     if ctx:
         from agent_cli.context.scratchpad import load_scratchpad
 
         if not load_scratchpad(ctx._scratchpad_dir):
             ctx.init_task(query)
+        # Set or clear skill context (for artifact subdirectory routing)
+        ctx.set_skill_context(
+            skill_name=skill_name, parent_turn=ctx._turn_count if skill_name else 0
+        )
 
     # Message setup
     if ctx:
@@ -219,7 +224,7 @@ def run_loop(
                         if ctx:
                             ctx.end_turn(
                                 content=answer,
-                                tags=["complete"],
+                                tags=_build_artifact_tags("complete", {}, skill_name),
                                 summary="Task completed",
                             )
                         if not quiet:
@@ -248,13 +253,53 @@ def run_loop(
                                 )
                         continue
 
-                # 4c. Echo-as-final-answer pattern
+                # 4c. run_skill — intercept at loop level (needs ctx)
+                if tc0["name"] == "run_skill":
+                    skill_input = (
+                        tc0.get("input", {})
+                        if isinstance(tc0.get("input"), dict)
+                        else {}
+                    )
+                    obs = _handle_run_skill(
+                        skill_input,
+                        provider_name,
+                        base_url,
+                        api_key,
+                        capabilities,
+                        model,
+                        ctx,
+                        session,
+                        skill_name,
+                    )
+                    if not quiet:
+                        render_step(
+                            "observation", obs, iteration, tool_name="run_skill"
+                        )
+                    # Format as tool call message
+                    new_msgs = _format_tool_call_messages(
+                        provider_name,
+                        response,
+                        [{"tool_call": tc0, "output": obs}],
+                    )
+                    messages.extend(new_msgs)
+                    if ctx:
+                        for m in new_msgs:
+                            ctx.add(
+                                m["role"],
+                                m.get("content", "")
+                                if isinstance(m.get("content"), str)
+                                else json.dumps(m.get("content", "")),
+                            )
+                    tools_called.append("run_skill")
+                    continue
+
+                # 4d. Echo-as-final-answer pattern
                 echo_answer = _try_echo_as_final(tc0["name"], tc0["input"])
                 if echo_answer:
                     if ctx:
                         ctx.end_turn(
                             content=echo_answer,
-                            tags=["complete"],
+                            tags=_build_artifact_tags("complete", {}, skill_name),
                             summary="Task completed (echo)",
                         )
                     if not quiet:
@@ -303,7 +348,7 @@ def run_loop(
                 if ctx:
                     ctx.end_turn(
                         content=obs,
-                        tags=[tool_name],
+                        tags=_build_artifact_tags(tool_name, tool_input, skill_name),
                         summary=f"{tool_name} executed",
                     )
 
@@ -393,7 +438,7 @@ def run_loop(
             if ctx:
                 ctx.end_turn(
                     content=answer,
-                    tags=["complete"],
+                    tags=_build_artifact_tags("complete", {}, skill_name),
                     summary="Task completed",
                 )
             if not quiet:
@@ -416,7 +461,7 @@ def run_loop(
             if ctx:
                 ctx.end_turn(
                     content=echo_answer,
-                    tags=["complete"],
+                    tags=_build_artifact_tags("complete", {}, skill_name),
                     summary="Task completed (echo)",
                 )
             if not quiet:
@@ -445,6 +490,44 @@ def run_loop(
                         },
                     )
                 continue
+
+        # 10b. run_skill — intercept at loop level (text parsing path)
+        if parsed.action == "run_skill":
+            skill_input = (
+                parsed.action_input if isinstance(parsed.action_input, dict) else {}
+            )
+            obs = _handle_run_skill(
+                skill_input,
+                provider_name,
+                base_url,
+                api_key,
+                capabilities,
+                model,
+                ctx,
+                session,
+                skill_name,
+            )
+            if not quiet:
+                render_step("observation", obs, iteration, tool_name="run_skill")
+            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
+            messages.append({"role": "assistant", "content": llm_text})
+            messages.append({"role": "user", "content": obs_msg})
+            if ctx:
+                ctx.add("assistant", llm_text)
+                ctx.add("user", obs_msg)
+            tools_called.append("run_skill")
+            if depth == 0:
+                _log_to_session(
+                    session,
+                    {
+                        "iter": iteration,
+                        "thought": parsed.thought,
+                        "action": "run_skill",
+                        "action_input": _normalize_input(skill_input),
+                        "observation": obs[:500],
+                    },
+                )
+            continue
 
         # 11. Tool execution (text parsing path)
         if parsed.action:
@@ -487,7 +570,7 @@ def run_loop(
             if ctx:
                 ctx.end_turn(
                     content=observation,
-                    tags=[tool_name],
+                    tags=_build_artifact_tags(tool_name, tool_input, skill_name),
                     summary=f"{tool_name} executed",
                 )
 
@@ -591,6 +674,91 @@ def _handle_ask(questions: list[str], quiet: bool) -> str:
             answer = "(no response)"
         responses.append(f"Q: {q}\nA: {answer}")
     return "\n".join(responses)
+
+
+def _handle_run_skill(
+    skill_input: dict,
+    provider_name: str,
+    base_url: str,
+    api_key: str,
+    capabilities: ModelCapabilities,
+    model: str,
+    ctx,
+    session,
+    parent_skill_name: str = "",
+) -> str:
+    """Handle run_skill at loop level with full ctx access."""
+    from agent_cli.skills import load_skills
+    from agent_cli.skills.executor import execute_skill
+
+    name = skill_input.get("name", "")
+    arguments = skill_input.get("arguments", "")
+
+    if not name:
+        return OBS_ERROR.format(error="run_skill: 'name' is required.")
+
+    skills = load_skills()
+    if name not in skills:
+        available = ", ".join(skills.keys()) if skills else "(none)"
+        return OBS_ERROR.format(
+            error=f"Skill '{name}' not found. Available: {available}"
+        )
+
+    skill = skills[name]
+    if skill.disable_model_invocation:
+        return OBS_ERROR.format(
+            error=f"Skill '{name}' is user-only (disable-model-invocation)."
+        )
+
+    # Set skill context for subdirectory routing
+    if ctx:
+        ctx.set_skill_context(skill_name=name, parent_turn=ctx._turn_count)
+
+    try:
+        from agent_cli.providers import create_provider
+
+        provider = create_provider(provider_name, base_url, api_key)
+        result = execute_skill(
+            skill=skill,
+            arguments=arguments,
+            provider=provider,
+            capabilities=capabilities,
+            model=model,
+            provider_name=provider_name,
+            base_url=base_url,
+            api_key=api_key,
+            quiet=True,
+            ctx=ctx,
+            session=session,
+        )
+    except Exception as e:
+        result = None
+        obs = OBS_ERROR.format(error=f"run_skill({name}) failed: {e}")
+    else:
+        obs = OBS_SUCCESS.format(result=result or "(skill returned no result)")
+    finally:
+        # Reset skill context
+        if ctx:
+            ctx.set_skill_context()
+
+    return obs
+
+
+def _build_artifact_tags(tool_name: str, tool_input, skill_name: str = "") -> list[str]:
+    """Build artifact tags from tool context."""
+    tags = [tool_name]
+
+    # Extract filepath for file tools
+    if isinstance(tool_input, dict):
+        filepath = tool_input.get("path", "")
+        if filepath and tool_name in ("read_file", "write_file", "edit_file"):
+            tags.append(filepath)
+
+    # Add skill tag if inside a skill
+    if skill_name:
+        tags.append(f"skill:{skill_name}")
+
+    return tags
 
 
 def _log_to_session(session, entry: dict) -> None:
@@ -723,34 +891,6 @@ def _do_execute_tool(
             )
         if pre_result.updated_input is not None:
             tool_input = pre_result.updated_input
-
-    # run_skill: needs provider context (like delegate)
-    if tool_name == "run_skill" and tool_name in tools_list:
-        from agent_cli.providers import create_provider
-        from agent_cli.tools.run_skill import tool_run_skill
-
-        valid, err = validate_tool_input(tool_name, tool_input)
-        if not valid:
-            return OBS_ERROR_HINT.format(error=err, hint="Fix action_input and retry.")
-        try:
-            provider = create_provider(provider_name, base_url, api_key)
-            raw = tool_run_skill(
-                tool_input if isinstance(tool_input, dict) else {},
-                provider=provider,
-                capabilities=capabilities,
-                model=model,
-                provider_name=provider_name,
-                base_url=base_url,
-                api_key=api_key,
-            )
-            cfg = get_truncation_config(capabilities, tool_name)
-            obs = OBS_SUCCESS.format(result=truncate_output(raw, cfg))
-            _run_post_hook(hooks_config, tool_name, input_dict, obs)
-            return obs
-        except Exception as e:
-            obs = OBS_ERROR_HINT.format(error=e, hint="Check skill name and arguments.")
-            _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
-            return obs
 
     if tool_name == "delegate" and include_delegate:
         try:

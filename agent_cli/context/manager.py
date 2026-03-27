@@ -63,6 +63,8 @@ class ContextManager:
             self._scratchpad_dir = session_scratchpad_dir(session_id, base)
 
         self._turn_count = 0
+        self._skill_name = ""
+        self._skill_parent_turn = 0
 
         from agent_cli.context.scratchpad import ContextBudget
 
@@ -183,6 +185,11 @@ class ContextManager:
 
     # ── Scratchpad integration ────────────────────────────────
 
+    def set_skill_context(self, skill_name: str = "", parent_turn: int = 0) -> None:
+        """Set skill context for artifact subdirectory routing."""
+        self._skill_name = skill_name
+        self._skill_parent_turn = parent_turn
+
     def begin_turn(self, query: str, tags: list[str] | None = None) -> dict:
         """Begin a turn: load scratchpad + select relevant artifacts.
 
@@ -214,6 +221,14 @@ class ContextManager:
             save_artifact,
         )
 
+        # Extract skill_name from tags if present
+        skill_name = ""
+        if tags:
+            for t in tags:
+                if t.startswith("skill:"):
+                    skill_name = t[6:]
+                    break
+
         # Save result as artifact (always)
         artifact_path = None
         if content:
@@ -223,6 +238,8 @@ class ContextManager:
                 tags=tags,
                 summary=summary,
                 base=self._scratchpad_dir,
+                skill_name=skill_name,
+                parent_turn=self._skill_parent_turn,
             )
 
         # Update scratchpad progress
@@ -249,7 +266,6 @@ class ContextManager:
         from agent_cli.context.scratchpad import init_scratchpad
 
         init_scratchpad(goal, self._scratchpad_dir)
-        self._turn_count = 0
 
     def _build_scratchpad_block(self) -> str:
         """Build the scratchpad context block for injection into messages."""

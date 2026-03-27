@@ -120,4 +120,5 @@ def execute_skill(
         active_tools=skill.allowed_tools,
         ctx=effective_ctx,
         session=session,
+        skill_name=skill.name,
     )
