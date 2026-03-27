@@ -81,6 +81,13 @@ def run_loop(
     if session and depth == 0:
         _log_to_session(session, {"iter": 0, "action": "query", "observation": query})
 
+    # Scratchpad: auto-init on first run, begin_turn per iteration
+    if ctx:
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        if not load_scratchpad(ctx._scratchpad_dir):
+            ctx.init_task(query)
+
     # Message setup
     if ctx:
         ctx.add("user", query)
@@ -95,6 +102,10 @@ def run_loop(
 
     while max_iter <= 0 or iteration < max_iter:
         iteration += 1
+
+        # Scratchpad: begin turn for each iteration
+        if ctx:
+            ctx.begin_turn(query)
         if not quiet:
             render_iter_sep(iteration)
 
@@ -204,6 +215,13 @@ def run_loop(
                                     "observation": answer[:500],
                                 },
                             )
+                        # Scratchpad: save complete result
+                        if ctx:
+                            ctx.end_turn(
+                                content=answer,
+                                tags=["complete"],
+                                summary="Task completed",
+                            )
                         if not quiet:
                             render_step("final", answer, iteration)
                         return answer
@@ -233,6 +251,12 @@ def run_loop(
                 # 4c. Echo-as-final-answer pattern
                 echo_answer = _try_echo_as_final(tc0["name"], tc0["input"])
                 if echo_answer:
+                    if ctx:
+                        ctx.end_turn(
+                            content=echo_answer,
+                            tags=["complete"],
+                            summary="Task completed (echo)",
+                        )
                     if not quiet:
                         render_step("final", echo_answer, iteration)
                     return echo_answer
@@ -274,6 +298,14 @@ def run_loop(
                 if not quiet:
                     render_step("observation", obs, iteration, tool_name=tool_name)
                 observations.append({"tool_call": tc, "output": obs})
+
+                # Scratchpad: save tool result as artifact
+                if ctx:
+                    ctx.end_turn(
+                        content=obs,
+                        tags=[tool_name],
+                        summary=f"{tool_name} executed",
+                    )
 
                 # Session logging (native tool calling path)
                 if depth == 0:
@@ -357,6 +389,13 @@ def run_loop(
                     },
                 )
 
+            # Scratchpad: save complete result
+            if ctx:
+                ctx.end_turn(
+                    content=answer,
+                    tags=["complete"],
+                    summary="Task completed",
+                )
             if not quiet:
                 render_step("final", answer, iteration)
             return answer
@@ -373,6 +412,12 @@ def run_loop(
                         "action": "complete (echo)",
                         "observation": echo_answer[:500],
                     },
+                )
+            if ctx:
+                ctx.end_turn(
+                    content=echo_answer,
+                    tags=["complete"],
+                    summary="Task completed (echo)",
                 )
             if not quiet:
                 render_step("final", echo_answer, iteration)
@@ -437,6 +482,14 @@ def run_loop(
 
             if not quiet:
                 render_step("observation", observation, iteration, tool_name=tool_name)
+
+            # Scratchpad: save tool result as artifact
+            if ctx:
+                ctx.end_turn(
+                    content=observation,
+                    tags=[tool_name],
+                    summary=f"{tool_name} executed",
+                )
 
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):

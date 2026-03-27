@@ -214,9 +214,9 @@ class ContextManager:
             save_artifact,
         )
 
-        # Save detailed result as artifact
+        # Save result as artifact (always)
         artifact_path = None
-        if content and len(content) > 50:  # Only save non-trivial results
+        if content:
             artifact_path = save_artifact(
                 turn=self._turn_count,
                 content=content,

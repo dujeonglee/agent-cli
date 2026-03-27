@@ -874,3 +874,157 @@ class TestExtractQuestions:
         from agent_cli.loop import _extract_questions
 
         assert _extract_questions(["a", "", "b"]) == ["a", "b"]
+
+
+class TestScratchpadIntegration:
+    """Test loop.py integration with scratchpad begin_turn/end_turn."""
+
+    def test_init_task_on_first_run(self, caps, tmp_path):
+        """First run_loop with ctx creates scratchpad.md automatically."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        provider = _make_provider(_complete("done"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Do something",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+        content = load_scratchpad(tmp_path)
+        assert "Do something" in content
+
+    def test_begin_turn_increments_counter(self, caps, tmp_path):
+        """Each iteration calls begin_turn, incrementing turn count."""
+        from agent_cli.context.manager import ContextManager
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Read file",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+        # 2 iterations (read_file + complete) → turn_count >= 2
+        assert ctx._turn_count >= 2
+
+    def test_tool_result_saved_as_artifact(self, caps, tmp_path):
+        """Tool execution result is saved as artifact."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        test_file = tmp_path / "data.txt"
+        test_file.write_text("important data")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Read data",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+        index = build_artifact_index(tmp_path)
+        assert len(index) >= 1  # at least the tool result artifact
+
+    def test_complete_result_saved_as_artifact(self, caps, tmp_path):
+        """Complete tool result is saved as artifact."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import build_artifact_index
+
+        provider = _make_provider(_complete("final answer here"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Answer question",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+        index = build_artifact_index(tmp_path)
+        # Complete result should also be an artifact
+        assert len(index) >= 1
+
+    def test_scratchpad_progress_updated(self, caps, tmp_path):
+        """Scratchpad progress section updated after tool execution."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        test_file = tmp_path / "code.py"
+        test_file.write_text("def hello(): pass")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("reviewed"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Review code",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+        content = load_scratchpad(tmp_path)
+        assert "## Progress" in content
+        assert "턴" in content  # progress entries contain turn markers
+
+    def test_no_ctx_no_scratchpad(self, caps):
+        """Without ctx, no scratchpad operations (no crash)."""
+        provider = _make_provider(_complete("ok"))
+        result = run_loop(
+            query="Simple",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=None,
+        )
+        assert result == "ok"
