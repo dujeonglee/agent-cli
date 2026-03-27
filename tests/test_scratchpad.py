@@ -11,6 +11,8 @@ from agent_cli.context.scratchpad import (
     append_decision,
     append_progress,
     build_artifact_index,
+    clear_scratchpad,
+    delete_artifact,
     init_scratchpad,
     load_artifact,
     load_scratchpad,
@@ -19,6 +21,7 @@ from agent_cli.context.scratchpad import (
     save_artifact,
     save_scratchpad,
     select_artifacts,
+    session_scratchpad_dir,
 )
 
 
@@ -349,3 +352,217 @@ class TestContextManagerScratchpad:
         info = ctx.get_budget_info()
         assert info["mode"] == "scratchpad"
         assert "budget" in info
+
+
+class TestSessionScopedPaths:
+    """Test session-scoped scratchpad directory structure."""
+
+    def test_session_scratchpad_dir(self, tmp_path):
+        """session_scratchpad_dir returns correct path."""
+        base = tmp_path / ".agent-cli"
+        result = session_scratchpad_dir("sess_123", base)
+        assert result == base / "sessions" / "sess_123"
+
+    def test_session_scratchpad_creates_dirs(self, tmp_path):
+        """init_scratchpad with session dir creates full path."""
+        base = tmp_path / ".agent-cli"
+        sdir = session_scratchpad_dir("sess_abc", base)
+        init_scratchpad("Test goal", sdir)
+        assert (sdir / "scratchpad.md").is_file()
+        assert (sdir / "artifacts").is_dir()
+
+    def test_session_isolation(self, tmp_path):
+        """Two sessions don't interfere with each other."""
+        base = tmp_path / ".agent-cli"
+        dir_a = session_scratchpad_dir("session_A", base)
+        dir_b = session_scratchpad_dir("session_B", base)
+
+        init_scratchpad("Goal A", dir_a)
+        init_scratchpad("Goal B", dir_b)
+
+        # Each has its own scratchpad
+        assert "Goal A" in load_scratchpad(dir_a)
+        assert "Goal B" in load_scratchpad(dir_b)
+        assert "Goal B" not in load_scratchpad(dir_a)
+
+        # Artifacts are isolated
+        save_artifact(1, "Content A", ["tag_a"], "Summary A", dir_a)
+        save_artifact(1, "Content B", ["tag_b"], "Summary B", dir_b)
+
+        index_a = build_artifact_index(dir_a)
+        index_b = build_artifact_index(dir_b)
+        assert len(index_a) == 1
+        assert len(index_b) == 1
+        assert index_a[0].tags == ["tag_a"]
+        assert index_b[0].tags == ["tag_b"]
+
+    def test_session_artifact_save_load(self, tmp_path):
+        """Artifact CRUD works within session scope."""
+        base = tmp_path / ".agent-cli"
+        sdir = session_scratchpad_dir("sess_1", base)
+        init_scratchpad("Goal", sdir)
+
+        path = save_artifact(1, "Detail content", ["code"], "Analysis", sdir)
+        assert Path(path).is_file()
+        assert "sess_1" in path
+
+        meta, body = load_artifact(path)
+        assert meta.entry_id == "turn_0001"
+        assert "Detail content" in body
+
+    def test_session_artifact_index(self, tmp_path):
+        """build_artifact_index only scans its own session."""
+        base = tmp_path / ".agent-cli"
+        dir_a = session_scratchpad_dir("ses_A", base)
+        dir_b = session_scratchpad_dir("ses_B", base)
+
+        init_scratchpad("A", dir_a)
+        init_scratchpad("B", dir_b)
+
+        save_artifact(1, "A1", base=dir_a)
+        save_artifact(2, "A2", base=dir_a)
+        save_artifact(1, "B1", base=dir_b)
+
+        assert len(build_artifact_index(dir_a)) == 2
+        assert len(build_artifact_index(dir_b)) == 1
+
+
+class TestClearScratchpad:
+    def test_clear_removes_all(self, tmp_path):
+        """clear_scratchpad removes scratchpad.md + artifacts/ entirely."""
+        base = tmp_path / ".agent-cli"
+        sdir = session_scratchpad_dir("sess_del", base)
+        init_scratchpad("To be deleted", sdir)
+        save_artifact(1, "Content 1", base=sdir)
+        save_artifact(2, "Content 2", base=sdir)
+
+        assert (sdir / "scratchpad.md").is_file()
+        assert len(list((sdir / "artifacts").glob("*.md"))) == 2
+
+        clear_scratchpad(sdir)
+
+        assert not (sdir / "scratchpad.md").exists()
+        assert not (sdir / "artifacts").exists()
+        # Session dir itself is removed
+        assert not sdir.exists()
+
+    def test_clear_nonexistent_is_noop(self, tmp_path):
+        """clear_scratchpad on nonexistent path does not error."""
+        sdir = tmp_path / "nonexistent"
+        clear_scratchpad(sdir)  # should not raise
+
+
+class TestDeleteArtifact:
+    def test_delete_single(self, tmp_path):
+        """delete_artifact removes one file, others remain."""
+        base = tmp_path / ".agent-cli"
+        sdir = session_scratchpad_dir("sess_da", base)
+        init_scratchpad("Goal", sdir)
+
+        path1 = save_artifact(1, "Keep me", base=sdir)
+        path2 = save_artifact(2, "Delete me", base=sdir)
+        path3 = save_artifact(3, "Keep me too", base=sdir)
+
+        delete_artifact(path2)
+
+        assert Path(path1).is_file()
+        assert not Path(path2).exists()
+        assert Path(path3).is_file()
+        assert len(build_artifact_index(sdir)) == 2
+
+    def test_delete_nonexistent_is_noop(self):
+        """delete_artifact on nonexistent path does not error."""
+        delete_artifact("/nonexistent/path.md")  # should not raise
+
+
+class TestInitScratchpadReinitialize:
+    def test_reinit_overwrites_scratchpad(self, tmp_path):
+        """init_scratchpad called again overwrites scratchpad.md."""
+        base = tmp_path / ".agent-cli"
+        sdir = session_scratchpad_dir("sess_re", base)
+
+        init_scratchpad("First goal", sdir)
+        append_progress(1, "Step 1", base=sdir)
+        assert "First goal" in load_scratchpad(sdir)
+        assert "Step 1" in load_scratchpad(sdir)
+
+        init_scratchpad("Second goal", sdir)
+        content = load_scratchpad(sdir)
+        assert "Second goal" in content
+        assert "First goal" not in content
+        assert "Step 1" not in content
+
+
+class TestContextManagerSessionIntegration:
+    """Test ContextManager with session_id-based scratchpad dir."""
+
+    @pytest.fixture
+    def caps(self):
+        from agent_cli.providers.compat import ModelCapabilities
+
+        return ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+    @pytest.fixture
+    def mock_provider(self):
+        from unittest.mock import MagicMock
+        from agent_cli.providers.base import LLMResponse
+
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(
+            content="## Goal\nTest\n## Progress\nDone"
+        )
+        return provider
+
+    def test_session_id_creates_scoped_dir(self, mock_provider, caps, tmp_path):
+        """ContextManager with session_id uses session-scoped dir."""
+        from agent_cli.context.manager import ContextManager
+
+        base = tmp_path / ".agent-cli"
+        ctx = ContextManager(
+            mock_provider,
+            "test",
+            caps,
+            session_id="my_session",
+            scratchpad_base=base,
+        )
+        ctx.init_task("Test task")
+
+        expected_dir = base / "sessions" / "my_session"
+        assert (expected_dir / "scratchpad.md").is_file()
+
+    def test_session_id_begin_end_turn(self, mock_provider, caps, tmp_path):
+        """begin_turn/end_turn use session-scoped paths."""
+        from agent_cli.context.manager import ContextManager
+
+        base = tmp_path / ".agent-cli"
+        ctx = ContextManager(
+            mock_provider,
+            "test",
+            caps,
+            session_id="turn_test",
+            scratchpad_base=base,
+        )
+        ctx.init_task("Turn test")
+        ctx.begin_turn("do something")
+        path = ctx.end_turn(
+            content="Detailed result " * 20,
+            tags=["test"],
+            summary="Did something",
+        )
+        assert path is not None
+        assert "turn_test" in path
+
+    def test_session_id_required(self, mock_provider, caps, tmp_path):
+        """ContextManager without session_id raises error."""
+        from agent_cli.context.manager import ContextManager
+
+        with pytest.raises(ValueError, match="session_id"):
+            ContextManager(mock_provider, "test", caps)

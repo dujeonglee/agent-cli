@@ -24,7 +24,12 @@ import yaml
 
 # ── Directory layout ─────────────────────────────────────────
 
-_DEFAULT_DIR = Path(".agent-cli")
+_DEFAULT_BASE = Path(".agent-cli")
+
+
+def session_scratchpad_dir(session_id: str, base: Path = _DEFAULT_BASE) -> Path:
+    """Return the session-scoped scratchpad directory path."""
+    return base / "sessions" / session_id
 
 
 def _ensure_dirs(base: Path) -> Path:
@@ -151,7 +156,7 @@ def render_frontmatter(meta: dict, body: str) -> str:
 # ── Scratchpad operations ────────────────────────────────────
 
 
-def load_scratchpad(base: Path = _DEFAULT_DIR) -> str:
+def load_scratchpad(base: Path = _DEFAULT_BASE) -> str:
     """Load scratchpad content. Returns empty string if not exists."""
     path = base / "scratchpad.md"
     if path.is_file():
@@ -159,14 +164,14 @@ def load_scratchpad(base: Path = _DEFAULT_DIR) -> str:
     return ""
 
 
-def save_scratchpad(content: str, base: Path = _DEFAULT_DIR) -> None:
+def save_scratchpad(content: str, base: Path = _DEFAULT_BASE) -> None:
     """Save scratchpad content."""
     _ensure_dirs(base)
     path = base / "scratchpad.md"
     path.write_text(content, encoding="utf-8")
 
 
-def init_scratchpad(goal: str, base: Path = _DEFAULT_DIR) -> str:
+def init_scratchpad(goal: str, base: Path = _DEFAULT_BASE) -> str:
     """Initialize a new scratchpad for a task."""
     content = render_frontmatter(
         {
@@ -184,7 +189,7 @@ def append_progress(
     turn: int,
     summary: str,
     artifact_path: str | None = None,
-    base: Path = _DEFAULT_DIR,
+    base: Path = _DEFAULT_BASE,
 ) -> None:
     """Append a progress line to the scratchpad."""
     content = load_scratchpad(base)
@@ -218,7 +223,7 @@ def append_progress(
 def append_decision(
     turn: int,
     decision: str,
-    base: Path = _DEFAULT_DIR,
+    base: Path = _DEFAULT_BASE,
 ) -> None:
     """Append a decision to the scratchpad."""
     content = load_scratchpad(base)
@@ -253,7 +258,7 @@ def save_artifact(
     content: str,
     tags: list[str] | None = None,
     summary: str = "",
-    base: Path = _DEFAULT_DIR,
+    base: Path = _DEFAULT_BASE,
 ) -> str:
     """Save a turn artifact with YAML frontmatter. Returns the file path."""
     _ensure_dirs(base)
@@ -297,7 +302,7 @@ def load_artifact(path: str | Path) -> tuple[ArtifactMeta, str]:
     return meta, body
 
 
-def build_artifact_index(base: Path = _DEFAULT_DIR) -> list[ArtifactMeta]:
+def build_artifact_index(base: Path = _DEFAULT_BASE) -> list[ArtifactMeta]:
     """Scan all artifacts and return frontmatter index (no body loaded)."""
     artifacts_dir = base / "artifacts"
     if not artifacts_dir.is_dir():
@@ -369,3 +374,22 @@ def select_artifacts(
                 remaining -= entry.token_count
 
     return selected
+
+
+# ── Cleanup operations ──────────────────────────────────────
+
+
+def clear_scratchpad(base: Path) -> None:
+    """Remove scratchpad.md, artifacts/, and the session directory itself."""
+    import shutil
+
+    if not base.exists():
+        return
+    shutil.rmtree(base, ignore_errors=True)
+
+
+def delete_artifact(path: str | Path) -> None:
+    """Delete a single artifact file."""
+    p = Path(path)
+    if p.is_file():
+        p.unlink()

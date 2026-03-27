@@ -34,8 +34,16 @@ class ContextManager:
         model: str,
         capabilities: ModelCapabilities,
         keep_recent: int = 4,
+        session_id: str | None = None,
+        scratchpad_base: Path | None = None,
         scratchpad_dir: Path | None = None,
     ):
+        if session_id is None and scratchpad_dir is None:
+            raise ValueError(
+                "session_id is required for ContextManager. "
+                "Pass session_id to create a session-scoped scratchpad."
+            )
+
         self.provider = provider
         self.model = model
         self.capabilities = capabilities
@@ -45,8 +53,15 @@ class ContextManager:
         self._summary: str | None = None
         self._msg_chars: int = 0  # Running character count for O(1) add()
 
-        # Scratchpad integration (always active)
-        self._scratchpad_dir = scratchpad_dir or Path(".agent-cli")
+        # Scratchpad integration (always active, session-scoped)
+        if scratchpad_dir:
+            self._scratchpad_dir = scratchpad_dir
+        else:
+            from agent_cli.context.scratchpad import session_scratchpad_dir
+
+            base = scratchpad_base or Path(".agent-cli")
+            self._scratchpad_dir = session_scratchpad_dir(session_id, base)
+
         self._turn_count = 0
 
         from agent_cli.context.scratchpad import ContextBudget

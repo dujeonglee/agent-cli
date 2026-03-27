@@ -615,6 +615,7 @@ def chat(
         provider=llm_provider,
         model=resolved_model,
         capabilities=capabilities,
+        session_id=session.session_id,
     )
 
     console.print()
@@ -659,6 +660,7 @@ def chat(
                 provider=llm_provider,
                 model=resolved_model,
                 capabilities=capabilities,
+                session_id=session.session_id,
             )
             console.print(f"[{C['accent']}]Context cleared.[/]")
             turn = 0

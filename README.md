@@ -470,8 +470,8 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 
 장시간 태스크에서 초반 맥락 손실을 방지하는 영속적 컨텍스트 시스템입니다.
 
-- **Scratchpad** (`.agent-cli/scratchpad.md`) — 태스크 목표, 진행 상황, 결정 사항을 기록. 컨텍스트 압축 후에도 항상 살아남는 앵커.
-- **Artifact** (`.agent-cli/artifacts/turn_NNNN.md`) — 턴별 상세 결과를 YAML frontmatter와 함께 저장. 태그 기반으로 선택적 로드.
+- **Scratchpad** (`.agent-cli/sessions/{session_id}/scratchpad.md`) — 태스크 목표, 진행 상황, 결정 사항을 기록. 컨텍스트 압축 후에도 항상 살아남는 앵커. 세션별로 격리.
+- **Artifact** (`.agent-cli/sessions/{session_id}/artifacts/turn_NNNN.md`) — 턴별 상세 결과를 YAML frontmatter와 함께 저장. 태그 기반으로 선택적 로드.
 - **ContextBudget** — 모델 크기별 토큰 배분 (scratchpad/artifact/conversation 비율 자동 조정)
 
 ### 컨텍스트 압축
