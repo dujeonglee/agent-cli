@@ -769,8 +769,10 @@ def chat(
                 )
                 continue
 
+            turn += 1
+            if turn == 1 and not session.query:
+                session.query = query[:100]
             if result is not None:
-                turn += 1
                 console.print(f"\n[{C['final']}]{result}[/]")
             else:
                 console.print(
