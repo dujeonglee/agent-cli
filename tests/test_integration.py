@@ -574,8 +574,9 @@ class TestSkillInvocationControl:
             ),
         }
         desc = build_skill_descriptions(skills)
-        assert "/auto-ok" in desc
-        assert "/manual-only" not in desc
+        assert "auto-ok" in desc
+        assert "run_skill" in desc
+        assert "manual-only" not in desc
 
     def test_user_invocable_false_hidden_from_list(self):
         """user-invocable=False → hidden from /skills listing."""

@@ -684,8 +684,9 @@ class TestSkillPromptInjection:
         from agent_cli.prompts.system_prompt import build_skill_descriptions
 
         desc = build_skill_descriptions(skills)
-        assert "/review" in desc
-        assert "/hidden" not in desc
+        assert "review" in desc
+        assert "run_skill" in desc
+        assert "hidden" not in desc
 
     def test_build_skill_descriptions_empty(self):
         """No skills → empty string."""

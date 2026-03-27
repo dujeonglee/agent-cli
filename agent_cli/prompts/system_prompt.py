@@ -189,13 +189,14 @@ def build_skill_descriptions(skills: dict | None = None) -> str:
 
     lines = [
         "## Available Skills",
-        "You can invoke these skills by using them as the action:",
+        "Use the run_skill tool to invoke these skills:",
+        '  Example: {"action": "run_skill", "action_input": {"name": "skill-name", "arguments": "..."}}',
     ]
     for skill in skills.values():
         if skill.disable_model_invocation:
             continue
-        hint = f" {skill.argument_hint}" if skill.argument_hint else " <args>"
-        lines.append(f"- `/{skill.name}{hint}` — {skill.description}")
+        hint = f" {skill.argument_hint}" if skill.argument_hint else ""
+        lines.append(f"- `{skill.name}{hint}` — {skill.description}")
 
     # If all skills are disabled, return empty
     if len(lines) <= 2:
