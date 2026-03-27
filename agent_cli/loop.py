@@ -111,6 +111,14 @@ def run_loop(
         # Scratchpad: begin turn for each iteration
         if ctx:
             ctx.begin_turn(query)
+        # Skill progress: show compact iteration counter even in quiet mode
+        if skill_name and quiet:
+            from agent_cli.render import console, C
+
+            console.print(
+                f"  [{C['muted']}]skill:{skill_name} iter {iteration}[/]",
+                highlight=False,
+            )
         if not quiet:
             render_iter_sep(iteration)
 
@@ -716,6 +724,8 @@ def _handle_run_skill(
     # Set skill context for subdirectory routing
     if ctx:
         ctx.set_skill_context(skill_name=name, parent_turn=ctx._turn_count)
+
+    render_status("running", f"Running skill: {name}...")
 
     try:
         from agent_cli.providers import create_provider
