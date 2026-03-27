@@ -142,7 +142,7 @@ agent-cli chat -p ollama -m qwen3:32b
 
 ### `sessions` — 세션 관리
 
-대화 이력은 `~/.agent-cli/context/`에 세션별로 자동 저장됩니다. 세션 종료 시 LLM이 요약을 생성하고, 다음 세션에 자동 주입됩니다.
+대화 이력은 `.agent-cli/sessions/{session_id}/`에 프로젝트별로 자동 저장됩니다. 세션 종료 시 컨텍스트 윈도우 내용이 요약으로 저장됩니다. `--resume`으로 이전 세션을 이어서 작업할 수 있습니다.
 
 ```bash
 # 현재 워크스페이스의 세션 목록
