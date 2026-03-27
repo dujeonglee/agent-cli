@@ -78,8 +78,8 @@ def run_loop(
     if not quiet:
         render_header(provider_name, model, max_iter)
 
-    # Log query to session
-    if session and depth == 0:
+    # Log query to session (skip for skill internal loops)
+    if session and depth == 0 and not skill_name:
         _log_to_session(session, {"iter": 0, "action": "query", "observation": query})
 
     # Scratchpad: auto-init on first run, set skill context if inside a skill
@@ -693,6 +693,9 @@ def _handle_run_skill(
 
     name = skill_input.get("name", "")
     arguments = skill_input.get("arguments", "")
+    # LLM might send arguments as dict instead of string
+    if not isinstance(arguments, str):
+        arguments = str(arguments) if arguments else ""
 
     if not name:
         return OBS_ERROR.format(error="run_skill: 'name' is required.")
