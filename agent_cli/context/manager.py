@@ -83,8 +83,12 @@ class ContextManager:
         """Return messages with summary and scratchpad context prepended."""
         msgs: list[dict] = []
 
-        # Scratchpad anchor: always injected first (survives compaction)
-        scratchpad_block = self._build_scratchpad_block()
+        # Scratchpad anchor: injected unless inside a skill execution
+        # (skill internal loops should not see the outer task's scratchpad)
+        if not self._skill_name:
+            scratchpad_block = self._build_scratchpad_block()
+        else:
+            scratchpad_block = ""
         if scratchpad_block:
             msgs.append({"role": "user", "content": scratchpad_block})
             msgs.append(
