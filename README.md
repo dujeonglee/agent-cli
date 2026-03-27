@@ -449,6 +449,56 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 {"action": "ask", "action_input": {"questions": ["파일 경로는?", "사용할 언어는?"]}}
 ```
 
+### shell — 셸 명령 실행
+
+셸 명령을 실행하고 stdout/stderr를 반환합니다. 타임아웃 기본 30초.
+
+```json
+{"action": "shell", "action_input": {"command": "find agent_cli -name '*.py' | wc -l"}}
+```
+
+### write_file — 파일 생성
+
+새 파일을 생성하거나 기존 파일을 덮어씁니다. 기존 파일 수정은 `edit_file` 권장.
+
+```json
+{"action": "write_file", "action_input": {"path": "output.txt", "content": "hello world"}}
+```
+
+### delegate — 서브에이전트 위임
+
+독립적인 작업을 별도 프로세스의 서브에이전트에 위임합니다. 서브에이전트는 현재 대화 맥락을 알지 못하므로, task에 모든 정보를 포함해야 합니다.
+
+```json
+{"action": "delegate", "action_input": {"task": "Read /tmp/data.csv and count the number of rows"}}
+```
+
+### run_skill — 스킬 실행
+
+등록된 스킬을 도구로 호출합니다. LLM이 스스로 판단하여 적절한 스킬을 선택합니다. 시스템 프롬프트에 사용 가능한 스킬 목록이 안내됩니다.
+
+```json
+{"action": "run_skill", "action_input": {"name": "optimize", "arguments": "./"}}
+{"action": "run_skill", "action_input": {"name": "summarize", "arguments": "README.md"}}
+```
+
+스킬 내부에서는 별도 ReAct 루프가 실행되며, 결과가 artifact로 저장됩니다. `disable-model-invocation: true`인 스킬은 LLM이 호출할 수 없습니다.
+
+### read_artifact — Artifact 읽기
+
+이전 도구 실행 결과(artifact)를 읽습니다. `read_file`과 달리 hashline 태그 없이 원본 내용을 반환합니다. 컨텍스트 압축 후 이전 결과를 복구할 때 사용합니다.
+
+```json
+// 특정 artifact 읽기 (scratchpad progress에서 경로 확인)
+{"action": "read_artifact", "action_input": {"path": "artifacts/turn_0003.md"}}
+
+// 현재 세션의 artifact 목록
+{"action": "read_artifact", "action_input": {"mode": "list"}}
+
+// 태그로 검색 (파일명, 스킬명 등)
+{"action": "read_artifact", "action_input": {"mode": "search", "tag": "hooks.py"}}
+```
+
 ## 핵심 기능
 
 ### 프로바이더별 최적 도구 호출
