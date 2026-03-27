@@ -495,6 +495,44 @@ class TestSkillExecution:
         # Skill's max_iter should be used (verified by run_loop not exceeding it)
         assert provider.call.called
 
+    def test_execute_passes_session(self, caps):
+        """execute_skill passes session to run_loop."""
+        provider = MagicMock()
+        fake_session = MagicMock()
+
+        skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="task",
+                provider=provider,
+                capabilities=caps,
+                model="m",
+                quiet=True,
+                session=fake_session,
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["session"] is fake_session
+
+    def test_execute_session_none_by_default(self, caps):
+        """execute_skill without session → run_loop gets session=None."""
+        provider = MagicMock()
+
+        skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="task",
+                provider=provider,
+                capabilities=caps,
+                model="m",
+                quiet=True,
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["session"] is None
+
     def test_execute_no_model_override(self, caps):
         """skill.model=None → run_loop called with the original model."""
         provider = MagicMock()
