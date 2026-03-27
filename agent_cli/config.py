@@ -41,13 +41,6 @@ _PROVIDER_FALLBACKS = {
 }
 
 
-def _find_models_json() -> Path | None:
-    for p in _SEARCH_PATHS:
-        if p.is_file():
-            return p
-    return None
-
-
 def _load_registry() -> dict[str, Any]:
     global _cached_registry
     if _cached_registry is not None:

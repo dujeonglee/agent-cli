@@ -30,12 +30,6 @@ class SessionMeta:
     query: str = ""  # first query (for identification)
 
 
-def _ensure_sessions_dir() -> Path:
-    d = _SESSIONS_BASE / "sessions"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def get_session_dir(meta: SessionMeta) -> Path:
     """Return the session directory path, creating it if needed."""
     d = _SESSIONS_BASE / "sessions" / meta.session_id
