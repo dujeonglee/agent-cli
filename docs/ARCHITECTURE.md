@@ -900,9 +900,10 @@ run_loop(query=치환된_프롬프트, allowed_tools=["read_file"], max_iter=5)
 
 | 스킬 | 도구 | 설명 |
 |------|------|------|
-| `/review-code <file>` | read_file | 코드 리뷰 (버그, 보안, 성능) |
-| `/summarize <file>` | read_file | 파일 요약 |
+| `/review-code <file>` | read_file, shell | 코드 리뷰 (버그, 보안, 성능) |
+| `/summarize <path>` | read_file, shell | 파일/디렉토리 요약 |
 | `/test <file>` | read_file, write_file, shell | 유닛 테스트 생성 |
+| `/optimize <path>` | read_file, shell, write_file | 코드 최적화 분석 → OptimizationToDo.md |
 
 ---
 

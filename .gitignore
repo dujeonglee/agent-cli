@@ -18,7 +18,8 @@ htmlcov/
 .DS_Store
 
 # Agent-CLI
-.agent-cli/
+.agent-cli/*
+!.agent-cli/skills/
 .claude/
 out.txt
 OptimizationToDo.md
