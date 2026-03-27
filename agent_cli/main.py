@@ -83,6 +83,7 @@ def _dispatch_skill(
     max_depth: int = 2,
     delegate_timeout: int = 300,
     ctx=None,
+    session=None,
 ):
     """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
     from agent_cli.skills import load_skills, execute_skill
@@ -111,6 +112,7 @@ def _dispatch_skill(
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
         ctx=ctx,
+        session=session,
     )
 
 
@@ -758,6 +760,7 @@ def chat(
                 max_depth=max_depth,
                 delegate_timeout=delegate_timeout,
                 ctx=ctx,
+                session=session,
             )
             if result is _SKILL_NOT_FOUND:
                 console.print(f"[{C['error']}]Unknown command: /{cmd_name}[/]")

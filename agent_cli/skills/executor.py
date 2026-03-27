@@ -84,6 +84,7 @@ def execute_skill(
     max_depth: int = 2,
     delegate_timeout: int = 300,
     ctx: ContextManager | None = None,
+    session=None,
 ) -> str | None:
     """Execute a skill by substituting arguments and calling run_loop."""
     from pathlib import Path
@@ -118,4 +119,5 @@ def execute_skill(
         delegate_timeout=delegate_timeout,
         active_tools=skill.allowed_tools,
         ctx=effective_ctx,
+        session=session,
     )
