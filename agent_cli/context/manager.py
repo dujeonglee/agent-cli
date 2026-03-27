@@ -270,10 +270,7 @@ class ContextManager:
     def _build_scratchpad_block(self) -> str:
         """Build the scratchpad context block for injection into messages."""
         from agent_cli.context.scratchpad import (
-            build_artifact_index,
-            load_artifact,
             load_scratchpad,
-            select_artifacts,
         )
 
         parts = []
@@ -287,24 +284,11 @@ class ContextManager:
                 scratchpad = scratchpad[:max_chars] + "\n[... scratchpad truncated]"
             parts.append(f"[Scratchpad — persistent task context]\n{scratchpad}")
 
-        # 2. Selected artifacts (within budget)
-        index = build_artifact_index(self._scratchpad_dir)
-        if index:
-            current_tags = getattr(self, "_current_tags", [])
-            selected = select_artifacts(
-                index=index,
-                current_tags=current_tags,
-                budget_tokens=self._budget.artifact_tokens,
-            )
-            for meta in selected:
-                _, body = load_artifact(meta.path)
-                if body:
-                    header = (
-                        f"[Artifact {meta.entry_id}] {meta.summary}"
-                        if meta.summary
-                        else f"[Artifact {meta.entry_id}]"
-                    )
-                    parts.append(f"{header}\n{body}")
+        # 2. Artifact injection — disabled for now.
+        # Artifacts are saved to disk for persistence/recovery but NOT injected
+        # into context. Raw tool output (hashlines, STATUS: prefixes) confuses LLM
+        # when mixed with conversation. Scratchpad progress references are sufficient.
+        # TODO: Re-enable with proper summarization (not raw tool output).
 
         return "\n\n---\n\n".join(parts) if parts else ""
 
