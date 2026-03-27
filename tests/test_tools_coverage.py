@@ -403,7 +403,7 @@ class TestToolsRegistry:
         assert "ask" in TOOLS
 
     def test_virtual_tools_frozenset(self):
-        assert VIRTUAL_TOOLS == frozenset({"complete", "ask"})
+        assert VIRTUAL_TOOLS == frozenset({"complete", "ask", "run_skill"})
         assert isinstance(VIRTUAL_TOOLS, frozenset)
 
     def test_virtual_tools_subset_of_tools(self):
@@ -632,3 +632,75 @@ class TestReadContextTool:
 
         result = tool_read_context({"mode": "invalid"})
         assert "unknown mode" in result.lower()
+
+
+class TestRunSkillTool:
+    def test_run_skill_in_tools(self):
+        """run_skill is registered in TOOLS."""
+        assert "run_skill" in TOOLS
+
+    def test_run_skill_in_virtual_tools(self):
+        """run_skill is a virtual tool (intercepted by loop)."""
+        assert "run_skill" in VIRTUAL_TOOLS
+
+    def test_run_skill_schema_exists(self):
+        """run_skill has a schema with name (required) and arguments."""
+        from agent_cli.tools.registry import TOOL_SCHEMAS
+
+        assert "run_skill" in TOOL_SCHEMAS
+        schema = TOOL_SCHEMAS["run_skill"]
+        assert "name" in schema.parameters["required"]
+
+    def test_run_skill_valid_skill(self, tmp_path, monkeypatch):
+        """run_skill with valid skill name → executes and returns result."""
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.skills.models import Skill
+        from agent_cli.tools.run_skill import tool_run_skill
+
+        mock_skills = {
+            "summarize": Skill(
+                name="summarize",
+                description="Summarize",
+                prompt_template="Summarize $ARGUMENTS",
+                max_iter=3,
+            )
+        }
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+            with patch(
+                "agent_cli.skills.executor.execute_skill", return_value="Summary done"
+            ):
+                result = tool_run_skill(
+                    {"name": "summarize", "arguments": "README.md"},
+                    provider=MagicMock(),
+                    capabilities=caps,
+                    model="test",
+                )
+                assert "Summary done" in result
+
+    def test_run_skill_unknown(self, tmp_path, monkeypatch):
+        """run_skill with unknown skill name → error message."""
+        from unittest.mock import patch
+
+        from agent_cli.tools.run_skill import tool_run_skill
+
+        with patch("agent_cli.skills.loader.load_skills", return_value={}):
+            result = tool_run_skill({"name": "nonexistent", "arguments": ""})
+            assert "not found" in result.lower()
+
+    def test_run_skill_no_name(self):
+        """run_skill without name → error."""
+        from agent_cli.tools.run_skill import tool_run_skill
+
+        result = tool_run_skill({"arguments": "something"})
+        assert "name" in result.lower()

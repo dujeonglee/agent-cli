@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 6,514 LOC (46 Python 파일) + 6,788 LOC 테스트 (26 파일)
-> 총 테스트: 473 유닛 + 65 통합 = 538개
+> 총 소스: 6,618 LOC (47 Python 파일) + 6,860 LOC 테스트 (26 파일)
+> 총 테스트: 480 유닛 + 65 통합 = 545개
 
 ---
 
@@ -49,7 +49,7 @@ agent_cli/
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (890)  ReAct 에이전트 루프 + scratchpad/hook 통합
+├── loop.py                  (918)  ReAct 에이전트 루프 + scratchpad/hook/run_skill 통합
 ├── render.py                (292)  Rich 터미널 렌더링 + 모델 정보 + compact observation
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -67,8 +67,9 @@ agent_cli/
 │   └── plan_parser.py       (106)  계획 step 추출 (텍스트 + JSON)
 │
 ├── tools/                          도구 시스템
-│   ├── __init__.py          (57)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool()
-│   ├── registry.py          (345)  스키마 정의, 검증, API 형식 변환
+│   ├── __init__.py          (60)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool()
+│   ├── registry.py          (364)  스키마 정의, 검증, API 형식 변환
+│   ├── run_skill.py         (54)   run_skill 도구 (LLM 자동 스킬 호출)
 │   ├── read_file.py         (99)   파일 읽기 + hashline 포맷팅 + 부분 읽기
 │   ├── write_file.py        (18)   파일 생성
 │   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)
@@ -258,9 +259,9 @@ class ToolSchema:
     description: str
     parameters: dict  # JSON Schema 형태
 
-# 등록된 도구: read_file, write_file, edit_file, shell, read_context, complete, ask
+# 등록된 도구: read_file, write_file, edit_file, shell, read_context, complete, ask, run_skill
 # complete, ask: 가상 도구 (TOOLS에 lambda로 등록, loop에서 인터셉트)
-# VIRTUAL_TOOLS = frozenset({"complete", "ask"}) — planning 등에서 제외 시 사용
+# VIRTUAL_TOOLS = frozenset({"complete", "ask", "run_skill"}) — planning 등에서 제외 시 사용
 # delegate는 별도 DELEGATE_TOOL_SCHEMA로 관리
 ```
 
@@ -696,9 +697,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 26 | 473 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 26 | 480 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 65 | `pytest tests/test_integration.py` |
-| **전체** | **26** | **538** | `pytest tests/` |
+| **전체** | **26** | **545** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

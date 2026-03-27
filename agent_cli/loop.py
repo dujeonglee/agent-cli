@@ -724,6 +724,34 @@ def _do_execute_tool(
         if pre_result.updated_input is not None:
             tool_input = pre_result.updated_input
 
+    # run_skill: needs provider context (like delegate)
+    if tool_name == "run_skill" and tool_name in tools_list:
+        from agent_cli.providers import create_provider
+        from agent_cli.tools.run_skill import tool_run_skill
+
+        valid, err = validate_tool_input(tool_name, tool_input)
+        if not valid:
+            return OBS_ERROR_HINT.format(error=err, hint="Fix action_input and retry.")
+        try:
+            provider = create_provider(provider_name, base_url, api_key)
+            raw = tool_run_skill(
+                tool_input if isinstance(tool_input, dict) else {},
+                provider=provider,
+                capabilities=capabilities,
+                model=model,
+                provider_name=provider_name,
+                base_url=base_url,
+                api_key=api_key,
+            )
+            cfg = get_truncation_config(capabilities, tool_name)
+            obs = OBS_SUCCESS.format(result=truncate_output(raw, cfg))
+            _run_post_hook(hooks_config, tool_name, input_dict, obs)
+            return obs
+        except Exception as e:
+            obs = OBS_ERROR_HINT.format(error=e, hint="Check skill name and arguments.")
+            _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
+            return obs
+
     if tool_name == "delegate" and include_delegate:
         try:
             obs = tool_delegate(

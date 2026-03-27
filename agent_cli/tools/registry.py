@@ -141,6 +141,25 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["questions"],
         },
     ),
+    "run_skill": ToolSchema(
+        name="run_skill",
+        description="Run a registered skill by name. Use this to invoke specialized "
+        "prompt-based workflows like code review, optimization, or test generation.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name (e.g. 'optimize', 'review-code', 'summarize', 'test')",
+                },
+                "arguments": {
+                    "type": "string",
+                    "description": "Arguments to pass to the skill (e.g. file path)",
+                },
+            },
+            "required": ["name"],
+        },
+    ),
 }
 
 

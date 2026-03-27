@@ -20,6 +20,8 @@ from agent_cli.tools.truncation import (
     TruncationConfig,
 )
 
+from agent_cli.tools.run_skill import tool_run_skill
+
 TOOLS: dict[str, Any] = {
     "read_file": tool_read_file,
     "write_file": tool_write_file,
@@ -29,10 +31,11 @@ TOOLS: dict[str, Any] = {
     # Virtual tools — intercepted by the loop before execute_tool
     "complete": lambda args: args.get("result", "(completed)"),
     "ask": lambda args: args.get("question", "(ask)"),
+    "run_skill": tool_run_skill,
 }
 
 # Virtual tool names — used to exclude them where only real tools matter (e.g. planning)
-VIRTUAL_TOOLS: frozenset[str] = frozenset({"complete", "ask"})
+VIRTUAL_TOOLS: frozenset[str] = frozenset({"complete", "ask", "run_skill"})
 
 __all__ = [
     "TOOLS",
