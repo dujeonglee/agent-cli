@@ -630,7 +630,7 @@ class TestRunLoopNativeToolCalling:
 
 
 class TestAskTool:
-    def test_ask_single_question(self, caps, monkeypatch):
+    def test_ask_single_question(self, caps, monkeypatch, tmp_path):
         """ask tool with single question in array."""
         from agent_cli.context.manager import ContextManager
 
@@ -657,7 +657,9 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
         result = run_loop(
             query="Do something",
             provider=provider,
@@ -669,7 +671,7 @@ class TestAskTool:
         assert result == "Done after confirmation"
         assert provider.call.call_count == 2
 
-    def test_ask_multiple_questions(self, caps, monkeypatch):
+    def test_ask_multiple_questions(self, caps, monkeypatch, tmp_path):
         """ask tool with multiple questions — collects all answers."""
         from agent_cli.context.manager import ContextManager
 
@@ -699,7 +701,9 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
         result = run_loop(
             query="Help me",
             provider=provider,
@@ -710,7 +714,7 @@ class TestAskTool:
         )
         assert result == "Processing file.py in python"
 
-    def test_ask_string_coercion(self, caps, monkeypatch):
+    def test_ask_string_coercion(self, caps, monkeypatch, tmp_path):
         """ask tool with string input (not array) — auto-coerced to list."""
         from agent_cli.context.manager import ContextManager
 
@@ -737,7 +741,9 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
         result = run_loop(
             query="Q",
             provider=provider,
@@ -748,7 +754,7 @@ class TestAskTool:
         )
         assert result == "The answer is 42"
 
-    def test_ask_legacy_question_key(self, caps, monkeypatch):
+    def test_ask_legacy_question_key(self, caps, monkeypatch, tmp_path):
         """ask tool with legacy 'question' key — backward compatible."""
         from agent_cli.context.manager import ContextManager
 
@@ -775,7 +781,9 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
         result = run_loop(
             query="Do it",
             provider=provider,
@@ -786,7 +794,7 @@ class TestAskTool:
         )
         assert result == "ok"
 
-    def test_ask_available_with_ctx(self, caps):
+    def test_ask_available_with_ctx(self, caps, tmp_path):
         """ask tool should be in system prompt when ctx is provided."""
         from agent_cli.context.manager import ContextManager
 
@@ -800,7 +808,9 @@ class TestAskTool:
                 }
             )
         )
-        ctx = ContextManager(provider=provider, model="test", capabilities=caps)
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
         run_loop(
             query="Do something",
             provider=provider,

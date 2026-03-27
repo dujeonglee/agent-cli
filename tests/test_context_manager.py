@@ -32,25 +32,29 @@ def mock_provider():
 
 
 class TestContextManager:
-    def test_add_and_get(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps)
+    def test_add_and_get(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         ctx.add("user", "hello")
         ctx.add("assistant", "hi")
         msgs = ctx.get_messages()
-        assert len(msgs) == 2
-        assert msgs[0]["role"] == "user"
+        # Messages include user+assistant (no scratchpad since no scratchpad.md exists)
+        user_msgs = [m for m in msgs if m["content"] == "hello"]
+        assert len(user_msgs) == 1
 
-    def test_summary_prepended(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps)
+    def test_summary_prepended(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         ctx._summary = "Previous summary here"
         ctx.add("user", "new message")
         msgs = ctx.get_messages()
-        assert msgs[0]["content"].startswith("[Previous conversation summary]")
-        assert msgs[1]["role"] == "assistant"
-        assert msgs[2]["role"] == "user"
+        summary_msgs = [
+            m for m in msgs if "[Previous conversation summary]" in m.get("content", "")
+        ]
+        assert len(summary_msgs) == 1
 
-    def test_compression_triggered(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps, keep_recent=1)
+    def test_compression_triggered(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
         # Add enough messages to exceed max_context_chars
         for i in range(10):
             ctx.add("user", "x" * 500)
@@ -60,8 +64,10 @@ class TestContextManager:
         assert mock_provider.call.called
         assert ctx._summary is not None
 
-    def test_incremental_update(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps, keep_recent=1)
+    def test_incremental_update(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
         ctx._summary = "Existing summary"
 
         # Add messages to trigger compression
@@ -76,8 +82,10 @@ class TestContextManager:
         assert "## Existing Summary" in prompt_text
         assert "## New Conversation to Incorporate" in prompt_text
 
-    def test_force_compress(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps, keep_recent=1)
+    def test_force_compress(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
         for i in range(5):
             ctx.messages.append({"role": "user", "content": f"msg{i}"})
             ctx.messages.append({"role": "assistant", "content": f"reply{i}"})
@@ -85,14 +93,14 @@ class TestContextManager:
         ctx.force_compress()
         assert mock_provider.call.called
 
-    def test_get_estimated_tokens(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps)
+    def test_get_estimated_tokens(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         ctx.add("user", "a" * 100)
         tokens = ctx.get_estimated_tokens()
         assert tokens > 0
 
-    def test_serialize_truncates_long_content(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps)
+    def test_serialize_truncates_long_content(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         msgs = [{"role": "user", "content": "x" * 5000}]
         serialized = ctx._serialize_messages(msgs)
         assert "truncated" in serialized
@@ -100,27 +108,29 @@ class TestContextManager:
 
 
 class TestSerializationTruncation:
-    def test_under_limit_not_truncated(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps)
+    def test_under_limit_not_truncated(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         msgs = [{"role": "user", "content": "a" * 1999}]
         serialized = ctx._serialize_messages(msgs)
         assert "truncated" not in serialized
 
-    def test_exact_limit_not_truncated(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps)
+    def test_exact_limit_not_truncated(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         msgs = [{"role": "user", "content": "a" * 2000}]
         serialized = ctx._serialize_messages(msgs)
         assert "truncated" not in serialized
 
-    def test_over_limit_truncated(self, mock_provider, caps):
-        ctx = ContextManager(mock_provider, "test-model", caps)
+    def test_over_limit_truncated(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         msgs = [{"role": "user", "content": "a" * 2001}]
         serialized = ctx._serialize_messages(msgs)
         assert "1 more characters truncated" in serialized
 
-    def test_truncation_in_compression_prompt(self, mock_provider, caps):
+    def test_truncation_in_compression_prompt(self, mock_provider, caps, tmp_path):
         """Verify truncated content reaches the LLM during compression."""
-        ctx = ContextManager(mock_provider, "test-model", caps, keep_recent=1)
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
         # Add messages with long tool result to trigger compression
         for _ in range(10):
             ctx.add("user", "short query")

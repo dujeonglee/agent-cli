@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 5,907 LOC (45 Python 파일) + 5,958 LOC 테스트 (25 파일)
-> 총 테스트: 421 유닛 + 65 통합 = 486개
+> 총 소스: 6,439 LOC (46 Python 파일) + 6,338 LOC 테스트 (26 파일)
+> 총 테스트: 450 유닛 + 65 통합 = 515개
 
 ---
 
@@ -45,7 +45,7 @@ agent_cli/
 ├── __main__.py              (5)    python -m agent_cli 진입점
 ├── main.py                  (812)  CLI 명령어: run, plan, chat, sessions + 공유 헬퍼
 ├── config.py                (138)  models.json 로딩/저장 + 프로바이더 기본값
-├── constants.py             (28)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
+├── constants.py             (27)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
@@ -78,10 +78,11 @@ agent_cli/
 │   └── truncation.py        (122)  모델 적응형 출력 압축 (context 3% 비례)
 │
 ├── context/                        컨텍스트 관리
-│   ├── __init__.py          (14)   re-export
+│   ├── __init__.py          (28)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (138)  ContextManager (구조화 요약 + 증분 업데이트)
+│   ├── manager.py           (286)  ContextManager (scratchpad 통합, 구조화 요약)
+│   ├── scratchpad.py        (371)  Scratchpad + Artifact + ContextBudget
 │   └── session.py           (197)  파일 기반 세션 영속화 (JSONL + ctx 저장)
 │
 ├── prompts/                        프롬프트 템플릿
@@ -695,9 +696,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 25 | 421 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 26 | 450 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 65 | `pytest tests/test_integration.py` |
-| **전체** | **25** | **486** | `pytest tests/` |
+| **전체** | **26** | **515** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

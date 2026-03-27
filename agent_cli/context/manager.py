@@ -1,8 +1,14 @@
-"""Context manager with structured summarization and incremental compression."""
+"""Context manager with structured summarization and incremental compression.
+
+Supports optional scratchpad + artifact persistence for long-running tasks.
+Scratchpad content survives compaction as a context anchor.
+"""
 
 from __future__ import annotations
 
-from agent_cli.constants import CHARS_PER_TOKEN, CONTEXT_RESERVE_RATIO
+from pathlib import Path
+
+from agent_cli.constants import CHARS_PER_TOKEN
 from agent_cli.context.token_estimator import estimate_tokens_from_messages
 from agent_cli.prompts.compression_prompt import (
     INCREMENTAL_UPDATE_PROMPT,
@@ -17,6 +23,9 @@ class ContextManager:
 
     Uses LLM-based summarization with incremental updates (pi-mono pattern).
     Adapts to model context window via ModelCapabilities.
+
+    Optional scratchpad mode: when enabled, maintains a persistent
+    scratchpad.md and per-turn artifacts that survive compaction.
     """
 
     def __init__(
@@ -25,21 +34,26 @@ class ContextManager:
         model: str,
         capabilities: ModelCapabilities,
         keep_recent: int = 4,
+        scratchpad_dir: Path | None = None,
     ):
         self.provider = provider
         self.model = model
         self.capabilities = capabilities
         self.keep_recent = keep_recent
 
-        # Max chars derived from context window (chars/4 heuristic, inverse)
-        # Reserve 25% for system prompt + current turn
-        self.max_context_chars = int(
-            capabilities.context_window * CHARS_PER_TOKEN * CONTEXT_RESERVE_RATIO
-        )
-
         self.messages: list[dict] = []
         self._summary: str | None = None
         self._msg_chars: int = 0  # Running character count for O(1) add()
+
+        # Scratchpad integration (always active)
+        self._scratchpad_dir = scratchpad_dir or Path(".agent-cli")
+        self._turn_count = 0
+
+        from agent_cli.context.scratchpad import ContextBudget
+
+        self._budget = ContextBudget.for_model(capabilities.context_window)
+        # Max chars for conversation = budget's conversation allocation
+        self.max_context_chars = int(self._budget.conversation_tokens * CHARS_PER_TOKEN)
 
     def add(self, role: str, content: str) -> None:
         """Add a message and trigger compression if needed."""
@@ -49,8 +63,23 @@ class ContextManager:
             self._compress()
 
     def get_messages(self) -> list[dict]:
-        """Return messages with summary prepended if available."""
+        """Return messages with summary and scratchpad context prepended."""
         msgs: list[dict] = []
+
+        # Scratchpad anchor: always injected first (survives compaction)
+        scratchpad_block = self._build_scratchpad_block()
+        if scratchpad_block:
+            msgs.append({"role": "user", "content": scratchpad_block})
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Understood. I have the scratchpad context "
+                        "and will avoid repeating completed work."
+                    ),
+                }
+            )
+
         if self._summary:
             msgs.append(
                 {
@@ -136,3 +165,122 @@ class ContextManager:
                 )
             parts.append(f"[{role}]: {content}")
         return "\n\n".join(parts)
+
+    # ── Scratchpad integration ────────────────────────────────
+
+    def begin_turn(self, query: str, tags: list[str] | None = None) -> dict:
+        """Begin a turn: load scratchpad + select relevant artifacts.
+
+        Returns a dict with context info for debugging/logging.
+        """
+        self._turn_count += 1
+        self._current_tags = tags or []
+
+        return {
+            "scratchpad_loaded": True,
+            "artifacts_loaded": 0,
+            "budget": self._budget.to_dict(),
+        }
+
+    def end_turn(
+        self,
+        content: str,
+        tags: list[str] | None = None,
+        summary: str = "",
+        decision: str | None = None,
+    ) -> str | None:
+        """End a turn: save artifact + update scratchpad.
+
+        Returns the artifact path if saved, None otherwise.
+        """
+        from agent_cli.context.scratchpad import (
+            append_decision,
+            append_progress,
+            save_artifact,
+        )
+
+        # Save detailed result as artifact
+        artifact_path = None
+        if content and len(content) > 50:  # Only save non-trivial results
+            artifact_path = save_artifact(
+                turn=self._turn_count,
+                content=content,
+                tags=tags,
+                summary=summary,
+                base=self._scratchpad_dir,
+            )
+
+        # Update scratchpad progress
+        if summary:
+            append_progress(
+                turn=self._turn_count,
+                summary=summary,
+                artifact_path=artifact_path,
+                base=self._scratchpad_dir,
+            )
+
+        # Record decision if any
+        if decision:
+            append_decision(
+                turn=self._turn_count,
+                decision=decision,
+                base=self._scratchpad_dir,
+            )
+
+        return artifact_path
+
+    def init_task(self, goal: str) -> None:
+        """Initialize scratchpad for a new task."""
+        from agent_cli.context.scratchpad import init_scratchpad
+
+        init_scratchpad(goal, self._scratchpad_dir)
+        self._turn_count = 0
+
+    def _build_scratchpad_block(self) -> str:
+        """Build the scratchpad context block for injection into messages."""
+        from agent_cli.context.scratchpad import (
+            build_artifact_index,
+            load_artifact,
+            load_scratchpad,
+            select_artifacts,
+        )
+
+        parts = []
+
+        # 1. Scratchpad (always loaded)
+        scratchpad = load_scratchpad(self._scratchpad_dir)
+        if scratchpad:
+            # Truncate if exceeds budget
+            max_chars = self._budget.scratchpad_tokens * CHARS_PER_TOKEN
+            if len(scratchpad) > max_chars:
+                scratchpad = scratchpad[:max_chars] + "\n[... scratchpad truncated]"
+            parts.append(f"[Scratchpad — persistent task context]\n{scratchpad}")
+
+        # 2. Selected artifacts (within budget)
+        index = build_artifact_index(self._scratchpad_dir)
+        if index:
+            current_tags = getattr(self, "_current_tags", [])
+            selected = select_artifacts(
+                index=index,
+                current_tags=current_tags,
+                budget_tokens=self._budget.artifact_tokens,
+            )
+            for meta in selected:
+                _, body = load_artifact(meta.path)
+                if body:
+                    header = (
+                        f"[Artifact {meta.entry_id}] {meta.summary}"
+                        if meta.summary
+                        else f"[Artifact {meta.entry_id}]"
+                    )
+                    parts.append(f"{header}\n{body}")
+
+        return "\n\n---\n\n".join(parts) if parts else ""
+
+    def get_budget_info(self) -> dict:
+        """Return current token budget allocation (for /ctx_window display)."""
+        return {
+            "mode": "scratchpad",
+            "budget": self._budget.to_dict(),
+            "turn_count": self._turn_count,
+        }

@@ -466,9 +466,17 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 
+### Scratchpad & Artifact 시스템
+
+장시간 태스크에서 초반 맥락 손실을 방지하는 영속적 컨텍스트 시스템입니다.
+
+- **Scratchpad** (`.agent-cli/scratchpad.md`) — 태스크 목표, 진행 상황, 결정 사항을 기록. 컨텍스트 압축 후에도 항상 살아남는 앵커.
+- **Artifact** (`.agent-cli/artifacts/turn_NNNN.md`) — 턴별 상세 결과를 YAML frontmatter와 함께 저장. 태그 기반으로 선택적 로드.
+- **ContextBudget** — 모델 크기별 토큰 배분 (scratchpad/artifact/conversation 비율 자동 조정)
+
 ### 컨텍스트 압축
 
-Chat 모드에서 컨텍스트 윈도우의 95%에 도달하면 LLM 기반 구조화 요약으로 자동 압축합니다. 첫 압축은 전체 요약, 이후는 증분 업데이트.
+ContextBudget의 conversation 배분량에 도달하면 LLM 기반 구조화 요약으로 자동 압축합니다. 첫 압축은 전체 요약, 이후는 증분 업데이트. Scratchpad와 artifact는 압축 후에도 보존됩니다.
 
 ### 체크포인트 시스템
 
@@ -505,7 +513,7 @@ agent_cli/
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI, Ollama)
 ├── parsing/             3단계 JSON 파서 + Thinking 블록 분리
 ├── tools/               도구 (read/write/edit/shell/delegate/context) + 출력 압축
-├── context/             컨텍스트 관리 (오버플로 감지, 압축, 세션 영속화)
+├── context/             컨텍스트 관리 (scratchpad, artifact, 압축, 세션 영속화)
 ├── prompts/             조건부 시스템 프롬프트
 └── planning/            Planning Mode (생성→검토→실행)
 ```

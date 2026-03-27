@@ -1,0 +1,371 @@
+"""Scratchpad + Artifact persistent context management.
+
+Scratchpad: always loaded into context window, survives compaction.
+Artifacts: per-turn detailed results, loaded selectively via frontmatter index.
+
+File layout:
+  .agent-cli/
+    scratchpad.md            # always loaded (anchor)
+    artifacts/
+      turn_001.md            # per-turn results with YAML frontmatter
+      turn_002.md
+      ...
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+# ── Directory layout ─────────────────────────────────────────
+
+_DEFAULT_DIR = Path(".agent-cli")
+
+
+def _ensure_dirs(base: Path) -> Path:
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "artifacts").mkdir(exist_ok=True)
+    return base
+
+
+# ── Data models ──────────────────────────────────────────────
+
+
+@dataclass
+class ArtifactMeta:
+    """Frontmatter parsed from an artifact file."""
+
+    entry_id: str
+    turn: int
+    tags: list[str] = field(default_factory=list)
+    summary: str = ""
+    token_count: int = 0
+    created_at: str = ""
+    path: str = ""  # resolved file path
+
+
+@dataclass
+class ContextBudget:
+    """Dynamic token budget allocation per section.
+
+    Ratios adapt to total available tokens (model context_window).
+    Smaller models get more budget for scratchpad (proportionally),
+    larger models can afford more artifact loading.
+    """
+
+    total_tokens: int
+    reserved_system: float = 0.12  # system prompt + tools
+    reserved_response: float = 0.05  # response generation
+    scratchpad_ratio: float = 0.05  # scratchpad (small, always loaded)
+    artifact_ratio: float = 0.30  # selected artifacts
+    conversation_ratio: float = 0.48  # conversation history
+
+    @classmethod
+    def for_model(cls, context_window: int) -> ContextBudget:
+        """Create budget adapted to model size."""
+        if context_window <= 8192:
+            # Small model: prioritize scratchpad, minimal artifacts
+            return cls(
+                total_tokens=context_window,
+                reserved_system=0.15,
+                reserved_response=0.08,
+                scratchpad_ratio=0.10,
+                artifact_ratio=0.15,
+                conversation_ratio=0.52,
+            )
+        elif context_window <= 32768:
+            # Medium model: balanced
+            return cls(
+                total_tokens=context_window,
+                reserved_system=0.12,
+                reserved_response=0.06,
+                scratchpad_ratio=0.06,
+                artifact_ratio=0.25,
+                conversation_ratio=0.51,
+            )
+        else:
+            # Large model (128K+): generous artifact budget
+            return cls(
+                total_tokens=context_window,
+                reserved_system=0.08,
+                reserved_response=0.04,
+                scratchpad_ratio=0.03,
+                artifact_ratio=0.35,
+                conversation_ratio=0.50,
+            )
+
+    @property
+    def scratchpad_tokens(self) -> int:
+        return int(self.total_tokens * self.scratchpad_ratio)
+
+    @property
+    def artifact_tokens(self) -> int:
+        return int(self.total_tokens * self.artifact_ratio)
+
+    @property
+    def conversation_tokens(self) -> int:
+        return int(self.total_tokens * self.conversation_ratio)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total": self.total_tokens,
+            "scratchpad": self.scratchpad_tokens,
+            "artifacts": self.artifact_tokens,
+            "conversation": self.conversation_tokens,
+        }
+
+
+# ── YAML frontmatter parsing ────────────────────────────────
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Parse YAML frontmatter from markdown text.
+
+    Returns (metadata_dict, body_text).
+    If no frontmatter, returns ({}, full_text).
+    """
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return {}, text
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError:
+        meta = {}
+    body = text[m.end() :]
+    return meta, body
+
+
+def render_frontmatter(meta: dict, body: str) -> str:
+    """Render YAML frontmatter + markdown body."""
+    fm = yaml.dump(meta, default_flow_style=False, allow_unicode=True).strip()
+    return f"---\n{fm}\n---\n\n{body}"
+
+
+# ── Scratchpad operations ────────────────────────────────────
+
+
+def load_scratchpad(base: Path = _DEFAULT_DIR) -> str:
+    """Load scratchpad content. Returns empty string if not exists."""
+    path = base / "scratchpad.md"
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    return ""
+
+
+def save_scratchpad(content: str, base: Path = _DEFAULT_DIR) -> None:
+    """Save scratchpad content."""
+    _ensure_dirs(base)
+    path = base / "scratchpad.md"
+    path.write_text(content, encoding="utf-8")
+
+
+def init_scratchpad(goal: str, base: Path = _DEFAULT_DIR) -> str:
+    """Initialize a new scratchpad for a task."""
+    content = render_frontmatter(
+        {
+            "goal": goal,
+            "status": "in_progress",
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+        "## Progress\n\n## Decisions\n\n## Open Questions\n",
+    )
+    save_scratchpad(content, base)
+    return content
+
+
+def append_progress(
+    turn: int,
+    summary: str,
+    artifact_path: str | None = None,
+    base: Path = _DEFAULT_DIR,
+) -> None:
+    """Append a progress line to the scratchpad."""
+    content = load_scratchpad(base)
+    if not content:
+        return
+
+    ref = f" → {artifact_path}" if artifact_path else ""
+    line = f"- [턴{turn}] {summary}{ref}\n"
+
+    # Insert after "## Progress" section
+    if "## Progress" in content:
+        idx = content.index("## Progress") + len("## Progress")
+        # Find end of the line (skip past any newline)
+        nl = content.find("\n", idx)
+        if nl >= 0:
+            content = content[: nl + 1] + line + content[nl + 1 :]
+        else:
+            content = content + "\n" + line
+    else:
+        content += f"\n## Progress\n{line}"
+
+    # Update timestamp in frontmatter
+    meta, body = parse_frontmatter(content)
+    if meta:
+        meta["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        content = render_frontmatter(meta, body)
+
+    save_scratchpad(content, base)
+
+
+def append_decision(
+    turn: int,
+    decision: str,
+    base: Path = _DEFAULT_DIR,
+) -> None:
+    """Append a decision to the scratchpad."""
+    content = load_scratchpad(base)
+    if not content:
+        return
+
+    line = f"- [턴{turn}] {decision}\n"
+
+    if "## Decisions" in content:
+        idx = content.index("## Decisions") + len("## Decisions")
+        nl = content.find("\n", idx)
+        if nl >= 0:
+            content = content[: nl + 1] + line + content[nl + 1 :]
+        else:
+            content = content + "\n" + line
+    else:
+        content += f"\n## Decisions\n{line}"
+
+    meta, body = parse_frontmatter(content)
+    if meta:
+        meta["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        content = render_frontmatter(meta, body)
+
+    save_scratchpad(content, base)
+
+
+# ── Artifact operations ──────────────────────────────────────
+
+
+def save_artifact(
+    turn: int,
+    content: str,
+    tags: list[str] | None = None,
+    summary: str = "",
+    base: Path = _DEFAULT_DIR,
+) -> str:
+    """Save a turn artifact with YAML frontmatter. Returns the file path."""
+    _ensure_dirs(base)
+    entry_id = f"turn_{turn:04d}"
+    path = base / "artifacts" / f"{entry_id}.md"
+
+    # Estimate tokens (chars/4 heuristic matching token_estimator.py)
+    token_count = len(content) // 4
+
+    text = render_frontmatter(
+        {
+            "entry_id": entry_id,
+            "turn": turn,
+            "tags": tags or [],
+            "summary": summary,
+            "token_count": token_count,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+        content,
+    )
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def load_artifact(path: str | Path) -> tuple[ArtifactMeta, str]:
+    """Load an artifact file, return (metadata, body)."""
+    p = Path(path)
+    if not p.is_file():
+        return ArtifactMeta(entry_id="", turn=0), ""
+    text = p.read_text(encoding="utf-8")
+    meta_dict, body = parse_frontmatter(text)
+    meta = ArtifactMeta(
+        entry_id=meta_dict.get("entry_id", p.stem),
+        turn=meta_dict.get("turn", 0),
+        tags=meta_dict.get("tags", []),
+        summary=meta_dict.get("summary", ""),
+        token_count=meta_dict.get("token_count", 0),
+        created_at=meta_dict.get("created_at", ""),
+        path=str(p),
+    )
+    return meta, body
+
+
+def build_artifact_index(base: Path = _DEFAULT_DIR) -> list[ArtifactMeta]:
+    """Scan all artifacts and return frontmatter index (no body loaded)."""
+    artifacts_dir = base / "artifacts"
+    if not artifacts_dir.is_dir():
+        return []
+
+    index = []
+    for f in sorted(artifacts_dir.glob("turn_*.md")):
+        text = f.read_text(encoding="utf-8")
+        meta_dict, _ = parse_frontmatter(text)
+        if meta_dict:
+            index.append(
+                ArtifactMeta(
+                    entry_id=meta_dict.get("entry_id", f.stem),
+                    turn=meta_dict.get("turn", 0),
+                    tags=meta_dict.get("tags", []),
+                    summary=meta_dict.get("summary", ""),
+                    token_count=meta_dict.get("token_count", 0),
+                    created_at=meta_dict.get("created_at", ""),
+                    path=str(f),
+                )
+            )
+    return index
+
+
+def select_artifacts(
+    index: list[ArtifactMeta],
+    current_tags: list[str],
+    budget_tokens: int,
+    recent_n: int = 3,
+) -> list[ArtifactMeta]:
+    """Select relevant artifacts within token budget.
+
+    Strategy (tag-based, replaceable):
+      1. Most recent N turns (recency bias)
+      2. Tag overlap scoring for older turns
+      3. Fill within budget
+    """
+    if not index:
+        return []
+
+    selected: list[ArtifactMeta] = []
+    remaining = budget_tokens
+    seen_ids: set[str] = set()
+
+    # 1. Recent turns first
+    recent = index[-recent_n:] if recent_n > 0 else []
+    for entry in reversed(recent):
+        if entry.token_count <= remaining:
+            selected.append(entry)
+            seen_ids.add(entry.entry_id)
+            remaining -= entry.token_count
+
+    # 2. Tag-scored older entries
+    if current_tags:
+        tag_set = set(current_tags)
+        scored = []
+        for entry in index:
+            if entry.entry_id in seen_ids:
+                continue
+            overlap = len(set(entry.tags) & tag_set)
+            if overlap > 0:
+                scored.append((overlap, entry))
+        scored.sort(key=lambda x: -x[0])
+
+        for _, entry in scored:
+            if entry.token_count <= remaining:
+                selected.append(entry)
+                seen_ids.add(entry.entry_id)
+                remaining -= entry.token_count
+
+    return selected
