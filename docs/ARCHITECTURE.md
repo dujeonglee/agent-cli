@@ -453,6 +453,71 @@ _compress() 호출
         └─ INCREMENTAL_UPDATE_PROMPT로 기존 요약에 새 정보만 추가
 
 도구 결과는 2,000자로 절단 후 요약에 포함
+압축 후 "[artifact 경로를 read_artifact로 복구 가능]" 힌트 자동 추가
+```
+
+### 5.6 Scratchpad & Artifact 시스템
+
+#### 설계 배경
+
+On-premise LLM(128K context)에서 긴 태스크 수행 시 세 가지 문제가 발생:
+1. 초반 맥락 망각 — 턴이 많아지면 목표/결정을 잊고 반복
+2. 도구 결과 손실 — compaction 시 이전에 읽은 파일 디테일 소실
+3. 컨텍스트 오염 — 과거 도구 결과 자동 주입 시 LLM 혼란
+
+해결 전략: **Scratchpad(인덱스) + Artifact(데이터) + Lazy Loading**
+
+#### Scratchpad — 항상 보이는 나침반
+
+```
+[Scratchpad — persistent task context]
+---
+goal: TX path 전체 분석 및 리팩토링
+status: in_progress
+---
+## Progress
+- [턴3] read_file: hooks.py (215줄) → artifacts/turn_0003.md
+- [턴5] shell: find agent_cli -name '*.py' → artifacts/turn_0005.md
+- [턴7] Task completed: 분석 완료 → artifacts/turn_0007.md
+## Decisions
+- [턴5] TX aggregation 별도 모듈 분리
+```
+
+- 매 LLM 호출 시 `get_messages()` 맨 앞에 주입 (compaction에서 살아남음)
+- **스킬 내부 루프에서는 주입하지 않음** — 외부 태스크 정보가 스킬 LLM을 혼란시키는 것 방지
+
+#### Artifact — 디스크에 보존, 필요할 때만 로드
+
+```
+.agent-cli/sessions/{session_id}/artifacts/
+  turn_0003.md                     # 일반 도구 결과
+  turn_0005_optimize/              # 스킬 내부 결과 (서브디렉토리)
+    turn_0006.md
+    turn_0007.md
+```
+
+- 매 이터레이션 도구 결과를 YAML frontmatter + 원본으로 저장
+- 컨텍스트에 자동 주입하지 않음 (Lazy Loading)
+- LLM이 `read_artifact` 도구로 선택적 로드
+- 시스템 프롬프트에 사용법 안내, compaction 후 복구 힌트 제공
+
+#### ContextBudget — 모델 크기별 토큰 배분
+
+```python
+ContextBudget.for_model(context_window)
+# 8K:  scratchpad 10%, artifact 15%, conversation 52%
+# 32K: scratchpad 6%,  artifact 25%, conversation 51%
+# 128K+: scratchpad 3%, artifact 35%, conversation 50%
+```
+
+#### 스킬 내부 격리
+
+```
+외부 루프: get_messages() → [scratchpad + 대화]    ← scratchpad 주입
+  └─ run_skill(optimize)
+       └─ 내부 루프: get_messages() → [대화만]      ← scratchpad 스킵
+                     set_skill_context() → 서브디렉토리 라우팅
+                     end_turn() → artifacts/turn_N_optimize/ 에 저장
 ```
 
 ---

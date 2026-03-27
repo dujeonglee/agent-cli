@@ -522,6 +522,20 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 
 장시간 태스크에서 초반 맥락 손실을 방지하고, 도구 실행 결과를 영속적으로 보존하는 시스템입니다.
 
+#### 설계 배경
+
+On-premise LLM(128K context)에서 긴 태스크를 수행하면 세 가지 문제가 발생합니다:
+
+1. **초반 맥락 망각** — 턴이 많아지면 대화 초반의 목표/결정을 잊고 같은 시도를 반복
+2. **도구 결과 손실** — 컨텍스트 압축(compaction) 발생 시 이전에 읽은 파일 내용의 디테일이 소실
+3. **컨텍스트 오염** — 도구 결과 원문을 자동 주입하면 LLM이 과거 결과와 현재 대화를 혼동
+
+이를 해결하기 위한 설계 원칙:
+
+- **Scratchpad = 항상 보이는 나침반** — 태스크 목표와 진행 상황이 매 턴 주입되어 방향 유지
+- **Artifact = 디스크에 보존, 필요할 때만 로드** — Lazy Loading 방식으로 LLM이 `read_artifact`로 선택적 복구
+- **스킬 내부 격리** — 스킬(run_skill) 실행 시 외부 scratchpad를 주입하지 않아 내부 LLM의 집중도 보장
+
 #### 디렉토리 구조
 
 모든 세션 데이터는 프로젝트 로컬 `.agent-cli/sessions/` 아래에 세션별로 격리됩니다:
@@ -556,6 +570,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 - 태스크 목표, 진행 상황, 결정 사항을 Markdown + YAML frontmatter로 기록
 - 컨텍스트 압축(compaction) 후에도 **항상 살아남는 앵커** 역할
 - LLM이 매 턴마다 scratchpad를 보고 이전 작업을 추적
+- **스킬 내부 루프에서는 주입하지 않음** — 외부 태스크 정보가 스킬 LLM을 혼란시키는 것을 방지
 
 ```markdown
 ---
@@ -649,6 +664,7 @@ chat 시작
        │         ├─ [run_skill] → set_skill_context(name, parent_turn)
        │         │                → execute_skill(ctx=ctx, skill_name=name)
        │         │                  → 내부 run_loop (같은 ctx 공유)
+       │         │                    → scratchpad 주입 스킵 (내부 LLM 집중도 보장)
        │         │                    → 내부 artifact는 서브디렉토리에 저장
        │         │                → reset skill_context
        │         │                → continue (외부에서 end_turn 안 함)
@@ -661,8 +677,8 @@ chat 시작
        │         └─ [compaction 발생 시]
        │              → 대화 히스토리만 요약 압축
        │              → scratchpad + artifact 파일은 보존됨
-       │              → 요약에 "artifact 경로를 read_file로 복구 가능" 힌트 추가
-       │              → LLM이 scratchpad progress에서 경로 확인 → read_file로 로드
+       │              → 요약에 "artifact 경로를 read_artifact로 복구 가능" 힌트 추가
+       │              → LLM이 scratchpad progress에서 경로 확인 → read_artifact로 로드
        │
        ├─ session logging → session.jsonl에 이터레이션 기록
        └─ finalize_session(ctx) → session.summary.md 저장
@@ -684,7 +700,7 @@ artifact의 태그는 나중에 관련 artifact를 찾을 때 사용됩니다:
 현재 artifact는 **Lazy Loading** 방식으로 동작합니다:
 - 컨텍스트에 자동 주입하지 않음 (LLM 혼란 방지)
 - Scratchpad progress에 artifact 경로 기록
-- 시스템 프롬프트에 "필요하면 read_file로 artifact를 읽으세요" 안내
+- 시스템 프롬프트에 "필요하면 read_artifact로 artifact를 읽으세요" 안내
 - Compaction 후 "이전 도구 결과는 artifact에 있습니다" 힌트 주입
 - LLM이 스스로 판단하여 필요한 artifact만 선택적으로 `read_file` 로드
 
