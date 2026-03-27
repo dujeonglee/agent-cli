@@ -29,8 +29,8 @@ class TestBuildSystemPrompt:
     def test_active_tools_only(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "shell" in prompt
-        assert "read_file" not in prompt  # No read_file → no artifact guide either
         assert "Hashline" not in prompt  # No edit_file → no hashline guide
+        assert "read_artifact" in prompt  # Artifact guide always present
 
     def test_hashline_guide_with_edit(self):
         prompt = build_system_prompt(_make_caps(), ["edit_file"])

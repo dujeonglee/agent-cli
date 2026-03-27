@@ -301,6 +301,37 @@ def run_loop(
                     tools_called.append("run_skill")
                     continue
 
+                # 4c-2. read_artifact — needs ctx for scratchpad_dir
+                if tc0["name"] == "read_artifact":
+                    art_input = (
+                        tc0.get("input", {})
+                        if isinstance(tc0.get("input"), dict)
+                        else {}
+                    )
+                    from agent_cli.tools.read_artifact import tool_read_artifact
+
+                    obs = tool_read_artifact(art_input, ctx=ctx)
+                    if not quiet:
+                        render_step(
+                            "observation", obs, iteration, tool_name="read_artifact"
+                        )
+                    new_msgs = _format_tool_call_messages(
+                        provider_name,
+                        response,
+                        [{"tool_call": tc0, "output": obs}],
+                    )
+                    messages.extend(new_msgs)
+                    if ctx:
+                        for m in new_msgs:
+                            ctx.add(
+                                m["role"],
+                                m.get("content", "")
+                                if isinstance(m.get("content"), str)
+                                else json.dumps(m.get("content", "")),
+                            )
+                    tools_called.append("read_artifact")
+                    continue
+
                 # 4d. Echo-as-final-answer pattern
                 echo_answer = _try_echo_as_final(tc0["name"], tc0["input"])
                 if echo_answer:
@@ -537,6 +568,25 @@ def run_loop(
                         "observation": obs[:500],
                     },
                 )
+            continue
+
+        # 10c. read_artifact — needs ctx (text parsing path)
+        if parsed.action == "read_artifact":
+            art_input = (
+                parsed.action_input if isinstance(parsed.action_input, dict) else {}
+            )
+            from agent_cli.tools.read_artifact import tool_read_artifact
+
+            obs = tool_read_artifact(art_input, ctx=ctx)
+            if not quiet:
+                render_step("observation", obs, iteration, tool_name="read_artifact")
+            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
+            messages.append({"role": "assistant", "content": llm_text})
+            messages.append({"role": "user", "content": obs_msg})
+            if ctx:
+                ctx.add("assistant", llm_text)
+                ctx.add("user", obs_msg)
+            tools_called.append("read_artifact")
             continue
 
         # 11. Tool execution (text parsing path)

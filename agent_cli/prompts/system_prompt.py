@@ -61,7 +61,10 @@ ARTIFACT_GUIDE = """\
 A scratchpad is maintained with your task progress and decisions.
 Each tool result is saved as an artifact file on disk.
 The scratchpad Progress section shows what was done and where the artifact is stored.
-If you need detailed results from a previous step, use read_file on the artifact path.
+If you need detailed results from a previous step, use read_artifact tool:
+  - Read artifact: {"action": "read_artifact", "action_input": {"path": "artifacts/turn_0003.md"}}
+  - List artifacts: {"action": "read_artifact", "action_input": {"mode": "list"}}
+  - Search by tag: {"action": "read_artifact", "action_input": {"mode": "search", "tag": "filename.py"}}
 Do NOT read all artifacts — only load what is needed for the current step."""
 
 RULES = """\
@@ -157,8 +160,7 @@ def build_system_prompt(
     if plan_context:
         sections.append(plan_context)
 
-    if "read_file" in active_tools:
-        sections.append(ARTIFACT_GUIDE)
+    sections.append(ARTIFACT_GUIDE)
     sections.append(RULES)
 
     # Small model hints

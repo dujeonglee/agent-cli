@@ -403,7 +403,9 @@ class TestToolsRegistry:
         assert "ask" in TOOLS
 
     def test_virtual_tools_frozenset(self):
-        assert VIRTUAL_TOOLS == frozenset({"complete", "ask", "run_skill"})
+        assert VIRTUAL_TOOLS == frozenset(
+            {"complete", "ask", "run_skill", "read_artifact"}
+        )
         assert isinstance(VIRTUAL_TOOLS, frozenset)
 
     def test_virtual_tools_subset_of_tools(self):
@@ -704,3 +706,80 @@ class TestRunSkillTool:
 
         result = tool_run_skill({"arguments": "something"})
         assert "name" in result.lower()
+
+
+class TestReadArtifactTool:
+    def test_in_tools_and_virtual(self):
+        """read_artifact is registered and virtual."""
+        assert "read_artifact" in TOOLS
+        assert "read_artifact" in VIRTUAL_TOOLS
+
+    def test_schema_exists(self):
+        from agent_cli.tools.registry import TOOL_SCHEMAS
+
+        assert "read_artifact" in TOOL_SCHEMAS
+
+    def test_read_by_path(self, tmp_path):
+        """Read artifact by path — returns body without hashlines."""
+        from agent_cli.context.scratchpad import save_artifact
+        from agent_cli.tools.read_artifact import tool_read_artifact
+
+        path = save_artifact(
+            turn=1,
+            content="## Analysis\nFound 3 bugs.",
+            tags=["read_file"],
+            summary="Analysis result",
+            base=tmp_path,
+        )
+        result = tool_read_artifact({"path": path})
+        assert "Found 3 bugs" in result
+        # No hashline tags (e.g. "1#XS:") in output
+        assert not any(
+            line and line[0].isdigit() and "#" in line[:5]
+            for line in result.split("\n")
+        )
+
+    def test_list_mode(self, tmp_path):
+        """List all artifacts."""
+        from agent_cli.context.scratchpad import save_artifact
+        from agent_cli.tools.read_artifact import tool_read_artifact
+        from unittest.mock import MagicMock
+
+        save_artifact(1, "Content 1", ["shell"], "shell executed", tmp_path)
+        save_artifact(2, "Content 2", ["read_file", "hooks.py"], "read hooks", tmp_path)
+
+        ctx = MagicMock()
+        ctx._scratchpad_dir = tmp_path
+        result = tool_read_artifact({"mode": "list"}, ctx=ctx)
+        assert "turn_0001" in result
+        assert "turn_0002" in result
+        assert "hooks.py" in result
+
+    def test_search_by_tag(self, tmp_path):
+        """Search artifacts by tag."""
+        from agent_cli.context.scratchpad import save_artifact
+        from agent_cli.tools.read_artifact import tool_read_artifact
+        from unittest.mock import MagicMock
+
+        save_artifact(1, "Content A", ["read_file", "hooks.py"], "read hooks", tmp_path)
+        save_artifact(2, "Content B", ["shell"], "shell cmd", tmp_path)
+
+        ctx = MagicMock()
+        ctx._scratchpad_dir = tmp_path
+        result = tool_read_artifact({"mode": "search", "tag": "hooks.py"}, ctx=ctx)
+        assert "turn_0001" in result
+        assert "turn_0002" not in result
+
+    def test_nonexistent_path(self):
+        """Read nonexistent artifact → error."""
+        from agent_cli.tools.read_artifact import tool_read_artifact
+
+        result = tool_read_artifact({"path": "/nonexistent/file.md"})
+        assert "not found" in result.lower()
+
+    def test_list_no_session(self):
+        """List without ctx → error."""
+        from agent_cli.tools.read_artifact import tool_read_artifact
+
+        result = tool_read_artifact({"mode": "list"})
+        assert "no" in result.lower()
