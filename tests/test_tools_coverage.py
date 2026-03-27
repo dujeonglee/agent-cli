@@ -574,7 +574,7 @@ class TestReadContextTool:
     def test_list_no_sessions(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
 
-        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({"mode": "list"})
@@ -583,7 +583,7 @@ class TestReadContextTool:
     def test_list_with_sessions(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
 
-        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
         from agent_cli.context.session import create_session, save_meta, save_summary
         from agent_cli.tools.context import tool_read_context
 
@@ -598,7 +598,7 @@ class TestReadContextTool:
     def test_detail_valid_session(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
 
-        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
         from agent_cli.context.session import append_log, create_session, save_meta
         from agent_cli.tools.context import tool_read_context
 
@@ -621,7 +621,7 @@ class TestReadContextTool:
     def test_detail_nonexistent_session(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
 
-        monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({"mode": "detail", "session_id": "999"})

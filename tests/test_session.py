@@ -1,4 +1,4 @@
-"""Tests for context/session.py — file-based session persistence."""
+"""Tests for context/session.py — project-local session persistence."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ import agent_cli.context.session as session_mod
 from agent_cli.context.session import (
     append_log,
     create_session,
-    find_latest_summary,
+    finalize_session,
     get_log_path,
+    get_session_dir,
     get_summary_path,
     list_sessions,
     load_session,
@@ -22,22 +23,46 @@ from agent_cli.context.session import (
 
 
 @pytest.fixture(autouse=True)
-def _use_tmp_context_dir(tmp_path, monkeypatch):
-    """Redirect context dir to temp for all tests."""
-    monkeypatch.setattr(session_mod, "_CONTEXT_DIR", tmp_path)
+def _use_tmp_sessions_dir(tmp_path, monkeypatch):
+    """Redirect sessions base dir to temp for all tests."""
+    monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path / ".agent-cli")
 
 
 class TestCreateSession:
     def test_creates_with_defaults(self):
         meta = create_session("/tmp/workspace")
         assert meta.workspace == "/tmp/workspace"
-        assert meta.workspace_hash
         assert meta.session_id
         assert meta.created_at
 
     def test_session_id_is_timestamp(self):
         meta = create_session()
         assert meta.session_id.isdigit()
+
+    def test_no_workspace_hash(self):
+        """New format: no workspace_hash field."""
+        meta = create_session("/tmp/ws")
+        assert not hasattr(meta, "workspace_hash") or meta.workspace_hash == ""
+
+
+class TestSessionDir:
+    def test_session_dir_structure(self, tmp_path):
+        """Session files live under .agent-cli/sessions/{session_id}/."""
+        meta = create_session("/tmp/ws")
+        sdir = get_session_dir(meta)
+        assert f"sessions/{meta.session_id}" in str(sdir)
+
+    def test_log_path_in_session_dir(self, tmp_path):
+        meta = create_session("/tmp/ws")
+        path = get_log_path(meta)
+        assert path.name == "session.jsonl"
+        assert f"sessions/{meta.session_id}" in str(path)
+
+    def test_summary_path_in_session_dir(self, tmp_path):
+        meta = create_session("/tmp/ws")
+        path = get_summary_path(meta)
+        assert path.name == "session.summary.md"
+        assert f"sessions/{meta.session_id}" in str(path)
 
 
 class TestLogOperations:
@@ -57,13 +82,6 @@ class TestLogOperations:
         meta = create_session("/tmp/ws")
         assert read_log(meta) == []
 
-    def test_log_path_contains_workspace_hash(self, tmp_path):
-        meta = create_session("/tmp/ws")
-        path = get_log_path(meta)
-        assert meta.workspace_hash in path.name
-        assert meta.session_id in path.name
-        assert path.suffix == ".jsonl"
-
 
 class TestSummary:
     def test_save_and_load(self, tmp_path):
@@ -76,12 +94,6 @@ class TestSummary:
         meta = create_session("/tmp/ws")
         assert load_summary(meta) is None
 
-    def test_summary_path(self, tmp_path):
-        meta = create_session("/tmp/ws")
-        path = get_summary_path(meta)
-        assert path.suffix == ".md"
-        assert "summary" in path.name
-
 
 class TestListSessions:
     def test_list_empty(self, tmp_path):
@@ -91,7 +103,7 @@ class TestListSessions:
         m1 = create_session("/tmp/ws")
         save_meta(m1)
         m2 = create_session("/tmp/ws")
-        m2.session_id = str(int(m2.session_id) + 1)  # ensure different
+        m2.session_id = str(int(m2.session_id) + 1)
         save_meta(m2)
 
         result = list_sessions("/tmp/ws")
@@ -107,6 +119,17 @@ class TestListSessions:
         assert len(result) == 1
         assert result[0].workspace == "/tmp/ws1"
 
+    def test_list_all_workspaces(self, tmp_path):
+        """list_sessions without workspace filter returns all."""
+        m1 = create_session("/tmp/ws1")
+        save_meta(m1)
+        m2 = create_session("/tmp/ws2")
+        m2.session_id = str(int(m2.session_id) + 1)
+        save_meta(m2)
+
+        result = list_sessions()
+        assert len(result) == 2
+
 
 class TestLoadSession:
     def test_load_existing(self, tmp_path):
@@ -120,30 +143,9 @@ class TestLoadSession:
         assert load_session("999999999") is None
 
 
-class TestFindLatestSummary:
-    def test_no_sessions(self, tmp_path):
-        assert find_latest_summary("/tmp/ws") is None
-
-    def test_returns_latest(self, tmp_path):
-        m1 = create_session("/tmp/ws")
-        save_meta(m1)
-        save_summary(m1, "First session summary")
-
-        m2 = create_session("/tmp/ws")
-        m2.session_id = str(int(m2.session_id) + 1)
-        save_meta(m2)
-        save_summary(m2, "Second session summary")
-
-        result = find_latest_summary("/tmp/ws")
-        assert result == "Second session summary"
-
-
 class TestFinalizeSession:
     def test_saves_ctx_as_summary(self, tmp_path):
-        """finalize_session saves ctx messages as summary."""
         from unittest.mock import MagicMock
-
-        from agent_cli.context.session import finalize_session
 
         meta = create_session("/tmp/ws")
         save_meta(meta)
@@ -151,10 +153,7 @@ class TestFinalizeSession:
         ctx = MagicMock()
         ctx.get_messages.return_value = [
             {"role": "user", "content": "What is 2+2?"},
-            {
-                "role": "assistant",
-                "content": '{"thought": "math", "action": "complete"}',
-            },
+            {"role": "assistant", "content": '{"thought": "math"}'},
         ]
 
         finalize_session(meta, ctx)
@@ -162,21 +161,14 @@ class TestFinalizeSession:
         summary = load_summary(meta)
         assert summary is not None
         assert "What is 2+2?" in summary
-        assert "User" in summary or "user" in summary
 
     def test_no_ctx_no_crash(self, tmp_path):
-        """finalize_session with ctx=None does nothing."""
-        from agent_cli.context.session import finalize_session
-
         meta = create_session("/tmp/ws")
-        finalize_session(meta, None)  # should not raise
+        finalize_session(meta, None)
         assert load_summary(meta) is None
 
     def test_empty_ctx_no_crash(self, tmp_path):
-        """finalize_session with empty messages does nothing."""
         from unittest.mock import MagicMock
-
-        from agent_cli.context.session import finalize_session
 
         meta = create_session("/tmp/ws")
         ctx = MagicMock()
@@ -187,7 +179,6 @@ class TestFinalizeSession:
 
 class TestSubagentNoSession:
     def test_depth_zero_logs(self, tmp_path):
-        """At depth=0, _log_to_session writes entries."""
         from agent_cli.loop import _log_to_session
 
         meta = create_session("/tmp/ws")
@@ -197,8 +188,58 @@ class TestSubagentNoSession:
         assert len(entries) == 2  # _meta + log entry
 
     def test_no_session_no_log(self, tmp_path):
-        """When session is None, _log_to_session is a no-op."""
         from agent_cli.loop import _log_to_session
 
         _log_to_session(None, {"iter": 1, "action": "test"})
-        # No error, no file created
+
+
+class TestSessionScratchpadCoexistence:
+    """Verify session files and scratchpad coexist in the same directory."""
+
+    def test_scratchpad_in_session_dir(self, tmp_path):
+        """Scratchpad files live alongside session files."""
+        from agent_cli.context.scratchpad import init_scratchpad, load_scratchpad
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+
+        sdir = get_session_dir(meta)
+        init_scratchpad("Test goal", sdir)
+
+        # Both session.jsonl and scratchpad.md exist in same dir
+        assert (sdir / "session.jsonl").is_file()
+        assert (sdir / "scratchpad.md").is_file()
+        assert "Test goal" in load_scratchpad(sdir)
+
+    def test_context_manager_uses_session_dir(self, tmp_path):
+        """ContextManager with session_id uses same dir as session files."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        provider = MagicMock()
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+
+        ctx = ContextManager(
+            provider,
+            "test",
+            caps,
+            session_id=meta.session_id,
+            scratchpad_base=tmp_path / ".agent-cli",
+        )
+        ctx.init_task("Test task")
+
+        sdir = get_session_dir(meta)
+        assert (sdir / "scratchpad.md").is_file()

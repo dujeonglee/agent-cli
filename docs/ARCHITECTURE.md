@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 6,491 LOC (46 Python 파일) + 6,593 LOC 테스트 (26 파일)
-> 총 테스트: 465 유닛 + 65 통합 = 530개
+> 총 소스: 6,474 LOC (46 Python 파일) + 6,634 LOC 테스트 (26 파일)
+> 총 테스트: 468 유닛 + 65 통합 = 533개
 
 ---
 
@@ -83,7 +83,7 @@ agent_cli/
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
 │   ├── manager.py           (301)  ContextManager (세션별 scratchpad, 구조화 요약)
 │   ├── scratchpad.py        (395)  Scratchpad + Artifact + ContextBudget + 세션 격리
-│   └── session.py           (197)  파일 기반 세션 영속화 (JSONL + ctx 저장)
+│   └── session.py           (192)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
@@ -696,9 +696,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 26 | 465 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 26 | 468 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 65 | `pytest tests/test_integration.py` |
-| **전체** | **26** | **530** | `pytest tests/` |
+| **전체** | **26** | **533** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

@@ -131,7 +131,6 @@ def build_system_prompt(
     active_tools: list[str],
     include_delegate: bool = False,
     plan_context: str | None = None,
-    session_context: str | None = None,
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools."""
     sections = [BASE_ROLE_PROMPT]
@@ -162,9 +161,6 @@ def build_system_prompt(
         and capabilities.context_window <= SMALL_MODEL_CONTEXT
     ):
         sections.append(THINKING_MODEL_HINTS)
-
-    if session_context:
-        sections.append(f"## Previous Session Context\n{session_context}")
 
     # Inject available skills for LLM auto-invocation
     skill_desc = build_skill_descriptions()

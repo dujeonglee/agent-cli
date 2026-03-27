@@ -1,43 +1,46 @@
-"""Session persistence — file-based context management.
+"""Session persistence — project-local, session-scoped file management.
 
-Stores per-session iteration logs (JSONL) and summaries (markdown).
-Harness writes automatically; LLM reads via read_context tool.
+Stores per-session iteration logs (JSONL) and summaries (markdown)
+alongside scratchpad and artifacts in the same session directory.
 
 File layout:
-  ~/.agent-cli/context/
-    {workspace_hash}-{session_id}.jsonl       # append-only iteration log
-    {workspace_hash}-{session_id}.summary.md  # generated on session end
+  {project}/.agent-cli/sessions/{session_id}/
+    session.jsonl          # append-only iteration log
+    session.summary.md     # generated on session end
+    scratchpad.md          # (managed by scratchpad.py)
+    artifacts/             # (managed by scratchpad.py)
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
-_CONTEXT_DIR = Path.home() / ".agent-cli" / "context"
+_SESSIONS_BASE = Path(".agent-cli")
 
 
 @dataclass
 class SessionMeta:
     session_id: str
     workspace: str
-    workspace_hash: str
     created_at: str
     query: str = ""  # first query (for identification)
 
 
-def _workspace_hash(workspace: str) -> str:
-    """Short hash of workspace path for filename prefix."""
-    return hashlib.sha256(workspace.encode()).hexdigest()[:12]
+def _ensure_sessions_dir() -> Path:
+    d = _SESSIONS_BASE / "sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def _ensure_context_dir() -> Path:
-    _CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
-    return _CONTEXT_DIR
+def get_session_dir(meta: SessionMeta) -> Path:
+    """Return the session directory path, creating it if needed."""
+    d = _SESSIONS_BASE / "sessions" / meta.session_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def create_session(workspace: str | None = None) -> SessionMeta:
@@ -46,23 +49,18 @@ def create_session(workspace: str | None = None) -> SessionMeta:
     return SessionMeta(
         session_id=str(int(time.time())),
         workspace=ws,
-        workspace_hash=_workspace_hash(ws),
         created_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
 
-def _file_prefix(meta: SessionMeta) -> str:
-    return f"{meta.workspace_hash}-{meta.session_id}"
-
-
 def get_log_path(meta: SessionMeta) -> Path:
     """Path to the JSONL iteration log file."""
-    return _ensure_context_dir() / f"{_file_prefix(meta)}.jsonl"
+    return get_session_dir(meta) / "session.jsonl"
 
 
 def get_summary_path(meta: SessionMeta) -> Path:
     """Path to the session summary markdown file."""
-    return _ensure_context_dir() / f"{_file_prefix(meta)}.summary.md"
+    return get_session_dir(meta) / "session.summary.md"
 
 
 def append_log(meta: SessionMeta, entry: dict) -> None:
@@ -109,31 +107,40 @@ def save_meta(meta: SessionMeta) -> None:
     if path.is_file() and path.stat().st_size > 0:
         return  # already has content
     with open(path, "a", encoding="utf-8") as f:
-        header = {"_meta": asdict(meta)}
+        header = {
+            "_meta": {
+                "session_id": meta.session_id,
+                "workspace": meta.workspace,
+                "created_at": meta.created_at,
+                "query": meta.query,
+            }
+        }
         f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
 
 def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
     """List sessions, optionally filtered by workspace."""
-    if not _CONTEXT_DIR.is_dir():
+    sessions_dir = _SESSIONS_BASE / "sessions"
+    if not sessions_dir.is_dir():
         return []
 
-    ws_hash = _workspace_hash(workspace) if workspace else None
     sessions = []
-
-    for path in sorted(_CONTEXT_DIR.glob("*.jsonl")):
-        name = path.stem  # {ws_hash}-{session_id}
-        if ws_hash and not name.startswith(ws_hash):
+    for sdir in sorted(sessions_dir.iterdir()):
+        if not sdir.is_dir():
             continue
-        # Read first line for metadata
+        jsonl = sdir / "session.jsonl"
+        if not jsonl.is_file():
+            continue
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(jsonl, encoding="utf-8") as f:
                 first_line = f.readline().strip()
             if first_line:
                 data = json.loads(first_line)
                 if "_meta" in data:
-                    meta_dict = data["_meta"]
-                    sessions.append(SessionMeta(**meta_dict))
+                    meta = SessionMeta(**data["_meta"])
+                    if workspace and meta.workspace != workspace:
+                        continue
+                    sessions.append(meta)
         except (json.JSONDecodeError, TypeError, KeyError):
             pass
 
@@ -142,26 +149,24 @@ def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
 
 def load_session(session_id: str) -> SessionMeta | None:
     """Load a session by ID."""
-    if not _CONTEXT_DIR.is_dir():
+    sdir = _SESSIONS_BASE / "sessions" / session_id
+    jsonl = sdir / "session.jsonl"
+    if not jsonl.is_file():
         return None
-    for path in _CONTEXT_DIR.glob(f"*-{session_id}.jsonl"):
-        try:
-            with open(path, encoding="utf-8") as f:
-                first_line = f.readline().strip()
-            if first_line:
-                data = json.loads(first_line)
-                if "_meta" in data:
-                    return SessionMeta(**data["_meta"])
-        except (json.JSONDecodeError, TypeError, KeyError):
-            pass
+    try:
+        with open(jsonl, encoding="utf-8") as f:
+            first_line = f.readline().strip()
+        if first_line:
+            data = json.loads(first_line)
+            if "_meta" in data:
+                return SessionMeta(**data["_meta"])
+    except (json.JSONDecodeError, TypeError, KeyError):
+        pass
     return None
 
 
 def _serialize_ctx_messages(messages: list[dict]) -> str:
-    """Serialize context messages to text for summary storage.
-
-    Reuses the pattern from ContextManager._serialize_messages().
-    """
+    """Serialize context messages to text for summary storage."""
     parts = []
     for m in messages:
         role = m.get("role", "unknown").capitalize()
@@ -185,13 +190,3 @@ def finalize_session(meta, ctx=None) -> None:
     summary = _serialize_ctx_messages(messages)
     if summary:
         save_summary(meta, summary)
-
-
-def find_latest_summary(workspace: str | None = None) -> str | None:
-    """Find the most recent session summary for a workspace."""
-    sessions = list_sessions(workspace or os.getcwd())
-    if not sessions:
-        return None
-    # Sessions are sorted by file name (which includes timestamp)
-    latest = sessions[-1]
-    return load_summary(latest)

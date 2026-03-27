@@ -67,19 +67,11 @@ def run_loop(
     if not ctx and "ask" in tools_list:
         tools_list = [t for t in tools_list if t != "ask"]
 
-    # Load previous session context (depth 0 only)
-    session_context = None
-    if session and depth == 0:
-        from agent_cli.context.session import find_latest_summary
-
-        session_context = find_latest_summary()
-
     system = build_system_prompt(
         capabilities=capabilities,
         active_tools=tools_list,
         include_delegate=include_delegate,
         plan_context=plan_context,
-        session_context=session_context,
     )
 
     if not quiet:
