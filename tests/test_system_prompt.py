@@ -29,7 +29,7 @@ class TestBuildSystemPrompt:
     def test_active_tools_only(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "shell" in prompt
-        # read_file appears in artifact guide but NOT in tool descriptions
+        assert "read_file" not in prompt  # No read_file → no artifact guide either
         assert "Hashline" not in prompt  # No edit_file → no hashline guide
 
     def test_hashline_guide_with_edit(self):

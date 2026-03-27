@@ -157,7 +157,8 @@ def build_system_prompt(
     if plan_context:
         sections.append(plan_context)
 
-    sections.append(ARTIFACT_GUIDE)
+    if "read_file" in active_tools:
+        sections.append(ARTIFACT_GUIDE)
     sections.append(RULES)
 
     # Small model hints
