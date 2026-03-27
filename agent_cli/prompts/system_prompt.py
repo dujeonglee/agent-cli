@@ -56,6 +56,14 @@ DELEGATE_DESC = (
 )
 DELEGATE_SCHEMA = '{"task": "fully self-contained task description"}'
 
+ARTIFACT_GUIDE = """\
+## Scratchpad & Artifacts
+A scratchpad is maintained with your task progress and decisions.
+Each tool result is saved as an artifact file on disk.
+The scratchpad Progress section shows what was done and where the artifact is stored.
+If you need detailed results from a previous step, use read_file on the artifact path.
+Do NOT read all artifacts — only load what is needed for the current step."""
+
 RULES = """\
 ## Rules
 1. Always include "thought" in your JSON
@@ -149,6 +157,7 @@ def build_system_prompt(
     if plan_context:
         sections.append(plan_context)
 
+    sections.append(ARTIFACT_GUIDE)
     sections.append(RULES)
 
     # Small model hints

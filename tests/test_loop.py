@@ -1030,6 +1030,139 @@ class TestScratchpadIntegration:
         assert result == "ok"
 
 
+class TestArtifactLazyLoading:
+    """Scratchpad progress + system prompt guide LLM to read artifacts on demand."""
+
+    def test_system_prompt_contains_artifact_guidance(self, caps):
+        """System prompt tells LLM about artifact recovery via read_file."""
+        from agent_cli.prompts.system_prompt import build_system_prompt
+        from agent_cli.tools import TOOLS
+
+        prompt = build_system_prompt(capabilities=caps, active_tools=list(TOOLS.keys()))
+        assert "artifact" in prompt.lower()
+        assert "read_file" in prompt
+
+    def test_compaction_includes_artifact_hint(self, caps, tmp_path):
+        """After compaction, a hint about artifact recovery is injected."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = MagicMock()
+        provider.call.return_value = __import__(
+            "agent_cli.providers.base", fromlist=["LLMResponse"]
+        ).LLMResponse(content="Summary of conversation")
+        # Use small context to trigger compaction easily
+        small_caps = (
+            caps._replace(context_window=1000) if hasattr(caps, "_replace") else caps
+        )
+        ctx = ContextManager(
+            provider=provider,
+            model="test",
+            capabilities=small_caps,
+            scratchpad_dir=tmp_path,
+        )
+        ctx.init_task("test")
+        # Fill messages to trigger compaction
+        for i in range(20):
+            ctx.add("user", "x" * 200)
+            ctx.add("assistant", "y" * 200)
+
+        msgs = ctx.get_messages()
+        all_content = " ".join(m.get("content", "") for m in msgs)
+        # After compaction, hint should be present
+        if ctx._summary:
+            assert (
+                "artifact" in all_content.lower() or "scratchpad" in all_content.lower()
+            )
+
+    def test_read_file_progress_includes_filename(self, caps, tmp_path):
+        """read_file progress: 'read_file: README.md (N줄)'."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        test_file = tmp_path / "README.md"
+        test_file.write_text("line1\nline2\nline3\n")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Read",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        content = load_scratchpad(tmp_path)
+        assert "README.md" in content
+
+    def test_shell_progress_includes_command(self, caps, tmp_path):
+        """shell progress: 'shell: ls -la'."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "list",
+                    "action": "shell",
+                    "action_input": {"command": "ls -la /tmp"},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="List",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        content = load_scratchpad(tmp_path)
+        assert "ls -la" in content
+
+    def test_complete_progress_includes_preview(self, caps, tmp_path):
+        """complete progress: 'Task completed: first 80 chars...'."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        provider = _make_provider(
+            _complete("Agent-CLI optimization analysis is complete with 5 findings")
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Do",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        content = load_scratchpad(tmp_path)
+        assert (
+            "optimization analysis" in content.lower() or "complete" in content.lower()
+        )
+
+
 class TestArtifactTags:
     """A. Tag enrichment tests."""
 

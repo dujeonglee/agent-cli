@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 6,790 LOC (47 Python 파일) + 7,329 LOC 테스트 (26 파일)
-> 총 테스트: 494 유닛 + 65 통합 = 559개
+> 총 소스: 6,831 LOC (47 Python 파일) + 7,462 LOC 테스트 (26 파일)
+> 총 테스트: 499 유닛 + 65 통합 = 564개
 
 ---
 
@@ -49,7 +49,7 @@ agent_cli/
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1058) ReAct 에이전트 루프 + scratchpad/hook/run_skill 통합
+├── loop.py                  (1099) ReAct 에이전트 루프 + scratchpad/hook/run_skill 통합
 ├── render.py                (292)  Rich 터미널 렌더링 + 모델 정보 + compact observation
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -82,13 +82,13 @@ agent_cli/
 │   ├── __init__.py          (34)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (317)  ContextManager (세션별 scratchpad, 스킬 컨텍스트, 구조화 요약)
+│   ├── manager.py           (308)  ContextManager (세션별 scratchpad, 스킬 컨텍스트, compaction 힌트)
 │   ├── scratchpad.py        (407)  Scratchpad + Artifact + ContextBudget + 세션/스킬 격리
 │   └── session.py           (192)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (204)  조건부 시스템 프롬프트 빌더 + 스킬 자동 주입
+│   ├── system_prompt.py     (214)  조건부 시스템 프롬프트 빌더 + 스킬/artifact 안내
 │   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
 │
 ├── skills/                         프롬프트 스킬 시스템
@@ -697,9 +697,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 26 | 494 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 26 | 499 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 65 | `pytest tests/test_integration.py` |
-| **전체** | **26** | **559** | `pytest tests/` |
+| **전체** | **26** | **564** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

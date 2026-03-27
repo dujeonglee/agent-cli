@@ -523,9 +523,10 @@ updated_at: 2026-03-28T10:00:00Z
 ## Open Questions
 ```
 
-**Artifact (scratchpad.py)** — 도구 결과 보존
+**Artifact (scratchpad.py)** — 도구 결과 보존 (Lazy Loading)
 - 매 이터레이션의 도구 실행 결과를 YAML frontmatter와 함께 Markdown으로 저장
-- 태그 기반 선택적 로드: recency(최근 3턴) + 태그 매칭으로 관련 artifact 자동 선별
+- 컨텍스트에 자동 주입하지 않음 — LLM이 필요할 때 `read_file`로 선택적 로드
+- Scratchpad progress에 artifact 경로가 기록되어 LLM이 참조 가능
 - 스킬 내부 artifact는 서브디렉토리에 격리: `artifacts/turn_N_skillname/`
 
 ```markdown
@@ -533,7 +534,7 @@ updated_at: 2026-03-28T10:00:00Z
 entry_id: turn_0001
 turn: 1
 tags: [read_file, agent_cli/hooks.py, skill:optimize]
-summary: "read_file executed"
+summary: "read_file: hooks.py (215줄)"
 token_count: 850
 created_at: 2026-03-28T10:00:00Z
 ---
@@ -541,6 +542,15 @@ created_at: 2026-03-28T10:00:00Z
 STATUS: success
 RESULT:
 1#PS:"""Hook system — PreToolUse...
+```
+
+Artifact는 컨텍스트에 자동 주입되지 않습니다. 대신 scratchpad progress에 경로가 기록되어 LLM이 필요할 때 `read_file`로 직접 로드합니다:
+
+```
+## Progress
+- [턴3] read_file: hooks.py (215줄) → artifacts/turn_0003.md       ← LLM이 필요하면 이 경로를 read_file
+- [턴5] shell: find agent_cli -name '*.py' → artifacts/turn_0005.md
+- [턴7] Task completed: Agent-CLI is a ReAct... → artifacts/turn_0007.md
 ```
 
 **ContextBudget (scratchpad.py)** — 모델 크기별 토큰 배분
@@ -595,11 +605,13 @@ chat 시작
        │         ├─ [도구 실행] → _execute_single_tool()
        │         │              → end_turn(obs, tags=[tool_name, filepath, skill:name])
        │         │                → artifact 저장 + scratchpad progress 기록
+       │         │                → progress: "read_file: hooks.py (215줄) → artifacts/..."
        │         │
        │         └─ [compaction 발생 시]
        │              → 대화 히스토리만 요약 압축
-       │              → scratchpad + artifacts는 보존됨
-       │              → 다음 get_messages()에서 scratchpad 재주입
+       │              → scratchpad + artifact 파일은 보존됨
+       │              → 요약에 "artifact 경로를 read_file로 복구 가능" 힌트 추가
+       │              → LLM이 scratchpad progress에서 경로 확인 → read_file로 로드
        │
        ├─ session logging → session.jsonl에 이터레이션 기록
        └─ finalize_session(ctx) → session.summary.md 저장
@@ -618,10 +630,12 @@ artifact의 태그는 나중에 관련 artifact를 찾을 때 사용됩니다:
 | 스킬 내부 도구 | `[tool_name, filepath, "skill:name"]` | `["read_file", "loop.py", "skill:optimize"]` |
 | 스킬 내부 완료 | `["complete", "skill:name"]` | `["complete", "skill:optimize"]` |
 
-`select_artifacts()`가 태그를 사용하여 현재 작업과 관련된 artifact를 우선 로드합니다:
-1. 최근 3턴을 무조건 로드 (recency bias)
-2. 태그 겹침이 높은 과거 artifact 추가
-3. ContextBudget의 artifact 토큰 예산 내에서 중단
+현재 artifact는 **Lazy Loading** 방식으로 동작합니다:
+- 컨텍스트에 자동 주입하지 않음 (LLM 혼란 방지)
+- Scratchpad progress에 artifact 경로 기록
+- 시스템 프롬프트에 "필요하면 read_file로 artifact를 읽으세요" 안내
+- Compaction 후 "이전 도구 결과는 artifact에 있습니다" 힌트 주입
+- LLM이 스스로 판단하여 필요한 artifact만 선택적으로 `read_file` 로드
 
 #### 세션 관리 명령어
 

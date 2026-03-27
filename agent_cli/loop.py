@@ -233,7 +233,7 @@ def run_loop(
                             ctx.end_turn(
                                 content=answer,
                                 tags=_build_artifact_tags("complete", {}, skill_name),
-                                summary="Task completed",
+                                summary=_build_artifact_summary("complete", {}, answer),
                             )
                         if not quiet:
                             render_step("final", answer, iteration)
@@ -308,7 +308,9 @@ def run_loop(
                         ctx.end_turn(
                             content=echo_answer,
                             tags=_build_artifact_tags("complete", {}, skill_name),
-                            summary="Task completed (echo)",
+                            summary=_build_artifact_summary(
+                                "complete", {}, echo_answer
+                            ),
                         )
                     if not quiet:
                         render_step("final", echo_answer, iteration)
@@ -357,7 +359,7 @@ def run_loop(
                     ctx.end_turn(
                         content=obs,
                         tags=_build_artifact_tags(tool_name, tool_input, skill_name),
-                        summary=f"{tool_name} executed",
+                        summary=_build_artifact_summary(tool_name, tool_input, obs),
                     )
 
                 # Session logging (native tool calling path)
@@ -447,7 +449,7 @@ def run_loop(
                 ctx.end_turn(
                     content=answer,
                     tags=_build_artifact_tags("complete", {}, skill_name),
-                    summary="Task completed",
+                    summary=_build_artifact_summary("complete", {}, answer),
                 )
             if not quiet:
                 render_step("final", answer, iteration)
@@ -470,7 +472,7 @@ def run_loop(
                 ctx.end_turn(
                     content=echo_answer,
                     tags=_build_artifact_tags("complete", {}, skill_name),
-                    summary="Task completed (echo)",
+                    summary=_build_artifact_summary("complete", {}, echo_answer),
                 )
             if not quiet:
                 render_step("final", echo_answer, iteration)
@@ -579,7 +581,7 @@ def run_loop(
                 ctx.end_turn(
                     content=observation,
                     tags=_build_artifact_tags(tool_name, tool_input, skill_name),
-                    summary=f"{tool_name} executed",
+                    summary=_build_artifact_summary(tool_name, tool_input, observation),
                 )
 
             # Repeated call detection
@@ -755,6 +757,32 @@ def _handle_run_skill(
             ctx.set_skill_context()
 
     return obs
+
+
+def _build_artifact_summary(tool_name: str, tool_input, obs: str = "") -> str:
+    """Build a human-readable summary for scratchpad progress."""
+    if tool_name == "complete":
+        # Preview of the result
+        preview = obs[:80].replace("\n", " ").strip()
+        return f"Task completed: {preview}"
+
+    if isinstance(tool_input, dict):
+        if tool_name in ("read_file", "write_file", "edit_file"):
+            filepath = tool_input.get("path", "")
+            if filepath:
+                # Count lines in observation
+                lines = obs.count("\n") + 1 if obs else 0
+                fname = filepath.split("/")[-1]
+                return f"{tool_name}: {fname} ({lines}줄)"
+        if tool_name == "shell":
+            cmd = tool_input.get("command", "")
+            if cmd:
+                return f"shell: {cmd[:60]}"
+        if tool_name == "delegate":
+            task = tool_input.get("task", "")
+            return f"delegate: {task[:80]}"
+
+    return f"{tool_name} executed"
 
 
 def _build_artifact_tags(tool_name: str, tool_input, skill_name: str = "") -> list[str]:

@@ -159,6 +159,13 @@ class ContextManager:
                 capabilities=self.capabilities,
             )
             self._summary = response.content
+            # Add artifact recovery hint after compaction
+            artifact_hint = (
+                "[Context was compressed. Previous tool outputs are no longer "
+                "in conversation history. Check the scratchpad Progress section "
+                "for artifact paths — use read_file to reload details if needed.]"
+            )
+            self._summary = f"{self._summary}\n\n{artifact_hint}"
             self.messages = kept_msgs
             self._msg_chars = sum(len(m["content"]) for m in kept_msgs)
         except Exception as e:
