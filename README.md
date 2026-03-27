@@ -467,13 +467,171 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 
-### Scratchpad & Artifact 시스템
+### 세션 & 컨텍스트 관리 시스템
 
-장시간 태스크에서 초반 맥락 손실을 방지하는 영속적 컨텍스트 시스템입니다.
+장시간 태스크에서 초반 맥락 손실을 방지하고, 도구 실행 결과를 영속적으로 보존하는 시스템입니다.
 
-- **Scratchpad** (`.agent-cli/sessions/{session_id}/scratchpad.md`) — 태스크 목표, 진행 상황, 결정 사항을 기록. 컨텍스트 압축 후에도 항상 살아남는 앵커. 세션별로 격리.
-- **Artifact** (`.agent-cli/sessions/{session_id}/artifacts/turn_NNNN.md`) — 턴별 상세 결과를 YAML frontmatter와 함께 저장. 태그 기반으로 선택적 로드.
-- **ContextBudget** — 모델 크기별 토큰 배분 (scratchpad/artifact/conversation 비율 자동 조정)
+#### 디렉토리 구조
+
+모든 세션 데이터는 프로젝트 로컬 `.agent-cli/sessions/` 아래에 세션별로 격리됩니다:
+
+```
+{project}/.agent-cli/
+  skills/                               # 스킬 파일 (git 추적)
+  hooks.json                            # hook 설정
+  sessions/
+    {session_id}/                       # 세션별 디렉토리
+      session.jsonl                     # 이터레이션 로그 (append-only)
+      session.summary.md                # 세션 종료 시 컨텍스트 요약
+      scratchpad.md                     # 태스크 추적 (항상 컨텍스트에 주입)
+      artifacts/                        # 도구 실행 결과 보존
+        turn_0001.md                    # 일반 도구 결과
+        turn_0002.md
+        turn_0003_optimize/             # 스킬 내부 결과 (서브디렉토리)
+          turn_0004.md
+          turn_0005.md
+        turn_0006.md
+```
+
+#### 핵심 컴포넌트
+
+**Session (session.py)** — 대화 이력 영속화
+- `session.jsonl`: 매 이터레이션의 thought/action/observation을 JSONL로 기록
+- `session.summary.md`: 세션 종료 시 컨텍스트 윈도우 내용을 텍스트로 저장
+- `--resume <session_id>`: 이전 세션을 이어서 작업
+- `agent-cli sessions`: 세션 목록 조회
+
+**Scratchpad (scratchpad.py)** — 태스크 추적 앵커
+- 태스크 목표, 진행 상황, 결정 사항을 Markdown + YAML frontmatter로 기록
+- 컨텍스트 압축(compaction) 후에도 **항상 살아남는 앵커** 역할
+- LLM이 매 턴마다 scratchpad를 보고 이전 작업을 추적
+
+```markdown
+---
+goal: TX path 전체 분석 및 리팩토링
+status: in_progress
+updated_at: 2026-03-28T10:00:00Z
+---
+
+## Progress
+- [턴1] read_file executed → .agent-cli/sessions/.../artifacts/turn_0001.md
+- [턴2] shell executed → .agent-cli/sessions/.../artifacts/turn_0002.md
+
+## Decisions
+- [턴5] TX aggregation 별도 모듈 분리
+
+## Open Questions
+```
+
+**Artifact (scratchpad.py)** — 도구 결과 보존
+- 매 이터레이션의 도구 실행 결과를 YAML frontmatter와 함께 Markdown으로 저장
+- 태그 기반 선택적 로드: recency(최근 3턴) + 태그 매칭으로 관련 artifact 자동 선별
+- 스킬 내부 artifact는 서브디렉토리에 격리: `artifacts/turn_N_skillname/`
+
+```markdown
+---
+entry_id: turn_0001
+turn: 1
+tags: [read_file, agent_cli/hooks.py, skill:optimize]
+summary: "read_file executed"
+token_count: 850
+created_at: 2026-03-28T10:00:00Z
+---
+
+STATUS: success
+RESULT:
+1#PS:"""Hook system — PreToolUse...
+```
+
+**ContextBudget (scratchpad.py)** — 모델 크기별 토큰 배분
+
+컨텍스트 윈도우를 섹션별로 동적 배분합니다:
+
+| 섹션 | 8K 모델 | 32K 모델 | 128K+ 모델 |
+|------|---------|---------|-----------|
+| System Prompt + Tools | 15% | 12% | 8% |
+| Scratchpad (항상 로드) | 10% | 6% | 3% |
+| Artifacts (선택적) | 15% | 25% | 35% |
+| Conversation History | 52% | 51% | 50% |
+| Response Budget | 8% | 6% | 4% |
+
+#### 루프 내 동작 원리
+
+ReAct 루프(`loop.py`)에서 세션/컨텍스트 관리가 어떻게 동작하는지:
+
+```
+chat 시작
+  │
+  ├─ create_session() → session_id 생성
+  ├─ ContextManager(session_id=...) → 세션별 scratchpad 디렉토리 설정
+  │
+  └─ 사용자 입력 루프
+       │
+       ├─ run_loop(query, ctx, session) 호출
+       │    │
+       │    ├─ [최초 1회] init_task(query) → scratchpad.md 생성
+       │    │
+       │    ├─ ctx.add("user", query)
+       │    ├─ ctx.get_messages() → [scratchpad + artifacts + summary + messages]
+       │    │                         ↑ scratchpad가 항상 맨 앞에 주입됨
+       │    │
+       │    └─ while iteration loop:
+       │         │
+       │         ├─ begin_turn(query) → 턴 카운터 증가
+       │         │
+       │         ├─ LLM 호출
+       │         │
+       │         ├─ [complete] → end_turn(answer, tags=["complete"])
+       │         │                → artifact 저장 + scratchpad progress 기록
+       │         │                → return answer
+       │         │
+       │         ├─ [run_skill] → set_skill_context(name, parent_turn)
+       │         │                → execute_skill(ctx=ctx, skill_name=name)
+       │         │                  → 내부 run_loop (같은 ctx 공유)
+       │         │                    → 내부 artifact는 서브디렉토리에 저장
+       │         │                → reset skill_context
+       │         │                → continue (외부에서 end_turn 안 함)
+       │         │
+       │         ├─ [도구 실행] → _execute_single_tool()
+       │         │              → end_turn(obs, tags=[tool_name, filepath, skill:name])
+       │         │                → artifact 저장 + scratchpad progress 기록
+       │         │
+       │         └─ [compaction 발생 시]
+       │              → 대화 히스토리만 요약 압축
+       │              → scratchpad + artifacts는 보존됨
+       │              → 다음 get_messages()에서 scratchpad 재주입
+       │
+       ├─ session logging → session.jsonl에 이터레이션 기록
+       └─ finalize_session(ctx) → session.summary.md 저장
+```
+
+#### 태그 체계
+
+artifact의 태그는 나중에 관련 artifact를 찾을 때 사용됩니다:
+
+| 상황 | 태그 | 예시 |
+|------|------|------|
+| 파일 읽기/쓰기/편집 | `[tool_name, filepath]` | `["read_file", "agent_cli/hooks.py"]` |
+| 셸 명령 | `["shell"]` | `["shell"]` |
+| 서브에이전트 위임 | `["delegate"]` | `["delegate"]` |
+| 작업 완료 | `["complete"]` | `["complete"]` |
+| 스킬 내부 도구 | `[tool_name, filepath, "skill:name"]` | `["read_file", "loop.py", "skill:optimize"]` |
+| 스킬 내부 완료 | `["complete", "skill:name"]` | `["complete", "skill:optimize"]` |
+
+`select_artifacts()`가 태그를 사용하여 현재 작업과 관련된 artifact를 우선 로드합니다:
+1. 최근 3턴을 무조건 로드 (recency bias)
+2. 태그 겹침이 높은 과거 artifact 추가
+3. ContextBudget의 artifact 토큰 예산 내에서 중단
+
+#### 세션 관리 명령어
+
+```bash
+# 세션 목록
+agent-cli sessions
+
+# 이전 세션 이어서 작업
+agent-cli chat --resume <session_id>
+```
 
 ### 컨텍스트 압축
 
