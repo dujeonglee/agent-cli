@@ -49,7 +49,7 @@ agent_cli/
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (845)  ReAct 에이전트 루프 + hook 통합 + _execute_single_tool
+├── loop.py                  (837)  ReAct 에이전트 루프 + hook 통합 + _execute_single_tool
 ├── render.py                (292)  Rich 터미널 렌더링 + 모델 정보 + compact observation
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -87,7 +87,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (208)  조건부 시스템 프롬프트 빌더 + 스킬 자동 주입
+│   ├── system_prompt.py     (204)  조건부 시스템 프롬프트 빌더 + 스킬 자동 주입
 │   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
 │
 ├── skills/                         프롬프트 스킬 시스템
