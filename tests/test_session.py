@@ -193,6 +193,65 @@ class TestSubagentNoSession:
         _log_to_session(None, {"iter": 1, "action": "test"})
 
 
+class TestLogToolToSession:
+    """Test _log_tool_to_session helper."""
+
+    def test_logs_at_depth_zero(self, tmp_path):
+        from agent_cli.loop import _log_tool_to_session
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        _log_tool_to_session(
+            meta, depth=0, iteration=1, action="shell", observation="output here"
+        )
+        entries = read_log(meta)
+        assert len(entries) == 2  # _meta + log entry
+        assert entries[1]["action"] == "shell"
+        assert entries[1]["observation"] == "output here"
+        assert entries[1]["iter"] == 1
+
+    def test_skips_at_depth_nonzero(self, tmp_path):
+        from agent_cli.loop import _log_tool_to_session
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        _log_tool_to_session(
+            meta, depth=1, iteration=1, action="shell", observation="output"
+        )
+        entries = read_log(meta)
+        assert len(entries) == 1  # _meta only, no log entry
+
+    def test_includes_thought_and_action_input(self, tmp_path):
+        from agent_cli.loop import _log_tool_to_session
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        _log_tool_to_session(
+            meta,
+            depth=0,
+            iteration=2,
+            action="read_file",
+            observation="file content",
+            thought="need to read",
+            action_input='{"path": "a.py"}',
+        )
+        entries = read_log(meta)
+        assert entries[1]["thought"] == "need to read"
+        assert entries[1]["action_input"] == '{"path": "a.py"}'
+
+    def test_truncates_observation(self, tmp_path):
+        from agent_cli.loop import _log_tool_to_session
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        long_obs = "x" * 1000
+        _log_tool_to_session(
+            meta, depth=0, iteration=1, action="shell", observation=long_obs
+        )
+        entries = read_log(meta)
+        assert len(entries[1]["observation"]) == 500
+
+
 class TestSessionScratchpadCoexistence:
     """Verify session files and scratchpad coexist in the same directory."""
 

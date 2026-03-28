@@ -255,16 +255,9 @@ def run_loop(
                         )
                         # Fall through to execute as normal tool (will fail gracefully)
                     else:
-                        # Session logging (native complete)
-                        if depth == 0:
-                            _log_to_session(
-                                session,
-                                {
-                                    "iter": iteration,
-                                    "action": "complete",
-                                    "observation": answer[:500],
-                                },
-                            )
+                        _log_tool_to_session(
+                            session, depth, iteration, "complete", answer
+                        )
                         # Scratchpad: save complete result
                         if ctx:
                             ctx.end_turn(
@@ -419,17 +412,14 @@ def run_loop(
                         summary=_build_artifact_summary(tool_name, tool_input, obs),
                     )
 
-                # Session logging (native tool calling path)
-                if depth == 0:
-                    _log_to_session(
-                        session,
-                        {
-                            "iter": iteration,
-                            "action": tool_name,
-                            "action_input": _normalize_input(tool_input),
-                            "observation": obs[:500],
-                        },
-                    )
+                _log_tool_to_session(
+                    session,
+                    depth,
+                    iteration,
+                    tool_name,
+                    obs,
+                    action_input=_normalize_input(tool_input),
+                )
 
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):
@@ -489,17 +479,14 @@ def run_loop(
                 )
                 continue
 
-            # Session logging (complete)
-            if depth == 0:
-                _log_to_session(
-                    session,
-                    {
-                        "iter": iteration,
-                        "thought": parsed.thought,
-                        "action": "complete",
-                        "observation": answer[:500],
-                    },
-                )
+            _log_tool_to_session(
+                session,
+                depth,
+                iteration,
+                "complete",
+                answer,
+                thought=parsed.thought or "",
+            )
 
             # Scratchpad: save complete result
             if ctx:
@@ -515,16 +502,14 @@ def run_loop(
         # 9. Detect echo-as-final-answer (common small model pattern)
         echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
         if echo_answer:
-            if depth == 0:
-                _log_to_session(
-                    session,
-                    {
-                        "iter": iteration,
-                        "thought": parsed.thought,
-                        "action": "complete (echo)",
-                        "observation": echo_answer[:500],
-                    },
-                )
+            _log_tool_to_session(
+                session,
+                depth,
+                iteration,
+                "complete (echo)",
+                echo_answer,
+                thought=parsed.thought or "",
+            )
             if ctx:
                 ctx.end_turn(
                     content=echo_answer,
@@ -542,16 +527,14 @@ def run_loop(
                 user_response = _handle_ask(questions, quiet)
                 obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
                 _append_text_observation(messages, ctx, llm_text, obs_msg)
-                if depth == 0:
-                    _log_to_session(
-                        session,
-                        {
-                            "iter": iteration,
-                            "thought": parsed.thought,
-                            "action": "ask",
-                            "observation": user_response[:500],
-                        },
-                    )
+                _log_tool_to_session(
+                    session,
+                    depth,
+                    iteration,
+                    "ask",
+                    user_response,
+                    thought=parsed.thought or "",
+                )
                 continue
 
         # 10b. run_skill — intercept at loop level (text parsing path)
@@ -576,17 +559,15 @@ def run_loop(
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
             _append_text_observation(messages, ctx, llm_text, obs_msg)
             tools_called.append("run_skill")
-            if depth == 0:
-                _log_to_session(
-                    session,
-                    {
-                        "iter": iteration,
-                        "thought": parsed.thought,
-                        "action": "run_skill",
-                        "action_input": _normalize_input(skill_input),
-                        "observation": obs[:500],
-                    },
-                )
+            _log_tool_to_session(
+                session,
+                depth,
+                iteration,
+                "run_skill",
+                obs,
+                thought=parsed.thought or "",
+                action_input=_normalize_input(skill_input),
+            )
             continue
 
         # 10c. read_artifact — needs ctx (text parsing path)
@@ -670,18 +651,15 @@ def run_loop(
                 )
                 return None
 
-            # Session logging (text parsing path)
-            if depth == 0:
-                _log_to_session(
-                    session,
-                    {
-                        "iter": iteration,
-                        "thought": parsed.thought,
-                        "action": tool_name,
-                        "action_input": _normalize_input(tool_input),
-                        "observation": observation[:500],
-                    },
-                )
+            _log_tool_to_session(
+                session,
+                depth,
+                iteration,
+                tool_name,
+                observation,
+                thought=parsed.thought or "",
+                action_input=_normalize_input(tool_input),
+            )
 
             # Inject observation
             obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
@@ -977,6 +955,30 @@ def _log_to_session(session, entry: dict) -> None:
 
     entry["ts"] = time.time()
     append_log(session, entry)
+
+
+def _log_tool_to_session(
+    session,
+    depth: int,
+    iteration: int,
+    action: str,
+    observation: str,
+    thought: str = "",
+    action_input: str = "",
+) -> None:
+    """Log a tool execution to session (depth==0 only)."""
+    if depth != 0:
+        return
+    entry: dict = {
+        "iter": iteration,
+        "action": action,
+        "observation": observation[:500],
+    }
+    if thought:
+        entry["thought"] = thought
+    if action_input:
+        entry["action_input"] = action_input
+    _log_to_session(session, entry)
 
 
 def _execute_single_tool(
