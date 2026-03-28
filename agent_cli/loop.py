@@ -134,14 +134,7 @@ def run_loop(
         # Scratchpad: begin turn for each iteration
         if ctx:
             ctx.begin_turn(query)
-        # Skill progress: show compact iteration counter even in quiet mode
-        if skill_name and quiet:
-            from agent_cli.render import console, C
-
-            console.print(
-                f"  [{C['muted']}]skill:{skill_name} iter {iteration}[/]",
-                highlight=False,
-            )
+        # Skill progress: shown per-tool after LLM response (see _render_skill_progress)
         if not quiet:
             render_iter_sep(iteration)
 
@@ -231,6 +224,7 @@ def run_loop(
 
                 # 4a. Complete tool → extract result and return
                 if tc0["name"] == "complete":
+                    _render_skill_progress(skill_name, iteration, "complete", {}, quiet)
                     answer = (
                         tc0.get("input", {}).get("result") or "(completed)"
                         if isinstance(tc0.get("input"), dict)
@@ -379,6 +373,9 @@ def run_loop(
             for tc in response.tool_calls:
                 tool_name = tc["name"]
                 tool_input = tc["input"]
+                _render_skill_progress(
+                    skill_name, iteration, tool_name, tool_input, quiet
+                )
 
                 if not quiet:
                     render_step(
@@ -468,6 +465,7 @@ def run_loop(
 
         # 7. Complete tool (text parsing path)
         if parsed.action == "complete":
+            _render_skill_progress(skill_name, iteration, "complete", {}, quiet)
             if isinstance(parsed.action_input, dict):
                 answer = parsed.action_input.get("result") or "(completed)"
             elif isinstance(parsed.action_input, str):
@@ -625,6 +623,7 @@ def run_loop(
         if parsed.action:
             tool_name = parsed.action
             tool_input = parsed.action_input or {}
+            _render_skill_progress(skill_name, iteration, tool_name, tool_input, quiet)
 
             if not quiet:
                 render_step(
@@ -772,6 +771,41 @@ def _handle_ask(questions: list[str], quiet: bool) -> str:
             answer = "(no response)"
         responses.append(f"Q: {q}\nA: {answer}")
     return "\n".join(responses)
+
+
+def _render_skill_progress(
+    skill_name: str, iteration: int, tool_name: str, tool_input, quiet: bool
+) -> None:
+    """Show compact skill progress: skill:name [N] tool: detail."""
+    if not skill_name or not quiet:
+        return
+    from agent_cli.render import C, console
+
+    # Build detail from tool input
+    detail = ""
+    if isinstance(tool_input, dict):
+        if tool_name in ("read_file", "write_file", "edit_file"):
+            path = tool_input.get("path", "")
+            if path:
+                detail = f" {path.split('/')[-1]}"
+        elif tool_name == "shell":
+            cmd = tool_input.get("command", "")
+            if cmd:
+                detail = f" {cmd[:50]}"
+        elif tool_name == "run_skill":
+            name = tool_input.get("name", "")
+            detail = f" {name}"
+
+    if tool_name == "complete":
+        console.print(
+            f"  [{C['muted']}]skill:{skill_name}[/] [{C['accent']}][{iteration}] {tool_name} ✓[/]",
+            highlight=False,
+        )
+    else:
+        console.print(
+            f"  [{C['muted']}]skill:{skill_name} [{iteration}] {tool_name}:{detail}[/]",
+            highlight=False,
+        )
 
 
 def _build_internal_skill_summary(ctx, turn_before: int) -> str:
