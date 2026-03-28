@@ -774,6 +774,28 @@ def _handle_ask(questions: list[str], quiet: bool) -> str:
     return "\n".join(responses)
 
 
+def _build_internal_skill_summary(ctx, turn_before: int) -> str:
+    """Build a summary of internal skill calls that happened since turn_before."""
+    if not ctx:
+        return ""
+    from agent_cli.context.scratchpad import build_artifact_index
+
+    index = build_artifact_index(ctx._scratchpad_dir)
+    internal = []
+    for a in index:
+        if a.turn <= turn_before:
+            continue
+        if "complete" not in a.tags:
+            continue
+        skill_tag = next((t for t in a.tags if t.startswith("skill:")), None)
+        if skill_tag:
+            internal.append(f"- run_skill({skill_tag[6:]}): {a.summary}")
+
+    if not internal:
+        return ""
+    return "\n[Internal skill calls during this execution:]\n" + "\n".join(internal)
+
+
 def _handle_run_skill(
     skill_input: dict,
     provider_name: str,
@@ -823,6 +845,8 @@ def _handle_run_skill(
         ctx.set_skill_context(skill_name=name, parent_turn=ctx._turn_count)
 
     render_status("running", f"Running skill: {name}...")
+    turn_before = ctx._turn_count if ctx else 0
+
     try:
         from agent_cli.providers import create_provider
 
@@ -850,7 +874,12 @@ def _handle_run_skill(
             _debug_log(
                 f"run_skill({name}) returned {repr(result)} (inner loop stopped without complete)"
             )
-        obs = OBS_SUCCESS.format(result=result or "(skill returned no result)")
+        skill_header = (
+            f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
+        )
+        body = result or "(skill returned no result)"
+        internal = _build_internal_skill_summary(ctx, turn_before)
+        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}{internal}")
     finally:
         # Reset skill context
         if ctx:

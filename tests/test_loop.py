@@ -1575,6 +1575,75 @@ class TestRunSkillIntercept:
             )
         assert result == "ok"  # loop continued after error
 
+    def test_run_skill_result_includes_skill_header(self, caps, tmp_path):
+        """run_skill result includes SKILL: name(args) header."""
+        from agent_cli.loop import _handle_run_skill
+        from agent_cli.skills.models import Skill
+        from unittest.mock import patch
+
+        mock_skills = {
+            "summarize": Skill(
+                name="summarize",
+                description="Sum",
+                prompt_template="Sum $ARGUMENTS",
+                max_iter=3,
+            )
+        }
+        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+            with patch(
+                "agent_cli.skills.executor.execute_skill", return_value="Summary done"
+            ):
+                obs = _handle_run_skill(
+                    skill_input={"name": "summarize", "arguments": "./src"},
+                    provider_name="ollama",
+                    base_url="http://localhost:11434",
+                    api_key="",
+                    capabilities=caps,
+                    model="test",
+                    ctx=None,
+                    session=None,
+                    parent_skill_name="",
+                )
+        assert "SKILL: summarize" in obs
+        assert "./src" in obs
+        assert "Summary done" in obs
+
+    def test_run_skill_result_includes_internal_calls(self, caps, tmp_path):
+        """When inner skill calls another skill, result shows internal call history."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import save_artifact
+
+        ctx = ContextManager(
+            provider=MagicMock(),
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        ctx.init_task("test")
+
+        # Simulate: turn_before=0, then internal skill created artifacts
+        ctx.begin_turn("q")  # turn 1
+        save_artifact(
+            turn=2,
+            content="shell output",
+            tags=["shell", "skill:summarize"],
+            summary="shell: ls",
+            base=tmp_path,
+        )
+        save_artifact(
+            turn=3,
+            content="optimize result",
+            tags=["complete", "skill:optimize"],
+            summary="Task completed: Analysis done",
+            base=tmp_path,
+        )
+
+        from agent_cli.loop import _build_internal_skill_summary
+
+        summary = _build_internal_skill_summary(ctx, turn_before=0)
+        assert "optimize" in summary
+        assert "Analysis done" in summary
+
 
 class TestSkillStack:
     """Skill stack prevents recursive calls (A→B ok, A→B→A blocked)."""
