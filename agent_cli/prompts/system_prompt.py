@@ -74,7 +74,8 @@ RULES = """\
 3. If observation shows error, fix parameters and retry
 4. Respond in the same language as the user
 5. Do NOT include "observation" — that is injected by the system
-6. Output ONLY valid JSON, nothing else"""
+6. Output ONLY valid JSON, nothing else
+7. NEVER invoke yourself recursively — do NOT run agent-cli, python agent-cli.py, or any command that starts this tool again via shell"""
 
 SMALL_MODEL_HINTS = """\
 ## Important
