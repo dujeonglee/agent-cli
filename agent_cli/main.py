@@ -637,7 +637,10 @@ def chat(
             session=session,
         )
 
-        if result is None:
+        if result is not None:
+            # Save final answer to context for next turn continuity
+            ctx.add("assistant", result)
+        else:
             console.print(
                 f"\n[{C['accent']}]Loop stopped without final answer. "
                 f"You can:[/]\n"
