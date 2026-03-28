@@ -225,10 +225,10 @@ def run_loop(
         # 4. Native tool calling path (Anthropic/OpenAI)
         if response.tool_calls:
             if len(response.tool_calls) == 1:
-                tc0 = response.tool_calls[0]
+                first_toolcall = response.tool_calls[0]
 
                 # 4a. Complete tool → extract result and return
-                if tc0["name"] == "complete":
+                if first_toolcall["name"] == "complete":
                     _render_skill_progress(
                         skill_name,
                         iteration,
@@ -238,8 +238,8 @@ def run_loop(
                         thought=llm_text[:100],
                     )
                     answer = (
-                        tc0.get("input", {}).get("result") or "(completed)"
-                        if isinstance(tc0.get("input"), dict)
+                        first_toolcall.get("input", {}).get("result") or "(completed)"
+                        if isinstance(first_toolcall.get("input"), dict)
                         else "(completed)"
                     )
                     # Fulfillment guard
@@ -273,15 +273,15 @@ def run_loop(
                         return answer
 
                 # 4b. Ask tool — prompt user (native path)
-                if tc0["name"] == "ask":
-                    questions = _extract_questions(tc0.get("input"))
+                if first_toolcall["name"] == "ask":
+                    questions = _extract_questions(first_toolcall.get("input"))
                     if questions:
                         user_response = _handle_ask(questions, quiet)
                         obs_msg = f"User responded:\n{user_response}"
                         new_msgs = _format_tool_call_messages(
                             provider_name,
                             response,
-                            [{"tool_call": tc0, "output": obs_msg}],
+                            [{"tool_call": first_toolcall, "output": obs_msg}],
                         )
                         messages.extend(new_msgs)
                         if ctx:
@@ -295,10 +295,10 @@ def run_loop(
                         continue
 
                 # 4c. run_skill — intercept at loop level (needs ctx)
-                if tc0["name"] == "run_skill":
+                if first_toolcall["name"] == "run_skill":
                     skill_input = (
-                        tc0.get("input", {})
-                        if isinstance(tc0.get("input"), dict)
+                        first_toolcall.get("input", {})
+                        if isinstance(first_toolcall.get("input"), dict)
                         else {}
                     )
                     obs = _handle_run_skill(
@@ -321,7 +321,7 @@ def run_loop(
                     new_msgs = _format_tool_call_messages(
                         provider_name,
                         response,
-                        [{"tool_call": tc0, "output": obs}],
+                        [{"tool_call": first_toolcall, "output": obs}],
                     )
                     messages.extend(new_msgs)
                     if ctx:
@@ -336,10 +336,10 @@ def run_loop(
                     continue
 
                 # 4c-2. read_artifact — needs ctx for scratchpad_dir
-                if tc0["name"] == "read_artifact":
+                if first_toolcall["name"] == "read_artifact":
                     art_input = (
-                        tc0.get("input", {})
-                        if isinstance(tc0.get("input"), dict)
+                        first_toolcall.get("input", {})
+                        if isinstance(first_toolcall.get("input"), dict)
                         else {}
                     )
                     from agent_cli.tools.read_artifact import tool_read_artifact
@@ -352,7 +352,7 @@ def run_loop(
                     new_msgs = _format_tool_call_messages(
                         provider_name,
                         response,
-                        [{"tool_call": tc0, "output": obs}],
+                        [{"tool_call": first_toolcall, "output": obs}],
                     )
                     messages.extend(new_msgs)
                     if ctx:
@@ -367,7 +367,9 @@ def run_loop(
                     continue
 
                 # 4d. Echo-as-final-answer pattern
-                echo_answer = _try_echo_as_final(tc0["name"], tc0["input"])
+                echo_answer = _try_echo_as_final(
+                    first_toolcall["name"], first_toolcall["input"]
+                )
                 if echo_answer:
                     if ctx:
                         ctx.end_turn(
@@ -777,18 +779,18 @@ def run_loop(
 def _extract_questions(action_input) -> list[str]:
     """Extract questions list from ask tool input, handling all formats."""
     if isinstance(action_input, dict):
-        qs = action_input.get("questions") or action_input.get("question")
+        raw_questions = action_input.get("questions") or action_input.get("question")
     elif isinstance(action_input, str):
-        qs = action_input
+        raw_questions = action_input
     elif isinstance(action_input, list):
-        qs = action_input
+        raw_questions = action_input
     else:
         return []
     # Normalize to list
-    if isinstance(qs, str):
-        return [qs] if qs else []
-    if isinstance(qs, list):
-        return [str(q) for q in qs if q]
+    if isinstance(raw_questions, str):
+        return [raw_questions] if raw_questions else []
+    if isinstance(raw_questions, list):
+        return [str(q) for q in raw_questions if q]
     return []
 
 
