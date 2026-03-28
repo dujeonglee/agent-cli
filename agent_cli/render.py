@@ -31,11 +31,21 @@ ICONS = {
 }
 
 
-def render_header(provider: str, model: str, max_iter: int) -> None:
+def render_header(
+    provider: str,
+    model: str,
+    max_iter: int,
+    skill_name: str = "",
+    skill_args: str = "",
+) -> None:
     console.print()
     t = Text(justify="center")
-    t.append("AGENTIC LOOP", style="bold bright_cyan")
-    t.append("  ·  Typer + Rich", style="grey50")
+    if skill_name:
+        args_label = f"({skill_args})" if skill_args else ""
+        t.append(f"SKILL: {skill_name}{args_label}", style="bold bright_cyan")
+    else:
+        t.append("AGENTIC LOOP", style="bold bright_cyan")
+        t.append("  ·  Typer + Rich", style="grey50")
     iter_label = str(max_iter) if max_iter > 0 else "∞"
     console.print(
         Panel(

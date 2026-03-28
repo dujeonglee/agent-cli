@@ -157,7 +157,13 @@ class AgentLoop:
         )
 
         if not self.quiet:
-            render_header(self.provider_name, self.model, self.max_iter)
+            render_header(
+                self.provider_name,
+                self.model,
+                self.max_iter,
+                skill_name=self.skill_name,
+                skill_args=self.query if self.skill_name else "",
+            )
 
         # Log query to session (skip for skill internal loops)
         if self.session and self.depth == 0 and not self.skill_name:
