@@ -604,7 +604,11 @@ def chat(
             turn += 1
             if turn == 1 and not session.query:
                 session.query = query[:100]
+            # Save skill invocation and result to context for continuity
+            skill_args = parts[1] if len(parts) > 1 else ""
+            ctx.add("user", f"Used skill: {cmd_name}({skill_args}) — results follow")
             if result is not None:
+                ctx.add("assistant", result)
                 console.print(f"\n[{C['final']}]{result}[/]")
             else:
                 console.print(

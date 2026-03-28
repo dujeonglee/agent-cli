@@ -957,6 +957,139 @@ class TestAgentLoopClass:
         assert result == "42"
 
 
+class TestContextContinuity:
+    """Verify context is properly maintained across turns and tools."""
+
+    def test_tool_observation_in_ctx(self, caps, tmp_path):
+        """Tool result is saved to ctx via _append_text_observation."""
+        from agent_cli.context.manager import ContextManager
+
+        test_file = tmp_path / "f.txt"
+        test_file.write_text("hello")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Read file",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        # ctx should have: user query + assistant (read_file) + user (observation) + assistant (complete)
+        msgs = ctx.get_messages()
+        roles = [m["role"] for m in msgs]
+        assert roles.count("assistant") >= 2  # at least tool call + complete
+
+    def test_complete_answer_not_in_ctx_after_run_loop(self, caps, tmp_path):
+        """run_loop returns answer but does NOT add it to ctx (caller's job)."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = _make_provider(_complete("final answer"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+        assert result == "final answer"
+
+        # run_loop does NOT add the final answer to ctx — that's main.py's responsibility
+        msgs = ctx.get_messages()
+        contents = [m.get("content", "") for m in msgs]
+        # The final "final answer" should NOT be in ctx (main.py adds it)
+        assert not any("final answer" == c for c in contents)
+
+    def test_ask_response_in_ctx(self, caps, tmp_path, monkeypatch):
+        """ask tool response is saved to ctx."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "need info",
+                    "action": "ask",
+                    "action_input": {"questions": ["What file?"]},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        monkeypatch.setattr("builtins.input", lambda _: "test.py")
+        run_loop(
+            query="Help",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        msgs = ctx.get_messages()
+        all_content = " ".join(m.get("content", "") for m in msgs)
+        assert "test.py" in all_content  # user response saved
+
+    def test_ctx_messages_grow_with_iterations(self, caps, tmp_path):
+        """Each iteration adds messages to ctx."""
+        from agent_cli.context.manager import ContextManager
+
+        test_file = tmp_path / "a.txt"
+        test_file.write_text("data")
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "run",
+                    "action": "shell",
+                    "action_input": {"command": "echo ok"},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        run_loop(
+            query="Do",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+        )
+
+        msgs = ctx.get_messages()
+        # Should have: scratchpad? + user query + (read_file pair) + (shell pair) + more
+        assert len(msgs) >= 5
+
+
 class TestAppendObservationHelpers:
     """Test _append_native_observation and _append_text_observation."""
 
