@@ -123,4 +123,5 @@ def execute_skill(
         session=session,
         skill_name=skill.name,
         skill_stack=skill_stack,
+        skill_args=arguments,
     )

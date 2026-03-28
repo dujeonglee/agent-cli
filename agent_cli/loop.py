@@ -84,6 +84,7 @@ class AgentLoop:
         hooks_config: dict | None = None,
         skill_name: str = "",
         skill_stack: list[str] | None = None,
+        skill_args: str = "",
     ):
         self.query = query
         self.provider = provider
@@ -103,6 +104,7 @@ class AgentLoop:
         self.session = session
         self.hooks_config = hooks_config
         self.skill_name = skill_name
+        self.skill_args = skill_args
 
         # Derived state
         self.include_delegate = depth < max_depth
@@ -162,7 +164,7 @@ class AgentLoop:
                 self.model,
                 self.max_iter,
                 skill_name=self.skill_name,
-                skill_args=self.query if self.skill_name else "",
+                skill_args=self.skill_args,
             )
 
         # Log query to session (skip for skill internal loops)
@@ -836,6 +838,7 @@ def run_loop(
     hooks_config: dict | None = None,
     skill_name: str = "",
     skill_stack: list[str] | None = None,
+    skill_args: str = "",
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -862,6 +865,7 @@ def run_loop(
         hooks_config=hooks_config,
         skill_name=skill_name,
         skill_stack=skill_stack,
+        skill_args=skill_args,
     ).run()
 
 
