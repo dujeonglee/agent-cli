@@ -1576,6 +1576,79 @@ class TestRunSkillIntercept:
         assert result == "ok"  # loop continued after error
 
 
+class TestSkillStack:
+    """Skill stack prevents recursive calls (A→B ok, A→B→A blocked)."""
+
+    def test_run_skill_not_in_tools_inside_skill(self, caps, tmp_path):
+        """run_skill is removed from tools_list when inside a skill."""
+        from agent_cli.context.manager import ContextManager
+
+        # LLM tries to call run_skill inside a skill → should hit unknown tool
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "call another skill",
+                    "action": "run_skill",
+                    "action_input": {"name": "optimize", "arguments": "./"},
+                }
+            ),
+            _complete("done"),
+        )
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        # Run inside a skill (skill_name set)
+        result = run_loop(
+            query="Do stuff",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            quiet=True,
+            ctx=ctx,
+            skill_name="summarize",
+        )
+        assert result == "done"
+
+    def test_skill_stack_blocks_recursive(self, caps, tmp_path):
+        """Same skill in stack → blocked with error."""
+        from agent_cli.loop import _handle_run_skill
+
+        obs = _handle_run_skill(
+            skill_input={"name": "optimize", "arguments": "./"},
+            provider_name="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            capabilities=caps,
+            model="test",
+            ctx=None,
+            session=None,
+            parent_skill_name="",
+            skill_stack=["optimize"],  # already in stack
+        )
+        assert "recursive" in obs.lower() or "already" in obs.lower()
+
+    def test_skill_stack_allows_different(self, caps, tmp_path):
+        """Different skills in stack → allowed (A→B ok)."""
+        from agent_cli.loop import _handle_run_skill
+
+        # This will fail because we can't actually execute, but it should
+        # NOT be blocked by the stack check
+        obs = _handle_run_skill(
+            skill_input={"name": "summarize", "arguments": "./"},
+            provider_name="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            capabilities=caps,
+            model="test",
+            ctx=None,
+            session=None,
+            parent_skill_name="",
+            skill_stack=["optimize"],  # different skill
+        )
+        # Should NOT contain "recursive" error
+        assert "recursive" not in obs.lower()
+
+
 class TestRunSkillNoDuplicateArtifact:
     """F. No duplicate artifact from outer loop for run_skill."""
 

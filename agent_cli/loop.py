@@ -71,6 +71,7 @@ def run_loop(
     session=None,  # SessionMeta — avoid circular import
     hooks_config: dict | None = None,
     skill_name: str = "",
+    skill_stack: list[str] | None = None,
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -81,6 +82,11 @@ def run_loop(
     # Remove "ask" in non-interactive mode (no ctx)
     if not ctx and "ask" in tools_list:
         tools_list = [t for t in tools_list if t != "ask"]
+    # Build skill stack for recursive call prevention
+    if skill_stack is None:
+        skill_stack = []
+    if skill_name:
+        skill_stack = [*skill_stack, skill_name]
     # Remove "run_skill" inside skill execution (prevent recursive skill calls)
     if skill_name and "run_skill" in tools_list:
         tools_list = [t for t in tools_list if t != "run_skill"]
@@ -299,6 +305,7 @@ def run_loop(
                         ctx,
                         session,
                         skill_name,
+                        skill_stack=skill_stack,
                     )
                     if not quiet:
                         render_step(
@@ -557,9 +564,6 @@ def run_loop(
                 continue
 
         # 10b. run_skill — intercept at loop level (text parsing path)
-        _debug_log(
-            f"parsed.action={parsed.action} parse_stage={parsed.parse_stage} skill_name={skill_name} iter={iteration}"
-        )
         if parsed.action == "run_skill":
             skill_input = (
                 parsed.action_input if isinstance(parsed.action_input, dict) else {}
@@ -574,6 +578,7 @@ def run_loop(
                 ctx,
                 session,
                 skill_name,
+                skill_stack=skill_stack,
             )
             if not quiet:
                 render_step("observation", obs, iteration, tool_name="run_skill")
@@ -584,9 +589,6 @@ def run_loop(
                 ctx.add("assistant", llm_text)
                 ctx.add("user", obs_msg)
             tools_called.append("run_skill")
-            _debug_log(
-                f"run_skill obs added to messages. obs_len={len(obs)} msg_count={len(messages)}"
-            )
             if depth == 0:
                 _log_to_session(
                     session,
@@ -782,6 +784,7 @@ def _handle_run_skill(
     ctx,
     session,
     parent_skill_name: str = "",
+    skill_stack: list[str] | None = None,
 ) -> str:
     """Handle run_skill at loop level with full ctx access."""
     from agent_cli.skills import load_skills
@@ -795,6 +798,12 @@ def _handle_run_skill(
 
     if not name:
         return OBS_ERROR.format(error="run_skill: 'name' is required.")
+
+    # Skill stack: prevent recursive calls (A→B→A)
+    if skill_stack and name in skill_stack:
+        return OBS_ERROR.format(
+            error=f"Recursive skill call blocked: '{name}' is already in the call stack {skill_stack}."
+        )
 
     skills = load_skills()
     if name not in skills:
@@ -814,10 +823,6 @@ def _handle_run_skill(
         ctx.set_skill_context(skill_name=name, parent_turn=ctx._turn_count)
 
     render_status("running", f"Running skill: {name}...")
-    _debug_log(
-        f"run_skill({name}) provider={provider_name} base_url={base_url} model={model}"
-    )
-
     try:
         from agent_cli.providers import create_provider
 
@@ -834,6 +839,7 @@ def _handle_run_skill(
             quiet=True,
             ctx=ctx,
             session=session,
+            skill_stack=skill_stack,
         )
     except Exception as e:
         result = None
