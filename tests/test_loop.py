@@ -876,6 +876,87 @@ class TestExtractQuestions:
         assert _extract_questions(["a", "", "b"]) == ["a", "b"]
 
 
+class TestAgentLoopClass:
+    """Test AgentLoop class directly."""
+
+    def test_init_stores_params(self, caps):
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="test",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            verbose=True,
+            skill_name="summarize",
+        )
+        assert loop.query == "test"
+        assert loop.model == "m"
+        assert loop.verbose is True
+        assert loop.skill_name == "summarize"
+        assert "summarize" in loop.skill_stack
+
+    def test_derived_state(self, caps):
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            depth=0,
+            max_depth=2,
+        )
+        assert loop.include_delegate is True
+        assert "complete" in loop.tools_list
+
+    def test_should_continue(self, caps):
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            max_iter=5,
+        )
+        loop.iteration = 4
+        assert loop._should_continue() is True
+        loop.iteration = 5
+        assert loop._should_continue() is False
+
+    def test_should_continue_unlimited(self, caps):
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            max_iter=0,
+        )
+        loop.iteration = 999
+        assert loop._should_continue() is True
+
+    def test_run_returns_answer(self, caps):
+        """AgentLoop.run() returns the complete answer."""
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.base import LLMResponse
+
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(content=_complete("42"))
+
+        loop = AgentLoop(
+            query="what",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            quiet=True,
+        )
+        result = loop.run()
+        assert result == "42"
+
+
 class TestAppendObservationHelpers:
     """Test _append_native_observation and _append_text_observation."""
 

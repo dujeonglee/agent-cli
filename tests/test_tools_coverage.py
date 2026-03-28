@@ -18,6 +18,48 @@ from agent_cli.tools import TOOLS, VIRTUAL_TOOLS, execute_tool
 from agent_cli.tools.truncation import truncate_output, TruncationConfig
 
 
+class TestToolResult:
+    """Test ToolResult dataclass behavior."""
+
+    def test_success_result(self):
+        from agent_cli.tools.result import ToolResult
+
+        r = ToolResult(True, output="hello")
+        assert r.success is True
+        assert r.output == "hello"
+        assert r.error == ""
+
+    def test_error_result(self):
+        from agent_cli.tools.result import ToolResult
+
+        r = ToolResult(False, error="file not found")
+        assert r.success is False
+        assert r.output == ""
+        assert r.error == "file not found"
+
+    def test_defaults(self):
+        from agent_cli.tools.result import ToolResult
+
+        r = ToolResult(True)
+        assert r.output == ""
+        assert r.error == ""
+
+    def test_execute_tool_returns_toolresult(self):
+        """execute_tool always returns ToolResult, never raises."""
+        result = execute_tool("shell", {"command": "echo hi"})
+        assert isinstance(
+            result,
+            __import__("agent_cli.tools.result", fromlist=["ToolResult"]).ToolResult,
+        )
+        assert result.success
+
+    def test_execute_tool_unknown_returns_error(self):
+        """Unknown tool → ToolResult(False) instead of RuntimeError."""
+        result = execute_tool("nonexistent_tool", {})
+        assert result.success is False
+        assert "Unknown tool" in result.error
+
+
 class TestWriteFile:
     def test_creates_file(self, tmp_path):
         target = tmp_path / "new.txt"
