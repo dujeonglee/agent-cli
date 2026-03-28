@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 7,138 LOC (48 Python 파일) + 7,750 LOC 테스트 (26 파일)
-> 총 테스트: 515 유닛 + 65 통합 = 580개
+> 총 소스: 7,363 LOC (48 Python 파일) + 7,750 LOC 테스트 (26 파일)
+> 총 테스트: 523 유닛 + 65 통합 = 588개
 
 ---
 
@@ -49,7 +49,7 @@ agent_cli/
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1099) ReAct 에이전트 루프 + scratchpad/hook/run_skill 통합
+├── loop.py                  (1453) AgentLoop 클래스 + ReAct 루프 + scratchpad/hook/run_skill
 ├── render.py                (292)  Rich 터미널 렌더링 + 모델 정보 + compact observation
 │
 ├── providers/                      LLM 프로바이더 어댑터
@@ -288,7 +288,7 @@ class Plan:
 
 ## 5. 핵심 플로우
 
-### 5.1 ReAct 에이전트 루프 (`loop.py`)
+### 5.1 ReAct 에이전트 루프 (`loop.py` — `AgentLoop` 클래스)
 
 ```
 사용자 쿼리 입력

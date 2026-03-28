@@ -59,6 +59,754 @@ assert _CHECKPOINT_FIRST >= _CHECKPOINT_INTERVAL, (
 )
 
 
+class AgentLoop:
+    """Encapsulates the ReAct agent loop state and execution."""
+
+    def __init__(
+        self,
+        query: str,
+        provider: LLMProvider,
+        capabilities: ModelCapabilities,
+        model: str,
+        provider_name: str = "ollama",
+        base_url: str = "",
+        api_key: str = "",
+        max_iter: int = 0,
+        verbose: bool = False,
+        ctx: ContextManager | None = None,
+        quiet: bool = False,
+        depth: int = 0,
+        max_depth: int = 2,
+        delegate_timeout: int = 300,
+        active_tools: list[str] | None = None,
+        plan_context: str | None = None,
+        session=None,  # SessionMeta — avoid circular import
+        hooks_config: dict | None = None,
+        skill_name: str = "",
+        skill_stack: list[str] | None = None,
+    ):
+        self.query = query
+        self.provider = provider
+        self.capabilities = capabilities
+        self.model = model
+        self.provider_name = provider_name
+        self.base_url = base_url
+        self.api_key = api_key
+        self.max_iter = max_iter
+        self.verbose = verbose
+        self.ctx = ctx
+        self.quiet = quiet
+        self.depth = depth
+        self.max_depth = max_depth
+        self.delegate_timeout = delegate_timeout
+        self.plan_context = plan_context
+        self.session = session
+        self.hooks_config = hooks_config
+        self.skill_name = skill_name
+
+        # Derived state
+        self.include_delegate = depth < max_depth
+        self.tools_list = active_tools or list(TOOLS.keys())
+        # Remove "ask" in non-interactive mode (no ctx)
+        if not ctx and "ask" in self.tools_list:
+            self.tools_list = [t for t in self.tools_list if t != "ask"]
+        # Build skill stack for recursive call prevention
+        if skill_stack is None:
+            skill_stack = []
+        if skill_name:
+            skill_stack = [*skill_stack, skill_name]
+        self.skill_stack = skill_stack
+
+        # Loop state
+        self.iteration = 0
+        self.tools_called: list[str] = []
+        self.overflow_retried = False
+        self.recent_tool_history: list[dict] = []
+        self.messages: list[dict] = []
+        self.system = ""
+        # Sentinels: distinct from None (failure) and str (answer)
+        self._CONTINUE = object()  # keep looping
+        self._RETRY = object()  # overflow retry
+
+    def run(self) -> str | None:
+        """Main entry point -- replaces run_loop body.
+
+        Returns the final answer string, or None if max iterations reached.
+        """
+        self._setup()
+        while self._should_continue():
+            self.iteration += 1
+            self._begin_iteration()
+            result = self._execute_iteration()
+            if result is not self._CONTINUE:
+                return result
+        return self._on_max_iter()
+
+    def _setup(self) -> None:
+        """Initialize system prompt, scratchpad, messages."""
+        _set_debug_verbose(self.verbose)
+
+        # Note: run_skill stays in tools_list -- skill_stack prevents recursion
+        # System prompt hides skills already in the stack from LLM
+        self.system = build_system_prompt(
+            capabilities=self.capabilities,
+            active_tools=self.tools_list,
+            include_delegate=self.include_delegate,
+            plan_context=self.plan_context,
+            skill_stack=self.skill_stack,
+        )
+
+        if not self.quiet:
+            render_header(self.provider_name, self.model, self.max_iter)
+
+        # Log query to session (skip for skill internal loops)
+        if self.session and self.depth == 0 and not self.skill_name:
+            _log_to_session(
+                self.session,
+                {"iter": 0, "action": "query", "observation": self.query},
+            )
+
+        # Scratchpad: auto-init on first run, set skill context if inside a skill
+        if self.ctx:
+            from agent_cli.context.scratchpad import load_scratchpad
+
+            if not load_scratchpad(self.ctx._scratchpad_dir):
+                self.ctx.init_task(self.query)
+            # Set or clear skill context (for artifact subdirectory routing)
+            self.ctx.set_skill_context(
+                skill_name=self.skill_name,
+                parent_turn=self.ctx._turn_count if self.skill_name else 0,
+            )
+
+        # Message setup
+        if self.ctx:
+            self.ctx.add("user", self.query)
+            self.messages = self.ctx.get_messages()
+        else:
+            self.messages = [{"role": "user", "content": self.query}]
+
+    def _should_continue(self) -> bool:
+        return self.max_iter <= 0 or self.iteration < self.max_iter
+
+    def _begin_iteration(self) -> None:
+        """Scratchpad begin_turn, skill progress, iter sep."""
+        # Scratchpad: begin turn for each iteration
+        if self.ctx:
+            self.ctx.begin_turn(self.query)
+        # Skill progress: shown per-tool after LLM response (see _render_skill_progress)
+        if not self.quiet:
+            render_iter_sep(self.iteration)
+
+    def _execute_iteration(self) -> str | None:
+        """Single iteration: checkpoint, overflow, LLM call, dispatch."""
+        # 1. Checkpoint: nudge LLM if running too long
+        self._maybe_checkpoint()
+
+        # 2. Preemptive overflow check
+        if check_preemptive_overflow(self.messages, self.capabilities):
+            if self.ctx:
+                render_status("running", "Compressing context (preemptive)...")
+                self.ctx.force_compress()
+                self.messages = self.ctx.get_messages()
+            else:
+                # Single-shot: trim oldest observations
+                self.messages = _trim_old_observations(self.messages, self.capabilities)
+
+        # 2. Prepare tools for native tool calling
+        call_kwargs: dict = {}
+        if self.capabilities.supports_tool_calling:
+            if self.provider_name == "anthropic":
+                call_kwargs["tools"] = convert_to_anthropic_tools(
+                    self.tools_list, include_delegate=self.include_delegate
+                )
+            elif self.provider_name == "openai":
+                call_kwargs["tools"] = convert_to_openai_tools(
+                    self.tools_list, include_delegate=self.include_delegate
+                )
+
+        # 3. LLM call
+        response = self._call_llm(call_kwargs)
+        if response is None:
+            return None  # LLM failed
+        if response == self._RETRY:
+            return self._CONTINUE  # Overflow retry
+
+        llm_text = response.content
+
+        if not self.quiet:
+            render_raw(llm_text, self.iteration, self.verbose)
+
+        # 4. Native tool calling path (Anthropic/OpenAI)
+        if response.tool_calls:
+            return self._handle_native_path(response, llm_text)
+
+        # 5. Text parsing path (Ollama, fallback)
+        return self._handle_text_path(llm_text)
+
+    def _maybe_checkpoint(self) -> None:
+        """Inject checkpoint message if iteration count is high."""
+        if self.iteration >= _CHECKPOINT_FIRST and (
+            (self.iteration - _CHECKPOINT_FIRST) % _CHECKPOINT_INTERVAL == 0
+        ):
+            recent = self.recent_tool_history[-_CHECKPOINT_INTERVAL:]
+            history_summary = "\n".join(
+                f"  iter {h['iter']}: {h['tool']} → {h['result'][:100]}" for h in recent
+            )
+            checkpoint_msg = (
+                f"[SYSTEM] CHECKPOINT — {self.iteration} iterations used.\n"
+                f"Recent tool calls:\n{history_summary}\n\n"
+                f"You MUST now do ONE of:\n"
+                f'1. Use the complete tool: {{"thought": "...", "action": "complete", "action_input": {{"result": "your result"}}}}\n'
+                f"2. If genuinely incomplete, explain what SPECIFIC step remains and do it.\n\n"
+                f"Do NOT call echo, cat, or any tool just to confirm completion.\n"
+                f"Do NOT repeat previous tool calls.\n"
+                f"If you already completed the task, call the complete tool IMMEDIATELY."
+            )
+            self.messages.append({"role": "user", "content": checkpoint_msg})
+            if self.ctx:
+                self.ctx.add("user", checkpoint_msg)
+            if not self.quiet:
+                render_status("running", f"Checkpoint at iteration {self.iteration}")
+
+    def _call_llm(self, call_kwargs: dict):
+        """LLM call with overflow retry. Returns response or None on failure."""
+        # Context dump (verbose only)
+        if self.verbose and not self.quiet:
+            render_context_dump(self.messages, self.iteration)
+        _debug_log(
+            f"LLM_CALL iter={self.iteration} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
+        )
+
+        try:
+            response = self.provider.call(
+                messages=self.messages,
+                system=self.system,
+                model=self.model,
+                capabilities=self.capabilities,
+                **call_kwargs,
+            )
+            return response
+        except Exception as e:
+            if is_context_overflow(str(e)):
+                if self.ctx and not self.overflow_retried:
+                    render_status("running", "Context overflow — compressing...")
+                    self.ctx.force_compress()
+                    self.messages = self.ctx.get_messages()
+                    self.overflow_retried = True
+                    self.iteration -= 1
+                    return self._RETRY
+            _debug_log(
+                f"LLM call failed: {e} skill_name={self.skill_name} iter={self.iteration}"
+            )
+            render_step("error", f"LLM call failed: {e}", self.iteration)
+            return None
+
+    def _handle_native_path(self, response, llm_text: str) -> str | None:
+        """Handle native tool calling response (Anthropic/OpenAI)."""
+        if len(response.tool_calls) == 1:
+            first_toolcall = response.tool_calls[0]
+
+            # 4a. Complete tool -> extract result and return
+            if first_toolcall["name"] == "complete":
+                _render_skill_progress(
+                    self.skill_name,
+                    self.iteration,
+                    "complete",
+                    {},
+                    self.quiet,
+                    thought=llm_text[:100],
+                )
+                answer = (
+                    first_toolcall.get("input", {}).get("result") or "(completed)"
+                    if isinstance(first_toolcall.get("input"), dict)
+                    else "(completed)"
+                )
+                # Fulfillment guard
+                if not self.tools_called and needs_tool_action(self.query):
+                    render_status(
+                        "error",
+                        "Answer rejected — no tool actions performed yet.",
+                        self.iteration,
+                    )
+                    # Fall through to execute as normal tool (will fail gracefully)
+                else:
+                    _log_tool_to_session(
+                        self.session,
+                        self.depth,
+                        self.iteration,
+                        "complete",
+                        answer,
+                    )
+                    # Scratchpad: save complete result
+                    if self.ctx:
+                        self.ctx.end_turn(
+                            content=answer,
+                            tags=_build_artifact_tags("complete", {}, self.skill_name),
+                            summary=_build_artifact_summary("complete", {}, answer),
+                        )
+                    if not self.quiet:
+                        render_step("final", answer, self.iteration)
+                    return answer
+
+            # 4b. Ask tool -- prompt user (native path)
+            if first_toolcall["name"] == "ask":
+                questions = _extract_questions(first_toolcall.get("input"))
+                if questions:
+                    user_response = _handle_ask(questions, self.quiet)
+                    obs_msg = f"User responded:\n{user_response}"
+                    _append_native_observation(
+                        self.messages,
+                        self.ctx,
+                        self.provider_name,
+                        response,
+                        [{"tool_call": first_toolcall, "output": obs_msg}],
+                    )
+                    return self._CONTINUE
+
+            # 4c. run_skill -- intercept at loop level (needs ctx)
+            if first_toolcall["name"] == "run_skill":
+                skill_input = (
+                    first_toolcall.get("input", {})
+                    if isinstance(first_toolcall.get("input"), dict)
+                    else {}
+                )
+                obs = _handle_run_skill(
+                    skill_input,
+                    self.provider_name,
+                    self.base_url,
+                    self.api_key,
+                    self.capabilities,
+                    self.model,
+                    self.ctx,
+                    self.session,
+                    self.skill_name,
+                    skill_stack=self.skill_stack,
+                )
+                if not self.quiet:
+                    render_step(
+                        "observation",
+                        obs,
+                        self.iteration,
+                        tool_name="run_skill",
+                    )
+                _append_native_observation(
+                    self.messages,
+                    self.ctx,
+                    self.provider_name,
+                    response,
+                    [{"tool_call": first_toolcall, "output": obs}],
+                )
+                self.tools_called.append("run_skill")
+                return self._CONTINUE
+
+            # 4c-2. read_artifact -- needs ctx for scratchpad_dir
+            if first_toolcall["name"] == "read_artifact":
+                art_input = (
+                    first_toolcall.get("input", {})
+                    if isinstance(first_toolcall.get("input"), dict)
+                    else {}
+                )
+                from agent_cli.tools.read_artifact import tool_read_artifact
+
+                obs = tool_read_artifact(art_input, ctx=self.ctx)
+                if not self.quiet:
+                    render_step(
+                        "observation",
+                        obs,
+                        self.iteration,
+                        tool_name="read_artifact",
+                    )
+                _append_native_observation(
+                    self.messages,
+                    self.ctx,
+                    self.provider_name,
+                    response,
+                    [{"tool_call": first_toolcall, "output": obs}],
+                )
+                self.tools_called.append("read_artifact")
+                return self._CONTINUE
+
+            # 4d. Echo-as-final-answer pattern
+            echo_answer = _try_echo_as_final(
+                first_toolcall["name"], first_toolcall["input"]
+            )
+            if echo_answer:
+                if self.ctx:
+                    self.ctx.end_turn(
+                        content=echo_answer,
+                        tags=_build_artifact_tags("complete", {}, self.skill_name),
+                        summary=_build_artifact_summary("complete", {}, echo_answer),
+                    )
+                if not self.quiet:
+                    render_step("final", echo_answer, self.iteration)
+                return echo_answer
+
+        observations = []
+        for tc in response.tool_calls:
+            tool_name = tc["name"]
+            tool_input = tc["input"]
+            _render_skill_progress(
+                self.skill_name,
+                self.iteration,
+                tool_name,
+                tool_input,
+                self.quiet,
+                thought=llm_text[:100],
+            )
+
+            if not self.quiet:
+                render_step(
+                    "action",
+                    "",
+                    self.iteration,
+                    tool_name=tool_name,
+                    tool_input=json.dumps(tool_input, ensure_ascii=False)
+                    if isinstance(tool_input, dict)
+                    else str(tool_input),
+                )
+
+            # Execute tool (shared logic -- tracks tools_called + history)
+            obs = _execute_single_tool(
+                tool_name,
+                tool_input,
+                self.tools_list,
+                self.include_delegate,
+                self.capabilities,
+                self.provider_name,
+                self.model,
+                self.base_url,
+                self.api_key,
+                self.delegate_timeout,
+                self.tools_called,
+                self.recent_tool_history,
+                self.iteration,
+                hooks_config=self.hooks_config,
+            )
+
+            if not self.quiet:
+                render_step("observation", obs, self.iteration, tool_name=tool_name)
+            observations.append({"tool_call": tc, "output": obs})
+
+            # Scratchpad: save tool result as artifact
+            if self.ctx:
+                self.ctx.end_turn(
+                    content=obs,
+                    tags=_build_artifact_tags(tool_name, tool_input, self.skill_name),
+                    summary=_build_artifact_summary(tool_name, tool_input, obs),
+                )
+
+            _log_tool_to_session(
+                self.session,
+                self.depth,
+                self.iteration,
+                tool_name,
+                obs,
+                action_input=_normalize_input(tool_input),
+            )
+
+        # Repeated call detection
+        if _detect_repeated_calls(self.recent_tool_history):
+            last = self.recent_tool_history[-1]
+            _debug_log(
+                f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={self.skill_name}"
+            )
+            render_status(
+                "error",
+                f"Repeated call detected: {last['tool']} called "
+                f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
+            )
+            return ""  # Non-None to exit loop
+
+        # Format messages based on provider
+        _append_native_observation(
+            self.messages, self.ctx, self.provider_name, response, observations
+        )
+        return self._CONTINUE
+
+    def _handle_text_path(self, llm_text: str) -> str | None:
+        """Handle text parsing response (Ollama, fallback)."""
+        parsed = parse_react(llm_text)
+
+        # 6. Thought
+        if parsed.thought and not self.quiet:
+            render_step("thought", parsed.thought, self.iteration)
+
+        # 7. Complete tool (text parsing path)
+        if parsed.action == "complete":
+            _render_skill_progress(
+                self.skill_name,
+                self.iteration,
+                "complete",
+                {},
+                self.quiet,
+                thought=parsed.thought or "",
+            )
+            if isinstance(parsed.action_input, dict):
+                answer = parsed.action_input.get("result") or "(completed)"
+            elif isinstance(parsed.action_input, str):
+                answer = parsed.action_input or "(completed)"
+            else:
+                answer = "(completed)"
+
+            # Fulfillment guard -- check BEFORE rendering
+            if not self.tools_called and needs_tool_action(self.query):
+                nudge = (
+                    "You called the complete tool, but the task likely requires "
+                    "tool actions (file operations, shell commands, etc.). "
+                    "Please use the appropriate tools first, then call complete."
+                )
+                _append_text_observation(self.messages, self.ctx, llm_text, nudge)
+                render_status(
+                    "error",
+                    "Answer rejected — no tool actions performed yet.",
+                    self.iteration,
+                )
+                return self._CONTINUE
+
+            _log_tool_to_session(
+                self.session,
+                self.depth,
+                self.iteration,
+                "complete",
+                answer,
+                thought=parsed.thought or "",
+            )
+
+            # Scratchpad: save complete result
+            if self.ctx:
+                self.ctx.end_turn(
+                    content=answer,
+                    tags=_build_artifact_tags("complete", {}, self.skill_name),
+                    summary=_build_artifact_summary("complete", {}, answer),
+                )
+            if not self.quiet:
+                render_step("final", answer, self.iteration)
+            return answer
+
+        # 9. Detect echo-as-final-answer (common small model pattern)
+        echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
+        if echo_answer:
+            _log_tool_to_session(
+                self.session,
+                self.depth,
+                self.iteration,
+                "complete (echo)",
+                echo_answer,
+                thought=parsed.thought or "",
+            )
+            if self.ctx:
+                self.ctx.end_turn(
+                    content=echo_answer,
+                    tags=_build_artifact_tags("complete", {}, self.skill_name),
+                    summary=_build_artifact_summary("complete", {}, echo_answer),
+                )
+            if not self.quiet:
+                render_step("final", echo_answer, self.iteration)
+            return echo_answer
+
+        # 10. Ask tool -- prompt user for input (text parsing path)
+        if parsed.action == "ask":
+            questions = _extract_questions(parsed.action_input)
+            if questions:
+                user_response = _handle_ask(questions, self.quiet)
+                obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
+                _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+                _log_tool_to_session(
+                    self.session,
+                    self.depth,
+                    self.iteration,
+                    "ask",
+                    user_response,
+                    thought=parsed.thought or "",
+                )
+                return self._CONTINUE
+
+        # 10b. run_skill -- intercept at loop level (text parsing path)
+        if parsed.action == "run_skill":
+            skill_input = (
+                parsed.action_input if isinstance(parsed.action_input, dict) else {}
+            )
+            obs = _handle_run_skill(
+                skill_input,
+                self.provider_name,
+                self.base_url,
+                self.api_key,
+                self.capabilities,
+                self.model,
+                self.ctx,
+                self.session,
+                self.skill_name,
+                skill_stack=self.skill_stack,
+            )
+            if not self.quiet:
+                render_step("observation", obs, self.iteration, tool_name="run_skill")
+            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
+            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+            self.tools_called.append("run_skill")
+            _log_tool_to_session(
+                self.session,
+                self.depth,
+                self.iteration,
+                "run_skill",
+                obs,
+                thought=parsed.thought or "",
+                action_input=_normalize_input(skill_input),
+            )
+            return self._CONTINUE
+
+        # 10c. read_artifact -- needs ctx (text parsing path)
+        if parsed.action == "read_artifact":
+            art_input = (
+                parsed.action_input if isinstance(parsed.action_input, dict) else {}
+            )
+            from agent_cli.tools.read_artifact import tool_read_artifact
+
+            obs = tool_read_artifact(art_input, ctx=self.ctx)
+            if not self.quiet:
+                render_step(
+                    "observation",
+                    obs,
+                    self.iteration,
+                    tool_name="read_artifact",
+                )
+            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
+            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+            self.tools_called.append("read_artifact")
+            return self._CONTINUE
+
+        # 11. Tool execution (text parsing path)
+        if parsed.action:
+            tool_name = parsed.action
+            tool_input = parsed.action_input or {}
+            _render_skill_progress(
+                self.skill_name,
+                self.iteration,
+                tool_name,
+                tool_input,
+                self.quiet,
+                thought=parsed.thought or "",
+            )
+
+            if not self.quiet:
+                render_step(
+                    "action",
+                    "",
+                    self.iteration,
+                    tool_name=tool_name,
+                    tool_input=json.dumps(tool_input, ensure_ascii=False)
+                    if isinstance(tool_input, dict)
+                    else str(tool_input),
+                )
+
+            # Execute tool (shared logic -- tracks tools_called + history)
+            observation = _execute_single_tool(
+                tool_name,
+                tool_input,
+                self.tools_list,
+                self.include_delegate,
+                self.capabilities,
+                self.provider_name,
+                self.model,
+                self.base_url,
+                self.api_key,
+                self.delegate_timeout,
+                self.tools_called,
+                self.recent_tool_history,
+                self.iteration,
+                hooks_config=self.hooks_config,
+            )
+
+            if not self.quiet:
+                render_step(
+                    "observation",
+                    observation,
+                    self.iteration,
+                    tool_name=tool_name,
+                )
+
+            # Scratchpad: save tool result as artifact
+            if self.ctx:
+                self.ctx.end_turn(
+                    content=observation,
+                    tags=_build_artifact_tags(tool_name, tool_input, self.skill_name),
+                    summary=_build_artifact_summary(tool_name, tool_input, observation),
+                )
+
+            # Repeated call detection
+            if _detect_repeated_calls(self.recent_tool_history):
+                last = self.recent_tool_history[-1]
+                _debug_log(
+                    f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={self.skill_name}"
+                )
+                render_status(
+                    "error",
+                    f"Repeated call detected: {last['tool']} called "
+                    f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
+                )
+                return None
+
+            _log_tool_to_session(
+                self.session,
+                self.depth,
+                self.iteration,
+                tool_name,
+                observation,
+                thought=parsed.thought or "",
+                action_input=_normalize_input(tool_input),
+            )
+
+            # Inject observation
+            obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
+            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+            return self._CONTINUE
+
+        # 12. Missing action or parse failure -- retry with appropriate hint
+        if parsed.parse_stage > 0:
+            # JSON parsed OK but no action -- LLM forgot to include action
+            _debug_log(
+                f"No action in parsed JSON (stage={parsed.parse_stage}):\n{llm_text}"
+            )
+            render_status(
+                "error",
+                "Response has no action. Retrying...",
+                self.iteration,
+            )
+            retry_msg = (
+                "Your JSON was parsed but has no action. "
+                "You MUST include an action. Either use a tool: "
+                '{"thought": "...", "action": "tool_name", "action_input": {...}} '
+                "or complete the task: "
+                '{"thought": "...", "action": "complete", "action_input": {"result": "..."}}'
+            )
+        else:
+            # JSON parse failed entirely
+            _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
+            render_status(
+                "error",
+                "Invalid JSON response. Retrying...",
+                self.iteration,
+            )
+            retry_msg = (
+                "Your response was not valid JSON. "
+                "Output ONLY a JSON object: "
+                '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
+                "No markdown fences, no extra text."
+            )
+        _append_text_observation(self.messages, self.ctx, llm_text, retry_msg)
+        self.iteration -= 1  # Don't count format retries
+        return self._CONTINUE
+
+    def _on_max_iter(self) -> None:
+        """Handle max iterations reached."""
+        if not self.quiet:
+            render_status("error", f"Max iterations ({self.max_iter}) reached.")
+        _debug_log(
+            f"run_loop returning None: max_iter={self.max_iter} reached, skill_name={self.skill_name}"
+        )
+        return None
+
+
+# Backward-compatible wrapper
 def run_loop(
     query: str,
     provider: LLMProvider,
@@ -85,628 +833,28 @@ def run_loop(
 
     Returns the final answer string, or None if max iterations reached.
     """
-    _set_debug_verbose(verbose)
-    include_delegate = depth < max_depth
-    tools_list = active_tools or list(TOOLS.keys())
-    # Remove "ask" in non-interactive mode (no ctx)
-    if not ctx and "ask" in tools_list:
-        tools_list = [t for t in tools_list if t != "ask"]
-    # Build skill stack for recursive call prevention
-    if skill_stack is None:
-        skill_stack = []
-    if skill_name:
-        skill_stack = [*skill_stack, skill_name]
-    # Note: run_skill stays in tools_list — skill_stack prevents recursion
-    # System prompt hides skills already in the stack from LLM
-
-    system = build_system_prompt(
+    return AgentLoop(
+        query=query,
+        provider=provider,
         capabilities=capabilities,
-        active_tools=tools_list,
-        include_delegate=include_delegate,
+        model=model,
+        provider_name=provider_name,
+        base_url=base_url,
+        api_key=api_key,
+        max_iter=max_iter,
+        verbose=verbose,
+        ctx=ctx,
+        quiet=quiet,
+        depth=depth,
+        max_depth=max_depth,
+        delegate_timeout=delegate_timeout,
+        active_tools=active_tools,
         plan_context=plan_context,
+        session=session,
+        hooks_config=hooks_config,
+        skill_name=skill_name,
         skill_stack=skill_stack,
-    )
-
-    if not quiet:
-        render_header(provider_name, model, max_iter)
-
-    # Log query to session (skip for skill internal loops)
-    if session and depth == 0 and not skill_name:
-        _log_to_session(session, {"iter": 0, "action": "query", "observation": query})
-
-    # Scratchpad: auto-init on first run, set skill context if inside a skill
-    if ctx:
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        if not load_scratchpad(ctx._scratchpad_dir):
-            ctx.init_task(query)
-        # Set or clear skill context (for artifact subdirectory routing)
-        ctx.set_skill_context(
-            skill_name=skill_name, parent_turn=ctx._turn_count if skill_name else 0
-        )
-
-    # Message setup
-    if ctx:
-        ctx.add("user", query)
-        messages = ctx.get_messages()
-    else:
-        messages = [{"role": "user", "content": query}]
-
-    iteration = 0
-    tools_called: list[str] = []
-    overflow_retried = False
-    recent_tool_history: list[dict] = []  # [{tool, input_summary, status}]
-
-    while max_iter <= 0 or iteration < max_iter:
-        iteration += 1
-
-        # Scratchpad: begin turn for each iteration
-        if ctx:
-            ctx.begin_turn(query)
-        # Skill progress: shown per-tool after LLM response (see _render_skill_progress)
-        if not quiet:
-            render_iter_sep(iteration)
-
-        # 1. Checkpoint: nudge LLM if running too long
-        if iteration >= _CHECKPOINT_FIRST and (
-            (iteration - _CHECKPOINT_FIRST) % _CHECKPOINT_INTERVAL == 0
-        ):
-            recent = recent_tool_history[-_CHECKPOINT_INTERVAL:]
-            history_summary = "\n".join(
-                f"  iter {h['iter']}: {h['tool']} → {h['result'][:100]}" for h in recent
-            )
-            checkpoint_msg = (
-                f"[SYSTEM] CHECKPOINT — {iteration} iterations used.\n"
-                f"Recent tool calls:\n{history_summary}\n\n"
-                f"You MUST now do ONE of:\n"
-                f'1. Use the complete tool: {{"thought": "...", "action": "complete", "action_input": {{"result": "your result"}}}}\n'
-                f"2. If genuinely incomplete, explain what SPECIFIC step remains and do it.\n\n"
-                f"Do NOT call echo, cat, or any tool just to confirm completion.\n"
-                f"Do NOT repeat previous tool calls.\n"
-                f"If you already completed the task, call the complete tool IMMEDIATELY."
-            )
-            messages.append({"role": "user", "content": checkpoint_msg})
-            if ctx:
-                ctx.add("user", checkpoint_msg)
-            if not quiet:
-                render_status("running", f"Checkpoint at iteration {iteration}")
-
-        # 2. Preemptive overflow check
-        if check_preemptive_overflow(messages, capabilities):
-            if ctx:
-                render_status("running", "Compressing context (preemptive)...")
-                ctx.force_compress()
-                messages = ctx.get_messages()
-            else:
-                # Single-shot: trim oldest observations
-                messages = _trim_old_observations(messages, capabilities)
-
-        # 2. Prepare tools for native tool calling
-        call_kwargs: dict = {}
-        if capabilities.supports_tool_calling:
-            if provider_name == "anthropic":
-                call_kwargs["tools"] = convert_to_anthropic_tools(
-                    tools_list, include_delegate=include_delegate
-                )
-            elif provider_name == "openai":
-                call_kwargs["tools"] = convert_to_openai_tools(
-                    tools_list, include_delegate=include_delegate
-                )
-
-        # 3. Context dump (verbose only)
-        if verbose and not quiet:
-            render_context_dump(messages, iteration)
-        _debug_log(
-            f"LLM_CALL iter={iteration} skill={skill_name or 'main'} msg_count={len(messages)}"
-        )
-
-        # 3. LLM call
-        try:
-            response = provider.call(
-                messages=messages,
-                system=system,
-                model=model,
-                capabilities=capabilities,
-                **call_kwargs,
-            )
-            llm_text = response.content
-        except Exception as e:
-            if is_context_overflow(str(e)):
-                if ctx and not overflow_retried:
-                    render_status("running", "Context overflow — compressing...")
-                    ctx.force_compress()
-                    messages = ctx.get_messages()
-                    overflow_retried = True
-                    iteration -= 1
-                    continue
-            _debug_log(f"LLM call failed: {e} skill_name={skill_name} iter={iteration}")
-            render_step("error", f"LLM call failed: {e}", iteration)
-            return None
-
-        if not quiet:
-            render_raw(llm_text, iteration, verbose)
-
-        # 4. Native tool calling path (Anthropic/OpenAI)
-        if response.tool_calls:
-            if len(response.tool_calls) == 1:
-                first_toolcall = response.tool_calls[0]
-
-                # 4a. Complete tool → extract result and return
-                if first_toolcall["name"] == "complete":
-                    _render_skill_progress(
-                        skill_name,
-                        iteration,
-                        "complete",
-                        {},
-                        quiet,
-                        thought=llm_text[:100],
-                    )
-                    answer = (
-                        first_toolcall.get("input", {}).get("result") or "(completed)"
-                        if isinstance(first_toolcall.get("input"), dict)
-                        else "(completed)"
-                    )
-                    # Fulfillment guard
-                    if not tools_called and needs_tool_action(query):
-                        render_status(
-                            "error",
-                            "Answer rejected — no tool actions performed yet.",
-                            iteration,
-                        )
-                        # Fall through to execute as normal tool (will fail gracefully)
-                    else:
-                        _log_tool_to_session(
-                            session, depth, iteration, "complete", answer
-                        )
-                        # Scratchpad: save complete result
-                        if ctx:
-                            ctx.end_turn(
-                                content=answer,
-                                tags=_build_artifact_tags("complete", {}, skill_name),
-                                summary=_build_artifact_summary("complete", {}, answer),
-                            )
-                        if not quiet:
-                            render_step("final", answer, iteration)
-                        return answer
-
-                # 4b. Ask tool — prompt user (native path)
-                if first_toolcall["name"] == "ask":
-                    questions = _extract_questions(first_toolcall.get("input"))
-                    if questions:
-                        user_response = _handle_ask(questions, quiet)
-                        obs_msg = f"User responded:\n{user_response}"
-                        _append_native_observation(
-                            messages,
-                            ctx,
-                            provider_name,
-                            response,
-                            [{"tool_call": first_toolcall, "output": obs_msg}],
-                        )
-                        continue
-
-                # 4c. run_skill — intercept at loop level (needs ctx)
-                if first_toolcall["name"] == "run_skill":
-                    skill_input = (
-                        first_toolcall.get("input", {})
-                        if isinstance(first_toolcall.get("input"), dict)
-                        else {}
-                    )
-                    obs = _handle_run_skill(
-                        skill_input,
-                        provider_name,
-                        base_url,
-                        api_key,
-                        capabilities,
-                        model,
-                        ctx,
-                        session,
-                        skill_name,
-                        skill_stack=skill_stack,
-                    )
-                    if not quiet:
-                        render_step(
-                            "observation", obs, iteration, tool_name="run_skill"
-                        )
-                    _append_native_observation(
-                        messages,
-                        ctx,
-                        provider_name,
-                        response,
-                        [{"tool_call": first_toolcall, "output": obs}],
-                    )
-                    tools_called.append("run_skill")
-                    continue
-
-                # 4c-2. read_artifact — needs ctx for scratchpad_dir
-                if first_toolcall["name"] == "read_artifact":
-                    art_input = (
-                        first_toolcall.get("input", {})
-                        if isinstance(first_toolcall.get("input"), dict)
-                        else {}
-                    )
-                    from agent_cli.tools.read_artifact import tool_read_artifact
-
-                    obs = tool_read_artifact(art_input, ctx=ctx)
-                    if not quiet:
-                        render_step(
-                            "observation", obs, iteration, tool_name="read_artifact"
-                        )
-                    _append_native_observation(
-                        messages,
-                        ctx,
-                        provider_name,
-                        response,
-                        [{"tool_call": first_toolcall, "output": obs}],
-                    )
-                    tools_called.append("read_artifact")
-                    continue
-
-                # 4d. Echo-as-final-answer pattern
-                echo_answer = _try_echo_as_final(
-                    first_toolcall["name"], first_toolcall["input"]
-                )
-                if echo_answer:
-                    if ctx:
-                        ctx.end_turn(
-                            content=echo_answer,
-                            tags=_build_artifact_tags("complete", {}, skill_name),
-                            summary=_build_artifact_summary(
-                                "complete", {}, echo_answer
-                            ),
-                        )
-                    if not quiet:
-                        render_step("final", echo_answer, iteration)
-                    return echo_answer
-
-            observations = []
-            for tc in response.tool_calls:
-                tool_name = tc["name"]
-                tool_input = tc["input"]
-                _render_skill_progress(
-                    skill_name,
-                    iteration,
-                    tool_name,
-                    tool_input,
-                    quiet,
-                    thought=llm_text[:100],
-                )
-
-                if not quiet:
-                    render_step(
-                        "action",
-                        "",
-                        iteration,
-                        tool_name=tool_name,
-                        tool_input=json.dumps(tool_input, ensure_ascii=False)
-                        if isinstance(tool_input, dict)
-                        else str(tool_input),
-                    )
-
-                # Execute tool (shared logic — tracks tools_called + history)
-                obs = _execute_single_tool(
-                    tool_name,
-                    tool_input,
-                    tools_list,
-                    include_delegate,
-                    capabilities,
-                    provider_name,
-                    model,
-                    base_url,
-                    api_key,
-                    delegate_timeout,
-                    tools_called,
-                    recent_tool_history,
-                    iteration,
-                    hooks_config=hooks_config,
-                )
-
-                if not quiet:
-                    render_step("observation", obs, iteration, tool_name=tool_name)
-                observations.append({"tool_call": tc, "output": obs})
-
-                # Scratchpad: save tool result as artifact
-                if ctx:
-                    ctx.end_turn(
-                        content=obs,
-                        tags=_build_artifact_tags(tool_name, tool_input, skill_name),
-                        summary=_build_artifact_summary(tool_name, tool_input, obs),
-                    )
-
-                _log_tool_to_session(
-                    session,
-                    depth,
-                    iteration,
-                    tool_name,
-                    obs,
-                    action_input=_normalize_input(tool_input),
-                )
-
-            # Repeated call detection
-            if _detect_repeated_calls(recent_tool_history):
-                last = recent_tool_history[-1]
-                _debug_log(
-                    f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={skill_name}"
-                )
-                render_status(
-                    "error",
-                    f"Repeated call detected: {last['tool']} called "
-                    f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
-                )
-                return None
-
-            # Format messages based on provider
-            _append_native_observation(
-                messages, ctx, provider_name, response, observations
-            )
-            continue
-
-        # 5. Text parsing path (Ollama, fallback)
-        parsed = parse_react(llm_text)
-
-        # 6. Thought
-        if parsed.thought and not quiet:
-            render_step("thought", parsed.thought, iteration)
-
-        # 7. Complete tool (text parsing path)
-        if parsed.action == "complete":
-            _render_skill_progress(
-                skill_name,
-                iteration,
-                "complete",
-                {},
-                quiet,
-                thought=parsed.thought or "",
-            )
-            if isinstance(parsed.action_input, dict):
-                answer = parsed.action_input.get("result") or "(completed)"
-            elif isinstance(parsed.action_input, str):
-                answer = parsed.action_input or "(completed)"
-            else:
-                answer = "(completed)"
-
-            # Fulfillment guard — check BEFORE rendering
-            if not tools_called and needs_tool_action(query):
-                nudge = (
-                    "You called the complete tool, but the task likely requires "
-                    "tool actions (file operations, shell commands, etc.). "
-                    "Please use the appropriate tools first, then call complete."
-                )
-                _append_text_observation(messages, ctx, llm_text, nudge)
-                render_status(
-                    "error",
-                    "Answer rejected — no tool actions performed yet.",
-                    iteration,
-                )
-                continue
-
-            _log_tool_to_session(
-                session,
-                depth,
-                iteration,
-                "complete",
-                answer,
-                thought=parsed.thought or "",
-            )
-
-            # Scratchpad: save complete result
-            if ctx:
-                ctx.end_turn(
-                    content=answer,
-                    tags=_build_artifact_tags("complete", {}, skill_name),
-                    summary=_build_artifact_summary("complete", {}, answer),
-                )
-            if not quiet:
-                render_step("final", answer, iteration)
-            return answer
-
-        # 9. Detect echo-as-final-answer (common small model pattern)
-        echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
-        if echo_answer:
-            _log_tool_to_session(
-                session,
-                depth,
-                iteration,
-                "complete (echo)",
-                echo_answer,
-                thought=parsed.thought or "",
-            )
-            if ctx:
-                ctx.end_turn(
-                    content=echo_answer,
-                    tags=_build_artifact_tags("complete", {}, skill_name),
-                    summary=_build_artifact_summary("complete", {}, echo_answer),
-                )
-            if not quiet:
-                render_step("final", echo_answer, iteration)
-            return echo_answer
-
-        # 10. Ask tool — prompt user for input (text parsing path)
-        if parsed.action == "ask":
-            questions = _extract_questions(parsed.action_input)
-            if questions:
-                user_response = _handle_ask(questions, quiet)
-                obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
-                _append_text_observation(messages, ctx, llm_text, obs_msg)
-                _log_tool_to_session(
-                    session,
-                    depth,
-                    iteration,
-                    "ask",
-                    user_response,
-                    thought=parsed.thought or "",
-                )
-                continue
-
-        # 10b. run_skill — intercept at loop level (text parsing path)
-        if parsed.action == "run_skill":
-            skill_input = (
-                parsed.action_input if isinstance(parsed.action_input, dict) else {}
-            )
-            obs = _handle_run_skill(
-                skill_input,
-                provider_name,
-                base_url,
-                api_key,
-                capabilities,
-                model,
-                ctx,
-                session,
-                skill_name,
-                skill_stack=skill_stack,
-            )
-            if not quiet:
-                render_step("observation", obs, iteration, tool_name="run_skill")
-            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
-            _append_text_observation(messages, ctx, llm_text, obs_msg)
-            tools_called.append("run_skill")
-            _log_tool_to_session(
-                session,
-                depth,
-                iteration,
-                "run_skill",
-                obs,
-                thought=parsed.thought or "",
-                action_input=_normalize_input(skill_input),
-            )
-            continue
-
-        # 10c. read_artifact — needs ctx (text parsing path)
-        if parsed.action == "read_artifact":
-            art_input = (
-                parsed.action_input if isinstance(parsed.action_input, dict) else {}
-            )
-            from agent_cli.tools.read_artifact import tool_read_artifact
-
-            obs = tool_read_artifact(art_input, ctx=ctx)
-            if not quiet:
-                render_step("observation", obs, iteration, tool_name="read_artifact")
-            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
-            _append_text_observation(messages, ctx, llm_text, obs_msg)
-            tools_called.append("read_artifact")
-            continue
-
-        # 11. Tool execution (text parsing path)
-        if parsed.action:
-            tool_name = parsed.action
-            tool_input = parsed.action_input or {}
-            _render_skill_progress(
-                skill_name,
-                iteration,
-                tool_name,
-                tool_input,
-                quiet,
-                thought=parsed.thought or "",
-            )
-
-            if not quiet:
-                render_step(
-                    "action",
-                    "",
-                    iteration,
-                    tool_name=tool_name,
-                    tool_input=json.dumps(tool_input, ensure_ascii=False)
-                    if isinstance(tool_input, dict)
-                    else str(tool_input),
-                )
-
-            # Execute tool (shared logic — tracks tools_called + history)
-            observation = _execute_single_tool(
-                tool_name,
-                tool_input,
-                tools_list,
-                include_delegate,
-                capabilities,
-                provider_name,
-                model,
-                base_url,
-                api_key,
-                delegate_timeout,
-                tools_called,
-                recent_tool_history,
-                iteration,
-                hooks_config=hooks_config,
-            )
-
-            if not quiet:
-                render_step("observation", observation, iteration, tool_name=tool_name)
-
-            # Scratchpad: save tool result as artifact
-            if ctx:
-                ctx.end_turn(
-                    content=observation,
-                    tags=_build_artifact_tags(tool_name, tool_input, skill_name),
-                    summary=_build_artifact_summary(tool_name, tool_input, observation),
-                )
-
-            # Repeated call detection
-            if _detect_repeated_calls(recent_tool_history):
-                last = recent_tool_history[-1]
-                _debug_log(
-                    f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={skill_name}"
-                )
-                render_status(
-                    "error",
-                    f"Repeated call detected: {last['tool']} called "
-                    f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
-                )
-                return None
-
-            _log_tool_to_session(
-                session,
-                depth,
-                iteration,
-                tool_name,
-                observation,
-                thought=parsed.thought or "",
-                action_input=_normalize_input(tool_input),
-            )
-
-            # Inject observation
-            obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
-            _append_text_observation(messages, ctx, llm_text, obs_msg)
-            continue
-
-        # 12. Missing action or parse failure — retry with appropriate hint
-        if parsed.parse_stage > 0:
-            # JSON parsed OK but no action — LLM forgot to include action
-            _debug_log(
-                f"No action in parsed JSON (stage={parsed.parse_stage}):\n{llm_text}"
-            )
-            render_status(
-                "error",
-                "Response has no action. Retrying...",
-                iteration,
-            )
-            retry_msg = (
-                "Your JSON was parsed but has no action. "
-                "You MUST include an action. Either use a tool: "
-                '{"thought": "...", "action": "tool_name", "action_input": {...}} '
-                "or complete the task: "
-                '{"thought": "...", "action": "complete", "action_input": {"result": "..."}}'
-            )
-        else:
-            # JSON parse failed entirely
-            _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
-            render_status(
-                "error",
-                "Invalid JSON response. Retrying...",
-                iteration,
-            )
-            retry_msg = (
-                "Your response was not valid JSON. "
-                "Output ONLY a JSON object: "
-                '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
-                "No markdown fences, no extra text."
-            )
-        _append_text_observation(messages, ctx, llm_text, retry_msg)
-        iteration -= 1  # Don't count format retries
-
-    if not quiet:
-        render_status("error", f"Max iterations ({max_iter}) reached.")
-    _debug_log(
-        f"run_loop returning None: max_iter={max_iter} reached, skill_name={skill_name}"
-    )
-    return None
+    ).run()
 
 
 def _extract_questions(action_input) -> list[str]:
