@@ -807,12 +807,12 @@ def _render_skill_progress(
     quiet: bool,
     thought: str = "",
 ) -> None:
-    """Show compact skill progress: skill:name [N] tool: detail — thought."""
+    """Show skill progress: thought first, then action."""
     if not skill_name or not quiet:
         return
     from agent_cli.render import C, console
 
-    # Build detail from tool input
+    # Build action detail from tool input
     detail = ""
     if isinstance(tool_input, dict):
         if tool_name in ("read_file", "write_file", "edit_file"):
@@ -822,28 +822,30 @@ def _render_skill_progress(
         elif tool_name == "shell":
             cmd = tool_input.get("command", "")
             if cmd:
-                detail = f" {cmd[:50]}"
+                detail = f" {cmd[:60]}"
         elif tool_name == "run_skill":
             name = tool_input.get("name", "")
             detail = f" {name}"
 
-    # Truncate thought
-    reason = ""
+    # Line 1: thought (full text)
     if thought:
         t = thought.replace("\n", " ").strip()
-        reason = f" — {t[:60]}" if len(t) > 60 else f" — {t}"
+        console.print(
+            f"  [{C['muted']}]skill:{skill_name} [{iteration}] 💭 {t}[/]",
+            highlight=False,
+        )
 
+    # Line 2: action
     if tool_name == "complete":
         console.print(
             f"  [{C['muted']}]skill:{skill_name}[/]"
-            f" [{C['accent']}][{iteration}] {tool_name} ✓[/]"
-            f"[{C['muted']}]{reason}[/]",
+            f" [{C['accent']}][{iteration}] ✅ {tool_name}{detail}[/]",
             highlight=False,
         )
     else:
         console.print(
             f"  [{C['muted']}]skill:{skill_name}"
-            f" [{iteration}] {tool_name}:{detail}{reason}[/]",
+            f" [{iteration}] ⚡ {tool_name}:{detail}[/]",
             highlight=False,
         )
 
