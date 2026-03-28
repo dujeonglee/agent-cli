@@ -45,8 +45,12 @@ def _debug_log(msg: str) -> None:
     print(f"[debug {time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
 
 
-# Checkpoint: first check at N iterations, then repeat every M iterations
-# Shows last M tool calls at each checkpoint for LLM self-assessment
+# Checkpoint system: nudges LLM to self-assess when iteration count gets high.
+# _CHECKPOINT_FIRST: first check after N iterations. 50 chosen because most
+#   tasks complete in 10-30 iterations; 50 indicates potential stuck state.
+# _CHECKPOINT_INTERVAL: repeat every M iterations after first. 20 gives LLM
+#   enough room to recover without being too aggressive.
+# At each checkpoint, the last _CHECKPOINT_INTERVAL tool calls are shown.
 _CHECKPOINT_FIRST = 50
 _CHECKPOINT_INTERVAL = 20
 assert _CHECKPOINT_FIRST >= _CHECKPOINT_INTERVAL, (
@@ -1071,7 +1075,10 @@ def _execute_single_tool(
     return obs
 
 
-_REPEAT_THRESHOLD = 3  # Same tool+input N times → force exit
+# Repeated call detection: if the same tool is called with identical input
+# N times consecutively, assume the LLM is stuck and force exit.
+# 3 chosen as minimum to distinguish genuine retries from loops.
+_REPEAT_THRESHOLD = 3
 
 # Regex: simple echo with no pipes, redirects, subshells, or chaining
 _ECHO_FINAL_RE = re.compile(
