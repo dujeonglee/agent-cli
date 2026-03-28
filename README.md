@@ -815,7 +815,7 @@ LLM이 도구를 반복 호출하며 `complete` 도구를 사용하지 않는 st
 
 ```
 agent_cli/
-├── main.py              CLI 명령어 (run, plan, chat, sessions)
+├── main.py              CLI 명령어 (run, chat, setup, sessions)
 ├── loop.py              ReAct 에이전트 루프
 ├── config.py            models.json 로딩
 ├── render.py            터미널 렌더링
@@ -824,8 +824,7 @@ agent_cli/
 ├── parsing/             3단계 JSON 파서 + Thinking 블록 분리
 ├── tools/               도구 (read/write/edit/shell/delegate/context) + 출력 압축
 ├── context/             컨텍스트 관리 (scratchpad, artifact, 압축, 세션 영속화)
-├── prompts/             조건부 시스템 프롬프트
-└── planning/            Planning Mode (생성→검토→실행)
+└── prompts/             조건부 시스템 프롬프트
 ```
 
 상세 아키텍처: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

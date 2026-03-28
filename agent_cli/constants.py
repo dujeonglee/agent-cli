@@ -18,10 +18,3 @@ OVERFLOW_RESERVE_TOKENS = 2048
 OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
 OBS_ERROR = "STATUS: error\nERROR: {error}"
 OBS_ERROR_HINT = "STATUS: error\nERROR: {error}\nHINT: {hint}"
-
-# ── Plan step status ──────────────────────────
-STEP_PENDING = "pending"
-STEP_IN_PROGRESS = "in_progress"
-STEP_DONE = "done"
-STEP_FAILED = "failed"
-STEP_SKIPPED = "skipped"
