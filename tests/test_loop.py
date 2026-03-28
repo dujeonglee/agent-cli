@@ -1579,35 +1579,22 @@ class TestRunSkillIntercept:
 class TestSkillStack:
     """Skill stack prevents recursive calls (A→B ok, A→B→A blocked)."""
 
-    def test_run_skill_not_in_tools_inside_skill(self, caps, tmp_path):
-        """run_skill is removed from tools_list when inside a skill."""
-        from agent_cli.context.manager import ContextManager
+    def test_skill_stack_passed_to_system_prompt(self, caps, tmp_path):
+        """System prompt hides skills already in the stack."""
+        from agent_cli.prompts.system_prompt import build_skill_descriptions
+        from agent_cli.skills.models import Skill
 
-        # LLM tries to call run_skill inside a skill → should hit unknown tool
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "call another skill",
-                    "action": "run_skill",
-                    "action_input": {"name": "optimize", "arguments": "./"},
-                }
+        skills = {
+            "summarize": Skill(
+                name="summarize", description="Sum", prompt_template="$ARGUMENTS"
             ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        # Run inside a skill (skill_name set)
-        result = run_loop(
-            query="Do stuff",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            quiet=True,
-            ctx=ctx,
-            skill_name="summarize",
-        )
-        assert result == "done"
+            "optimize": Skill(
+                name="optimize", description="Opt", prompt_template="$ARGUMENTS"
+            ),
+        }
+        desc = build_skill_descriptions(skills, exclude_names=["summarize"])
+        assert "optimize" in desc
+        assert "summarize" not in desc
 
     def test_skill_stack_blocks_recursive(self, caps, tmp_path):
         """Same skill in stack → blocked with error."""

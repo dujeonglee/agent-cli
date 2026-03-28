@@ -142,6 +142,7 @@ def build_system_prompt(
     active_tools: list[str],
     include_delegate: bool = False,
     plan_context: str | None = None,
+    skill_stack: list[str] | None = None,
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools."""
     sections = [BASE_ROLE_PROMPT]
@@ -175,17 +176,21 @@ def build_system_prompt(
         sections.append(THINKING_MODEL_HINTS)
 
     # Inject available skills for LLM auto-invocation
-    skill_desc = build_skill_descriptions()
+    skill_desc = build_skill_descriptions(exclude_names=skill_stack)
     if skill_desc:
         sections.append(skill_desc)
 
     return "\n\n".join(sections)
 
 
-def build_skill_descriptions(skills: dict | None = None) -> str:
+def build_skill_descriptions(
+    skills: dict | None = None,
+    exclude_names: list[str] | None = None,
+) -> str:
     """Build skill descriptions for system prompt injection.
 
-    Excludes skills with disable_model_invocation=True.
+    Excludes skills with disable_model_invocation=True and
+    skills in exclude_names (e.g. current skill_stack for recursion prevention).
     If skills is None, loads from disk.
     """
     if skills is None:
@@ -199,6 +204,8 @@ def build_skill_descriptions(skills: dict | None = None) -> str:
     if not skills:
         return ""
 
+    excluded = set(exclude_names or [])
+
     lines = [
         "## Available Skills",
         "Use the run_skill tool to invoke these skills:",
@@ -206,6 +213,8 @@ def build_skill_descriptions(skills: dict | None = None) -> str:
     ]
     for skill in skills.values():
         if skill.disable_model_invocation:
+            continue
+        if skill.name in excluded:
             continue
         hint = f" {skill.argument_hint}" if skill.argument_hint else ""
         lines.append(f"- `{skill.name}{hint}` — {skill.description}")

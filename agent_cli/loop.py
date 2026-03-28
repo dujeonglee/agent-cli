@@ -87,15 +87,15 @@ def run_loop(
         skill_stack = []
     if skill_name:
         skill_stack = [*skill_stack, skill_name]
-    # Remove "run_skill" inside skill execution (prevent recursive skill calls)
-    if skill_name and "run_skill" in tools_list:
-        tools_list = [t for t in tools_list if t != "run_skill"]
+    # Note: run_skill stays in tools_list — skill_stack prevents recursion
+    # System prompt hides skills already in the stack from LLM
 
     system = build_system_prompt(
         capabilities=capabilities,
         active_tools=tools_list,
         include_delegate=include_delegate,
         plan_context=plan_context,
+        skill_stack=skill_stack,
     )
 
     if not quiet:
