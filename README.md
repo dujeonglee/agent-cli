@@ -484,6 +484,28 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 스킬 내부에서는 별도 ReAct 루프가 실행되며, 결과가 artifact로 저장됩니다. `disable-model-invocation: true`인 스킬은 LLM이 호출할 수 없습니다.
 
+결과 포맷:
+```
+STATUS: success
+RESULT:
+SKILL: summarize(./)
+The agent-cli directory contains a ReAct pattern-based agent CLI...
+
+[Internal skill calls during this execution:]
+- run_skill(optimize): Task completed: Analysis done.
+```
+
+`SKILL:` 헤더로 실행된 스킬과 인자를 식별하고, `[Internal skill calls]`로 내부에서 호출된 스킬 이력을 표시합니다.
+
+#### 스킬 스택 (재귀 방지)
+
+스킬 내부에서 다른 스킬을 호출할 수 있지만 재귀는 차단됩니다:
+
+- `A→B` 허용: summarize 내부에서 optimize 호출 가능
+- `A→A` 차단: summarize 내부에서 summarize 호출 불가
+- `A→B→A` 차단: 순환 호출 불가
+- 시스템 프롬프트에서 현재 실행 중인 스킬은 자동으로 숨김
+
 ### read_artifact — Artifact 읽기
 
 이전 도구 실행 결과(artifact)를 읽습니다. `read_file`과 달리 hashline 태그 없이 원본 내용을 반환합니다. 컨텍스트 압축 후 이전 결과를 복구할 때 사용합니다.

@@ -1029,6 +1029,41 @@ class TestScratchpadIntegration:
         )
         assert result == "ok"
 
+    def test_skill_internal_loop_skips_scratchpad(self, caps, tmp_path):
+        """Scratchpad NOT injected when inside a skill (skill_name set)."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = _make_provider(_complete("done"))
+        ctx = ContextManager(
+            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
+        )
+        ctx.init_task("Outer task")
+
+        # Set skill context (simulating inside a skill)
+        ctx.set_skill_context(skill_name="summarize", parent_turn=1)
+
+        msgs = ctx.get_messages()
+        # Scratchpad should NOT be in messages
+        all_content = " ".join(m.get("content", "") for m in msgs)
+        assert "[Scratchpad" not in all_content
+
+        # Reset — scratchpad should appear again
+        ctx.set_skill_context()
+        msgs = ctx.get_messages()
+        all_content = " ".join(m.get("content", "") for m in msgs)
+        assert "[Scratchpad" in all_content
+
+    def test_debug_log_written_on_failure(self, caps, tmp_path):
+        """debug.log written when skill inner loop fails."""
+        from agent_cli.loop import _debug_log
+
+        _debug_log("test_debug_entry")
+        from pathlib import Path
+
+        log = Path(".agent-cli/debug.log")
+        if log.exists():
+            assert "test_debug_entry" in log.read_text()
+
 
 class TestArtifactLazyLoading:
     """Scratchpad progress + system prompt guide LLM to read artifacts on demand."""

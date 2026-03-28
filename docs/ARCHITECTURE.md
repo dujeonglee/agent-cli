@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-26
 > 버전: 2.0.0-dev
-> 총 소스: 7,099 LOC (48 Python 파일) + 7,614 LOC 테스트 (26 파일)
-> 총 테스트: 509 유닛 + 65 통합 = 574개
+> 총 소스: 7,138 LOC (48 Python 파일) + 7,750 LOC 테스트 (26 파일)
+> 총 테스트: 515 유닛 + 65 통합 = 580개
 
 ---
 
@@ -526,6 +526,8 @@ ContextBudget.for_model(context_window)
 
 ### 6.1 등록된 도구
 
+**실제 도구** — 파일/셸/네트워크 작업 수행:
+
 | 도구 | 설명 | 필수 입력 | 출력 |
 |------|------|----------|------|
 | `read_file` | 파일 읽기 (hashline 포맷) | `path` | `LINE#HASH:content` 형식 |
@@ -533,6 +535,34 @@ ContextBudget.for_model(context_window)
 | `edit_file` | hashline 기반 파일 편집 | `path`, `edits[]` | 편집 확인 메시지 |
 | `shell` | 셸 명령 실행 | `command` | stdout + stderr + exit code |
 | `delegate` | 서브에이전트 위임 | `task` | 서브에이전트 실행 결과 |
+| `read_context` | 이전 세션 이력 조회 | `mode` | 세션 목록 또는 상세 이력 |
+
+**가상 도구** (`VIRTUAL_TOOLS`) — loop.py에서 인터셉트, planning 도구 목록에서 제외:
+
+| 도구 | 설명 | 필수 입력 | 비고 |
+|------|------|----------|------|
+| `complete` | 작업 완료 신호 | `result` | 루프 종료 |
+| `ask` | 사용자에게 질문 | `questions` | chat 모드 전용 |
+| `run_skill` | 스킬 실행 | `name` | loop 레벨 인터셉트, ctx 전달 |
+| `read_artifact` | artifact 읽기/목록/검색 | `path` 또는 `mode` | hashline 없이 반환 |
+
+### 6.2 run_skill 결과 포맷
+
+`run_skill` 실행 결과에는 스킬 식별 헤더와 내부 스킬 호출 이력이 포함:
+
+```
+STATUS: success
+RESULT:
+SKILL: summarize(./)
+The agent-cli directory contains a ReAct pattern-based agent CLI...
+
+[Internal skill calls during this execution:]
+- run_skill(optimize): Task completed: Analysis complete. OptimizationToDo.md updated.
+```
+
+- `SKILL: name(arguments)` — 실행된 스킬과 인자
+- `[Internal skill calls]` — A→B 체이닝 시 내부에서 호출된 스킬 이력
+- 외부 LLM이 이를 보고 중복 실행 방지
 
 ### 6.2 Hashline 시스템 (`tools/read_file.py`)
 
@@ -763,9 +793,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 26 | 509 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 26 | 515 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 65 | `pytest tests/test_integration.py` |
-| **전체** | **26** | **574** | `pytest tests/` |
+| **전체** | **26** | **580** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 
@@ -959,11 +989,26 @@ run_loop(query=치환된_프롬프트, allowed_tools=["read_file"], max_iter=5)
 결과 반환
 ```
 
-### 13.6 커스텀 스킬 작성
+### 13.6 스킬 스택 (재귀 방지)
+
+스킬이 `run_skill`로 다른 스킬을 호출할 수 있지만, 재귀는 방지:
+
+```
+A→B: 허용 (summarize → optimize)
+A→A: 차단 (summarize → summarize)
+A→B→A: 차단 (summarize → optimize → summarize)
+```
+
+방어 메커니즘 3단계:
+1. **skill_stack** — `run_loop`이 `skill_stack: list[str]`를 추적. `_handle_run_skill`이 스택에 같은 이름이 있으면 에러 반환.
+2. **시스템 프롬프트** — `build_skill_descriptions(exclude_names=skill_stack)`로 현재 실행 중인 스킬을 Available Skills에서 숨김. LLM이 재귀 시도 자체를 하지 않도록 유도.
+3. **프롬프트 규칙** — Rule 7: "NEVER invoke yourself recursively via shell"
+
+### 13.7 커스텀 스킬 작성
 
 `.agent-cli/skills/my-skill.md` 파일을 생성하면 자동으로 `/my-skill` 명령어가 등록됩니다.
 
-### 13.7 기본 내장 스킬
+### 13.8 기본 내장 스킬
 
 | 스킬 | 도구 | 설명 |
 |------|------|------|

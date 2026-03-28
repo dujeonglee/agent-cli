@@ -533,6 +533,26 @@ class TestSkillExecution:
             _, kwargs = mock_run_loop.call_args
             assert kwargs["session"] is None
 
+    def test_execute_propagates_skill_stack(self, caps):
+        """execute_skill passes skill_stack to run_loop."""
+        provider = MagicMock()
+
+        skill = Skill(name="optimize", description="d", prompt_template="Do $ARGUMENTS")
+        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
+            mock_run_loop.return_value = "ok"
+            execute_skill(
+                skill=skill,
+                arguments="./",
+                provider=provider,
+                capabilities=caps,
+                model="m",
+                quiet=True,
+                skill_stack=["summarize"],
+            )
+            _, kwargs = mock_run_loop.call_args
+            assert kwargs["skill_stack"] == ["summarize"]
+            assert kwargs["skill_name"] == "optimize"
+
     def test_execute_no_model_override(self, caps):
         """skill.model=None → run_loop called with the original model."""
         provider = MagicMock()

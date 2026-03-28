@@ -777,6 +777,31 @@ class TestReadArtifactTool:
         result = tool_read_artifact({"path": "/nonexistent/file.md"})
         assert "not found" in result.lower()
 
+    def test_read_artifact_finds_skill_subdirectory(self, tmp_path):
+        """read_artifact list mode includes artifacts in skill subdirectories."""
+        from agent_cli.context.scratchpad import save_artifact
+        from agent_cli.tools.read_artifact import tool_read_artifact
+        from unittest.mock import MagicMock
+
+        # Flat artifact
+        save_artifact(1, "Flat content", ["shell"], "flat", tmp_path)
+        # Skill subdirectory artifact
+        save_artifact(
+            2,
+            "Skill content",
+            ["read_file", "skill:optimize"],
+            "skill read",
+            tmp_path,
+            skill_name="optimize",
+            parent_turn=1,
+        )
+
+        ctx = MagicMock()
+        ctx._scratchpad_dir = tmp_path
+        result = tool_read_artifact({"mode": "list"}, ctx=ctx)
+        assert "turn_0001" in result  # flat
+        assert "turn_0002" in result  # skill subdir
+
     def test_list_no_session(self):
         """List without ctx → error."""
         from agent_cli.tools.read_artifact import tool_read_artifact
