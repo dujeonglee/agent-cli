@@ -52,16 +52,39 @@ def _resolve_provider(
     base_url: str | None,
     api_key: str | None,
 ):
-    """Resolve provider settings from CLI args, config, and env."""
-    defaults = get_provider_defaults(provider)
-    resolved_url = base_url or defaults.base_url
-    resolved_model = model or defaults.default_model
+    """Resolve provider settings: CLI args > config.json > provider defaults."""
+    from agent_cli.config import load_config
+
+    config = load_config()
+
+    # CLI args override config, config overrides provider defaults
+    defaults = get_provider_defaults(config.get("provider", provider))
+    effective_provider = (
+        provider if provider != "ollama" else config.get("provider", provider)
+    )
+    resolved_url = base_url or config.get("base_url", "") or defaults.base_url
+    resolved_model = model or config.get("default_model", "") or defaults.default_model
 
     if api_key is None:
-        env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
-        api_key = os.environ.get(env_map.get(provider, ""), "")
+        api_key = config.get("api_key", "")
+        if not api_key:
+            env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+            api_key = os.environ.get(env_map.get(effective_provider, ""), "")
 
     return resolved_url, resolved_model, api_key
+
+
+def _maybe_setup() -> None:
+    """Trigger setup wizard if no config exists."""
+    from agent_cli.config import has_config
+
+    if not has_config():
+        from agent_cli.setup import SetupWizard
+
+        console.print(
+            f"[{C['accent']}]No configuration found. Starting setup wizard...[/]\n"
+        )
+        SetupWizard().run()
 
 
 _SKILL_NOT_FOUND = (
@@ -180,6 +203,7 @@ def _setup_provider(
     quiet: bool = False,
 ):
     """Resolve settings + create provider + get capabilities. Returns tuple."""
+    _maybe_setup()
     from agent_cli.providers.compat import DEFAULT_CAPABILITIES, was_runtime_detected
     from agent_cli.render import render_model_detected, render_model_loaded
 
@@ -508,6 +532,14 @@ def plan(
             print(result)
         else:
             console.print(f"\n[{C['final']}]{result}[/]")
+
+
+@app.command()
+def setup():
+    """Run the setup wizard to configure agent-cli."""
+    from agent_cli.setup import SetupWizard
+
+    SetupWizard().run()
 
 
 @app.command()
