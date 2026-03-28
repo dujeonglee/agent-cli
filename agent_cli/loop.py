@@ -740,6 +740,9 @@ def run_loop(
         # 12. Missing action or parse failure — retry with appropriate hint
         if parsed.parse_stage > 0:
             # JSON parsed OK but no action — LLM forgot to include action
+            _debug_log(
+                f"No action in parsed JSON (stage={parsed.parse_stage}):\n{llm_text}"
+            )
             render_status(
                 "error",
                 "Response has no action. Retrying...",
@@ -754,6 +757,7 @@ def run_loop(
             )
         else:
             # JSON parse failed entirely
+            _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
             render_status(
                 "error",
                 "Invalid JSON response. Retrying...",
