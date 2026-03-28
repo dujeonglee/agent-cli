@@ -144,3 +144,84 @@ class TestSerializationTruncation:
             )
             prompt_text = messages_arg[0]["content"]
             assert "truncated" in prompt_text
+
+
+class TestCompressionFailureTracking:
+    def test_failure_increments_counter(self, caps, tmp_path):
+        """Compression failure increments counter and raises threshold."""
+        provider = MagicMock()
+        provider.call.side_effect = RuntimeError("LLM unavailable")
+
+        ctx = ContextManager(
+            provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        original = ctx.max_context_chars
+
+        # Fill messages to trigger compression
+        for _ in range(10):
+            ctx.add("user", "x" * 200)
+            ctx.add("assistant", "y" * 200)
+
+        assert ctx._compress_failures >= 1
+        assert ctx.max_context_chars > original
+
+    def test_threshold_capped_at_2x(self, caps, tmp_path):
+        """Threshold increase capped at 2x original."""
+        provider = MagicMock()
+        provider.call.side_effect = RuntimeError("fail")
+
+        ctx = ContextManager(
+            provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        original = ctx._original_max_context_chars
+
+        # Force many compressions
+        for _ in range(50):
+            ctx.add("user", "x" * 200)
+            ctx.add("assistant", "y" * 200)
+
+        assert ctx.max_context_chars <= original * 2
+
+    def test_success_resets_counter(self, caps, tmp_path):
+        """Successful compression resets failure counter and threshold."""
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(content="Summary")
+
+        ctx = ContextManager(
+            provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # Simulate previous failures
+        ctx._compress_failures = 2
+
+        # Add enough messages then directly call _compress
+        for _ in range(10):
+            ctx.messages.append({"role": "user", "content": "x" * 200})
+            ctx.messages.append({"role": "assistant", "content": "y" * 200})
+        ctx._compress()
+
+        assert ctx._compress_failures == 0
+        assert ctx.max_context_chars == ctx._original_max_context_chars
+
+    def test_alerts_user_after_max_failures(self, caps, tmp_path):
+        """After 3+ failures, Rich console warning is shown."""
+        from unittest.mock import patch
+
+        provider = MagicMock()
+        provider.call.side_effect = RuntimeError("fail")
+
+        ctx = ContextManager(
+            provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        ctx._compress_failures = 3  # already at max
+
+        with patch("agent_cli.render.console") as mock_console:
+            # Add messages and trigger compression
+            for _ in range(10):
+                ctx.messages.append({"role": "user", "content": "x" * 200})
+                ctx.messages.append({"role": "assistant", "content": "y" * 200})
+            ctx._compress()
+
+            assert ctx._compress_failures == 4
+            mock_console.print.assert_called()
+            call_str = str(mock_console.print.call_args)
+            assert "failed" in call_str.lower()

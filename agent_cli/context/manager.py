@@ -71,6 +71,9 @@ class ContextManager:
         self._budget = ContextBudget.for_model(capabilities.context_window)
         # Max chars for conversation = budget's conversation allocation
         self.max_context_chars = int(self._budget.conversation_tokens * CHARS_PER_TOKEN)
+        self._original_max_context_chars = self.max_context_chars
+        self._compress_failures = 0
+        self._max_compress_failures = 3
 
     def add(self, role: str, content: str) -> None:
         """Add a message and trigger compression if needed."""
@@ -172,12 +175,34 @@ class ContextManager:
             self._summary = f"{self._summary}\n\n{artifact_hint}"
             self.messages = kept_msgs
             self._msg_chars = sum(len(m["content"]) for m in kept_msgs)
+            # Reset failure tracking on success
+            self._compress_failures = 0
+            self.max_context_chars = self._original_max_context_chars
         except Exception as e:
-            # Compression failed — temporarily raise threshold to avoid retry loop
+            self._compress_failures += 1
             import sys
 
-            print(f"[warn] Context compression failed: {e}", file=sys.stderr)
-            self.max_context_chars = int(self.max_context_chars * 1.5)
+            if self._compress_failures <= self._max_compress_failures:
+                # Raise threshold temporarily, capped at 2x original
+                new_limit = min(
+                    int(self.max_context_chars * 1.3),
+                    self._original_max_context_chars * 2,
+                )
+                self.max_context_chars = new_limit
+                print(
+                    f"[warn] Context compression failed ({self._compress_failures}/"
+                    f"{self._max_compress_failures}): {e}",
+                    file=sys.stderr,
+                )
+            else:
+                # Too many failures — alert user via Rich console
+                from agent_cli.render import console, C
+
+                console.print(
+                    f"[{C['error']}]Context compression failed "
+                    f"{self._compress_failures} times. "
+                    f"Context may grow unbounded.[/]"
+                )
 
     def _serialize_messages(self, messages: list[dict]) -> str:
         """Serialize messages to text format for summarization (pi-mono pattern)."""
