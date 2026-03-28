@@ -224,7 +224,14 @@ def run_loop(
 
                 # 4a. Complete tool → extract result and return
                 if tc0["name"] == "complete":
-                    _render_skill_progress(skill_name, iteration, "complete", {}, quiet)
+                    _render_skill_progress(
+                        skill_name,
+                        iteration,
+                        "complete",
+                        {},
+                        quiet,
+                        thought=llm_text[:100],
+                    )
                     answer = (
                         tc0.get("input", {}).get("result") or "(completed)"
                         if isinstance(tc0.get("input"), dict)
@@ -374,7 +381,12 @@ def run_loop(
                 tool_name = tc["name"]
                 tool_input = tc["input"]
                 _render_skill_progress(
-                    skill_name, iteration, tool_name, tool_input, quiet
+                    skill_name,
+                    iteration,
+                    tool_name,
+                    tool_input,
+                    quiet,
+                    thought=llm_text[:100],
                 )
 
                 if not quiet:
@@ -465,7 +477,14 @@ def run_loop(
 
         # 7. Complete tool (text parsing path)
         if parsed.action == "complete":
-            _render_skill_progress(skill_name, iteration, "complete", {}, quiet)
+            _render_skill_progress(
+                skill_name,
+                iteration,
+                "complete",
+                {},
+                quiet,
+                thought=parsed.thought or "",
+            )
             if isinstance(parsed.action_input, dict):
                 answer = parsed.action_input.get("result") or "(completed)"
             elif isinstance(parsed.action_input, str):
@@ -623,7 +642,14 @@ def run_loop(
         if parsed.action:
             tool_name = parsed.action
             tool_input = parsed.action_input or {}
-            _render_skill_progress(skill_name, iteration, tool_name, tool_input, quiet)
+            _render_skill_progress(
+                skill_name,
+                iteration,
+                tool_name,
+                tool_input,
+                quiet,
+                thought=parsed.thought or "",
+            )
 
             if not quiet:
                 render_step(
@@ -774,9 +800,14 @@ def _handle_ask(questions: list[str], quiet: bool) -> str:
 
 
 def _render_skill_progress(
-    skill_name: str, iteration: int, tool_name: str, tool_input, quiet: bool
+    skill_name: str,
+    iteration: int,
+    tool_name: str,
+    tool_input,
+    quiet: bool,
+    thought: str = "",
 ) -> None:
-    """Show compact skill progress: skill:name [N] tool: detail."""
+    """Show compact skill progress: skill:name [N] tool: detail — thought."""
     if not skill_name or not quiet:
         return
     from agent_cli.render import C, console
@@ -796,14 +827,23 @@ def _render_skill_progress(
             name = tool_input.get("name", "")
             detail = f" {name}"
 
+    # Truncate thought
+    reason = ""
+    if thought:
+        t = thought.replace("\n", " ").strip()
+        reason = f" — {t[:60]}" if len(t) > 60 else f" — {t}"
+
     if tool_name == "complete":
         console.print(
-            f"  [{C['muted']}]skill:{skill_name}[/] [{C['accent']}][{iteration}] {tool_name} ✓[/]",
+            f"  [{C['muted']}]skill:{skill_name}[/]"
+            f" [{C['accent']}][{iteration}] {tool_name} ✓[/]"
+            f"[{C['muted']}]{reason}[/]",
             highlight=False,
         )
     else:
         console.print(
-            f"  [{C['muted']}]skill:{skill_name} [{iteration}] {tool_name}:{detail}[/]",
+            f"  [{C['muted']}]skill:{skill_name}"
+            f" [{iteration}] {tool_name}:{detail}{reason}[/]",
             highlight=False,
         )
 
