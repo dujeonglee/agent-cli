@@ -994,8 +994,8 @@ class TestContextContinuity:
         roles = [m["role"] for m in msgs]
         assert roles.count("assistant") >= 2  # at least tool call + complete
 
-    def test_complete_answer_not_in_ctx_after_run_loop(self, caps, tmp_path):
-        """run_loop returns answer but does NOT add it to ctx (caller's job)."""
+    def test_complete_answer_in_ctx_after_run_loop(self, caps, tmp_path):
+        """AgentLoop adds final answer to ctx before returning."""
         from agent_cli.context.manager import ContextManager
 
         provider = _make_provider(_complete("final answer"))
@@ -1012,11 +1012,12 @@ class TestContextContinuity:
         )
         assert result == "final answer"
 
-        # run_loop does NOT add the final answer to ctx — that's main.py's responsibility
+        # AgentLoop now adds the final answer to ctx
         msgs = ctx.get_messages()
-        contents = [m.get("content", "") for m in msgs]
-        # The final "final answer" should NOT be in ctx (main.py adds it)
-        assert not any("final answer" == c for c in contents)
+        assistant_msgs = [
+            m.get("content", "") for m in msgs if m["role"] == "assistant"
+        ]
+        assert any("final answer" in c for c in assistant_msgs)
 
     def test_ask_response_in_ctx(self, caps, tmp_path, monkeypatch):
         """ask tool response is saved to ctx."""

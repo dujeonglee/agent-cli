@@ -353,6 +353,8 @@ class AgentLoop:
                             tags=_build_artifact_tags("complete", {}, self.skill_name),
                             summary=_build_artifact_summary("complete", {}, answer),
                         )
+                    if self.ctx:
+                        self.ctx.add("assistant", answer)
                     if not self.quiet:
                         render_step("final", answer, self.iteration)
                     return answer
@@ -447,6 +449,8 @@ class AgentLoop:
                         tags=_build_artifact_tags("complete", {}, self.skill_name),
                         summary=_build_artifact_summary("complete", {}, echo_answer),
                     )
+                if self.ctx:
+                    self.ctx.add("assistant", echo_answer)
                 if not self.quiet:
                     render_step("final", echo_answer, self.iteration)
                 return echo_answer
@@ -589,6 +593,8 @@ class AgentLoop:
                     tags=_build_artifact_tags("complete", {}, self.skill_name),
                     summary=_build_artifact_summary("complete", {}, answer),
                 )
+            if self.ctx:
+                self.ctx.add("assistant", answer)
             if not self.quiet:
                 render_step("final", answer, self.iteration)
             return answer
@@ -610,6 +616,8 @@ class AgentLoop:
                     tags=_build_artifact_tags("complete", {}, self.skill_name),
                     summary=_build_artifact_summary("complete", {}, echo_answer),
                 )
+            if self.ctx:
+                self.ctx.add("assistant", echo_answer)
             if not self.quiet:
                 render_step("final", echo_answer, self.iteration)
             return echo_answer
