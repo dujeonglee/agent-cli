@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import time
 
@@ -26,6 +27,19 @@ from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
 from agent_cli.tools.registry import convert_to_anthropic_tools, convert_to_openai_tools
 from agent_cli.tools.truncation import get_truncation_config, truncate_output
+
+_DEBUG_LOG_PATH = Path(".agent-cli/debug.log")
+
+
+def _debug_log(msg: str) -> None:
+    """Write debug message to .agent-cli/debug.log."""
+    try:
+        _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
 
 # Checkpoint: first check at N iterations, then repeat every M iterations
 # Shows last M tool calls at each checkpoint for LLM self-assessment
@@ -67,6 +81,9 @@ def run_loop(
     # Remove "ask" in non-interactive mode (no ctx)
     if not ctx and "ask" in tools_list:
         tools_list = [t for t in tools_list if t != "ask"]
+    # Remove "run_skill" inside skill execution (prevent recursive skill calls)
+    if skill_name and "run_skill" in tools_list:
+        tools_list = [t for t in tools_list if t != "run_skill"]
 
     system = build_system_prompt(
         capabilities=capabilities,
@@ -171,6 +188,9 @@ def run_loop(
         # 3. Context dump (verbose only)
         if verbose and not quiet:
             render_context_dump(messages, iteration)
+        _debug_log(
+            f"LLM_CALL iter={iteration} skill={skill_name or 'main'} msg_count={len(messages)}"
+        )
 
         # 3. LLM call
         try:
@@ -191,6 +211,7 @@ def run_loop(
                     overflow_retried = True
                     iteration -= 1
                     continue
+            _debug_log(f"LLM call failed: {e} skill_name={skill_name} iter={iteration}")
             render_step("error", f"LLM call failed: {e}", iteration)
             return None
 
@@ -408,6 +429,9 @@ def run_loop(
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):
                 last = recent_tool_history[-1]
+                _debug_log(
+                    f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={skill_name}"
+                )
                 render_status(
                     "error",
                     f"Repeated call detected: {last['tool']} called "
@@ -533,6 +557,9 @@ def run_loop(
                 continue
 
         # 10b. run_skill — intercept at loop level (text parsing path)
+        _debug_log(
+            f"parsed.action={parsed.action} parse_stage={parsed.parse_stage} skill_name={skill_name} iter={iteration}"
+        )
         if parsed.action == "run_skill":
             skill_input = (
                 parsed.action_input if isinstance(parsed.action_input, dict) else {}
@@ -557,6 +584,9 @@ def run_loop(
                 ctx.add("assistant", llm_text)
                 ctx.add("user", obs_msg)
             tools_called.append("run_skill")
+            _debug_log(
+                f"run_skill obs added to messages. obs_len={len(obs)} msg_count={len(messages)}"
+            )
             if depth == 0:
                 _log_to_session(
                     session,
@@ -637,6 +667,9 @@ def run_loop(
             # Repeated call detection
             if _detect_repeated_calls(recent_tool_history):
                 last = recent_tool_history[-1]
+                _debug_log(
+                    f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={skill_name}"
+                )
                 render_status(
                     "error",
                     f"Repeated call detected: {last['tool']} called "
@@ -703,6 +736,9 @@ def run_loop(
 
     if not quiet:
         render_status("error", f"Max iterations ({max_iter}) reached.")
+    _debug_log(
+        f"run_loop returning None: max_iter={max_iter} reached, skill_name={skill_name}"
+    )
     return None
 
 
@@ -778,6 +814,9 @@ def _handle_run_skill(
         ctx.set_skill_context(skill_name=name, parent_turn=ctx._turn_count)
 
     render_status("running", f"Running skill: {name}...")
+    _debug_log(
+        f"run_skill({name}) provider={provider_name} base_url={base_url} model={model}"
+    )
 
     try:
         from agent_cli.providers import create_provider
@@ -798,8 +837,13 @@ def _handle_run_skill(
         )
     except Exception as e:
         result = None
+        _debug_log(f"run_skill({name}) exception: {e}")
         obs = OBS_ERROR.format(error=f"run_skill({name}) failed: {e}")
     else:
+        if not result:
+            _debug_log(
+                f"run_skill({name}) returned {repr(result)} (inner loop stopped without complete)"
+            )
         obs = OBS_SUCCESS.format(result=result or "(skill returned no result)")
     finally:
         # Reset skill context
