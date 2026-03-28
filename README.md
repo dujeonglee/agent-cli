@@ -52,7 +52,6 @@ agent-cli run "/summarize README.md"
 agent-cli --help
 agent-cli run --help
 agent-cli chat --help
-agent-cli plan --help
 agent-cli sessions --help
 ```
 
@@ -149,38 +148,6 @@ agent-cli run "task description" [options]
 | `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
 | `-q, --quiet` | 최소 출력 (결과만) | |
 
-### `plan` — 계획 기반 실행
-
-복잡한 작업을 단계별 계획으로 분해하여 실행합니다.
-
-```bash
-# 계획 생성 → 검토 → 실행
-agent-cli plan "Refactor auth module to use JWT"
-
-# 계획만 보기 (실행 안 함)
-agent-cli plan "Migrate database schema" --plan-only
-
-# 검토 없이 바로 실행
-agent-cli plan "Add unit tests for utils.py" --auto-approve
-
-# 계획 저장 + 나중에 재개
-agent-cli plan "Big refactoring task" --save-plan my-plan.json
-agent-cli plan "Big refactoring task" --resume my-plan.json
-
-# 계획 생성은 작은 모델, 실행은 큰 모델
-agent-cli plan "Complex task" --plan-model qwen3:8b --model qwen3:32b
-```
-
-| 추가 옵션 | 설명 | 기본값 |
-|----------|------|--------|
-| `--max-steps` | 최대 계획 step 수 | `20` |
-| `--step-max-iter` | step당 최대 이터레이션 | `10` |
-| `--auto-approve` | 검토 건너뛰기 | |
-| `--plan-only` | 계획 생성만 | |
-| `--plan-model` | 계획 생성용 별도 모델 | `--model`과 동일 |
-| `--save-plan` | 계획 파일 저장 | |
-| `--resume` | 저장된 계획에서 재개 | |
-
 ### `chat` — 대화형 모드
 
 ```bash
@@ -203,13 +170,13 @@ agent-cli chat -p ollama -m qwen3:32b
 
 | 명령어 | 설명 |
 |--------|------|
+| `/help`, `/?` | 사용 가능한 명령어 목록 |
 | `/quit`, `/exit` | 세션 종료 (요약 생성 후 저장) |
 | `/clear` | 컨텍스트 초기화 |
 | `/sh <cmd>` | 셸 명령 실행 |
-| `/plan <goal>` | 대화 중 계획 모드 진입 |
 | `/skills` | 사용 가능한 스킬 목록 |
+| `/<skill> <args>` | 스킬 실행 (예: `/optimize ./`) |
 | `/ctx_window` | 현재 컨텍스트 윈도우 내용 덤프 (디버깅용) |
-| `/<skill> <args>` | 스킬 실행 |
 
 입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.
 

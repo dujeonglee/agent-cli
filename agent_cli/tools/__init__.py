@@ -37,7 +37,7 @@ TOOLS: dict[str, Any] = {
     "read_artifact": tool_read_artifact,
 }
 
-# Virtual tool names — used to exclude them where only real tools matter (e.g. planning)
+# Virtual tool names — intercepted by loop, excluded from tool descriptions
 VIRTUAL_TOOLS: frozenset[str] = frozenset(
     {"complete", "ask", "run_skill", "read_artifact"}
 )

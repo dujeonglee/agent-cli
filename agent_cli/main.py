@@ -20,7 +20,11 @@ from agent_cli.render import C, console
 
 app = typer.Typer(
     name="agent-cli",
-    help="ReAct pattern Agentic Loop CLI",
+    help="AI agent CLI with ReAct pattern. Supports Ollama, OpenAI, Anthropic.\n\n"
+    "Run 'agent-cli setup' to configure.\n"
+    "Run 'agent-cli chat' for interactive mode.\n"
+    "Run 'agent-cli run <task>' for single-shot execution.\n"
+    "Run 'agent-cli sessions' to list previous sessions.",
     add_completion=False,
 )
 
@@ -297,7 +301,7 @@ def run(
         help="Current nesting depth (used internally by subagents)",
     ),
 ):
-    """ReAct pattern Agentic Loop (single-shot)."""
+    """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     # /sh prefix: Run shell command directly without LLM
     if not quiet and (query.startswith("/sh ") or query == "/sh"):
         cmd = query[3:].strip()
@@ -356,187 +360,8 @@ def run(
 
 
 @app.command()
-def plan(
-    goal: str = typer.Argument(..., help="Planning task description"),
-    provider: str = typer.Option(
-        "ollama",
-        "--provider",
-        "-p",
-        help="LLM provider: anthropic | openai | ollama",
-    ),
-    model: Optional[str] = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="Model ID (uses provider default if not specified)",
-    ),
-    base_url: Optional[str] = typer.Option(
-        None,
-        "--base-url",
-        help="API base URL (uses provider default if not specified)",
-    ),
-    api_key: Optional[str] = typer.Option(
-        None,
-        "--api-key",
-        help="API key (auto-detects from environment if not specified)",
-    ),
-    max_iter: int = typer.Option(
-        0,
-        "--max-iter",
-        "-n",
-        help="Maximum iterations per step (0 = unlimited)",
-    ),
-    max_steps: int = typer.Option(
-        20,
-        "--max-steps",
-        help="Maximum number of steps in plan",
-    ),
-    max_depth: int = typer.Option(
-        2,
-        "--max-depth",
-        help="Maximum subagent nesting depth",
-    ),
-    delegate_timeout: int = typer.Option(
-        300,
-        "--delegate-timeout",
-        help="Timeout in seconds for subagent delegation",
-    ),
-    auto_approve: bool = typer.Option(
-        False,
-        "--auto-approve",
-        help="Skip review, execute immediately",
-    ),
-    plan_only: bool = typer.Option(
-        False,
-        "--plan-only",
-        help="Generate plan and display, don't execute",
-    ),
-    plan_model: Optional[str] = typer.Option(
-        None,
-        "--plan-model",
-        help="Model for plan generation (defaults to --model)",
-    ),
-    step_max_iter: int = typer.Option(
-        10,
-        "--step-max-iter",
-        help="Maximum iterations per step (default: 10)",
-    ),
-    save_plan: Optional[str] = typer.Option(
-        None,
-        "--save-plan",
-        help="Save plan to file (auto-generates path if empty)",
-    ),
-    resume: Optional[str] = typer.Option(
-        None,
-        "--resume",
-        help="Resume execution from a saved plan file",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Show raw LLM response",
-    ),
-    quiet: bool = typer.Option(
-        False,
-        "--quiet",
-        hidden=True,
-    ),
-):
-    """Plan-driven execution with review and step-by-step control."""
-    import time
-    from agent_cli.planning.executor import execute_plan
-    from agent_cli.planning.generator import generate_plan
-    from agent_cli.planning.models import Plan as PlanModel
-    from agent_cli.planning.reviewer import review_plan
-
-    llm_provider, capabilities, resolved_model, resolved_url, resolved_key = (
-        _setup_provider(provider, model, base_url, api_key, quiet=quiet)
-    )
-
-    # Resolve plan-model (defaults to execution model)
-    if plan_model:
-        plan_model_resolved = plan_model
-        plan_capabilities = get_capabilities(
-            plan_model_resolved, provider, resolved_url
-        )
-    else:
-        plan_model_resolved = resolved_model
-        plan_capabilities = capabilities
-
-    # Auto-generate save path
-    if save_plan == "":
-        save_plan = f".agent-cli/plans/plan-{int(time.time())}.json"
-
-    # Resume from saved plan
-    if resume:
-        plan_obj = PlanModel.load(resume)
-        if not quiet:
-            console.print(f"[{C['accent']}]Resumed plan from {resume}[/]")
-    else:
-        # Phase 1: Generate plan (uses plan-model if specified)
-        while True:
-            plan_obj = generate_plan(
-                goal=goal,
-                provider=llm_provider,
-                capabilities=plan_capabilities,
-                model=plan_model_resolved,
-                max_steps=max_steps,
-                quiet=quiet,
-            )
-            if plan_obj is None:
-                if not quiet:
-                    console.print(f"[{C['error']}]Failed to generate plan.[/]")
-                raise typer.Exit(1)
-
-            if plan_only:
-                from agent_cli.render import render_plan as rp
-
-                rp(plan_obj)
-                if save_plan:
-                    plan_obj.save(save_plan)
-                    console.print(f"[{C['muted']}]Plan saved to {save_plan}[/]")
-                return
-
-            # Phase 2: Review
-            decision = review_plan(plan_obj, auto_approve=auto_approve)
-            if decision == "approve":
-                break
-            elif decision == "regenerate":
-                continue
-            else:  # cancel
-                if not quiet:
-                    console.print(f"[{C['muted']}]Plan cancelled.[/]")
-                return
-
-    # Phase 3: Execute (uses execution model, not plan model)
-    result = execute_plan(
-        plan=plan_obj,
-        provider=llm_provider,
-        capabilities=capabilities,
-        model=resolved_model,
-        provider_name=provider,
-        base_url=resolved_url,
-        api_key=resolved_key,
-        max_iter=max_iter,
-        step_max_iter=step_max_iter,
-        verbose=verbose,
-        quiet=quiet,
-        max_depth=max_depth,
-        delegate_timeout=delegate_timeout,
-        save_path=save_plan,
-    )
-
-    if result:
-        if quiet:
-            print(result)
-        else:
-            console.print(f"\n[{C['final']}]{result}[/]")
-
-
-@app.command()
 def setup():
-    """Run the setup wizard to configure agent-cli."""
+    """Configure provider, model, and connection. Runs automatically on first use. Re-run anytime to change settings."""
     from agent_cli.setup import SetupWizard
 
     SetupWizard().run()
@@ -548,7 +373,7 @@ def sessions(
         None, "--workspace", "-w", help="Filter by workspace path"
     ),
 ):
-    """List previous sessions."""
+    """List previous chat sessions. Use with 'chat --resume <id>' to continue."""
     from agent_cli.context.session import list_sessions as _list_sessions, load_summary
 
     ws = workspace or os.getcwd()
@@ -622,7 +447,7 @@ def chat(
         help="Resume a previous session by ID",
     ),
 ):
-    """Interactive chat with persistent context and automatic compression."""
+    """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
     from agent_cli.context.session import (
         create_session,
         finalize_session,
@@ -689,6 +514,18 @@ def chat(
             console.print(f"[{C['muted']}]Session ended.[/]")
             break
 
+        if query in ("/help", "/?"):
+            console.print(f"\n[{C['accent']}]Chat commands:[/]")
+            console.print("  /help               Show this help")
+            console.print("  /quit, /exit        End session")
+            console.print("  /clear              Reset context")
+            console.print("  /sh <cmd>           Run shell command")
+            console.print("  /skills             List available skills")
+            console.print("  /<skill> <args>     Run a skill")
+            console.print("  /ctx_window         Dump context window (debug)")
+            console.print()
+            continue
+
         if query == "/clear":
             ctx = ContextManager(
                 provider=llm_provider,
@@ -722,41 +559,6 @@ def chat(
                 f"[{C['muted']}]── estimated {tokens} tokens "
                 f"/ {ctx.capabilities.context_window} context window ──[/]"
             )
-            continue
-
-        if query.startswith("/plan "):
-            from agent_cli.planning.executor import execute_plan
-            from agent_cli.planning.generator import generate_plan
-            from agent_cli.planning.reviewer import review_plan
-
-            plan_goal = query[6:].strip()
-            if plan_goal:
-                plan_obj = generate_plan(
-                    goal=plan_goal,
-                    provider=llm_provider,
-                    capabilities=capabilities,
-                    model=resolved_model,
-                )
-                if plan_obj:
-                    decision = review_plan(plan_obj)
-                    if decision == "approve":
-                        plan_result = execute_plan(
-                            plan=plan_obj,
-                            provider=llm_provider,
-                            capabilities=capabilities,
-                            model=resolved_model,
-                            provider_name=provider,
-                            base_url=resolved_url,
-                            api_key=resolved_key,
-                            max_iter=max_iter,
-                            verbose=verbose,
-                            max_depth=max_depth,
-                            delegate_timeout=delegate_timeout,
-                        )
-                        if plan_result:
-                            ctx.add("user", f"/plan {plan_goal}")
-                            ctx.add("assistant", plan_result)
-                            console.print(f"\n[{C['final']}]{plan_result}[/]")
             continue
 
         # Skill dispatch: /skill-name args
@@ -796,9 +598,7 @@ def chat(
             )
             if result is _SKILL_NOT_FOUND:
                 console.print(f"[{C['error']}]Unknown command: /{cmd_name}[/]")
-                console.print(
-                    f"[{C['muted']}]Try /skills for available skills, or /quit, /clear, /sh, /plan[/]"
-                )
+                console.print(f"[{C['muted']}]Type /help for available commands[/]")
                 continue
 
             turn += 1

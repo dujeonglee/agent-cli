@@ -225,49 +225,6 @@ def render_model_loaded(model: str, capabilities) -> None:
     )
 
 
-# ── Plan rendering ──────────────────────────────
-
-_STATUS_ICONS = {
-    "pending": "[ ]",
-    "in_progress": "[→]",
-    "done": "[✓]",
-    "failed": "[✗]",
-    "skipped": "[~]",
-}
-
-_STATUS_COLORS = {
-    "pending": "white",
-    "in_progress": "bright_cyan",
-    "done": "green",
-    "failed": "red",
-    "skipped": "grey50",
-}
-
-
-def render_plan(plan) -> None:
-    """Display plan with status indicators."""
-
-    t = Text(justify="center")
-    t.append(f"PLAN · {len(plan.steps)} steps", style="bold bright_cyan")
-
-    console.print(
-        Panel(
-            t,
-            border_style="bright_cyan",
-            box=box.DOUBLE_EDGE,
-            padding=(0, 2),
-        )
-    )
-    console.print()
-
-    for step in plan.steps:
-        icon = _STATUS_ICONS.get(step.status, "[ ]")
-        color = _STATUS_COLORS.get(step.status, "white")
-        console.print(f"  {step.id}. [{color}]{icon}[/] {step.description}")
-
-    console.print()
-
-
 def render_context_dump(messages: list[dict], iteration: int) -> None:
     """Dump full context window contents (verbose mode, before each LLM call)."""
     console.print(
@@ -288,15 +245,3 @@ def render_context_dump(messages: list[dict], iteration: int) -> None:
             preview = str(content)[:200]
         console.print(f"  [{C['muted']}][{i}] {role}: {preview}[/]")
     console.print(Rule(style=C["muted"]))
-
-
-def render_plan_progress(plan) -> None:
-    """Display plan progress during execution."""
-    for step in plan.steps:
-        icon = _STATUS_ICONS.get(step.status, "[ ]")
-        color = _STATUS_COLORS.get(step.status, "white")
-        line = f"  {step.id}. [{color}]{icon}[/] {step.description}"
-        console.print(line)
-        if step.result and step.status in ("done", "failed"):
-            summary = step.result[:80].replace("\n", " ")
-            console.print(f"      [{C['muted']}]└─ {summary}[/]")

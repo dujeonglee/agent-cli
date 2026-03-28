@@ -11,9 +11,6 @@ import pytest
 
 from agent_cli.loop import run_loop
 from agent_cli.parsing.react_parser import parse_react
-from agent_cli.planning.executor import execute_plan
-from agent_cli.planning.generator import generate_plan
-from agent_cli.planning.models import Plan
 from agent_cli.providers.compat import get_capabilities
 from tests.conftest import OLLAMA_BASE_URL
 
@@ -116,56 +113,6 @@ class TestEditFile:
         assert "NEW_VALUE" in content
 
 
-class TestPlanGeneration:
-    def test_generate_plan(
-        self, integration_model, ollama_provider, model_capabilities, tmp_path
-    ):
-        """Plan generation → returns Plan with steps."""
-        test_file = tmp_path / "readme.txt"
-        test_file.write_text("This is a test readme file.\nIt has two lines.")
-
-        plan = generate_plan(
-            goal=f"Read {test_file} and summarize its content",
-            provider=ollama_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
-            max_steps=5,
-            quiet=True,
-        )
-        assert plan is not None
-        assert len(plan.steps) >= 1
-        assert plan.goal is not None
-
-
-class TestPlanExecution:
-    def test_plan_execute(
-        self, integration_model, ollama_provider, model_capabilities, tmp_path
-    ):
-        """Plan generation + execution → result."""
-        data_file = tmp_path / "data.txt"
-        data_file.write_text("apple\nbanana\ncherry\n")
-
-        plan = generate_plan(
-            goal=f"Read {data_file} and tell me how many lines it has",
-            provider=ollama_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
-            max_steps=5,
-            quiet=True,
-        )
-        assert plan is not None
-
-        result = execute_plan(
-            plan=plan,
-            provider=ollama_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
-            quiet=True,
-            step_max_iter=8,
-        )
-        assert result is not None
-
-
 class TestConstrainedDecoding:
     def test_json_response_parseable(
         self, integration_model, ollama_provider, model_capabilities
@@ -248,34 +195,6 @@ class TestProbeBasedThinkingDetection:
                 "thinking_field",
             )
             assert model_capabilities.thinking_format == fmt
-
-
-class TestPlanPersistence:
-    def test_save_and_resume(
-        self, integration_model, ollama_provider, model_capabilities, tmp_path
-    ):
-        """Save plan → load → done steps skipped."""
-        data_file = tmp_path / "persist_test.txt"
-        data_file.write_text("test content for persistence")
-
-        plan = generate_plan(
-            goal=f"Read {data_file} and tell me its content",
-            provider=ollama_provider,
-            capabilities=model_capabilities,
-            model=integration_model,
-            max_steps=5,
-            quiet=True,
-        )
-        assert plan is not None
-
-        # Save plan
-        plan_file = tmp_path / "saved_plan.json"
-        plan.save(plan_file)
-
-        # Load and verify
-        loaded = Plan.load(plan_file)
-        assert loaded.goal == plan.goal
-        assert len(loaded.steps) == len(plan.steps)
 
 
 class TestSkillExecution:

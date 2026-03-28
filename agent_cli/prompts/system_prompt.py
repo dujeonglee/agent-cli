@@ -97,52 +97,10 @@ def _format_tool_block(
     return get_tool_descriptions(active_tools, include_delegate)
 
 
-PLAN_GENERATION_TEMPLATE = """\
-You are an AI assistant that creates step-by-step execution plans.
-
-Given a goal, produce a numbered plan of concrete, actionable steps.
-Each step should be a single tool action (read file, write file, edit, shell command)
-or an analysis/reasoning step.
-
-Respond with a numbered list after the >>>PLAN marker:
-
->>>PLAN
-1. Description of step 1
-2. Description of step 2
-...
-
-Rules:
-- Each step should be independently executable
-- Steps should be ordered by dependency
-- Be specific about file paths and operations
-- Keep steps atomic — one action per step
-- Include verification steps where appropriate (e.g., run tests)
-- Maximum {max_steps} steps"""
-
-
-def build_plan_generation_prompt(
-    capabilities: ModelCapabilities,
-    active_tools: list[str],
-    include_delegate: bool = False,
-    max_steps: int = 20,
-) -> str:
-    """Build system prompt for plan generation (Phase 1)."""
-    sections = [PLAN_GENERATION_TEMPLATE.format(max_steps=max_steps)]
-
-    tool_block = _format_tool_block(active_tools, include_delegate)
-    sections.append(f"## Available Tools\n{tool_block}")
-
-    if capabilities.context_window <= SMALL_MODEL_CONTEXT:
-        sections.append(SMALL_MODEL_HINTS)
-
-    return "\n\n".join(sections)
-
-
 def build_system_prompt(
     capabilities: ModelCapabilities,
     active_tools: list[str],
     include_delegate: bool = False,
-    plan_context: str | None = None,
     skill_stack: list[str] | None = None,
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools."""
@@ -158,9 +116,6 @@ def build_system_prompt(
 
     if include_delegate:
         sections.append(DELEGATE_GUIDE)
-
-    if plan_context:
-        sections.append(plan_context)
 
     sections.append(ARTIFACT_GUIDE)
     sections.append(RULES)

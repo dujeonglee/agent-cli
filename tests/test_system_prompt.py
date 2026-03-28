@@ -53,12 +53,6 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(ctx_window=128000), ["shell"])
         assert SMALL_MODEL_HINTS not in prompt
 
-    def test_plan_context(self):
-        prompt = build_system_prompt(
-            _make_caps(), ["shell"], plan_context="Step 3 of 5: Run tests"
-        )
-        assert "Step 3 of 5" in prompt
-
     def test_json_format_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "JSON" in prompt

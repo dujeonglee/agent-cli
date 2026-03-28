@@ -905,10 +905,13 @@ agent-cli chat [options]
   (run 옵션 포함)
 
   # 대화 중 명령어:
+  /help, /?          명령어 목록
   /quit, /exit       세션 종료
   /clear             컨텍스트 초기화
   /sh <cmd>          셸 명령 실행
-  /plan <goal>       계획 모드 진입
+  /skills            사용 가능한 스킬 목록
+  /<skill> <args>    스킬 실행
+  /ctx_window        컨텍스트 윈도우 덤프 (디버그)
 ```
 
 ---

@@ -553,39 +553,6 @@ class TestTruncationByteLimit:
         assert isinstance(result, str)
 
 
-class TestPlanParserJsonExtraction:
-    def test_json_steps_array(self):
-        from agent_cli.parsing.plan_parser import parse_plan_steps
-
-        text = '{"steps": ["Read file", "Analyze", "Write summary"]}'
-        steps = parse_plan_steps(text)
-        assert len(steps) == 3
-        assert steps[0].description == "Read file"
-
-    def test_json_plan_key(self):
-        from agent_cli.parsing.plan_parser import parse_plan_steps
-
-        text = '{"plan": ["Step 1", "Step 2"]}'
-        steps = parse_plan_steps(text)
-        assert len(steps) == 2
-
-    def test_json_dict_items(self):
-        from agent_cli.parsing.plan_parser import parse_plan_steps
-
-        text = '{"steps": [{"description": "Read file"}, {"task": "Analyze"}]}'
-        steps = parse_plan_steps(text)
-        assert len(steps) == 2
-        assert steps[0].description == "Read file"
-        assert steps[1].description == "Analyze"
-
-    def test_json_plan_string(self):
-        from agent_cli.parsing.plan_parser import parse_plan_steps
-
-        text = '{"plan": "1. Read file\\n2. Analyze it"}'
-        steps = parse_plan_steps(text)
-        assert len(steps) == 2
-
-
 class TestReadFilePartial:
     def test_full_read(self, tmp_path):
         f = tmp_path / "test.py"

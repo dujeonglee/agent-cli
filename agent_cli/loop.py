@@ -79,7 +79,6 @@ class AgentLoop:
         max_depth: int = 2,
         delegate_timeout: int = 300,
         active_tools: list[str] | None = None,
-        plan_context: str | None = None,
         session=None,  # SessionMeta — avoid circular import
         hooks_config: dict | None = None,
         skill_name: str = "",
@@ -100,7 +99,6 @@ class AgentLoop:
         self.depth = depth
         self.max_depth = max_depth
         self.delegate_timeout = delegate_timeout
-        self.plan_context = plan_context
         self.session = session
         self.hooks_config = hooks_config
         self.skill_name = skill_name
@@ -154,7 +152,6 @@ class AgentLoop:
             capabilities=self.capabilities,
             active_tools=self.tools_list,
             include_delegate=self.include_delegate,
-            plan_context=self.plan_context,
             skill_stack=self.skill_stack,
         )
 
@@ -837,7 +834,6 @@ def run_loop(
     max_depth: int = 2,
     delegate_timeout: int = 300,
     active_tools: list[str] | None = None,
-    plan_context: str | None = None,
     session=None,  # SessionMeta — avoid circular import
     hooks_config: dict | None = None,
     skill_name: str = "",
@@ -864,7 +860,6 @@ def run_loop(
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
         active_tools=active_tools,
-        plan_context=plan_context,
         session=session,
         hooks_config=hooks_config,
         skill_name=skill_name,
