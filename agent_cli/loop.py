@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 import time
 
@@ -28,17 +27,22 @@ from agent_cli.tools.delegate import tool_delegate
 from agent_cli.tools.registry import convert_to_anthropic_tools, convert_to_openai_tools
 from agent_cli.tools.truncation import get_truncation_config, truncate_output
 
-_DEBUG_LOG_PATH = Path(".agent-cli/debug.log")
+_debug_verbose = False
+
+
+def _set_debug_verbose(v: bool) -> None:
+    """Enable/disable debug logging to stderr."""
+    global _debug_verbose
+    _debug_verbose = v
 
 
 def _debug_log(msg: str) -> None:
-    """Write debug message to .agent-cli/debug.log."""
-    try:
-        _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
+    """Print debug message to stderr (only when verbose mode is on)."""
+    if not _debug_verbose:
+        return
+    import sys
+
+    print(f"[debug {time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
 
 
 # Checkpoint: first check at N iterations, then repeat every M iterations
@@ -77,6 +81,7 @@ def run_loop(
 
     Returns the final answer string, or None if max iterations reached.
     """
+    _set_debug_verbose(verbose)
     include_delegate = depth < max_depth
     tools_list = active_tools or list(TOOLS.keys())
     # Remove "ask" in non-interactive mode (no ctx)

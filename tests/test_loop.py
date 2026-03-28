@@ -1053,16 +1053,24 @@ class TestScratchpadIntegration:
         all_content = " ".join(m.get("content", "") for m in msgs)
         assert "[Scratchpad" in all_content
 
-    def test_debug_log_written_on_failure(self, caps, tmp_path):
-        """debug.log written when skill inner loop fails."""
-        from agent_cli.loop import _debug_log
+    def test_debug_log_to_stderr_when_verbose(self, caps, tmp_path, capsys):
+        """debug messages go to stderr only when verbose is on."""
+        from agent_cli.loop import _debug_log, _set_debug_verbose
 
-        _debug_log("test_debug_entry")
-        from pathlib import Path
+        # Off by default
+        _set_debug_verbose(False)
+        _debug_log("should_not_appear")
+        captured = capsys.readouterr()
+        assert "should_not_appear" not in captured.err
 
-        log = Path(".agent-cli/debug.log")
-        if log.exists():
-            assert "test_debug_entry" in log.read_text()
+        # On when verbose
+        _set_debug_verbose(True)
+        _debug_log("should_appear")
+        captured = capsys.readouterr()
+        assert "should_appear" in captured.err
+
+        # Cleanup
+        _set_debug_verbose(False)
 
 
 class TestArtifactLazyLoading:
