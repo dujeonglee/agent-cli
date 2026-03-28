@@ -282,20 +282,13 @@ def run_loop(
                     if questions:
                         user_response = _handle_ask(questions, quiet)
                         obs_msg = f"User responded:\n{user_response}"
-                        new_msgs = _format_tool_call_messages(
+                        _append_native_observation(
+                            messages,
+                            ctx,
                             provider_name,
                             response,
                             [{"tool_call": first_toolcall, "output": obs_msg}],
                         )
-                        messages.extend(new_msgs)
-                        if ctx:
-                            for m in new_msgs:
-                                ctx.add(
-                                    m["role"],
-                                    m.get("content", "")
-                                    if isinstance(m.get("content"), str)
-                                    else json.dumps(m.get("content", "")),
-                                )
                         continue
 
                 # 4c. run_skill — intercept at loop level (needs ctx)
@@ -321,21 +314,13 @@ def run_loop(
                         render_step(
                             "observation", obs, iteration, tool_name="run_skill"
                         )
-                    # Format as tool call message
-                    new_msgs = _format_tool_call_messages(
+                    _append_native_observation(
+                        messages,
+                        ctx,
                         provider_name,
                         response,
                         [{"tool_call": first_toolcall, "output": obs}],
                     )
-                    messages.extend(new_msgs)
-                    if ctx:
-                        for m in new_msgs:
-                            ctx.add(
-                                m["role"],
-                                m.get("content", "")
-                                if isinstance(m.get("content"), str)
-                                else json.dumps(m.get("content", "")),
-                            )
                     tools_called.append("run_skill")
                     continue
 
@@ -353,20 +338,13 @@ def run_loop(
                         render_step(
                             "observation", obs, iteration, tool_name="read_artifact"
                         )
-                    new_msgs = _format_tool_call_messages(
+                    _append_native_observation(
+                        messages,
+                        ctx,
                         provider_name,
                         response,
                         [{"tool_call": first_toolcall, "output": obs}],
                     )
-                    messages.extend(new_msgs)
-                    if ctx:
-                        for m in new_msgs:
-                            ctx.add(
-                                m["role"],
-                                m.get("content", "")
-                                if isinstance(m.get("content"), str)
-                                else json.dumps(m.get("content", "")),
-                            )
                     tools_called.append("read_artifact")
                     continue
 
@@ -467,16 +445,9 @@ def run_loop(
                 return None
 
             # Format messages based on provider
-            new_msgs = _format_tool_call_messages(provider_name, response, observations)
-            messages.extend(new_msgs)
-            if ctx:
-                for m in new_msgs:
-                    ctx.add(
-                        m["role"],
-                        m.get("content", "")
-                        if isinstance(m.get("content"), str)
-                        else json.dumps(m.get("content", "")),
-                    )
+            _append_native_observation(
+                messages, ctx, provider_name, response, observations
+            )
             continue
 
         # 5. Text parsing path (Ollama, fallback)
@@ -510,11 +481,7 @@ def run_loop(
                     "tool actions (file operations, shell commands, etc.). "
                     "Please use the appropriate tools first, then call complete."
                 )
-                messages.append({"role": "assistant", "content": llm_text})
-                messages.append({"role": "user", "content": nudge})
-                if ctx:
-                    ctx.add("assistant", llm_text)
-                    ctx.add("user", nudge)
+                _append_text_observation(messages, ctx, llm_text, nudge)
                 render_status(
                     "error",
                     "Answer rejected — no tool actions performed yet.",
@@ -574,11 +541,7 @@ def run_loop(
             if questions:
                 user_response = _handle_ask(questions, quiet)
                 obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
-                messages.append({"role": "assistant", "content": llm_text})
-                messages.append({"role": "user", "content": obs_msg})
-                if ctx:
-                    ctx.add("assistant", llm_text)
-                    ctx.add("user", obs_msg)
+                _append_text_observation(messages, ctx, llm_text, obs_msg)
                 if depth == 0:
                     _log_to_session(
                         session,
@@ -611,11 +574,7 @@ def run_loop(
             if not quiet:
                 render_step("observation", obs, iteration, tool_name="run_skill")
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
-            messages.append({"role": "assistant", "content": llm_text})
-            messages.append({"role": "user", "content": obs_msg})
-            if ctx:
-                ctx.add("assistant", llm_text)
-                ctx.add("user", obs_msg)
+            _append_text_observation(messages, ctx, llm_text, obs_msg)
             tools_called.append("run_skill")
             if depth == 0:
                 _log_to_session(
@@ -641,11 +600,7 @@ def run_loop(
             if not quiet:
                 render_step("observation", obs, iteration, tool_name="read_artifact")
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
-            messages.append({"role": "assistant", "content": llm_text})
-            messages.append({"role": "user", "content": obs_msg})
-            if ctx:
-                ctx.add("assistant", llm_text)
-                ctx.add("user", obs_msg)
+            _append_text_observation(messages, ctx, llm_text, obs_msg)
             tools_called.append("read_artifact")
             continue
 
@@ -730,11 +685,7 @@ def run_loop(
 
             # Inject observation
             obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
-            messages.append({"role": "assistant", "content": llm_text})
-            messages.append({"role": "user", "content": obs_msg})
-            if ctx:
-                ctx.add("assistant", llm_text)
-                ctx.add("user", obs_msg)
+            _append_text_observation(messages, ctx, llm_text, obs_msg)
             continue
 
         # 12. Missing action or parse failure — retry with appropriate hint
@@ -769,11 +720,7 @@ def run_loop(
                 '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
                 "No markdown fences, no extra text."
             )
-        messages.append({"role": "assistant", "content": llm_text})
-        messages.append({"role": "user", "content": retry_msg})
-        if ctx:
-            ctx.add("assistant", llm_text)
-            ctx.add("user", retry_msg)
+        _append_text_observation(messages, ctx, llm_text, retry_msg)
         iteration -= 1  # Don't count format retries
 
     if not quiet:
@@ -1309,6 +1256,40 @@ def _format_openai_tool_messages(response, observations: list[dict]) -> list[dic
     ]
 
     return [assistant_msg] + result_msgs
+
+
+def _append_native_observation(
+    messages: list[dict],
+    ctx,
+    provider_name: str,
+    response,
+    observations: list[dict],
+) -> None:
+    """Native tool calling: format messages + extend + sync ctx."""
+    new_msgs = _format_tool_call_messages(provider_name, response, observations)
+    messages.extend(new_msgs)
+    if ctx:
+        for m in new_msgs:
+            ctx.add(
+                m["role"],
+                m.get("content", "")
+                if isinstance(m.get("content"), str)
+                else json.dumps(m.get("content", "")),
+            )
+
+
+def _append_text_observation(
+    messages: list[dict],
+    ctx,
+    llm_text: str,
+    obs_msg: str,
+) -> None:
+    """Text parsing: append assistant + observation + sync ctx."""
+    messages.append({"role": "assistant", "content": llm_text})
+    messages.append({"role": "user", "content": obs_msg})
+    if ctx:
+        ctx.add("assistant", llm_text)
+        ctx.add("user", obs_msg)
 
 
 def _trim_old_observations(

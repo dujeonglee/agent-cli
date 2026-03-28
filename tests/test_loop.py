@@ -876,6 +876,68 @@ class TestExtractQuestions:
         assert _extract_questions(["a", "", "b"]) == ["a", "b"]
 
 
+class TestAppendObservationHelpers:
+    """Test _append_native_observation and _append_text_observation."""
+
+    def test_append_text_observation_basic(self):
+        """Appends assistant + user messages and syncs ctx."""
+        from agent_cli.loop import _append_text_observation
+
+        messages = [{"role": "user", "content": "hello"}]
+        ctx = MagicMock()
+
+        _append_text_observation(messages, ctx, "llm response", "Observation: result")
+
+        assert len(messages) == 3
+        assert messages[1]["role"] == "assistant"
+        assert messages[1]["content"] == "llm response"
+        assert messages[2]["role"] == "user"
+        assert messages[2]["content"] == "Observation: result"
+        assert ctx.add.call_count == 2
+        ctx.add.assert_any_call("assistant", "llm response")
+        ctx.add.assert_any_call("user", "Observation: result")
+
+    def test_append_text_observation_no_ctx(self):
+        """Works without ctx (no crash)."""
+        from agent_cli.loop import _append_text_observation
+
+        messages = []
+        _append_text_observation(messages, None, "llm", "obs")
+        assert len(messages) == 2
+
+    def test_append_native_observation_basic(self):
+        """Extends messages with formatted tool call messages and syncs ctx."""
+        from agent_cli.loop import _append_native_observation
+
+        messages = []
+        ctx = MagicMock()
+        response = MagicMock()
+        response.content = "thinking..."
+        response.tool_calls = [
+            {"id": "t1", "name": "shell", "input": {"command": "ls"}}
+        ]
+
+        observations = [{"tool_call": {"id": "t1"}, "output": "file.txt"}]
+
+        # Use fallback provider (not anthropic/openai) for simple format
+        _append_native_observation(messages, ctx, "ollama", response, observations)
+
+        assert len(messages) == 2  # assistant + user (fallback format)
+        assert ctx.add.call_count == 2
+
+    def test_append_native_observation_no_ctx(self):
+        """Works without ctx (no crash)."""
+        from agent_cli.loop import _append_native_observation
+
+        messages = []
+        response = MagicMock()
+        response.content = "ok"
+        response.tool_calls = []
+
+        _append_native_observation(messages, None, "ollama", response, [])
+        assert len(messages) == 2  # fallback still appends assistant + user
+
+
 class TestScratchpadIntegration:
     """Test loop.py integration with scratchpad begin_turn/end_turn."""
 
