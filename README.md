@@ -18,7 +18,7 @@ pip install typer rich requests
 python agent-cli.py --help
 ```
 
-설치 후 `agent-cli` 명령어가 PATH에 등록됩니다.
+설치 후 `agent-cli` 명령어가 PATH에 등록됩니다. 처음 실행하면 설정 마법사가 자동으로 시작됩니다.
 
 ```bash
 # pip install 없이 실행하는 방법
@@ -55,6 +55,79 @@ agent-cli chat --help
 agent-cli plan --help
 agent-cli sessions --help
 ```
+
+## 설정
+
+### 첫 실행 (Setup Wizard)
+
+설정 파일(`config.json`)이 없으면 자동으로 설정 마법사가 시작됩니다:
+
+```
+$ agent-cli run "hello"
+
+No configuration found. Starting setup wizard...
+
+╭─ Agent-CLI Setup ─────────────────────────────────────╮
+│                                                        │
+╰─ ReAct pattern agent CLI for on-premise LLMs ─────────╯
+
+1. Select LLM Provider
+   [1] Ollama (local, default)
+   [2] OpenAI compatible (vLLM, LM Studio, mlx-lm)
+   [3] Anthropic
+
+2. Connection → base URL, API key, 연결 테스트
+3. Model → 사용 가능한 모델 자동 탐색 및 선택
+4. Review → 설정 확인 후 저장 위치 선택
+```
+
+수동으로 다시 실행:
+```bash
+agent-cli setup
+```
+
+### config.json
+
+설정은 JSON 파일로 저장됩니다:
+
+```json
+{
+  "provider": "ollama",
+  "base_url": "http://localhost:11434",
+  "api_key": "",
+  "default_model": "qwen3:32b"
+}
+```
+
+### 설정 우선순위
+
+높은 게 낮은 걸 덮어씁니다 (필드 단위 병합):
+
+| 우선순위 | 위치 | 용도 |
+|---------|------|------|
+| 1 (최고) | CLI 파라미터 (`-p`, `-m`, `--base-url`, `--api-key`) | 임시 오버라이드 |
+| 2 | `.agent-cli/config.json` (프로젝트) | 워크스페이스별 설정 |
+| 3 | `~/.agent-cli/config.json` (사용자) | 전역 기본 설정 |
+| 4 (최저) | 환경변수 | 시스템 레벨 |
+
+예: `~/.agent-cli/config.json`에 `qwen3:32b`가 기본이지만 `-m nemotron:120b`로 임시 실행:
+```bash
+agent-cli run "task" -m nemotron:120b
+```
+
+### 환경변수
+
+| 변수 | config.json 키 | 설명 |
+|------|---------------|------|
+| `AGENT_CLI_PROVIDER` | `provider` | LLM 프로바이더 |
+| `AGENT_CLI_BASE_URL` | `base_url` | API 엔드포인트 |
+| `AGENT_CLI_API_KEY` | `api_key` | API 키 |
+| `AGENT_CLI_MODEL` | `default_model` | 기본 모델 |
+| `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
+| `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
+| `OLLAMA_BASE_URL` | — | Ollama 엔드포인트 (기존 호환) |
+| `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
+| `INTEGRATION_MODELS` | — | 통합 테스트 모델 |
 
 ## 명령어
 
@@ -139,6 +212,14 @@ agent-cli chat -p ollama -m qwen3:32b
 | `/<skill> <args>` | 스킬 실행 |
 
 입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.
+
+### `setup` — 설정 마법사
+
+```bash
+agent-cli setup
+```
+
+프로바이더, 접속 정보, 기본 모델을 대화형으로 설정합니다. 설정이 없을 때 자동으로 실행되며, 언제든 수동으로 다시 실행할 수 있습니다.
 
 ### `sessions` — 세션 관리
 
@@ -800,13 +881,7 @@ pytest tests/ -v
 
 ## 환경 변수
 
-| 변수 | 설명 |
-|------|------|
-| `ANTHROPIC_API_KEY` | Anthropic API 키 |
-| `OPENAI_API_KEY` | OpenAI API 키 |
-| `OLLAMA_BASE_URL` | Ollama 엔드포인트 (기본: `http://localhost:11434`) |
-| `AGENT_CLI_NO_READLINE` | `1`로 설정 시 readline 비활성화 (깨진 빌드 우회) |
-| `INTEGRATION_MODELS` | 통합 테스트 모델 (쉼표 구분) |
+설정 우선순위 및 전체 환경변수 목록은 [설정 섹션](#설정)을 참조하세요.
 
 ## 라이선스
 

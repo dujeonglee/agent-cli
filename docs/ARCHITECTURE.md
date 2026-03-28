@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-03-28
 > 버전: 2.0.0-dev
-> 총 소스: 7,460 LOC (49 Python 파일) + 8,012 LOC 테스트 (26 파일)
-> 총 테스트: 527 유닛 + 65 통합 = 592개
+> 총 소스: 7,826 LOC (50 Python 파일) + 8,460 LOC 테스트 (27 파일)
+> 총 테스트: 554 유닛 + 65 통합 = 619개
 
 ---
 
@@ -43,8 +43,9 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (812)  CLI 명령어: run, plan, chat, sessions + 공유 헬퍼
-├── config.py                (138)  models.json 로딩/저장 + 프로바이더 기본값
+├── main.py                  (852)  CLI 명령어: run, plan, chat, setup, sessions + 공유 헬퍼
+├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
+├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
 ├── constants.py             (27)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
@@ -695,6 +696,30 @@ Thinking 블록 처리 플로우:
 
 ## 8. 설정 시스템
 
+### 8.0 config.json (프로바이더/모델 설정)
+
+```json
+{
+  "provider": "ollama",
+  "base_url": "http://localhost:11434",
+  "api_key": "",
+  "default_model": "qwen3:32b"
+}
+```
+
+**3레이어 병합** (`load_config()`):
+```
+env vars (AGENT_CLI_*)  →  최저 우선순위
+~/.agent-cli/config.json →  사용자 전역
+.agent-cli/config.json   →  워크스페이스 (최고)
++ CLI 파라미터             →  임시 오버라이드
+```
+
+필드 단위 병합: 상위 레이어가 해당 필드를 가지면 덮어씀, 없으면 하위에서 상속.
+
+**SetupWizard** (`setup.py`): 설정 파일이 없으면 자동 실행.
+`agent-cli setup`으로 수동 재설정 가능.
+
 ### 8.1 models.json 구조
 
 ```json
@@ -801,9 +826,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, plan_context)
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 26 | 515 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 27 | 554 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 65 | `pytest tests/test_integration.py` |
-| **전체** | **26** | **580** | `pytest tests/` |
+| **전체** | **27** | **619** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 
