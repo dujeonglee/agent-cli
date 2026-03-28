@@ -9,6 +9,8 @@ import re
 import zlib
 from pathlib import Path
 
+from agent_cli.tools.result import ToolResult
+
 # Hashline constants: 16-char alphabet for CRC32-to-2-char hash encoding
 _NIBBLE = "ZPMQVRWSNKTXJBYH"
 # Lookup table: maps byte 0-255 to 2-char hash tag (e.g. "VR", "KT")
@@ -62,11 +64,12 @@ def _verify_ref(lines: list[str], ref: str) -> int:
     return line_num - 1  # 0-based
 
 
-def tool_read_file(args: dict) -> str:
+def tool_read_file(args: dict) -> ToolResult:
     """Read a file and return hashline-formatted content.
 
     Supports partial reads via line_start/line_end (1-based, inclusive).
     """
+
     path = args.get("path", "")
     line_start = args.get("line_start", 0)
     line_end = args.get("line_end", 0)
@@ -92,8 +95,8 @@ def tool_read_file(args: dict) -> str:
             for i, line in enumerate(selected, start + 1):
                 tag = compute_line_hash(i, line)
                 out.append(f"{i}#{tag}:{line}")
-            return "\n".join(out)
+            return ToolResult(True, output="\n".join(out))
 
-        return format_hashlines(text)
+        return ToolResult(True, output=format_hashlines(text))
     except Exception as e:
-        raise RuntimeError(f"read_file failed: {e}")
+        return ToolResult(False, error=f"read_file failed: {e}")

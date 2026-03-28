@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from agent_cli.tools.result import ToolResult
 
-def tool_run_skill(args: dict, **kwargs) -> str:
+
+def tool_run_skill(args: dict, **kwargs) -> ToolResult:
     """Execute a skill by name. Called by the loop as a virtual tool.
 
     The actual execution requires provider/capabilities/model context,
     which are passed via **kwargs from _do_execute_tool.
     """
+
     name = args.get("name", "")
     if not name:
-        return "Error: 'name' is required. Specify the skill name to run."
+        return ToolResult(
+            False, error="'name' is required. Specify the skill name to run."
+        )
 
     arguments = args.get("arguments", "")
 
@@ -20,13 +25,18 @@ def tool_run_skill(args: dict, **kwargs) -> str:
     skills = load_skills()
     if name not in skills:
         available = ", ".join(skills.keys()) if skills else "(none)"
-        return f"Error: skill '{name}' not found. Available: {available}"
+        return ToolResult(
+            False, error=f"skill '{name}' not found. Available: {available}"
+        )
 
     skill = skills[name]
 
     # Check if skill disables model invocation
     if skill.disable_model_invocation:
-        return f"Error: skill '{name}' is user-only (disable-model-invocation: true)."
+        return ToolResult(
+            False,
+            error=f"skill '{name}' is user-only (disable-model-invocation: true).",
+        )
 
     from agent_cli.skills.executor import execute_skill
 
@@ -35,7 +45,9 @@ def tool_run_skill(args: dict, **kwargs) -> str:
     model = kwargs.get("model", "")
 
     if not provider or not capabilities:
-        return "Error: run_skill requires provider context (internal error)."
+        return ToolResult(
+            False, error="run_skill requires provider context (internal error)."
+        )
 
     result = execute_skill(
         skill=skill,
@@ -51,4 +63,4 @@ def tool_run_skill(args: dict, **kwargs) -> str:
         session=kwargs.get("session"),
     )
 
-    return result or "(skill returned no result)"
+    return ToolResult(True, output=result or "(skill returned no result)")

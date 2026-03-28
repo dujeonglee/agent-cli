@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from agent_cli.tools.read_file import _parse_ref, _verify_ref, compute_line_hash
+from agent_cli.tools.result import ToolResult
 
 
 def _normalize_for_fuzzy(text: str) -> str:
@@ -61,24 +62,26 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         raise exact_err
 
 
-def tool_edit_file(args: dict) -> str:
+def tool_edit_file(args: dict) -> ToolResult:
     """Apply hashline-based edits to a file with fuzzy matching support."""
+
     path = args.get("path", "")
     edits = args.get("edits", [])
     if not edits:
-        raise RuntimeError("No edits provided.")
+        return ToolResult(False, error="No edits provided.")
 
     # Filter out non-dict items in edits (LLM sometimes inserts ints or strings)
     edits = [e for e in edits if isinstance(e, dict)]
     if not edits:
-        raise RuntimeError(
-            "No valid edit operations found (each edit must be a JSON object)."
+        return ToolResult(
+            False,
+            error="No valid edit operations found (each edit must be a JSON object).",
         )
 
     try:
         text = Path(path).read_text(encoding="utf-8")
     except Exception as e:
-        raise RuntimeError(f"edit_file: cannot read '{path}': {e}")
+        return ToolResult(False, error=f"edit_file: cannot read '{path}': {e}")
 
     file_lines = text.split("\n")
     fuzzy_warnings: list[str] = []
@@ -89,7 +92,9 @@ def tool_edit_file(args: dict) -> str:
         pos = edit.get("pos")
         end = edit.get("end")
         if op not in ("replace", "append", "prepend"):
-            raise RuntimeError(f"Unknown edit op: '{op}'. Use replace|append|prepend.")
+            return ToolResult(
+                False, error=f"Unknown edit op: '{op}'. Use replace|append|prepend."
+            )
         if pos:
             _, was_fuzzy = fuzzy_verify_ref(file_lines, pos)
             if was_fuzzy:
@@ -125,7 +130,7 @@ def tool_edit_file(args: dict) -> str:
 
         if op == "replace":
             if not pos:
-                raise RuntimeError("replace requires 'pos'.")
+                return ToolResult(False, error="replace requires 'pos'.")
             start_idx, _ = fuzzy_verify_ref(file_lines, pos)
             if end:
                 end_idx, _ = fuzzy_verify_ref(file_lines, end)
@@ -151,9 +156,9 @@ def tool_edit_file(args: dict) -> str:
     try:
         Path(path).write_text(result_text, encoding="utf-8")
     except Exception as e:
-        raise RuntimeError(f"edit_file: cannot write '{path}': {e}")
+        return ToolResult(False, error=f"edit_file: cannot write '{path}': {e}")
 
     msg = f"Edit complete: {path} ({len(file_lines)} lines)"
     if fuzzy_warnings:
         msg += "\n" + "\n".join(fuzzy_warnings)
-    return msg
+    return ToolResult(True, output=msg)

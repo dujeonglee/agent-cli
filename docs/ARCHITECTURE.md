@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-03-26
+> 최종 업데이트: 2026-03-28
 > 버전: 2.0.0-dev
-> 총 소스: 7,363 LOC (48 Python 파일) + 7,750 LOC 테스트 (26 파일)
-> 총 테스트: 523 유닛 + 65 통합 = 588개
+> 총 소스: 7,460 LOC (49 Python 파일) + 8,012 LOC 테스트 (26 파일)
+> 총 테스트: 527 유닛 + 65 통합 = 592개
 
 ---
 
@@ -67,16 +67,17 @@ agent_cli/
 │   └── plan_parser.py       (106)  계획 step 추출 (텍스트 + JSON)
 │
 ├── tools/                          도구 시스템
-│   ├── __init__.py          (60)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool()
+│   ├── __init__.py          (67)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
+│   ├── result.py            (14)   ToolResult 데이터클래스 (모든 도구의 표준 반환 타입)
 │   ├── registry.py          (364)  스키마 정의, 검증, API 형식 변환
-│   ├── run_skill.py         (54)   run_skill 도구 (LLM 자동 스킬 호출)
-│   ├── read_artifact.py     (117)  read_artifact 도구 (artifact 읽기/목록/검색)
-│   ├── read_file.py         (99)   파일 읽기 + hashline 포맷팅 + 부분 읽기
-│   ├── write_file.py        (18)   파일 생성
-│   ├── edit_file.py         (159)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링)
-│   ├── shell.py             (35)   셸 명령 실행
-│   ├── delegate.py          (80)   서브에이전트 위임
-│   ├── context.py           (54)   read_context 도구 (세션 이력 조회)
+│   ├── run_skill.py         (57)   run_skill 도구 (LLM 자동 스킬 호출) → ToolResult
+│   ├── read_artifact.py     (133)  read_artifact 도구 (artifact 읽기/목록/검색) → ToolResult
+│   ├── read_file.py         (101)  파일 읽기 + hashline 포맷팅 + 부분 읽기 → ToolResult
+│   ├── write_file.py        (19)   파일 생성 → ToolResult
+│   ├── edit_file.py         (162)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
+│   ├── shell.py             (36)   셸 명령 실행 → ToolResult
+│   ├── delegate.py          (84)   서브에이전트 위임 → ToolResult
+│   ├── context.py           (57)   read_context 도구 (세션 이력 조회) → ToolResult
 │   └── truncation.py        (122)  모델 적응형 출력 압축 (context 3% 비례)
 │
 ├── context/                        컨텍스트 관리
@@ -168,8 +169,15 @@ providers/*.py      → providers/base, providers/compat
 parsing/json_repair → (외부만: json, re)
 parsing/react_parser→ parsing/json_repair
 parsing/plan_parser → planning/models
-tools/read_file.py  → (외부만: re, zlib, pathlib)
-tools/edit_file.py  → tools/read_file
+tools/result.py     → (외부만: dataclasses, 순수 데이터 타입)
+tools/read_file.py  → tools/result, (외부만: re, zlib, pathlib)
+tools/edit_file.py  → tools/read_file, tools/result
+tools/shell.py      → tools/result
+tools/write_file.py → tools/result
+tools/context.py    → tools/result, context/session
+tools/delegate.py   → tools/result
+tools/read_artifact → tools/result
+tools/run_skill.py  → tools/result
 tools/registry.py   → (외부만: json, dataclasses)
 tools/truncation.py → providers/compat
 context/token_est.  → (외부만: 없음)

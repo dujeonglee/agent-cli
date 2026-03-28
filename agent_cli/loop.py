@@ -408,7 +408,8 @@ class AgentLoop:
                 )
                 from agent_cli.tools.read_artifact import tool_read_artifact
 
-                obs = tool_read_artifact(art_input, ctx=self.ctx)
+                art_result = tool_read_artifact(art_input, ctx=self.ctx)
+                obs = art_result.output if art_result.success else art_result.error
                 if not self.quiet:
                     render_step(
                         "observation",
@@ -661,7 +662,8 @@ class AgentLoop:
             )
             from agent_cli.tools.read_artifact import tool_read_artifact
 
-            obs = tool_read_artifact(art_input, ctx=self.ctx)
+            art_result = tool_read_artifact(art_input, ctx=self.ctx)
+            obs = art_result.output if art_result.success else art_result.error
             if not self.quiet:
                 render_step(
                     "observation",
@@ -1254,22 +1256,22 @@ def _do_execute_tool(
             tool_input = pre_result.updated_input
 
     if tool_name == "delegate" and include_delegate:
-        try:
-            obs = tool_delegate(
-                args=tool_input
-                if isinstance(tool_input, dict)
-                else {"task": str(tool_input)},
-                provider=provider_name,
-                model=model,
-                base_url=base_url,
-                api_key=api_key,
-                timeout=delegate_timeout,
-            )
-            _run_post_hook(hooks_config, tool_name, input_dict, obs)
-            return obs
-        except Exception as e:
+        result = tool_delegate(
+            args=tool_input
+            if isinstance(tool_input, dict)
+            else {"task": str(tool_input)},
+            provider=provider_name,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            timeout=delegate_timeout,
+        )
+        if result.success:
+            _run_post_hook(hooks_config, tool_name, input_dict, result.output)
+            return result.output
+        else:
             obs = OBS_ERROR_HINT.format(
-                error=e, hint="Check task description and try again."
+                error=result.error, hint="Check task description and try again."
             )
             _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
             return obs
@@ -1278,14 +1280,16 @@ def _do_execute_tool(
         valid, err = validate_tool_input(tool_name, tool_input)
         if not valid:
             return OBS_ERROR_HINT.format(error=err, hint="Fix action_input and retry.")
-        try:
-            raw = execute_tool(tool_name, tool_input)
+        result = execute_tool(tool_name, tool_input)
+        if result.success:
             cfg = get_truncation_config(capabilities, tool_name)
-            obs = OBS_SUCCESS.format(result=truncate_output(raw, cfg))
+            obs = OBS_SUCCESS.format(result=truncate_output(result.output, cfg))
             _run_post_hook(hooks_config, tool_name, input_dict, obs)
             return obs
-        except Exception as e:
-            obs = OBS_ERROR_HINT.format(error=e, hint="Check parameters and try again.")
+        else:
+            obs = OBS_ERROR_HINT.format(
+                error=result.error, hint="Check parameters and try again."
+            )
             _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
             return obs
 

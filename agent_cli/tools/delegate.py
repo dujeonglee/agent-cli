@@ -7,6 +7,8 @@ import re
 import subprocess
 import sys
 
+from agent_cli.tools.result import ToolResult
+
 _VAGUE_REFS = re.compile(
     r"\b(it|this|that|these|those|above|previous|earlier|the same)\b", re.I
 )
@@ -44,12 +46,13 @@ def tool_delegate(
     base_url: str,
     api_key: str,
     timeout: int = 300,
-) -> str:
+) -> ToolResult:
     """Delegate a self-contained subtask to an independent subagent."""
+
     task_str = args.get("task", "")
     validation_err = _validate_subtask(task_str)
     if validation_err:
-        raise RuntimeError(f"Delegation rejected: {validation_err}")
+        return ToolResult(False, error=f"Delegation rejected: {validation_err}")
 
     cmd_args = [
         "run",
@@ -72,9 +75,11 @@ def tool_delegate(
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
         if result.returncode == 0 and stdout:
-            return f"STATUS: success\nRESULT:\n{stdout}"
+            return ToolResult(True, output=f"STATUS: success\nRESULT:\n{stdout}")
         else:
             err_msg = stderr or stdout or "(no output)"
-            return f"STATUS: error\nERROR: Subagent failed\n{err_msg}"
+            return ToolResult(
+                False, error=f"STATUS: error\nERROR: Subagent failed\n{err_msg}"
+            )
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"Subagent timed out ({timeout}s)")
+        return ToolResult(False, error=f"Subagent timed out ({timeout}s)")

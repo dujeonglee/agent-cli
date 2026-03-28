@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_cli.tools.result import ToolResult
 
-def tool_read_artifact(args: dict, **kwargs) -> str:
+
+def tool_read_artifact(args: dict, **kwargs) -> ToolResult:
     """Read artifact content, list artifacts, or search by tag.
 
     Modes:
@@ -17,6 +19,7 @@ def tool_read_artifact(args: dict, **kwargs) -> str:
       - list: list all artifacts in the current session
       - search: find artifacts matching a tag
     """
+
     mode = args.get("mode", "")
     path = args.get("path", "")
     tag = args.get("tag", "")
@@ -37,7 +40,10 @@ def tool_read_artifact(args: dict, **kwargs) -> str:
     elif mode == "search":
         return _search_artifacts(tag, scratchpad_dir)
     else:
-        return f"Error: unknown mode '{mode}'. Use 'list', 'search', or provide 'path'."
+        return ToolResult(
+            False,
+            error=f"unknown mode '{mode}'. Use 'list', 'search', or provide 'path'.",
+        )
 
 
 def _get_scratchpad_dir(ctx) -> Path | None:
@@ -47,10 +53,11 @@ def _get_scratchpad_dir(ctx) -> Path | None:
     return None
 
 
-def _read_artifact(path: str, scratchpad_dir: Path | None) -> str:
+def _read_artifact(path: str, scratchpad_dir: Path | None) -> ToolResult:
     """Read a single artifact file without hashlines."""
+
     if not path:
-        return "Error: 'path' is required for reading an artifact."
+        return ToolResult(False, error="'path' is required for reading an artifact.")
 
     p = Path(path)
 
@@ -61,7 +68,7 @@ def _read_artifact(path: str, scratchpad_dir: Path | None) -> str:
             p = candidate
 
     if not p.is_file():
-        return f"Error: artifact not found at '{path}'."
+        return ToolResult(False, error=f"artifact not found at '{path}'.")
 
     try:
         from agent_cli.context.scratchpad import parse_frontmatter
@@ -80,22 +87,23 @@ def _read_artifact(path: str, scratchpad_dir: Path | None) -> str:
 
         header = " | ".join(header_parts) if header_parts else ""
         if header:
-            return f"[{header}]\n{body}"
-        return body
+            return ToolResult(True, output=f"[{header}]\n{body}")
+        return ToolResult(True, output=body)
     except Exception as e:
-        return f"Error reading artifact: {e}"
+        return ToolResult(False, error=f"Error reading artifact: {e}")
 
 
-def _list_artifacts(scratchpad_dir: Path | None) -> str:
+def _list_artifacts(scratchpad_dir: Path | None) -> ToolResult:
     """List all artifacts in the current session."""
+
     if not scratchpad_dir:
-        return "No artifacts available (no active session)."
+        return ToolResult(True, output="No artifacts available (no active session).")
 
     from agent_cli.context.scratchpad import build_artifact_index
 
     index = build_artifact_index(scratchpad_dir)
     if not index:
-        return "No artifacts found in this session."
+        return ToolResult(True, output="No artifacts found in this session.")
 
     lines = [f"Artifacts ({len(index)} total):"]
     for meta in index:
@@ -104,16 +112,17 @@ def _list_artifacts(scratchpad_dir: Path | None) -> str:
         lines.append(f"- {meta.entry_id} [{tags_str}] {summary}")
         lines.append(f"  path: {meta.path}")
 
-    return "\n".join(lines)
+    return ToolResult(True, output="\n".join(lines))
 
 
-def _search_artifacts(tag: str, scratchpad_dir: Path | None) -> str:
+def _search_artifacts(tag: str, scratchpad_dir: Path | None) -> ToolResult:
     """Search artifacts by tag."""
+
     if not tag:
-        return "Error: 'tag' is required for search mode."
+        return ToolResult(False, error="'tag' is required for search mode.")
 
     if not scratchpad_dir:
-        return "No artifacts available (no active session)."
+        return ToolResult(True, output="No artifacts available (no active session).")
 
     from agent_cli.context.scratchpad import build_artifact_index
 
@@ -121,7 +130,7 @@ def _search_artifacts(tag: str, scratchpad_dir: Path | None) -> str:
     matched = [a for a in index if tag in a.tags]
 
     if not matched:
-        return f"No artifacts found with tag '{tag}'."
+        return ToolResult(True, output=f"No artifacts found with tag '{tag}'.")
 
     lines = [f"Artifacts matching '{tag}' ({len(matched)} found):"]
     for meta in matched:
@@ -129,4 +138,4 @@ def _search_artifacts(tag: str, scratchpad_dir: Path | None) -> str:
         lines.append(f"- {meta.entry_id} {summary}")
         lines.append(f"  path: {meta.path}")
 
-    return "\n".join(lines)
+    return ToolResult(True, output="\n".join(lines))

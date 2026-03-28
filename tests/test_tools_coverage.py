@@ -24,48 +24,60 @@ class TestWriteFile:
         result = tool_write_file({"path": str(target), "content": "hello"})
         assert target.exists()
         assert target.read_text() == "hello"
-        assert "File saved" in result
+        assert result.success
+        assert "File saved" in result.output
 
     def test_creates_parent_dirs(self, tmp_path):
         target = tmp_path / "sub" / "dir" / "file.txt"
-        tool_write_file({"path": str(target), "content": "nested"})
+        result = tool_write_file({"path": str(target), "content": "nested"})
         assert target.exists()
+        assert result.success
 
     def test_overwrites_existing(self, tmp_path):
         target = tmp_path / "exist.txt"
         target.write_text("old")
-        tool_write_file({"path": str(target), "content": "new"})
+        result = tool_write_file({"path": str(target), "content": "new"})
         assert target.read_text() == "new"
+        assert result.success
 
     def test_error_on_invalid_path(self):
-        with pytest.raises(RuntimeError):
-            tool_write_file({"path": "/nonexistent/dir/\x00/file.txt", "content": "x"})
+        result = tool_write_file(
+            {"path": "/nonexistent/dir/\x00/file.txt", "content": "x"}
+        )
+        assert not result.success
+        assert result.error
 
 
 class TestShellTool:
     def test_basic_command(self):
         result = tool_shell({"command": "echo hello"})
-        assert "hello" in result
+        assert result.success
+        assert "hello" in result.output
 
     def test_stderr_output(self):
         result = tool_shell({"command": "echo err >&2"})
-        assert "stderr" in result
+        assert result.success
+        assert "stderr" in result.output
 
     def test_nonzero_exit(self):
         result = tool_shell({"command": "exit 1"})
-        assert "exit code: 1" in result
+        assert result.success
+        assert "exit code: 1" in result.output
 
     def test_timeout(self):
-        with pytest.raises(RuntimeError, match="timed out"):
-            tool_shell({"command": "sleep 10", "timeout": 1})
+        result = tool_shell({"command": "sleep 10", "timeout": 1})
+        assert not result.success
+        assert "timed out" in result.error
 
     def test_empty_command(self):
-        with pytest.raises(RuntimeError, match="Empty command"):
-            tool_shell({"command": ""})
+        result = tool_shell({"command": ""})
+        assert not result.success
+        assert "Empty command" in result.error
 
     def test_no_output(self):
         result = tool_shell({"command": "true"})
-        assert result == "(no output)"
+        assert result.success
+        assert result.output == "(no output)"
 
 
 class TestEditFile:
@@ -80,7 +92,8 @@ class TestEditFile:
                 "edits": [{"op": "replace", "pos": f"2#{h2}", "lines": ["replaced"]}],
             }
         )
-        assert "Edit complete" in result
+        assert result.success
+        assert "Edit complete" in result.output
         assert "replaced" in f.read_text()
 
     def test_append_operation(self, tmp_path):
@@ -139,28 +152,31 @@ class TestEditFile:
     def test_no_edits_error(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("hello\n")
-        with pytest.raises(RuntimeError, match="No edits"):
-            tool_edit_file({"path": str(f), "edits": []})
+        result = tool_edit_file({"path": str(f), "edits": []})
+        assert not result.success
+        assert "No edits" in result.error
 
     def test_unknown_op_error(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("hello\n")
-        with pytest.raises(RuntimeError, match="Unknown edit op"):
-            tool_edit_file(
-                {
-                    "path": str(f),
-                    "edits": [{"op": "invalid", "pos": "1#ZZ"}],
-                }
-            )
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [{"op": "invalid", "pos": "1#ZZ"}],
+            }
+        )
+        assert not result.success
+        assert "Unknown edit op" in result.error
 
     def test_file_not_found(self):
-        with pytest.raises(RuntimeError, match="cannot read"):
-            tool_edit_file(
-                {
-                    "path": "/nonexistent/file.py",
-                    "edits": [{"op": "replace", "pos": "1#ZZ", "lines": []}],
-                }
-            )
+        result = tool_edit_file(
+            {
+                "path": "/nonexistent/file.py",
+                "edits": [{"op": "replace", "pos": "1#ZZ", "lines": []}],
+            }
+        )
+        assert not result.success
+        assert "cannot read" in result.error
 
     def test_range_replace(self, tmp_path):
         f = tmp_path / "test.py"
@@ -219,15 +235,17 @@ class TestEditFile:
                 ],
             }
         )
-        assert "Edit complete" in result
+        assert result.success
+        assert "Edit complete" in result.output
         assert "new_line" in f.read_text()
 
     def test_all_non_dict_edits_error(self, tmp_path):
         """If all edits are non-dict, should raise error."""
         f = tmp_path / "test.py"
         f.write_text("hello\n")
-        with pytest.raises(RuntimeError, match="No valid edit"):
-            tool_edit_file({"path": str(f), "edits": [1, 2, "bad"]})
+        result = tool_edit_file({"path": str(f), "edits": [1, 2, "bad"]})
+        assert not result.success
+        assert "No valid edit" in result.error
 
 
 class TestDelegate:
@@ -279,14 +297,15 @@ class TestToolDelegate:
     def test_rejects_vague_task(self):
         from agent_cli.tools.delegate import tool_delegate
 
-        with pytest.raises(RuntimeError, match="Delegation rejected"):
-            tool_delegate(
-                args={"task": "Fix it"},
-                provider="ollama",
-                model="test",
-                base_url="http://localhost:11434",
-                api_key="",
-            )
+        result = tool_delegate(
+            args={"task": "Fix it"},
+            provider="ollama",
+            model="test",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        assert not result.success
+        assert "Delegation rejected" in result.error
 
     @pytest.fixture()
     def mock_subprocess(self, monkeypatch):
@@ -312,8 +331,9 @@ class TestToolDelegate:
             base_url="http://localhost:11434",
             api_key="",
         )
-        assert "STATUS: success" in result
-        assert "Task completed" in result
+        assert result.success
+        assert "STATUS: success" in result.output
+        assert "Task completed" in result.output
 
     def test_failure(self, mock_subprocess):
         from agent_cli.tools.delegate import tool_delegate
@@ -331,8 +351,9 @@ class TestToolDelegate:
             base_url="http://localhost:11434",
             api_key="",
         )
-        assert "STATUS: error" in result
-        assert "Error occurred" in result
+        assert not result.success
+        assert "STATUS: error" in result.error
+        assert "Error occurred" in result.error
 
     def test_timeout(self, mock_subprocess):
         import subprocess as sp
@@ -340,17 +361,18 @@ class TestToolDelegate:
 
         mock_subprocess.side_effect = sp.TimeoutExpired(cmd="test", timeout=5)
 
-        with pytest.raises(RuntimeError, match="timed out"):
-            tool_delegate(
-                args={
-                    "task": "Read /tmp/data.csv and count the number of rows then report"
-                },
-                provider="ollama",
-                model="test-model",
-                base_url="http://localhost:11434",
-                api_key="",
-                timeout=5,
-            )
+        result = tool_delegate(
+            args={
+                "task": "Read /tmp/data.csv and count the number of rows then report"
+            },
+            provider="ollama",
+            model="test-model",
+            base_url="http://localhost:11434",
+            api_key="",
+            timeout=5,
+        )
+        assert not result.success
+        assert "timed out" in result.error
 
     def test_api_key_appended(self, mock_subprocess):
         from agent_cli.tools.delegate import tool_delegate
@@ -388,7 +410,8 @@ class TestToolDelegate:
             base_url="http://localhost:11434",
             api_key="",
         )
-        assert "(no output)" in result
+        assert not result.success
+        assert "(no output)" in result.error
 
 
 class TestToolsRegistry:
@@ -419,42 +442,51 @@ class TestToolsRegistry:
 
     def test_complete_lambda_with_result(self):
         fn = TOOLS["complete"]
-        assert fn({"result": "done"}) == "done"
+        result = fn({"result": "done"})
+        assert result.success
+        assert result.output == "done"
 
     def test_complete_lambda_default(self):
         fn = TOOLS["complete"]
-        assert fn({}) == "(completed)"
+        result = fn({})
+        assert result.success
+        assert result.output == "(completed)"
 
     def test_ask_lambda_with_question(self):
         fn = TOOLS["ask"]
-        assert fn({"question": "what?"}) == "what?"
+        result = fn({"question": "what?"})
+        assert result.success
+        assert result.output == "what?"
 
     def test_ask_lambda_default(self):
         fn = TOOLS["ask"]
-        assert fn({}) == "(ask)"
+        result = fn({})
+        assert result.success
+        assert result.output == "(ask)"
 
 
 class TestExecuteTool:
     def test_unknown_tool(self):
-        with pytest.raises(RuntimeError, match="Unknown tool"):
-            execute_tool("nonexistent_tool", {})
+        result = execute_tool("nonexistent_tool", {})
+        assert not result.success
+        assert "Unknown tool" in result.error
 
     def test_execute_virtual_complete(self):
         result = execute_tool("complete", {"result": "all done"})
-        assert result == "all done"
+        assert result.success
+        assert result.output == "all done"
 
     def test_execute_virtual_ask(self):
         result = execute_tool("ask", {"question": "which file?"})
-        assert result == "which file?"
+        assert result.success
+        assert result.output == "which file?"
 
     def test_error_message_includes_virtual_tools(self):
-        try:
-            execute_tool("bogus", {})
-        except RuntimeError as e:
-            msg = str(e)
-            assert "complete" in msg
-            assert "ask" in msg
-            assert "read_file" in msg
+        result = execute_tool("bogus", {})
+        assert not result.success
+        assert "complete" in result.error
+        assert "ask" in result.error
+        assert "read_file" in result.error
 
 
 class TestTruncationByteLimit:
@@ -517,41 +549,46 @@ class TestReadFilePartial:
         f = tmp_path / "test.py"
         f.write_text("line1\nline2\nline3\nline4\nline5")
         result = tool_read_file({"path": str(f)})
-        assert "1#" in result
-        assert "5#" in result
+        assert result.success
+        assert "1#" in result.output
+        assert "5#" in result.output
 
     def test_line_start(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc\nddd\neee")
         result = tool_read_file({"path": str(f), "line_start": 3})
-        assert "ccc" in result
-        assert "ddd" in result
-        assert "eee" in result
-        assert "aaa" not in result
+        assert result.success
+        assert "ccc" in result.output
+        assert "ddd" in result.output
+        assert "eee" in result.output
+        assert "aaa" not in result.output
 
     def test_line_start_and_end(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc\nddd\neee")
         result = tool_read_file({"path": str(f), "line_start": 2, "line_end": 4})
-        assert "bbb" in result
-        assert "ddd" in result
-        assert "aaa" not in result
-        assert "eee" not in result
+        assert result.success
+        assert "bbb" in result.output
+        assert "ddd" in result.output
+        assert "aaa" not in result.output
+        assert "eee" not in result.output
 
     def test_line_numbers_preserved(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc\nddd\neee")
         result = tool_read_file({"path": str(f), "line_start": 3})
+        assert result.success
         # First line in result should be line 3, not line 1
-        assert result.startswith("3#")
+        assert result.output.startswith("3#")
 
     def test_string_line_start_coerced(self, tmp_path):
         """LLMs sometimes send line_start as string."""
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc")
         result = tool_read_file({"path": str(f), "line_start": "2"})
-        assert "bbb" in result
-        assert "aaa" not in result
+        assert result.success
+        assert "bbb" in result.output
+        assert "aaa" not in result.output
 
 
 class TestTruncationReadFileGuide:
@@ -580,7 +617,8 @@ class TestReadContextTool:
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({"mode": "list"})
-        assert "No previous sessions" in result
+        assert result.success
+        assert "No previous sessions" in result.output
 
     def test_list_with_sessions(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
@@ -594,8 +632,9 @@ class TestReadContextTool:
         save_summary(meta, "Test summary content")
 
         result = tool_read_context({"mode": "list"})
-        assert meta.session_id in result
-        assert "Test summary" in result
+        assert result.success
+        assert meta.session_id in result.output
+        assert "Test summary" in result.output
 
     def test_detail_valid_session(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
@@ -611,14 +650,16 @@ class TestReadContextTool:
         )
 
         result = tool_read_context({"mode": "detail", "session_id": meta.session_id})
-        assert "shell" in result
-        assert "ok" in result
+        assert result.success
+        assert "shell" in result.output
+        assert "ok" in result.output
 
     def test_detail_missing_session_id(self, tmp_path, monkeypatch):
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({"mode": "detail"})
-        assert "session_id is required" in result
+        assert not result.success
+        assert "session_id is required" in result.error
 
     def test_detail_nonexistent_session(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
@@ -627,13 +668,15 @@ class TestReadContextTool:
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({"mode": "detail", "session_id": "999"})
-        assert "not found" in result
+        assert not result.success
+        assert "not found" in result.error
 
     def test_unknown_mode(self, tmp_path, monkeypatch):
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({"mode": "invalid"})
-        assert "unknown mode" in result.lower()
+        assert not result.success
+        assert "unknown mode" in result.error.lower()
 
 
 class TestRunSkillTool:
@@ -688,7 +731,8 @@ class TestRunSkillTool:
                     capabilities=caps,
                     model="test",
                 )
-                assert "Summary done" in result
+                assert result.success
+                assert "Summary done" in result.output
 
     def test_run_skill_unknown(self, tmp_path, monkeypatch):
         """run_skill with unknown skill name → error message."""
@@ -698,14 +742,16 @@ class TestRunSkillTool:
 
         with patch("agent_cli.skills.loader.load_skills", return_value={}):
             result = tool_run_skill({"name": "nonexistent", "arguments": ""})
-            assert "not found" in result.lower()
+            assert not result.success
+            assert "not found" in result.error.lower()
 
     def test_run_skill_no_name(self):
         """run_skill without name → error."""
         from agent_cli.tools.run_skill import tool_run_skill
 
         result = tool_run_skill({"arguments": "something"})
-        assert "name" in result.lower()
+        assert not result.success
+        assert "name" in result.error.lower()
 
 
 class TestReadArtifactTool:
@@ -732,11 +778,12 @@ class TestReadArtifactTool:
             base=tmp_path,
         )
         result = tool_read_artifact({"path": path})
-        assert "Found 3 bugs" in result
+        assert result.success
+        assert "Found 3 bugs" in result.output
         # No hashline tags (e.g. "1#XS:") in output
         assert not any(
             line and line[0].isdigit() and "#" in line[:5]
-            for line in result.split("\n")
+            for line in result.output.split("\n")
         )
 
     def test_list_mode(self, tmp_path):
@@ -751,9 +798,10 @@ class TestReadArtifactTool:
         ctx = MagicMock()
         ctx._scratchpad_dir = tmp_path
         result = tool_read_artifact({"mode": "list"}, ctx=ctx)
-        assert "turn_0001" in result
-        assert "turn_0002" in result
-        assert "hooks.py" in result
+        assert result.success
+        assert "turn_0001" in result.output
+        assert "turn_0002" in result.output
+        assert "hooks.py" in result.output
 
     def test_search_by_tag(self, tmp_path):
         """Search artifacts by tag."""
@@ -767,15 +815,17 @@ class TestReadArtifactTool:
         ctx = MagicMock()
         ctx._scratchpad_dir = tmp_path
         result = tool_read_artifact({"mode": "search", "tag": "hooks.py"}, ctx=ctx)
-        assert "turn_0001" in result
-        assert "turn_0002" not in result
+        assert result.success
+        assert "turn_0001" in result.output
+        assert "turn_0002" not in result.output
 
     def test_nonexistent_path(self):
         """Read nonexistent artifact → error."""
         from agent_cli.tools.read_artifact import tool_read_artifact
 
         result = tool_read_artifact({"path": "/nonexistent/file.md"})
-        assert "not found" in result.lower()
+        assert not result.success
+        assert "not found" in result.error.lower()
 
     def test_read_artifact_finds_skill_subdirectory(self, tmp_path):
         """read_artifact list mode includes artifacts in skill subdirectories."""
@@ -799,12 +849,14 @@ class TestReadArtifactTool:
         ctx = MagicMock()
         ctx._scratchpad_dir = tmp_path
         result = tool_read_artifact({"mode": "list"}, ctx=ctx)
-        assert "turn_0001" in result  # flat
-        assert "turn_0002" in result  # skill subdir
+        assert result.success
+        assert "turn_0001" in result.output  # flat
+        assert "turn_0002" in result.output  # skill subdir
 
     def test_list_no_session(self):
         """List without ctx → error."""
         from agent_cli.tools.read_artifact import tool_read_artifact
 
         result = tool_read_artifact({"mode": "list"})
-        assert "no" in result.lower()
+        assert result.success  # no session is not an error, just informational
+        assert "no" in result.output.lower()
