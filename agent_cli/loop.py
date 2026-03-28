@@ -304,9 +304,13 @@ class AgentLoop:
                     self.iteration -= 1
                     return self._RETRY
             _debug_log(
-                f"LLM call failed: {e} skill_name={self.skill_name} iter={self.iteration}"
+                f"LLM call failed: model={self.model} iter={self.iteration} skill={self.skill_name} error={e}"
             )
-            render_step("error", f"LLM call failed: {e}", self.iteration)
+            render_step(
+                "error",
+                f"LLM call failed (model={self.model}, iter={self.iteration}): {e}",
+                self.iteration,
+            )
             return None
 
     def _handle_native_path(self, response, llm_text: str) -> str | None:
@@ -1283,7 +1287,7 @@ def _do_execute_tool(
             obs = OBS_ERROR_HINT.format(
                 error=result.error, hint="Check task description and try again."
             )
-            _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
+            _run_post_hook(hooks_config, tool_name, input_dict, obs, success=False)
             return obs
 
     if tool_name in tools_list:
@@ -1300,34 +1304,21 @@ def _do_execute_tool(
             obs = OBS_ERROR_HINT.format(
                 error=result.error, hint="Check parameters and try again."
             )
-            _run_post_failure_hook(hooks_config, tool_name, input_dict, obs)
+            _run_post_hook(hooks_config, tool_name, input_dict, obs, success=False)
             return obs
 
     avail = ", ".join(tools_list) + (", delegate" if include_delegate else "")
     return OBS_ERROR.format(error=f"Unknown tool '{tool_name}'. Available: {avail}")
 
 
-def _run_post_hook(hooks_config, tool_name, input_dict, obs):
-    """Fire PostToolUse hook if configured."""
+def _run_post_hook(hooks_config, tool_name, input_dict, obs, success=True):
+    """Fire PostToolUse or PostToolUseFailure hook if configured."""
     if hooks_config:
         from agent_cli.hooks import run_hooks
 
+        event = "PostToolUse" if success else "PostToolUseFailure"
         run_hooks(
-            "PostToolUse",
-            tool_name,
-            input_dict,
-            hooks_config=hooks_config,
-            tool_result=obs,
-        )
-
-
-def _run_post_failure_hook(hooks_config, tool_name, input_dict, obs):
-    """Fire PostToolUseFailure hook if configured."""
-    if hooks_config:
-        from agent_cli.hooks import run_hooks
-
-        run_hooks(
-            "PostToolUseFailure",
+            event,
             tool_name,
             input_dict,
             hooks_config=hooks_config,

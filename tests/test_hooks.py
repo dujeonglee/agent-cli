@@ -242,6 +242,49 @@ class TestHookTimeout:
         assert result.allowed is True
 
 
+class TestRunPostHookUnified:
+    """Test unified _run_post_hook with success parameter."""
+
+    def test_post_success_fires_posttooluse(self):
+        """success=True fires PostToolUse event."""
+        from agent_cli.loop import _run_post_hook
+
+        with patch("agent_cli.hooks.run_hooks") as mock_run:
+            mock_run.return_value = HookResult(allowed=True)
+            _run_post_hook(
+                hooks_config={"PostToolUse": []},
+                tool_name="shell",
+                input_dict={"command": "ls"},
+                obs="output",
+                success=True,
+            )
+            mock_run.assert_called_once()
+            assert mock_run.call_args[0][0] == "PostToolUse"
+
+    def test_post_failure_fires_posttoolusefailure(self):
+        """success=False fires PostToolUseFailure event."""
+        from agent_cli.loop import _run_post_hook
+
+        with patch("agent_cli.hooks.run_hooks") as mock_run:
+            mock_run.return_value = HookResult(allowed=True)
+            _run_post_hook(
+                hooks_config={"PostToolUseFailure": []},
+                tool_name="shell",
+                input_dict={"command": "ls"},
+                obs="error",
+                success=False,
+            )
+            mock_run.assert_called_once()
+            assert mock_run.call_args[0][0] == "PostToolUseFailure"
+
+    def test_no_hooks_config_noop(self):
+        """No hooks_config → no crash."""
+        from agent_cli.loop import _run_post_hook
+
+        _run_post_hook(None, "shell", {}, "obs")  # should not raise
+        _run_post_hook(None, "shell", {}, "obs", success=False)
+
+
 class TestSkillFrontmatterHooks:
     def test_parse_hooks_from_frontmatter(self, tmp_path):
         from agent_cli.skills.loader import _parse_skill_file
