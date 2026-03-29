@@ -703,7 +703,48 @@ Artifact는 컨텍스트에 자동 주입되지 않습니다. 대신 scratchpad 
 
 #### 루프 내 동작 원리
 
-ReAct 루프(`loop.py`)에서 세션/컨텍스트 관리가 어떻게 동작하는지:
+#### 컨텍스트 윈도우 레이아웃
+
+`ctx.get_messages()`가 반환하는 메시지 순서 (LLM이 보는 것):
+
+```
+[0] user:      [Scratchpad — persistent task context]
+               goal, progress, decisions (compaction에서 살아남는 앵커)
+               ※ 스킬 내부 루프에서는 주입하지 않음
+
+[1] assistant: "Understood. I have the scratchpad context..."
+
+[2] user:      [Previous conversation summary]  ← compaction 발생 시만
+               (요약 + artifact 복구 힌트)
+
+[3] assistant: "Understood. I have the context..."
+
+[4] user:      "hooks.py 분석해줘"               ← 실제 사용자 입력
+[5] assistant: {"action": "read_file", ...}      ← LLM 응답
+[6] user:      "Observation: STATUS: success..." ← 도구 결과
+[7] assistant: {"action": "complete", ...}       ← 최종 답변
+[8] user:      "Used skill: optimize(./) — ..."  ← 스킬 호출 기록
+[9] assistant: "Analysis complete..."             ← 스킬 결과
+...
+```
+
+#### 컨텍스트 추가 주체 (ctx.add 위치)
+
+main.py는 ctx.add를 직접 호출하지 않습니다. 각 컴포넌트가 자기 영역을 책임:
+
+```
+AgentLoop (일반 대화):
+  ├─ _setup()           → ctx.add("user", query)
+  ├─ _append_*()        → ctx.add(assistant, llm_text) + ctx.add(user, observation)
+  ├─ _maybe_checkpoint  → ctx.add("user", checkpoint_msg)
+  └─ complete/echo      → ctx.add("assistant", final_answer)
+
+_dispatch_skill (스킬 호출):
+  ├─ 호출 시   → ctx.add("user", "Used skill: name(args) — results follow")
+  └─ 결과     → ctx.add("assistant", result)
+```
+
+#### 루프 동작 플로우
 
 ```
 chat 시작
@@ -713,44 +754,23 @@ chat 시작
   │
   └─ 사용자 입력 루프
        │
-       ├─ run_loop(query, ctx, session) 호출
-       │    │
-       │    ├─ [최초 1회] init_task(query) → scratchpad.md 생성
-       │    │
-       │    ├─ ctx.add("user", query)
-       │    ├─ ctx.get_messages() → [scratchpad + artifacts + summary + messages]
-       │    │                         ↑ scratchpad가 항상 맨 앞에 주입됨
-       │    │
-       │    └─ while iteration loop:
-       │         │
-       │         ├─ begin_turn(query) → 턴 카운터 증가
-       │         │
-       │         ├─ LLM 호출
-       │         │
-       │         ├─ [complete] → end_turn(answer, tags=["complete"])
-       │         │                → artifact 저장 + scratchpad progress 기록
-       │         │                → return answer
-       │         │
-       │         ├─ [run_skill] → set_skill_context(name, parent_turn)
-       │         │                → execute_skill(ctx=ctx, skill_name=name)
-       │         │                  → 내부 run_loop (같은 ctx 공유)
-       │         │                    → scratchpad 주입 스킵 (내부 LLM 집중도 보장)
-       │         │                    → 내부 artifact는 서브디렉토리에 저장
-       │         │                → reset skill_context
-       │         │                → continue (외부에서 end_turn 안 함)
-       │         │
-       │         ├─ [도구 실행] → _execute_single_tool()
-       │         │              → end_turn(obs, tags=[tool_name, filepath, skill:name])
-       │         │                → artifact 저장 + scratchpad progress 기록
-       │         │                → progress: "read_file: hooks.py (215줄) → artifacts/..."
-       │         │
-       │         └─ [compaction 발생 시]
-       │              → 대화 히스토리만 요약 압축
-       │              → scratchpad + artifact 파일은 보존됨
-       │              → 요약에 "artifact 경로를 read_artifact로 복구 가능" 힌트 추가
-       │              → LLM이 scratchpad progress에서 경로 확인 → read_artifact로 로드
+       ├─ /skill 입력 → _dispatch_skill
+       │    ├─ ctx.add("user", "Used skill: name(args)")
+       │    ├─ execute_skill → 내부 AgentLoop 실행
+       │    └─ ctx.add("assistant", result)
        │
-       ├─ session logging → session.jsonl에 이터레이션 기록
+       ├─ 일반 입력 → AgentLoop.run()
+       │    ├─ [최초] init_task(query) → scratchpad.md 생성
+       │    ├─ ctx.add("user", query)
+       │    ├─ ctx.get_messages() → 위 레이아웃대로 조립
+       │    │
+       │    └─ while iteration:
+       │         ├─ LLM 호출 → 응답
+       │         ├─ [complete] → ctx.add("assistant", answer) → return
+       │         ├─ [run_skill] → 내부 AgentLoop (ctx 공유, scratchpad 스킵)
+       │         ├─ [도구] → ctx.add(assistant+observation) + artifact 저장
+       │         └─ [compaction] → 요약 + artifact 복구 힌트
+       │
        └─ finalize_session(ctx) → session.summary.md 저장
 ```
 

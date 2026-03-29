@@ -264,51 +264,67 @@ class ToolSchema:
 
 ### 5.1 ReAct 에이전트 루프 (`loop.py` — `AgentLoop` 클래스)
 
+#### 컨텍스트 윈도우 레이아웃
+
+`ctx.get_messages()` 반환 순서 (매 LLM 호출 시):
+
 ```
-사용자 쿼리 입력
+[scratchpad]  [Scratchpad — persistent task context]     ← 스킬 내부에서는 스킵
+              goal, progress, decisions
+
+[summary]     [Previous conversation summary]             ← compaction 후만
+              요약 + "[artifact 경로를 read_artifact로 복구 가능]"
+
+[messages]    user: "hooks.py 분석해줘"                    ← 실제 대화
+              assistant: {"action": "read_file", ...}
+              user: "Observation: STATUS: success..."
+              assistant: "분석 완료"                        ← complete 결과
+              user: "Used skill: optimize(./) — ..."       ← 스킬 호출 기록
+              assistant: "Analysis complete..."             ← 스킬 결과
+```
+
+#### ctx.add 책임 분리
+
+main.py는 ctx.add를 직접 호출하지 않음. 각 컴포넌트가 자기 영역 책임:
+
+| 컴포넌트 | ctx.add 내용 |
+|----------|-------------|
+| AgentLoop._setup | `("user", query)` |
+| _append_*_observation | `("assistant", llm_text)` + `("user", observation)` |
+| AgentLoop complete/echo | `("assistant", final_answer)` |
+| _dispatch_skill | `("user", "Used skill: ...")` + `("assistant", result)` |
+| AgentLoop._maybe_checkpoint | `("user", checkpoint_msg)` |
+
+#### 루프 플로우
+
+```
+AgentLoop.run()
     │
-    ▼
-시스템 프롬프트 빌드 (capabilities, active_tools 기반)
+    ├─ _setup()
+    │   ├─ 시스템 프롬프트 빌드 (capabilities, tools, skill_stack)
+    │   ├─ scratchpad 초기화 (최초 1회)
+    │   └─ ctx.add("user", query) → ctx.get_messages()
     │
-    ▼
-┌─── 이터레이션 루프 ────────────────────────────────────┐
-│                                                         │
-│  1. 체크포인트 (50회 도달 후 매 20회)                       │
-│     └─ 최근 20회 도구 이력 + nudge → LLM 자기 판단          │
-│                                                         │
-│  2. 선제 오버플로 체크                                     │
-│     └─ 초과 시 → ContextManager.force_compress()         │
-│                                                         │
-│  3. 네이티브 tool 정의 준비 (Anthropic/OpenAI)             │
-│     └─ convert_to_anthropic_tools() / openai_tools()     │
-│                                                         │
-│  4. LLM 호출 → LLMResponse                              │
-│     └─ 오류 시 overflow 패턴 매칭 → 압축 후 재시도 (1회)    │
-│                                                         │
-│  5. 응답 처리 분기:                                       │
-│     ├─ tool_calls 있음 → 네이티브 tool calling 경로        │
-│     │   ├─ complete → fulfillment guard → 반환            │
-│     │   ├─ ask → 사용자 입력 수집 → continue              │
-│     │   ├─ echo 감지 → 자동 변환 → 반환                    │
-│     │   ├─ 도구 실행 (validate + execute + truncate)      │
-│     │   ├─ 반복 호출 3회 감지 → 중단                       │
-│     │   ├─ 프로바이더별 메시지 포맷 (Anthropic/OpenAI)     │
-│     │   └─ continue                                      │
-│     │                                                    │
-│     └─ tool_calls 없음 → 텍스트 파싱 경로                  │
-│         ├─ parse_react() → ReActResult                   │
-│         ├─ action="complete" → fulfillment guard → 반환    │
-│         ├─ echo 감지 → 자동 변환 → 반환                    │
-│         ├─ action="ask" → 사용자 입력 수집 → continue      │
-│         ├─ action → validate + execute + truncate         │
-│         │   ├─ 반복 호출 3회 감지 → 중단                   │
-│         │   └─ observation 메시지 주입 → continue         │
-│         └─ 파싱 실패 → 포맷 리마인더 → continue            │
-│                                                         │
-└────────────────────────────────────────────────────────┘
-    │
-    ▼
-최종 답변 반환 (또는 max_iter 도달 시 None)
+    └─ while _should_continue():
+         │
+         ├─ _begin_iteration() → 턴 카운터, 체크포인트
+         │
+         ├─ _call_llm() → LLMResponse (overflow 시 압축 후 재시도)
+         │
+         └─ _handle_native_path() 또는 _handle_text_path()
+              │
+              ├─ [complete] → ctx.add("assistant", answer)
+              │               → artifact 저장 + scratchpad progress
+              │               → return answer
+              │
+              ├─ [run_skill] → 내부 AgentLoop (ctx 공유, scratchpad 스킵)
+              │                → 결과를 observation으로 주입
+              │
+              ├─ [도구] → execute + truncate
+              │           → ctx.add(assistant + observation)
+              │           → artifact 저장 + scratchpad progress
+              │
+              └─ [compaction] → 요약 + artifact 복구 힌트
 ```
 
 ### 5.2 프로바이더별 도구 호출 방식
@@ -741,13 +757,15 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack)
     │
     ├─ DELEGATE_GUIDE (include_delegate=True일 때만)
     │
-    ├─ ARTIFACT_GUIDE (read_file in active_tools일 때만)
+    ├─ ARTIFACT_GUIDE (항상 포함 — read_artifact 사용 안내)
     │
-    ├─ RULES (항상 포함)
+    ├─ RULES (항상 포함 — 재귀 호출 금지 Rule 7 포함)
     │
     ├─ SMALL_MODEL_HINTS (context_window ≤ 8192)
     │
-    └─ THINKING_MODEL_HINTS (thinking_budget > 0 AND context_window ≤ 8192)
+    ├─ THINKING_MODEL_HINTS (thinking + small context일 때만)
+    │
+    └─ Available Skills (skill_stack에 없는 스킬만 표시, run_skill 사용 안내)
 ```
 
 ---
