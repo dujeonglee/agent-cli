@@ -263,12 +263,12 @@ class TestSessionScratchpadCoexistence:
         save_meta(meta)
 
         sdir = get_session_dir(meta)
-        init_scratchpad("Test goal", sdir)
+        init_scratchpad(sdir)
 
         # Both session.jsonl and scratchpad.md exist in same dir
         assert (sdir / "session.jsonl").is_file()
         assert (sdir / "scratchpad.md").is_file()
-        assert "Test goal" in load_scratchpad(sdir)
+        assert "## Progress" in load_scratchpad(sdir)
 
     def test_context_manager_uses_session_dir(self, tmp_path):
         """ContextManager with session_id uses same dir as session files."""
@@ -298,7 +298,7 @@ class TestSessionScratchpadCoexistence:
             session_id=meta.session_id,
             scratchpad_base=tmp_path / ".agent-cli",
         )
-        ctx.init_task("Test task")
+        ctx.init_task()
 
         sdir = get_session_dir(meta)
         assert (sdir / "scratchpad.md").is_file()

@@ -297,11 +297,11 @@ class ContextManager:
 
         return artifact_path
 
-    def init_task(self, goal: str) -> None:
-        """Initialize scratchpad for a new task."""
+    def init_task(self) -> None:
+        """Initialize scratchpad."""
         from agent_cli.context.scratchpad import init_scratchpad
 
-        init_scratchpad(goal, self._scratchpad_dir)
+        init_scratchpad(self._scratchpad_dir)
 
     def _build_scratchpad_block(self) -> str:
         """Build the scratchpad context block for injection into messages."""

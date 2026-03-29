@@ -125,14 +125,18 @@ def _dispatch_skill(
     skill = skills[cmd_name]
     arguments = parts[1] if len(parts) > 1 else ""
 
-    # Record skill invocation in context
+    # Record skill invocation in context + scratchpad
     if ctx:
         ctx.add("user", f"Used skill: {cmd_name}({arguments}) — results follow")
-        # Init scratchpad with clean goal (not skill prompt text)
-        from agent_cli.context.scratchpad import load_scratchpad
+        from agent_cli.context.scratchpad import append_progress, load_scratchpad
 
         if not load_scratchpad(ctx._scratchpad_dir):
-            ctx.init_task(f"User requested /{cmd_name} {arguments}".strip())
+            ctx.init_task()
+        append_progress(
+            turn=ctx._turn_count,
+            summary=f"User: /{cmd_name} {arguments}".strip(),
+            base=ctx._scratchpad_dir,
+        )
 
     from agent_cli.render import render_status
 

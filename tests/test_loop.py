@@ -1314,7 +1314,7 @@ class TestScratchpadIntegration:
         ctx = ContextManager(
             provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
         )
-        ctx.init_task("Outer task")
+        ctx.init_task()
 
         # Set skill context (simulating inside a skill)
         ctx.set_skill_context(skill_name="summarize", parent_turn=1)
@@ -1380,7 +1380,7 @@ class TestArtifactLazyLoading:
             capabilities=small_caps,
             scratchpad_dir=tmp_path,
         )
-        ctx.init_task("test")
+        ctx.init_task()
         # Fill messages to trigger compaction
         for i in range(20):
             ctx.add("user", "x" * 200)
@@ -1939,7 +1939,7 @@ class TestRunSkillIntercept:
             capabilities=caps,
             scratchpad_dir=tmp_path,
         )
-        ctx.init_task("test")
+        ctx.init_task()
 
         # Simulate: turn_before=0, then internal skill created artifacts
         ctx.begin_turn("q")  # turn 1

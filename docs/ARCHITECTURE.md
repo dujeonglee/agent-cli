@@ -441,13 +441,15 @@ On-premise LLM(128K context)에서 긴 태스크 수행 시 세 가지 문제가
 ```
 [Scratchpad — persistent task context]
 ---
-goal: TX path 전체 분석 및 리팩토링
 status: in_progress
 ---
 ## Progress
-- [턴3] read_file: hooks.py (215줄) → artifacts/turn_0003.md
-- [턴5] shell: find agent_cli -name '*.py' → artifacts/turn_0005.md
-- [턴7] Task completed: 분석 완료 → artifacts/turn_0007.md
+- [턴0] User: hooks.py 분석해줘
+- [턴1] read_file: hooks.py (215줄) → artifacts/turn_0001.md
+- [턴2] User: 리팩토링해줘
+- [턴3] edit_file: hooks.py → artifacts/turn_0003.md
+- [턴4] User: /optimize ./
+- [턴4] Used skill: optimize(./)
 ## Decisions
 - [턴5] TX aggregation 별도 모듈 분리
 ```

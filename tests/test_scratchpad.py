@@ -100,12 +100,12 @@ class TestContextBudget:
 
 class TestScratchpad:
     def test_init_and_load(self, tmp_agent_dir):
-        content = init_scratchpad("Build TX path", tmp_agent_dir)
-        assert "Build TX path" in content
+        content = init_scratchpad(tmp_agent_dir)
+        assert "## Progress" in content
 
         loaded = load_scratchpad(tmp_agent_dir)
-        assert "Build TX path" in loaded
         assert "## Progress" in loaded
+        assert "in_progress" in loaded
 
     def test_load_nonexistent(self, tmp_agent_dir):
         assert load_scratchpad(tmp_agent_dir) == ""
@@ -115,7 +115,7 @@ class TestScratchpad:
         assert load_scratchpad(tmp_agent_dir) == "# Test\nHello"
 
     def test_append_progress(self, tmp_agent_dir):
-        init_scratchpad("Test goal", tmp_agent_dir)
+        init_scratchpad(tmp_agent_dir)
         append_progress(1, "Analyzed file.c", "artifacts/turn_0001.md", tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
         assert "[턴1]" in content
@@ -123,14 +123,14 @@ class TestScratchpad:
         assert "artifacts/turn_0001.md" in content
 
     def test_append_decision(self, tmp_agent_dir):
-        init_scratchpad("Test goal", tmp_agent_dir)
+        init_scratchpad(tmp_agent_dir)
         append_decision(3, "Use pre-allocated pool", tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
         assert "[턴3]" in content
         assert "Use pre-allocated pool" in content
 
     def test_multiple_progress_entries(self, tmp_agent_dir):
-        init_scratchpad("Test goal", tmp_agent_dir)
+        init_scratchpad(tmp_agent_dir)
         append_progress(1, "Step one", base=tmp_agent_dir)
         append_progress(2, "Step two", base=tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
@@ -267,9 +267,9 @@ class TestContextManagerScratchpad:
             caps,
             scratchpad_dir=tmp_agent_dir,
         )
-        ctx.init_task("Analyze TX path")
+        ctx.init_task()
         content = load_scratchpad(tmp_agent_dir)
-        assert "Analyze TX path" in content
+        assert "## Progress" in content
 
     def test_end_turn_saves_artifact(self, mock_provider, caps, tmp_agent_dir):
         from agent_cli.context.manager import ContextManager
@@ -280,7 +280,7 @@ class TestContextManagerScratchpad:
             caps,
             scratchpad_dir=tmp_agent_dir,
         )
-        ctx.init_task("Test task")
+        ctx.init_task()
         ctx.begin_turn("analyze something")
 
         path = ctx.end_turn(
@@ -304,7 +304,7 @@ class TestContextManagerScratchpad:
             caps,
             scratchpad_dir=tmp_agent_dir,
         )
-        ctx.init_task("Test task")
+        ctx.init_task()
         ctx.begin_turn("decide something")
 
         ctx.end_turn(
@@ -325,7 +325,7 @@ class TestContextManagerScratchpad:
             caps,
             scratchpad_dir=tmp_agent_dir,
         )
-        ctx.init_task("Test task")
+        ctx.init_task()
         ctx.add("user", "hello")
 
         msgs = ctx.get_messages()
@@ -367,7 +367,7 @@ class TestSessionScopedPaths:
         """init_scratchpad with session dir creates full path."""
         base = tmp_path / ".agent-cli"
         sdir = session_scratchpad_dir("sess_abc", base)
-        init_scratchpad("Test goal", sdir)
+        init_scratchpad(sdir)
         assert (sdir / "scratchpad.md").is_file()
         assert (sdir / "artifacts").is_dir()
 
@@ -377,13 +377,12 @@ class TestSessionScopedPaths:
         dir_a = session_scratchpad_dir("session_A", base)
         dir_b = session_scratchpad_dir("session_B", base)
 
-        init_scratchpad("Goal A", dir_a)
-        init_scratchpad("Goal B", dir_b)
+        init_scratchpad(dir_a)
+        init_scratchpad(dir_b)
 
         # Each has its own scratchpad
-        assert "Goal A" in load_scratchpad(dir_a)
-        assert "Goal B" in load_scratchpad(dir_b)
-        assert "Goal B" not in load_scratchpad(dir_a)
+        assert load_scratchpad(dir_a) != ""
+        assert load_scratchpad(dir_b) != ""
 
         # Artifacts are isolated
         save_artifact(1, "Content A", ["tag_a"], "Summary A", dir_a)
@@ -400,7 +399,7 @@ class TestSessionScopedPaths:
         """Artifact CRUD works within session scope."""
         base = tmp_path / ".agent-cli"
         sdir = session_scratchpad_dir("sess_1", base)
-        init_scratchpad("Goal", sdir)
+        init_scratchpad(sdir)
 
         path = save_artifact(1, "Detail content", ["code"], "Analysis", sdir)
         assert Path(path).is_file()
@@ -416,8 +415,8 @@ class TestSessionScopedPaths:
         dir_a = session_scratchpad_dir("ses_A", base)
         dir_b = session_scratchpad_dir("ses_B", base)
 
-        init_scratchpad("A", dir_a)
-        init_scratchpad("B", dir_b)
+        init_scratchpad(dir_a)
+        init_scratchpad(dir_b)
 
         save_artifact(1, "A1", base=dir_a)
         save_artifact(2, "A2", base=dir_a)
@@ -432,7 +431,7 @@ class TestClearScratchpad:
         """clear_scratchpad removes scratchpad.md + artifacts/ entirely."""
         base = tmp_path / ".agent-cli"
         sdir = session_scratchpad_dir("sess_del", base)
-        init_scratchpad("To be deleted", sdir)
+        init_scratchpad(sdir)
         save_artifact(1, "Content 1", base=sdir)
         save_artifact(2, "Content 2", base=sdir)
 
@@ -457,7 +456,7 @@ class TestDeleteArtifact:
         """delete_artifact removes one file, others remain."""
         base = tmp_path / ".agent-cli"
         sdir = session_scratchpad_dir("sess_da", base)
-        init_scratchpad("Goal", sdir)
+        init_scratchpad(sdir)
 
         path1 = save_artifact(1, "Keep me", base=sdir)
         path2 = save_artifact(2, "Delete me", base=sdir)
@@ -481,16 +480,13 @@ class TestInitScratchpadReinitialize:
         base = tmp_path / ".agent-cli"
         sdir = session_scratchpad_dir("sess_re", base)
 
-        init_scratchpad("First goal", sdir)
+        init_scratchpad(sdir)
         append_progress(1, "Step 1", base=sdir)
-        assert "First goal" in load_scratchpad(sdir)
         assert "Step 1" in load_scratchpad(sdir)
 
-        init_scratchpad("Second goal", sdir)
+        init_scratchpad(sdir)
         content = load_scratchpad(sdir)
-        assert "Second goal" in content
-        assert "First goal" not in content
-        assert "Step 1" not in content
+        assert "Step 1" not in content  # reinit clears progress
 
 
 class TestContextManagerSessionIntegration:
@@ -533,7 +529,7 @@ class TestContextManagerSessionIntegration:
             session_id="my_session",
             scratchpad_base=base,
         )
-        ctx.init_task("Test task")
+        ctx.init_task()
 
         expected_dir = base / "sessions" / "my_session"
         assert (expected_dir / "scratchpad.md").is_file()
@@ -550,7 +546,7 @@ class TestContextManagerSessionIntegration:
             session_id="turn_test",
             scratchpad_base=base,
         )
-        ctx.init_task("Turn test")
+        ctx.init_task()
         ctx.begin_turn("do something")
         path = ctx.end_turn(
             content="Detailed result " * 20,

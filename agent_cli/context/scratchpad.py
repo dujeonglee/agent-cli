@@ -171,11 +171,10 @@ def save_scratchpad(content: str, base: Path = _DEFAULT_BASE) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def init_scratchpad(goal: str, base: Path = _DEFAULT_BASE) -> str:
-    """Initialize a new scratchpad for a task."""
+def init_scratchpad(base: Path = _DEFAULT_BASE) -> str:
+    """Initialize a new scratchpad."""
     content = render_frontmatter(
         {
-            "goal": goal,
             "status": "in_progress",
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },

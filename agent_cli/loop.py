@@ -176,11 +176,21 @@ class AgentLoop:
             from agent_cli.context.scratchpad import load_scratchpad
 
             if not load_scratchpad(self.ctx._scratchpad_dir):
-                self.ctx.init_task(self.query)
+                self.ctx.init_task()
             # Set or clear skill context (for artifact subdirectory routing)
             self.ctx.set_skill_context(
                 skill_name=self.skill_name,
                 parent_turn=self.ctx._turn_count if self.skill_name else 0,
+            )
+
+        # Record user query in scratchpad progress (not for skill internal loops)
+        if self.ctx and not self.skill_name:
+            from agent_cli.context.scratchpad import append_progress
+
+            append_progress(
+                turn=self.ctx._turn_count,
+                summary=f"User: {self.query[:80]}",
+                base=self.ctx._scratchpad_dir,
             )
 
         # Message setup
