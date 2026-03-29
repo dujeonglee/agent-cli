@@ -128,7 +128,15 @@ def _dispatch_skill(
     # Record skill invocation in context
     if ctx:
         ctx.add("user", f"Used skill: {cmd_name}({arguments}) — results follow")
+        # Init scratchpad with clean goal (not skill prompt text)
+        from agent_cli.context.scratchpad import load_scratchpad
 
+        if not load_scratchpad(ctx._scratchpad_dir):
+            ctx.init_task(f"User requested /{cmd_name} {arguments}".strip())
+
+    from agent_cli.render import render_status
+
+    render_status("running", f"Running skill: {cmd_name}...")
     result = execute_skill(
         skill=skill,
         arguments=arguments,
