@@ -106,11 +106,11 @@ def _dispatch_skill(
     resolved_key: str,
     max_iter: int = 0,
     verbose: bool = False,
-    quiet: bool = False,
     max_depth: int = 2,
     delegate_timeout: int = 300,
     ctx=None,
     session=None,
+    graceful_interrupt: bool = False,
 ):
     """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
     from agent_cli.skills import load_skills, execute_skill
@@ -152,11 +152,12 @@ def _dispatch_skill(
         api_key=resolved_key,
         max_iter=max_iter,
         verbose=verbose,
-        quiet=quiet,
+        suppress_output=True,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
         ctx=ctx,
         session=session,
+        graceful_interrupt=graceful_interrupt,
     )
 
     # Record skill result in context
@@ -311,22 +312,22 @@ def run(
         "-v",
         help="Show raw LLM response",
     ),
-    quiet: bool = typer.Option(
-        False,
-        "--quiet",
-        hidden=True,
-        help="Output only the final answer (used internally by subagents)",
-    ),
     depth: int = typer.Option(
         0,
         "--depth",
         hidden=True,
         help="Current nesting depth (used internally by subagents)",
     ),
+    headless: bool = typer.Option(
+        False,
+        "--headless",
+        hidden=True,
+        help="No session/rendering; volatile tmpdir context (used by subagents)",
+    ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     # /sh prefix: Run shell command directly without LLM
-    if not quiet and (query.startswith("/sh ") or query == "/sh"):
+    if not headless and (query.startswith("/sh ") or query == "/sh"):
         cmd = query[3:].strip()
         if not cmd:
             console.print(f"[{C['error']}]No command to execute.[/]")
@@ -335,8 +336,37 @@ def run(
         raise typer.Exit(0)
 
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key = (
-        _setup_provider(provider, model, base_url, api_key, quiet=quiet)
+        _setup_provider(provider, model, base_url, api_key, quiet=headless)
     )
+
+    # Session & context setup
+    session = None
+    ctx = None
+    _tmpdir = None  # prevent GC of TemporaryDirectory
+
+    if headless:
+        import tempfile
+        from pathlib import Path as _Path
+
+        _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
+        ctx = ContextManager(
+            provider=llm_provider,
+            model=resolved_model,
+            capabilities=capabilities,
+            scratchpad_dir=_Path(_tmpdir.name),
+        )
+    else:
+        from agent_cli.context.session import create_session, save_meta
+
+        session = create_session()
+        session.query = query[:100]
+        save_meta(session)
+        ctx = ContextManager(
+            provider=llm_provider,
+            model=resolved_model,
+            capabilities=capabilities,
+            session_id=session.session_id,
+        )
 
     # Skill dispatch: /skill-name args
     if query.startswith("/") and not query.startswith("/sh"):
@@ -350,36 +380,61 @@ def run(
             resolved_key,
             max_iter=max_iter,
             verbose=verbose,
-            quiet=quiet,
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,
+            ctx=ctx,
+            session=session,
         )
         if answer is not _SKILL_NOT_FOUND:
             if answer is not None:
-                if quiet:
+                if headless:
                     print(answer)
                 else:
                     console.print(f"\n[{C['final']}]{answer}[/]")
+            _finalize_run(session, ctx, headless)
             return
 
-    answer = run_loop(
-        query=query,
-        provider=llm_provider,
-        capabilities=capabilities,
-        model=resolved_model,
-        provider_name=provider,
-        base_url=resolved_url,
-        api_key=resolved_key,
-        max_iter=max_iter,
-        verbose=verbose,
-        quiet=quiet,
-        depth=depth,
-        max_depth=max_depth,
-        delegate_timeout=delegate_timeout,
-    )
+    try:
+        answer = run_loop(
+            query=query,
+            provider=llm_provider,
+            capabilities=capabilities,
+            model=resolved_model,
+            provider_name=provider,
+            base_url=resolved_url,
+            api_key=resolved_key,
+            max_iter=max_iter,
+            verbose=verbose,
+            suppress_output=headless,
+            depth=depth,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
+            ctx=ctx,
+            session=session,
+        )
+    except KeyboardInterrupt:
+        answer = None
+        if not headless:
+            console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
 
-    if quiet and answer:
+    if headless and answer:
         print(answer)
+
+    _finalize_run(session, ctx, headless)
+
+
+def _finalize_run(session, ctx, headless: bool) -> None:
+    """Finalize session after run command (save summary, print session ID)."""
+    if session is None:
+        return
+    from agent_cli.context.session import finalize_session
+
+    finalize_session(session, ctx)
+    if not headless:
+        console.print(
+            f"[{C['muted']}]Session {session.session_id} saved. "
+            f"Resume with: agent-cli chat --resume {session.session_id}[/]"
+        )
 
 
 @app.command()
@@ -618,6 +673,7 @@ def chat(
                 delegate_timeout=delegate_timeout,
                 ctx=ctx,
                 session=session,
+                graceful_interrupt=True,
             )
             if result is _SKILL_NOT_FOUND:
                 console.print(f"[{C['error']}]Unknown command: /{cmd_name}[/]")
@@ -627,6 +683,7 @@ def chat(
             turn += 1
             if turn == 1 and not session.query:
                 session.query = query[:100]
+                save_meta(session)
             # ctx.add already done inside _dispatch_skill
             if result is not None:
                 console.print(f"\n[{C['final']}]{result}[/]")
@@ -643,6 +700,7 @@ def chat(
         turn += 1
         if turn == 1 and not session.query:
             session.query = query[:100]
+            save_meta(session)
         console.print(Rule(f"[{C['muted']}]TURN {turn}[/]", style=C["muted"]))
 
         result = run_loop(
@@ -659,6 +717,7 @@ def chat(
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,
             session=session,
+            graceful_interrupt=True,
         )
 
         if result is None:

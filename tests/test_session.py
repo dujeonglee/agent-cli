@@ -113,6 +113,7 @@ class TestListSessions:
         m1 = create_session("/tmp/ws1")
         save_meta(m1)
         m2 = create_session("/tmp/ws2")
+        m2.session_id = str(int(m2.session_id) + 1)
         save_meta(m2)
 
         result = list_sessions("/tmp/ws1")
@@ -175,6 +176,94 @@ class TestFinalizeSession:
         ctx.get_messages.return_value = []
         finalize_session(meta, ctx)
         assert load_summary(meta) is None
+
+
+class TestSummaryObservationCompaction:
+    """Verify that Observation messages are compacted in session summary."""
+
+    def test_short_observation_kept(self, tmp_path):
+        """Observations under 200 chars are kept as-is."""
+        from unittest.mock import MagicMock
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+
+        ctx = MagicMock()
+        ctx.get_messages.return_value = [
+            {"role": "user", "content": "Observation: STATUS: success\nRESULT: ok"},
+        ]
+        finalize_session(meta, ctx)
+        summary = load_summary(meta)
+        assert "RESULT: ok" in summary
+
+    def test_long_observation_compacted(self, tmp_path):
+        """Long Observations are replaced with short artifact reference."""
+        from unittest.mock import MagicMock
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+
+        long_output = "Observation: STATUS: success\nRESULT:\n" + "x" * 5000
+        ctx = MagicMock()
+        ctx.get_messages.return_value = [
+            {"role": "user", "content": "What files?"},
+            {"role": "assistant", "content": '{"action": "read_file"}'},
+            {"role": "user", "content": long_output},
+        ]
+        finalize_session(meta, ctx)
+        summary = load_summary(meta)
+        assert "STATUS: success" in summary
+        assert "truncated" in summary
+        assert "xxxxx" not in summary
+
+    def test_non_observation_user_msg_kept(self, tmp_path):
+        """Regular user messages are not compacted."""
+        from unittest.mock import MagicMock
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+
+        ctx = MagicMock()
+        ctx.get_messages.return_value = [
+            {"role": "user", "content": "Please analyze " + "a" * 5000},
+        ]
+        finalize_session(meta, ctx)
+        summary = load_summary(meta)
+        # Not compacted (not an Observation), but truncated at 2000 chars
+        assert "aaa" in summary
+        assert "more characters truncated" in summary
+
+    def test_assistant_messages_preserved(self, tmp_path):
+        """Assistant thought/action JSON is kept intact."""
+        from unittest.mock import MagicMock
+
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+
+        ctx = MagicMock()
+        ctx.get_messages.return_value = [
+            {"role": "user", "content": "Analyze"},
+            {
+                "role": "assistant",
+                "content": '{"thought": "reading file", "action": "read_file"}',
+            },
+        ]
+        finalize_session(meta, ctx)
+        summary = load_summary(meta)
+        assert '"thought": "reading file"' in summary
+
+
+class TestRunModeQuerySaved:
+    """Verify run mode saves query in session metadata."""
+
+    def test_session_meta_has_query(self, tmp_path):
+        meta = create_session("/tmp/ws")
+        meta.query = "Analyze the project"[:100]
+        save_meta(meta)
+
+        loaded = load_session(meta.session_id)
+        assert loaded is not None
+        assert loaded.query == "Analyze the project"
 
 
 class TestSubagentNoSession:
@@ -302,3 +391,75 @@ class TestSessionScratchpadCoexistence:
 
         sdir = get_session_dir(meta)
         assert (sdir / "scratchpad.md").is_file()
+
+
+class TestRunHeadlessTmpdir:
+    """Verify headless mode uses volatile tmpdir for ctx/scratchpad."""
+
+    def test_headless_ctx_uses_tmpdir(self, tmp_path):
+        """Headless creates ContextManager with tmpdir scratchpad_dir."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        provider = MagicMock()
+
+        _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
+        ctx = ContextManager(provider, "test", caps, scratchpad_dir=Path(_tmpdir.name))
+        ctx.init_task()
+
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        assert load_scratchpad(Path(_tmpdir.name)) != ""
+        assert "## Progress" in load_scratchpad(Path(_tmpdir.name))
+
+    def test_headless_tmpdirs_are_unique(self):
+        """Each headless invocation gets a unique tmpdir (no collisions)."""
+        import tempfile
+
+        dirs = set()
+        for _ in range(5):
+            d = tempfile.TemporaryDirectory(prefix="agent-cli-")
+            dirs.add(d.name)
+        assert len(dirs) == 5
+
+    def test_headless_no_session_files(self, tmp_path):
+        """Headless mode does not create session files in .agent-cli/."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        provider = MagicMock()
+
+        _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
+        ctx = ContextManager(provider, "test", caps, scratchpad_dir=Path(_tmpdir.name))
+        ctx.init_task()
+
+        # No session.jsonl in tmpdir (session is separate concern)
+        assert not (Path(_tmpdir.name) / "session.jsonl").exists()
+        # Scratchpad exists in tmpdir
+        assert (Path(_tmpdir.name) / "scratchpad.md").is_file()

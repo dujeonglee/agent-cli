@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 
 from agent_cli.tools.result import ToolResult
-
-_VAGUE_REFS = re.compile(
-    r"\b(it|this|that|these|those|above|previous|earlier|the same)\b", re.I
-)
 
 
 def _validate_subtask(task: str) -> str | None:
@@ -20,11 +15,6 @@ def _validate_subtask(task: str) -> str | None:
         return (
             "Task is too short. The subagent has NO context from this conversation. "
             "Include all necessary details: file paths, specific instructions, etc."
-        )
-    if _VAGUE_REFS.search(task):
-        return (
-            "Task contains vague references (e.g. 'it', 'this', 'above') that the "
-            "subagent cannot resolve. Rewrite with explicit, self-contained details."
         )
     return None
 
@@ -63,7 +53,7 @@ def tool_delegate(
         model,
         "--base-url",
         base_url,
-        "--quiet",
+        "--headless",
     ]
     if api_key:
         cmd_args.extend(["--api-key", api_key])

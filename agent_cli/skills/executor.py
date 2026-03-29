@@ -80,12 +80,13 @@ def execute_skill(
     api_key: str = "",
     max_iter: int = 0,
     verbose: bool = False,
-    quiet: bool = False,
+    suppress_output: bool = False,
     max_depth: int = 2,
     delegate_timeout: int = 300,
     ctx: ContextManager | None = None,
     session=None,
     skill_stack: list[str] | None = None,
+    graceful_interrupt: bool = False,
 ) -> str | None:
     """Execute a skill by substituting arguments and calling run_loop."""
     from pathlib import Path
@@ -114,7 +115,7 @@ def execute_skill(
         api_key=api_key,
         max_iter=effective_max_iter,
         verbose=verbose,
-        quiet=quiet,
+        suppress_output=suppress_output,
         depth=0,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
@@ -124,4 +125,5 @@ def execute_skill(
         skill_name=skill.name,
         skill_stack=skill_stack,
         skill_args=arguments,
+        graceful_interrupt=graceful_interrupt,
     )

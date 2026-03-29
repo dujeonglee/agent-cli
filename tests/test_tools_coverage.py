@@ -296,15 +296,13 @@ class TestDelegate:
         assert err is not None
         assert "too short" in err
 
-    def test_validate_vague_refs(self):
+    def test_validate_long_task_passes(self):
         err = _validate_subtask("Analyze this file and fix the bug in it")
-        assert err is not None
-        assert "vague" in err
+        assert err is None  # length >= 5 words, no vague check
 
-    def test_validate_good_task(self):
+    def test_validate_with_pronouns_passes(self):
         err = _validate_subtask("Read /tmp/data.csv and count the number of rows in it")
-        # "it" is vague but the task is long enough
-        assert err is not None  # still has "it"
+        assert err is None  # pronouns OK, subagent handles context naturally
 
     def test_validate_explicit_task(self):
         err = _validate_subtask(
@@ -454,6 +452,46 @@ class TestToolDelegate:
         )
         assert not result.success
         assert "(no output)" in result.error
+
+    def test_headless_flag_in_cmd(self, mock_subprocess):
+        """Delegate passes --headless to subprocess."""
+        from agent_cli.tools.delegate import tool_delegate
+
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stdout = "done"
+        mock_subprocess.return_value.stderr = ""
+
+        tool_delegate(
+            args={
+                "task": "Read /tmp/data.csv and count the number of rows then report"
+            },
+            provider="ollama",
+            model="test",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        cmd = mock_subprocess.call_args[0][0]
+        assert "--headless" in cmd
+
+    def test_no_quiet_flag_in_cmd(self, mock_subprocess):
+        """Delegate no longer passes --quiet (merged into --headless)."""
+        from agent_cli.tools.delegate import tool_delegate
+
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stdout = "done"
+        mock_subprocess.return_value.stderr = ""
+
+        tool_delegate(
+            args={
+                "task": "Read /tmp/data.csv and count the number of rows then report"
+            },
+            provider="ollama",
+            model="test",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        cmd = mock_subprocess.call_args[0][0]
+        assert "--quiet" not in cmd
 
 
 class TestToolsRegistry:

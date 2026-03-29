@@ -96,20 +96,27 @@ def load_summary(meta: SessionMeta) -> str | None:
 
 
 def save_meta(meta: SessionMeta) -> None:
-    """Save session metadata as first line of JSONL (if file is empty)."""
+    """Save or update session metadata (first line of JSONL)."""
     path = get_log_path(meta)
-    if path.is_file() and path.stat().st_size > 0:
-        return  # already has content
-    with open(path, "a", encoding="utf-8") as f:
-        header = {
+    header = json.dumps(
+        {
             "_meta": {
                 "session_id": meta.session_id,
                 "workspace": meta.workspace,
                 "created_at": meta.created_at,
                 "query": meta.query,
             }
-        }
-        f.write(json.dumps(header, ensure_ascii=False) + "\n")
+        },
+        ensure_ascii=False,
+    )
+    if path.is_file() and path.stat().st_size > 0:
+        # Rewrite first line (meta), keep the rest (log entries)
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines[0] = header + "\n"
+        path.write_text("".join(lines), encoding="utf-8")
+    else:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(header + "\n")
 
 
 def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
@@ -159,12 +166,40 @@ def load_session(session_id: str) -> SessionMeta | None:
     return None
 
 
+def _compact_observation(content: str) -> str:
+    """Replace verbose Observation tool output with short artifact reference.
+
+    Keeps the first line (STATUS + tool info) and replaces the body with
+    an artifact pointer so the resume context stays small.
+    """
+    if not content.startswith("Observation:"):
+        return content
+
+    # Extract first meaningful line after "Observation:"
+    lines = content.split("\n", 3)
+    # Typical: "Observation: STATUS: success\nRESULT:\n..."
+    first_line = lines[0]  # "Observation: STATUS: success"
+
+    # Trim to just the status + short hint
+    if len(content) <= 200:
+        return content  # short observations are fine as-is
+
+    return f"{first_line}\n[... tool output truncated — see artifacts for full content]"
+
+
 def _serialize_ctx_messages(messages: list[dict]) -> str:
-    """Serialize context messages to text for summary storage."""
+    """Serialize context messages to text for summary storage.
+
+    Observation messages (tool outputs) are compacted to avoid bloating
+    the session summary. Full tool output is preserved in artifacts.
+    """
     parts = []
     for m in messages:
         role = m.get("role", "unknown").capitalize()
         content = m.get("content", "")
+        # Compact Observation messages (user role, tool output)
+        if role == "User":
+            content = _compact_observation(content)
         if len(content) > 2000:
             content = (
                 content[:2000]

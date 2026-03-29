@@ -45,7 +45,7 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "42"
 
@@ -68,7 +68,7 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert "hello world" in result
 
@@ -88,7 +88,7 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "Simple answer"
 
@@ -110,7 +110,7 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert "Created file successfully" in result
 
@@ -140,7 +140,7 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "(completed)"
 
@@ -170,7 +170,7 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "(completed)"
 
@@ -192,7 +192,7 @@ class TestRunLoopToolExecution:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result is not None
 
@@ -212,7 +212,7 @@ class TestRunLoopToolExecution:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "ok"
 
@@ -228,7 +228,7 @@ class TestRunLoopParseFailure:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
             max_iter=5,
         )
         assert result == "recovered"
@@ -264,7 +264,7 @@ class TestRunLoopMaxIter:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
             max_iter=2,
         )
         assert result is None
@@ -291,7 +291,7 @@ class TestCheckpoint:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "completed"
         assert provider.call.call_count == 11
@@ -318,7 +318,7 @@ class TestCheckpoint:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "done after checkpoint"
 
@@ -360,7 +360,7 @@ class TestToolHistoryTracking:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "ok"
 
@@ -385,7 +385,7 @@ class TestEchoAsFinalAnswer:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "Task completed successfully."
 
@@ -406,7 +406,7 @@ class TestEchoAsFinalAnswer:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "found"
 
@@ -427,7 +427,7 @@ class TestEchoAsFinalAnswer:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "written"
 
@@ -451,7 +451,7 @@ class TestRepeatedCallDetection:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result is None
 
@@ -493,22 +493,439 @@ class TestRepeatedCallDetection:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "ok"
 
 
-class TestRunLoopQuietMode:
-    def test_quiet_no_render(self, caps, capsys):
+class TestRunLoopHeadlessMode:
+    def test_headless_no_render(self, caps, capsys):
         provider = _make_provider(_complete("answer"))
         result = run_loop(
             query="Q",
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
         assert result == "answer"
+
+
+class TestAskToolAvailability:
+    """Verify ask tool inclusion/exclusion based on ctx and suppress_output."""
+
+    def test_ask_available_with_ctx_not_headless(self, caps):
+        """ctx present + suppress_output=False → ask included."""
+        from agent_cli.loop import AgentLoop
+
+        ctx = MagicMock()
+        loop = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            suppress_output=False,
+        )
+        assert "ask" in loop.tools_list
+
+    def test_ask_hidden_when_headless(self, caps):
+        """suppress_output=True → ask removed even with ctx."""
+        from agent_cli.loop import AgentLoop
+
+        ctx = MagicMock()
+        loop = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            suppress_output=True,
+        )
+        assert "ask" not in loop.tools_list
+
+    def test_ask_hidden_without_ctx(self, caps):
+        """ctx=None → ask removed regardless of suppress_output."""
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            ctx=None,
+            suppress_output=False,
+        )
+        assert "ask" not in loop.tools_list
+
+
+class TestGracefulInterrupt:
+    """Test Ctrl+C graceful interrupt via _interrupted flag."""
+
+    def test_interrupt_returns_none(self, caps):
+        """Setting _interrupted flag causes run() to return None."""
+        from agent_cli.loop import AgentLoop
+
+        provider = _make_provider(
+            _complete("should not reach"),
+        )
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+        )
+        loop._interrupted = True
+        result = loop.run()
+        assert result is None
+        # LLM should never be called
+        provider.call.assert_not_called()
+
+    def test_interrupt_after_first_iteration(self, caps, tmp_path):
+        """Interrupt flag set during iteration → exits at next checkpoint."""
+        import json as _json
+        from agent_cli.loop import AgentLoop
+
+        # Two responses: first is a tool call, second is complete
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello")
+        responses = [
+            _json.dumps(
+                {
+                    "thought": "reading",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("final"),
+        ]
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+        )
+
+        # Monkey-patch: set interrupted after first LLM call
+        original_call_llm = loop._call_llm
+
+        def _call_and_interrupt(*args, **kwargs):
+            result = original_call_llm(*args, **kwargs)
+            loop._interrupted = True
+            return result
+
+        loop._call_llm = _call_and_interrupt
+
+        result = loop.run()
+        # First iteration completes (tool executed), then exits at checkpoint
+        assert result is None
+        # LLM was called once (first iteration)
+        assert provider.call.call_count == 1
+
+    def test_interrupt_records_in_ctx(self, caps, tmp_path):
+        """Interrupt adds message to ctx."""
+        from agent_cli.loop import AgentLoop
+        from agent_cli.context.manager import ContextManager
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=_complete("done"))]
+
+        ctx = ContextManager(
+            provider=provider,
+            model="m",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            suppress_output=True,
+        )
+        # Set interrupt before first iteration (after setup adds user query)
+        loop._interrupted = True
+        loop.run()
+
+        # Check ctx has interrupt message
+        msgs = ctx.get_messages()
+        user_msgs = [m for m in msgs if m["role"] == "user"]
+        interrupt_msgs = [
+            m for m in user_msgs if m["content"].startswith("⚡ User interrupted")
+        ]
+        assert len(interrupt_msgs) == 1
+
+    def test_interrupt_records_in_scratchpad(self, caps, tmp_path):
+        """Interrupt adds progress entry to scratchpad."""
+        from agent_cli.loop import AgentLoop
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=_complete("done"))]
+
+        ctx = ContextManager(
+            provider=provider,
+            model="m",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            suppress_output=True,
+        )
+        loop._interrupted = True
+        loop.run()
+
+        scratchpad = load_scratchpad(tmp_path)
+        assert "Interrupted" in scratchpad
+
+    def test_signal_handler_installed_and_restored(self, caps):
+        """Signal handler is installed during run() and restored after."""
+        import signal
+
+        from agent_cli.loop import AgentLoop
+
+        provider = _make_provider(_complete("ok"))
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+            graceful_interrupt=True,
+        )
+        loop.run()
+
+        # After run(), the original handler should be restored
+        assert signal.getsignal(signal.SIGINT) is original_handler
+
+    def test_no_signal_handler_without_graceful(self, caps):
+        """Without graceful_interrupt, signal handler is NOT installed."""
+        import signal
+
+        from agent_cli.loop import AgentLoop
+
+        provider = _make_provider(_complete("ok"))
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+            graceful_interrupt=False,
+        )
+        loop.run()
+
+        # Handler was never changed
+        assert signal.getsignal(signal.SIGINT) is original_handler
+
+    def test_signal_handler_sets_flag(self, caps):
+        """Simulated SIGINT sets _interrupted flag."""
+        from agent_cli.loop import AgentLoop
+
+        provider = _make_provider(_complete("ok"))
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+        )
+        loop._install_signal_handler()
+        try:
+            assert not loop._interrupted
+            # Simulate SIGINT
+            import os
+            import signal
+
+            os.kill(os.getpid(), signal.SIGINT)
+            assert loop._interrupted
+        finally:
+            loop._restore_signal_handler()
+
+    def test_second_sigint_raises(self, caps):
+        """Second Ctrl+C raises KeyboardInterrupt."""
+        from agent_cli.loop import AgentLoop
+
+        provider = _make_provider(_complete("ok"))
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+        )
+        loop._install_signal_handler()
+        try:
+            loop._interrupted = True  # simulate first Ctrl+C already happened
+            import os
+            import signal
+
+            with pytest.raises(KeyboardInterrupt):
+                os.kill(os.getpid(), signal.SIGINT)
+        finally:
+            loop._restore_signal_handler()
+
+    def test_interrupt_without_ctx(self, caps):
+        """Interrupt without ctx (no crash)."""
+        from agent_cli.loop import AgentLoop
+
+        provider = _make_provider(_complete("should not reach"))
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=None,
+            suppress_output=True,
+        )
+        loop._interrupted = True
+        result = loop.run()
+        assert result is None
+
+    def test_run_mode_keyboardinterrupt_propagates(self, caps):
+        """Without graceful_interrupt, KeyboardInterrupt propagates up."""
+        from agent_cli.loop import AgentLoop
+
+        provider = MagicMock()
+        provider.call.side_effect = KeyboardInterrupt()
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+            graceful_interrupt=False,
+        )
+        with pytest.raises(KeyboardInterrupt):
+            loop.run()
+
+    def test_chat_mode_sigint_graceful(self, caps, tmp_path):
+        """With graceful_interrupt, SIGINT sets flag instead of raising."""
+        import json as _json
+
+        from agent_cli.loop import AgentLoop
+
+        test_file = tmp_path / "f.txt"
+        test_file.write_text("data")
+        test_responses = [
+            _json.dumps(
+                {
+                    "thought": "working",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("done"),
+        ]
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=r) for r in test_responses]
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            suppress_output=True,
+            graceful_interrupt=True,
+        )
+
+        # Simulate: after first LLM call, send SIGINT
+        original_call_llm = loop._call_llm
+
+        def _call_then_sigint(*args, **kwargs):
+            result = original_call_llm(*args, **kwargs)
+            import os
+            import signal
+
+            os.kill(os.getpid(), signal.SIGINT)
+            return result
+
+        loop._call_llm = _call_then_sigint
+
+        # Should NOT raise — graceful handler catches it
+        result = loop.run()
+        assert result is None
+        assert loop._interrupted
+
+    def test_chat_mode_ctx_preserved_after_interrupt(self, caps, tmp_path):
+        """After graceful interrupt in chat mode, ctx has all prior work."""
+        import json as _json
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
+
+        test_file = tmp_path / "data.txt"
+        test_file.write_text("important data")
+
+        responses = [
+            _json.dumps(
+                {
+                    "thought": "reading file",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("final"),
+        ]
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
+
+        ctx = ContextManager(
+            provider=provider,
+            model="m",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+
+        loop = AgentLoop(
+            query="Analyze data.txt",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            suppress_output=True,
+            graceful_interrupt=True,
+        )
+
+        # Interrupt after first iteration
+        original_call_llm = loop._call_llm
+
+        def _call_and_interrupt(*args, **kwargs):
+            result = original_call_llm(*args, **kwargs)
+            loop._interrupted = True
+            return result
+
+        loop._call_llm = _call_and_interrupt
+        loop.run()
+
+        # Verify: ctx should have user query + tool observation + interrupt msg
+        msgs = ctx.get_messages()
+        contents = [m["content"] for m in msgs]
+        # User query present
+        assert any("Analyze data.txt" in c for c in contents)
+        # Tool observation present (read_file result survived)
+        assert any("important data" in c for c in contents)
+        # Interrupt message present
+        assert any("interrupted" in c.lower() for c in contents)
 
 
 @pytest.fixture
@@ -561,7 +978,7 @@ class TestRunLoopNativeToolCalling:
             capabilities=caps_tc,
             model="claude-sonnet-4-20250514",
             provider_name="anthropic",
-            quiet=True,
+            suppress_output=True,
         )
 
         assert result is not None
@@ -600,7 +1017,7 @@ class TestRunLoopNativeToolCalling:
             capabilities=caps_tc,
             model="gpt-4o",
             provider_name="openai",
-            quiet=True,
+            suppress_output=True,
         )
 
         assert result == "Executed"
@@ -623,7 +1040,7 @@ class TestRunLoopNativeToolCalling:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
         )
 
         assert result == "ok"
@@ -665,7 +1082,7 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         assert result == "Done after confirmation"
@@ -709,7 +1126,7 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         assert result == "Processing file.py in python"
@@ -749,7 +1166,7 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         assert result == "The answer is 42"
@@ -789,7 +1206,7 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         assert result == "ok"
@@ -816,7 +1233,7 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         call_args = provider.call.call_args
@@ -951,7 +1368,7 @@ class TestAgentLoopClass:
             provider=provider,
             capabilities=caps,
             model="m",
-            quiet=True,
+            suppress_output=True,
         )
         result = loop.run()
         assert result == "42"
@@ -985,7 +1402,7 @@ class TestContextContinuity:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1007,7 +1424,7 @@ class TestContextContinuity:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         assert result == "final answer"
@@ -1042,7 +1459,7 @@ class TestContextContinuity:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1082,7 +1499,7 @@ class TestContextContinuity:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1170,7 +1587,7 @@ class TestScratchpadIntegration:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         content = load_scratchpad(tmp_path)
@@ -1201,7 +1618,7 @@ class TestScratchpadIntegration:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         # 2 iterations (read_file + complete) → turn_count >= 2
@@ -1233,7 +1650,7 @@ class TestScratchpadIntegration:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         index = build_artifact_index(tmp_path)
@@ -1253,7 +1670,7 @@ class TestScratchpadIntegration:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         index = build_artifact_index(tmp_path)
@@ -1286,7 +1703,7 @@ class TestScratchpadIntegration:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
         content = load_scratchpad(tmp_path)
@@ -1301,7 +1718,7 @@ class TestScratchpadIntegration:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=None,
         )
         assert result == "ok"
@@ -1420,7 +1837,7 @@ class TestArtifactLazyLoading:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1450,7 +1867,7 @@ class TestArtifactLazyLoading:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1473,7 +1890,7 @@ class TestArtifactLazyLoading:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1512,7 +1929,7 @@ class TestArtifactTags:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1547,7 +1964,7 @@ class TestArtifactTags:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1569,7 +1986,7 @@ class TestArtifactTags:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1597,7 +2014,7 @@ class TestSkillNamePropagation:
                 provider=MagicMock(),
                 capabilities=caps,
                 model="m",
-                quiet=True,
+                suppress_output=True,
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["skill_name"] == "optimize"
@@ -1628,7 +2045,7 @@ class TestSkillNamePropagation:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
             skill_name="optimize",
         )
@@ -1651,7 +2068,7 @@ class TestSkillNamePropagation:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
             skill_name="summarize",
         )
@@ -1676,7 +2093,7 @@ class TestSkillNamePropagation:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1704,7 +2121,7 @@ class TestSkillSubdirectory:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
             skill_name="optimize",
         )
@@ -1727,7 +2144,7 @@ class TestSkillSubdirectory:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1763,7 +2180,7 @@ class TestSkillSubdirectory:
             provider=provider1,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
             skill_name="review",
         )
@@ -1775,7 +2192,7 @@ class TestSkillSubdirectory:
             provider=provider2,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1799,7 +2216,7 @@ class TestSkillSubdirectory:
             provider=provider,
             capabilities=caps,
             model="test",
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
             skill_name="test-skill",
         )
@@ -1855,7 +2272,7 @@ class TestRunSkillIntercept:
                 provider=outer_provider,
                 capabilities=caps,
                 model="test",
-                quiet=True,
+                suppress_output=True,
                 ctx=ctx,
                 provider_name="ollama",
                 base_url="http://localhost:11434",
@@ -1890,7 +2307,7 @@ class TestRunSkillIntercept:
                 provider=provider,
                 capabilities=caps,
                 model="test",
-                quiet=True,
+                suppress_output=True,
                 ctx=ctx,
             )
         assert result == "ok"  # loop continued after error
@@ -2065,7 +2482,7 @@ class TestRunSkillNoDuplicateArtifact:
                 provider=provider,
                 capabilities=caps,
                 model="test",
-                quiet=True,
+                suppress_output=True,
                 ctx=ctx,
                 provider_name="ollama",
                 base_url="http://localhost:11434",

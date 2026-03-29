@@ -59,8 +59,9 @@ def tool_run_skill(args: dict, **kwargs) -> ToolResult:
         base_url=kwargs.get("base_url", ""),
         api_key=kwargs.get("api_key", ""),
         max_iter=skill.max_iter,
-        quiet=True,
+        suppress_output=True,
         session=kwargs.get("session"),
+        graceful_interrupt=kwargs.get("graceful_interrupt", False),
     )
 
     return ToolResult(True, output=result or "(skill returned no result)")

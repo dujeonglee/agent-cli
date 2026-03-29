@@ -137,6 +137,41 @@ class TestScratchpad:
         assert "[턴1]" in content
         assert "[턴2]" in content
 
+    def test_progress_chronological_order(self, tmp_agent_dir):
+        """Progress entries are in chronological order (oldest first)."""
+        init_scratchpad(tmp_agent_dir)
+        append_progress(0, "User: hello", base=tmp_agent_dir)
+        append_progress(1, "read_file: main.py", base=tmp_agent_dir)
+        append_progress(2, "shell: ls", base=tmp_agent_dir)
+        content = load_scratchpad(tmp_agent_dir)
+        idx0 = content.index("[턴0]")
+        idx1 = content.index("[턴1]")
+        idx2 = content.index("[턴2]")
+        assert idx0 < idx1 < idx2
+
+    def test_decision_chronological_order(self, tmp_agent_dir):
+        """Decision entries are in chronological order (oldest first)."""
+        init_scratchpad(tmp_agent_dir)
+        append_decision(1, "Decision A", tmp_agent_dir)
+        append_decision(2, "Decision B", tmp_agent_dir)
+        content = load_scratchpad(tmp_agent_dir)
+        idxA = content.index("Decision A")
+        idxB = content.index("Decision B")
+        assert idxA < idxB
+
+    def test_progress_and_decision_interleaved(self, tmp_agent_dir):
+        """Progress and decisions both maintain order in their sections."""
+        init_scratchpad(tmp_agent_dir)
+        append_progress(1, "Step 1", base=tmp_agent_dir)
+        append_decision(1, "Choose X", tmp_agent_dir)
+        append_progress(2, "Step 2", base=tmp_agent_dir)
+        append_decision(2, "Choose Y", tmp_agent_dir)
+        content = load_scratchpad(tmp_agent_dir)
+        # Progress section: Step 1 before Step 2
+        assert content.index("Step 1") < content.index("Step 2")
+        # Decisions section: Choose X before Choose Y
+        assert content.index("Choose X") < content.index("Choose Y")
+
 
 class TestArtifacts:
     def test_save_and_load(self, tmp_agent_dir):

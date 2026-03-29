@@ -198,15 +198,19 @@ def append_progress(
     ref = f" → {artifact_path}" if artifact_path else ""
     line = f"- [턴{turn}] {summary}{ref}\n"
 
-    # Insert after "## Progress" section
+    # Append at end of "## Progress" section (chronological order)
     if "## Progress" in content:
-        idx = content.index("## Progress") + len("## Progress")
-        # Find end of the line (skip past any newline)
-        nl = content.find("\n", idx)
-        if nl >= 0:
-            content = content[: nl + 1] + line + content[nl + 1 :]
+        prog_start = content.index("## Progress")
+        # Find the next section header (## Decisions, ## Open Questions, etc.)
+        next_section = content.find("\n## ", prog_start + 1)
+        if next_section >= 0:
+            # Insert before the next section
+            content = content[:next_section] + line + content[next_section:]
         else:
-            content = content + "\n" + line
+            # No next section — append at end
+            if not content.endswith("\n"):
+                content += "\n"
+            content += line
     else:
         content += f"\n## Progress\n{line}"
 
@@ -231,13 +235,16 @@ def append_decision(
 
     line = f"- [턴{turn}] {decision}\n"
 
+    # Append at end of "## Decisions" section (chronological order)
     if "## Decisions" in content:
-        idx = content.index("## Decisions") + len("## Decisions")
-        nl = content.find("\n", idx)
-        if nl >= 0:
-            content = content[: nl + 1] + line + content[nl + 1 :]
+        dec_start = content.index("## Decisions")
+        next_section = content.find("\n## ", dec_start + 1)
+        if next_section >= 0:
+            content = content[:next_section] + line + content[next_section:]
         else:
-            content = content + "\n" + line
+            if not content.endswith("\n"):
+                content += "\n"
+            content += line
     else:
         content += f"\n## Decisions\n{line}"
 

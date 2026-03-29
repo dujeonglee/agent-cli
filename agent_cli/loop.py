@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import signal
+import sys
 import time
 
 from agent_cli.constants import OBS_SUCCESS, OBS_ERROR, OBS_ERROR_HINT
@@ -74,7 +76,7 @@ class AgentLoop:
         max_iter: int = 0,
         verbose: bool = False,
         ctx: ContextManager | None = None,
-        quiet: bool = False,
+        suppress_output: bool = False,
         depth: int = 0,
         max_depth: int = 2,
         delegate_timeout: int = 300,
@@ -84,6 +86,7 @@ class AgentLoop:
         skill_name: str = "",
         skill_stack: list[str] | None = None,
         skill_args: str = "",
+        graceful_interrupt: bool = False,
     ):
         self.query = query
         self.provider = provider
@@ -95,7 +98,7 @@ class AgentLoop:
         self.max_iter = max_iter
         self.verbose = verbose
         self.ctx = ctx
-        self.quiet = quiet
+        self.suppress_output = suppress_output
         self.depth = depth
         self.max_depth = max_depth
         self.delegate_timeout = delegate_timeout
@@ -107,8 +110,8 @@ class AgentLoop:
         # Derived state
         self.include_delegate = depth < max_depth
         self.tools_list = active_tools or list(TOOLS.keys())
-        # Remove "ask" in non-interactive mode (no ctx)
-        if not ctx and "ask" in self.tools_list:
+        # Remove "ask" in non-interactive mode (no ctx or suppress_output)
+        if (not ctx or suppress_output) and "ask" in self.tools_list:
             self.tools_list = [t for t in self.tools_list if t != "ask"]
         # Build skill stack for recursive call prevention
         if skill_stack is None:
@@ -121,6 +124,9 @@ class AgentLoop:
         self.iteration = 0
         self.tools_called: list[str] = []
         self.overflow_retried = False
+        self._interrupted = False
+        self._prev_sigint_handler = None
+        self.graceful_interrupt = graceful_interrupt
         self.recent_tool_history: list[dict] = []
         self.messages: list[dict] = []
         self.system = ""
@@ -131,16 +137,65 @@ class AgentLoop:
     def run(self) -> str | None:
         """Main entry point -- replaces run_loop body.
 
-        Returns the final answer string, or None if max iterations reached.
+        Returns the final answer string, or None if max iterations reached
+        or interrupted by user.
         """
-        self._setup()
-        while self._should_continue():
-            self.iteration += 1
-            self._begin_iteration()
-            result = self._execute_iteration()
-            if result is not self._CONTINUE:
-                return result
-        return self._on_max_iter()
+        if self.graceful_interrupt:
+            self._install_signal_handler()
+        try:
+            self._setup()
+            while self._should_continue():
+                if self._interrupted:
+                    return self._on_interrupt()
+                self.iteration += 1
+                self._begin_iteration()
+                result = self._execute_iteration()
+                if result is not self._CONTINUE:
+                    return result
+            return self._on_max_iter()
+        finally:
+            if self.graceful_interrupt:
+                self._restore_signal_handler()
+
+    def _install_signal_handler(self) -> None:
+        """Install graceful SIGINT handler (1st: flag, 2nd: hard exit)."""
+        self._prev_sigint_handler = signal.getsignal(signal.SIGINT)
+
+        def _handle_sigint(signum, frame):
+            if self._interrupted:
+                # 2nd Ctrl+C → hard exit via default handler
+                signal.signal(signal.SIGINT, signal.default_int_handler)
+                signal.default_int_handler(signum, frame)
+            self._interrupted = True
+            print("\n⚡ Finishing current step...", file=sys.stderr)
+
+        signal.signal(signal.SIGINT, _handle_sigint)
+
+    def _restore_signal_handler(self) -> None:
+        """Restore the previous SIGINT handler."""
+        if self._prev_sigint_handler is not None:
+            signal.signal(signal.SIGINT, self._prev_sigint_handler)
+
+    def _on_interrupt(self) -> None:
+        """Handle graceful interrupt: record in ctx + scratchpad, return None."""
+        interrupt_msg = "⚡ User interrupted. Waiting for new instructions."
+        if self.ctx:
+            self.ctx.add("user", interrupt_msg)
+            from agent_cli.context.scratchpad import append_progress
+
+            append_progress(
+                turn=self.ctx._turn_count,
+                summary=f"⚡ Interrupted by user at iteration {self.iteration}",
+                base=self.ctx._scratchpad_dir,
+            )
+        if not self.suppress_output:
+            from agent_cli.render import C, console
+
+            console.print(
+                f"\n[{C['accent']}]⚡ Interrupted after iteration {self.iteration}.[/]"
+            )
+        _debug_log(f"Graceful interrupt at iteration {self.iteration}")
+        return None
 
     def _setup(self) -> None:
         """Initialize system prompt, scratchpad, messages."""
@@ -155,7 +210,7 @@ class AgentLoop:
             skill_stack=self.skill_stack,
         )
 
-        if not self.quiet:
+        if not self.suppress_output:
             render_header(
                 self.provider_name,
                 self.model,
@@ -209,7 +264,7 @@ class AgentLoop:
         if self.ctx:
             self.ctx.begin_turn(self.query)
         # Skill progress: shown per-tool after LLM response (see _render_skill_progress)
-        if not self.quiet:
+        if not self.suppress_output:
             render_iter_sep(self.iteration)
 
     def _execute_iteration(self) -> str | None:
@@ -248,7 +303,7 @@ class AgentLoop:
 
         llm_text = response.content
 
-        if not self.quiet:
+        if not self.suppress_output:
             render_raw(llm_text, self.iteration, self.verbose)
 
         # 4. Native tool calling path (Anthropic/OpenAI)
@@ -280,13 +335,13 @@ class AgentLoop:
             self.messages.append({"role": "user", "content": checkpoint_msg})
             if self.ctx:
                 self.ctx.add("user", checkpoint_msg)
-            if not self.quiet:
+            if not self.suppress_output:
                 render_status("running", f"Checkpoint at iteration {self.iteration}")
 
     def _call_llm(self, call_kwargs: dict):
         """LLM call with overflow retry. Returns response or None on failure."""
         # Context dump (verbose only)
-        if self.verbose and not self.quiet:
+        if self.verbose and not self.suppress_output:
             render_context_dump(self.messages, self.iteration)
         _debug_log(
             f"LLM_CALL iter={self.iteration} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
@@ -324,6 +379,9 @@ class AgentLoop:
         """Handle native tool calling response (Anthropic/OpenAI)."""
         if len(response.tool_calls) == 1:
             first_toolcall = response.tool_calls[0]
+            _debug_log(
+                f"NATIVE_TOOL iter={self.iteration} action={first_toolcall['name']}"
+            )
 
             # 4a. Complete tool -> extract result and return
             if first_toolcall["name"] == "complete":
@@ -332,14 +390,14 @@ class AgentLoop:
                     self.iteration,
                     "complete",
                     {},
-                    self.quiet,
+                    self.suppress_output,
                     thought=llm_text[:100],
                 )
-                answer = (
-                    first_toolcall.get("input", {}).get("result") or "(completed)"
-                    if isinstance(first_toolcall.get("input"), dict)
-                    else "(completed)"
-                )
+                if isinstance(first_toolcall.get("input"), dict):
+                    raw = first_toolcall["input"].get("result")
+                    answer = str(raw) if raw else "(completed)"
+                else:
+                    answer = "(completed)"
                 # Fulfillment guard
                 if not self.tools_called and needs_tool_action(self.query):
                     render_status(
@@ -365,7 +423,7 @@ class AgentLoop:
                         )
                     if self.ctx:
                         self.ctx.add("assistant", answer)
-                    if not self.quiet:
+                    if not self.suppress_output:
                         render_step("final", answer, self.iteration)
                     return answer
 
@@ -373,7 +431,7 @@ class AgentLoop:
             if first_toolcall["name"] == "ask":
                 questions = _extract_questions(first_toolcall.get("input"))
                 if questions:
-                    user_response = _handle_ask(questions, self.quiet)
+                    user_response = _handle_ask(questions, self.suppress_output)
                     obs_msg = f"User responded:\n{user_response}"
                     _append_native_observation(
                         self.messages,
@@ -402,8 +460,9 @@ class AgentLoop:
                     self.session,
                     self.skill_name,
                     skill_stack=self.skill_stack,
+                    graceful_interrupt=self.graceful_interrupt,
                 )
-                if not self.quiet:
+                if not self.suppress_output:
                     render_step(
                         "observation",
                         obs,
@@ -431,7 +490,7 @@ class AgentLoop:
 
                 art_result = tool_read_artifact(art_input, ctx=self.ctx)
                 obs = art_result.output if art_result.success else art_result.error
-                if not self.quiet:
+                if not self.suppress_output:
                     render_step(
                         "observation",
                         obs,
@@ -461,7 +520,7 @@ class AgentLoop:
                     )
                 if self.ctx:
                     self.ctx.add("assistant", echo_answer)
-                if not self.quiet:
+                if not self.suppress_output:
                     render_step("final", echo_answer, self.iteration)
                 return echo_answer
 
@@ -474,11 +533,11 @@ class AgentLoop:
                 self.iteration,
                 tool_name,
                 tool_input,
-                self.quiet,
+                self.suppress_output,
                 thought=llm_text[:100],
             )
 
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step(
                     "action",
                     "",
@@ -507,7 +566,7 @@ class AgentLoop:
                 hooks_config=self.hooks_config,
             )
 
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step("observation", obs, self.iteration, tool_name=tool_name)
             observations.append({"tool_call": tc, "output": obs})
 
@@ -552,25 +611,29 @@ class AgentLoop:
         parsed = parse_react(llm_text)
 
         # 6. Thought
-        if parsed.thought and not self.quiet:
+        if parsed.thought and not self.suppress_output:
             render_step("thought", parsed.thought, self.iteration)
 
         # 7. Complete tool (text parsing path)
+        _debug_log(f"PARSED iter={self.iteration} action={parsed.action}")
         if parsed.action == "complete":
             _render_skill_progress(
                 self.skill_name,
                 self.iteration,
                 "complete",
                 {},
-                self.quiet,
+                self.suppress_output,
                 thought=parsed.thought or "",
             )
             if isinstance(parsed.action_input, dict):
-                answer = parsed.action_input.get("result") or "(completed)"
+                raw = parsed.action_input.get("result")
+                answer = str(raw) if raw else "(completed)"
             elif isinstance(parsed.action_input, str):
                 answer = parsed.action_input or "(completed)"
             else:
-                answer = "(completed)"
+                answer = (
+                    str(parsed.action_input) if parsed.action_input else "(completed)"
+                )
 
             # Fulfillment guard -- check BEFORE rendering
             if not self.tools_called and needs_tool_action(self.query):
@@ -605,7 +668,7 @@ class AgentLoop:
                 )
             if self.ctx:
                 self.ctx.add("assistant", answer)
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step("final", answer, self.iteration)
             return answer
 
@@ -628,7 +691,7 @@ class AgentLoop:
                 )
             if self.ctx:
                 self.ctx.add("assistant", echo_answer)
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step("final", echo_answer, self.iteration)
             return echo_answer
 
@@ -636,7 +699,7 @@ class AgentLoop:
         if parsed.action == "ask":
             questions = _extract_questions(parsed.action_input)
             if questions:
-                user_response = _handle_ask(questions, self.quiet)
+                user_response = _handle_ask(questions, self.suppress_output)
                 obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
                 _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
                 _log_tool_to_session(
@@ -665,8 +728,9 @@ class AgentLoop:
                 self.session,
                 self.skill_name,
                 skill_stack=self.skill_stack,
+                graceful_interrupt=self.graceful_interrupt,
             )
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step("observation", obs, self.iteration, tool_name="run_skill")
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
             _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
@@ -691,7 +755,7 @@ class AgentLoop:
 
             art_result = tool_read_artifact(art_input, ctx=self.ctx)
             obs = art_result.output if art_result.success else art_result.error
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step(
                     "observation",
                     obs,
@@ -712,11 +776,11 @@ class AgentLoop:
                 self.iteration,
                 tool_name,
                 tool_input,
-                self.quiet,
+                self.suppress_output,
                 thought=parsed.thought or "",
             )
 
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step(
                     "action",
                     "",
@@ -745,7 +809,7 @@ class AgentLoop:
                 hooks_config=self.hooks_config,
             )
 
-            if not self.quiet:
+            if not self.suppress_output:
                 render_step(
                     "observation",
                     observation,
@@ -827,7 +891,7 @@ class AgentLoop:
 
     def _on_max_iter(self) -> None:
         """Handle max iterations reached."""
-        if not self.quiet:
+        if not self.suppress_output:
             render_status("error", f"Max iterations ({self.max_iter}) reached.")
         _debug_log(
             f"run_loop returning None: max_iter={self.max_iter} reached, skill_name={self.skill_name}"
@@ -847,7 +911,7 @@ def run_loop(
     max_iter: int = 0,
     verbose: bool = False,
     ctx: ContextManager | None = None,
-    quiet: bool = False,
+    suppress_output: bool = False,
     depth: int = 0,
     max_depth: int = 2,
     delegate_timeout: int = 300,
@@ -857,6 +921,7 @@ def run_loop(
     skill_name: str = "",
     skill_stack: list[str] | None = None,
     skill_args: str = "",
+    graceful_interrupt: bool = False,
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -873,7 +938,7 @@ def run_loop(
         max_iter=max_iter,
         verbose=verbose,
         ctx=ctx,
-        quiet=quiet,
+        suppress_output=suppress_output,
         depth=depth,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
@@ -883,6 +948,7 @@ def run_loop(
         skill_name=skill_name,
         skill_stack=skill_stack,
         skill_args=skill_args,
+        graceful_interrupt=graceful_interrupt,
     ).run()
 
 
@@ -904,7 +970,7 @@ def _extract_questions(action_input) -> list[str]:
     return []
 
 
-def _handle_ask(questions: list[str], quiet: bool) -> str:
+def _handle_ask(questions: list[str], suppress_output: bool) -> str:
     """Display questions to the user and collect responses."""
     from agent_cli.render import C, console
 
@@ -924,11 +990,11 @@ def _render_skill_progress(
     iteration: int,
     tool_name: str,
     tool_input,
-    quiet: bool,
+    suppress_output: bool,
     thought: str = "",
 ) -> None:
     """Show skill progress: thought first, then action."""
-    if not skill_name or not quiet:
+    if not skill_name or not suppress_output:
         return
     from agent_cli.render import C, console
 
@@ -1003,6 +1069,7 @@ def _handle_run_skill(
     session,
     parent_skill_name: str = "",
     skill_stack: list[str] | None = None,
+    graceful_interrupt: bool = False,
 ) -> str:
     """Handle run_skill at loop level with full ctx access."""
     from agent_cli.skills import load_skills
@@ -1039,6 +1106,15 @@ def _handle_run_skill(
     # Set skill context for subdirectory routing
     if ctx:
         ctx.set_skill_context(skill_name=name, parent_turn=ctx._turn_count)
+        # Record skill invocation in scratchpad progress
+        from agent_cli.context.scratchpad import append_progress
+
+        args_hint = f"({arguments})" if arguments else ""
+        append_progress(
+            turn=ctx._turn_count,
+            summary=f"run_skill: {name}{args_hint}",
+            base=ctx._scratchpad_dir,
+        )
 
     render_status("running", f"Running skill: {name}...")
     turn_before = ctx._turn_count if ctx else 0
@@ -1056,10 +1132,11 @@ def _handle_run_skill(
             provider_name=provider_name,
             base_url=base_url,
             api_key=api_key,
-            quiet=True,
+            suppress_output=True,
             ctx=ctx,
             session=session,
             skill_stack=skill_stack,
+            graceful_interrupt=graceful_interrupt,
         )
     except Exception as e:
         result = None
@@ -1149,10 +1226,11 @@ def _log_tool_to_session(
     """Log a tool execution to session (depth==0 only)."""
     if depth != 0:
         return
+    obs_str = str(observation) if not isinstance(observation, str) else observation
     entry: dict = {
         "iter": iteration,
         "action": action,
-        "observation": observation[:500],
+        "observation": obs_str[:500],
     }
     if thought:
         entry["thought"] = thought
@@ -1178,6 +1256,9 @@ def _execute_single_tool(
     hooks_config: dict | None = None,
 ) -> str:
     """Execute a single tool, track history, and return observation string."""
+    _debug_log(
+        f"TOOL iter={iteration} action={tool_name} input={str(tool_input)[:200]}"
+    )
     obs = _do_execute_tool(
         tool_name,
         tool_input,
