@@ -395,9 +395,13 @@ class AgentLoop:
                 )
                 if isinstance(first_toolcall.get("input"), dict):
                     raw = first_toolcall["input"].get("result")
-                    answer = str(raw) if raw else "(completed)"
+                    answer = (
+                        str(raw)
+                        if raw
+                        else "(Completed without result — model may lack capability for this task)"
+                    )
                 else:
-                    answer = "(completed)"
+                    answer = "(Completed without result — model may lack capability for this task)"
                 # Fulfillment guard
                 if not self.tools_called and needs_tool_action(self.query):
                     render_status(
@@ -627,12 +631,21 @@ class AgentLoop:
             )
             if isinstance(parsed.action_input, dict):
                 raw = parsed.action_input.get("result")
-                answer = str(raw) if raw else "(completed)"
+                answer = (
+                    str(raw)
+                    if raw
+                    else "(Completed without result — model may lack capability for this task)"
+                )
             elif isinstance(parsed.action_input, str):
-                answer = parsed.action_input or "(completed)"
+                answer = (
+                    parsed.action_input
+                    or "(Completed without result — model may lack capability for this task)"
+                )
             else:
                 answer = (
-                    str(parsed.action_input) if parsed.action_input else "(completed)"
+                    str(parsed.action_input)
+                    if parsed.action_input
+                    else "(Completed without result — model may lack capability for this task)"
                 )
 
             # Fulfillment guard -- check BEFORE rendering

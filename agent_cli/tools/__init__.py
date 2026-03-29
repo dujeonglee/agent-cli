@@ -31,7 +31,13 @@ TOOLS: dict[str, Any] = {
     "shell": tool_shell,
     "read_context": tool_read_context,
     # Virtual tools — intercepted by the loop before execute_tool
-    "complete": lambda args: ToolResult(True, output=args.get("result", "(completed)")),
+    "complete": lambda args: ToolResult(
+        True,
+        output=args.get(
+            "result",
+            "(Completed without result — model may lack capability for this task)",
+        ),
+    ),
     "ask": lambda args: ToolResult(True, output=args.get("question", "(ask)")),
     "run_skill": tool_run_skill,
     "read_artifact": tool_read_artifact,

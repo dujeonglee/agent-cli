@@ -142,7 +142,10 @@ class TestRunLoopComplete:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "(completed)"
+        assert (
+            result
+            == "(Completed without result — model may lack capability for this task)"
+        )
 
     def test_complete_missing_result_key(self, caps, tmp_path):
         """complete with no result key → returns '(completed)'."""
@@ -172,7 +175,10 @@ class TestRunLoopComplete:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "(completed)"
+        assert (
+            result
+            == "(Completed without result — model may lack capability for this task)"
+        )
 
 
 class TestRunLoopToolExecution:

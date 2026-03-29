@@ -530,7 +530,10 @@ class TestToolsRegistry:
         fn = TOOLS["complete"]
         result = fn({})
         assert result.success
-        assert result.output == "(completed)"
+        assert (
+            result.output
+            == "(Completed without result — model may lack capability for this task)"
+        )
 
     def test_ask_lambda_with_question(self):
         fn = TOOLS["ask"]
