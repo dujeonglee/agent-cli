@@ -78,28 +78,34 @@ class TestConvertToAnthropicTools:
         tools = convert_to_anthropic_tools(
             ["read_file", "write_file", "edit_file", "shell"]
         )
-        assert len(tools) == 4
+        names = {t["name"] for t in tools}
+        # 4 requested + always-included (complete, ready_for_review)
+        assert {"read_file", "write_file", "edit_file", "shell"}.issubset(names)
+        assert "complete" in names
+        assert "ready_for_review" in names
         assert all("name" in t and "input_schema" in t for t in tools)
 
     def test_single_tool(self):
         tools = convert_to_anthropic_tools(["shell"])
-        assert len(tools) == 1
-        assert tools[0]["name"] == "shell"
+        names = {t["name"] for t in tools}
+        assert "shell" in names
+        # Always-included tools are present
+        assert "complete" in names
+        assert "ready_for_review" in names
 
     def test_with_delegate(self):
         tools = convert_to_anthropic_tools(["shell"], include_delegate=True)
-        assert len(tools) == 2
-        names = [t["name"] for t in tools]
+        names = {t["name"] for t in tools}
         assert "delegate" in names
 
     def test_without_delegate(self):
         tools = convert_to_anthropic_tools(["shell"], include_delegate=False)
-        names = [t["name"] for t in tools]
+        names = {t["name"] for t in tools}
         assert "delegate" not in names
 
     def test_schema_structure(self):
         tools = convert_to_anthropic_tools(["read_file"])
-        t = tools[0]
+        t = next(t for t in tools if t["name"] == "read_file")
         assert t["input_schema"]["type"] == "object"
         assert "path" in t["input_schema"]["properties"]
 
@@ -109,18 +115,22 @@ class TestConvertToOpenAITools:
         tools = convert_to_openai_tools(
             ["read_file", "write_file", "edit_file", "shell"]
         )
-        assert len(tools) == 4
+        names = {t["function"]["name"] for t in tools}
+        assert {"read_file", "write_file", "edit_file", "shell"}.issubset(names)
+        assert "complete" in names
+        assert "ready_for_review" in names
         assert all(t["type"] == "function" for t in tools)
 
     def test_function_structure(self):
         tools = convert_to_openai_tools(["shell"])
-        t = tools[0]
+        t = next(t for t in tools if t["function"]["name"] == "shell")
         assert t["function"]["name"] == "shell"
         assert "parameters" in t["function"]
 
     def test_with_delegate(self):
         tools = convert_to_openai_tools(["shell"], include_delegate=True)
-        assert len(tools) == 2
+        names = {t["function"]["name"] for t in tools}
+        assert "delegate" in names
 
 
 class TestEmptyStringStripping:
@@ -158,3 +168,15 @@ class TestGetToolDescriptions:
         desc = get_tool_descriptions(["read_file", "complete", "ask"])
         assert "complete" in desc
         assert "ask" in desc
+
+    def test_always_includes_essential_tools(self):
+        """complete and ready_for_review are always in descriptions even if not requested."""
+        desc = get_tool_descriptions(["shell"])
+        assert "complete" in desc
+        assert "ready_for_review" in desc
+
+    def test_no_duplicate_when_already_requested(self):
+        """If complete is already in the list, it should not appear twice."""
+        desc = get_tool_descriptions(["shell", "complete", "ready_for_review"])
+        assert desc.count("- complete:") == 1
+        assert desc.count("- ready_for_review:") == 1

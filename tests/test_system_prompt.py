@@ -57,3 +57,30 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "JSON" in prompt
         assert "thought" in prompt
+
+    def test_session_id_included(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"], session_id="1774882777")
+        assert "1774882777" in prompt
+        assert "Session" in prompt
+
+    def test_session_id_omitted_when_empty(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"], session_id="")
+        assert "Current session ID" not in prompt
+
+    def test_ready_for_review_in_base_prompt(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "ready_for_review" in prompt
+        assert "complete" in prompt
+
+    def test_ready_for_review_before_complete_workflow(self):
+        """The prompt should instruct to call ready_for_review before complete."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        rfr_pos = prompt.index("ready_for_review")
+        complete_pos = prompt.index('"complete"')
+        assert rfr_pos < complete_pos, (
+            "ready_for_review should appear before complete in the workflow"
+        )
+
+    def test_rule_8_review_before_complete(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "ALWAYS call ready_for_review first" in prompt

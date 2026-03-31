@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.loop import run_loop
+from agent_cli.loop import run_loop, _build_review_observation
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.compat import ModelCapabilities
 
@@ -1714,7 +1714,7 @@ class TestScratchpadIntegration:
         )
         content = load_scratchpad(tmp_path)
         assert "## Progress" in content
-        assert "턴" in content  # progress entries contain turn markers
+        assert "turn" in content  # progress entries contain turn markers
 
     def test_no_ctx_no_scratchpad(self, caps):
         """Without ctx, no scratchpad operations (no crash)."""
@@ -2500,3 +2500,156 @@ class TestRunSkillNoDuplicateArtifact:
         assert len(entry_ids) == len(set(entry_ids)), (
             f"Duplicate artifacts: {entry_ids}"
         )
+
+
+class TestBuildReviewObservation:
+    """Tests for _build_review_observation helper."""
+
+    def test_includes_query(self):
+        obs = _build_review_observation("Fix the bug in main.py", "Fixed it")
+        assert "Fix the bug in main.py" in obs
+        assert "ORIGINAL REQUEST" in obs
+
+    def test_includes_summary(self):
+        obs = _build_review_observation("task", "I did X and Y")
+        assert "I did X and Y" in obs
+        assert "YOUR SUMMARY" in obs
+
+    def test_includes_scratchpad_when_ctx_provided(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.context.scratchpad import init_scratchpad, append_progress
+
+        ctx = ContextManager(
+            provider=MagicMock(),
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        init_scratchpad(tmp_path)
+        append_progress(1, "read_file: loop.py", base=tmp_path)
+        append_progress(2, "shell: pytest", base=tmp_path)
+
+        obs = _build_review_observation("Analyze code", "Done", ctx=ctx)
+        assert "WORK LOG" in obs
+        assert "read_file: loop.py" in obs
+        assert "shell: pytest" in obs
+
+    def test_no_work_log_section_without_ctx(self):
+        obs = _build_review_observation("task", "summary", ctx=None)
+        assert "--- WORK LOG ---" not in obs
+
+    def test_verification_instructions(self):
+        obs = _build_review_observation("task", "summary")
+        assert "EVERY requirement" in obs
+        assert "complete" in obs
+
+
+class TestReadyForReviewTextPath:
+    """Test ready_for_review tool via text parsing path."""
+
+    def test_ready_for_review_then_complete(self, caps, tmp_path):
+        """LLM calls ready_for_review, reviews, then completes."""
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "I think I'm done",
+                    "action": "ready_for_review",
+                    "action_input": {"summary": "Analyzed all files"},
+                }
+            ),
+            _complete("Analysis complete"),
+        )
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(
+            provider=provider,
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        result = run_loop(
+            query="Analyze the code",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            suppress_output=True,
+            ctx=ctx,
+        )
+        assert result == "Analysis complete"
+
+    def test_ready_for_review_returns_query_in_observation(self, caps, tmp_path):
+        """The observation from ready_for_review contains the original query."""
+        query_text = "Find all bugs in the authentication module"
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "reviewing",
+                    "action": "ready_for_review",
+                    "action_input": {"summary": "done"},
+                }
+            ),
+            _complete("ok"),
+        )
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(
+            provider=provider,
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        run_loop(
+            query=query_text,
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            suppress_output=True,
+            ctx=ctx,
+        )
+        # The query should have appeared in the messages (as review observation)
+        messages = ctx.get_messages()
+        obs_contents = [m["content"] for m in messages if m["role"] == "user"]
+        assert any(query_text in c for c in obs_contents)
+
+
+class TestNoOutputTruncation:
+    """Verify tool output is passed to LLM without truncation."""
+
+    def test_large_file_not_truncated(self, caps, tmp_path):
+        """A large file should be returned in full, not truncated."""
+        large_content = "\n".join(f"line {i}: {'x' * 100}" for i in range(500))
+        test_file = tmp_path / "large.txt"
+        test_file.write_text(large_content)
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read large file",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            _complete("Read 500 lines"),
+        )
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(
+            provider=provider,
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        run_loop(
+            query="Read the file",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            suppress_output=True,
+            ctx=ctx,
+        )
+        # Verify the observation contains all 500 lines (hashline format: "500#xx:")
+        messages = ctx.get_messages()
+        all_content = " ".join(m.get("content", "") for m in messages)
+        assert "500#" in all_content, "Last line (500) should be in context"
+        # Verify no truncation notice
+        assert "[... truncated" not in all_content

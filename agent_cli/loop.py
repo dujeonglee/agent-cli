@@ -27,7 +27,6 @@ from agent_cli.render import (
 from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
 from agent_cli.tools.registry import convert_to_anthropic_tools, convert_to_openai_tools
-from agent_cli.tools.truncation import get_truncation_config, truncate_output
 
 _debug_verbose = False
 
@@ -203,11 +202,15 @@ class AgentLoop:
 
         # Note: run_skill stays in tools_list -- skill_stack prevents recursion
         # System prompt hides skills already in the stack from LLM
+        session_id = ""
+        if self.session and hasattr(self.session, "session_id"):
+            session_id = str(self.session.session_id)
         self.system = build_system_prompt(
             capabilities=self.capabilities,
             active_tools=self.tools_list,
             include_delegate=self.include_delegate,
             skill_stack=self.skill_stack,
+            session_id=session_id,
         )
 
         if not self.suppress_output:
@@ -511,7 +514,30 @@ class AgentLoop:
                 self.tools_called.append("read_artifact")
                 return self._CONTINUE
 
-            # 4d. Echo-as-final-answer pattern
+            # 4d. ready_for_review -- return original query for self-check
+            if first_toolcall["name"] == "ready_for_review":
+                summary = ""
+                if isinstance(first_toolcall.get("input"), dict):
+                    summary = first_toolcall["input"].get("summary", "")
+                obs = _build_review_observation(self.query, summary, ctx=self.ctx)
+                _render_skill_progress(
+                    self.skill_name,
+                    self.iteration,
+                    "ready_for_review",
+                    {"summary": summary},
+                    self.suppress_output,
+                    thought=llm_text[:100],
+                )
+                _append_native_observation(
+                    self.messages,
+                    self.ctx,
+                    self.provider_name,
+                    response,
+                    [{"tool_call": first_toolcall, "output": obs}],
+                )
+                return self._CONTINUE
+
+            # 4e. Echo-as-final-answer pattern
             echo_answer = _try_echo_as_final(
                 first_toolcall["name"], first_toolcall["input"]
             )
@@ -648,7 +674,7 @@ class AgentLoop:
                     else "(Completed without result — model may lack capability for this task)"
                 )
 
-            # Fulfillment guard -- check BEFORE rendering
+            # Fulfillment guard -- no tools used yet
             if not self.tools_called and needs_tool_action(self.query):
                 nudge = (
                     "You called the complete tool, but the task likely requires "
@@ -778,6 +804,26 @@ class AgentLoop:
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
             _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
             self.tools_called.append("read_artifact")
+            return self._CONTINUE
+
+        # 10d. ready_for_review -- return original query for self-check (text path)
+        if parsed.action == "ready_for_review":
+            summary = ""
+            if isinstance(parsed.action_input, dict):
+                summary = parsed.action_input.get("summary", "")
+            obs = _build_review_observation(self.query, summary, ctx=self.ctx)
+            _render_skill_progress(
+                self.skill_name,
+                self.iteration,
+                "ready_for_review",
+                {"summary": summary},
+                self.suppress_output,
+                thought=parsed.thought or "",
+            )
+            obs_msg = (
+                f"Observation: {obs}\n\nReview your work and respond with JSON only."
+            )
+            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
             return self._CONTINUE
 
         # 11. Tool execution (text parsing path)
@@ -1188,7 +1234,7 @@ def _build_artifact_summary(tool_name: str, tool_input, obs: str = "") -> str:
                 # Count lines in observation
                 lines = obs.count("\n") + 1 if obs else 0
                 fname = filepath.split("/")[-1]
-                return f"{tool_name}: {fname} ({lines}줄)"
+                return f"{tool_name}: {fname} ({lines} lines)"
         if tool_name == "shell":
             cmd = tool_input.get("command", "")
             if cmd:
@@ -1198,6 +1244,35 @@ def _build_artifact_summary(tool_name: str, tool_input, obs: str = "") -> str:
             return f"delegate: {task[:80]}"
 
     return f"{tool_name} executed"
+
+
+def _build_review_observation(query: str, summary: str, ctx=None) -> str:
+    """Build the observation returned by ready_for_review tool."""
+    progress = ""
+    if ctx and hasattr(ctx, "_scratchpad_dir"):
+        from agent_cli.context.scratchpad import load_scratchpad
+
+        progress = load_scratchpad(ctx._scratchpad_dir)
+
+    parts = [
+        "Review your work against the original request below.",
+        "--- ORIGINAL REQUEST ---",
+        query,
+        "--- YOUR SUMMARY ---",
+        summary,
+    ]
+    if progress:
+        parts.extend(["--- WORK LOG ---", progress])
+    parts.extend(
+        [
+            "",
+            "Compare the ORIGINAL REQUEST with your WORK LOG.",
+            "Check: did you fulfill EVERY requirement?",
+            "- If anything is missing or incomplete, continue working.",
+            "- If everything is done, call the complete tool with your final result.",
+        ]
+    )
+    return "\n".join(parts)
 
 
 def _build_artifact_tags(tool_name: str, tool_input, skill_name: str = "") -> list[str]:
@@ -1406,8 +1481,7 @@ def _do_execute_tool(
             return OBS_ERROR_HINT.format(error=err, hint="Fix action_input and retry.")
         result = execute_tool(tool_name, tool_input)
         if result.success:
-            cfg = get_truncation_config(capabilities, tool_name)
-            obs = OBS_SUCCESS.format(result=truncate_output(result.output, cfg))
+            obs = OBS_SUCCESS.format(result=result.output)
             _run_post_hook(hooks_config, tool_name, input_dict, obs)
             return obs
         else:

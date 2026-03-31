@@ -15,7 +15,6 @@ from agent_cli.tools.read_file import (
 )
 from agent_cli.tools.delegate import _validate_subtask, _build_subprocess_cmd
 from agent_cli.tools import TOOLS, VIRTUAL_TOOLS, execute_tool
-from agent_cli.tools.truncation import truncate_output, TruncationConfig
 
 
 class TestToolResult:
@@ -507,7 +506,7 @@ class TestToolsRegistry:
 
     def test_virtual_tools_frozenset(self):
         assert VIRTUAL_TOOLS == frozenset(
-            {"complete", "ask", "run_skill", "read_artifact"}
+            {"complete", "ask", "run_skill", "read_artifact", "ready_for_review"}
         )
         assert isinstance(VIRTUAL_TOOLS, frozenset)
 
@@ -572,28 +571,6 @@ class TestExecuteTool:
         assert "read_file" in result.error
 
 
-class TestTruncationByteLimit:
-    def test_byte_limit_head(self):
-        text = "a" * 100 + "\n" + "b" * 100
-        config = TruncationConfig(max_lines=1000, max_bytes=50, direction="head")
-        result = truncate_output(text, config)
-        assert len(result.encode("utf-8")) < 200
-        assert "truncated" in result
-
-    def test_byte_limit_tail(self):
-        text = "a" * 100 + "\n" + "b" * 100
-        config = TruncationConfig(max_lines=1000, max_bytes=50, direction="tail")
-        result = truncate_output(text, config)
-        assert "truncated" in result
-
-    def test_utf8_safe(self):
-        text = "한글테스트\n" * 100
-        config = TruncationConfig(max_lines=5, max_bytes=500)
-        result = truncate_output(text, config)
-        # Should not crash on UTF-8 boundaries
-        assert isinstance(result, str)
-
-
 class TestReadFilePartial:
     def test_full_read(self, tmp_path):
         f = tmp_path / "test.py"
@@ -639,24 +616,6 @@ class TestReadFilePartial:
         assert result.success
         assert "bbb" in result.output
         assert "aaa" not in result.output
-
-
-class TestTruncationReadFileGuide:
-    def test_head_truncation_includes_read_guide(self):
-        text = "\n".join(f"line{i}" for i in range(100))
-        config = TruncationConfig(
-            max_lines=10, max_bytes=100_000, direction="head", tool_name="read_file"
-        )
-        result = truncate_output(text, config)
-        assert "line_start=" in result
-
-    def test_non_read_file_no_guide(self):
-        text = "\n".join(f"line{i}" for i in range(100))
-        config = TruncationConfig(
-            max_lines=10, max_bytes=100_000, direction="head", tool_name="shell"
-        )
-        result = truncate_output(text, config)
-        assert "line_start=" not in result
 
 
 class TestReadContextTool:

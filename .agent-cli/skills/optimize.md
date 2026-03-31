@@ -2,7 +2,7 @@
 name: optimize
 description: Analyze source code for optimization opportunities (complexity, duplication, readability, error handling)
 allowed-tools: [read_file, shell, write_file]
-max-iter: 30
+max-iter: 0
 argument-hint: "<path>"
 ---
 

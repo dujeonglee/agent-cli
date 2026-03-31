@@ -160,6 +160,22 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["name"],
         },
     ),
+    "ready_for_review": ToolSchema(
+        name="ready_for_review",
+        description="Call this BEFORE complete to verify your work fulfills all requirements. "
+        "The system will return the original request for you to review against. "
+        "After reviewing, call complete if everything is done, or continue working if not.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Brief summary of what you accomplished",
+                },
+            },
+            "required": ["summary"],
+        },
+    ),
     "read_artifact": ToolSchema(
         name="read_artifact",
         description="Read saved artifacts from previous tool executions. "
@@ -206,6 +222,10 @@ DELEGATE_TOOL_SCHEMA = ToolSchema(
 )
 
 
+# Tools always included in API tool list regardless of allowed_tools
+_ALWAYS_INCLUDE = ("complete", "ready_for_review")
+
+
 def _convert_tools(
     tool_names: list[str],
     include_delegate: bool,
@@ -213,6 +233,10 @@ def _convert_tools(
 ) -> list[dict]:
     """Shared logic for converting tool schemas to provider-specific format."""
     schemas = [TOOL_SCHEMAS[n] for n in tool_names if n in TOOL_SCHEMAS]
+    # Always include essential tools
+    for name in _ALWAYS_INCLUDE:
+        if name not in tool_names and name in TOOL_SCHEMAS:
+            schemas.append(TOOL_SCHEMAS[name])
     if include_delegate:
         schemas.append(DELEGATE_TOOL_SCHEMA)
     return [formatter(s) for s in schemas]
@@ -262,6 +286,10 @@ def get_tool_descriptions(
         include_delegate: Whether to include delegate tool.
     """
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
+    # Always include essential tools in descriptions
+    for t in _ALWAYS_INCLUDE:
+        if t not in names:
+            names = [*names, t]
     lines = []
     for name in names:
         schema = TOOL_SCHEMAS.get(name)

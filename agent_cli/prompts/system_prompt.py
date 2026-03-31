@@ -17,8 +17,11 @@ No markdown fences, no extra text — ONLY the JSON object.
 
 {"thought": "your reasoning", "action": "tool_name", "action_input": {...}}
 
-When the task is complete, use the "complete" tool:
-{"thought": "summary", "action": "complete", "action_input": {"result": "your answer"}}"""
+When you believe the task is done, first call "ready_for_review" to verify:
+{"thought": "summary of what I did", "action": "ready_for_review", "action_input": {"summary": "brief summary"}}
+
+After reviewing, call "complete" to finish:
+{"thought": "confirmed all requirements met", "action": "complete", "action_input": {"result": "your answer"}}"""
 
 HASHLINE_GUIDE = """\
 ## Hashline Editing
@@ -75,7 +78,8 @@ RULES = """\
 4. Respond in the same language as the user
 5. Do NOT include "observation" — that is injected by the system
 6. Output ONLY valid JSON, nothing else
-7. NEVER invoke yourself recursively — do NOT run agent-cli, python agent-cli.py, or any command that starts this tool again via shell"""
+7. NEVER invoke yourself recursively — do NOT run agent-cli, python agent-cli.py, or any command that starts this tool again via shell
+8. Before calling complete, ALWAYS call ready_for_review first to verify your work"""
 
 SMALL_MODEL_HINTS = """\
 ## Important
@@ -102,9 +106,13 @@ def build_system_prompt(
     active_tools: list[str],
     include_delegate: bool = False,
     skill_stack: list[str] | None = None,
+    session_id: str = "",
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools."""
     sections = [BASE_ROLE_PROMPT]
+
+    if session_id:
+        sections.append(f"## Session\nCurrent session ID: {session_id}")
 
     # Tool descriptions (only active tools)
     tool_block = _format_tool_block(active_tools, include_delegate)

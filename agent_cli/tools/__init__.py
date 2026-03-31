@@ -15,11 +15,6 @@ from agent_cli.tools.registry import (
     validate_tool_input,
     get_tool_descriptions,
 )
-from agent_cli.tools.truncation import (
-    truncate_output,
-    get_truncation_config,
-    TruncationConfig,
-)
 
 from agent_cli.tools.read_artifact import tool_read_artifact
 from agent_cli.tools.run_skill import tool_run_skill
@@ -41,11 +36,12 @@ TOOLS: dict[str, Any] = {
     "ask": lambda args: ToolResult(True, output=args.get("question", "(ask)")),
     "run_skill": tool_run_skill,
     "read_artifact": tool_read_artifact,
+    "ready_for_review": lambda args: ToolResult(True, output=args.get("summary", "")),
 }
 
 # Virtual tool names — intercepted by loop, excluded from tool descriptions
 VIRTUAL_TOOLS: frozenset[str] = frozenset(
-    {"complete", "ask", "run_skill", "read_artifact"}
+    {"complete", "ask", "run_skill", "read_artifact", "ready_for_review"}
 )
 
 __all__ = [
@@ -55,9 +51,6 @@ __all__ = [
     "ToolResult",
     "validate_tool_input",
     "get_tool_descriptions",
-    "truncate_output",
-    "get_truncation_config",
-    "TruncationConfig",
     "execute_tool",
 ]
 

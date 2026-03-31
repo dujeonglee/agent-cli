@@ -196,7 +196,7 @@ def append_progress(
         return
 
     ref = f" → {artifact_path}" if artifact_path else ""
-    line = f"- [턴{turn}] {summary}{ref}\n"
+    line = f"- [turn {turn}] {summary}{ref}\n"
 
     # Append at end of "## Progress" section (chronological order)
     if "## Progress" in content:
@@ -233,7 +233,7 @@ def append_decision(
     if not content:
         return
 
-    line = f"- [턴{turn}] {decision}\n"
+    line = f"- [turn {turn}] {decision}\n"
 
     # Append at end of "## Decisions" section (chronological order)
     if "## Decisions" in content:

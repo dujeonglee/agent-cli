@@ -118,7 +118,7 @@ class TestScratchpad:
         init_scratchpad(tmp_agent_dir)
         append_progress(1, "Analyzed file.c", "artifacts/turn_0001.md", tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        assert "[턴1]" in content
+        assert "[turn 1]" in content
         assert "Analyzed file.c" in content
         assert "artifacts/turn_0001.md" in content
 
@@ -126,7 +126,7 @@ class TestScratchpad:
         init_scratchpad(tmp_agent_dir)
         append_decision(3, "Use pre-allocated pool", tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        assert "[턴3]" in content
+        assert "[turn 3]" in content
         assert "Use pre-allocated pool" in content
 
     def test_multiple_progress_entries(self, tmp_agent_dir):
@@ -134,8 +134,8 @@ class TestScratchpad:
         append_progress(1, "Step one", base=tmp_agent_dir)
         append_progress(2, "Step two", base=tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        assert "[턴1]" in content
-        assert "[턴2]" in content
+        assert "[turn 1]" in content
+        assert "[turn 2]" in content
 
     def test_progress_chronological_order(self, tmp_agent_dir):
         """Progress entries are in chronological order (oldest first)."""
@@ -144,9 +144,9 @@ class TestScratchpad:
         append_progress(1, "read_file: main.py", base=tmp_agent_dir)
         append_progress(2, "shell: ls", base=tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        idx0 = content.index("[턴0]")
-        idx1 = content.index("[턴1]")
-        idx2 = content.index("[턴2]")
+        idx0 = content.index("[turn 0]")
+        idx1 = content.index("[turn 1]")
+        idx2 = content.index("[turn 2]")
         assert idx0 < idx1 < idx2
 
     def test_decision_chronological_order(self, tmp_agent_dir):
