@@ -92,6 +92,8 @@ class TestContextManager:
 
         ctx.force_compress()
         assert mock_provider.call.called
+        call_args = mock_provider.call.call_args
+        assert call_args.kwargs.get("skip_json_format") is True
 
     def test_force_compress_with_user_instruction(self, mock_provider, caps, tmp_path):
         ctx = ContextManager(

@@ -167,6 +167,7 @@ class ContextManager:
                 system=system,
                 model=self.model,
                 capabilities=self.capabilities,
+                skip_json_format=True,
             )
             self._summary = response.content
             # Add artifact recovery hint after compaction
