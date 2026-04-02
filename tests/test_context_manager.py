@@ -93,6 +93,35 @@ class TestContextManager:
         ctx.force_compress()
         assert mock_provider.call.called
 
+    def test_force_compress_with_user_instruction(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        for i in range(5):
+            ctx.messages.append({"role": "user", "content": f"msg{i}"})
+            ctx.messages.append({"role": "assistant", "content": f"reply{i}"})
+
+        ctx.force_compress(user_instruction="Focus on error analysis")
+        assert mock_provider.call.called
+        call_args = mock_provider.call.call_args
+        system_arg = call_args.kwargs.get("system") or call_args[1].get("system")
+        assert "Focus on error analysis" in system_arg
+
+    def test_force_compress_no_instruction_no_extra(
+        self, mock_provider, caps, tmp_path
+    ):
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        for i in range(5):
+            ctx.messages.append({"role": "user", "content": f"msg{i}"})
+            ctx.messages.append({"role": "assistant", "content": f"reply{i}"})
+
+        ctx.force_compress()
+        call_args = mock_provider.call.call_args
+        system_arg = call_args.kwargs.get("system") or call_args[1].get("system")
+        assert "Additional Instruction" not in system_arg
+
     def test_get_estimated_tokens(self, mock_provider, caps, tmp_path):
         ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         ctx.add("user", "a" * 100)

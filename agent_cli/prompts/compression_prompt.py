@@ -1,30 +1,38 @@
-"""Context compression prompts for structured summarization."""
+"""Context compression prompts for structured summarization.
+
+Designed to complement the scratchpad (which tracks Progress / Decisions / Open Questions).
+The summary focuses on context that the scratchpad does NOT capture:
+goal, working state, conversation direction, and files touched.
+"""
 
 SUMMARIZATION_PROMPT = """\
 Summarize the following conversation into these sections.
-Be concise. Preserve file paths, command outputs, and error messages exactly.
+Be concise. Preserve file paths, error messages, and command outputs exactly.
+
+NOTE: Progress and Decisions are tracked separately in a scratchpad.
+Do NOT duplicate them here. Focus on context the scratchpad cannot capture.
 
 ## Goal
-What the user is trying to accomplish.
+What the user is trying to accomplish (1-2 sentences).
 
-## Progress
-What has been completed so far (specific files, commands, results).
+## Working State
+Current errors, blockers, intermediate results, or variable values
+that the next assistant turn needs to continue work.
+Preserve exact error messages but summarize long tracebacks.
 
-## Key Decisions
-Important choices made and their rationale.
-
-## Current State
-Where things stand right now (errors, blockers, next action needed).
+## Conversation Direction
+What was agreed on next, the user's intent, and any stated preferences
+for how to proceed.
 
 ## Files Touched
-- Read: [list of files read]
-- Modified: [list of files written/edited]
+- Read: [list of file paths read]
+- Modified: [list of file paths written/edited]
 
 Reply with ONLY the summary in the format above. Do not continue the conversation."""
 
 INCREMENTAL_UPDATE_PROMPT = """\
 Update the existing summary below with new information from the recent conversation.
-Do NOT re-summarize from scratch. Only ADD new information to the relevant sections.
+Do NOT re-summarize from scratch. Only ADD or REPLACE information in the relevant sections.
 If a section has no new information, keep it unchanged.
 
 ## Existing Summary

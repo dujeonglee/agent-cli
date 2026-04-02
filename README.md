@@ -198,6 +198,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `/quit`, `/exit` | 세션 종료 (요약 생성 후 저장) |
 | `/clear` | 컨텍스트 초기화 |
 | `/sh <cmd>` | 셸 명령 실행 |
+| `/compact [prompt]` | 컨텍스트 압축 (선택적 포커스 프롬프트) |
 | `/skills` | 사용 가능한 스킬 목록 |
 | `/<skill> <args>` | 스킬 실행 (예: `/optimize ./`) |
 | `/ctx_window` | 현재 컨텍스트 윈도우 내용 덤프 (디버깅용) |

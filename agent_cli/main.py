@@ -598,6 +598,9 @@ def chat(
             console.print("  /quit, /exit        End session")
             console.print("  /clear              Reset context")
             console.print("  /sh <cmd>           Run shell command")
+            console.print(
+                "  /compact [prompt]   Compress context (optional focus prompt)"
+            )
             console.print("  /skills             List available skills")
             console.print("  /<skill> <args>     Run a skill")
             console.print("  /ctx_window         Dump context window (debug)")
@@ -619,6 +622,26 @@ def chat(
             cmd = query[4:].strip()
             if cmd:
                 _run_shell_inline(cmd)
+            continue
+
+        if query == "/compact" or query.startswith("/compact "):
+            user_instruction = query[len("/compact") :].strip()
+            msg_count = len(ctx.messages)
+            if msg_count <= ctx.keep_recent * 2:
+                console.print(
+                    f"[{C['muted']}]Not enough messages to compact "
+                    f"({msg_count} messages, need > {ctx.keep_recent * 2}).[/]"
+                )
+                continue
+            tokens_before = ctx.get_estimated_tokens()
+            console.print(f"[{C['muted']}]Compressing context...[/]")
+            ctx.force_compress(user_instruction=user_instruction)
+            tokens_after = ctx.get_estimated_tokens()
+            console.print(
+                f"[{C['accent']}]Context compacted: "
+                f"{tokens_before} → {tokens_after} tokens "
+                f"(saved {tokens_before - tokens_after})[/]"
+            )
             continue
 
         if query == "/ctx_window":

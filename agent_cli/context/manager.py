@@ -120,10 +120,10 @@ class ContextManager:
         msgs.extend(self.messages)
         return msgs
 
-    def force_compress(self) -> None:
-        """Trigger compression immediately (for overflow recovery)."""
+    def force_compress(self, user_instruction: str = "") -> None:
+        """Trigger compression immediately (for overflow recovery or /compact)."""
         if len(self.messages) > self.keep_recent * 2:
-            self._compress()
+            self._compress(user_instruction=user_instruction)
 
     def get_estimated_tokens(self) -> int:
         """Estimate current buffer size in tokens."""
@@ -133,7 +133,7 @@ class ContextManager:
         extra = len(self._summary) if self._summary else 0
         return extra + self._msg_chars
 
-    def _compress(self) -> None:
+    def _compress(self, user_instruction: str = "") -> None:
         """Compress older messages into a structured summary."""
         keep = self.keep_recent * 2  # pairs of user+assistant
         if len(self.messages) <= keep:
@@ -157,6 +157,9 @@ class ContextManager:
             system = (
                 "You are a summarization assistant. Follow the instructions exactly."
             )
+
+        if user_instruction:
+            system += f"\n\n## Additional Instruction\n{user_instruction}"
 
         try:
             response = self.provider.call(

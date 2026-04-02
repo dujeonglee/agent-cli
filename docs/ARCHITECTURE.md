@@ -90,7 +90,7 @@ agent_cli/
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
 │   ├── system_prompt.py     (182)  조건부 시스템 프롬프트 빌더 + 스킬/artifact 안내
-│   └── compression_prompt.py (36)  요약/증분 업데이트 프롬프트
+│   └── compression_prompt.py (44)  요약/증분 업데이트 프롬프트 (scratchpad과 역할 분리)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
@@ -442,17 +442,21 @@ total_chars > max_context_chars?
     ├─ No → 그대로 유지
     │
     ▼ Yes
-_compress() 호출
+_compress(user_instruction="") 호출
     │
     ├─ _summary 없음 (첫 압축)
     │   └─ SUMMARIZATION_PROMPT로 전체 요약 생성
-    │      (Goal, Progress, Key Decisions, Current State, Files Touched)
+    │      (Goal, Working State, Conversation Direction, Files Touched)
+    │      ※ Progress/Decisions는 scratchpad에 위임 — 요약에서 제외
     │
     └─ _summary 있음 (후속 압축)
         └─ INCREMENTAL_UPDATE_PROMPT로 기존 요약에 새 정보만 추가
+    │
+    └─ user_instruction 있으면 system prompt에 "## Additional Instruction"으로 추가
 
 도구 결과는 2,000자로 절단 후 요약에 포함
 압축 후 "[artifact 경로를 read_artifact로 복구 가능]" 힌트 자동 추가
+수동 트리거: /compact [prompt] 명령으로 즉시 압축 가능
 ```
 
 ### 5.6 Scratchpad & Artifact 시스템
