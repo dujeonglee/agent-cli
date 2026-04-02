@@ -1063,7 +1063,7 @@ def _render_skill_progress(
         if tool_name in ("read_file", "write_file", "edit_file"):
             path = tool_input.get("path", "")
             if path:
-                detail = f" {path.split('/')[-1]}"
+                detail = f" {path}"  # Show full relative path
         elif tool_name == "shell":
             cmd = tool_input.get("command", "")
             if cmd:
