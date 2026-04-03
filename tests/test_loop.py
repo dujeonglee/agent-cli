@@ -2542,6 +2542,8 @@ class TestBuildReviewObservation:
         obs = _build_review_observation("task", "summary")
         assert "EVERY requirement" in obs
         assert "complete" in obs
+        assert "adversarial" in obs.lower()
+        assert "evidence" in obs.lower()
 
 
 class TestReadyForReviewTextPath:

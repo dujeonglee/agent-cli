@@ -1255,7 +1255,6 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
         progress = load_scratchpad(ctx._scratchpad_dir)
 
     parts = [
-        "Review your work against the original request below.",
         "--- ORIGINAL REQUEST ---",
         query,
         "--- YOUR SUMMARY ---",
@@ -1266,10 +1265,12 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
     parts.extend(
         [
             "",
-            "Compare the ORIGINAL REQUEST with your WORK LOG.",
-            "Check: did you fulfill EVERY requirement?",
-            "- If anything is missing or incomplete, continue working.",
-            "- If everything is done, call the complete tool with your final result.",
+            "--- REVIEW INSTRUCTIONS ---",
+            "Be adversarial. Try to find gaps, not confirm success.",
+            "1. List each requirement from the ORIGINAL REQUEST.",
+            "2. For each requirement, check if the WORK LOG shows evidence it was completed.",
+            "3. If a requirement is NOT met or evidence is missing, continue working on it.",
+            "4. Only call complete if EVERY requirement has clear evidence of completion.",
         ]
     )
     return "\n".join(parts)
