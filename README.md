@@ -887,7 +887,7 @@ agent-cli chat --resume <session_id>
 
 ### 컨텍스트 압축
 
-ContextBudget의 conversation 배분량에 도달하면 LLM 기반 구조화 요약으로 자동 압축합니다. 첫 압축은 전체 요약, 이후는 증분 업데이트. Scratchpad와 artifact는 압축 후에도 보존됩니다.
+메시지 수와 문자 수를 모두 확인하는 dual-gate 조건을 충족하면 LLM 기반 구조화 요약으로 자동 압축합니다. 첫 압축은 전체 요약, 이후는 증분 업데이트. Scratchpad와 artifact는 압축 후에도 보존됩니다.
 
 ### 체크포인트 시스템
 

@@ -83,7 +83,7 @@ agent_cli/
 │   ├── __init__.py          (34)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (420)  ContextManager (하이브리드 컴팩션, scratchpad, 스킬 컨텍스트)
+│   ├── manager.py           (423)  ContextManager (하이브리드 컴팩션, scratchpad, 스킬 컨텍스트)
 │   ├── scratchpad.py        (413)  Scratchpad + Artifact + ContextBudget + 세션/스킬 격리
 │   └── session.py           (214)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
 │
@@ -438,11 +438,12 @@ ReActResult (parse_stage=0, 모든 필드 None)
 메시지 추가 (add)
     │
     ▼
-total_chars > max_context_chars?
+Dual-gate 판정:
+  len(messages) > keep_recent * 2  AND  total_chars > max_context_chars?
     │
-    ├─ No → 그대로 유지
+    ├─ 어느 하나라도 미충족 → 그대로 유지
     │
-    ▼ Yes
+    ▼ 둘 다 충족
 _compress(user_instruction="") 호출
     │
     ├─ 규칙 기반: _extract_files_touched(old_msgs)
@@ -464,7 +465,7 @@ _compress(user_instruction="") 호출
     └─ user_instruction 있으면 system prompt에 "## Additional Instruction"으로 추가
 
 도구 결과는 2,000자로 절단 후 요약에 포함
-수동 트리거: /compact [prompt] 명령으로 즉시 압축 가능
+수동 트리거: /compact [prompt] 명령으로 즉시 압축 가능 (메시지 수 조건만 확인)
 ```
 
 ### 5.6 Scratchpad & Artifact 시스템
@@ -838,9 +839,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 23 | 548 | `pytest tests/ -m "not ollama_integration"` |
-| 통합 테스트 | 1 | 56 | `pytest tests/test_integration.py` |
-| **전체** | **23** | **604** | `pytest tests/` |
+| 유닛 테스트 | 21 | 617 | `pytest tests/ -m "not ollama_integration"` |
+| 통합 테스트 | 1 | 62 | `pytest tests/test_integration.py` |
+| **전체** | **21** | **679** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

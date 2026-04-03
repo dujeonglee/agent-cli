@@ -81,7 +81,10 @@ class ContextManager:
         """Add a message and trigger compression if needed."""
         self.messages.append({"role": role, "content": content})
         self._msg_chars += len(content)
-        if self._total_chars() > self.max_context_chars:
+        if (
+            len(self.messages) > self.keep_recent * 2
+            and self._total_chars() > self.max_context_chars
+        ):
             self._compress()
 
     def get_messages(self) -> list[dict]:

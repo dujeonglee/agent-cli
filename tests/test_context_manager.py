@@ -472,3 +472,177 @@ class TestCompressionFailureTracking:
             mock_console.print.assert_called()
             call_str = str(mock_console.print.call_args)
             assert "failed" in call_str.lower()
+
+
+class TestDualGateCompaction:
+    """Tests for dual-gate compaction: compression requires both message count AND char threshold."""
+
+    def test_no_compress_when_only_chars_exceed(self, mock_provider, caps, tmp_path):
+        """DG-01: Gate 2 only (chars exceed) should NOT trigger compression."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=4, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 8. Add only 2 messages but with huge content.
+        ctx.add("user", "x" * (ctx.max_context_chars + 1))
+        ctx.add("assistant", "short reply")
+
+        assert not mock_provider.call.called
+        assert ctx._summary is None
+        assert len(ctx.messages) == 2
+
+    def test_no_compress_when_only_message_count_exceeds(
+        self, mock_provider, caps, tmp_path
+    ):
+        """DG-02: Gate 1 only (message count exceed) should NOT trigger compression."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 2. Add 4 messages but each very short.
+        for _ in range(2):
+            ctx.add("user", "hi")
+            ctx.add("assistant", "ok")
+
+        assert not mock_provider.call.called
+        assert ctx._summary is None
+        assert len(ctx.messages) == 4
+
+    def test_compress_when_both_gates_met(self, mock_provider, caps, tmp_path):
+        """DG-03: Both gates met should trigger compression."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 2. Add many messages with large content.
+        for _ in range(10):
+            ctx.add("user", "x" * 500)
+            ctx.add("assistant", "y" * 500)
+
+        assert mock_provider.call.called
+        assert ctx._summary is not None
+
+    def test_no_compress_when_neither_gate_met(self, mock_provider, caps, tmp_path):
+        """DG-04: Neither gate met should NOT trigger compression."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=4, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 8. Add few short messages.
+        ctx.add("user", "hello")
+        ctx.add("assistant", "hi")
+
+        assert not mock_provider.call.called
+        assert ctx._summary is None
+        assert len(ctx.messages) == 2
+
+    def test_message_count_at_exact_threshold(self, mock_provider, caps, tmp_path):
+        """DG-05: len(messages) == keep_recent * 2 should NOT trigger (> required)."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=2, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 4. Add exactly 4 messages with large content.
+        ctx.add("user", "x" * (ctx.max_context_chars + 1))
+        ctx.add("assistant", "y" * 100)
+        ctx.add("user", "x" * 100)
+        ctx.add("assistant", "y" * 100)
+
+        assert len(ctx.messages) == 4
+        assert not mock_provider.call.called
+        assert ctx._summary is None
+
+    def test_chars_at_exact_threshold(self, mock_provider, caps, tmp_path):
+        """DG-06: _total_chars() == max_context_chars should NOT trigger (> required)."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 2. We need > 2 messages and total chars == max exactly.
+        # Distribute chars across 4 messages to equal max_context_chars exactly.
+        per_msg = ctx.max_context_chars // 4
+        remainder = ctx.max_context_chars - per_msg * 4
+        ctx.add("user", "x" * (per_msg + remainder))
+        ctx.add("assistant", "y" * per_msg)
+        ctx.add("user", "x" * per_msg)
+        ctx.add("assistant", "y" * per_msg)
+
+        assert ctx._total_chars() == ctx.max_context_chars
+        assert not mock_provider.call.called
+        assert ctx._summary is None
+
+    def test_message_count_one_over_threshold(self, mock_provider, caps, tmp_path):
+        """DG-07: len(messages) == keep_recent * 2 + 1 with char overflow triggers."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 2. Add 3 messages (> 2) with enough chars.
+        ctx.add("user", "x" * (ctx.max_context_chars // 2 + 1))
+        ctx.add("assistant", "y" * (ctx.max_context_chars // 2 + 1))
+        ctx.add("user", "z" * 100)
+
+        assert len(ctx.messages) <= 3  # may have been compressed
+        assert mock_provider.call.called
+        assert ctx._summary is not None
+
+    def test_force_compress_ignores_char_gate(self, mock_provider, caps, tmp_path):
+        """DG-08: force_compress works even if chars < max_context_chars."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # Add messages via direct append (short content, won't exceed char gate)
+        for _ in range(5):
+            ctx.messages.append({"role": "user", "content": "hi"})
+            ctx.messages.append({"role": "assistant", "content": "ok"})
+        ctx._msg_chars = sum(len(m["content"]) for m in ctx.messages)
+
+        assert ctx._total_chars() < ctx.max_context_chars
+        ctx.force_compress()
+        assert mock_provider.call.called
+        assert ctx._summary is not None
+
+    def test_force_compress_still_checks_message_count(
+        self, mock_provider, caps, tmp_path
+    ):
+        """DG-09: force_compress still requires message count > keep_recent * 2."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=4, scratchpad_dir=tmp_path
+        )
+        # keep_recent * 2 = 8. Add only 2 messages.
+        ctx.messages.append({"role": "user", "content": "hi"})
+        ctx.messages.append({"role": "assistant", "content": "ok"})
+
+        ctx.force_compress()
+        assert not mock_provider.call.called
+        assert ctx._summary is None
+
+    def test_failure_raised_threshold_affects_gate2(self, caps, tmp_path):
+        """DG-10: After compression failure raises max_context_chars, gate 2 threshold increases."""
+        provider = MagicMock()
+        provider.call.side_effect = RuntimeError("LLM unavailable")
+
+        ctx = ContextManager(
+            provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        original = ctx.max_context_chars
+
+        # Trigger compression failure
+        for _ in range(10):
+            ctx.add("user", "x" * 200)
+            ctx.add("assistant", "y" * 200)
+
+        assert ctx._compress_failures >= 1
+        assert ctx.max_context_chars > original
+
+    def test_success_resets_threshold_restores_gate2(self, caps, tmp_path):
+        """DG-11: After successful compression, max_context_chars is restored."""
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(content="Summary")
+
+        ctx = ContextManager(
+            provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        ctx._compress_failures = 2
+        ctx.max_context_chars = int(ctx._original_max_context_chars * 1.5)
+
+        for _ in range(10):
+            ctx.messages.append({"role": "user", "content": "x" * 200})
+            ctx.messages.append({"role": "assistant", "content": "y" * 200})
+        ctx._compress()
+
+        assert ctx._compress_failures == 0
+        assert ctx.max_context_chars == ctx._original_max_context_chars
