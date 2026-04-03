@@ -103,7 +103,7 @@ class TestBuildSystemPrompt:
 
     def test_rule_8_review_before_complete(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
-        assert "ALWAYS call ready_for_review first" in prompt
+        assert "always call ready_for_review first" in prompt
 
     def test_environment_section_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
@@ -140,7 +140,7 @@ class TestBuildSystemPrompt:
     def test_format_rules_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Response Format" in prompt
-        assert "ONLY valid JSON" in prompt
+        assert "only valid JSON" in prompt
 
     def test_section_order_primacy_before_tools(self):
         """Task Guidelines and Format Rules should appear before Available Tools."""

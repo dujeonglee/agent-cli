@@ -64,10 +64,10 @@ Rules:
 2. "action_input" must match the tool's input schema.
 3. If an observation shows an error, fix parameters and retry.
 4. Respond in the same language as the user.
-5. Do NOT include "observation" — it is injected by the system.
-6. Output ONLY valid JSON, nothing else.
-7. NEVER invoke yourself recursively — do NOT run agent-cli or any command that starts this tool again via shell.
-8. Before calling complete, ALWAYS call ready_for_review first to verify your work."""
+5. Do not include "observation" — it is injected by the system.
+6. Output only valid JSON, nothing else.
+7. Do not invoke yourself recursively — do not run agent-cli or any command that starts this tool again via shell.
+8. Before calling complete, always call ready_for_review first to verify your work."""
 
 # ── Inline guides for tools ──────────────────────
 _HASHLINE_INLINE = """\
@@ -84,9 +84,10 @@ _HASHLINE_INLINE = """\
   - insert after:         {"op": "append", "pos": "1#VR", "lines": ["    # new comment"]}
   - insert before:        {"op": "prepend", "pos": "1#VR", "lines": ["# header"]}
   - append to EOF:        {"op": "append", "lines": ["# end of file"]}
-  IMPORTANT: Always read the file first to get current hashline tags.
-  If a hash mismatch error occurs, re-read the file and retry with fresh tags.
-  Use write_file only for creating NEW files, not for editing existing ones."""
+  Constraints:
+  - Always read the file first to get current hashline tags.
+  - If a hash mismatch error occurs, re-read the file and retry with fresh tags.
+  - Use write_file only for creating new files, not for editing existing ones."""
 
 _DELEGATE_INLINE = """\
 

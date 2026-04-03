@@ -11,9 +11,10 @@ SUMMARIZATION_PROMPT = """\
 Summarize the following conversation into these sections.
 Be concise. Preserve error messages and command outputs exactly.
 
-NOTE: Progress and Decisions are tracked separately in a scratchpad.
-Do NOT duplicate them here. Focus on context the scratchpad cannot capture.
-NOTE: Files Touched is extracted automatically — do NOT include it.
+Constraints:
+- Progress and Decisions are tracked separately in a scratchpad. Do not duplicate them here.
+- Files Touched is extracted automatically — do not include it.
+Focus on context the scratchpad cannot capture.
 
 ## Goal
 What the user is trying to accomplish (1-2 sentences).
@@ -31,9 +32,9 @@ Reply with ONLY the summary in the format above. Do not continue the conversatio
 
 INCREMENTAL_UPDATE_PROMPT = """\
 Update the existing summary below with new information from the recent conversation.
-Do NOT re-summarize from scratch. Only ADD or REPLACE information in the relevant sections.
+Do not re-summarize from scratch. Only add or replace information in the relevant sections.
 If a section has no new information, keep it unchanged.
-Do NOT include a "Files Touched" section — it is handled automatically.
+Do not include a "Files Touched" section — it is handled automatically.
 
 ## Existing Summary
 {existing_summary}
