@@ -13,7 +13,13 @@ from agent_cli.tools.read_file import (
     compute_line_hash,
     tool_read_file,
 )
-from agent_cli.tools.delegate import _validate_subtask, _build_subprocess_cmd
+from agent_cli.tools.delegate import (
+    tool_delegate,
+    _fork_context,
+    _format_delegate_output,
+    _format_parallel_results,
+    DelegateResult,
+)
 from agent_cli.tools import TOOLS, VIRTUAL_TOOLS, execute_tool
 
 
@@ -289,208 +295,471 @@ class TestEditFile:
         assert "No valid edit" in result.error
 
 
-class TestDelegate:
-    def test_validate_short_task(self):
-        err = _validate_subtask("Do it")
-        assert err is not None
-        assert "too short" in err
-
-    def test_validate_long_task_passes(self):
-        err = _validate_subtask("Analyze this file and fix the bug in it")
-        assert err is None  # length >= 5 words, no vague check
-
-    def test_validate_with_pronouns_passes(self):
-        err = _validate_subtask("Read /tmp/data.csv and count the number of rows in it")
-        assert err is None  # pronouns OK, subagent handles context naturally
-
-    def test_validate_explicit_task(self):
-        err = _validate_subtask(
-            "Read /tmp/data.csv and count the number of rows, then save count to /tmp/result.txt"
+class TestDelegateResult:
+    def test_format_with_output(self):
+        result = DelegateResult(
+            output="Task completed",
+            files_read=["a.py"],
+            files_modified=["b.py"],
+            iterations=3,
         )
-        assert err is None
+        formatted = _format_delegate_output(result)
+        assert "Task completed" in formatted
+        assert "a.py" in formatted
+        assert "b.py" in formatted
+        assert "3 iterations" in formatted
 
-    def test_build_cmd_package_mode(self, monkeypatch):
-        import sys
+    def test_format_no_output(self):
+        result = DelegateResult()
+        formatted = _format_delegate_output(result)
+        assert "no result" in formatted
 
-        monkeypatch.setattr(sys, "argv", ["agent-cli"])
-        monkeypatch.setattr(sys, "frozen", False, raising=False)
-        cmd = _build_subprocess_cmd(["run", "test task"])
-        assert "-m" in cmd
+    def test_format_no_files(self):
+        result = DelegateResult(output="Done")
+        formatted = _format_delegate_output(result)
+        assert "Files touched" not in formatted
 
-    def test_build_cmd_wrapper_mode(self, monkeypatch):
-        import sys
 
-        monkeypatch.setattr(sys, "argv", ["agent-cli.py"])
-        cmd = _build_subprocess_cmd(["run", "test task"])
-        assert "agent-cli.py" in cmd
+class TestForkContext:
+    def test_fork_copies_messages(self, tmp_path):
+        from unittest.mock import MagicMock
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.compat import ModelCapabilities
 
-    def test_build_cmd_frozen(self, monkeypatch):
-        import sys
+        provider = MagicMock()
+        caps = ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        parent = ContextManager(provider, "test", caps, scratchpad_dir=tmp_path)
+        parent.messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        parent._summary = "Some summary"
 
-        monkeypatch.setattr(sys, "frozen", True, raising=False)
-        cmd = _build_subprocess_cmd(["run", "test"])
-        assert cmd[0] == sys.executable
+        forked = _fork_context(parent, provider, "test", caps, tmp_path)
+        assert len(forked.messages) == 2
+        assert forked._summary == "Some summary"
+
+    def test_fork_does_not_affect_parent(self, tmp_path):
+        from unittest.mock import MagicMock
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.compat import ModelCapabilities
+
+        provider = MagicMock()
+        caps = ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        parent = ContextManager(provider, "test", caps, scratchpad_dir=tmp_path)
+        parent.messages = [{"role": "user", "content": "hello"}]
+
+        forked = _fork_context(parent, provider, "test", caps, tmp_path)
+        forked.messages.append({"role": "assistant", "content": "new msg"})
+
+        assert len(parent.messages) == 1
+        assert len(forked.messages) == 2
 
 
 class TestToolDelegate:
-    def test_rejects_vague_task(self):
-        from agent_cli.tools.delegate import tool_delegate
-
-        result = tool_delegate(
-            args={"task": "Fix it"},
-            provider="ollama",
-            model="test",
-            base_url="http://localhost:11434",
-            api_key="",
-        )
-        assert not result.success
-        assert "Delegation rejected" in result.error
+    """Tests for tool_delegate with tasks array API."""
 
     @pytest.fixture()
-    def mock_subprocess(self, monkeypatch):
+    def caps(self):
+        from agent_cli.providers.compat import ModelCapabilities
+
+        return ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+    @pytest.fixture()
+    def mock_provider(self):
         from unittest.mock import MagicMock
+        from agent_cli.providers.base import LLMResponse
 
-        mock_run = MagicMock()
-        monkeypatch.setattr("agent_cli.tools.delegate.subprocess.run", mock_run)
-        return mock_run
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(content="mock response")
+        return provider
 
-    def test_success(self, mock_subprocess):
-        from agent_cli.tools.delegate import tool_delegate
+    # ── API: tasks array ──
 
-        mock_subprocess.return_value.returncode = 0
-        mock_subprocess.return_value.stdout = "Task completed successfully"
-        mock_subprocess.return_value.stderr = ""
-
+    def test_empty_tasks_rejected(self, mock_provider, caps):
         result = tool_delegate(
-            args={
-                "task": "Read /tmp/data.csv and count the number of rows then report"
-            },
-            provider="ollama",
-            model="test-model",
-            base_url="http://localhost:11434",
-            api_key="",
-        )
-        assert result.success
-        assert "STATUS: success" in result.output
-        assert "Task completed" in result.output
-
-    def test_failure(self, mock_subprocess):
-        from agent_cli.tools.delegate import tool_delegate
-
-        mock_subprocess.return_value.returncode = 1
-        mock_subprocess.return_value.stdout = ""
-        mock_subprocess.return_value.stderr = "Error occurred"
-
-        result = tool_delegate(
-            args={
-                "task": "Read /tmp/data.csv and count the number of rows then report"
-            },
-            provider="ollama",
-            model="test-model",
-            base_url="http://localhost:11434",
-            api_key="",
+            args={"tasks": []}, provider=mock_provider, capabilities=caps
         )
         assert not result.success
-        assert "STATUS: error" in result.error
-        assert "Error occurred" in result.error
+        assert "empty tasks" in result.error
 
-    def test_timeout(self, mock_subprocess):
-        import subprocess as sp
-        from agent_cli.tools.delegate import tool_delegate
+    def test_single_task_sync(self, mock_provider, caps):
+        from unittest.mock import patch
 
-        mock_subprocess.side_effect = sp.TimeoutExpired(cmd="test", timeout=5)
+        with patch("agent_cli.loop.run_loop", return_value="Done") as mock_loop:
+            result = tool_delegate(
+                args={"tasks": [{"task": "Count files"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert result.success
+            assert "Done" in result.output
+            assert mock_loop.call_count == 1
 
+    def test_single_task_empty_rejected(self, mock_provider, caps):
         result = tool_delegate(
-            args={
-                "task": "Read /tmp/data.csv and count the number of rows then report"
-            },
-            provider="ollama",
-            model="test-model",
-            base_url="http://localhost:11434",
-            api_key="",
-            timeout=5,
+            args={"tasks": [{"task": ""}]},
+            provider=mock_provider,
+            capabilities=caps,
         )
         assert not result.success
-        assert "timed out" in result.error
+        assert "empty task" in result.error
 
-    def test_api_key_appended(self, mock_subprocess):
-        from agent_cli.tools.delegate import tool_delegate
+    # ── Context modes (single) ──
 
-        mock_subprocess.return_value.returncode = 0
-        mock_subprocess.return_value.stdout = "done"
-        mock_subprocess.return_value.stderr = ""
+    def test_context_none_fresh_ctx(self, mock_provider, caps):
+        from unittest.mock import patch
 
-        tool_delegate(
-            args={
-                "task": "Read /tmp/data.csv and count the number of rows then report"
-            },
-            provider="openai",
-            model="gpt-4o",
-            base_url="https://api.openai.com/v1",
-            api_key="sk-test-key",
-        )
-        cmd = mock_subprocess.call_args[0][0]
-        assert "--api-key" in cmd
-        assert "sk-test-key" in cmd
+        with patch("agent_cli.loop.run_loop", return_value="ok") as mock_loop:
+            tool_delegate(
+                args={"tasks": [{"task": "Do it", "context": "none"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            ctx_arg = mock_loop.call_args.kwargs["ctx"]
+            assert ctx_arg is not None
+            assert len(ctx_arg.messages) == 0
 
-    def test_no_output(self, mock_subprocess):
-        from agent_cli.tools.delegate import tool_delegate
+    def test_context_fork_copies_parent(self, mock_provider, caps, tmp_path):
+        from unittest.mock import patch
+        from agent_cli.context.manager import ContextManager
 
-        mock_subprocess.return_value.returncode = 1
-        mock_subprocess.return_value.stdout = ""
-        mock_subprocess.return_value.stderr = ""
+        parent = ContextManager(mock_provider, "test", caps, scratchpad_dir=tmp_path)
+        parent.messages = [{"role": "user", "content": "original"}]
 
+        with patch("agent_cli.loop.run_loop", return_value="ok") as mock_loop:
+            tool_delegate(
+                args={"tasks": [{"task": "Continue", "context": "fork"}]},
+                parent_ctx=parent,
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            ctx_arg = mock_loop.call_args.kwargs["ctx"]
+            assert len(ctx_arg.messages) == 1
+            assert ctx_arg is not parent
+
+    def test_context_fork_does_not_affect_parent(self, mock_provider, caps, tmp_path):
+        from unittest.mock import patch
+        from agent_cli.context.manager import ContextManager
+
+        parent = ContextManager(mock_provider, "test", caps, scratchpad_dir=tmp_path)
+        parent.messages = [{"role": "user", "content": "orig"}]
+
+        def add_msg(**kwargs):
+            kwargs["ctx"].messages.append({"role": "assistant", "content": "new"})
+            return "ok"
+
+        with patch("agent_cli.loop.run_loop", side_effect=add_msg):
+            tool_delegate(
+                args={"tasks": [{"task": "Work", "context": "fork"}]},
+                parent_ctx=parent,
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+        assert len(parent.messages) == 1
+
+    def test_context_inherit_shares_parent(self, mock_provider, caps, tmp_path):
+        from unittest.mock import patch
+        from agent_cli.context.manager import ContextManager
+
+        parent = ContextManager(mock_provider, "test", caps, scratchpad_dir=tmp_path)
+
+        with patch("agent_cli.loop.run_loop", return_value="ok") as mock_loop:
+            tool_delegate(
+                args={"tasks": [{"task": "Continue", "context": "inherit"}]},
+                parent_ctx=parent,
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert mock_loop.call_args.kwargs["ctx"] is parent
+
+    def test_fork_requires_parent(self, mock_provider, caps):
         result = tool_delegate(
-            args={
-                "task": "Read /tmp/data.csv and count the number of rows then report"
-            },
-            provider="ollama",
-            model="test",
-            base_url="http://localhost:11434",
-            api_key="",
+            args={"tasks": [{"task": "Do it", "context": "fork"}]},
+            provider=mock_provider,
+            capabilities=caps,
         )
         assert not result.success
-        assert "(no output)" in result.error
+        assert "fork requires parent" in result.error
 
-    def test_headless_flag_in_cmd(self, mock_subprocess):
-        """Delegate passes --headless to subprocess."""
-        from agent_cli.tools.delegate import tool_delegate
-
-        mock_subprocess.return_value.returncode = 0
-        mock_subprocess.return_value.stdout = "done"
-        mock_subprocess.return_value.stderr = ""
-
-        tool_delegate(
-            args={
-                "task": "Read /tmp/data.csv and count the number of rows then report"
-            },
-            provider="ollama",
-            model="test",
-            base_url="http://localhost:11434",
-            api_key="",
+    def test_inherit_requires_parent(self, mock_provider, caps):
+        result = tool_delegate(
+            args={"tasks": [{"task": "Do it", "context": "inherit"}]},
+            provider=mock_provider,
+            capabilities=caps,
         )
-        cmd = mock_subprocess.call_args[0][0]
-        assert "--headless" in cmd
+        assert not result.success
+        assert "inherit requires parent" in result.error
 
-    def test_no_quiet_flag_in_cmd(self, mock_subprocess):
-        """Delegate no longer passes --quiet (merged into --headless)."""
-        from agent_cli.tools.delegate import tool_delegate
+    # ── Depth + tools ──
 
-        mock_subprocess.return_value.returncode = 0
-        mock_subprocess.return_value.stdout = "done"
-        mock_subprocess.return_value.stderr = ""
+    def test_depth_incremented(self, mock_provider, caps):
+        from unittest.mock import patch
 
-        tool_delegate(
+        with patch("agent_cli.loop.run_loop", return_value="ok") as mock_loop:
+            tool_delegate(
+                args={"tasks": [{"task": "Sub"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+                depth=2,
+            )
+            assert mock_loop.call_args.kwargs["depth"] == 3
+
+    def test_tools_restriction(self, mock_provider, caps):
+        from unittest.mock import patch
+
+        with patch("agent_cli.loop.run_loop", return_value="ok") as mock_loop:
+            tool_delegate(
+                args={
+                    "tasks": [{"task": "Read only", "tools": ["read_file", "shell"]}]
+                },
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert mock_loop.call_args.kwargs["active_tools"] == ["read_file", "shell"]
+
+    # ── Results ──
+
+    def test_result_includes_files(self, mock_provider, caps):
+        import json
+        from unittest.mock import patch
+
+        def fake_run_loop(**kwargs):
+            kwargs["ctx"].messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {"action": "read_file", "action_input": {"path": "test.py"}}
+                    ),
+                }
+            )
+            return "Read test.py"
+
+        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+            result = tool_delegate(
+                args={"tasks": [{"task": "Read the file"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert result.success
+            assert "test.py" in result.output
+
+    def test_subagent_failure(self, mock_provider, caps):
+        from unittest.mock import patch
+
+        with patch("agent_cli.loop.run_loop", return_value=None):
+            result = tool_delegate(
+                args={"tasks": [{"task": "This will fail"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert not result.success
+            assert "did not complete" in result.error
+
+    # ── Parallel: context restriction ──
+
+    def test_parallel_none_allowed(self, mock_provider, caps):
+        from unittest.mock import patch
+
+        with patch("agent_cli.loop.run_loop", return_value="ok"):
+            result = tool_delegate(
+                args={"tasks": [{"task": "A"}, {"task": "B"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert result.success
+
+    def test_parallel_fork_allowed(self, mock_provider, caps, tmp_path):
+        from unittest.mock import patch
+        from agent_cli.context.manager import ContextManager
+
+        parent = ContextManager(mock_provider, "test", caps, scratchpad_dir=tmp_path)
+
+        with patch("agent_cli.loop.run_loop", return_value="ok"):
+            result = tool_delegate(
+                args={
+                    "tasks": [
+                        {"task": "A", "context": "fork"},
+                        {"task": "B", "context": "fork"},
+                    ]
+                },
+                parent_ctx=parent,
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert result.success
+
+    def test_parallel_inherit_rejected(self, mock_provider, caps):
+        result = tool_delegate(
             args={
-                "task": "Read /tmp/data.csv and count the number of rows then report"
+                "tasks": [
+                    {"task": "A", "context": "none"},
+                    {"task": "B", "context": "inherit"},
+                ]
             },
-            provider="ollama",
+            provider=mock_provider,
             model="test",
-            base_url="http://localhost:11434",
-            api_key="",
+            capabilities=caps,
         )
-        cmd = mock_subprocess.call_args[0][0]
-        assert "--quiet" not in cmd
+        assert not result.success
+        assert "inherit" in result.error
+
+    def test_single_inherit_allowed(self, mock_provider, caps, tmp_path):
+        """inherit is fine for single task (not parallel)."""
+        from unittest.mock import patch
+        from agent_cli.context.manager import ContextManager
+
+        parent = ContextManager(mock_provider, "test", caps, scratchpad_dir=tmp_path)
+
+        with patch("agent_cli.loop.run_loop", return_value="ok"):
+            result = tool_delegate(
+                args={"tasks": [{"task": "Continue", "context": "inherit"}]},
+                parent_ctx=parent,
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert result.success
+
+    # ── Parallel: execution ──
+
+    def test_parallel_runs_all_tasks(self, mock_provider, caps):
+        from unittest.mock import patch
+
+        call_count = {"n": 0}
+
+        def counting_run_loop(**kwargs):
+            call_count["n"] += 1
+            return f"Result {call_count['n']}"
+
+        with patch("agent_cli.loop.run_loop", side_effect=counting_run_loop):
+            result = tool_delegate(
+                args={"tasks": [{"task": "A"}, {"task": "B"}, {"task": "C"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert call_count["n"] == 3
+            assert result.success
+
+    def test_parallel_suppress_output(self, mock_provider, caps):
+        from unittest.mock import patch
+
+        with patch("agent_cli.loop.run_loop", return_value="ok") as mock_loop:
+            tool_delegate(
+                args={"tasks": [{"task": "A"}, {"task": "B"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+                suppress_output=False,  # parent wants output
+            )
+            # But parallel delegates should always suppress
+            for call in mock_loop.call_args_list:
+                assert call.kwargs["suppress_output"] is True
+
+    def test_parallel_partial_failure(self, mock_provider, caps):
+        from unittest.mock import patch
+
+        def mixed_results(**kwargs):
+            if "fail" in kwargs["query"]:
+                return None
+            return "ok"
+
+        with patch("agent_cli.loop.run_loop", side_effect=mixed_results):
+            result = tool_delegate(
+                args={"tasks": [{"task": "succeed"}, {"task": "fail please"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert not result.success
+            assert "1 succeeded" in result.error
+            assert "1 failed" in result.error
+
+    # ── Parallel: result format ──
+
+    def test_parallel_result_format(self, mock_provider, caps):
+        from unittest.mock import patch
+
+        with patch("agent_cli.loop.run_loop", return_value="Done"):
+            result = tool_delegate(
+                args={"tasks": [{"task": "Alpha"}, {"task": "Beta"}]},
+                provider=mock_provider,
+                model="test",
+                capabilities=caps,
+            )
+            assert "[Task 1]" in result.output
+            assert "[Task 2]" in result.output
+            assert "all succeeded" in result.output
+
+
+class TestParallelResultFormat:
+    def test_all_success(self):
+        from agent_cli.tools.result import ToolResult
+
+        specs = [{"task": "A"}, {"task": "B"}]
+        results = [
+            ToolResult(True, output="STATUS: success\nRESULT:\nDone A"),
+            ToolResult(True, output="STATUS: success\nRESULT:\nDone B"),
+        ]
+        combined = _format_parallel_results(specs, results)
+        assert combined.success
+        assert "all succeeded" in combined.output
+
+    def test_partial_failure(self):
+        from agent_cli.tools.result import ToolResult
+
+        specs = [{"task": "A"}, {"task": "B"}]
+        results = [
+            ToolResult(True, output="ok"),
+            ToolResult(False, error="failed"),
+        ]
+        combined = _format_parallel_results(specs, results)
+        assert not combined.success
+        assert "1 succeeded" in combined.error
+        assert "1 failed" in combined.error
+
+    def test_timeout_none_result(self):
+        specs = [{"task": "A"}]
+        results = [None]
+        combined = _format_parallel_results(specs, results)
+        assert not combined.success
+        assert "timed out" in combined.error.lower()
 
 
 class TestToolsRegistry:

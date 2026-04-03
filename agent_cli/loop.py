@@ -157,7 +157,16 @@ class AgentLoop:
                 self._restore_signal_handler()
 
     def _install_signal_handler(self) -> None:
-        """Install graceful SIGINT handler (1st: flag, 2nd: hard exit)."""
+        """Install graceful SIGINT handler (1st: flag, 2nd: hard exit).
+
+        Only installs on the main thread — signal handlers cannot be set
+        from worker threads (e.g. parallel delegates).
+        """
+        import threading
+
+        if threading.current_thread() is not threading.main_thread():
+            return
+
         self._prev_sigint_handler = signal.getsignal(signal.SIGINT)
 
         def _handle_sigint(signum, frame):
@@ -172,6 +181,10 @@ class AgentLoop:
 
     def _restore_signal_handler(self) -> None:
         """Restore the previous SIGINT handler."""
+        import threading
+
+        if threading.current_thread() is not threading.main_thread():
+            return
         if self._prev_sigint_handler is not None:
             signal.signal(signal.SIGINT, self._prev_sigint_handler)
 
@@ -601,6 +614,14 @@ class AgentLoop:
                 self.recent_tool_history,
                 self.iteration,
                 hooks_config=self.hooks_config,
+                delegate_ctx=self.ctx,
+                delegate_provider=self.provider,
+                delegate_depth=self.depth,
+                delegate_max_depth=self.max_depth,
+                delegate_max_iter=self.max_iter,
+                delegate_suppress=self.suppress_output,
+                delegate_session=self.session,
+                delegate_skill_stack=self.skill_stack,
             )
 
             if not self.suppress_output:
@@ -880,6 +901,14 @@ class AgentLoop:
                 self.recent_tool_history,
                 self.iteration,
                 hooks_config=self.hooks_config,
+                delegate_ctx=self.ctx,
+                delegate_provider=self.provider,
+                delegate_depth=self.depth,
+                delegate_max_depth=self.max_depth,
+                delegate_max_iter=self.max_iter,
+                delegate_suppress=self.suppress_output,
+                delegate_session=self.session,
+                delegate_skill_stack=self.skill_stack,
             )
 
             if not self.suppress_output:
@@ -1254,6 +1283,10 @@ def _build_artifact_summary(tool_name: str, tool_input, obs: str = "") -> str:
             if cmd:
                 return f"shell: {cmd[:60]}"
         if tool_name == "delegate":
+            tasks = tool_input.get("tasks", [])
+            if tasks:
+                labels = [t.get("task", "")[:40] for t in tasks[:3]]
+                return f"delegate ({len(tasks)} tasks): {'; '.join(labels)}"
             task = tool_input.get("task", "")
             return f"delegate: {task[:80]}"
 
@@ -1357,6 +1390,14 @@ def _execute_single_tool(
     recent_tool_history: list[dict] | None = None,
     iteration: int = 0,
     hooks_config: dict | None = None,
+    delegate_ctx=None,
+    delegate_provider=None,
+    delegate_depth: int = 0,
+    delegate_max_depth: int = 2,
+    delegate_max_iter: int = 0,
+    delegate_suppress: bool = False,
+    delegate_session=None,
+    delegate_skill_stack: list[str] | None = None,
 ) -> str:
     """Execute a single tool, track history, and return observation string."""
     _debug_log(
@@ -1374,6 +1415,14 @@ def _execute_single_tool(
         api_key,
         delegate_timeout,
         hooks_config=hooks_config,
+        delegate_ctx=delegate_ctx,
+        delegate_provider=delegate_provider,
+        delegate_depth=delegate_depth,
+        delegate_max_depth=delegate_max_depth,
+        delegate_max_iter=delegate_max_iter,
+        delegate_suppress=delegate_suppress,
+        delegate_session=delegate_session,
+        delegate_skill_stack=delegate_skill_stack,
     )
 
     # Track tool usage
@@ -1450,6 +1499,14 @@ def _do_execute_tool(
     api_key: str = "",
     delegate_timeout: int = 300,
     hooks_config: dict | None = None,
+    delegate_ctx=None,
+    delegate_provider=None,
+    delegate_depth: int = 0,
+    delegate_max_depth: int = 2,
+    delegate_max_iter: int = 0,
+    delegate_suppress: bool = False,
+    delegate_session=None,
+    delegate_skill_stack: list[str] | None = None,
 ) -> str:
     """Core tool execution logic (no tracking)."""
     # PreToolUse hook
@@ -1470,15 +1527,34 @@ def _do_execute_tool(
             tool_input = pre_result.updated_input
 
     if tool_name == "delegate" and include_delegate:
+        raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
+        # Normalize: legacy {"task": "..."} → {"tasks": [{...}]}
+        if "tasks" not in raw and "task" in raw:
+            raw = {
+                "tasks": [
+                    {
+                        "task": raw["task"],
+                        "context": raw.get("context", "none"),
+                        **({"tools": raw["tools"]} if raw.get("tools") else {}),
+                    }
+                ]
+            }
         result = tool_delegate(
-            args=tool_input
-            if isinstance(tool_input, dict)
-            else {"task": str(tool_input)},
-            provider=provider_name,
+            args=raw,
+            parent_ctx=delegate_ctx,
+            provider=delegate_provider,
             model=model,
+            capabilities=capabilities,
+            provider_name=provider_name,
             base_url=base_url,
             api_key=api_key,
+            depth=delegate_depth,
+            max_depth=delegate_max_depth,
+            max_iter=delegate_max_iter,
             timeout=delegate_timeout,
+            suppress_output=delegate_suppress,
+            session=delegate_session,
+            skill_stack=delegate_skill_stack,
         )
         if result.success:
             _run_post_hook(hooks_config, tool_name, input_dict, result.output)

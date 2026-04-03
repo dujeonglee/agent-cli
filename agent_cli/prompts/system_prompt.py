@@ -84,13 +84,18 @@ _HASHLINE_INLINE = """\
 
 _DELEGATE_INLINE = """\
 
-  Delegation rules:
-  - Only delegate tasks that are fully independent and self-contained.
-  - The subagent has NO memory of this conversation.
-  - Include ALL details: file paths, content, specific instructions.
-  - NEVER use pronouns or references to prior context in the task.
-  - Good: "Read /tmp/data.csv and count the number of rows"
-  - Bad: "Analyze the file we discussed earlier\""""
+  Always use the "tasks" array format. Single item = sync, multiple = parallel.
+  Context modes per task:
+  - "none" (default): subagent starts with no context. Task must be self-contained.
+  - "fork": subagent receives a copy of the current conversation context.
+  - "inherit": subagent shares your context directly (single task only, not parallel).
+  - "tools": optionally restrict which tools the subagent can use.
+  Note: inherit cannot be used with multiple tasks (parallel).
+  Examples:
+  - Single: {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}
+  - With context: {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}
+  - Parallel: {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
+  - Read-only: {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}\""""
 
 _ARTIFACT_INLINE = """\
 

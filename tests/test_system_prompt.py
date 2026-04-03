@@ -46,11 +46,25 @@ class TestBuildSystemPrompt:
     def test_delegate_included(self):
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
         assert "delegate" in prompt.lower()
-        assert "Delegation rules" in prompt
+        assert "tasks" in prompt
 
     def test_delegate_excluded(self):
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=False)
-        assert "Delegation rules" not in prompt
+        assert "delegate" not in prompt.split("## Available Tools")[1]
+
+    def test_delegate_guide_mentions_context_modes(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        assert "none" in prompt
+        assert "fork" in prompt
+        assert "inherit" in prompt
+
+    def test_delegate_guide_mentions_parallel(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        assert "parallel" in prompt.lower()
+
+    def test_delegate_guide_mentions_tasks_array(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        assert '"tasks"' in prompt
 
     def test_json_format_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])

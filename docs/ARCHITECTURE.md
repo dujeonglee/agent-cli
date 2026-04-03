@@ -32,7 +32,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 | `requests` | >=2.28 | HTTP 클라이언트 (LLM API 호출) |
 | `pyyaml` | >=6.0 | 스킬 frontmatter 파싱 |
 
-표준 라이브러리: json, re, dataclasses, pathlib, subprocess, os, sys, zlib, textwrap, unicodedata
+표준 라이브러리: json, re, dataclasses, pathlib, os, sys, zlib, textwrap, unicodedata, copy, tempfile, threading
 
 ---
 
@@ -68,14 +68,14 @@ agent_cli/
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (67)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
 │   ├── result.py            (14)   ToolResult 데이터클래스 (모든 도구의 표준 반환 타입)
-│   ├── registry.py          (434)  스키마 정의, 검증, API 형식 변환, inline 가이드
+│   ├── registry.py          (454)  스키마 정의, 검증, API 형식 변환, inline 가이드
 │   ├── run_skill.py         (66)   run_skill 도구 (LLM 자동 스킬 호출) → ToolResult
 │   ├── read_artifact.py     (141)  read_artifact 도구 (artifact 읽기/목록/검색) → ToolResult
 │   ├── read_file.py         (102)  파일 읽기 + hashline 포맷팅 + 부분 읽기 → ToolResult
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
 │   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
-│   ├── delegate.py          (85)   서브에이전트 위임 → ToolResult
+│   ├── delegate.py          (326)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행)
 │   ├── context.py           (63)   read_context 도구 (세션 이력 조회) → ToolResult
 │   (truncation.py 삭제됨 — tool output은 잘림 없이 그대로 LLM에 전달)
 │
@@ -164,7 +164,7 @@ tools/edit_file.py  → tools/read_file, tools/result
 tools/shell.py      → tools/result
 tools/write_file.py → tools/result
 tools/context.py    → tools/result, context/session
-tools/delegate.py   → tools/result
+tools/delegate.py   → tools/result, context/manager, loop (lazy import)
 tools/read_artifact → tools/result
 tools/run_skill.py  → tools/result
 tools/registry.py   → (외부만: json, dataclasses)
@@ -549,7 +549,7 @@ ContextBudget.for_model(context_window)
 | `write_file` | 파일 생성/덮어쓰기 | `path`, `content` | 저장 확인 메시지 |
 | `edit_file` | hashline 기반 파일 편집 | `path`, `edits[]` | 편집 확인 메시지 |
 | `shell` | 셸 명령 실행 | `command` | stdout + stderr + exit code |
-| `delegate` | 서브에이전트 위임 (`--headless`) | `task` | 서브에이전트 실행 결과 |
+| `delegate` | in-process 서브에이전트 위임 | `tasks[]` (각 항목: task, context?, tools?) | 구조화된 결과 (output + files), 복수 시 병렬 |
 | `read_context` | 이전 세션 이력 조회 | `mode` | 세션 목록 또는 상세 이력 |
 
 **가상 도구** (`VIRTUAL_TOOLS`) — loop.py에서 인터셉트, 도구 설명에서 제외:

@@ -205,19 +205,39 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
 DELEGATE_TOOL_SCHEMA = ToolSchema(
     name="delegate",
     description=(
-        "Delegate a self-contained subtask to an independent subagent. "
-        "The subagent has NO context from this conversation — the task "
-        "description must include ALL necessary details."
+        "Delegate tasks to subagents. "
+        "Single task = sync, multiple tasks = parallel. "
+        "Use context mode to control what the subagent knows."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "task": {
-                "type": "string",
-                "description": "Fully self-contained task description",
+            "tasks": {
+                "type": "array",
+                "description": "List of tasks. Single item = sync, multiple = parallel.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Task description for the subagent",
+                        },
+                        "context": {
+                            "type": "string",
+                            "enum": ["none", "fork", "inherit"],
+                            "description": "none (independent), fork (copy context), inherit (share context)",
+                        },
+                        "tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Allowed tools (omit for default set)",
+                        },
+                    },
+                    "required": ["task"],
+                },
             },
         },
-        "required": ["task"],
+        "required": ["tasks"],
     },
 )
 

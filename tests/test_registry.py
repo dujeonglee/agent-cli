@@ -133,6 +133,35 @@ class TestConvertToOpenAITools:
         assert "delegate" in names
 
 
+class TestDelegateSchema:
+    def test_delegate_has_tasks_param(self):
+        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+
+        props = DELEGATE_TOOL_SCHEMA.parameters["properties"]
+        assert "tasks" in props
+        assert props["tasks"]["type"] == "array"
+
+    def test_delegate_tasks_is_array_of_objects(self):
+        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+
+        items = DELEGATE_TOOL_SCHEMA.parameters["properties"]["tasks"]["items"]
+        assert items["type"] == "object"
+        assert "task" in items["properties"]
+        assert "context" in items["properties"]
+        assert "tools" in items["properties"]
+
+    def test_delegate_tasks_required(self):
+        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+
+        assert "tasks" in DELEGATE_TOOL_SCHEMA.parameters["required"]
+
+    def test_delegate_no_top_level_task(self):
+        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+
+        props = DELEGATE_TOOL_SCHEMA.parameters["properties"]
+        assert "task" not in props  # Only inside tasks array items
+
+
 class TestEmptyStringStripping:
     def test_optional_empty_string_removed(self):
         """Empty string on optional field should be stripped before validation."""

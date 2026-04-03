@@ -576,11 +576,21 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 ### delegate — 서브에이전트 위임
 
-독립적인 작업을 별도 프로세스의 서브에이전트에 위임합니다. 서브에이전트는 `--headless` 모드로 실행되어 자체 컨텍스트 관리(scratchpad/압축)를 수행하지만 세션은 저장하지 않습니다. 현재 대화 맥락을 알지 못하므로, task에 모든 정보를 포함해야 합니다.
+작업을 in-process 서브에이전트에 위임합니다. 컨텍스트 모드로 서브에이전트가 부모 맥락을 얼마나 알지 제어합니다:
+
+| 모드 | 동작 |
+|------|------|
+| `none` (기본) | 독립 실행. task에 모든 정보 포함 필요 |
+| `fork` | 부모 컨텍스트를 복사하여 실행. 맥락 인지 + 독립 |
+| `inherit` | 부모 컨텍스트를 공유. 메시지가 부모에 누적 |
 
 ```json
-{"action": "delegate", "action_input": {"task": "Read /tmp/data.csv and count the number of rows"}}
+{"action": "delegate", "action_input": {"task": "Read /tmp/data.csv and count rows"}}
+{"action": "delegate", "action_input": {"task": "Fix the bug we found", "context": "fork"}}
+{"action": "delegate", "action_input": {"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}}
 ```
+
+`tools` 파라미터로 서브에이전트가 사용할 수 있는 도구를 제한할 수 있습니다.
 
 ### run_skill — 스킬 실행
 
