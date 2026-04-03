@@ -2272,7 +2272,7 @@ class TestRunSkillIntercept:
             scratchpad_dir=tmp_path,
         )
 
-        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
             run_loop(
                 query="Summarize something",
                 provider=outer_provider,
@@ -2307,7 +2307,7 @@ class TestRunSkillIntercept:
             provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
         )
 
-        with patch("agent_cli.skills.loader.load_skills", return_value={}):
+        with patch("agent_cli.skills.load_skills", return_value={}):
             result = run_loop(
                 query="Try",
                 provider=provider,
@@ -2332,7 +2332,7 @@ class TestRunSkillIntercept:
                 max_iter=3,
             )
         }
-        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
             with patch(
                 "agent_cli.skills.executor.execute_skill", return_value="Summary done"
             ):
@@ -2350,6 +2350,110 @@ class TestRunSkillIntercept:
         assert "SKILL: summarize" in obs
         assert "./src" in obs
         assert "Summary done" in obs
+
+    def test_run_skill_result_includes_files_touched(self, caps, tmp_path):
+        """run_skill result includes files touched by the skill."""
+        import json
+        from agent_cli.loop import _handle_run_skill
+        from agent_cli.skills.models import Skill
+        from agent_cli.context.manager import ContextManager
+        from unittest.mock import patch
+
+        ctx = ContextManager(
+            provider=MagicMock(),
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        # _turn_count starts at 0, so turn_before=0, messages[0:] will be scanned
+
+        mock_skills = {
+            "analyze": Skill(
+                name="analyze",
+                description="Analyze",
+                prompt_template="Analyze $ARGUMENTS",
+                max_iter=3,
+            )
+        }
+
+        def fake_execute_skill(**kwargs):
+            # Simulate skill reading/writing files via tool calls
+            ctx.messages.extend(
+                [
+                    {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "action": "read_file",
+                                "action_input": {"path": "src/main.py"},
+                            }
+                        ),
+                    },
+                    {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "action": "write_file",
+                                "action_input": {"path": "report.md", "content": "..."},
+                            }
+                        ),
+                    },
+                ]
+            )
+            return "Analysis complete"
+
+        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
+            with patch(
+                "agent_cli.skills.executor.execute_skill",
+                side_effect=fake_execute_skill,
+            ):
+                obs = _handle_run_skill(
+                    skill_input={"name": "analyze", "arguments": "./"},
+                    provider_name="ollama",
+                    base_url="http://localhost:11434",
+                    api_key="",
+                    capabilities=caps,
+                    model="test",
+                    ctx=ctx,
+                    session=None,
+                    parent_skill_name="",
+                )
+        assert "Files touched by skill" in obs
+        assert "src/main.py" in obs
+        assert "report.md" in obs
+
+    def test_run_skill_no_files_touched_when_no_ctx(self, caps, tmp_path):
+        """No files section when ctx is None."""
+        from agent_cli.loop import _handle_run_skill
+        from agent_cli.skills.models import Skill
+        from unittest.mock import patch
+
+        mock_skills = {
+            "greet": Skill(
+                name="greet",
+                description="Greet",
+                prompt_template="Say hi",
+                max_iter=3,
+            )
+        }
+        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
+            with patch(
+                "agent_cli.skills.executor.execute_skill",
+                return_value="Hello!",
+            ):
+                obs = _handle_run_skill(
+                    skill_input={"name": "greet", "arguments": ""},
+                    provider_name="ollama",
+                    base_url="http://localhost:11434",
+                    api_key="",
+                    capabilities=caps,
+                    model="test",
+                    ctx=None,
+                    session=None,
+                    parent_skill_name="",
+                )
+        assert "Files touched" not in obs
+        assert "Hello!" in obs
 
     def test_run_skill_result_includes_internal_calls(self, caps, tmp_path):
         """When inner skill calls another skill, result shows internal call history."""
@@ -2482,7 +2586,7 @@ class TestRunSkillNoDuplicateArtifact:
             provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
         )
 
-        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
             run_loop(
                 query="Do",
                 provider=provider,

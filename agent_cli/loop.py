@@ -1261,7 +1261,18 @@ def _handle_run_skill(
         )
         body = result or "(skill returned no result)"
         internal = _build_internal_skill_summary(ctx, turn_before)
-        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}{internal}")
+        # Extract files touched by the skill for parent context
+        files_info = ""
+        if ctx:
+            fr, fm = ctx._extract_files_touched(ctx.messages[turn_before * 2 :])
+            if fr or fm:
+                parts = ["[Files touched by skill]"]
+                if fr:
+                    parts.append(f"- Read: {', '.join(sorted(fr))}")
+                if fm:
+                    parts.append(f"- Modified: {', '.join(sorted(fm))}")
+                files_info = "\n" + "\n".join(parts)
+        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}{internal}{files_info}")
     finally:
         # Reset skill context
         if ctx:
