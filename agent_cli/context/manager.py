@@ -108,13 +108,23 @@ class ContextManager:
             msgs.append(
                 {
                     "role": "user",
-                    "content": f"[Previous conversation summary]\n{self._summary}",
+                    "content": (
+                        "This conversation is being continued from earlier context "
+                        "that was compressed. The summary below covers the prior "
+                        "portion of the conversation.\n\n"
+                        f"Summary:\n{self._summary}\n\n"
+                        "Recent messages are preserved verbatim below. "
+                        "Continue the conversation from where it left off — "
+                        "do not acknowledge the summary, do not recap what was "
+                        "happening, and do not ask clarifying questions about "
+                        "prior context. Resume directly."
+                    ),
                 }
             )
             msgs.append(
                 {
                     "role": "assistant",
-                    "content": "Understood. I have the context from our previous conversation.",
+                    "content": "Understood. Resuming where we left off.",
                 }
             )
         msgs.extend(self.messages)

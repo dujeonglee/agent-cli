@@ -1,6 +1,12 @@
 """Tests for prompts/system_prompt."""
 
-from agent_cli.prompts.system_prompt import build_system_prompt, SMALL_MODEL_HINTS
+from agent_cli.prompts.system_prompt import (
+    build_system_prompt,
+    _build_environment_section,
+    _load_directives,
+    SMALL_MODEL_HINTS,
+    MAX_DIRECTIVE_FILE_CHARS,
+)
 from agent_cli.providers.compat import ModelCapabilities
 
 
@@ -84,3 +90,106 @@ class TestBuildSystemPrompt:
     def test_rule_8_review_before_complete(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "ALWAYS call ready_for_review first" in prompt
+
+    def test_environment_section_present(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Environment" in prompt
+        assert "Working directory:" in prompt
+        assert "Date:" in prompt
+        assert "Platform:" in prompt
+
+    def test_directives_loaded_when_present(self, tmp_path, monkeypatch):
+        directive_dir = tmp_path / ".agent-cli"
+        directive_dir.mkdir()
+        (directive_dir / "DIRECTIVE.md").write_text("Always write tests.")
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [directive_dir / "DIRECTIVE.md"],
+        )
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Directives" in prompt
+        assert "Always write tests." in prompt
+
+    def test_directives_absent_when_no_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [tmp_path / "nonexistent" / "DIRECTIVE.md"],
+        )
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Directives" not in prompt
+
+
+class TestEnvironmentSection:
+    def test_contains_required_fields(self):
+        section = _build_environment_section()
+        assert "Working directory:" in section
+        assert "Date:" in section
+        assert "Platform:" in section
+
+    def test_date_format(self):
+        section = _build_environment_section()
+        # Should contain YYYY-MM-DD format
+        import re
+
+        assert re.search(r"\d{4}-\d{2}-\d{2}", section)
+
+
+class TestLoadDirectives:
+    def test_empty_when_no_files(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [tmp_path / "nope.md"],
+        )
+        assert _load_directives() == ""
+
+    def test_loads_single_file(self, tmp_path, monkeypatch):
+        d = tmp_path / ".agent-cli"
+        d.mkdir()
+        (d / "DIRECTIVE.md").write_text("Rule one.")
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [d / "DIRECTIVE.md"],
+        )
+        result = _load_directives()
+        assert "Rule one." in result
+        assert "## Directives" in result
+
+    def test_truncates_large_file(self, tmp_path, monkeypatch):
+        d = tmp_path / ".agent-cli"
+        d.mkdir()
+        (d / "DIRECTIVE.md").write_text("x" * (MAX_DIRECTIVE_FILE_CHARS + 500))
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [d / "DIRECTIVE.md"],
+        )
+        result = _load_directives()
+        assert "[truncated]" in result
+
+    def test_dedup_identical_content(self, tmp_path, monkeypatch):
+        d1 = tmp_path / "proj" / ".agent-cli"
+        d2 = tmp_path / "home" / ".agent-cli"
+        d1.mkdir(parents=True)
+        d2.mkdir(parents=True)
+        (d1 / "DIRECTIVE.md").write_text("Same rule.")
+        (d2 / "DIRECTIVE.md").write_text("Same rule.")
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [d1 / "DIRECTIVE.md", d2 / "DIRECTIVE.md"],
+        )
+        result = _load_directives()
+        assert result.count("Same rule.") == 1
+
+    def test_loads_both_when_different(self, tmp_path, monkeypatch):
+        d1 = tmp_path / "proj" / ".agent-cli"
+        d2 = tmp_path / "home" / ".agent-cli"
+        d1.mkdir(parents=True)
+        d2.mkdir(parents=True)
+        (d1 / "DIRECTIVE.md").write_text("Project rule.")
+        (d2 / "DIRECTIVE.md").write_text("User rule.")
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [d1 / "DIRECTIVE.md", d2 / "DIRECTIVE.md"],
+        )
+        result = _load_directives()
+        assert "Project rule." in result
+        assert "User rule." in result

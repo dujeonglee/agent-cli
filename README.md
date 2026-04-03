@@ -114,6 +114,27 @@ agent-cli setup
 agent-cli run "task" -m nemotron:120b
 ```
 
+### DIRECTIVE.md — 프로젝트 지시사항
+
+에이전트가 항상 따라야 하는 규칙을 `DIRECTIVE.md` 파일에 작성하면 매 세션의 시스템 프롬프트에 자동 주입됩니다.
+
+| 경로 | 용도 |
+|------|------|
+| `.agent-cli/DIRECTIVE.md` | 프로젝트별 규칙 (코딩 컨벤션, 테스트 정책 등) |
+| `~/.agent-cli/DIRECTIVE.md` | 사용자 전역 규칙 (응답 언어, 개인 선호 등) |
+
+- 두 파일 모두 존재하면 **둘 다 로드** (프로젝트 먼저, 유저 전역 뒤에)
+- 동일 내용이면 중복 제거
+- 파일당 최대 4,000자, 전체 최대 8,000자 (초과 시 잘림)
+
+예시 (`.agent-cli/DIRECTIVE.md`):
+```markdown
+# 코드 규칙
+- 코드 수정 시 관련 유닛 테스트를 반드시 추가한다
+- ruff check와 ruff format을 통과해야 한다
+- Python 3.10+ 호환을 유지한다
+```
+
 ### 환경변수
 
 | 변수 | config.json 키 | 설명 |
@@ -757,10 +778,11 @@ Artifact는 컨텍스트에 자동 주입되지 않습니다. 대신 scratchpad 
 
 [1] assistant: "Understood. I have the scratchpad context..."
 
-[2] user:      [Previous conversation summary]  ← compaction 발생 시만
-               (요약 + artifact 복구 힌트)
+[2] user:      "This conversation is being continued from earlier context
+               that was compressed. ..."          ← compaction 발생 시만
+               (요약 + resume 지시문 + artifact 복구 힌트)
 
-[3] assistant: "Understood. I have the context..."
+[3] assistant: "Understood. Resuming where we left off."
 
 [4] user:      "hooks.py 분석해줘"               ← 실제 사용자 입력
 [5] assistant: {"action": "read_file", ...}      ← LLM 응답

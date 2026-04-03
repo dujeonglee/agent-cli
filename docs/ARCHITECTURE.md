@@ -83,13 +83,13 @@ agent_cli/
 │   ├── __init__.py          (34)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (337)  ContextManager (세션별 scratchpad, 스킬 컨텍스트, compaction 힌트)
+│   ├── manager.py           (351)  ContextManager (세션별 scratchpad, 스킬 컨텍스트, compaction 힌트)
 │   ├── scratchpad.py        (413)  Scratchpad + Artifact + ContextBudget + 세션/스킬 격리
 │   └── session.py           (214)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (182)  조건부 시스템 프롬프트 빌더 + 스킬/artifact 안내
+│   ├── system_prompt.py     (268)  조건부 시스템 프롬프트 빌더 + 환경/directive/스킬 안내
 │   └── compression_prompt.py (44)  요약/증분 업데이트 프롬프트 (scratchpad과 역할 분리)
 │
 ├── skills/                         프롬프트 스킬 시스템
@@ -273,8 +273,9 @@ class ToolSchema:
 [scratchpad]  [Scratchpad — persistent task context]     ← 스킬 내부에서는 스킵
               goal, progress, decisions
 
-[summary]     [Previous conversation summary]             ← compaction 후만
-              요약 + "[artifact 경로를 read_artifact로 복구 가능]"
+[summary]     "This conversation is being continued       ← compaction 후만
+               from earlier context that was compressed."
+              요약 + resume 지시문 + artifact 복구 힌트
 
 [messages]    user: "hooks.py 분석해줘"                    ← 실제 대화
               assistant: {"action": "read_file", ...}
@@ -702,6 +703,15 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 **SetupWizard** (`setup.py`): 설정 파일이 없으면 자동 실행.
 `agent-cli setup`으로 수동 재설정 가능.
 
+**DIRECTIVE.md** — 프로젝트 지시사항 (`prompts/system_prompt.py`):
+```
+.agent-cli/DIRECTIVE.md   →  프로젝트별 규칙 (우선 로드)
+~/.agent-cli/DIRECTIVE.md →  사용자 전역 규칙
+```
+- 둘 다 존재하면 모두 로드 (content hash 중복 제거)
+- 파일당 4K char, 전체 8K char 예산 (초과 시 truncate)
+- 매 세션 시작 시 system prompt 동적 영역에 주입
+
 ### 8.1 models.json 구조
 
 ```json
@@ -804,6 +814,14 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     ├─ THINKING_MODEL_HINTS (thinking + small context일 때만)
     │
     └─ Available Skills (skill_stack에 없는 스킬만 표시, run_skill 사용 안내)
+    │
+    │  ── 동적 영역 (매 세션 변경) ──
+    │
+    ├─ Environment (항상 포함 — CWD, 날짜, 플랫폼)
+    │
+    └─ Directives (DIRECTIVE.md가 존재할 때만)
+        └─ .agent-cli/DIRECTIVE.md (프로젝트) + ~/.agent-cli/DIRECTIVE.md (유저 전역)
+        └─ 파일당 4K char, 전체 8K char 예산, content hash 중복 제거
 ```
 
 ---

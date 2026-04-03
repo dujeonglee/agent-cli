@@ -47,9 +47,72 @@ class TestContextManager:
         ctx.add("user", "new message")
         msgs = ctx.get_messages()
         summary_msgs = [
-            m for m in msgs if "[Previous conversation summary]" in m.get("content", "")
+            m
+            for m in msgs
+            if "compressed" in m.get("content", "")
+            and "Previous summary here" in m.get("content", "")
         ]
         assert len(summary_msgs) == 1
+        # Verify resume instruction is included
+        assert "Resume directly" in summary_msgs[0]["content"]
+        # Verify assistant acknowledges without recap
+        summary_idx = msgs.index(summary_msgs[0])
+        assistant_reply = msgs[summary_idx + 1]
+        assert assistant_reply["role"] == "assistant"
+        assert "Resuming" in assistant_reply["content"]
+
+    def test_no_summary_no_resume_injection(self, mock_provider, caps, tmp_path):
+        """When there is no summary, no resume messages should be injected."""
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        ctx.add("user", "hello")
+        ctx.add("assistant", "hi")
+        msgs = ctx.get_messages()
+        resume_msgs = [
+            m for m in msgs if "Resuming where we left off" in m.get("content", "")
+        ]
+        assert len(resume_msgs) == 0
+        compressed_msgs = [m for m in msgs if "compressed" in m.get("content", "")]
+        assert len(compressed_msgs) == 0
+
+    def test_summary_and_scratchpad_order(self, mock_provider, caps, tmp_path):
+        """Scratchpad block should come before summary in message order."""
+        # Create a scratchpad file so it gets injected
+        scratchpad_file = tmp_path / "scratchpad.md"
+        scratchpad_file.write_text("# Goal\nTest task")
+
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        ctx._summary = "Previous summary here"
+        ctx.add("user", "continue")
+        msgs = ctx.get_messages()
+
+        # Find indices
+        scratchpad_idx = None
+        summary_idx = None
+        for i, m in enumerate(msgs):
+            if "Scratchpad" in m.get("content", ""):
+                scratchpad_idx = i
+            if "compressed" in m.get("content", ""):
+                summary_idx = i
+
+        assert scratchpad_idx is not None, "Scratchpad block should be present"
+        assert summary_idx is not None, "Summary block should be present"
+        assert scratchpad_idx < summary_idx, "Scratchpad should come before summary"
+
+    def test_summary_injected_during_skill(self, mock_provider, caps, tmp_path):
+        """Summary should still be injected even inside a skill context."""
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        ctx._summary = "Previous summary here"
+        ctx.set_skill_context(skill_name="test_skill", parent_turn=1)
+        ctx.add("user", "skill input")
+        msgs = ctx.get_messages()
+
+        # Summary should still be present
+        summary_msgs = [m for m in msgs if "compressed" in m.get("content", "")]
+        assert len(summary_msgs) == 1
+
+        # But scratchpad should NOT be present (skill context skips it)
+        scratchpad_msgs = [m for m in msgs if "Scratchpad" in m.get("content", "")]
+        assert len(scratchpad_msgs) == 0
 
     def test_compression_triggered(self, mock_provider, caps, tmp_path):
         ctx = ContextManager(

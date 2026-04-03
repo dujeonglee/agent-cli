@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import platform
+from datetime import datetime
+from pathlib import Path
 
 from agent_cli.constants import SMALL_MODEL_CONTEXT
 
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.tools.registry import get_tool_descriptions
+
+# ── DIRECTIVE.md budget ──────────────────────────
+MAX_DIRECTIVE_FILE_CHARS = 4000
+MAX_DIRECTIVE_TOTAL_CHARS = 8000
+
+# ── DIRECTIVE.md search paths ────────────────────
+_DIRECTIVE_PATHS = [
+    Path.cwd() / ".agent-cli" / "DIRECTIVE.md",
+    Path.home() / ".agent-cli" / "DIRECTIVE.md",
+]
 
 BASE_ROLE_PROMPT = """\
 You are an AI assistant that solves tasks step-by-step using available tools.
@@ -93,6 +106,64 @@ Keep your internal reasoning brief and focused.
 Prioritize outputting the JSON response over extended reasoning."""
 
 
+def _build_environment_section() -> str:
+    """Build environment context section with CWD, date, platform."""
+    lines = ["## Environment"]
+    lines.append(f"- Working directory: {Path.cwd()}")
+    lines.append(f"- Date: {datetime.now().strftime('%Y-%m-%d')}")
+    lines.append(f"- Platform: {platform.system().lower()} ({platform.release()})")
+    return "\n".join(lines)
+
+
+def _load_directives() -> str:
+    """Load DIRECTIVE.md files from project and user paths.
+
+    Returns formatted section string, or empty string if no files found.
+    Budget: per-file MAX_DIRECTIVE_FILE_CHARS, total MAX_DIRECTIVE_TOTAL_CHARS.
+    """
+    loaded: list[str] = []
+    total_chars = 0
+    seen_hashes: set[int] = set()
+
+    for path in _DIRECTIVE_PATHS:
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not content:
+            continue
+
+        # Content-hash dedup
+        content_hash = hash(content)
+        if content_hash in seen_hashes:
+            continue
+        seen_hashes.add(content_hash)
+
+        # Per-file budget
+        if len(content) > MAX_DIRECTIVE_FILE_CHARS:
+            content = content[:MAX_DIRECTIVE_FILE_CHARS] + "\n\n[truncated]"
+
+        # Total budget
+        if total_chars + len(content) > MAX_DIRECTIVE_TOTAL_CHARS:
+            remaining = MAX_DIRECTIVE_TOTAL_CHARS - total_chars
+            if remaining > 100:
+                content = (
+                    content[:remaining] + "\n\n[truncated — directive budget exceeded]"
+                )
+            else:
+                break
+        total_chars += len(content)
+
+        scope = "project" if path.parent == Path.cwd() / ".agent-cli" else "user"
+        loaded.append(f"### {path.name} (scope: {scope})\n{content}")
+
+    if not loaded:
+        return ""
+    return "## Directives\n\n" + "\n\n".join(loaded)
+
+
 def _format_tool_block(
     active_tools: list[str],
     include_delegate: bool = False,
@@ -143,6 +214,13 @@ def build_system_prompt(
     skill_desc = build_skill_descriptions(exclude_names=skill_stack)
     if skill_desc:
         sections.append(skill_desc)
+
+    # ── Dynamic sections (change per session) ──
+    sections.append(_build_environment_section())
+
+    directives = _load_directives()
+    if directives:
+        sections.append(directives)
 
     return "\n\n".join(sections)
 
