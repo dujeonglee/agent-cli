@@ -96,10 +96,10 @@ _DELEGATE_INLINE = """\
   - "fork": subagent receives a copy of the current conversation context.
   - "inherit": subagent shares your context directly (single task only, not parallel).
   - "tools": optionally restrict which tools the subagent can use.
-  Note: inherit cannot be used with multiple tasks (parallel).
-  IMPORTANT: Multiple tasks in one call run in PARALLEL (simultaneously).
-  If task B depends on task A's result, do NOT put them in the same array.
-  Instead, call delegate twice: first A, then use A's result to call B.
+  Constraints:
+  - inherit cannot be used with multiple tasks.
+  - Multiple tasks run in PARALLEL. If task B depends on task A's result,
+    call delegate twice: first A, then use A's result to call B.
   Examples:
   - Single: {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}
   - With context: {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}
