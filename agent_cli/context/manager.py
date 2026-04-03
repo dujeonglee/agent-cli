@@ -247,6 +247,8 @@ class ContextManager:
                 data = json.loads(msg["content"])
             except (json.JSONDecodeError, TypeError, KeyError):
                 continue
+            if not isinstance(data, dict):
+                continue
             action = data.get("action", "")
             action_input = data.get("action_input")
             if not isinstance(action_input, dict):
