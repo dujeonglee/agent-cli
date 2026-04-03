@@ -4,7 +4,6 @@ from agent_cli.prompts.system_prompt import (
     build_system_prompt,
     _build_environment_section,
     _load_directives,
-    SMALL_MODEL_HINTS,
     MAX_DIRECTIVE_FILE_CHARS,
 )
 from agent_cli.providers.compat import ModelCapabilities
@@ -36,28 +35,22 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "shell" in prompt
         assert "Hashline" not in prompt  # No edit_file → no hashline guide
-        assert "read_artifact" in prompt  # Artifact guide always present
+        assert "edit_file" not in prompt  # Not in active_tools
 
-    def test_hashline_guide_with_edit(self):
+    def test_hashline_guide_inlined_with_edit(self):
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
         assert "Hashline" in prompt
+        # Should be inline, not a separate section
+        assert "## Hashline" not in prompt
 
     def test_delegate_included(self):
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
         assert "delegate" in prompt.lower()
-        assert "Delegation Rules" in prompt
+        assert "Delegation rules" in prompt
 
     def test_delegate_excluded(self):
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=False)
-        assert "Delegation Rules" not in prompt
-
-    def test_small_model_hints(self):
-        prompt = build_system_prompt(_make_caps(ctx_window=4096), ["shell"])
-        assert "concise" in prompt.lower()
-
-    def test_large_model_no_hints(self):
-        prompt = build_system_prompt(_make_caps(ctx_window=128000), ["shell"])
-        assert SMALL_MODEL_HINTS not in prompt
+        assert "Delegation rules" not in prompt
 
     def test_json_format_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
@@ -73,7 +66,7 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"], session_id="")
         assert "Current session ID" not in prompt
 
-    def test_ready_for_review_in_base_prompt(self):
+    def test_ready_for_review_in_prompt(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "ready_for_review" in prompt
         assert "complete" in prompt
@@ -83,9 +76,7 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         rfr_pos = prompt.index("ready_for_review")
         complete_pos = prompt.index('"complete"')
-        assert rfr_pos < complete_pos, (
-            "ready_for_review should appear before complete in the workflow"
-        )
+        assert rfr_pos < complete_pos
 
     def test_rule_8_review_before_complete(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
@@ -118,6 +109,72 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Directives" not in prompt
 
+    def test_task_guidelines_present(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Task Guidelines" in prompt
+        assert "Read relevant code" in prompt
+
+    def test_format_rules_present(self):
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Response Format" in prompt
+        assert "ONLY valid JSON" in prompt
+
+    def test_section_order_primacy_before_tools(self):
+        """Task Guidelines and Format Rules should appear before Available Tools."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        guidelines_pos = prompt.index("## Task Guidelines")
+        format_pos = prompt.index("## Response Format")
+        tools_pos = prompt.index("## Available Tools")
+        assert guidelines_pos < format_pos < tools_pos
+
+    def test_section_order_tools_before_environment(self):
+        """Available Tools should appear before Environment (recency section)."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        tools_pos = prompt.index("## Available Tools")
+        env_pos = prompt.index("## Environment")
+        assert tools_pos < env_pos
+
+    def test_section_order_session_in_recency(self):
+        """Session ID should appear in the recency section, after tools."""
+        prompt = build_system_prompt(_make_caps(), ["shell"], session_id="12345")
+        tools_pos = prompt.index("## Available Tools")
+        session_pos = prompt.index("## Session")
+        env_pos = prompt.index("## Environment")
+        assert tools_pos < session_pos < env_pos
+
+    def test_static_tools_before_conditional(self):
+        """Static tools (shell, read_file) should appear before conditional (edit_file)."""
+        prompt = build_system_prompt(_make_caps(), ["read_file", "shell", "edit_file"])
+        shell_pos = prompt.index("- shell:")
+        edit_pos = prompt.index("- edit_file:")
+        assert shell_pos < edit_pos
+
+    def test_artifact_guide_inlined(self):
+        prompt = build_system_prompt(_make_caps(), ["shell", "read_artifact"])
+        assert "read_artifact" in prompt
+        assert "scratchpad" in prompt.lower()
+        # Should be inline, not a separate section
+        assert "## Scratchpad & Artifacts" not in prompt
+
+    def test_no_small_model_hints(self):
+        """Small model hints should no longer be included."""
+        prompt = build_system_prompt(_make_caps(ctx_window=4096), ["shell"])
+        assert "Keep responses concise" not in prompt
+
+    def test_no_thinking_hints(self):
+        """Thinking model hints should no longer be included."""
+        caps = ModelCapabilities(
+            context_window=4096,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_tool_calling=False,
+            supports_thinking=True,
+            thinking_budget=1024,
+            supports_strict_schema=False,
+        )
+        prompt = build_system_prompt(caps, ["shell"])
+        assert "Thinking Budget" not in prompt
+
 
 class TestEnvironmentSection:
     def test_contains_required_fields(self):
@@ -128,7 +185,6 @@ class TestEnvironmentSection:
 
     def test_date_format(self):
         section = _build_environment_section()
-        # Should contain YYYY-MM-DD format
         import re
 
         assert re.search(r"\d{4}-\d{2}-\d{2}", section)

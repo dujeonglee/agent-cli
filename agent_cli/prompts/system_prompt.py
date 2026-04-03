@@ -1,12 +1,16 @@
-"""Conditional system prompt builder adapted to model capabilities."""
+"""Conditional system prompt builder adapted to model capabilities.
+
+Layout (optimized for LLM attention):
+  Primacy  — Role, Task Guidelines, Format Rules
+  Middle   — Available Tools (guides inlined), Skills
+  Recency  — Session, Environment, Directives
+"""
 
 from __future__ import annotations
 
 import platform
 from datetime import datetime
 from pathlib import Path
-
-from agent_cli.constants import SMALL_MODEL_CONTEXT
 
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.tools.registry import get_tool_descriptions
@@ -21,89 +25,104 @@ _DIRECTIVE_PATHS = [
     Path.home() / ".agent-cli" / "DIRECTIVE.md",
 ]
 
-BASE_ROLE_PROMPT = """\
-You are an AI assistant that solves tasks step-by-step using available tools.
+# ── Section 1: Role ──────────────────────────────
+ROLE_PROMPT = """\
+You are an AI assistant that solves tasks step-by-step using available tools."""
 
-## Response Format (STRICT)
+# ── Section 2: Task Guidelines ───────────────────
+TASK_GUIDELINES = """\
+## Task Guidelines
+- Read relevant code before changing it. Do not modify files you have not read.
+- Keep changes tightly scoped to the request. Do not add unrelated cleanup or refactoring.
+- Do not create new files unless required to complete the task.
+- If an approach fails, diagnose the cause before switching tactics.
+- Be careful not to introduce security vulnerabilities (command injection, path traversal, etc.).
+- Report outcomes honestly — if verification failed or was not run, say so explicitly."""
+
+# ── Section 3: Format Rules ──────────────────────
+FORMAT_RULES = """\
+## Response Format
 You MUST respond with a single JSON object and nothing else.
 No markdown fences, no extra text — ONLY the JSON object.
 
 {"thought": "your reasoning", "action": "tool_name", "action_input": {...}}
 
-When you believe the task is done, first call "ready_for_review" to verify:
+When the task is done, first call "ready_for_review" to verify:
 {"thought": "summary of what I did", "action": "ready_for_review", "action_input": {"summary": "brief summary"}}
 
 After reviewing, call "complete" to finish:
-{"thought": "confirmed all requirements met", "action": "complete", "action_input": {"result": "your answer"}}"""
+{"thought": "confirmed all requirements met", "action": "complete", "action_input": {"result": "your answer"}}
 
-HASHLINE_GUIDE = """\
-## Hashline Editing
-read_file returns lines tagged as LINE#HASH:content, e.g.:
-  1#VR:def hello():
-  2#KT:    return "world"
-  3#ZZ:
+Rules:
+1. Always include "thought" in your JSON.
+2. "action_input" must match the tool's input schema.
+3. If an observation shows an error, fix parameters and retry.
+4. Respond in the same language as the user.
+5. Do NOT include "observation" — it is injected by the system.
+6. Output ONLY valid JSON, nothing else.
+7. NEVER invoke yourself recursively — do NOT run agent-cli or any command that starts this tool again via shell.
+8. Before calling complete, ALWAYS call ready_for_review first to verify your work."""
 
-To edit, use edit_file with hashline refs copied EXACTLY from read_file output.
-- replace single line:  {"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}
-- replace range:        {"op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}
-- delete lines:         {"op": "replace", "pos": "2#KT", "lines": []}
-- insert after:         {"op": "append", "pos": "1#VR", "lines": ["    # new comment"]}
-- insert before:        {"op": "prepend", "pos": "1#VR", "lines": ["# header"]}
-- append to EOF:        {"op": "append", "lines": ["# end of file"]}
+# ── Inline guides for tools ──────────────────────
+_HASHLINE_INLINE = """\
 
-IMPORTANT: Always read the file first to get current hashline tags.
-If a hash mismatch error occurs, re-read the file and retry with fresh tags.
-Use write_file only for creating NEW files, not for editing existing ones."""
+  Hashline editing guide:
+  read_file returns lines tagged as LINE#HASH:content, e.g.:
+    1#VR:def hello():
+    2#KT:    return "world"
+    3#ZZ:
+  Use edit_file with hashline refs copied EXACTLY from read_file output.
+  - replace single line:  {"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}
+  - replace range:        {"op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}
+  - delete lines:         {"op": "replace", "pos": "2#KT", "lines": []}
+  - insert after:         {"op": "append", "pos": "1#VR", "lines": ["    # new comment"]}
+  - insert before:        {"op": "prepend", "pos": "1#VR", "lines": ["# header"]}
+  - append to EOF:        {"op": "append", "lines": ["# end of file"]}
+  IMPORTANT: Always read the file first to get current hashline tags.
+  If a hash mismatch error occurs, re-read the file and retry with fresh tags.
+  Use write_file only for creating NEW files, not for editing existing ones."""
 
-DELEGATE_GUIDE = """\
-## Delegation Rules
-- Only delegate tasks that are fully independent and self-contained
-- The subagent has NO memory of this conversation
-- Include ALL details: file paths, content, specific instructions
-- NEVER use pronouns or references to prior context in the task
-- Good: "Read /tmp/data.csv and count the number of rows"
-- Bad: "Analyze the file we discussed earlier"
-"""
+_DELEGATE_INLINE = """\
 
-DELEGATE_DESC = (
-    "Delegate a self-contained subtask to an independent subagent. "
-    "The subagent has NO context from this conversation — the task "
-    "description must include ALL necessary details."
-)
-DELEGATE_SCHEMA = '{"task": "fully self-contained task description"}'
+  Delegation rules:
+  - Only delegate tasks that are fully independent and self-contained.
+  - The subagent has NO memory of this conversation.
+  - Include ALL details: file paths, content, specific instructions.
+  - NEVER use pronouns or references to prior context in the task.
+  - Good: "Read /tmp/data.csv and count the number of rows"
+  - Bad: "Analyze the file we discussed earlier\""""
 
-ARTIFACT_GUIDE = """\
-## Scratchpad & Artifacts
-A scratchpad is maintained with your task progress and decisions.
-Each tool result is saved as an artifact file on disk.
-The scratchpad Progress section shows what was done and where the artifact is stored.
-If you need detailed results from a previous step, use read_artifact tool:
+_ARTIFACT_INLINE = """\
+
+  A scratchpad tracks your task progress and decisions.
+  Each tool result is saved as an artifact file on disk.
+  The scratchpad Progress section shows what was done and where the artifact is stored.
+  To load details from a previous step:
   - Read artifact: {"action": "read_artifact", "action_input": {"path": "artifacts/turn_0003.md"}}
   - List artifacts: {"action": "read_artifact", "action_input": {"mode": "list"}}
-  - Search by tag: {"action": "read_artifact", "action_input": {"mode": "search", "tag": "filename.py"}}
-Do NOT read all artifacts — only load what is needed for the current step."""
+  - Search by tag:  {"action": "read_artifact", "action_input": {"mode": "search", "tag": "filename.py"}}
+  Do NOT read all artifacts — only load what is needed for the current step."""
 
-RULES = """\
-## Rules
-1. Always include "thought" in your JSON
-2. "action_input" must match the tool's input schema
-3. If observation shows error, fix parameters and retry
-4. Respond in the same language as the user
-5. Do NOT include "observation" — that is injected by the system
-6. Output ONLY valid JSON, nothing else
-7. NEVER invoke yourself recursively — do NOT run agent-cli, python agent-cli.py, or any command that starts this tool again via shell
-8. Before calling complete, ALWAYS call ready_for_review first to verify your work"""
+# Map tool names to their inline guides
+_TOOL_INLINE_GUIDES: dict[str, str] = {
+    "edit_file": _HASHLINE_INLINE,
+    "delegate": _DELEGATE_INLINE,
+    "read_artifact": _ARTIFACT_INLINE,
+}
 
-SMALL_MODEL_HINTS = """\
-## Important
-Keep responses concise. Prefer short thoughts.
-When reading files, request specific line ranges if possible.
-Avoid reading entire large files."""
 
-THINKING_MODEL_HINTS = """\
-## Thinking Budget
-Keep your internal reasoning brief and focused.
-Prioritize outputting the JSON response over extended reasoning."""
+def _build_tools_section(
+    active_tools: list[str],
+    include_delegate: bool = False,
+) -> str:
+    """Build Available Tools section with inline guides.
+
+    Static tools come first (stable for KV cache), conditional tools last.
+    """
+    tool_block = get_tool_descriptions(
+        active_tools, include_delegate, inline_guides=_TOOL_INLINE_GUIDES
+    )
+    return f"## Available Tools\n{tool_block}"
 
 
 def _build_environment_section() -> str:
@@ -164,14 +183,6 @@ def _load_directives() -> str:
     return "## Directives\n\n" + "\n\n".join(loaded)
 
 
-def _format_tool_block(
-    active_tools: list[str],
-    include_delegate: bool = False,
-) -> str:
-    """Generate tool descriptions for the system prompt."""
-    return get_tool_descriptions(active_tools, include_delegate)
-
-
 def build_system_prompt(
     capabilities: ModelCapabilities,
     active_tools: list[str],
@@ -179,43 +190,31 @@ def build_system_prompt(
     skill_stack: list[str] | None = None,
     session_id: str = "",
 ) -> str:
-    """Build a system prompt adapted to model capabilities and active tools."""
-    sections = [BASE_ROLE_PROMPT]
+    """Build a system prompt adapted to model capabilities and active tools.
 
-    if session_id:
-        sections.append(f"## Session\nCurrent session ID: {session_id}")
+    Section order is optimized for LLM attention patterns:
+      Primacy  — identity and behavioral principles (strong attention)
+      Middle   — reference material: tools, guides, skills (looked up as needed)
+      Recency  — current context and user rules (strong attention)
+    """
+    sections: list[str] = []
 
-    # Tool descriptions (only active tools)
-    tool_block = _format_tool_block(active_tools, include_delegate)
-    sections.append(f"## Available Tools\n{tool_block}")
+    # ── Primacy: identity + principles ──
+    sections.append(ROLE_PROMPT)
+    sections.append(TASK_GUIDELINES)
+    sections.append(FORMAT_RULES)
 
-    # Conditional guidelines
-    if "edit_file" in active_tools:
-        sections.append(HASHLINE_GUIDE)
+    # ── Middle: reference material ──
+    sections.append(_build_tools_section(active_tools, include_delegate))
 
-    if include_delegate:
-        sections.append(DELEGATE_GUIDE)
-
-    sections.append(ARTIFACT_GUIDE)
-    sections.append(RULES)
-
-    # Small model hints
-    if capabilities.context_window <= SMALL_MODEL_CONTEXT:
-        sections.append(SMALL_MODEL_HINTS)
-
-    # Thinking model hints for small context + thinking
-    if (
-        capabilities.thinking_budget > 0
-        and capabilities.context_window <= SMALL_MODEL_CONTEXT
-    ):
-        sections.append(THINKING_MODEL_HINTS)
-
-    # Inject available skills for LLM auto-invocation
     skill_desc = build_skill_descriptions(exclude_names=skill_stack)
     if skill_desc:
         sections.append(skill_desc)
 
-    # ── Dynamic sections (change per session) ──
+    # ── Recency: current context + user rules ──
+    if session_id:
+        sections.append(f"## Session\nCurrent session ID: {session_id}")
+
     sections.append(_build_environment_section())
 
     directives = _load_directives()

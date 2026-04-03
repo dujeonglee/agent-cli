@@ -278,20 +278,33 @@ def convert_to_openai_tools(
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
     include_delegate: bool = False,
+    inline_guides: dict[str, str] | None = None,
 ) -> str:
     """Generate tool description text for system prompt.
 
     Args:
         tool_names: Filter to specific tools. None = all tools.
         include_delegate: Whether to include delegate tool.
+        inline_guides: Map of tool name → extra guide text to append.
+
+    Tools are ordered: always-present first (KV cache stable),
+    conditional (edit_file, delegate) last.
     """
+    guides = inline_guides or {}
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
     # Always include essential tools in descriptions
     for t in _ALWAYS_INCLUDE:
         if t not in names:
             names = [*names, t]
+
+    # Partition: static tools first, conditional tools last
+    conditional = {"edit_file", "delegate"}
+    static_names = [n for n in names if n not in conditional]
+    cond_names = [n for n in names if n in conditional]
+    ordered = static_names + cond_names
+
     lines = []
-    for name in names:
+    for name in ordered:
         schema = TOOL_SCHEMAS.get(name)
         if schema is None:
             continue
@@ -301,12 +314,18 @@ def get_tool_descriptions(
                 for k, v in schema.parameters.get("properties", {}).items()
             },
         )
-        lines.append(f"- {name}: {schema.description}\n  Input JSON: {params_str}")
+        entry = f"- {name}: {schema.description}\n  Input JSON: {params_str}"
+        if name in guides:
+            entry += guides[name]
+        lines.append(entry)
     if include_delegate:
-        lines.append(
+        entry = (
             f"- delegate: {DELEGATE_TOOL_SCHEMA.description}\n"
             f'  Input JSON: {{"task": "fully self-contained task description"}}'
         )
+        if "delegate" in guides:
+            entry += guides["delegate"]
+        lines.append(entry)
     return "\n".join(lines)
 
 
