@@ -97,10 +97,13 @@ _DELEGATE_INLINE = """\
   - "inherit": subagent shares your context directly (single task only, not parallel).
   - "tools": optionally restrict which tools the subagent can use.
   Note: inherit cannot be used with multiple tasks (parallel).
+  IMPORTANT: Multiple tasks in one call run in PARALLEL (simultaneously).
+  If task B depends on task A's result, do NOT put them in the same array.
+  Instead, call delegate twice: first A, then use A's result to call B.
   Examples:
   - Single: {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}
   - With context: {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}
-  - Parallel: {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
+  - Parallel (independent): {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
   - Read-only: {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}\""""
 
 _ARTIFACT_INLINE = """\
