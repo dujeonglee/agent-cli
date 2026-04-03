@@ -9,7 +9,6 @@ from __future__ import annotations
 import copy
 import tempfile
 import threading
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -264,16 +263,8 @@ def _run_parallel(
         threads.append(t)
         t.start()
 
-    deadline = time.monotonic() + timeout
     for t in threads:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        t.join(timeout=remaining)
-
-    # Signal remaining threads to stop gracefully
-    if any(t.is_alive() for t in threads):
-        stop_event.set()
+        t.join()
 
     return _format_parallel_results(task_specs, results)
 
