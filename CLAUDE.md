@@ -24,6 +24,9 @@
 
 - `agent_cli/` — 소스 코드 패키지
 - `tests/` — 유닛 + 통합 테스트
+- `docs/` — 아키텍처 문서 + 설계 문서 (`delegate-redesign/` 등)
 - `~/.agent-cli/models.json` — 사용자 전역 모델 설정 (자동 저장 대상)
+- `~/.agent-cli/DIRECTIVE.md` — 사용자 전역 에이전트 지시사항
 - `.agent-cli/` — 프로젝트 로컬 설정 + 스킬 (.gitignore 대상)
+- `.agent-cli/DIRECTIVE.md` — 프로젝트별 에이전트 지시사항
 - `agent_cli/default_models.json` — 패키지 기본 모델 정의
