@@ -528,6 +528,13 @@ class AgentLoop:
                     self.suppress_output,
                     thought=llm_text[:100],
                 )
+                if not self.skill_name and not self.suppress_output:
+                    render_step(
+                        "observation",
+                        obs,
+                        self.iteration,
+                        tool_name="ready_for_review",
+                    )
                 _append_native_observation(
                     self.messages,
                     self.ctx,
@@ -820,6 +827,13 @@ class AgentLoop:
                 self.suppress_output,
                 thought=parsed.thought or "",
             )
+            if not self.skill_name and not self.suppress_output:
+                render_step(
+                    "observation",
+                    obs,
+                    self.iteration,
+                    tool_name="ready_for_review",
+                )
             obs_msg = (
                 f"Observation: {obs}\n\nReview your work and respond with JSON only."
             )

@@ -2613,6 +2613,87 @@ class TestReadyForReviewTextPath:
         obs_contents = [m["content"] for m in messages if m["role"] == "user"]
         assert any(query_text in c for c in obs_contents)
 
+    def test_ready_for_review_renders_in_main_loop(self, caps, tmp_path):
+        """ready_for_review should render observation in main loop (not skill)."""
+        from unittest.mock import patch
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "I think I'm done",
+                    "action": "ready_for_review",
+                    "action_input": {"summary": "Did everything"},
+                }
+            ),
+            _complete("All done"),
+        )
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(
+            provider=provider,
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        with patch("agent_cli.loop.render_step") as mock_render:
+            run_loop(
+                query="Fix the bug",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                suppress_output=False,
+                ctx=ctx,
+            )
+            # render_step should have been called for ready_for_review observation
+            render_calls = [
+                c
+                for c in mock_render.call_args_list
+                if c.args[0] == "observation"
+                and c.kwargs.get("tool_name") == "ready_for_review"
+            ]
+            assert len(render_calls) >= 1
+
+    def test_ready_for_review_not_rendered_in_skill(self, caps, tmp_path):
+        """ready_for_review should NOT render observation inside a skill."""
+        from unittest.mock import patch
+
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "ready_for_review",
+                    "action_input": {"summary": "Done"},
+                }
+            ),
+            _complete("ok"),
+        )
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(
+            provider=provider,
+            model="test",
+            capabilities=caps,
+            scratchpad_dir=tmp_path,
+        )
+        with patch("agent_cli.loop.render_step") as mock_render:
+            run_loop(
+                query="Greet Alice",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                suppress_output=False,
+                skill_name="greet",
+                ctx=ctx,
+            )
+            # render_step should NOT be called for ready_for_review in skill mode
+            render_calls = [
+                c
+                for c in mock_render.call_args_list
+                if c.args[0] == "observation"
+                and c.kwargs.get("tool_name") == "ready_for_review"
+            ]
+            assert len(render_calls) == 0
+
 
 class TestNoOutputTruncation:
     """Verify tool output is passed to LLM without truncation."""
