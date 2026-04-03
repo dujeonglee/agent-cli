@@ -9,11 +9,17 @@ Layout (optimized for LLM attention):
 from __future__ import annotations
 
 import platform
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.tools.registry import get_tool_descriptions
+
+# ── Git Context budget ─────────────────────────
+MAX_GIT_DIFF_CHARS = 4000
+_GIT_CMD_TIMEOUT = 3  # seconds
 
 # ── DIRECTIVE.md budget ──────────────────────────
 MAX_DIRECTIVE_FILE_CHARS = 4000
@@ -139,6 +145,53 @@ def _build_environment_section() -> str:
     return "\n".join(lines)
 
 
+def _run_git_cmd(args: list[str]) -> str | None:
+    """Run a git command and return stdout, or None on failure."""
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_CMD_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def _build_git_context_section() -> str:
+    """Build Git context section with current branch and diff.
+
+    Returns formatted section string, or empty string if:
+    - git is not installed
+    - CWD is not a git repository
+    - git commands fail or timeout
+    """
+    if shutil.which("git") is None:
+        return ""
+
+    status_output = _run_git_cmd(["git", "status", "--short", "--branch"])
+    if status_output is None:
+        return ""
+
+    lines = ["## Git Context"]
+    lines.append(f"$ git status --short --branch\n{status_output.rstrip()}")
+
+    diff_output = _run_git_cmd(["git", "diff", "HEAD"])
+    if diff_output:
+        if len(diff_output) > MAX_GIT_DIFF_CHARS:
+            total = len(diff_output)
+            diff_output = (
+                diff_output[:MAX_GIT_DIFF_CHARS]
+                + f"\n[diff truncated — {total}chars total]"
+            )
+        lines.append(f"$ git diff HEAD\n{diff_output.rstrip()}")
+
+    return "\n\n".join(lines)
+
+
 def _load_directives() -> str:
     """Load DIRECTIVE.md files from project and user paths.
 
@@ -221,6 +274,10 @@ def build_system_prompt(
         sections.append(f"## Session\nCurrent session ID: {session_id}")
 
     sections.append(_build_environment_section())
+
+    git_context = _build_git_context_section()
+    if git_context:
+        sections.append(git_context)
 
     directives = _load_directives()
     if directives:

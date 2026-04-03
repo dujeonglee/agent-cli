@@ -1,9 +1,15 @@
 """Tests for prompts/system_prompt."""
 
+from subprocess import CompletedProcess
+from unittest.mock import patch
+
 from agent_cli.prompts.system_prompt import (
-    build_system_prompt,
+    MAX_GIT_DIFF_CHARS,
     _build_environment_section,
+    _build_git_context_section,
     _load_directives,
+    _run_git_cmd,
+    build_system_prompt,
     MAX_DIRECTIVE_FILE_CHARS,
 )
 from agent_cli.providers.compat import ModelCapabilities
@@ -48,7 +54,10 @@ class TestBuildSystemPrompt:
         assert "delegate" in prompt.lower()
         assert "tasks" in prompt
 
-    def test_delegate_excluded(self):
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_delegate_excluded(self, mock_git_ctx):
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=False)
         assert "delegate" not in prompt.split("## Available Tools")[1]
 
@@ -263,3 +272,179 @@ class TestLoadDirectives:
         result = _load_directives()
         assert "Project rule." in result
         assert "User rule." in result
+
+
+class TestRunGitCmd:
+    """G-01 ~ G-05: _run_git_cmd() helper tests."""
+
+    @patch("agent_cli.prompts.system_prompt.subprocess.run")
+    def test_run_git_cmd_success(self, mock_run):
+        """G-01: Returns stdout on success."""
+        mock_run.return_value = CompletedProcess(
+            args=[], returncode=0, stdout="output\n"
+        )
+        result = _run_git_cmd(["git", "status"])
+        assert result == "output\n"
+        mock_run.assert_called_once()
+
+    @patch("agent_cli.prompts.system_prompt.subprocess.run")
+    def test_run_git_cmd_nonzero_exit(self, mock_run):
+        """G-02: Returns None on non-zero exit code."""
+        mock_run.return_value = CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: not a git repo"
+        )
+        assert _run_git_cmd(["git", "status"]) is None
+
+    @patch("agent_cli.prompts.system_prompt.subprocess.run")
+    def test_run_git_cmd_timeout(self, mock_run):
+        """G-03: Returns None on timeout."""
+        import subprocess
+
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=3)
+        assert _run_git_cmd(["git", "diff", "HEAD"]) is None
+
+    @patch("agent_cli.prompts.system_prompt.subprocess.run")
+    def test_run_git_cmd_file_not_found(self, mock_run):
+        """G-04: Returns None when git binary not found."""
+        mock_run.side_effect = FileNotFoundError("git not found")
+        assert _run_git_cmd(["git", "status"]) is None
+
+    @patch("agent_cli.prompts.system_prompt.subprocess.run")
+    def test_run_git_cmd_os_error(self, mock_run):
+        """G-05: Returns None on OSError."""
+        mock_run.side_effect = OSError("permission denied")
+        assert _run_git_cmd(["git", "status"]) is None
+
+
+class TestBuildGitContextSection:
+    """G-06 ~ G-12: _build_git_context_section() tests."""
+
+    @patch("agent_cli.prompts.system_prompt.shutil.which", return_value=None)
+    def test_git_context_no_git_binary(self, mock_which):
+        """G-06: Returns empty string when git is not installed."""
+        assert _build_git_context_section() == ""
+
+    @patch("agent_cli.prompts.system_prompt._run_git_cmd", return_value=None)
+    @patch("agent_cli.prompts.system_prompt.shutil.which", return_value="/usr/bin/git")
+    def test_git_context_not_a_repo(self, mock_which, mock_git):
+        """G-07: Returns empty string when not a git repo."""
+        assert _build_git_context_section() == ""
+
+    @patch("agent_cli.prompts.system_prompt._run_git_cmd")
+    @patch("agent_cli.prompts.system_prompt.shutil.which", return_value="/usr/bin/git")
+    def test_git_context_with_status_and_diff(self, mock_which, mock_git):
+        """G-08: Includes both status and diff when available."""
+        mock_git.side_effect = [
+            "## main\n M file.py\n",
+            "diff --git a/file.py b/file.py\n+new line\n",
+        ]
+        result = _build_git_context_section()
+        assert "## Git Context" in result
+        assert "git status --short --branch" in result
+        assert "git diff HEAD" in result
+        assert "M file.py" in result
+        assert "+new line" in result
+
+    @patch("agent_cli.prompts.system_prompt._run_git_cmd")
+    @patch("agent_cli.prompts.system_prompt.shutil.which", return_value="/usr/bin/git")
+    def test_git_context_status_only_no_diff(self, mock_which, mock_git):
+        """G-09: Shows only status when diff is empty."""
+        mock_git.side_effect = [
+            "## main\n",
+            "",  # empty diff
+        ]
+        result = _build_git_context_section()
+        assert "## Git Context" in result
+        assert "git status --short --branch" in result
+        assert "git diff HEAD" not in result
+
+    @patch("agent_cli.prompts.system_prompt._run_git_cmd")
+    @patch("agent_cli.prompts.system_prompt.shutil.which", return_value="/usr/bin/git")
+    def test_git_context_diff_truncation(self, mock_which, mock_git):
+        """G-10: Truncates diff exceeding MAX_GIT_DIFF_CHARS."""
+        large_diff = "x" * (MAX_GIT_DIFF_CHARS + 500)
+        mock_git.side_effect = [
+            "## main\n",
+            large_diff,
+        ]
+        result = _build_git_context_section()
+        assert "[diff truncated" in result
+        assert f"{len(large_diff)}chars total" in result
+
+    @patch("agent_cli.prompts.system_prompt._run_git_cmd")
+    @patch("agent_cli.prompts.system_prompt.shutil.which", return_value="/usr/bin/git")
+    def test_git_context_diff_at_budget_boundary(self, mock_which, mock_git):
+        """G-11: Does not truncate diff exactly at MAX_GIT_DIFF_CHARS."""
+        exact_diff = "x" * MAX_GIT_DIFF_CHARS
+        mock_git.side_effect = [
+            "## main\n",
+            exact_diff,
+        ]
+        result = _build_git_context_section()
+        assert "[diff truncated" not in result
+        assert "git diff HEAD" in result
+
+    @patch("agent_cli.prompts.system_prompt._run_git_cmd")
+    @patch("agent_cli.prompts.system_prompt.shutil.which", return_value="/usr/bin/git")
+    def test_git_context_diff_failure_shows_status(self, mock_which, mock_git):
+        """G-12: Shows status only when git diff fails (returns None)."""
+        mock_git.side_effect = [
+            "## main\n M file.py\n",
+            None,  # diff failed
+        ]
+        result = _build_git_context_section()
+        assert "## Git Context" in result
+        assert "git status --short --branch" in result
+        assert "git diff HEAD" not in result
+
+
+class TestSystemPromptGitIntegration:
+    """G-13 ~ G-16: build_system_prompt() Git context integration tests."""
+
+    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
+    def test_system_prompt_includes_git_context(self, mock_git_ctx):
+        """G-13: Git context section appears in system prompt."""
+        mock_git_ctx.return_value = (
+            "## Git Context\n$ git status --short --branch\n## main"
+        )
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Git Context" in prompt
+
+    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
+    def test_system_prompt_git_context_after_environment(self, mock_git_ctx):
+        """G-14: Git Context section appears after Environment section."""
+        mock_git_ctx.return_value = (
+            "## Git Context\n$ git status --short --branch\n## main"
+        )
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        env_pos = prompt.index("## Environment")
+        git_pos = prompt.index("## Git Context")
+        assert env_pos < git_pos
+
+    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
+    def test_system_prompt_git_context_before_directives(
+        self, mock_git_ctx, tmp_path, monkeypatch
+    ):
+        """G-15: Git Context section appears before Directives section."""
+        mock_git_ctx.return_value = (
+            "## Git Context\n$ git status --short --branch\n## main"
+        )
+        directive_dir = tmp_path / ".agent-cli"
+        directive_dir.mkdir()
+        (directive_dir / "DIRECTIVE.md").write_text("Test directive.")
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [directive_dir / "DIRECTIVE.md"],
+        )
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        git_pos = prompt.index("## Git Context")
+        dir_pos = prompt.index("## Directives")
+        assert git_pos < dir_pos
+
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_system_prompt_no_git_context_when_no_git(self, mock_git_ctx):
+        """G-16: No Git Context section when git is not available."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Git Context" not in prompt

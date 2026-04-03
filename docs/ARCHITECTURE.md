@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-03-31
+> 최종 업데이트: 2026-04-04
 > 버전: 2.0.0-dev
-> 총 소스: 7,144 LOC (43 Python 파일) + 8,905 LOC 테스트 (23 파일)
-> 총 테스트: 548 유닛 + 56 통합 = 604개
+> 총 소스: 7,799 LOC (43 Python 파일) + 10,227 LOC 테스트 (23 파일)
+> 총 테스트: 633 유닛 + 62 통합 = 695개
 
 ---
 
@@ -89,7 +89,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (267)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency)
+│   ├── system_prompt.py     (329)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Git 스냅샷)
 │   └── compression_prompt.py (45)  하이브리드 요약 프롬프트 (LLM 3섹션 + 규칙 기반 Files Touched)
 │
 ├── skills/                         프롬프트 스킬 시스템
@@ -826,6 +826,10 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     │
     ├─ Environment (항상 포함 — CWD, 날짜, 플랫폼)
     │
+    ├─ Git Context (Git 저장소일 때만)
+    │   └─ git status --short --branch + git diff HEAD (최대 4K char, 초과 시 잘림)
+    │   └─ git 미설치 / 비-git 디렉토리 → 섹션 생략
+    │
     └─ Directives (DIRECTIVE.md가 존재할 때만)
         └─ .agent-cli/DIRECTIVE.md (프로젝트) + ~/.agent-cli/DIRECTIVE.md (유저 전역)
         └─ 파일당 4K char, 전체 8K char 예산, content hash 중복 제거
@@ -839,9 +843,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 21 | 617 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | 21 | 633 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 62 | `pytest tests/test_integration.py` |
-| **전체** | **21** | **679** | `pytest tests/` |
+| **전체** | **21** | **695** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

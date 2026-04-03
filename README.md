@@ -114,6 +114,15 @@ agent-cli setup
 agent-cli run "task" -m nemotron:120b
 ```
 
+### Git 상태 스냅샷
+
+Git 저장소 안에서 실행하면, 시스템 프롬프트에 현재 Git 상태가 자동 포함됩니다:
+
+- `git status --short --branch` — 현재 브랜치와 변경 파일 목록
+- `git diff HEAD` — 스테이징 전/후 diff (최대 4,000자, 초과 시 잘림)
+
+Git이 설치되지 않았거나, Git 저장소가 아닌 경우에는 해당 섹션이 생략됩니다.
+
 ### DIRECTIVE.md — 프로젝트 지시사항
 
 에이전트가 항상 따라야 하는 규칙을 `DIRECTIVE.md` 파일에 작성하면 매 세션의 시스템 프롬프트에 자동 주입됩니다.
