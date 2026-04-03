@@ -1,5 +1,6 @@
 """Tests for context/manager."""
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -238,6 +239,158 @@ class TestSerializationTruncation:
             )
             prompt_text = messages_arg[0]["content"]
             assert "truncated" in prompt_text
+
+
+class TestHybridCompaction:
+    """Tests for rule-based file extraction + LLM summary hybrid."""
+
+    def test_extract_files_from_tool_calls(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        msgs = [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {"action": "read_file", "action_input": {"path": "src/main.py"}}
+                ),
+            },
+            {"role": "user", "content": "Observation: file contents"},
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "action": "edit_file",
+                        "action_input": {"path": "src/main.py", "edits": []},
+                    }
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "action": "write_file",
+                        "action_input": {"path": "tests/test.py", "content": "..."},
+                    }
+                ),
+            },
+        ]
+        read, modified = ctx._extract_files_touched(msgs)
+        assert read == {"src/main.py"}
+        assert modified == {"src/main.py", "tests/test.py"}
+
+    def test_extract_skips_non_json(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        msgs = [
+            {"role": "assistant", "content": "plain text response"},
+            {"role": "user", "content": "hello"},
+        ]
+        read, modified = ctx._extract_files_touched(msgs)
+        assert read == set()
+        assert modified == set()
+
+    def test_extract_skips_shell_commands(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        msgs = [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {"action": "shell", "action_input": {"command": "ls -la"}}
+                ),
+            },
+        ]
+        read, modified = ctx._extract_files_touched(msgs)
+        assert read == set()
+        assert modified == set()
+
+    def test_format_files_touched(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        result = ctx._format_files_touched({"a.py", "b.py"}, {"a.py"})
+        assert "## Files Touched" in result
+        assert "a.py" in result
+        assert "b.py" in result
+        assert "- Read:" in result
+        assert "- Modified:" in result
+
+    def test_format_files_touched_empty(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        result = ctx._format_files_touched(set(), set())
+        assert "(none)" in result
+
+    def test_parse_files_from_summary(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        summary = (
+            "## Goal\nSome goal\n\n"
+            "## Files Touched\n"
+            "- Read: a.py, b.py\n"
+            "- Modified: a.py\n\n"
+            "## Other\nstuff"
+        )
+        read, modified = ctx._parse_files_from_summary(summary)
+        assert read == {"a.py", "b.py"}
+        assert modified == {"a.py"}
+
+    def test_parse_files_no_section(self, mock_provider, caps, tmp_path):
+        ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
+        summary = "## Goal\nSome goal\n\n## Working State\nAll good"
+        read, modified = ctx._parse_files_from_summary(summary)
+        assert read == set()
+        assert modified == set()
+
+    def test_compress_includes_files_section(self, mock_provider, caps, tmp_path):
+        """After compression, summary should contain rule-based Files Touched."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # Add messages with tool calls
+        for _ in range(5):
+            ctx.messages.append(
+                {
+                    "role": "user",
+                    "content": "x" * 200,
+                }
+            )
+            ctx.messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "action": "read_file",
+                            "action_input": {"path": "config.py"},
+                        }
+                    ),
+                }
+            )
+
+        ctx.force_compress()
+        assert "## Files Touched" in ctx._summary
+        assert "config.py" in ctx._summary
+
+    def test_incremental_compress_merges_files(self, mock_provider, caps, tmp_path):
+        """Incremental compression should merge files from prior summary."""
+        ctx = ContextManager(
+            mock_provider, "test-model", caps, keep_recent=1, scratchpad_dir=tmp_path
+        )
+        # Set up existing summary with prior files
+        ctx._summary = (
+            "## Goal\nOld goal\n\n## Files Touched\n- Read: old.py\n- Modified: (none)"
+        )
+        # Add new messages with different file
+        for _ in range(5):
+            ctx.messages.append({"role": "user", "content": "x" * 200})
+            ctx.messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "action": "read_file",
+                            "action_input": {"path": "new.py"},
+                        }
+                    ),
+                }
+            )
+
+        ctx.force_compress()
+        assert "old.py" in ctx._summary  # preserved from prior
+        assert "new.py" in ctx._summary  # added from new messages
 
 
 class TestCompressionFailureTracking:

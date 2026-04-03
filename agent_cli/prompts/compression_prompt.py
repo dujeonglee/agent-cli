@@ -2,15 +2,18 @@
 
 Designed to complement the scratchpad (which tracks Progress / Decisions / Open Questions).
 The summary focuses on context that the scratchpad does NOT capture:
-goal, working state, conversation direction, and files touched.
+goal, working state, and conversation direction.
+
+Files Touched is extracted by rule-based parsing (not LLM) for accuracy.
 """
 
 SUMMARIZATION_PROMPT = """\
 Summarize the following conversation into these sections.
-Be concise. Preserve file paths, error messages, and command outputs exactly.
+Be concise. Preserve error messages and command outputs exactly.
 
 NOTE: Progress and Decisions are tracked separately in a scratchpad.
 Do NOT duplicate them here. Focus on context the scratchpad cannot capture.
+NOTE: Files Touched is extracted automatically — do NOT include it.
 
 ## Goal
 What the user is trying to accomplish (1-2 sentences).
@@ -24,16 +27,13 @@ Preserve exact error messages but summarize long tracebacks.
 What was agreed on next, the user's intent, and any stated preferences
 for how to proceed.
 
-## Files Touched
-- Read: [list of file paths read]
-- Modified: [list of file paths written/edited]
-
 Reply with ONLY the summary in the format above. Do not continue the conversation."""
 
 INCREMENTAL_UPDATE_PROMPT = """\
 Update the existing summary below with new information from the recent conversation.
 Do NOT re-summarize from scratch. Only ADD or REPLACE information in the relevant sections.
 If a section has no new information, keep it unchanged.
+Do NOT include a "Files Touched" section — it is handled automatically.
 
 ## Existing Summary
 {existing_summary}
@@ -41,4 +41,5 @@ If a section has no new information, keep it unchanged.
 ## New Conversation to Incorporate
 {new_messages}
 
-Reply with the FULL updated summary in the same format. Do not continue the conversation."""
+Reply with the FULL updated summary (Goal, Working State, Conversation Direction only).
+Do not continue the conversation."""

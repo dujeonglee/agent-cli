@@ -2,10 +2,12 @@
 
 Supports optional scratchpad + artifact persistence for long-running tasks.
 Scratchpad content survives compaction as a context anchor.
+Uses hybrid compaction: LLM for semantic summary, rule-based for file extraction.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from agent_cli.constants import CHARS_PER_TOKEN
@@ -172,6 +174,15 @@ class ContextManager:
             system += f"\n\n## Additional Instruction\n{user_instruction}"
 
         try:
+            # Rule-based: extract files touched from messages being compressed
+            new_read, new_modified = self._extract_files_touched(old_msgs)
+
+            # Incremental: merge with files from prior summary
+            if self._summary:
+                prev_read, prev_modified = self._parse_files_from_summary(self._summary)
+                new_read |= prev_read
+                new_modified |= prev_modified
+
             response = self.provider.call(
                 messages=[{"role": "user", "content": prompt_text}],
                 system=system,
@@ -179,14 +190,14 @@ class ContextManager:
                 capabilities=self.capabilities,
                 skip_json_format=True,
             )
-            self._summary = response.content
-            # Add artifact recovery hint after compaction
+            llm_summary = response.content
+            files_section = self._format_files_touched(new_read, new_modified)
             artifact_hint = (
                 "[Context was compressed. Previous tool outputs are no longer "
                 "in conversation history. Check the scratchpad Progress section "
                 "for artifact paths — use read_file to reload details if needed.]"
             )
-            self._summary = f"{self._summary}\n\n{artifact_hint}"
+            self._summary = f"{llm_summary}\n\n{files_section}\n\n{artifact_hint}"
             self.messages = kept_msgs
             self._msg_chars = sum(len(m["content"]) for m in kept_msgs)
             # Reset failure tracking on success
@@ -217,6 +228,64 @@ class ContextManager:
                     f"{self._compress_failures} times. "
                     f"Context may grow unbounded.[/]"
                 )
+
+    @staticmethod
+    def _extract_files_touched(messages: list[dict]) -> tuple[set[str], set[str]]:
+        """Extract file paths from assistant tool-call messages (rule-based).
+
+        Returns (files_read, files_modified) sets.
+        """
+        read: set[str] = set()
+        modified: set[str] = set()
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            try:
+                data = json.loads(msg["content"])
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
+            action = data.get("action", "")
+            action_input = data.get("action_input")
+            if not isinstance(action_input, dict):
+                continue
+            path = action_input.get("path", "")
+            if not path:
+                continue
+            if action == "read_file":
+                read.add(path)
+            elif action in ("write_file", "edit_file"):
+                modified.add(path)
+        return read, modified
+
+    @staticmethod
+    def _format_files_touched(read: set[str], modified: set[str]) -> str:
+        """Format extracted file sets into the Files Touched section."""
+        lines = ["## Files Touched"]
+        lines.append(f"- Read: {', '.join(sorted(read)) or '(none)'}")
+        lines.append(f"- Modified: {', '.join(sorted(modified)) or '(none)'}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_files_from_summary(summary: str) -> tuple[set[str], set[str]]:
+        """Parse existing Files Touched section from a prior summary."""
+        read: set[str] = set()
+        modified: set[str] = set()
+        in_files = False
+        for line in summary.splitlines():
+            if line.strip() == "## Files Touched":
+                in_files = True
+                continue
+            if in_files and line.startswith("##"):
+                break
+            if in_files and line.startswith("- Read:"):
+                paths = line[len("- Read:") :].strip()
+                if paths and paths != "(none)":
+                    read.update(p.strip() for p in paths.split(","))
+            elif in_files and line.startswith("- Modified:"):
+                paths = line[len("- Modified:") :].strip()
+                if paths and paths != "(none)":
+                    modified.update(p.strip() for p in paths.split(","))
+        return read, modified
 
     def _serialize_messages(self, messages: list[dict]) -> str:
         """Serialize messages to text format for summarization (pi-mono pattern)."""

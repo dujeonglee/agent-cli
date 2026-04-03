@@ -20,7 +20,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 - **3단계 파싱 폴백**: json.loads → JSON repair → regex 추출
 - **Constrained Decoding**: Ollama JSON Schema, OpenAI response_format, Anthropic tool calling
 - **Hashline 편집**: CRC32 해시 기반 정밀 파일 편집 + 퍼지 매칭
-- **컨텍스트 압축**: LLM 기반 구조화 요약 + 증분 업데이트
+- **컨텍스트 압축**: 하이브리드 컴팩션 (LLM 의미 요약 + 규칙 기반 파일 추출)
 - **모델 적응형**: context window, thinking budget에 따른 자동 조정
 
 ### 외부 의존성
@@ -83,14 +83,14 @@ agent_cli/
 │   ├── __init__.py          (34)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (351)  ContextManager (세션별 scratchpad, 스킬 컨텍스트, compaction 힌트)
+│   ├── manager.py           (420)  ContextManager (하이브리드 컴팩션, scratchpad, 스킬 컨텍스트)
 │   ├── scratchpad.py        (413)  Scratchpad + Artifact + ContextBudget + 세션/스킬 격리
 │   └── session.py           (214)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
 │   ├── system_prompt.py     (267)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency)
-│   └── compression_prompt.py (44)  요약/증분 업데이트 프롬프트 (scratchpad과 역할 분리)
+│   └── compression_prompt.py (45)  하이브리드 요약 프롬프트 (LLM 3섹션 + 규칙 기반 Files Touched)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
@@ -445,18 +445,25 @@ total_chars > max_context_chars?
     ▼ Yes
 _compress(user_instruction="") 호출
     │
-    ├─ _summary 없음 (첫 압축)
-    │   └─ SUMMARIZATION_PROMPT로 전체 요약 생성
-    │      (Goal, Working State, Conversation Direction, Files Touched)
-    │      ※ Progress/Decisions는 scratchpad에 위임 — 요약에서 제외
+    ├─ 규칙 기반: _extract_files_touched(old_msgs)
+    │   └─ assistant 메시지의 action/action_input.path에서 파일 경로 추출
+    │   └─ read_file → files_read, write_file/edit_file → files_modified
     │
-    └─ _summary 있음 (후속 압축)
-        └─ INCREMENTAL_UPDATE_PROMPT로 기존 요약에 새 정보만 추가
+    ├─ 증분: 기존 _summary에서 Files Touched 파싱 → 새 파일과 merge
+    │
+    ├─ LLM 요약 (의미적 판단이 필요한 3개 섹션만)
+    │   ├─ _summary 없음 (첫 압축)
+    │   │   └─ SUMMARIZATION_PROMPT → Goal, Working State, Conversation Direction
+    │   └─ _summary 있음 (후속 압축)
+    │       └─ INCREMENTAL_UPDATE_PROMPT → 기존 3개 섹션 증분 업데이트
+    │   ※ Progress/Decisions는 scratchpad에 위임 — 요약에서 제외
+    │   ※ Files Touched는 규칙 기반이 담당 — LLM에 요청하지 않음
+    │
+    ├─ 합치기: summary = LLM 요약 + Files Touched (규칙 기반) + artifact 힌트
     │
     └─ user_instruction 있으면 system prompt에 "## Additional Instruction"으로 추가
 
 도구 결과는 2,000자로 절단 후 요약에 포함
-압축 후 "[artifact 경로를 read_artifact로 복구 가능]" 힌트 자동 추가
 수동 트리거: /compact [prompt] 명령으로 즉시 압축 가능
 ```
 
