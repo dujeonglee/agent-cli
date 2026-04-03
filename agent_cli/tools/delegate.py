@@ -136,6 +136,7 @@ def _run_single(
     suppress_output: bool = False,
     session=None,
     skill_stack: list[str] | None = None,
+    stop_event=None,
 ) -> ToolResult:
     """Execute a single delegate task."""
     from agent_cli.loop import run_loop
@@ -188,6 +189,7 @@ def _run_single(
         ctx=ctx,
         session=session,
         skill_stack=skill_stack,
+        stop_event=stop_event,
     )
 
     delegate_result = DelegateResult(output=result_str)
@@ -232,6 +234,7 @@ def _run_parallel(
             )
 
     results: list[ToolResult | None] = [None] * len(task_specs)
+    stop_event = threading.Event()
 
     def worker(index: int, spec: dict) -> None:
         results[index] = _run_single(
@@ -252,6 +255,7 @@ def _run_parallel(
             suppress_output=True,  # Always suppress for parallel
             session=session,
             skill_stack=skill_stack,
+            stop_event=stop_event,
         )
 
     threads = []
@@ -266,6 +270,10 @@ def _run_parallel(
         if remaining <= 0:
             break
         t.join(timeout=remaining)
+
+    # Signal remaining threads to stop gracefully
+    if any(t.is_alive() for t in threads):
+        stop_event.set()
 
     return _format_parallel_results(task_specs, results)
 

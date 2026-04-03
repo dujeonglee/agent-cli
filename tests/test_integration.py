@@ -520,87 +520,50 @@ class TestSkillInvocationControl:
 
 
 class TestDelegateSubagent:
-    """Integration tests for delegate tool with real subagent subprocess."""
+    """Integration tests for in-process delegate tool."""
 
-    def test_delegate_subprocess_executes_tools(
+    def test_delegate_none_executes_tools(
         self, integration_model, ollama_provider, model_capabilities
     ):
-        """Delegate spawns subagent that uses tools and returns result."""
+        """Delegate (context=none) runs subagent that uses tools."""
         result = run_loop(
             query="Use the delegate tool to count .py files in the tests/ directory. "
-            "Delegate the task with this exact description: "
-            '"Count the number of .py files in the tests/ directory using '
-            "the shell tool with the command: find tests/ -name *.py -type f | wc -l. "
-            'Return only the number."',
+            "Use this exact delegate call: "
+            '{"tasks": [{"task": "Count .py files in tests/ directory using '
+            "shell command: find tests/ -name '*.py' -type f | wc -l. "
+            'Return only the number."}]}',
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
             max_iter=5,
         )
-        # Should get a result (delegate succeeded or LLM did it directly)
         assert result is not None
         assert len(result) > 0
 
-    def test_delegate_headless_no_session_files(self, integration_model, tmp_path):
-        """Subagent runs --headless: uses tmpdir, no persistent session."""
-        import subprocess
+    def test_delegate_fork_has_parent_context(
+        self, integration_model, ollama_provider, model_capabilities, tmp_path
+    ):
+        """Delegate (context=fork) subagent can access parent conversation history."""
+        from agent_cli.context.manager import ContextManager
 
-        from agent_cli.tools.delegate import _build_subprocess_cmd
-
-        cmd = _build_subprocess_cmd(
-            [
-                "run",
-                "Count the number of .py files in the tests/ directory "
-                "using the shell command: find tests/ -name '*.py' -type f | wc -l. "
-                "Return only the integer count.",
-                "--provider",
-                "ollama",
-                "--model",
-                integration_model,
-                "--base-url",
-                OLLAMA_BASE_URL,
-                "--headless",
-            ]
+        ctx = ContextManager(
+            provider=ollama_provider,
+            model=integration_model,
+            capabilities=model_capabilities,
+            scratchpad_dir=tmp_path,
         )
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        stdout = proc.stdout.strip()
-
-        # Subagent should return a result
-        assert proc.returncode == 0, f"stderr: {proc.stderr}"
-        assert len(stdout) > 0
-
-        # No session files created in .agent-cli/ for this run
-        # (headless uses tmpdir which is auto-cleaned)
-
-    def test_delegate_headless_verbose_shows_tools(self, integration_model):
-        """Subagent with -v shows tool usage in stderr debug log."""
-        import subprocess
-
-        from agent_cli.tools.delegate import _build_subprocess_cmd
-
-        cmd = _build_subprocess_cmd(
-            [
-                "run",
-                "Read the file agent_cli/constants.py and return the first constant name defined in it.",
-                "--provider",
-                "ollama",
-                "--model",
-                integration_model,
-                "--base-url",
-                OLLAMA_BASE_URL,
-                "--headless",
-                "-v",
-            ]
+        result = run_loop(
+            query="First, remember that the secret password is DOLPHIN42. "
+            "Then delegate a task with context fork: "
+            '{"tasks": [{"task": "What is the secret password mentioned earlier?", '
+            '"context": "fork"}]}. '
+            "Return whatever the delegate says.",
+            provider=ollama_provider,
+            capabilities=model_capabilities,
+            model=integration_model,
+            suppress_output=True,
+            max_iter=8,
+            ctx=ctx,
         )
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        stderr = proc.stderr
-
-        # Debug log should show tool usage
-        assert "TOOL" in stderr or "PARSED" in stderr, (
-            f"Expected debug log with TOOL/PARSED, got stderr: {stderr}"
-        )
-        # Should show read_file or shell was used
-        assert "read_file" in stderr or "shell" in stderr, (
-            f"Expected read_file or shell in debug log, got: {stderr}"
-        )
+        assert result is not None

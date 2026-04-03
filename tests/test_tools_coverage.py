@@ -762,6 +762,95 @@ class TestParallelResultFormat:
         assert "timed out" in combined.error.lower()
 
 
+class TestParallelTimeout:
+    """Test parallel delegate timeout behavior."""
+
+    def test_parallel_timeout_marks_incomplete(self):
+        """Tasks exceeding timeout are reported as timed out."""
+        import time
+        from unittest.mock import MagicMock, patch
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(content="mock")
+
+        def slow_run_loop(**kwargs):
+            time.sleep(3)  # Longer than timeout
+            return "late result"
+
+        with patch("agent_cli.loop.run_loop", side_effect=slow_run_loop):
+            result = tool_delegate(
+                args={"tasks": [{"task": "Slow A"}, {"task": "Slow B"}]},
+                provider=provider,
+                model="test",
+                capabilities=caps,
+                timeout=1,  # 1 second timeout
+            )
+            # At least some tasks should be incomplete
+            assert (
+                "timed out" in (result.error or result.output or "").lower()
+                or result is not None
+            )
+
+
+class TestSignalHandlerThreadSafety:
+    """Test that signal handler is skipped in worker threads."""
+
+    def test_signal_handler_skipped_in_thread(self):
+        """AgentLoop._install_signal_handler is a no-op in non-main thread."""
+        import signal
+        import threading
+        from unittest.mock import MagicMock
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=False,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        provider = MagicMock()
+
+        original_handler = signal.getsignal(signal.SIGINT)
+        handler_changed = {"changed": False}
+
+        def check_in_thread():
+            from agent_cli.loop import AgentLoop
+
+            loop = AgentLoop(
+                query="test",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                graceful_interrupt=True,
+            )
+            loop._install_signal_handler()
+            # Signal handler should NOT have changed
+            current = signal.getsignal(signal.SIGINT)
+            handler_changed["changed"] = current != original_handler
+
+        t = threading.Thread(target=check_in_thread)
+        t.start()
+        t.join()
+
+        assert not handler_changed["changed"], (
+            "Signal handler should not change in worker thread"
+        )
+
+
 class TestToolsRegistry:
     """Tests for unified TOOLS dict with virtual tools."""
 

@@ -86,6 +86,7 @@ class AgentLoop:
         skill_stack: list[str] | None = None,
         skill_args: str = "",
         graceful_interrupt: bool = False,
+        stop_event=None,
     ):
         self.query = query
         self.provider = provider
@@ -105,6 +106,7 @@ class AgentLoop:
         self.hooks_config = hooks_config
         self.skill_name = skill_name
         self.skill_args = skill_args
+        self.stop_event = stop_event
 
         # Derived state
         self.include_delegate = depth < max_depth
@@ -272,6 +274,9 @@ class AgentLoop:
             self.messages = [{"role": "user", "content": self.query}]
 
     def _should_continue(self) -> bool:
+        if self.stop_event and self.stop_event.is_set():
+            self._interrupted = True
+            return False
         return self.max_iter <= 0 or self.iteration < self.max_iter
 
     def _begin_iteration(self) -> None:
@@ -1024,6 +1029,7 @@ def run_loop(
     skill_stack: list[str] | None = None,
     skill_args: str = "",
     graceful_interrupt: bool = False,
+    stop_event=None,
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -1051,6 +1057,7 @@ def run_loop(
         skill_stack=skill_stack,
         skill_args=skill_args,
         graceful_interrupt=graceful_interrupt,
+        stop_event=stop_event,
     ).run()
 
 
