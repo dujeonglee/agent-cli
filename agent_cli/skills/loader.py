@@ -22,10 +22,13 @@ except ImportError:
 from agent_cli.hooks import parse_hooks_config
 from agent_cli.skills.models import Skill
 
-# Search order: project root first (priority), then user home
+# Search order: project root first (priority), then user home, then built-in
+_BUILTIN_DIR = Path(__file__).parent / "builtin"
+
 _SEARCH_PATHS = [
     Path.cwd() / ".agent-cli" / "skills",
     Path.home() / ".agent-cli" / "skills",
+    _BUILTIN_DIR,
 ]
 
 _FRONTMATTER_PATTERN = re.compile(

@@ -283,7 +283,18 @@ LLM은 `read_context` 도구로 이전 세션의 세부 이력을 조회할 수 
 
 특정 작업에 최적화된 재사용 가능한 프롬프트 템플릿. Claude Code 스킬 포맷과 호환.
 
-### 기본 내장 스킬
+### 패키지 내장 스킬 (built-in)
+
+패키지와 함께 배포되는 메타 스킬:
+
+| 스킬 | 설명 |
+|------|------|
+| `/create-skill <name>` | 새 스킬 파일을 대화형으로 생성 (SKILL.md + scripts/) |
+| `/create-agent <name>` | 새 에이전트 정의 파일을 대화형으로 생성 |
+
+사용자가 같은 이름의 스킬을 `.agent-cli/skills/`에 만들면 built-in을 오버라이드합니다.
+
+### 프로젝트 스킬 예시
 
 ```bash
 # 코드 리뷰
@@ -305,7 +316,7 @@ agent-cli run "/optimize ./agent_cli"
 
 ### 커스텀 스킬 작성
 
-`.agent-cli/skills/my-skill.md` 파일을 만들면 `/my-skill` 명령어가 자동 등록됩니다:
+`/create-skill my-skill` 명령으로 대화형 생성하거나, `.agent-cli/skills/my-skill.md` 파일을 직접 만들면 `/my-skill` 명령어가 자동 등록됩니다:
 
 ```markdown
 ---

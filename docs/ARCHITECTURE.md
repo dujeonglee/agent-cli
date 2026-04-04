@@ -95,8 +95,11 @@ agent_cli/
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
 │   ├── models.py            (21)   Skill 데이터 모델 (model/context/hooks/invocation)
-│   ├── loader.py            (136)  스킬 파일 검색/파싱 (플랫+디렉토리, PyYAML, hooks, 캐싱)
-│   └── executor.py          (127)  인자/변수/!`cmd` 치환 + model/context/skill_name 오버라이드
+│   ├── loader.py            (139)  스킬 파일 검색/파싱 (프로젝트→전역→built-in, PyYAML, 캐싱)
+│   ├── executor.py          (127)  인자/변수/!`cmd` 치환 + model/context/skill_name 오버라이드
+│   └── builtin/                    패키지 내장 스킬
+│       ├── create-skill.md         스킬 생성 메타 스킬
+│       └── create-agent.md         에이전트 생성 메타 스킬
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)
@@ -1050,10 +1053,15 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 
 ### 13.4 스킬 검색 경로
 
-1. `.agent-cli/skills/*.md` (프로젝트 로컬, 우선)
+1. `.agent-cli/skills/*.md` (프로젝트 로컬, 최우선)
 2. `~/.agent-cli/skills/*.md` (사용자 전역)
+3. `agent_cli/skills/builtin/*.md` (패키지 내장, 최하위)
 
-동일 name의 스킬이 양쪽에 있으면 프로젝트 로컬이 우선합니다.
+동일 name의 스킬이 여러 위치에 있으면 상위 우선순위가 오버라이드합니다.
+
+패키지 내장 스킬:
+- `create-skill` — 새 스킬 파일 대화형 생성
+- `create-agent` — 새 에이전트 정의 파일 대화형 생성
 
 ### 13.5 실행 플로우
 
