@@ -161,6 +161,21 @@ class TestDelegateSchema:
         props = DELEGATE_TOOL_SCHEMA.parameters["properties"]
         assert "task" not in props  # Only inside tasks array items
 
+    def test_delegate_schema_has_agent_field(self):
+        """AG-29: DELEGATE_TOOL_SCHEMA items have agent field."""
+        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+
+        items = DELEGATE_TOOL_SCHEMA.parameters["properties"]["tasks"]["items"]
+        assert "agent" in items["properties"]
+        assert items["properties"]["agent"]["type"] == "string"
+
+    def test_delegate_schema_agent_not_required(self):
+        """AG-30: agent field is not in required list."""
+        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+
+        items = DELEGATE_TOOL_SCHEMA.parameters["properties"]["tasks"]["items"]
+        assert "agent" not in items["required"]
+
 
 class TestEmptyStringStripping:
     def test_optional_empty_string_removed(self):

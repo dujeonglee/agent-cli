@@ -87,6 +87,7 @@ class AgentLoop:
         skill_args: str = "",
         graceful_interrupt: bool = False,
         stop_event=None,
+        agent_role: str = "",
     ):
         self.query = query
         self.provider = provider
@@ -107,6 +108,7 @@ class AgentLoop:
         self.skill_name = skill_name
         self.skill_args = skill_args
         self.stop_event = stop_event
+        self.agent_role = agent_role
 
         # Derived state
         self.include_delegate = depth < max_depth
@@ -226,6 +228,7 @@ class AgentLoop:
             include_delegate=self.include_delegate,
             skill_stack=self.skill_stack,
             session_id=session_id,
+            agent_role=self.agent_role,
         )
 
         if not self.suppress_output:
@@ -1030,6 +1033,7 @@ def run_loop(
     skill_args: str = "",
     graceful_interrupt: bool = False,
     stop_event=None,
+    agent_role: str = "",
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -1058,6 +1062,7 @@ def run_loop(
         skill_args=skill_args,
         graceful_interrupt=graceful_interrupt,
         stop_event=stop_event,
+        agent_role=agent_role,
     ).run()
 
 

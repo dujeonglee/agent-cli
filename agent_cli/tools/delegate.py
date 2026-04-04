@@ -7,6 +7,7 @@ Uses tasks array API: single item = sync, multiple items = parallel (threading).
 from __future__ import annotations
 
 import copy
+import re
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -16,6 +17,72 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.tools.result import ToolResult
+
+# ── Agent file loading ──────────────────────────
+
+_AGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+_AGENT_SEARCH_PATHS = [
+    Path.cwd() / ".agent-cli" / "agents",
+    Path.home() / ".agent-cli" / "agents",
+]
+
+_FRONTMATTER_PATTERN = re.compile(
+    r"^---\s*\n(.*?)\n---\s*\n(.*)",
+    re.S,
+)
+
+
+def _validate_agent_name(name: str) -> bool:
+    """Validate agent name: alphanumeric, hyphens, underscores only."""
+    return bool(_AGENT_NAME_PATTERN.match(name))
+
+
+def _load_agent(name: str) -> tuple[str | None, dict, str | None]:
+    """Load agent definition file.
+
+    Returns:
+        (role_prompt, config_dict, error_message)
+        - Success: (body, {allowed-tools, model, ...}, None)
+        - Failure: (None, {}, error_message)
+    """
+    if not _validate_agent_name(name):
+        return None, {}, f"Invalid agent name '{name}': only [a-zA-Z0-9_-] allowed"
+
+    for search_dir in _AGENT_SEARCH_PATHS:
+        agent_file = search_dir / f"{name}.md"
+        if agent_file.is_file():
+            try:
+                text = agent_file.read_text(encoding="utf-8")
+            except OSError as e:
+                return None, {}, f"Cannot read agent file {agent_file}: {e}"
+
+            # Parse frontmatter
+            match = _FRONTMATTER_PATTERN.match(text)
+            if match:
+                frontmatter_text = match.group(1)
+                body = match.group(2).strip()
+                try:
+                    import yaml
+
+                    config = yaml.safe_load(frontmatter_text)
+                    if not isinstance(config, dict):
+                        config = {}
+                except Exception:
+                    # YAML parse failure: ignore frontmatter, use full text as body
+                    config = {}
+                    body = text.strip()
+            else:
+                config = {}
+                body = text.strip()
+
+            if not body:
+                return None, {}, f"Agent file '{name}.md' has no content"
+
+            return body, config, None
+
+    paths_str = ", ".join(str(p / f"{name}.md") for p in _AGENT_SEARCH_PATHS)
+    return None, {}, f"Agent '{name}' not found. Searched: {paths_str}"
 
 
 @dataclass
@@ -121,6 +188,7 @@ def _run_single(
     task: str,
     context_mode: str = "none",
     allowed_tools: list[str] | None = None,
+    agent_name: str = "",
     parent_ctx: ContextManager | None = None,
     provider: LLMProvider | None = None,
     model: str = "",
@@ -147,6 +215,23 @@ def _run_single(
         return ToolResult(
             False, error="Delegation rejected: missing provider/capabilities"
         )
+
+    # ── Agent loading ──
+    agent_role = ""
+    if agent_name:
+        role_prompt, agent_config, error = _load_agent(agent_name)
+        if error:
+            return ToolResult(False, error=f"Delegation rejected: {error}")
+
+        agent_role = role_prompt
+
+        # Agent config overrides (lower priority than explicit task params)
+        if allowed_tools is None and agent_config.get("allowed-tools"):
+            allowed_tools = agent_config["allowed-tools"]
+
+        agent_model = agent_config.get("model")
+        if agent_model and isinstance(agent_model, str):
+            model = agent_model
 
     scratchpad_dir = _resolve_scratchpad_dir(session, parent_ctx)
 
@@ -189,6 +274,7 @@ def _run_single(
         session=session,
         skill_stack=skill_stack,
         stop_event=stop_event,
+        agent_role=agent_role,
     )
 
     delegate_result = DelegateResult(output=result_str)
@@ -240,6 +326,7 @@ def _run_parallel(
             task=spec["task"],
             context_mode=spec.get("context", "none"),
             allowed_tools=spec.get("tools"),
+            agent_name=spec.get("agent", ""),
             parent_ctx=parent_ctx,
             provider=provider,
             model=model,
@@ -318,6 +405,7 @@ def tool_delegate(
             task=spec.get("task", ""),
             context_mode=spec.get("context", "none"),
             allowed_tools=spec.get("tools"),
+            agent_name=spec.get("agent", ""),
             suppress_output=suppress_output,
             **common_kwargs,
         )

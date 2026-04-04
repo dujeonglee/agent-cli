@@ -97,6 +97,8 @@ _DELEGATE_INLINE = """\
   - "fork": subagent receives a copy of the current conversation context.
   - "inherit": subagent shares your context directly (single task only, not parallel).
   - "tools": optionally restrict which tools the subagent can use.
+  - "agent": optionally specify a predefined agent from .agent-cli/agents/{name}.md.
+    The agent file defines the subagent's role/principles and can set allowed-tools/model.
   Constraints:
   - inherit cannot be used with multiple tasks.
   - Multiple tasks run in PARALLEL. If task B depends on task A's result,
@@ -104,6 +106,8 @@ _DELEGATE_INLINE = """\
   Examples:
   - Single: {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}
   - With context: {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}
+  - With agent: {"tasks": [{"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}]}
+  - Agent + context: {"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]}
   - Parallel (independent): {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
   - Read-only: {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}\""""
 
@@ -251,6 +255,7 @@ def build_system_prompt(
     include_delegate: bool = False,
     skill_stack: list[str] | None = None,
     session_id: str = "",
+    agent_role: str = "",
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools.
 
@@ -282,6 +287,10 @@ def build_system_prompt(
     git_context = _build_git_context_section()
     if git_context:
         sections.append(git_context)
+
+    # Agent role injection (before directives for strong attention)
+    if agent_role:
+        sections.append(f"## Agent Role\n{agent_role}")
 
     directives = _load_directives()
     if directives:

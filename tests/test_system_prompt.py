@@ -7,6 +7,7 @@ from agent_cli.prompts.system_prompt import (
     MAX_GIT_DIFF_CHARS,
     _build_environment_section,
     _build_git_context_section,
+    _DELEGATE_INLINE,
     _load_directives,
     _run_git_cmd,
     build_system_prompt,
@@ -37,11 +38,14 @@ class TestBuildSystemPrompt:
         assert "edit_file" in prompt
         assert "shell" in prompt
 
-    def test_active_tools_only(self):
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_active_tools_only(self, mock_git_ctx):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "shell" in prompt
         assert "Hashline" not in prompt  # No edit_file → no hashline guide
-        assert "edit_file" not in prompt  # Not in active_tools
+        assert "- edit_file:" not in prompt  # Not in active_tools list
 
     def test_hashline_guide_inlined_with_edit(self):
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
@@ -197,6 +201,57 @@ class TestBuildSystemPrompt:
         )
         prompt = build_system_prompt(caps, ["shell"])
         assert "Thinking Budget" not in prompt
+
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_agent_role_included(self, mock_git_ctx):
+        """AG-23: agent_role adds '## Agent Role' section to prompt."""
+        prompt = build_system_prompt(
+            _make_caps(), ["shell"], agent_role="You are a reviewer"
+        )
+        assert "## Agent Role" in prompt
+        assert "You are a reviewer" in prompt
+
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_agent_role_excluded_when_empty(self, mock_git_ctx):
+        """AG-24: Empty agent_role does not add '## Agent Role' section."""
+        prompt = build_system_prompt(_make_caps(), ["shell"], agent_role="")
+        assert "## Agent Role" not in prompt
+
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_agent_role_before_directives(self, mock_git_ctx, tmp_path, monkeypatch):
+        """AG-25: Agent Role section appears before Directives."""
+        directive_dir = tmp_path / ".agent-cli"
+        directive_dir.mkdir()
+        (directive_dir / "DIRECTIVE.md").write_text("Test directive.")
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [directive_dir / "DIRECTIVE.md"],
+        )
+        prompt = build_system_prompt(
+            _make_caps(), ["shell"], agent_role="You are a reviewer"
+        )
+        role_pos = prompt.index("## Agent Role")
+        dir_pos = prompt.index("## Directives")
+        assert role_pos < dir_pos
+
+    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
+    def test_agent_role_after_git_context(self, mock_git_ctx):
+        """AG-26: Agent Role section appears after Git Context."""
+        mock_git_ctx.return_value = (
+            "## Git Context\n$ git status --short --branch\n## main"
+        )
+        prompt = build_system_prompt(
+            _make_caps(), ["shell"], agent_role="You are a reviewer"
+        )
+        git_pos = prompt.index("## Git Context")
+        role_pos = prompt.index("## Agent Role")
+        assert git_pos < role_pos
 
 
 class TestEnvironmentSection:
@@ -448,3 +503,16 @@ class TestSystemPromptGitIntegration:
         """G-16: No Git Context section when git is not available."""
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Git Context" not in prompt
+
+
+class TestDelegateInlineAgent:
+    """AG-27 ~ AG-28: _DELEGATE_INLINE agent field tests."""
+
+    def test_delegate_inline_mentions_agent(self):
+        """AG-27: _DELEGATE_INLINE contains agent field description."""
+        assert '"agent"' in _DELEGATE_INLINE
+        assert ".agent-cli/agents/" in _DELEGATE_INLINE
+
+    def test_delegate_inline_agent_example(self):
+        """AG-28: _DELEGATE_INLINE contains agent usage example."""
+        assert '"agent": "security-reviewer"' in _DELEGATE_INLINE

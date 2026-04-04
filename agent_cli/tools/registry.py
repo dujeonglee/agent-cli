@@ -232,6 +232,10 @@ DELEGATE_TOOL_SCHEMA = ToolSchema(
                             "items": {"type": "string"},
                             "description": "Allowed tools (omit for default set)",
                         },
+                        "agent": {
+                            "type": "string",
+                            "description": "Agent name to load role/config from .agent-cli/agents/{name}.md",
+                        },
                     },
                     "required": ["task"],
                 },

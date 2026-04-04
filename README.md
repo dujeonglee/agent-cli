@@ -498,7 +498,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `write_file` | 파일 생성/덮어쓰기 |
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
-| `delegate` | 서브에이전트에 독립 작업 위임 |
+| `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
 | `read_context` | 이전 세션 이력 조회 (목록/세부) |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
@@ -594,12 +594,16 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 | `inherit` | 부모 컨텍스트를 공유. 메시지가 부모에 누적 |
 
 ```json
-{"action": "delegate", "action_input": {"task": "Read /tmp/data.csv and count rows"}}
-{"action": "delegate", "action_input": {"task": "Fix the bug we found", "context": "fork"}}
-{"action": "delegate", "action_input": {"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}}
+{"action": "delegate", "action_input": {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}}
+{"action": "delegate", "action_input": {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}}
+{"action": "delegate", "action_input": {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}}
+{"action": "delegate", "action_input": {"tasks": [{"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}]}}
+{"action": "delegate", "action_input": {"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]}}
 ```
 
 `tools` 파라미터로 서브에이전트가 사용할 수 있는 도구를 제한할 수 있습니다.
+
+`agent` 파라미터로 `.agent-cli/agents/{name}.md` 파일에서 정의된 에이전트 역할을 로드할 수 있습니다. 에이전트 파일은 YAML frontmatter로 `allowed-tools`, `model` 등을 설정하고, 본문에 역할/원칙을 정의합니다. 검색 경로: 프로젝트 로컬(`.agent-cli/agents/`) → 유저 전역(`~/.agent-cli/agents/`).
 
 ### run_skill — 스킬 실행
 
