@@ -113,3 +113,36 @@ def render_spinner_start(message: str = "thinking...") -> None:
 
 def render_spinner_stop() -> None:
     _renderer.spinner_stop()
+
+
+def load_renderer_by_name(name: str) -> None:
+    """Load and activate a renderer by filename (without .py).
+
+    Looks for agent_cli/render/{name}.py with a class that subclasses Renderer.
+    Example: load_renderer_by_name("fancy") → loads FancyRenderer from fancy.py
+    """
+    import importlib
+
+    try:
+        module = importlib.import_module(f"agent_cli.render.{name}")
+    except ImportError:
+        raise ValueError(
+            f"Renderer '{name}' not found. "
+            f"Expected module at agent_cli/render/{name}.py"
+        )
+
+    renderer_cls = None
+    for attr_name in dir(module):
+        attr = getattr(module, attr_name)
+        if (
+            isinstance(attr, type)
+            and issubclass(attr, Renderer)
+            and attr is not Renderer
+        ):
+            renderer_cls = attr
+            break
+
+    if renderer_cls is None:
+        raise ValueError(f"No Renderer subclass found in agent_cli/render/{name}.py")
+
+    set_renderer(renderer_cls(console))

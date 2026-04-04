@@ -87,6 +87,18 @@ def _maybe_setup() -> None:
         SetupWizard().run()
 
 
+def _apply_style(style: str | None) -> None:
+    """Apply renderer style if specified."""
+    if style:
+        from agent_cli.render import load_renderer_by_name
+
+        try:
+            load_renderer_by_name(style)
+        except ValueError as e:
+            console.print(f"[{C['error']}]{e}[/]")
+            raise typer.Exit(1)
+
+
 _SKILL_NOT_FOUND = (
     object()
 )  # Sentinel to distinguish "not a skill" from "skill returned None"
@@ -393,8 +405,14 @@ def run(
         hidden=True,
         help="No session/rendering; volatile tmpdir context (used by subagents)",
     ),
+    style: Optional[str] = typer.Option(
+        None,
+        "--style",
+        help="Renderer style: minimal (default), fancy, or custom renderer name",
+    ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
+    _apply_style(style)
     # /sh prefix: Run shell command directly without LLM
     if not headless and (query.startswith("/sh ") or query == "/sh"):
         cmd = query[3:].strip()
@@ -619,8 +637,14 @@ def chat(
         "--resume",
         help="Resume a previous session by ID",
     ),
+    style: Optional[str] = typer.Option(
+        None,
+        "--style",
+        help="Renderer style: minimal (default), fancy, or custom renderer name",
+    ),
 ):
     """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
+    _apply_style(style)
     from agent_cli.context.session import (
         create_session,
         finalize_session,
