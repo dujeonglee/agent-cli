@@ -100,7 +100,10 @@ agent_cli/
 │   └── builtin/                    패키지 내장 스킬
 │       ├── create-skill.md         스킬 생성 메타 스킬
 │       ├── create-agent.md         에이전트 생성 메타 스킬
-│       └── plan.md                 구현 계획 생성 (plan/ 디렉토리에 저장)
+│       ├── plan.md                 구현 계획 생성 (plan/ 디렉토리에 저장)
+│       └── create-team/            에이전트 팀 구성 메타 스킬
+│           ├── SKILL.md            6단계 워크플로 (분석→설계→에이전트→스킬→오케스트레이터→검증)
+│           └── references/         단계별 가이드 (design-patterns, agent-writing, skill-writing)
 │
 ├── agents/                         에이전트 정의 패키지
 │   ├── __init__.py          (1)

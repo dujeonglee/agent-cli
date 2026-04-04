@@ -9,7 +9,9 @@ class TestBuiltinDirectory:
 
     def test_builtin_dir_has_skills(self):
         md_files = list(_BUILTIN_DIR.glob("*.md"))
-        assert len(md_files) >= 3  # create-skill, create-agent, plan
+        assert (
+            len(md_files) >= 3
+        )  # create-skill, create-agent, plan (+ create-team dir)
 
 
 class TestBuiltinSkillsParsing:
@@ -124,3 +126,29 @@ class TestBuiltinSkillContent:
     def test_plan_user_invocable(self):
         skill = _parse_skill_file(_BUILTIN_DIR / "plan.md")
         assert skill.user_invocable is True
+
+    def test_create_team_parses(self):
+        path = _BUILTIN_DIR / "create-team" / "SKILL.md"
+        skill = _parse_skill_file(path)
+        assert skill is not None
+        assert skill.name == "create-team"
+        assert skill.description
+        assert skill.disable_model_invocation is True
+
+    def test_create_team_has_references(self):
+        ref_dir = _BUILTIN_DIR / "create-team" / "references"
+        assert ref_dir.is_dir()
+        assert (ref_dir / "design-patterns.md").is_file()
+        assert (ref_dir / "agent-writing.md").is_file()
+        assert (ref_dir / "skill-writing.md").is_file()
+
+    def test_create_team_references_content(self):
+        ref_dir = _BUILTIN_DIR / "create-team" / "references"
+        for name in ("design-patterns.md", "agent-writing.md", "skill-writing.md"):
+            content = (ref_dir / name).read_text()
+            assert len(content) > 100  # Not empty stubs
+
+    def test_create_team_skill_references_skill_dir(self):
+        path = _BUILTIN_DIR / "create-team" / "SKILL.md"
+        content = path.read_text()
+        assert "${SKILL_DIR}" in content  # References are loaded via SKILL_DIR
