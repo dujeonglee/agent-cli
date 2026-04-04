@@ -162,7 +162,9 @@ class MinimalRenderer(Renderer):
             return  # Already spinning
         try:
             spinner = Spinner("dots", text=Text(f"  {message}", style=_MUTED))
-            self._live = Live(spinner, console=self.con, refresh_per_second=10)
+            self._live = Live(
+                spinner, console=self.con, refresh_per_second=10, transient=True
+            )
             self._live.start()
         except Exception:
             self._live = None  # Graceful fallback in non-TTY environments

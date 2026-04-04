@@ -10,6 +10,7 @@ from rich.console import Console
 
 from agent_cli.render.base import Renderer
 from agent_cli.render.minimal import MinimalRenderer
+from agent_cli.render.fancy import FancyRenderer as FancyRenderer
 
 # ── Global state ──────────────────────────────────
 console = Console()
