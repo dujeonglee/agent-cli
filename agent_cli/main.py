@@ -688,7 +688,6 @@ def chat(
     _setup_input_history()
     _prompt = make_prompt("You:")
 
-    turn = 0
     while True:
         try:
             query = input(_prompt).strip()
@@ -728,7 +727,6 @@ def chat(
                 session_id=session.session_id,
             )
             console.print(f"[{C['accent']}]Context cleared.[/]")
-            turn = 0
             continue
 
         if query.startswith("/sh "):
@@ -821,8 +819,7 @@ def chat(
                 console.print(f"[{C['muted']}]Type @ to list available agents[/]")
                 continue
 
-            turn += 1
-            if turn == 1 and not session.query:
+            if not session.query:
                 session.query = query[:100]
                 save_meta(session)
             if result is not None:
@@ -870,8 +867,7 @@ def chat(
                 console.print(f"[{C['muted']}]Type /help for available commands[/]")
                 continue
 
-            turn += 1
-            if turn == 1 and not session.query:
+            if not session.query:
                 session.query = query[:100]
                 save_meta(session)
             # ctx.add already done inside _dispatch_skill
@@ -887,11 +883,9 @@ def chat(
                 )
             continue
 
-        turn += 1
-        if turn == 1 and not session.query:
+        if not session.query:
             session.query = query[:100]
             save_meta(session)
-        console.print(f"\n[{C['muted']}]→ turn {turn}[/]\n")
 
         result = run_loop(
             query=query,
