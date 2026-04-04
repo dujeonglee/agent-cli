@@ -702,8 +702,8 @@ def chat(
             )
             console.print("  /skills             List available skills")
             console.print("  /<skill> <args>     Run a skill")
-            console.print("  @<agent> <task>     Delegate task to an agent")
             console.print("  @agents             List available agents")
+            console.print("  @<agent> <task>     Delegate task to an agent")
             console.print("  /ctx_window         Dump context window (debug)")
             console.print()
             continue
