@@ -115,6 +115,16 @@ def render_spinner_stop() -> None:
     _renderer.spinner_stop()
 
 
+def render_dispatch_progress(
+    label: str,
+    iteration: int,
+    tool_name: str,
+    detail: str = "",
+    thought: str = "",
+) -> None:
+    _renderer.dispatch_progress(label, iteration, tool_name, detail, thought)
+
+
 def load_renderer_by_name(name: str) -> None:
     """Load and activate a renderer by filename (without .py).
 

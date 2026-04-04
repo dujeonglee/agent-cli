@@ -18,6 +18,7 @@ from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities, needs_tool_action
 from agent_cli.render import (
     render_context_dump,
+    render_dispatch_progress,
     render_header,
     render_iter_sep,
     render_raw,
@@ -373,7 +374,9 @@ class AgentLoop:
             f"LLM_CALL iter={self.iteration} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
         )
 
-        if not self.suppress_output:
+        if self.skill_name:
+            render_spinner_start(f"skill:{self.skill_name} thinking...")
+        elif not self.suppress_output:
             render_spinner_start("thinking...")
         try:
             response = self.provider.call(
@@ -403,7 +406,7 @@ class AgentLoop:
             )
             return None
         finally:
-            if not self.suppress_output:
+            if self.skill_name or not self.suppress_output:
                 render_spinner_stop()
 
     def _handle_native_path(self, response, llm_text: str) -> str | None:
@@ -1114,10 +1117,9 @@ def _render_skill_progress(
     suppress_output: bool,
     thought: str = "",
 ) -> None:
-    """Show skill progress: thought first, then action."""
-    if not skill_name or not suppress_output:
+    """Show skill/dispatch progress via renderer. Shows even when suppress_output=True (for skills)."""
+    if not skill_name:
         return
-    from agent_cli.render import C, console
 
     # Build action detail from tool input
     detail = ""
@@ -1125,7 +1127,7 @@ def _render_skill_progress(
         if tool_name in ("read_file", "write_file", "edit_file"):
             path = tool_input.get("path", "")
             if path:
-                detail = f" {path}"  # Show full relative path
+                detail = f" {path}"
         elif tool_name == "shell":
             cmd = tool_input.get("command", "")
             if cmd:
@@ -1134,27 +1136,13 @@ def _render_skill_progress(
             name = tool_input.get("name", "")
             detail = f" {name}"
 
-    # Line 1: thought (full text)
-    if thought:
-        t = thought.replace("\n", " ").strip()
-        console.print(
-            f"  [{C['muted']}]skill:{skill_name} [{iteration}] 💭 {t}[/]",
-            highlight=False,
-        )
-
-    # Line 2: action
-    if tool_name == "complete":
-        console.print(
-            f"  [{C['muted']}]skill:{skill_name}[/]"
-            f" [{C['accent']}][{iteration}] ✅ {tool_name}{detail}[/]",
-            highlight=False,
-        )
-    else:
-        console.print(
-            f"  [{C['muted']}]skill:{skill_name}"
-            f" [{iteration}] ⚡ {tool_name}:{detail}[/]",
-            highlight=False,
-        )
+    render_dispatch_progress(
+        label=f"skill:{skill_name}",
+        iteration=iteration,
+        tool_name=tool_name,
+        detail=detail,
+        thought=thought,
+    )
 
 
 def _build_internal_skill_summary(ctx, turn_before: int) -> str:

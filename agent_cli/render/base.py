@@ -78,3 +78,14 @@ class Renderer(ABC):
     @abstractmethod
     def spinner_stop(self) -> None:
         """Stop the spinner animation."""
+
+    @abstractmethod
+    def dispatch_progress(
+        self,
+        label: str,
+        iteration: int,
+        tool_name: str,
+        detail: str = "",
+        thought: str = "",
+    ) -> None:
+        """Show dispatched execution progress (skill, delegate, etc.)."""

@@ -350,3 +350,24 @@ class FancyRenderer(Renderer):
             except Exception:
                 pass
             self._live = None
+
+    def dispatch_progress(
+        self,
+        label: str,
+        iteration: int,
+        tool_name: str,
+        detail: str = "",
+        thought: str = "",
+    ) -> None:
+        self.spinner_stop()
+        if thought:
+            t = thought.replace("\n", " ").strip()
+            self.con.print(
+                f"  [dim]{label} [{iteration}] 💭 {t}[/]",
+                highlight=False,
+            )
+        icon = "✅" if tool_name == "complete" else "⚡"
+        self.con.print(
+            f"  [dim]{label} [{iteration}] {icon} {tool_name}{detail}[/]",
+            highlight=False,
+        )

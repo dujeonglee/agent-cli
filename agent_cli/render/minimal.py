@@ -176,3 +176,31 @@ class MinimalRenderer(Renderer):
             except Exception:
                 pass
             self._live = None
+
+    def dispatch_progress(
+        self,
+        label: str,
+        iteration: int,
+        tool_name: str,
+        detail: str = "",
+        thought: str = "",
+    ) -> None:
+        # Stop any active spinner before printing progress
+        self.spinner_stop()
+
+        if thought:
+            t = thought.replace("\n", " ").strip()
+            self.con.print(
+                f"  [{_MUTED}]{label} [{iteration}] 💭 {t}[/]",
+                highlight=False,
+            )
+        if tool_name == "complete":
+            self.con.print(
+                f"  [{_MUTED}]{label} [{iteration}] ✅ {tool_name}{detail}[/]",
+                highlight=False,
+            )
+        else:
+            self.con.print(
+                f"  [{_MUTED}]{label} [{iteration}] ⚡ {tool_name}:{detail}[/]",
+                highlight=False,
+            )
