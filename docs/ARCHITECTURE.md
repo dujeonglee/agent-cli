@@ -50,7 +50,10 @@ agent_cli/
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
 ├── loop.py                  (1756) AgentLoop 클래스 + ReAct 루프 + scratchpad/hook/run_skill
-├── render.py                (247)  Rich 터미널 렌더링 + 모델 정보 + compact observation
+├── render/                         플러그인 가능 렌더링 시스템
+│   ├── __init__.py          (106)  렌더러 디스패치 + 하위 호환 API
+│   ├── base.py              (72)   Renderer ABC (인터페이스 정의)
+│   └── minimal.py           (154)  MinimalRenderer (인덴트 스타일, 박스 없음)
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
