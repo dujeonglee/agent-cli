@@ -199,6 +199,26 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             },
         },
     ),
+    "fetch": ToolSchema(
+        name="fetch",
+        description="Fetch a web page and return its content as markdown. "
+        "Supports recursive fetching of same-domain links via depth parameter. "
+        "Full content saved to artifact; truncated version returned.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL to fetch",
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Recursive depth: 0 = current page only (default), 1+ = follow same-domain links",
+                },
+            },
+            "required": ["url"],
+        },
+    ),
 }
 
 

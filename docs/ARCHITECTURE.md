@@ -75,6 +75,7 @@ agent_cli/
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
 │   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
+│   ├── fetch.py             (244)  웹 페이지 fetch → 마크다운 변환 (재귀, 에러 힌트)
 │   ├── delegate.py          (610)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩, 산출물 개선)
 │   ├── context.py           (63)   read_context 도구 (세션 이력 조회) → ToolResult
 │   (truncation.py 삭제됨 — tool output은 잘림 없이 그대로 LLM에 전달)
