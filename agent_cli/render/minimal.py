@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from rich.console import Console
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.text import Text
 
 from agent_cli.render.base import Renderer
 
@@ -14,6 +17,7 @@ class MinimalRenderer(Renderer):
 
     def __init__(self, console: Console):
         self.con = console
+        self._live: Live | None = None
 
     def header(
         self,
@@ -152,3 +156,21 @@ class MinimalRenderer(Renderer):
                 preview = str(content)[:200]
             self.con.print(f"  [{_MUTED}][{i}] {role}: {preview}[/]")
         self.con.print(f"  [{_MUTED}]── end dump ──[/]\n")
+
+    def spinner_start(self, message: str = "thinking...") -> None:
+        if self._live is not None:
+            return  # Already spinning
+        try:
+            spinner = Spinner("dots", text=Text(f"  {message}", style=_MUTED))
+            self._live = Live(spinner, console=self.con, refresh_per_second=10)
+            self._live.start()
+        except Exception:
+            self._live = None  # Graceful fallback in non-TTY environments
+
+    def spinner_stop(self) -> None:
+        if self._live is not None:
+            try:
+                self._live.stop()
+            except Exception:
+                pass
+            self._live = None

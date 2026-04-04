@@ -104,3 +104,11 @@ def render_model_loaded(model: str, capabilities) -> None:
 
 def render_context_dump(messages: list[dict], iteration: int) -> None:
     _renderer.context_dump(messages, iteration)
+
+
+def render_spinner_start(message: str = "thinking...") -> None:
+    _renderer.spinner_start(message)
+
+
+def render_spinner_stop() -> None:
+    _renderer.spinner_stop()

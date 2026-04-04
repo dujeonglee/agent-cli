@@ -70,3 +70,11 @@ class Renderer(ABC):
     @abstractmethod
     def context_dump(self, messages: list[dict], iteration: int) -> None:
         """Debug context window dump."""
+
+    @abstractmethod
+    def spinner_start(self, message: str = "thinking...") -> None:
+        """Start a spinner animation (e.g. during LLM call)."""
+
+    @abstractmethod
+    def spinner_stop(self) -> None:
+        """Stop the spinner animation."""

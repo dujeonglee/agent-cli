@@ -21,6 +21,8 @@ from agent_cli.render import (
     render_header,
     render_iter_sep,
     render_raw,
+    render_spinner_start,
+    render_spinner_stop,
     render_status,
     render_step,
 )
@@ -371,6 +373,8 @@ class AgentLoop:
             f"LLM_CALL iter={self.iteration} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
         )
 
+        if not self.suppress_output:
+            render_spinner_start("thinking...")
         try:
             response = self.provider.call(
                 messages=self.messages,
@@ -398,6 +402,9 @@ class AgentLoop:
                 self.iteration,
             )
             return None
+        finally:
+            if not self.suppress_output:
+                render_spinner_stop()
 
     def _handle_native_path(self, response, llm_text: str) -> str | None:
         """Handle native tool calling response (Anthropic/OpenAI)."""
