@@ -191,6 +191,7 @@ agent-cli run "task description" [options]
 | `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
+| `--style` | 렌더러 스타일 (minimal, fancy 등) | `minimal` |
 
 `run` 실행 후 세션이 자동 저장됩니다. `chat --resume <id>`로 이어서 작업할 수 있습니다:
 
@@ -219,6 +220,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
 | `--resume <id>` | 이전 세션 이어서 작업 | |
+| `--style` | 렌더러 스타일 (minimal, fancy 등) | `minimal` |
 
 대화 중 명령어:
 
@@ -231,6 +233,8 @@ agent-cli chat -p ollama -m qwen3:32b
 | `/compact [prompt]` | 컨텍스트 압축 (선택적 포커스 프롬프트) |
 | `/skills` | 사용 가능한 스킬 목록 |
 | `/<skill> <args>` | 스킬 실행 (예: `/optimize ./`) |
+| `@agents` | 사용 가능한 에이전트 목록 |
+| `@<agent> <task>` | 에이전트에게 작업 위임 (예: `@explorer loop.py 설명해줘`) |
 | `/ctx_window` | 현재 컨텍스트 윈도우 내용 덤프 (디버깅용) |
 
 입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.

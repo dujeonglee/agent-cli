@@ -42,18 +42,19 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (732)  CLI 명령어: run, chat, setup, sessions + 공유 헬퍼
+├── main.py                  (925)  CLI 명령어: run, chat, setup, sessions + @agent 디스패치
 ├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
 ├── constants.py             (20)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1756) AgentLoop 클래스 + ReAct 루프 + scratchpad/hook/run_skill
+├── loop.py                  (1763) AgentLoop 클래스 + ReAct 루프 + scratchpad/hook/run_skill
 ├── render/                         플러그인 가능 렌더링 시스템
-│   ├── __init__.py          (106)  렌더러 디스패치 + 하위 호환 API
-│   ├── base.py              (72)   Renderer ABC (인터페이스 정의)
-│   └── minimal.py           (154)  MinimalRenderer (인덴트 스타일, 박스 없음)
+│   ├── __init__.py          (148)  렌더러 디스패치 + load_renderer_by_name + 하위 호환 API
+│   ├── base.py              (80)   Renderer ABC (14개 메서드 인터페이스)
+│   ├── minimal.py           (178)  MinimalRenderer (인덴트 스타일, spinner)
+│   └── fancy.py             (352)  FancyRenderer (컬러 박스, 애니메이션)
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
@@ -71,15 +72,15 @@ agent_cli/
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (67)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
 │   ├── result.py            (14)   ToolResult 데이터클래스 (모든 도구의 표준 반환 타입)
-│   ├── registry.py          (458)  스키마 정의, 검증, API 형식 변환, inline 가이드
+│   ├── registry.py          (478)  스키마 정의, 검증, API 형식 변환, inline 가이드
 │   ├── run_skill.py         (66)   run_skill 도구 (LLM 자동 스킬 호출) → ToolResult
 │   ├── read_artifact.py     (141)  read_artifact 도구 (artifact 읽기/목록/검색) → ToolResult
 │   ├── read_file.py         (102)  파일 읽기 + hashline 포맷팅 + 부분 읽기 → ToolResult
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
 │   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
-│   ├── fetch.py             (244)  웹 페이지 fetch → 마크다운 변환 (재귀, 에러 힌트)
-│   ├── delegate.py          (610)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩, 산출물 개선)
+│   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 (재귀, 에러 힌트)
+│   ├── delegate.py          (613)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩, 산출물 개선)
 │   ├── context.py           (63)   read_context 도구 (세션 이력 조회) → ToolResult
 │   (truncation.py 삭제됨 — tool output은 잘림 없이 그대로 LLM에 전달)
 │
@@ -93,7 +94,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (342)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Git 스냅샷)
+│   ├── system_prompt.py     (400)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Git 스냅샷, Agent 목록)
 │   └── compression_prompt.py (45)  하이브리드 요약 프롬프트 (LLM 3섹션 + 규칙 기반 Files Touched)
 │
 ├── skills/                         프롬프트 스킬 시스템
@@ -875,6 +876,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     │       - read_artifact ← Scratchpad/Artifact Guide
     │
     ├─ Available Skills (skill_stack에 없는 스킬만, run_skill 사용 안내)
+    │
+    ├─ Available Agents (delegate 활성 시, agent 파라미터 사용 안내)
+    │   └─ .agent-cli/agents/ + ~/.agent-cli/agents/ + builtin/ 스캔
     │
     │  ── Recency: 현재 맥락 + 사용자 규칙 (강한 attention) ──
     │
