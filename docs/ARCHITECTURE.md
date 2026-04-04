@@ -776,7 +776,7 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 ~/.agent-cli/DIRECTIVE.md →  사용자 전역 규칙
 ```
 - 둘 다 존재하면 모두 로드 (content hash 중복 제거)
-- content hash 중복 제거, truncation 없음 (ResourceLoader 기반) (초과 시 truncate)
+- content hash 중복 제거, truncation 없음 (ResourceLoader 기반)
 - 매 세션 시작 시 system prompt 동적 영역에 주입
 
 ### 8.1 models.json 구조
@@ -896,7 +896,7 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     │
     └─ Directives (DIRECTIVE.md가 존재할 때만)
         └─ .agent-cli/DIRECTIVE.md (프로젝트) + ~/.agent-cli/DIRECTIVE.md (유저 전역)
-        └─ content hash 중복 제거, truncation 없음 (ResourceLoader 기반), content hash 중복 제거
+        └─ content hash 중복 제거, truncation 없음 (ResourceLoader 기반)
 ```
 
 ---
