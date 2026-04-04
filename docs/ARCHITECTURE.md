@@ -5,8 +5,8 @@
 >
 > 최종 업데이트: 2026-04-04
 > 버전: 2.0.0-dev
-> 총 소스: 7,912 LOC (43 Python 파일) + 10,840 LOC 테스트 (24 파일)
-> 총 테스트: 663 유닛 + 62 통합 = 725개
+> 총 소스: 8,109 LOC (43 Python 파일) + 11,570 LOC 테스트 (25 파일)
+> 총 테스트: 701 유닛 + 62 통합 = 763개
 
 ---
 
@@ -75,7 +75,7 @@ agent_cli/
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
 │   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
-│   ├── delegate.py          (413)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩)
+│   ├── delegate.py          (610)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩, 산출물 개선)
 │   ├── context.py           (63)   read_context 도구 (세션 이력 조회) → ToolResult
 │   (truncation.py 삭제됨 — tool output은 잘림 없이 그대로 LLM에 전달)
 │
@@ -550,7 +550,7 @@ ContextBudget.for_model(context_window)
 | `write_file` | 파일 생성/덮어쓰기 | `path`, `content` | 저장 확인 메시지 |
 | `edit_file` | hashline 기반 파일 편집 | `path`, `edits[]` | 편집 확인 메시지 |
 | `shell` | 셸 명령 실행 | `command` | stdout + stderr + exit code |
-| `delegate` | in-process 서브에이전트 위임 | `tasks[]` (각 항목: task, context?, tools?, agent?) | 구조화된 결과 (output + files), 복수 시 병렬 |
+| `delegate` | in-process 서브에이전트 위임 | `tasks[]` (각 항목: task, context?, tools?, agent?) | 구조화된 결과 (output + files + activity log + duration), 복수 시 병렬 |
 | `read_context` | 이전 세션 이력 조회 | `mode` | 세션 목록 또는 상세 이력 |
 
 **가상 도구** (`VIRTUAL_TOOLS`) — loop.py에서 인터셉트, 도구 설명에서 제외:
@@ -582,8 +582,23 @@ ContextBudget.for_model(context_window)
 **핵심 함수** (`tools/delegate.py`):
 - `_validate_agent_name(name)` — 이름 검증 (`[a-zA-Z0-9_-]`만 허용)
 - `_load_agent(name)` — 파일 탐색 + YAML frontmatter 파싱 → `(role_prompt, config, error)`
+- `_extract_activity_log(messages)` — 컨텍스트 메시지에서 per-iteration 액션 요약 추출
+- `_summarize_action(action, action_input)` — 단일 액션을 한 줄 요약으로 포맷
+- `_extract_last_actions(messages, n)` — 마지막 N개 액션 + 에러 observation 추출
+- `_persist_delegate_result(...)` — scratchpad artifact/progress에 결과 저장
+- `_format_delegate_output(result)` — DelegateResult를 구조화된 observation 문자열로 포맷
 - `_AGENT_SEARCH_PATHS` — 검색 경로 리스트
 - `_FRONTMATTER_PATTERN` — `---` frontmatter 정규식
+
+**DelegateResult 필드**: `output`, `files_read`, `files_modified`, `iterations`, `duration_secs`, `activity_log`, `last_actions`
+
+**산출물 구조**: delegate 실행 결과는 다음 섹션을 포함:
+1. 서브에이전트 출력 (output 또는 "(subagent returned no result)")
+2. `[Subagent activity]` — per-iteration 액션 로그 (최대 20개)
+3. `[Last actions before failure]` — 실패 시 마지막 5개 액션 + 에러 힌트
+4. `[Files touched]` — 읽기/수정 파일 목록
+5. `[Duration: Ns]` + `[Subagent used N iterations]` — 실행 메타데이터
+6. scratchpad에 artifact + progress로 디스크 영속화
 
 **적용 우선순위**: task에 명시된 `tools`/`model`이 agent 파일 설정보다 우선합니다.
 

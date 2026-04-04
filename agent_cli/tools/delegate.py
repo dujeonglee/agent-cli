@@ -7,9 +7,11 @@ Uses tasks array API: single item = sync, multiple items = parallel (threading).
 from __future__ import annotations
 
 import copy
+import json
 import re
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -93,6 +95,149 @@ class DelegateResult:
     files_read: list[str] = field(default_factory=list)
     files_modified: list[str] = field(default_factory=list)
     iterations: int = 0
+    duration_secs: float = 0.0
+    activity_log: list[str] = field(default_factory=list)
+    last_actions: list[str] = field(default_factory=list)
+
+
+def _extract_activity_log(messages: list[dict], max_entries: int = 20) -> list[str]:
+    """Extract per-iteration action summaries from context messages.
+
+    Parses assistant messages for ReAct JSON (action/action_input),
+    formats each into a one-line summary.
+
+    Returns list of strings like:
+      ["iter 1: read_file auth.py", "iter 2: shell pytest"]
+    """
+    log: list[str] = []
+    iter_num = 0
+
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+
+        try:
+            data = json.loads(msg["content"])
+        except (json.JSONDecodeError, TypeError, KeyError):
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        action = data.get("action", "")
+        if not action:
+            continue
+
+        iter_num += 1
+        action_input = data.get("action_input", {})
+        summary = _summarize_action(action, action_input)
+        log.append(f"iter {iter_num}: {summary}")
+
+    if len(log) > max_entries:
+        trimmed = log[:max_entries]
+        trimmed.append(f"... and {len(log) - max_entries} more")
+        return trimmed
+    return log
+
+
+def _summarize_action(action: str, action_input: dict) -> str:
+    """Format a single action into a one-line summary."""
+    if not isinstance(action_input, dict):
+        return action
+
+    path = action_input.get("path", "")
+    if action == "read_file" and path:
+        return f"read_file {Path(path).name}"
+    elif action in ("write_file", "edit_file") and path:
+        return f"{action} {Path(path).name}"
+    elif action == "shell":
+        cmd = action_input.get("command", "")
+        return f"shell {cmd[:60]}" if cmd else "shell"
+    elif action == "delegate":
+        task = action_input.get("task", "")
+        return f'delegate "{task[:40]}"' if task else "delegate"
+    else:
+        return action
+
+
+def _extract_last_actions(messages: list[dict], n: int = 5) -> list[str]:
+    """Extract last N actions with their observation results.
+
+    Returns list of strings like:
+      ["iter 4: shell pytest -> ERROR: 3 tests failed",
+       "iter 5: edit_file test_auth.py -> hash mismatch"]
+    """
+    actions: list[tuple[int, int, str]] = []
+    iter_num = 0
+    for i, msg in enumerate(messages):
+        if msg.get("role") != "assistant":
+            continue
+        try:
+            data = json.loads(msg["content"])
+        except (json.JSONDecodeError, TypeError, KeyError):
+            continue
+        if not isinstance(data, dict) or not data.get("action"):
+            continue
+
+        iter_num += 1
+        summary = _summarize_action(data["action"], data.get("action_input", {}))
+        actions.append((i, iter_num, summary))
+
+    last_n = actions[-n:]
+
+    result: list[str] = []
+    for msg_idx, it, summary in last_n:
+        obs_hint = ""
+        if msg_idx + 1 < len(messages) and messages[msg_idx + 1].get("role") == "user":
+            obs = messages[msg_idx + 1]["content"]
+            for line in obs.split("\n")[:5]:
+                if any(
+                    kw in line.upper()
+                    for kw in ["ERROR", "FAIL", "EXCEPTION", "TRACEBACK"]
+                ):
+                    obs_hint = f" → {line.strip()[:80]}"
+                    break
+        result.append(f"iter {it}: {summary}{obs_hint}")
+
+    return result
+
+
+def _persist_delegate_result(
+    formatted: str,
+    task: str,
+    duration: float,
+    iterations: int,
+    success: bool,
+    scratchpad_dir: Path,
+    depth: int,
+) -> None:
+    """Save delegate result as session artifact and update scratchpad progress.
+
+    Uses existing scratchpad infrastructure (save_artifact, append_progress).
+    Errors are silently caught to avoid disrupting delegate flow.
+    """
+    from agent_cli.context.scratchpad import append_progress, save_artifact
+
+    try:
+        status = "success" if success else "failed"
+        save_artifact(
+            turn=0,
+            content=formatted,
+            tags=["delegate", f"depth:{depth}", status],
+            summary=f"delegate: {task[:60]}",
+            base=scratchpad_dir,
+        )
+
+        status_str = "completed" if success else "FAILED"
+        append_progress(
+            turn=0,
+            summary=(
+                f"delegate {status_str}: {task[:60]} "
+                f"({duration:.1f}s, {iterations} iters)"
+            ),
+            base=scratchpad_dir,
+        )
+    except Exception:
+        pass
 
 
 def _fork_context(
@@ -131,11 +276,28 @@ def _resolve_scratchpad_dir(session, parent_ctx) -> Path:
 def _format_delegate_output(result: DelegateResult) -> str:
     """Format DelegateResult into observation string."""
     parts = []
+
+    # 1. Output
     if result.output:
         parts.append(result.output)
     else:
         parts.append("(subagent returned no result)")
 
+    # 2. Activity log
+    if result.activity_log:
+        parts.append("")
+        parts.append("[Subagent activity]")
+        for entry in result.activity_log:
+            parts.append(f"- {entry}")
+
+    # 3. Last actions on failure
+    if result.last_actions:
+        parts.append("")
+        parts.append("[Last actions before failure]")
+        for entry in result.last_actions:
+            parts.append(f"- {entry}")
+
+    # 4. Files touched
     if result.files_read or result.files_modified:
         parts.append("")
         parts.append("[Files touched]")
@@ -144,8 +306,15 @@ def _format_delegate_output(result: DelegateResult) -> str:
         if result.files_modified:
             parts.append(f"- Modified: {', '.join(sorted(result.files_modified))}")
 
+    # 5. Duration + Iterations
+    footer = []
+    if result.duration_secs > 0:
+        footer.append(f"[Duration: {result.duration_secs:.1f}s]")
     if result.iterations > 0:
-        parts.append(f"\n[Subagent used {result.iterations} iterations]")
+        footer.append(f"[Subagent used {result.iterations} iterations]")
+    if footer:
+        parts.append("")
+        parts.append(" ".join(footer))
 
     return "\n".join(parts)
 
@@ -255,6 +424,8 @@ def _run_single(
             scratchpad_dir=scratchpad_dir,
         )
 
+    t0 = time.monotonic()
+
     result_str = run_loop(
         query=task,
         provider=provider,
@@ -277,13 +448,39 @@ def _run_single(
         agent_role=agent_role,
     )
 
-    delegate_result = DelegateResult(output=result_str)
+    duration = time.monotonic() - t0
+
+    delegate_result = DelegateResult(output=result_str, duration_secs=duration)
+
     if context_mode != "inherit":
         files_read, files_modified = ctx._extract_files_touched(ctx.messages)
         delegate_result.files_read = sorted(files_read)
         delegate_result.files_modified = sorted(files_modified)
 
+    # Activity log extraction
+    delegate_result.activity_log = _extract_activity_log(ctx.messages)
+
+    # Iterations count from activity log
+    real_entries = [e for e in delegate_result.activity_log if not e.startswith("...")]
+    delegate_result.iterations = len(real_entries)
+
+    # Last actions on failure
+    if result_str is None:
+        delegate_result.last_actions = _extract_last_actions(ctx.messages)
+
     formatted = _format_delegate_output(delegate_result)
+
+    # Persist to disk
+    _persist_delegate_result(
+        formatted=formatted,
+        task=task,
+        duration=duration,
+        iterations=delegate_result.iterations,
+        success=result_str is not None,
+        scratchpad_dir=scratchpad_dir,
+        depth=depth,
+    )
+
     if result_str is not None:
         return ToolResult(True, output=f"STATUS: success\nRESULT:\n{formatted}")
     else:

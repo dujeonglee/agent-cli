@@ -605,6 +605,27 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 `agent` 파라미터로 `.agent-cli/agents/{name}.md` 파일에서 정의된 에이전트 역할을 로드할 수 있습니다. 에이전트 파일은 YAML frontmatter로 `allowed-tools`, `model` 등을 설정하고, 본문에 역할/원칙을 정의합니다. 검색 경로: 프로젝트 로컬(`.agent-cli/agents/`) → 유저 전역(`~/.agent-cli/agents/`).
 
+**산출물 포맷**: delegate 실행 결과는 구조화된 형식으로 반환됩니다:
+
+```
+STATUS: success
+RESULT:
+(서브에이전트 출력)
+
+[Subagent activity]
+- iter 1: read_file auth.py
+- iter 2: shell pytest
+- iter 3: edit_file auth.py
+
+[Files touched]
+- Read: auth.py, config.py
+- Modified: auth.py
+
+[Duration: 12.3s] [Subagent used 3 iterations]
+```
+
+실패 시에는 `[Last actions before failure]` 섹션이 추가되어 디버깅에 필요한 마지막 액션과 에러 메시지를 확인할 수 있습니다. 결과는 scratchpad artifact로도 자동 저장됩니다.
+
 ### run_skill — 스킬 실행
 
 등록된 스킬을 도구로 호출합니다. LLM이 스스로 판단하여 적절한 스킬을 선택합니다. 시스템 프롬프트에 사용 가능한 스킬 목록이 안내됩니다.
