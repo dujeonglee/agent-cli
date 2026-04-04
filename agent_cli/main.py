@@ -703,7 +703,7 @@ def chat(
             console.print("  /skills             List available skills")
             console.print("  /<skill> <args>     Run a skill")
             console.print("  @<agent> <task>     Delegate task to an agent")
-            console.print("  @                   List available agents")
+            console.print("  @agents             List available agents")
             console.print("  /ctx_window         Dump context window (debug)")
             console.print()
             continue
@@ -768,8 +768,8 @@ def chat(
             agent_parts = query.split(maxsplit=1)
             agent_name = agent_parts[0][1:]
 
-            if not agent_name or len(agent_parts) < 2:
-                # List available agents
+            if agent_name == "agents" or not agent_name or len(agent_parts) < 2:
+                # List available agents (@agents or @ alone)
                 from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS
 
                 console.print(f"\n[{C['accent']}]Available agents:[/]")
