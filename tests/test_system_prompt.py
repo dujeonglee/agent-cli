@@ -11,7 +11,6 @@ from agent_cli.prompts.system_prompt import (
     _load_directives,
     _run_git_cmd,
     build_system_prompt,
-    MAX_DIRECTIVE_FILE_CHARS,
 )
 from agent_cli.providers.compat import ModelCapabilities
 
@@ -138,7 +137,7 @@ class TestBuildSystemPrompt:
         (directive_dir / "DIRECTIVE.md").write_text("Always write tests.")
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [directive_dir / "DIRECTIVE.md"],
+            [directive_dir],
         )
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Directives" in prompt
@@ -147,7 +146,7 @@ class TestBuildSystemPrompt:
     def test_directives_absent_when_no_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [tmp_path / "nonexistent" / "DIRECTIVE.md"],
+            [tmp_path / "nonexistent"],
         )
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Directives" not in prompt
@@ -247,7 +246,7 @@ class TestBuildSystemPrompt:
         (directive_dir / "DIRECTIVE.md").write_text("Test directive.")
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [directive_dir / "DIRECTIVE.md"],
+            [directive_dir],
         )
         prompt = build_system_prompt(
             _make_caps(), ["shell"], agent_role="You are a reviewer"
@@ -298,22 +297,25 @@ class TestLoadDirectives:
         (d / "DIRECTIVE.md").write_text("Rule one.")
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [d / "DIRECTIVE.md"],
+            [d],
         )
         result = _load_directives()
         assert "Rule one." in result
         assert "## Directives" in result
 
-    def test_truncates_large_file(self, tmp_path, monkeypatch):
+    def test_large_file_not_truncated(self, tmp_path, monkeypatch):
+        """Large directives are loaded fully — no truncation."""
         d = tmp_path / ".agent-cli"
         d.mkdir()
-        (d / "DIRECTIVE.md").write_text("x" * (MAX_DIRECTIVE_FILE_CHARS + 500))
+        long_content = "x" * 10000
+        (d / "DIRECTIVE.md").write_text(long_content)
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [d / "DIRECTIVE.md"],
+            [d],
         )
         result = _load_directives()
-        assert "[truncated]" in result
+        assert "[truncated]" not in result
+        assert "x" * 100 in result
 
     def test_dedup_identical_content(self, tmp_path, monkeypatch):
         d1 = tmp_path / "proj" / ".agent-cli"
@@ -324,7 +326,7 @@ class TestLoadDirectives:
         (d2 / "DIRECTIVE.md").write_text("Same rule.")
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [d1 / "DIRECTIVE.md", d2 / "DIRECTIVE.md"],
+            [d1, d2],
         )
         result = _load_directives()
         assert result.count("Same rule.") == 1
@@ -338,7 +340,7 @@ class TestLoadDirectives:
         (d2 / "DIRECTIVE.md").write_text("User rule.")
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [d1 / "DIRECTIVE.md", d2 / "DIRECTIVE.md"],
+            [d1, d2],
         )
         result = _load_directives()
         assert "Project rule." in result
@@ -505,7 +507,7 @@ class TestSystemPromptGitIntegration:
         (directive_dir / "DIRECTIVE.md").write_text("Test directive.")
         monkeypatch.setattr(
             "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [directive_dir / "DIRECTIVE.md"],
+            [directive_dir],
         )
         prompt = build_system_prompt(_make_caps(), ["shell"])
         git_pos = prompt.index("## Git Context")

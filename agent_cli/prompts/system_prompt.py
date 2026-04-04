@@ -21,14 +21,10 @@ from agent_cli.tools.registry import get_tool_descriptions
 MAX_GIT_DIFF_CHARS = 4000
 _GIT_CMD_TIMEOUT = 3  # seconds
 
-# ── DIRECTIVE.md budget ──────────────────────────
-MAX_DIRECTIVE_FILE_CHARS = 4000
-MAX_DIRECTIVE_TOTAL_CHARS = 8000
-
 # ── DIRECTIVE.md search paths ────────────────────
 _DIRECTIVE_PATHS = [
-    Path.cwd() / ".agent-cli" / "DIRECTIVE.md",
-    Path.home() / ".agent-cli" / "DIRECTIVE.md",
+    Path.cwd() / ".agent-cli",
+    Path.home() / ".agent-cli",
 ]
 
 # ── Section 1: Role ──────────────────────────────
@@ -203,46 +199,35 @@ def _build_git_context_section() -> str:
 def _load_directives() -> str:
     """Load DIRECTIVE.md files from project and user paths.
 
-    Returns formatted section string, or empty string if no files found.
-    Budget: per-file MAX_DIRECTIVE_FILE_CHARS, total MAX_DIRECTIVE_TOTAL_CHARS.
+    Uses ResourceLoader._parse_file for consistent parsing.
+    Both project and user directives are included (not deduplicated by name)
+    unless they have identical content.
     """
+    from agent_cli.resource_loader import ResourceLoader
+
     loaded: list[str] = []
-    total_chars = 0
     seen_hashes: set[int] = set()
 
-    for path in _DIRECTIVE_PATHS:
-        if not path.is_file():
-            continue
-        try:
-            content = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if not content:
+    for search_dir in _DIRECTIVE_PATHS:
+        directive_file = search_dir / "DIRECTIVE.md"
+        if not directive_file.is_file():
             continue
 
-        # Content-hash dedup
-        content_hash = hash(content)
+        resource = ResourceLoader._parse_file(directive_file)
+        if resource is None:
+            continue
+
+        content_hash = hash(resource.body)
         if content_hash in seen_hashes:
             continue
         seen_hashes.add(content_hash)
 
-        # Per-file budget
-        if len(content) > MAX_DIRECTIVE_FILE_CHARS:
-            content = content[:MAX_DIRECTIVE_FILE_CHARS] + "\n\n[truncated]"
-
-        # Total budget
-        if total_chars + len(content) > MAX_DIRECTIVE_TOTAL_CHARS:
-            remaining = MAX_DIRECTIVE_TOTAL_CHARS - total_chars
-            if remaining > 100:
-                content = (
-                    content[:remaining] + "\n\n[truncated — directive budget exceeded]"
-                )
-            else:
-                break
-        total_chars += len(content)
-
-        scope = "project" if path.parent == Path.cwd() / ".agent-cli" else "user"
-        loaded.append(f"### {path.name} (scope: {scope})\n{content}")
+        scope = (
+            "project"
+            if str(Path.cwd() / ".agent-cli") in resource.source_path
+            else "user"
+        )
+        loaded.append(f"### DIRECTIVE.md (scope: {scope})\n{resource.body}")
 
     if not loaded:
         return ""
