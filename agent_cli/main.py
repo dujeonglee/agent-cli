@@ -7,10 +7,6 @@ import subprocess
 from typing import Optional
 
 import typer
-from rich import box
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.text import Text
 
 from agent_cli.config import get_provider_defaults
 from agent_cli.context.manager import ContextManager
@@ -656,18 +652,10 @@ def chat(
 
     console.print()
     console.print(
-        Panel(
-            Text("Interactive Chat Mode", justify="center", style="bold bright_cyan"),
-            subtitle=Text(
-                f"provider={provider}  model={resolved_model}  "
-                f"ctx_window={capabilities.context_window}  /quit to exit",
-                style=C["muted"],
-                justify="center",
-            ),
-            border_style="bright_cyan",
-            box=box.DOUBLE_EDGE,
-            padding=(0, 2),
-        )
+        f"  ● chat mode  "
+        f"[{C['muted']}]{provider} · {resolved_model} · "
+        f"ctx={capabilities.context_window:,}  /quit to exit[/]",
+        highlight=False,
     )
     console.print()
 
@@ -879,7 +867,7 @@ def chat(
         if turn == 1 and not session.query:
             session.query = query[:100]
             save_meta(session)
-        console.print(Rule(f"[{C['muted']}]TURN {turn}[/]", style=C["muted"]))
+        console.print(f"\n[{C['muted']}]→ turn {turn}[/]\n")
 
         result = run_loop(
             query=query,

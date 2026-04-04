@@ -44,12 +44,12 @@ class TestObservationCompact:
 
     def test_no_tool_name(self):
         out = _capture_render("STATUS: success\nRESULT:\nok")
-        assert "OBS" in out
+        assert "✓" in out
         assert "success" in out
 
-    def test_iteration_displayed(self):
+    def test_success_status_displayed(self):
         out = _capture_render("STATUS: success\nRESULT:\nok")
-        assert "iter 1" in out
+        assert "success" in out
 
     def test_unknown_status_format(self):
         out = _capture_render("some unexpected output without STATUS prefix")
