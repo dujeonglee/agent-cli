@@ -95,6 +95,79 @@ _SKILL_NOT_FOUND = (
     object()
 )  # Sentinel to distinguish "not a skill" from "skill returned None"
 
+_AGENT_NOT_FOUND = object()
+
+
+def _dispatch_agent(
+    query: str,
+    llm_provider,
+    capabilities,
+    resolved_model: str,
+    provider: str,
+    resolved_url: str,
+    resolved_key: str,
+    max_iter: int = 0,
+    verbose: bool = False,
+    max_depth: int = 2,
+    delegate_timeout: int = 300,
+    ctx=None,
+    session=None,
+    graceful_interrupt: bool = False,
+):
+    """Dispatch @agent-name query. Returns _AGENT_NOT_FOUND if agent not found."""
+    from agent_cli.tools.delegate import tool_delegate
+
+    parts = query.split(maxsplit=1)
+    agent_name = parts[0][1:]  # strip leading @
+    task = parts[1] if len(parts) > 1 else ""
+
+    if not task:
+        return _AGENT_NOT_FOUND  # No task = not a valid agent call
+
+    # Record agent invocation in context + scratchpad
+    if ctx:
+        ctx.add("user", f"Delegate to @{agent_name}: {task}")
+        from agent_cli.context.scratchpad import append_progress, load_scratchpad
+
+        if not load_scratchpad(ctx._scratchpad_dir):
+            ctx.init_task()
+        append_progress(
+            turn=ctx._turn_count,
+            summary=f"User: @{agent_name} {task[:60]}",
+            base=ctx._scratchpad_dir,
+        )
+
+    from agent_cli.render import render_status
+
+    render_status("running", f"Running agent: {agent_name}...")
+    result = tool_delegate(
+        args={"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
+        parent_ctx=ctx,
+        provider=llm_provider,
+        model=resolved_model,
+        capabilities=capabilities,
+        provider_name=provider,
+        base_url=resolved_url,
+        api_key=resolved_key,
+        depth=0,
+        max_depth=max_depth,
+        max_iter=max_iter,
+        timeout=delegate_timeout,
+        suppress_output=False,
+        session=session,
+    )
+
+    if not result.success and "not found" in (result.error or ""):
+        return _AGENT_NOT_FOUND
+
+    answer = result.output if result.success else result.error
+
+    # Record result in context
+    if ctx and answer:
+        ctx.add("assistant", answer)
+
+    return answer
+
 
 def _dispatch_skill(
     query: str,
@@ -394,6 +467,32 @@ def run(
             _finalize_run(session, ctx, headless)
             return
 
+    # Agent dispatch: @agent-name task
+    if query.startswith("@"):
+        answer = _dispatch_agent(
+            query,
+            llm_provider,
+            capabilities,
+            resolved_model,
+            provider,
+            resolved_url,
+            resolved_key,
+            max_iter=max_iter,
+            verbose=verbose,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
+            ctx=ctx,
+            session=session,
+        )
+        if answer is not _AGENT_NOT_FOUND:
+            if answer is not None:
+                if headless:
+                    print(answer)
+                else:
+                    console.print(f"\n[{C['final']}]{answer}[/]")
+            _finalize_run(session, ctx, headless)
+            return
+
     try:
         answer = run_loop(
             query=query,
@@ -603,6 +702,8 @@ def chat(
             )
             console.print("  /skills             List available skills")
             console.print("  /<skill> <args>     Run a skill")
+            console.print("  @<agent> <task>     Delegate task to an agent")
+            console.print("  @                   List available agents")
             console.print("  /ctx_window         Dump context window (debug)")
             console.print()
             continue
@@ -660,6 +761,60 @@ def chat(
                 f"[{C['muted']}]── estimated {tokens} tokens "
                 f"/ {ctx.capabilities.context_window} context window ──[/]"
             )
+            continue
+
+        # Agent dispatch: @agent-name task
+        if query.startswith("@"):
+            agent_parts = query.split(maxsplit=1)
+            agent_name = agent_parts[0][1:]
+
+            if not agent_name or len(agent_parts) < 2:
+                # List available agents
+                from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS
+
+                console.print(f"\n[{C['accent']}]Available agents:[/]")
+                seen = set()
+                for search_dir in _AGENT_SEARCH_PATHS:
+                    if not search_dir.is_dir():
+                        continue
+                    for md_file in sorted(search_dir.glob("*.md")):
+                        name = md_file.stem
+                        if name in seen:
+                            continue
+                        seen.add(name)
+                        console.print(f"  @{name}")
+                if not seen:
+                    console.print(f"[{C['muted']}]No agents found.[/]")
+                console.print(f"\n[{C['muted']}]Usage: @agent-name <task>[/]")
+                continue
+
+            result = _dispatch_agent(
+                query,
+                llm_provider,
+                capabilities,
+                resolved_model,
+                provider,
+                resolved_url,
+                resolved_key,
+                max_iter=max_iter,
+                verbose=verbose,
+                max_depth=max_depth,
+                delegate_timeout=delegate_timeout,
+                ctx=ctx,
+                session=session,
+                graceful_interrupt=True,
+            )
+            if result is _AGENT_NOT_FOUND:
+                console.print(f"[{C['error']}]Agent not found: @{agent_name}[/]")
+                console.print(f"[{C['muted']}]Type @ to list available agents[/]")
+                continue
+
+            turn += 1
+            if turn == 1 and not session.query:
+                session.query = query[:100]
+                save_meta(session)
+            if result is not None:
+                console.print(f"\n[{C['final']}]{result}[/]")
             continue
 
         # Skill dispatch: /skill-name args
