@@ -24,9 +24,12 @@ from agent_cli.tools.result import ToolResult
 
 _AGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+_BUILTIN_AGENTS_DIR = Path(__file__).parent.parent / "agents" / "builtin"
+
 _AGENT_SEARCH_PATHS = [
     Path.cwd() / ".agent-cli" / "agents",
     Path.home() / ".agent-cli" / "agents",
+    _BUILTIN_AGENTS_DIR,
 ]
 
 _FRONTMATTER_PATTERN = re.compile(

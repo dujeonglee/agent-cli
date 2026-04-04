@@ -101,6 +101,11 @@ agent_cli/
 │       ├── create-skill.md         스킬 생성 메타 스킬
 │       ├── create-agent.md         에이전트 생성 메타 스킬
 │       └── plan.md                 구현 계획 생성 (plan/ 디렉토리에 저장)
+│
+├── agents/                         에이전트 정의 패키지
+│   ├── __init__.py          (1)
+│   └── builtin/                    패키지 내장 에이전트
+│       └── explorer.md             읽기 전용 코드베이스 탐색 에이전트
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)
