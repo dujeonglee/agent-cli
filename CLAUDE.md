@@ -25,7 +25,10 @@
 ## 프로젝트 구조
 
 - `agent_cli/` — 소스 코드 패키지
-- `agent_cli/skills/builtin/` — 패키지 내장 스킬 (create-skill, create-agent)
+- `agent_cli/render/` — 플러그인 렌더러 시스템 (minimal, fancy, custom)
+- `agent_cli/skills/builtin/` — 패키지 내장 스킬 (create-skill, create-agent, plan, create-team)
+- `agent_cli/agents/builtin/` — 패키지 내장 에이전트 (explorer)
+- `agent_cli/resource_loader.py` — 공유 파일 로더 (스킬/에이전트/지시사항)
 - `tests/` — 유닛 + 통합 테스트
 - `docs/` — 아키텍처 문서 + 설계 문서 (`delegate-redesign/` 등)
 - `~/.agent-cli/models.json` — 사용자 전역 모델 설정 (자동 저장 대상)

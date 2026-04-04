@@ -42,7 +42,8 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (925)  CLI 명령어: run, chat, setup, sessions + @agent 디스패치
+├── main.py                  (925)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
+├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
 ├── constants.py             (20)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
@@ -80,7 +81,7 @@ agent_cli/
 │   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 (재귀, 에러 힌트)
-│   ├── delegate.py          (613)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩, 산출물 개선)
+│   ├── delegate.py          (598)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩, 산출물 개선)
 │   ├── context.py           (63)   read_context 도구 (세션 이력 조회) → ToolResult
 │   (truncation.py 삭제됨 — tool output은 잘림 없이 그대로 LLM에 전달)
 │
@@ -94,13 +95,13 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (400)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Git 스냅샷, Agent 목록)
+│   ├── system_prompt.py     (362)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Git 스냅샷, Agent 목록)
 │   └── compression_prompt.py (45)  하이브리드 요약 프롬프트 (LLM 3섹션 + 규칙 기반 Files Touched)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
 │   ├── models.py            (21)   Skill 데이터 모델 (model/context/hooks/invocation)
-│   ├── loader.py            (139)  스킬 파일 검색/파싱 (프로젝트→전역→built-in, PyYAML, 캐싱)
+│   ├── loader.py            (103)  스킬 파일 검색/파싱 (ResourceLoader 기반, 캐싱)
 │   ├── executor.py          (127)  인자/변수/!`cmd` 치환 + model/context/skill_name 오버라이드
 │   └── builtin/                    패키지 내장 스킬
 │       ├── create-skill.md         스킬 생성 메타 스킬
@@ -181,7 +182,7 @@ tools/edit_file.py  → tools/read_file, tools/result
 tools/shell.py      → tools/result
 tools/write_file.py → tools/result
 tools/context.py    → tools/result, context/session
-tools/delegate.py   → tools/result, context/manager, loop (lazy import), yaml (optional, frontmatter)
+tools/delegate.py   → tools/result, context/manager, resource_loader, loop (lazy import)
 tools/read_artifact → tools/result
 tools/run_skill.py  → tools/result
 tools/registry.py   → (외부만: json, dataclasses)
@@ -193,7 +194,8 @@ prompts/system_pr.  → providers/compat, tools/registry
 loop.py             → constants, context/manager, context/overflow, parsing/react_parser,
                       prompts/system_prompt, providers/base, providers/compat,
                       render, tools, tools/delegate, tools/registry
-skills/loader.py    → skills/models
+skills/loader.py    → skills/models, resource_loader
+resource_loader.py  → yaml (optional)
 skills/executor.py  → loop, skills/models, providers/base, providers/compat
 main.py             → config, context/manager, loop, providers, render, skills
 ```
@@ -774,7 +776,7 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 ~/.agent-cli/DIRECTIVE.md →  사용자 전역 규칙
 ```
 - 둘 다 존재하면 모두 로드 (content hash 중복 제거)
-- 파일당 4K char, 전체 8K char 예산 (초과 시 truncate)
+- content hash 중복 제거, truncation 없음 (ResourceLoader 기반) (초과 시 truncate)
 - 매 세션 시작 시 system prompt 동적 영역에 주입
 
 ### 8.1 models.json 구조
@@ -894,7 +896,7 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     │
     └─ Directives (DIRECTIVE.md가 존재할 때만)
         └─ .agent-cli/DIRECTIVE.md (프로젝트) + ~/.agent-cli/DIRECTIVE.md (유저 전역)
-        └─ 파일당 4K char, 전체 8K char 예산, content hash 중복 제거
+        └─ content hash 중복 제거, truncation 없음 (ResourceLoader 기반), content hash 중복 제거
 ```
 
 ---
