@@ -278,6 +278,11 @@ def build_system_prompt(
     if skill_desc:
         sections.append(skill_desc)
 
+    if include_delegate:
+        agent_desc = build_agent_descriptions()
+        if agent_desc:
+            sections.append(agent_desc)
+
     # ── Recency: current context + user rules ──
     if session_id:
         sections.append(f"## Session\nCurrent session ID: {session_id}")
@@ -297,6 +302,59 @@ def build_system_prompt(
         sections.append(directives)
 
     return "\n\n".join(sections)
+
+
+def build_agent_descriptions() -> str:
+    """Build agent descriptions for system prompt injection.
+
+    Scans agent search paths and returns a formatted section listing
+    available agents for delegation.
+    """
+    try:
+        from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS, _FRONTMATTER_PATTERN
+
+        import yaml
+    except ImportError:
+        return ""
+
+    seen: set[str] = set()
+    agents: list[tuple[str, str]] = []  # (name, description)
+
+    for search_dir in _AGENT_SEARCH_PATHS:
+        if not search_dir.is_dir():
+            continue
+        for md_file in sorted(search_dir.glob("*.md")):
+            name = md_file.stem
+            if name in seen:
+                continue
+            seen.add(name)
+
+            description = ""
+            try:
+                text = md_file.read_text(encoding="utf-8")
+                match = _FRONTMATTER_PATTERN.match(text)
+                if match:
+                    meta = yaml.safe_load(match.group(1))
+                    if isinstance(meta, dict):
+                        description = meta.get("description", "")
+            except Exception:
+                pass
+
+            agents.append((name, description))
+
+    if not agents:
+        return ""
+
+    lines = [
+        "## Available Agents",
+        "Use delegate with agent parameter to invoke:",
+        '  {"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
+    ]
+    for name, desc in agents:
+        suffix = f" — {desc}" if desc else ""
+        lines.append(f"- `{name}`{suffix}")
+
+    return "\n".join(lines)
 
 
 def build_skill_descriptions(

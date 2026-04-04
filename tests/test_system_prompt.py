@@ -79,6 +79,19 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
         assert '"tasks"' in prompt
 
+    def test_available_agents_shown_with_delegate(self):
+        """When delegate is included, available agents are listed."""
+        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        assert "Available Agents" in prompt
+        assert "explorer" in prompt  # built-in agent
+
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_no_agents_without_delegate(self, mock_git):
+        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=False)
+        assert "Available Agents" not in prompt
+
     def test_json_format_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "JSON" in prompt
@@ -89,7 +102,10 @@ class TestBuildSystemPrompt:
         assert "1774882777" in prompt
         assert "Session" in prompt
 
-    def test_session_id_omitted_when_empty(self):
+    @patch(
+        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
+    )
+    def test_session_id_omitted_when_empty(self, mock_git):
         prompt = build_system_prompt(_make_caps(), ["shell"], session_id="")
         assert "Current session ID" not in prompt
 

@@ -95,8 +95,14 @@ Summarize results from all steps.
    - Run: `ls .agent-cli/agents/` and `ls .agent-cli/skills/`
    - For each agent: confirm _load_agent succeeds
    - For each skill: confirm frontmatter is valid
-2. **Test prompts**: generate 2-3 test prompts per skill/agent for the user.
-3. **Report**: list created files + test prompts, ask user to try them.
+2. **Delegate agent check**: verify every delegate call in the orchestrator
+   includes an "agent" parameter matching an existing agent file.
+   - Read the orchestrator skill file
+   - For each delegate call, check that "agent": "{name}" is present
+   - Verify each referenced agent exists in .agent-cli/agents/{name}.md
+   - If any delegate call is missing the agent parameter, fix it
+3. **Test prompts**: generate 2-3 test prompts per skill/agent for the user.
+4. **Report**: list created files + test prompts, ask user to try them.
 
 ## Output
 
@@ -111,4 +117,5 @@ After all phases:
 - Do not create agents/skills that duplicate existing ones
 - Agent names: kebab-case, [a-zA-Z0-9_-] only
 - Orchestrator should use delegate tool, not direct run_loop
+- Every delegate call in the orchestrator must include "agent" parameter
 - All file writes go to .agent-cli/ (gitignored project-local)
