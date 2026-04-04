@@ -18,6 +18,7 @@ from pathlib import Path
 from agent_cli.context.manager import ContextManager
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.resource_loader import ResourceLoader
 from agent_cli.tools.result import ToolResult
 
 # ── Agent file loading ──────────────────────────
@@ -37,6 +38,15 @@ _FRONTMATTER_PATTERN = re.compile(
     re.S,
 )
 
+_agent_loader = ResourceLoader(_AGENT_SEARCH_PATHS)
+
+
+def _reset_agent_loader(search_paths: list[Path] | None = None) -> None:
+    """Reset the agent loader with new search paths (for testing)."""
+    global _agent_loader
+    paths = search_paths if search_paths is not None else _AGENT_SEARCH_PATHS
+    _agent_loader = ResourceLoader(paths)
+
 
 def _validate_agent_name(name: str) -> bool:
     """Validate agent name: alphanumeric, hyphens, underscores only."""
@@ -54,40 +64,15 @@ def _load_agent(name: str) -> tuple[str | None, dict, str | None]:
     if not _validate_agent_name(name):
         return None, {}, f"Invalid agent name '{name}': only [a-zA-Z0-9_-] allowed"
 
-    for search_dir in _AGENT_SEARCH_PATHS:
-        agent_file = search_dir / f"{name}.md"
-        if agent_file.is_file():
-            try:
-                text = agent_file.read_text(encoding="utf-8")
-            except OSError as e:
-                return None, {}, f"Cannot read agent file {agent_file}: {e}"
+    resource = _agent_loader.load_one(name)
+    if resource is None:
+        paths_str = ", ".join(str(p / f"{name}.md") for p in _AGENT_SEARCH_PATHS)
+        return None, {}, f"Agent '{name}' not found. Searched: {paths_str}"
 
-            # Parse frontmatter
-            match = _FRONTMATTER_PATTERN.match(text)
-            if match:
-                frontmatter_text = match.group(1)
-                body = match.group(2).strip()
-                try:
-                    import yaml
+    if not resource.body:
+        return None, {}, f"Agent file '{name}.md' has no content"
 
-                    config = yaml.safe_load(frontmatter_text)
-                    if not isinstance(config, dict):
-                        config = {}
-                except Exception:
-                    # YAML parse failure: ignore frontmatter, use full text as body
-                    config = {}
-                    body = text.strip()
-            else:
-                config = {}
-                body = text.strip()
-
-            if not body:
-                return None, {}, f"Agent file '{name}.md' has no content"
-
-            return body, config, None
-
-    paths_str = ", ".join(str(p / f"{name}.md") for p in _AGENT_SEARCH_PATHS)
-    return None, {}, f"Agent '{name}' not found. Searched: {paths_str}"
+    return resource.body, resource.meta, None
 
 
 @dataclass

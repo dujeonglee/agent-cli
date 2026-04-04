@@ -44,6 +44,12 @@ class TestBuiltinSkillsParsing:
 
 
 class TestBuiltinSkillsLoading:
+    def setup_method(self):
+        """Reset loader to default paths before each test."""
+        import agent_cli.skills.loader as loader
+
+        loader._reset_loader()
+
     def test_builtin_included_in_load(self):
         skills = load_skills(use_cache=False)
         assert "create-skill" in skills
@@ -54,18 +60,13 @@ class TestBuiltinSkillsLoading:
         """Project-local skill with same name overrides built-in."""
         import agent_cli.skills.loader as loader
 
-        # Create a project-local skill with same name as built-in
         local_dir = tmp_path / "skills"
         local_dir.mkdir()
         (local_dir / "create-skill.md").write_text(
             "---\nname: create-skill\ndescription: Custom override\n---\n\nCustom prompt"
         )
 
-        monkeypatch.setattr(
-            loader,
-            "_SEARCH_PATHS",
-            [local_dir, _BUILTIN_DIR],
-        )
+        loader._reset_loader([local_dir, _BUILTIN_DIR])
         skills = load_skills(use_cache=False)
         assert skills["create-skill"].description == "Custom override"
 
@@ -79,11 +80,7 @@ class TestBuiltinSkillsLoading:
             "---\nname: my-custom\ndescription: My skill\n---\n\nDo stuff"
         )
 
-        monkeypatch.setattr(
-            loader,
-            "_SEARCH_PATHS",
-            [local_dir, _BUILTIN_DIR],
-        )
+        loader._reset_loader([local_dir, _BUILTIN_DIR])
         skills = load_skills(use_cache=False)
         assert "my-custom" in skills
         assert "create-skill" in skills

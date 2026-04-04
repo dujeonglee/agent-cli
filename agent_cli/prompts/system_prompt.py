@@ -307,40 +307,17 @@ def build_system_prompt(
 def build_agent_descriptions() -> str:
     """Build agent descriptions for system prompt injection.
 
-    Scans agent search paths and returns a formatted section listing
-    available agents for delegation.
+    Uses the delegate module's agent loader to discover available agents.
     """
     try:
-        from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS, _FRONTMATTER_PATTERN
-
-        import yaml
+        from agent_cli.tools.delegate import _agent_loader
     except ImportError:
         return ""
 
-    seen: set[str] = set()
-    agents: list[tuple[str, str]] = []  # (name, description)
-
-    for search_dir in _AGENT_SEARCH_PATHS:
-        if not search_dir.is_dir():
-            continue
-        for md_file in sorted(search_dir.glob("*.md")):
-            name = md_file.stem
-            if name in seen:
-                continue
-            seen.add(name)
-
-            description = ""
-            try:
-                text = md_file.read_text(encoding="utf-8")
-                match = _FRONTMATTER_PATTERN.match(text)
-                if match:
-                    meta = yaml.safe_load(match.group(1))
-                    if isinstance(meta, dict):
-                        description = meta.get("description", "")
-            except Exception:
-                pass
-
-            agents.append((name, description))
+    resources = _agent_loader.load_all()
+    agents = [
+        (name, res.meta.get("description", "")) for name, res in resources.items()
+    ]
 
     if not agents:
         return ""

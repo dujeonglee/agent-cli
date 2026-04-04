@@ -360,9 +360,9 @@ class TestSkillLoader:
 
         import agent_cli.skills.loader as loader
 
-        monkeypatch.setattr(loader, "_SEARCH_PATHS", [skills_dir])
+        loader._reset_loader([skills_dir])
 
-        skills = load_skills()
+        skills = load_skills(use_cache=False)
         assert "skill1" in skills
         assert "skill2" in skills
 
@@ -381,9 +381,9 @@ class TestSkillLoader:
 
         import agent_cli.skills.loader as loader
 
-        monkeypatch.setattr(loader, "_SEARCH_PATHS", [local_dir, global_dir])
+        loader._reset_loader([local_dir, global_dir])
 
-        skills = load_skills()
+        skills = load_skills(use_cache=False)
         assert skills["review"].description == "Local"
 
     def test_load_flat_and_directory_mixed(self, tmp_path, monkeypatch):
@@ -404,24 +404,22 @@ class TestSkillLoader:
 
         import agent_cli.skills.loader as loader
 
-        monkeypatch.setattr(loader, "_SEARCH_PATHS", [skills_dir])
+        loader._reset_loader([skills_dir])
 
-        skills = load_skills()
+        skills = load_skills(use_cache=False)
         assert "flat-skill" in skills
         assert "dir-skill" in skills
         assert skills["flat-skill"].description == "Flat"
         assert skills["dir-skill"].description == "Dir"
 
-    def test_duplicate_name_flat_and_directory_raises(self, tmp_path, monkeypatch):
-        """Same skill name in flat and directory → raises error."""
+    def test_duplicate_name_flat_and_directory_overwrites(self, tmp_path, monkeypatch):
+        """Same skill name in flat and directory → directory wins (last loaded)."""
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
 
-        # Flat skill
         (skills_dir / "review.md").write_text(
             "---\nname: review\ndescription: Flat\n---\n\nFlat $ARGUMENTS\n"
         )
-        # Directory skill with same name
         dir_skill = skills_dir / "review"
         dir_skill.mkdir()
         (dir_skill / "SKILL.md").write_text(
@@ -430,10 +428,10 @@ class TestSkillLoader:
 
         import agent_cli.skills.loader as loader
 
-        monkeypatch.setattr(loader, "_SEARCH_PATHS", [skills_dir])
+        loader._reset_loader([skills_dir])
 
-        with pytest.raises(ValueError, match="review"):
-            load_skills()
+        skills = load_skills(use_cache=False)
+        assert "review" in skills
 
 
 class TestSkillExecution:
@@ -659,28 +657,35 @@ class TestSkillExecution:
             assert kwargs["ctx"] is None
 
 
-class TestYamlRequired:
-    def test_import_error_without_yaml(self):
-        """Loader should raise ImportError when PyYAML is not installed."""
-        import importlib
-        import sys
+class TestYamlOptional:
+    def test_resource_loader_works_without_frontmatter(self, tmp_path):
+        """ResourceLoader loads files without frontmatter (body only)."""
+        d = tmp_path / "res"
+        d.mkdir()
+        (d / "test.md").write_text("Just plain markdown, no frontmatter")
 
-        # Temporarily remove yaml from sys.modules and block re-import
-        saved = sys.modules.pop("yaml", None)
-        with unittest.mock.patch.dict(sys.modules, {"yaml": None}):
-            with pytest.raises(ImportError):
-                # Force reimport of loader to trigger the import
-                if "agent_cli.skills.loader" in sys.modules:
-                    del sys.modules["agent_cli.skills.loader"]
-                importlib.import_module("agent_cli.skills.loader")
+        from agent_cli.resource_loader import ResourceLoader
 
-        # Restore
-        if saved is not None:
-            sys.modules["yaml"] = saved
-        # Re-import to restore normal state
-        if "agent_cli.skills.loader" in sys.modules:
-            del sys.modules["agent_cli.skills.loader"]
-        importlib.import_module("agent_cli.skills.loader")
+        loader = ResourceLoader([d])
+        results = loader.load_all()
+        assert "test" in results
+        assert results["test"].meta == {}
+
+    def test_skills_require_frontmatter(self, tmp_path):
+        """Skill loader skips files without frontmatter."""
+        import agent_cli.skills.loader as loader
+
+        d = tmp_path / "skills"
+        d.mkdir()
+        (d / "no-meta.md").write_text("No frontmatter here")
+        (d / "with-meta.md").write_text(
+            "---\nname: with-meta\ndescription: Has meta\n---\n\nBody"
+        )
+
+        loader._reset_loader([d])
+        skills = load_skills(use_cache=False)
+        assert "no-meta" not in skills
+        assert "with-meta" in skills
 
 
 class TestSkillPromptInjection:

@@ -1088,7 +1088,7 @@ class TestRunSkillTool:
             thinking_budget=0,
             supports_strict_schema=False,
         )
-        with patch("agent_cli.skills.loader.load_skills", return_value=mock_skills):
+        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
             with patch(
                 "agent_cli.skills.executor.execute_skill", return_value="Summary done"
             ):

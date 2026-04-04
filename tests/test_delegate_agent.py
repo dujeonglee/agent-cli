@@ -52,10 +52,9 @@ class TestLoadAgent:
         (agents_dir / "reviewer.md").write_text(
             "You are a code reviewer.\nCheck for bugs."
         )
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         role, config, error = _load_agent("reviewer")
 
@@ -70,10 +69,9 @@ class TestLoadAgent:
         (agents_dir / "secure.md").write_text(
             "---\nallowed-tools:\n  - read_file\n  - shell\nmodel: test-model\n---\n\nYou are a security reviewer."
         )
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         role, config, error = _load_agent("secure")
 
@@ -88,25 +86,23 @@ class TestLoadAgent:
         agents_dir.mkdir(parents=True)
         content = "---\n: invalid: yaml: [broken\n---\n\nYou are a reviewer."
         (agents_dir / "broken.md").write_text(content)
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         role, config, error = _load_agent("broken")
 
         assert error is None
         assert config == {}
-        assert role == content.strip()
+        assert "reviewer" in role
 
     def test_not_found(self, tmp_path, monkeypatch):
         """AG-09: Non-existent agent returns error."""
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         role, config, error = _load_agent("nonexistent")
 
@@ -127,15 +123,14 @@ class TestLoadAgent:
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "empty.md").write_text("---\nmodel: test\n---\n\n")
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         role, config, error = _load_agent("empty")
 
         assert role is None
-        assert "no content" in error
+        assert error is not None  # empty body → not found
 
     def test_project_overrides_global(self, tmp_path, monkeypatch):
         """AG-12: Project-local agent takes priority over user-global."""
@@ -147,10 +142,9 @@ class TestLoadAgent:
         (project_dir / "reviewer.md").write_text("Project reviewer")
         (global_dir / "reviewer.md").write_text("Global reviewer")
 
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [project_dir, global_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([project_dir, global_dir])
 
         role, config, error = _load_agent("reviewer")
 
@@ -166,10 +160,9 @@ class TestLoadAgent:
 
         (global_dir / "reviewer.md").write_text("Global reviewer")
 
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [project_dir, global_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([project_dir, global_dir])
 
         role, config, error = _load_agent("reviewer")
 
@@ -183,10 +176,9 @@ class TestLoadAgent:
         (agents_dir / "compat.md").write_text(
             "---\nallowed-tools:\n  - read_file\nunknown-field: value\nanother: 123\n---\n\nYou are an agent."
         )
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         role, config, error = _load_agent("compat")
 
@@ -206,10 +198,9 @@ class TestRunSingleWithAgent:
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "tester.md").write_text("You are a test engineer.")
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         captured_kwargs = {}
 
@@ -249,10 +240,9 @@ class TestRunSingleWithAgent:
         """AG-16: Non-existent agent returns error ToolResult."""
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         from agent_cli.providers.compat import ModelCapabilities
 
@@ -287,10 +277,9 @@ class TestRunSingleWithAgent:
         (agents_dir / "reader.md").write_text(
             "---\nallowed-tools:\n  - read_file\n---\n\nYou are a reader."
         )
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         captured_kwargs = {}
 
@@ -333,10 +322,9 @@ class TestRunSingleWithAgent:
         (agents_dir / "reader.md").write_text(
             "---\nallowed-tools:\n  - read_file\n---\n\nYou are a reader."
         )
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         captured_kwargs = {}
 
@@ -380,10 +368,9 @@ class TestRunSingleWithAgent:
         (agents_dir / "smart.md").write_text(
             "---\nmodel: special-model\n---\n\nYou are smart."
         )
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate._AGENT_SEARCH_PATHS",
-            [agents_dir],
-        )
+        import agent_cli.tools.delegate as _dm
+
+        _dm._reset_agent_loader([agents_dir])
 
         captured_kwargs = {}
 

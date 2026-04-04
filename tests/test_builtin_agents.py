@@ -50,11 +50,7 @@ class TestBuiltinAgentPriority:
             "# Custom Explorer\nYou are a custom explorer that can also write."
         )
 
-        monkeypatch.setattr(
-            delegate_mod,
-            "_AGENT_SEARCH_PATHS",
-            [project_dir, _BUILTIN_AGENTS_DIR],
-        )
+        delegate_mod._reset_agent_loader([project_dir, _BUILTIN_AGENTS_DIR])
 
         role, config, error = _load_agent("explorer")
         assert error is None
@@ -68,11 +64,7 @@ class TestBuiltinAgentPriority:
         empty_dir = tmp_path / "agents"
         empty_dir.mkdir()
 
-        monkeypatch.setattr(
-            delegate_mod,
-            "_AGENT_SEARCH_PATHS",
-            [empty_dir, _BUILTIN_AGENTS_DIR],
-        )
+        delegate_mod._reset_agent_loader([empty_dir, _BUILTIN_AGENTS_DIR])
 
         role, config, error = _load_agent("explorer")
         assert error is None

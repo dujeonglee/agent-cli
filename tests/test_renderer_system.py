@@ -56,7 +56,7 @@ class TestBuildAgentDescriptions:
         from agent_cli.prompts.system_prompt import build_agent_descriptions
         import agent_cli.tools.delegate as delegate_mod
 
-        monkeypatch.setattr(delegate_mod, "_AGENT_SEARCH_PATHS", [tmp_path / "empty"])
+        delegate_mod._reset_agent_loader([tmp_path / "empty"])
         desc = build_agent_descriptions()
         assert desc == ""
 
