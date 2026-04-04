@@ -99,7 +99,8 @@ agent_cli/
 │   ├── executor.py          (127)  인자/변수/!`cmd` 치환 + model/context/skill_name 오버라이드
 │   └── builtin/                    패키지 내장 스킬
 │       ├── create-skill.md         스킬 생성 메타 스킬
-│       └── create-agent.md         에이전트 생성 메타 스킬
+│       ├── create-agent.md         에이전트 생성 메타 스킬
+│       └── plan.md                 구현 계획 생성 (plan/ 디렉토리에 저장)
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)
@@ -1062,6 +1063,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 패키지 내장 스킬:
 - `create-skill` — 새 스킬 파일 대화형 생성
 - `create-agent` — 새 에이전트 정의 파일 대화형 생성
+- `plan` — 기능 요청을 작업 분해 + 의존성 + 범위 추정으로 구조화 (plan/ 저장)
 
 ### 13.5 실행 플로우
 

@@ -9,7 +9,7 @@ class TestBuiltinDirectory:
 
     def test_builtin_dir_has_skills(self):
         md_files = list(_BUILTIN_DIR.glob("*.md"))
-        assert len(md_files) >= 2  # create-skill, create-agent
+        assert len(md_files) >= 3  # create-skill, create-agent, plan
 
 
 class TestBuiltinSkillsParsing:
@@ -31,12 +31,22 @@ class TestBuiltinSkillsParsing:
         assert skill.disable_model_invocation is True
         assert "ask" in skill.allowed_tools
 
+    def test_plan_parses(self):
+        path = _BUILTIN_DIR / "plan.md"
+        skill = _parse_skill_file(path)
+        assert skill is not None
+        assert skill.name == "plan"
+        assert skill.description
+        assert "write_file" in skill.allowed_tools
+        assert skill.disable_model_invocation is False  # LLM can auto-invoke
+
 
 class TestBuiltinSkillsLoading:
     def test_builtin_included_in_load(self):
         skills = load_skills(use_cache=False)
         assert "create-skill" in skills
         assert "create-agent" in skills
+        assert "plan" in skills
 
     def test_builtin_has_lower_priority(self, tmp_path, monkeypatch):
         """Project-local skill with same name overrides built-in."""
@@ -100,4 +110,17 @@ class TestBuiltinSkillContent:
 
     def test_create_agent_user_invocable(self):
         skill = _parse_skill_file(_BUILTIN_DIR / "create-agent.md")
+        assert skill.user_invocable is True
+
+    def test_plan_has_output_template(self):
+        path = _BUILTIN_DIR / "plan.md"
+        content = path.read_text()
+        assert "plan/" in content
+        assert "## Tasks" in content
+        assert "## Dependencies" in content
+        assert "## Scope" in content
+        assert "- [ ]" in content
+
+    def test_plan_user_invocable(self):
+        skill = _parse_skill_file(_BUILTIN_DIR / "plan.md")
         assert skill.user_invocable is True

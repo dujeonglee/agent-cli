@@ -291,6 +291,7 @@ LLM은 `read_context` 도구로 이전 세션의 세부 이력을 조회할 수 
 |------|------|
 | `/create-skill <name>` | 새 스킬 파일을 대화형으로 생성 (SKILL.md + scripts/) |
 | `/create-agent <name>` | 새 에이전트 정의 파일을 대화형으로 생성 |
+| `/plan <feature>` | 기능 요청을 작업 분해 + 의존성 + 범위 추정으로 구조화하여 `plan/` 에 저장 |
 
 사용자가 같은 이름의 스킬을 `.agent-cli/skills/`에 만들면 built-in을 오버라이드합니다.
 
