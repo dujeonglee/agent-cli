@@ -26,7 +26,14 @@ def ctx(session_dir):
 class TestFIFO:
     def test_add_and_get(self, ctx):
         ctx.add({"role": "user", "content": "hello"})
-        ctx.add({"role": "assistant", "thought": "greeting", "action": "complete", "action_input": {"result": "hi"}})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "greeting",
+                "action": "complete",
+                "action_input": {"result": "hi"},
+            }
+        )
         msgs = ctx.get_messages()
         assert len(msgs) == 2
         assert msgs[0]["role"] == "user"
@@ -44,7 +51,14 @@ class TestFIFO:
     def test_fifo_preserves_order(self, ctx):
         for i in range(3):
             ctx.add({"role": "user", "content": f"u{i}"})
-            ctx.add({"role": "assistant", "thought": f"t{i}", "action": "complete", "action_input": {"result": f"r{i}"}})
+            ctx.add(
+                {
+                    "role": "assistant",
+                    "thought": f"t{i}",
+                    "action": "complete",
+                    "action_input": {"result": f"r{i}"},
+                }
+            )
         # fifo_size=5, so last 5 of 6 messages
         raw = ctx.get_raw_messages()
         assert len(raw) == 5
@@ -139,7 +153,7 @@ class TestSessionResume:
         history_path = session_dir / "history.jsonl"
         history_path.write_text(
             '{"role":"user","content":"good"}\n'
-            'NOT JSON\n'
+            "NOT JSON\n"
             '{"role":"user","content":"also good"}\n'
         )
         ctx = ContextManager(session_dir, fifo_size=5, resume=True)
@@ -189,7 +203,9 @@ class TestNaturalLanguageConversion:
             "role": "assistant",
             "thought": "explorer에게 의존성 분석을 위임하겠다",
             "action": "delegate",
-            "action_input": {"tasks": [{"task": "auth.py 의존성 조사", "agent": "explorer"}]},
+            "action_input": {
+                "tasks": [{"task": "auth.py 의존성 조사", "agent": "explorer"}]
+            },
         }
         result = _to_natural_language(msg)
         assert "→ delegate(explorer" in result["content"]
@@ -274,7 +290,14 @@ class TestFork:
     def test_fork_copies_history(self, session_dir, tmp_path):
         ctx = ContextManager(session_dir, fifo_size=5)
         ctx.add({"role": "user", "content": "parent msg 1"})
-        ctx.add({"role": "assistant", "thought": "ok", "action": "complete", "action_input": {"result": "done"}})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "ok",
+                "action": "complete",
+                "action_input": {"result": "done"},
+            }
+        )
 
         target = tmp_path / "delegate_coder_abc_123"
         copied_path = ctx.fork_history_to(target)
@@ -319,24 +342,30 @@ class TestGetMessagesIntegration:
     def test_full_conversation_flow(self, ctx):
         """Simulate a realistic conversation and verify output."""
         ctx.add({"role": "user", "content": "auth.py를 리팩토링 해줘"})
-        ctx.add({
-            "role": "assistant",
-            "thought": "현재 구조를 파악하기 위해 auth.py를 읽겠다",
-            "action": "read_file",
-            "action_input": {"path": "src/auth.py"},
-        })
-        ctx.add({
-            "role": "user",
-            "tool": "read_file",
-            "args": {"path": "src/auth.py"},
-            "content": "class AuthManager:\n    pass",
-        })
-        ctx.add({
-            "role": "assistant",
-            "thought": "리팩토링이 완료되었다",
-            "action": "complete",
-            "action_input": {"result": "AuthManager 리팩토링 완료"},
-        })
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "현재 구조를 파악하기 위해 auth.py를 읽겠다",
+                "action": "read_file",
+                "action_input": {"path": "src/auth.py"},
+            }
+        )
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "read_file",
+                "args": {"path": "src/auth.py"},
+                "content": "class AuthManager:\n    pass",
+            }
+        )
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "리팩토링이 완료되었다",
+                "action": "complete",
+                "action_input": {"result": "AuthManager 리팩토링 완료"},
+            }
+        )
 
         msgs = ctx.get_messages()
         assert len(msgs) == 4
@@ -348,12 +377,14 @@ class TestGetMessagesIntegration:
 
     def test_artifact_paths_preserved_in_messages(self, ctx):
         """Artifact paths from observations appear in get_messages output."""
-        ctx.add({
-            "role": "user",
-            "tool": "delegate",
-            "agent": "coder",
-            "content": "구현 완료",
-            "artifact": "delegate_coder_f1a9_20260405T143230456/",
-        })
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "delegate",
+                "agent": "coder",
+                "content": "구현 완료",
+                "artifact": "delegate_coder_f1a9_20260405T143230456/",
+            }
+        )
         msgs = ctx.get_messages()
         assert "delegate_coder_f1a9_20260405T143230456/" in msgs[0]["content"]

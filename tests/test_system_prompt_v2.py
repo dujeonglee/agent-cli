@@ -58,9 +58,7 @@ class TestGitContextRemoved:
 
 class TestSessionIdRemoved:
     def test_no_session_section(self, caps):
-        prompt = build_system_prompt(
-            caps, ["read_file"], session_id="test-123"
-        )
+        prompt = build_system_prompt(caps, ["read_file"], session_id="test-123")
         # session_id param still accepted but no longer creates a section
         assert "## Session" not in prompt
 
@@ -94,9 +92,7 @@ class TestThoughtGuidelines:
 class TestDirectiveBeforeEnvironment:
     def test_directive_section_order(self, caps):
         """DIRECTIVE should come before Environment in recency zone."""
-        prompt = build_system_prompt(
-            caps, ["read_file"], session_dir="/tmp/test"
-        )
+        prompt = build_system_prompt(caps, ["read_file"], session_dir="/tmp/test")
         # Environment section should exist
         env_pos = prompt.find("## Environment")
         recovery_pos = prompt.find("## Context Recovery")

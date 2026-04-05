@@ -200,7 +200,12 @@ def _dispatch_skill(
 
     # Record skill invocation in context
     if ctx:
-        ctx.add({"role": "user", "content": f"Used skill: {cmd_name}({arguments}) — results follow"})
+        ctx.add(
+            {
+                "role": "user",
+                "content": f"Used skill: {cmd_name}({arguments}) — results follow",
+            }
+        )
 
     from agent_cli.render import render_status
 

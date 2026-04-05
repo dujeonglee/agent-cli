@@ -11,7 +11,7 @@ import time
 from agent_cli.constants import OBS_SUCCESS, OBS_ERROR, OBS_ERROR_HINT
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.overflow import check_preemptive_overflow, is_context_overflow
+from agent_cli.context.overflow import is_context_overflow
 from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
@@ -29,7 +29,6 @@ from agent_cli.render import (
 )
 from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
-from agent_cli.tools.registry import convert_to_anthropic_tools, convert_to_openai_tools
 
 _debug_verbose = False
 
@@ -199,7 +198,7 @@ class AgentLoop:
         """Handle graceful interrupt: record in ctx, return None."""
         interrupt_msg = "⚡ User interrupted. Waiting for new instructions."
         if self.ctx:
-            self.ctx.add("user", interrupt_msg)
+            self.ctx.add({"role": "user", "content": interrupt_msg})
         if not self.suppress_output:
             from agent_cli.render import C, console
 
@@ -244,7 +243,7 @@ class AgentLoop:
 
         # Message setup
         if self.ctx:
-            self.ctx.add("user", self.query)
+            self.ctx.add({"role": "user", "content": self.query})
             self.messages = self.ctx.get_messages()
         else:
             self.messages = [{"role": "user", "content": self.query}]
@@ -261,49 +260,20 @@ class AgentLoop:
             render_turn_sep(self.turn)
 
     def _execute_iteration(self) -> str | None:
-        """Single iteration: checkpoint, overflow, LLM call, dispatch."""
-        # 1. Checkpoint: nudge LLM if running too long
+        """Single iteration: checkpoint, LLM call, text parse, dispatch."""
         self._maybe_checkpoint()
 
-        # 2. Preemptive overflow check
-        if check_preemptive_overflow(self.messages, self.capabilities):
-            if self.ctx:
-                render_status("running", "Compressing context (preemptive)...")
-                self.ctx.force_compress()
-                self.messages = self.ctx.get_messages()
-            else:
-                # Single-shot: trim oldest observations
-                self.messages = _trim_old_observations(self.messages, self.capabilities)
-
-        # 2. Prepare tools for native tool calling
-        call_kwargs: dict = {}
-        if self.capabilities.supports_tool_calling:
-            if self.provider_name == "anthropic":
-                call_kwargs["tools"] = convert_to_anthropic_tools(
-                    self.tools_list, include_delegate=self.include_delegate
-                )
-            elif self.provider_name == "openai":
-                call_kwargs["tools"] = convert_to_openai_tools(
-                    self.tools_list, include_delegate=self.include_delegate
-                )
-
-        # 3. LLM call
-        response = self._call_llm(call_kwargs)
+        response = self._call_llm({})
         if response is None:
-            return None  # LLM failed
+            return None
         if response == self._RETRY:
-            return self._CONTINUE  # Overflow retry
+            return self._CONTINUE
 
         llm_text = response.content
 
         if not self.suppress_output:
             render_raw(llm_text, self.turn, self.verbose)
 
-        # 4. Native tool calling path (Anthropic/OpenAI)
-        if response.tool_calls:
-            return self._handle_native_path(response, llm_text)
-
-        # 5. Text parsing path (Ollama, fallback)
         return self._handle_text_path(llm_text)
 
     def _maybe_checkpoint(self) -> None:
@@ -327,7 +297,7 @@ class AgentLoop:
             )
             self.messages.append({"role": "user", "content": checkpoint_msg})
             if self.ctx:
-                self.ctx.add("user", checkpoint_msg)
+                self.ctx.add({"role": "user", "content": checkpoint_msg})
             if not self.suppress_output:
                 render_status("running", f"Checkpoint at iteration {self.turn}")
 
@@ -356,8 +326,7 @@ class AgentLoop:
         except Exception as e:
             if is_context_overflow(str(e)):
                 if self.ctx and not self.overflow_retried:
-                    render_status("running", "Context overflow — compressing...")
-                    self.ctx.force_compress()
+                    render_status("running", "Context overflow — refreshing...")
                     self.messages = self.ctx.get_messages()
                     self.overflow_retried = True
                     self.turn -= 1
@@ -374,270 +343,6 @@ class AgentLoop:
         finally:
             if self.skill_name or not self.suppress_output:
                 render_spinner_stop()
-
-    def _handle_native_path(self, response, llm_text: str) -> str | None:
-        """Handle native tool calling response (Anthropic/OpenAI)."""
-        if len(response.tool_calls) == 1:
-            first_toolcall = response.tool_calls[0]
-            _debug_log(f"NATIVE_TOOL iter={self.turn} action={first_toolcall['name']}")
-
-            # 4a. Complete tool -> extract result and return
-            if first_toolcall["name"] == "complete":
-                _render_skill_progress(
-                    self.skill_name,
-                    self.turn,
-                    "complete",
-                    {},
-                    self.suppress_output,
-                    thought=llm_text[:100],
-                )
-                if isinstance(first_toolcall.get("input"), dict):
-                    raw = first_toolcall["input"].get("result")
-                    answer = (
-                        str(raw)
-                        if raw
-                        else "(Completed without result — model may lack capability for this task)"
-                    )
-                else:
-                    answer = "(Completed without result — model may lack capability for this task)"
-                # Fulfillment guard
-                if not self.tools_called and needs_tool_action(self.query):
-                    render_status(
-                        "error",
-                        "Answer rejected — no tool actions performed yet.",
-                        self.turn,
-                    )
-                    # Fall through to execute as normal tool (will fail gracefully)
-                else:
-                    _log_tool_to_session(
-                        self.session,
-                        self.depth,
-                        self.turn,
-                        "complete",
-                        answer,
-                    )
-                    # Scratchpad: save complete result
-                    if self.ctx:
-                        self.ctx.end_turn(
-                            content=answer,
-                            tags=_build_artifact_tags("complete", {}, self.skill_name),
-                            summary=_build_artifact_summary("complete", {}, answer),
-                        )
-                    if self.ctx:
-                        self.ctx.add("assistant", answer)
-                    if not self.suppress_output:
-                        render_step("final", answer, self.turn)
-                    return answer
-
-            # 4b. Ask tool -- prompt user (native path)
-            if first_toolcall["name"] == "ask":
-                questions = _extract_questions(first_toolcall.get("input"))
-                if questions:
-                    user_response = _handle_ask(questions, self.suppress_output)
-                    obs_msg = f"User responded:\n{user_response}"
-                    _append_native_observation(
-                        self.messages,
-                        self.ctx,
-                        self.provider_name,
-                        response,
-                        [{"tool_call": first_toolcall, "output": obs_msg}],
-                    )
-                    return self._CONTINUE
-
-            # 4c. run_skill -- intercept at loop level (needs ctx)
-            if first_toolcall["name"] == "run_skill":
-                skill_input = (
-                    first_toolcall.get("input", {})
-                    if isinstance(first_toolcall.get("input"), dict)
-                    else {}
-                )
-                obs = _handle_run_skill(
-                    skill_input,
-                    self.provider_name,
-                    self.base_url,
-                    self.api_key,
-                    self.capabilities,
-                    self.model,
-                    self.ctx,
-                    self.session,
-                    self.skill_name,
-                    skill_stack=self.skill_stack,
-                    graceful_interrupt=self.graceful_interrupt,
-                )
-                if not self.suppress_output:
-                    render_step(
-                        "observation",
-                        obs,
-                        self.turn,
-                        tool_name="run_skill",
-                    )
-                _append_native_observation(
-                    self.messages,
-                    self.ctx,
-                    self.provider_name,
-                    response,
-                    [{"tool_call": first_toolcall, "output": obs}],
-                )
-                self.tools_called.append("run_skill")
-                return self._CONTINUE
-
-            # 4c-2. read_artifact -- needs ctx for scratchpad_dir
-            if first_toolcall["name"] == "read_artifact":
-                art_input = (
-                    first_toolcall.get("input", {})
-                    if isinstance(first_toolcall.get("input"), dict)
-                    else {}
-                )
-                from agent_cli.tools.read_artifact import tool_read_artifact
-
-                art_result = tool_read_artifact(art_input, ctx=self.ctx)
-                obs = art_result.output if art_result.success else art_result.error
-                if not self.suppress_output:
-                    render_step(
-                        "observation",
-                        obs,
-                        self.turn,
-                        tool_name="read_artifact",
-                    )
-                _append_native_observation(
-                    self.messages,
-                    self.ctx,
-                    self.provider_name,
-                    response,
-                    [{"tool_call": first_toolcall, "output": obs}],
-                )
-                self.tools_called.append("read_artifact")
-                return self._CONTINUE
-
-            # 4d. ready_for_review -- return original query for self-check
-            if first_toolcall["name"] == "ready_for_review":
-                summary = ""
-                if isinstance(first_toolcall.get("input"), dict):
-                    summary = first_toolcall["input"].get("summary", "")
-                obs = _build_review_observation(self.query, summary, ctx=self.ctx)
-                _render_skill_progress(
-                    self.skill_name,
-                    self.turn,
-                    "ready_for_review",
-                    {"summary": summary},
-                    self.suppress_output,
-                    thought=llm_text[:100],
-                )
-                if not self.skill_name and not self.suppress_output:
-                    render_step(
-                        "observation",
-                        obs,
-                        self.turn,
-                        tool_name="ready_for_review",
-                    )
-                _append_native_observation(
-                    self.messages,
-                    self.ctx,
-                    self.provider_name,
-                    response,
-                    [{"tool_call": first_toolcall, "output": obs}],
-                )
-                return self._CONTINUE
-
-            # 4e. Echo-as-final-answer pattern
-            echo_answer = _try_echo_as_final(
-                first_toolcall["name"], first_toolcall["input"]
-            )
-            if echo_answer:
-                if self.ctx:
-                    self.ctx.end_turn(
-                        content=echo_answer,
-                        tags=_build_artifact_tags("complete", {}, self.skill_name),
-                        summary=_build_artifact_summary("complete", {}, echo_answer),
-                    )
-                if self.ctx:
-                    self.ctx.add("assistant", echo_answer)
-                if not self.suppress_output:
-                    render_step("final", echo_answer, self.turn)
-                return echo_answer
-
-        observations = []
-        for tc in response.tool_calls:
-            tool_name = tc["name"]
-            tool_input = tc["input"]
-            _render_skill_progress(
-                self.skill_name,
-                self.turn,
-                tool_name,
-                tool_input,
-                self.suppress_output,
-                thought=llm_text[:100],
-            )
-
-            if not self.suppress_output:
-                render_step(
-                    "action",
-                    "",
-                    self.turn,
-                    tool_name=tool_name,
-                    tool_input=json.dumps(tool_input, ensure_ascii=False)
-                    if isinstance(tool_input, dict)
-                    else str(tool_input),
-                )
-
-            # Execute tool (shared logic -- tracks tools_called + history)
-            obs = _execute_single_tool(
-                tool_name,
-                tool_input,
-                self.tools_list,
-                self.include_delegate,
-                self.capabilities,
-                self.provider_name,
-                self.model,
-                self.base_url,
-                self.api_key,
-                self.delegate_timeout,
-                self.tools_called,
-                self.recent_tool_history,
-                self.turn,
-                hooks_config=self.hooks_config,
-                delegate_ctx=self.ctx,
-                delegate_provider=self.provider,
-                delegate_depth=self.depth,
-                delegate_max_depth=self.max_depth,
-                delegate_max_turns=self.max_turns,
-                delegate_suppress=self.suppress_output,
-                delegate_session=self.session,
-                delegate_skill_stack=self.skill_stack,
-            )
-
-            if not self.suppress_output:
-                render_step("observation", obs, self.turn, tool_name=tool_name)
-            observations.append({"tool_call": tc, "output": obs})
-
-
-            _log_tool_to_session(
-                self.session,
-                self.depth,
-                self.turn,
-                tool_name,
-                obs,
-                action_input=_normalize_input(tool_input),
-            )
-
-        # Repeated call detection
-        if _detect_repeated_calls(self.recent_tool_history):
-            last = self.recent_tool_history[-1]
-            _debug_log(
-                f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={self.skill_name}"
-            )
-            render_status(
-                "error",
-                f"Repeated call detected: {last['tool']} called "
-                f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
-            )
-            return ""  # Non-None to exit loop
-
-        # Format messages based on provider
-        _append_native_observation(
-            self.messages, self.ctx, self.provider_name, response, observations
-        )
-        return self._CONTINUE
 
     def _handle_text_path(self, llm_text: str) -> str | None:
         """Handle text parsing response (Ollama, fallback)."""
@@ -702,7 +407,7 @@ class AgentLoop:
             )
 
             if self.ctx:
-                self.ctx.add("assistant", answer)
+                self.ctx.add({"role": "assistant", "content": answer})
             if not self.suppress_output:
                 render_step("final", answer, self.turn)
             return answer
@@ -719,7 +424,7 @@ class AgentLoop:
                 thought=parsed.thought or "",
             )
             if self.ctx:
-                self.ctx.add("assistant", echo_answer)
+                self.ctx.add({"role": "assistant", "content": echo_answer})
             if not self.suppress_output:
                 render_step("final", echo_answer, self.turn)
             return echo_answer
@@ -880,7 +585,6 @@ class AgentLoop:
                     self.turn,
                     tool_name=tool_name,
                 )
-
 
             # Repeated call detection
             if _detect_repeated_calls(self.recent_tool_history):
@@ -1082,7 +786,6 @@ def _render_skill_progress(
     )
 
 
-
 def _handle_run_skill(
     skill_input: dict,
     provider_name: str,
@@ -1169,36 +872,6 @@ def _handle_run_skill(
     return obs
 
 
-def _build_artifact_summary(tool_name: str, tool_input, obs: str = "") -> str:
-    """Build a human-readable summary for scratchpad progress."""
-    if tool_name == "complete":
-        # Preview of the result
-        preview = obs[:80].replace("\n", " ").strip()
-        return f"Task completed: {preview}"
-
-    if isinstance(tool_input, dict):
-        if tool_name in ("read_file", "write_file", "edit_file"):
-            filepath = tool_input.get("path", "")
-            if filepath:
-                # Count lines in observation
-                lines = obs.count("\n") + 1 if obs else 0
-                fname = filepath.split("/")[-1]
-                return f"{tool_name}: {fname} ({lines} lines)"
-        if tool_name == "shell":
-            cmd = tool_input.get("command", "")
-            if cmd:
-                return f"shell: {cmd[:60]}"
-        if tool_name == "delegate":
-            tasks = tool_input.get("tasks", [])
-            if tasks:
-                labels = [t.get("task", "")[:40] for t in tasks[:3]]
-                return f"delegate ({len(tasks)} tasks): {'; '.join(labels)}"
-            task = tool_input.get("task", "")
-            return f"delegate: {task[:80]}"
-
-    return f"{tool_name} executed"
-
-
 def _build_review_observation(query: str, summary: str, ctx=None) -> str:
     """Build the observation returned by ready_for_review tool."""
     parts = [
@@ -1219,23 +892,6 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
         ]
     )
     return "\n".join(parts)
-
-
-def _build_artifact_tags(tool_name: str, tool_input, skill_name: str = "") -> list[str]:
-    """Build artifact tags from tool context."""
-    tags = [tool_name]
-
-    # Extract filepath for file tools
-    if isinstance(tool_input, dict):
-        filepath = tool_input.get("path", "")
-        if filepath and tool_name in ("read_file", "write_file", "edit_file"):
-            tags.append(filepath)
-
-    # Add skill tag if inside a skill
-    if skill_name:
-        tags.append(f"skill:{skill_name}")
-
-    return tags
 
 
 def _log_to_session(session, entry: dict) -> None:
@@ -1499,113 +1155,6 @@ def _run_post_hook(hooks_config, tool_name, input_dict, obs, success=True):
         )
 
 
-def _format_tool_call_messages(
-    provider_name: str,
-    response,
-    observations: list[dict],
-) -> list[dict]:
-    """Format tool call results as provider-specific messages."""
-    if provider_name == "anthropic":
-        return _format_anthropic_tool_messages(response, observations)
-    elif provider_name == "openai":
-        return _format_openai_tool_messages(response, observations)
-    else:
-        # Fallback: generic observation format
-        obs_text = "\n\n".join(o["output"] for o in observations)
-        return [
-            {"role": "assistant", "content": response.content or ""},
-            {
-                "role": "user",
-                "content": f"Observation: {obs_text}\n\nContinue. Respond with JSON only.",
-            },
-        ]
-
-
-def _format_anthropic_tool_messages(response, observations: list[dict]) -> list[dict]:
-    """Format for Anthropic: assistant content blocks + tool_result user message."""
-    # Build assistant message with text + tool_use blocks
-    assistant_content = []
-    if response.content:
-        assistant_content.append({"type": "text", "text": response.content})
-    for tc in response.tool_calls or []:
-        assistant_content.append(
-            {
-                "type": "tool_use",
-                "id": tc["id"],
-                "name": tc["name"],
-                "input": tc["input"],
-            }
-        )
-
-    # Build tool result user message
-    tool_results = []
-    for obs in observations:
-        tool_results.append(
-            {
-                "type": "tool_result",
-                "tool_use_id": obs["tool_call"]["id"],
-                "content": obs["output"],
-            }
-        )
-
-    return [
-        {"role": "assistant", "content": assistant_content},
-        {"role": "user", "content": tool_results},
-    ]
-
-
-def _format_openai_tool_messages(response, observations: list[dict]) -> list[dict]:
-    """Format for OpenAI: assistant with tool_calls + tool role messages."""
-    # Build assistant message with tool_calls
-    assistant_msg = {
-        "role": "assistant",
-        "content": response.content or None,
-        "tool_calls": [
-            {
-                "id": tc["id"],
-                "type": "function",
-                "function": {
-                    "name": tc["name"],
-                    "arguments": json.dumps(tc["input"]),
-                },
-            }
-            for tc in response.tool_calls or []
-        ],
-    }
-
-    # Build tool result messages
-    result_msgs = [
-        {
-            "role": "tool",
-            "tool_call_id": obs["tool_call"]["id"],
-            "content": obs["output"],
-        }
-        for obs in observations
-    ]
-
-    return [assistant_msg] + result_msgs
-
-
-def _append_native_observation(
-    messages: list[dict],
-    ctx,
-    provider_name: str,
-    response,
-    observations: list[dict],
-) -> None:
-    """Native tool calling: format messages + extend + sync ctx."""
-    new_msgs = _format_tool_call_messages(provider_name, response, observations)
-    messages.extend(new_msgs)
-    if ctx:
-        for m in new_msgs:
-            ctx.add(
-                m["role"],
-                m.get("content", "")
-                if isinstance(m.get("content"), str)
-                else json.dumps(m.get("content", "")),
-            )
-
-
 def _append_text_observation(
     messages: list[dict],
     ctx,
@@ -1616,16 +1165,5 @@ def _append_text_observation(
     messages.append({"role": "assistant", "content": llm_text})
     messages.append({"role": "user", "content": obs_msg})
     if ctx:
-        ctx.add("assistant", llm_text)
-        ctx.add("user", obs_msg)
-
-
-def _trim_old_observations(
-    messages: list[dict], capabilities: ModelCapabilities
-) -> list[dict]:
-    """Trim oldest observation messages in single-shot mode to fit context."""
-    if len(messages) <= 3:
-        return messages
-    # Keep first (query) and last 4 messages, trim middle
-    keep_last = min(4, len(messages) - 1)
-    return [messages[0]] + messages[-keep_last:]
+        ctx.add({"role": "assistant", "content": llm_text})
+        ctx.add({"role": "user", "content": obs_msg})

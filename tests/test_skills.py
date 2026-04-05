@@ -612,52 +612,6 @@ class TestSkillExecution:
             _, kwargs = mock_run_loop.call_args
             assert kwargs["model"] == "qwen3:8b"
 
-    @pytest.mark.skip(reason="skill executor redesigned")
-    def test_execute_no_context_fork(self, caps):
-        """skill.context=None → run_loop called with the original ctx."""
-        provider = MagicMock()
-        fake_ctx = MagicMock()
-
-        skill = Skill(
-            name="s", description="d", prompt_template="Do $ARGUMENTS", context=None
-        )
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
-            execute_skill(
-                skill=skill,
-                arguments="task",
-                provider=provider,
-                capabilities=caps,
-                model="m",
-                suppress_output=True,
-                ctx=fake_ctx,
-            )
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["ctx"] is fake_ctx
-
-    @pytest.mark.skip(reason="skill executor redesigned")
-    def test_execute_context_fork(self, caps):
-        """skill.context='fork' → run_loop called with ctx=None (independent)."""
-        provider = MagicMock()
-        fake_ctx = MagicMock()
-
-        skill = Skill(
-            name="s", description="d", prompt_template="Do $ARGUMENTS", context="fork"
-        )
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
-            execute_skill(
-                skill=skill,
-                arguments="task",
-                provider=provider,
-                capabilities=caps,
-                model="m",
-                suppress_output=True,
-                ctx=fake_ctx,
-            )
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["ctx"] is None
-
 
 class TestYamlOptional:
     def test_resource_loader_works_without_frontmatter(self, tmp_path):

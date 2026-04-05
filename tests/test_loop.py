@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.loop import run_loop, _build_review_observation
+from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.compat import ModelCapabilities
 
@@ -641,12 +641,7 @@ class TestGracefulInterrupt:
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
 
-        ctx = ContextManager(
-            provider=provider,
-            model="m",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
 
         loop = AgentLoop(
             query="Q",
@@ -667,37 +662,6 @@ class TestGracefulInterrupt:
             m for m in user_msgs if m["content"].startswith("⚡ User interrupted")
         ]
         assert len(interrupt_msgs) == 1
-
-    @pytest.mark.skip(reason="scratchpad removed — redesign pending")
-    def test_interrupt_records_in_scratchpad(self, caps, tmp_path):
-        """Interrupt adds progress entry to scratchpad."""
-        from agent_cli.loop import AgentLoop
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        provider = MagicMock()
-        provider.call.side_effect = [LLMResponse(content=_complete("done"))]
-
-        ctx = ContextManager(
-            provider=provider,
-            model="m",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
-
-        loop = AgentLoop(
-            query="Q",
-            provider=provider,
-            capabilities=caps,
-            model="m",
-            ctx=ctx,
-            suppress_output=True,
-        )
-        loop._interrupted = True
-        loop.run()
-
-        scratchpad = load_scratchpad(tmp_path)
-        assert "Interrupted" in scratchpad
 
     def test_signal_handler_installed_and_restored(self, caps):
         """Signal handler is installed during run() and restored after."""
@@ -896,12 +860,7 @@ class TestGracefulInterrupt:
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
 
-        ctx = ContextManager(
-            provider=provider,
-            model="m",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
 
         loop = AgentLoop(
             query="Analyze data.txt",
@@ -949,110 +908,6 @@ def caps_tc():
     )
 
 
-class TestRunLoopNativeToolCalling:
-    def test_anthropic_tool_call_then_complete(self, caps_tc, tmp_path):
-        """Native tool_calls → execute → complete tool call."""
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("hello world")
-
-        provider = MagicMock()
-        provider.call.side_effect = [
-            LLMResponse(
-                content="I'll read the file.",
-                tool_calls=[
-                    {
-                        "id": "tu_1",
-                        "name": "read_file",
-                        "input": {"path": str(test_file)},
-                    }
-                ],
-            ),
-            LLMResponse(
-                content="",
-                tool_calls=[
-                    {
-                        "id": "tu_2",
-                        "name": "complete",
-                        "input": {"result": "File contains hello world"},
-                    }
-                ],
-            ),
-        ]
-
-        result = run_loop(
-            query="Read the file",
-            provider=provider,
-            capabilities=caps_tc,
-            model="claude-sonnet-4-20250514",
-            provider_name="anthropic",
-            suppress_output=True,
-        )
-
-        assert result is not None
-        assert "hello world" in result
-        assert provider.call.call_count == 2
-
-    def test_openai_tool_call_then_complete(self, caps_tc):
-        """OpenAI native tool_calls → execute → complete."""
-        provider = MagicMock()
-        provider.call.side_effect = [
-            LLMResponse(
-                content="",
-                tool_calls=[
-                    {
-                        "id": "call_1",
-                        "name": "shell",
-                        "input": {"command": "whoami"},
-                    }
-                ],
-            ),
-            LLMResponse(
-                content="",
-                tool_calls=[
-                    {
-                        "id": "call_2",
-                        "name": "complete",
-                        "input": {"result": "Executed"},
-                    }
-                ],
-            ),
-        ]
-
-        result = run_loop(
-            query="Run whoami",
-            provider=provider,
-            capabilities=caps_tc,
-            model="gpt-4o",
-            provider_name="openai",
-            suppress_output=True,
-        )
-
-        assert result == "Executed"
-
-    def test_text_parsing_regression(self, caps):
-        """When tool_calls=None, should fall back to text parsing."""
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "t",
-                    "action": "shell",
-                    "action_input": {"command": "whoami"},
-                }
-            ),
-            _complete("ok"),
-        )
-
-        result = run_loop(
-            query="Run command",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-            suppress_output=True,
-        )
-
-        assert result == "ok"
-
-
 class TestAskTool:
     def test_ask_single_question(self, caps, monkeypatch, tmp_path):
         """ask tool with single question in array."""
@@ -1081,9 +936,7 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
             query="Do something",
             provider=provider,
@@ -1125,9 +978,7 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
             query="Help me",
             provider=provider,
@@ -1165,9 +1016,7 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
             query="Q",
             provider=provider,
@@ -1205,9 +1054,7 @@ class TestAskTool:
                 )
             ),
         ]
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
             query="Do it",
             provider=provider,
@@ -1232,9 +1079,7 @@ class TestAskTool:
                 }
             )
         )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         run_loop(
             query="Do something",
             provider=provider,
@@ -1401,9 +1246,7 @@ class TestContextContinuity:
             ),
             _complete("done"),
         )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         run_loop(
             query="Read file",
             provider=provider,
@@ -1423,9 +1266,7 @@ class TestContextContinuity:
         from agent_cli.context.manager import ContextManager
 
         provider = _make_provider(_complete("final answer"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
             query="Q",
             provider=provider,
@@ -1457,9 +1298,7 @@ class TestContextContinuity:
             ),
             _complete("done"),
         )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         monkeypatch.setattr("builtins.input", lambda _: "test.py")
         run_loop(
             query="Help",
@@ -1474,68 +1313,9 @@ class TestContextContinuity:
         all_content = " ".join(m.get("content", "") for m in msgs)
         assert "test.py" in all_content  # user response saved
 
-    @pytest.mark.skip(reason="scratchpad removed — redesign pending")
-    def test_ctx_messages_grow_with_iterations(self, caps, tmp_path):
-        """Each iteration adds messages to ctx."""
-        from agent_cli.context.manager import ContextManager
-
-        test_file = tmp_path / "a.txt"
-        test_file.write_text("data")
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "run",
-                    "action": "shell",
-                    "action_input": {"command": "echo ok"},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Do",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        msgs = ctx.get_messages()
-        # Should have: scratchpad? + user query + (read_file pair) + (shell pair) + more
-        assert len(msgs) >= 5
-
 
 class TestAppendObservationHelpers:
     """Test _append_native_observation and _append_text_observation."""
-
-    def test_append_text_observation_basic(self):
-        """Appends assistant + user messages and syncs ctx."""
-        from agent_cli.loop import _append_text_observation
-
-        messages = [{"role": "user", "content": "hello"}]
-        ctx = MagicMock()
-
-        _append_text_observation(messages, ctx, "llm response", "Observation: result")
-
-        assert len(messages) == 3
-        assert messages[1]["role"] == "assistant"
-        assert messages[1]["content"] == "llm response"
-        assert messages[2]["role"] == "user"
-        assert messages[2]["content"] == "Observation: result"
-        assert ctx.add.call_count == 2
-        ctx.add.assert_any_call("assistant", "llm response")
-        ctx.add.assert_any_call("user", "Observation: result")
 
     def test_append_text_observation_no_ctx(self):
         """Works without ctx (no crash)."""
@@ -1544,960 +1324,6 @@ class TestAppendObservationHelpers:
         messages = []
         _append_text_observation(messages, None, "llm", "obs")
         assert len(messages) == 2
-
-    def test_append_native_observation_basic(self):
-        """Extends messages with formatted tool call messages and syncs ctx."""
-        from agent_cli.loop import _append_native_observation
-
-        messages = []
-        ctx = MagicMock()
-        response = MagicMock()
-        response.content = "thinking..."
-        response.tool_calls = [
-            {"id": "t1", "name": "shell", "input": {"command": "ls"}}
-        ]
-
-        observations = [{"tool_call": {"id": "t1"}, "output": "file.txt"}]
-
-        # Use fallback provider (not anthropic/openai) for simple format
-        _append_native_observation(messages, ctx, "ollama", response, observations)
-
-        assert len(messages) == 2  # assistant + user (fallback format)
-        assert ctx.add.call_count == 2
-
-    def test_append_native_observation_no_ctx(self):
-        """Works without ctx (no crash)."""
-        from agent_cli.loop import _append_native_observation
-
-        messages = []
-        response = MagicMock()
-        response.content = "ok"
-        response.tool_calls = []
-
-        _append_native_observation(messages, None, "ollama", response, [])
-        assert len(messages) == 2  # fallback still appends assistant + user
-
-
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestScratchpadIntegration:
-    """Test loop.py integration with scratchpad begin_turn/end_turn."""
-
-    def test_init_task_on_first_run(self, caps, tmp_path):
-        """First run_loop with ctx creates scratchpad.md automatically."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        provider = _make_provider(_complete("done"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Do something",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-        content = load_scratchpad(tmp_path)
-        assert "Do something" in content
-
-    def test_begin_turn_increments_counter(self, caps, tmp_path):
-        """Each iteration calls begin_turn, incrementing turn count."""
-        from agent_cli.context.manager import ContextManager
-
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("hello")
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Read file",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-        # 2 iterations (read_file + complete) → step_count >= 2
-        assert ctx._step_count >= 2
-
-    def test_tool_result_saved_as_artifact(self, caps, tmp_path):
-        """Tool execution result is saved as artifact."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        test_file = tmp_path / "data.txt"
-        test_file.write_text("important data")
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Read data",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-        index = build_artifact_index(tmp_path)
-        assert len(index) >= 1  # at least the tool result artifact
-
-    def test_complete_result_saved_as_artifact(self, caps, tmp_path):
-        """Complete tool result is saved as artifact."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        provider = _make_provider(_complete("final answer here"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Answer question",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-        index = build_artifact_index(tmp_path)
-        # Complete result should also be an artifact
-        assert len(index) >= 1
-
-    def test_scratchpad_progress_updated(self, caps, tmp_path):
-        """Scratchpad progress section updated after tool execution."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        test_file = tmp_path / "code.py"
-        test_file.write_text("def hello(): pass")
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            _complete("reviewed"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Review code",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-        content = load_scratchpad(tmp_path)
-        assert "## Progress" in content
-        assert "step" in content  # progress entries contain step markers
-
-    def test_no_ctx_no_scratchpad(self, caps):
-        """Without ctx, no scratchpad operations (no crash)."""
-        provider = _make_provider(_complete("ok"))
-        result = run_loop(
-            query="Simple",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=None,
-        )
-        assert result == "ok"
-
-    def test_skill_internal_loop_skips_scratchpad(self, caps, tmp_path):
-        """Scratchpad NOT injected when inside a skill (skill_name set)."""
-        from agent_cli.context.manager import ContextManager
-
-        provider = _make_provider(_complete("done"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        ctx.init_task()
-
-        # Set skill context (simulating inside a skill)
-        ctx.set_dispatch_context(name="summarize", parent_step=1)
-
-        msgs = ctx.get_messages()
-        # Scratchpad should NOT be in messages
-        all_content = " ".join(m.get("content", "") for m in msgs)
-        assert "[Scratchpad" not in all_content
-
-        # Reset — scratchpad should appear again
-        ctx.set_dispatch_context()
-        msgs = ctx.get_messages()
-        all_content = " ".join(m.get("content", "") for m in msgs)
-        assert "[Scratchpad" in all_content
-
-    def test_debug_log_to_stderr_when_verbose(self, caps, tmp_path, capsys):
-        """debug messages go to stderr only when verbose is on."""
-        from agent_cli.loop import _debug_log, _set_debug_verbose
-
-        # Off by default
-        _set_debug_verbose(False)
-        _debug_log("should_not_appear")
-        captured = capsys.readouterr()
-        assert "should_not_appear" not in captured.err
-
-        # On when verbose
-        _set_debug_verbose(True)
-        _debug_log("should_appear")
-        captured = capsys.readouterr()
-        assert "should_appear" in captured.err
-
-        # Cleanup
-        _set_debug_verbose(False)
-
-
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestArtifactLazyLoading:
-    """Scratchpad progress + system prompt guide LLM to read artifacts on demand."""
-
-    def test_system_prompt_contains_artifact_guidance(self, caps):
-        """System prompt tells LLM about artifact recovery via read_file."""
-        from agent_cli.prompts.system_prompt import build_system_prompt
-        from agent_cli.tools import TOOLS
-
-        prompt = build_system_prompt(capabilities=caps, active_tools=list(TOOLS.keys()))
-        assert "artifact" in prompt.lower()
-        assert "read_file" in prompt
-
-    def test_compaction_includes_artifact_hint(self, caps, tmp_path):
-        """After compaction, a hint about artifact recovery is injected."""
-        from agent_cli.context.manager import ContextManager
-
-        provider = MagicMock()
-        provider.call.return_value = __import__(
-            "agent_cli.providers.base", fromlist=["LLMResponse"]
-        ).LLMResponse(content="Summary of conversation")
-        # Use small context to trigger compaction easily
-        small_caps = (
-            caps._replace(context_window=1000) if hasattr(caps, "_replace") else caps
-        )
-        ctx = ContextManager(
-            provider=provider,
-            model="test",
-            capabilities=small_caps,
-            scratchpad_dir=tmp_path,
-        )
-        ctx.init_task()
-        # Fill messages to trigger compaction
-        for i in range(20):
-            ctx.add("user", "x" * 200)
-            ctx.add("assistant", "y" * 200)
-
-        msgs = ctx.get_messages()
-        all_content = " ".join(m.get("content", "") for m in msgs)
-        # After compaction, hint should be present
-        if ctx._summary:
-            assert (
-                "artifact" in all_content.lower() or "scratchpad" in all_content.lower()
-            )
-
-    def test_read_file_progress_includes_filename(self, caps, tmp_path):
-        """read_file progress: 'read_file: README.md (N줄)'."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        test_file = tmp_path / "README.md"
-        test_file.write_text("line1\nline2\nline3\n")
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Read",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        content = load_scratchpad(tmp_path)
-        assert "README.md" in content
-
-    def test_shell_progress_includes_command(self, caps, tmp_path):
-        """shell progress: 'shell: ls -la'."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "list",
-                    "action": "shell",
-                    "action_input": {"command": "ls -la /tmp"},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="List",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        content = load_scratchpad(tmp_path)
-        assert "ls -la" in content
-
-    def test_complete_progress_includes_preview(self, caps, tmp_path):
-        """complete progress: 'Task completed: first 80 chars...'."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        provider = _make_provider(
-            _complete("Agent-CLI optimization analysis is complete with 5 findings")
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Do",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        content = load_scratchpad(tmp_path)
-        assert (
-            "optimization analysis" in content.lower() or "complete" in content.lower()
-        )
-
-
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestArtifactTags:
-    """A. Tag enrichment tests."""
-
-    def test_read_file_tag_includes_filepath(self, caps, tmp_path):
-        """A1: read_file artifact has filepath in tags."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        test_file = tmp_path / "myfile.py"
-        test_file.write_text("hello")
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Read",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        index = build_artifact_index(tmp_path)
-        read_artifacts = [a for a in index if "read_file" in a.tags]
-        assert len(read_artifacts) >= 1
-        assert any(
-            str(test_file) in a.tags or "myfile.py" in str(a.tags)
-            for a in read_artifacts
-        )
-
-    def test_shell_tag_tool_name_only(self, caps, tmp_path):
-        """A2: shell artifact has tool name tag only."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "run",
-                    "action": "shell",
-                    "action_input": {"command": "ls -la /tmp"},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Run",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        index = build_artifact_index(tmp_path)
-        shell_artifacts = [a for a in index if "shell" in a.tags]
-        assert len(shell_artifacts) >= 1
-
-    def test_complete_tag(self, caps, tmp_path):
-        """A4: complete artifact has 'complete' tag."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        provider = _make_provider(_complete("final"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Q",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        index = build_artifact_index(tmp_path)
-        complete_artifacts = [a for a in index if "complete" in a.tags]
-        assert len(complete_artifacts) >= 1
-
-
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestSkillNamePropagation:
-    """B. skill_name propagation to tags."""
-
-    def test_execute_skill_passes_skill_name(self, caps):
-        """B1: execute_skill passes skill_name to run_loop."""
-        import unittest.mock
-
-        from agent_cli.skills.executor import execute_skill
-        from agent_cli.skills.models import Skill
-
-        skill = Skill(name="optimize", description="d", prompt_template="Do $ARGUMENTS")
-        with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
-            execute_skill(
-                skill=skill,
-                arguments="./",
-                provider=MagicMock(),
-                capabilities=caps,
-                model="m",
-                suppress_output=True,
-            )
-            _, kwargs = mock_run_loop.call_args
-            assert kwargs["skill_name"] == "optimize"
-
-    def test_skill_internal_tool_has_skill_tag(self, caps, tmp_path):
-        """B2: tool inside skill has 'skill:name' tag."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        test_file = tmp_path / "src.py"
-        test_file.write_text("code")
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            _complete("done"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Analyze",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-            skill_name="optimize",
-        )
-
-        index = build_artifact_index(tmp_path)
-        skill_tagged = [a for a in index if "skill:optimize" in a.tags]
-        assert len(skill_tagged) >= 1
-
-    def test_skill_internal_complete_has_skill_tag(self, caps, tmp_path):
-        """B3: complete inside skill has 'skill:name' tag."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        provider = _make_provider(_complete("done"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Do",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-            skill_name="summarize",
-        )
-
-        index = build_artifact_index(tmp_path)
-        skill_complete = [
-            a for a in index if "complete" in a.tags and "skill:summarize" in a.tags
-        ]
-        assert len(skill_complete) >= 1
-
-    def test_no_skill_name_no_skill_tag(self, caps, tmp_path):
-        """B4: normal chat has no 'skill:' tag."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        provider = _make_provider(_complete("done"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Q",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        index = build_artifact_index(tmp_path)
-        for a in index:
-            assert not any(t.startswith("skill:") for t in a.tags)
-
-
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestSkillSubdirectory:
-    """C+D. Skill artifacts in subdirectories + rglob index."""
-
-    def test_skill_artifacts_in_subdirectory(self, caps, tmp_path):
-        """C1: skill artifacts stored under turn_N_skillname/."""
-        from agent_cli.context.manager import ContextManager
-
-        provider = _make_provider(_complete("done"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        # Simulate outer turn 1 first
-        ctx.begin_turn("outer query")
-
-        run_loop(
-            query="Analyze",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-            skill_name="optimize",
-        )
-
-        # Check subdirectory exists
-        artifacts_dir = tmp_path / "artifacts"
-        subdirs = [d for d in artifacts_dir.iterdir() if d.is_dir()]
-        assert any("optimize" in d.name for d in subdirs)
-
-    def test_normal_artifacts_flat(self, caps, tmp_path):
-        """C2: normal (non-skill) artifacts are flat files."""
-        from agent_cli.context.manager import ContextManager
-
-        provider = _make_provider(_complete("done"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Q",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        artifacts_dir = tmp_path / "artifacts"
-        if artifacts_dir.exists():
-            md_files = list(artifacts_dir.glob("step_*.md"))
-            assert len(md_files) >= 1  # flat files exist
-
-    def test_rglob_indexes_all(self, caps, tmp_path):
-        """D1: build_artifact_index finds flat + subdirectory artifacts."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-
-        test_file = tmp_path / "f.txt"
-        test_file.write_text("data")
-
-        # Run with skill (creates subdirectory artifacts)
-        provider1 = _make_provider(
-            json.dumps(
-                {
-                    "thought": "read",
-                    "action": "read_file",
-                    "action_input": {"path": str(test_file)},
-                }
-            ),
-            _complete("skill done"),
-        )
-        ctx = ContextManager(
-            provider=provider1, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Skill work",
-            provider=provider1,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-            skill_name="review",
-        )
-
-        # Run without skill (creates flat artifacts)
-        provider2 = _make_provider(_complete("normal done"))
-        run_loop(
-            query="Normal work",
-            provider=provider2,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-        )
-
-        index = build_artifact_index(tmp_path)
-        # Should find both flat and subdirectory artifacts
-        assert (
-            len(index) >= 3
-        )  # at least: skill read_file + skill complete + normal complete
-
-    def test_subdirectory_artifact_loadable(self, caps, tmp_path):
-        """D2: artifacts in subdirectory can be loaded by path."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index, load_artifact
-
-        provider = _make_provider(_complete("result"))
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-        run_loop(
-            query="Do",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            suppress_output=True,
-            ctx=ctx,
-            skill_name="test-skill",
-        )
-
-        index = build_artifact_index(tmp_path)
-        for meta in index:
-            loaded_meta, body = load_artifact(meta.path)
-            assert loaded_meta.entry_id
-            assert body  # non-empty
-
-
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestRunSkillIntercept:
-    """E. run_skill loop-level intercept."""
-
-    def test_run_skill_with_ctx(self, caps, tmp_path):
-        """E1: run_skill passes ctx to inner run_loop."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import load_scratchpad
-        from unittest.mock import patch
-
-        from agent_cli.skills.models import Skill
-
-        mock_skills = {
-            "summarize": Skill(
-                name="summarize",
-                description="Summarize",
-                prompt_template="Summarize $ARGUMENTS. Reply with one sentence.",
-                max_turns=3,
-            )
-        }
-
-        # Outer provider: calls run_skill then complete
-        outer_provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "use skill",
-                    "action": "run_skill",
-                    "action_input": {"name": "summarize", "arguments": "test"},
-                }
-            ),
-            _complete("all done"),
-        )
-        ctx = ContextManager(
-            provider=outer_provider,
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
-
-        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
-            run_loop(
-                query="Summarize something",
-                provider=outer_provider,
-                capabilities=caps,
-                model="test",
-                suppress_output=True,
-                ctx=ctx,
-                provider_name="ollama",
-                base_url="http://localhost:11434",
-            )
-
-        # Scratchpad should exist (ctx was passed to inner loop)
-        content = load_scratchpad(tmp_path)
-        assert content  # non-empty
-
-    def test_run_skill_unknown_returns_error(self, caps, tmp_path):
-        """E3: unknown skill → error in observation, loop continues."""
-        from agent_cli.context.manager import ContextManager
-        from unittest.mock import patch
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "try skill",
-                    "action": "run_skill",
-                    "action_input": {"name": "nonexistent", "arguments": ""},
-                }
-            ),
-            _complete("ok"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-
-        with patch("agent_cli.skills.load_skills", return_value={}):
-            result = run_loop(
-                query="Try",
-                provider=provider,
-                capabilities=caps,
-                model="test",
-                suppress_output=True,
-                ctx=ctx,
-            )
-        assert result == "ok"  # loop continued after error
-
-    def test_run_skill_result_includes_skill_header(self, caps, tmp_path):
-        """run_skill result includes SKILL: name(args) header."""
-        from agent_cli.loop import _handle_run_skill
-        from agent_cli.skills.models import Skill
-        from unittest.mock import patch
-
-        mock_skills = {
-            "summarize": Skill(
-                name="summarize",
-                description="Sum",
-                prompt_template="Sum $ARGUMENTS",
-                max_turns=3,
-            )
-        }
-        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
-            with patch(
-                "agent_cli.skills.executor.execute_skill", return_value="Summary done"
-            ):
-                obs = _handle_run_skill(
-                    skill_input={"name": "summarize", "arguments": "./src"},
-                    provider_name="ollama",
-                    base_url="http://localhost:11434",
-                    api_key="",
-                    capabilities=caps,
-                    model="test",
-                    ctx=None,
-                    session=None,
-                    parent_skill_name="",
-                )
-        assert "SKILL: summarize" in obs
-        assert "./src" in obs
-        assert "Summary done" in obs
-
-    def test_run_skill_result_includes_files_touched(self, caps, tmp_path):
-        """run_skill result includes files touched by the skill."""
-        import json
-        from agent_cli.loop import _handle_run_skill
-        from agent_cli.skills.models import Skill
-        from agent_cli.context.manager import ContextManager
-        from unittest.mock import patch
-
-        ctx = ContextManager(
-            provider=MagicMock(),
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
-        # _step_count starts at 0, so step_before=0, messages[0:] will be scanned
-
-        mock_skills = {
-            "analyze": Skill(
-                name="analyze",
-                description="Analyze",
-                prompt_template="Analyze $ARGUMENTS",
-                max_turns=3,
-            )
-        }
-
-        def fake_execute_skill(**kwargs):
-            # Simulate skill reading/writing files via tool calls
-            ctx.messages.extend(
-                [
-                    {
-                        "role": "assistant",
-                        "content": json.dumps(
-                            {
-                                "action": "read_file",
-                                "action_input": {"path": "src/main.py"},
-                            }
-                        ),
-                    },
-                    {
-                        "role": "assistant",
-                        "content": json.dumps(
-                            {
-                                "action": "write_file",
-                                "action_input": {"path": "report.md", "content": "..."},
-                            }
-                        ),
-                    },
-                ]
-            )
-            return "Analysis complete"
-
-        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
-            with patch(
-                "agent_cli.skills.executor.execute_skill",
-                side_effect=fake_execute_skill,
-            ):
-                obs = _handle_run_skill(
-                    skill_input={"name": "analyze", "arguments": "./"},
-                    provider_name="ollama",
-                    base_url="http://localhost:11434",
-                    api_key="",
-                    capabilities=caps,
-                    model="test",
-                    ctx=ctx,
-                    session=None,
-                    parent_skill_name="",
-                )
-        assert "Files touched by skill" in obs
-        assert "src/main.py" in obs
-        assert "report.md" in obs
-
-    def test_run_skill_no_files_touched_when_no_ctx(self, caps, tmp_path):
-        """No files section when ctx is None."""
-        from agent_cli.loop import _handle_run_skill
-        from agent_cli.skills.models import Skill
-        from unittest.mock import patch
-
-        mock_skills = {
-            "greet": Skill(
-                name="greet",
-                description="Greet",
-                prompt_template="Say hi",
-                max_turns=3,
-            )
-        }
-        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
-            with patch(
-                "agent_cli.skills.executor.execute_skill",
-                return_value="Hello!",
-            ):
-                obs = _handle_run_skill(
-                    skill_input={"name": "greet", "arguments": ""},
-                    provider_name="ollama",
-                    base_url="http://localhost:11434",
-                    api_key="",
-                    capabilities=caps,
-                    model="test",
-                    ctx=None,
-                    session=None,
-                    parent_skill_name="",
-                )
-        assert "Files touched" not in obs
-        assert "Hello!" in obs
-
-    def test_run_skill_result_includes_internal_calls(self, caps, tmp_path):
-        """When inner skill calls another skill, result shows internal call history."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import save_artifact
-
-        ctx = ContextManager(
-            provider=MagicMock(),
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
-        ctx.init_task()
-
-        # Simulate: step_before=0, then internal skill created artifacts
-        ctx.begin_turn("q")  # turn 1
-        save_artifact(
-            step=2,
-            content="shell output",
-            tags=["shell", "skill:summarize"],
-            summary="shell: ls",
-            base=tmp_path,
-        )
-        save_artifact(
-            step=3,
-            content="optimize result",
-            tags=["complete", "skill:optimize"],
-            summary="Task completed: Analysis done",
-            base=tmp_path,
-        )
-
-        from agent_cli.loop import _build_internal_skill_summary
-
-        summary = _build_internal_skill_summary(ctx, step_before=0)
-        assert "optimize" in summary
-        assert "Analysis done" in summary
 
 
 class TestSkillStack:
@@ -2560,106 +1386,6 @@ class TestSkillStack:
         assert "recursive" not in obs.lower()
 
 
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestRunSkillNoDuplicateArtifact:
-    """F. No duplicate artifact from outer loop for run_skill."""
-
-    def test_no_outer_end_turn_for_run_skill(self, caps, tmp_path):
-        """F1: outer loop does not call end_turn for run_skill result."""
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import build_artifact_index
-        from unittest.mock import patch
-
-        from agent_cli.skills.models import Skill
-
-        mock_skills = {
-            "simple": Skill(
-                name="simple",
-                description="Simple",
-                prompt_template="Say hello. Use complete to answer.",
-                max_turns=2,
-            )
-        }
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "use skill",
-                    "action": "run_skill",
-                    "action_input": {"name": "simple", "arguments": ""},
-                }
-            ),
-            _complete("final"),
-        )
-        ctx = ContextManager(
-            provider=provider, model="test", capabilities=caps, scratchpad_dir=tmp_path
-        )
-
-        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
-            run_loop(
-                query="Do",
-                provider=provider,
-                capabilities=caps,
-                model="test",
-                suppress_output=True,
-                ctx=ctx,
-                provider_name="ollama",
-                base_url="http://localhost:11434",
-            )
-
-        index = build_artifact_index(tmp_path)
-        # Check no duplicate — inner loop saves its own, outer should not duplicate
-        entry_ids = [a.entry_id for a in index]
-        assert len(entry_ids) == len(set(entry_ids)), (
-            f"Duplicate artifacts: {entry_ids}"
-        )
-
-
-@pytest.mark.skip(reason="scratchpad removed — redesign pending")
-class TestBuildReviewObservation:
-    """Tests for _build_review_observation helper."""
-
-    def test_includes_query(self):
-        obs = _build_review_observation("Fix the bug in main.py", "Fixed it")
-        assert "Fix the bug in main.py" in obs
-        assert "ORIGINAL REQUEST" in obs
-
-    def test_includes_summary(self):
-        obs = _build_review_observation("task", "I did X and Y")
-        assert "I did X and Y" in obs
-        assert "YOUR SUMMARY" in obs
-
-    def test_includes_scratchpad_when_ctx_provided(self, caps, tmp_path):
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.context.scratchpad import init_scratchpad, append_progress
-
-        ctx = ContextManager(
-            provider=MagicMock(),
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
-        init_scratchpad(tmp_path)
-        append_progress(1, "read_file: loop.py", base=tmp_path)
-        append_progress(2, "shell: pytest", base=tmp_path)
-
-        obs = _build_review_observation("Analyze code", "Done", ctx=ctx)
-        assert "WORK LOG" in obs
-        assert "read_file: loop.py" in obs
-        assert "shell: pytest" in obs
-
-    def test_no_work_log_section_without_ctx(self):
-        obs = _build_review_observation("task", "summary", ctx=None)
-        assert "--- WORK LOG ---" not in obs
-
-    def test_verification_instructions(self):
-        obs = _build_review_observation("task", "summary")
-        assert "EVERY requirement" in obs
-        assert "complete" in obs
-        assert "adversarial" in obs.lower()
-        assert "evidence" in obs.lower()
-
-
 class TestReadyForReviewTextPath:
     """Test ready_for_review tool via text parsing path."""
 
@@ -2677,12 +1403,7 @@ class TestReadyForReviewTextPath:
         )
         from agent_cli.context.manager import ContextManager
 
-        ctx = ContextManager(
-            provider=provider,
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
             query="Analyze the code",
             provider=provider,
@@ -2708,12 +1429,7 @@ class TestReadyForReviewTextPath:
         )
         from agent_cli.context.manager import ContextManager
 
-        ctx = ContextManager(
-            provider=provider,
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         run_loop(
             query=query_text,
             provider=provider,
@@ -2743,12 +1459,7 @@ class TestReadyForReviewTextPath:
         )
         from agent_cli.context.manager import ContextManager
 
-        ctx = ContextManager(
-            provider=provider,
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         with patch("agent_cli.loop.render_step") as mock_render:
             run_loop(
                 query="Fix the bug",
@@ -2783,12 +1494,7 @@ class TestReadyForReviewTextPath:
         )
         from agent_cli.context.manager import ContextManager
 
-        ctx = ContextManager(
-            provider=provider,
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         with patch("agent_cli.loop.render_step") as mock_render:
             run_loop(
                 query="Greet Alice",
@@ -2830,12 +1536,7 @@ class TestNoOutputTruncation:
         )
         from agent_cli.context.manager import ContextManager
 
-        ctx = ContextManager(
-            provider=provider,
-            model="test",
-            capabilities=caps,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         run_loop(
             query="Read the file",
             provider=provider,

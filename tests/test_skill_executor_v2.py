@@ -55,7 +55,9 @@ class TestToolIntersection:
                 parent_tools=["read_file", "shell"],
             )
             call_kwargs = mock_loop.call_args
-            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get("active_tools")
+            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
+                "active_tools"
+            )
             assert set(active_tools) == {"read_file", "shell"}
 
     def test_empty_intersection_rejected(self, caps, ctx):
@@ -90,7 +92,9 @@ class TestToolIntersection:
                 ctx=ctx,
             )
             call_kwargs = mock_loop.call_args
-            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get("active_tools")
+            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
+                "active_tools"
+            )
             assert set(active_tools) == {"read_file", "write_file"}
 
     def test_no_skill_tools_uses_parent_tools(self, caps, ctx):
@@ -109,7 +113,9 @@ class TestToolIntersection:
                 parent_tools=["read_file", "shell"],
             )
             call_kwargs = mock_loop.call_args
-            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get("active_tools")
+            active_tools = call_kwargs.kwargs.get("active_tools") or call_kwargs[1].get(
+                "active_tools"
+            )
             assert set(active_tools) == {"read_file", "shell"}
 
 
@@ -130,7 +136,9 @@ class TestParentRoleInheritance:
                 parent_role="You are an explorer agent.",
             )
             call_kwargs = mock_loop.call_args
-            agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get("agent_role")
+            agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get(
+                "agent_role"
+            )
             assert agent_role == "You are an explorer agent."
 
     def test_no_parent_role_empty(self, caps, ctx):
@@ -148,7 +156,9 @@ class TestParentRoleInheritance:
                 ctx=ctx,
             )
             call_kwargs = mock_loop.call_args
-            agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get("agent_role")
+            agent_role = call_kwargs.kwargs.get("agent_role") or call_kwargs[1].get(
+                "agent_role"
+            )
             assert agent_role == ""
 
 
