@@ -132,18 +132,9 @@ def _dispatch_agent(
     if not task:
         return _AGENT_NOT_FOUND  # No task = not a valid agent call
 
-    # Record agent invocation in context + scratchpad
+    # Record agent invocation in context
     if ctx:
         ctx.add("user", f"Delegate to @{agent_name}: {task}")
-        from agent_cli.context.scratchpad import append_progress, load_scratchpad
-
-        if not load_scratchpad(ctx._scratchpad_dir):
-            ctx.init_task()
-        append_progress(
-            step=ctx._step_count,
-            summary=f"User: @{agent_name} {task[:60]}",
-            base=ctx._scratchpad_dir,
-        )
 
     from agent_cli.render import render_status
 
@@ -206,18 +197,9 @@ def _dispatch_skill(
     skill = skills[cmd_name]
     arguments = parts[1] if len(parts) > 1 else ""
 
-    # Record skill invocation in context + scratchpad
+    # Record skill invocation in context
     if ctx:
         ctx.add("user", f"Used skill: {cmd_name}({arguments}) — results follow")
-        from agent_cli.context.scratchpad import append_progress, load_scratchpad
-
-        if not load_scratchpad(ctx._scratchpad_dir):
-            ctx.init_task()
-        append_progress(
-            step=ctx._step_count,
-            summary=f"User: /{cmd_name} {arguments}".strip(),
-            base=ctx._scratchpad_dir,
-        )
 
     from agent_cli.render import render_status
 
@@ -736,40 +718,27 @@ def chat(
             continue
 
         if query == "/compact" or query.startswith("/compact "):
-            user_instruction = query[len("/compact") :].strip()
-            msg_count = len(ctx.messages)
-            if msg_count <= ctx.keep_recent * 2:
-                console.print(
-                    f"[{C['muted']}]Not enough messages to compact "
-                    f"({msg_count} messages, need > {ctx.keep_recent * 2}).[/]"
-                )
-                continue
-            tokens_before = ctx.get_estimated_tokens()
-            console.print(f"[{C['muted']}]Compressing context...[/]")
-            ctx.force_compress(user_instruction=user_instruction)
-            tokens_after = ctx.get_estimated_tokens()
             console.print(
-                f"[{C['accent']}]Context compacted: "
-                f"{tokens_before} → {tokens_after} tokens "
-                f"(saved {tokens_before - tokens_after})[/]"
+                f"[{C['muted']}]Context uses FIFO (last {ctx.fifo_size} messages). "
+                f"No compression needed.[/]"
             )
             continue
 
         if query == "/ctx_window":
             msgs = ctx.get_messages()
             console.print(
-                f"[{C['muted']}]── context window dump ({len(msgs)} messages) ──[/]"
+                f"[{C['muted']}]── context window dump ({len(msgs)} messages, "
+                f"FIFO {ctx.fifo_size}) ──[/]"
             )
             for i, m in enumerate(msgs):
                 role = m["role"]
-                content = m["content"]
+                content = m.get("content", "")
                 console.print(f"[{C['accent']}][{i}] {role}[/]")
                 console.print(content, markup=False)
                 console.print()
             tokens = ctx.get_estimated_tokens()
             console.print(
-                f"[{C['muted']}]── estimated {tokens} tokens "
-                f"/ {ctx.capabilities.context_window} context window ──[/]"
+                f"[{C['muted']}]── estimated {tokens} tokens ──[/]"
             )
             continue
 
