@@ -80,45 +80,28 @@ Anthropic/OpenAI native tool calling 제거. 모든 provider가 text parsing 방
   - history.jsonl 기록 확인
   - 기존 테스트 중 native tool calling / scratchpad 관련 제거/수정
 
-## Phase 3: system_prompt.py 변경
+## Phase 3: system_prompt.py 변경 ✅
 
-- [ ] Role 상속 로직
-  - main: 기본 ROLE_PROMPT
-  - delegate: agent_role이 있으면 ROLE_PROMPT 대체
-  - skill: parent_role 파라미터 받아서 사용
-- [ ] Git Context 섹션 제거 (_build_git_context_section 호출 제거)
-- [ ] Session ID 섹션 제거
-- [ ] Context Recovery Guide 섹션 추가
-  - `"## Context Recovery\n최근 {N}개 메시지만 대화에 포함되어 있다.\n이전 대화 내용이 필요하면:\n  read_file(\"{session_dir}/history.jsonl\")"`
-  - session_dir 파라미터 추가
-- [ ] thought 지침 강화 (Format Rules 내)
-- [ ] 유닛 테스트
-  - main/delegate/skill 별 Role 확인
-  - Git Context 미포함 확인
-  - Context Recovery Guide 포함 + 경로 정확성
-  - thought 지침 포함 확인
+- [x] Role 상속 로직 (agent_role > parent_role > ROLE_PROMPT)
+- [x] Git Context 섹션 제거
+- [x] Session ID 섹션 제거
+- [x] Context Recovery Guide 섹션 추가 (session_dir 파라미터)
+- [x] DIRECTIVE.md를 Environment 앞으로 이동
+- [x] thought 지침 강화 (purpose + reason 필수)
+- [x] 유닛 테스트 (11 passed)
 
-## Phase 4: delegate.py 변경
+## Phase 4: delegate.py 변경 ✅ (partial)
 
-- [ ] inherit 모드 제거
-- [ ] fork 모드 재정의: parent history.jsonl 복사 → delegate history.jsonl
-- [ ] delegate subdir 구조 생성: `delegate_{name}_{hash}_{ts}/`
-  - history.jsonl (none=빈 파일, fork=parent 복사)
-  - result.md (완료 시 저장)
-- [ ] agent_stack 재귀 방지
-  - parent에서 agent_stack 전달
-  - 동일 agent 재호출 시 거부
-- [ ] 결과 반환: 최종 텍스트 + 디렉토리 경로
-- [ ] parent history.jsonl에 observation 기록 (결과 + artifact 경로)
-- [ ] 병렬 delegate: join 후 호출 순서대로 parent history에 append
-- [ ] 명명 규칙: `delegate_{name}_{hash}_{timestamp_ms}/`
-- [ ] 유닛 테스트
-  - none 모드: 빈 history.jsonl 생성 확인
-  - fork 모드: parent history.jsonl 복사 확인
-  - subdir 구조 (history.jsonl + result.md) 확인
-  - agent_stack 재귀 방지
-  - 병렬 delegate 호출 순서 append
-  - inherit 모드 거부
+- [x] inherit 모드 제거 (treat as none)
+- [x] fork 모드 재정의: parent history.jsonl 복사 → delegate history.jsonl
+- [x] delegate subdir 구조 생성: `delegate_{name}_{hash}_{ts}/`
+- [x] result.md 저장 (replaces scratchpad save_artifact)
+- [x] 결과 반환에 delegate 디렉토리 경로 포함
+- [x] files_touched 제거
+- [x] set_dispatch_context 제거
+- [ ] agent_stack 재귀 방지 (별도 작업)
+- [ ] 병렬 delegate 호출 순서 append 검증
+- [ ] 유닛 테스트 업데이트 (old API 테스트 10개 실패 중)
 
 ## Phase 5: skills/executor.py 변경
 
