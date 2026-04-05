@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-04-04
+> 최종 업데이트: 2026-04-05
 > 버전: 2.0.0-dev
-> 총 소스: 8,109 LOC (43 Python 파일) + 11,570 LOC 테스트 (25 파일)
-> 총 테스트: 701 유닛 + 62 통합 = 763개
+> 총 소스: 8,362 LOC (47 Python 파일) + 10,410 LOC 테스트 (33 파일)
+> 총 테스트: 654 유닛 + 62 통합 (88 ollama_integration deselected)
 
 ---
 
@@ -20,7 +20,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 - **3단계 파싱 폴백**: json.loads → JSON repair → regex 추출
 - **Constrained Decoding**: Ollama JSON Schema, OpenAI response_format, Anthropic tool calling
 - **Hashline 편집**: CRC32 해시 기반 정밀 파일 편집 + 퍼지 매칭
-- **컨텍스트 압축**: 하이브리드 컴팩션 (LLM 의미 요약 + 규칙 기반 파일 추출)
+- **컨텍스트 관리**: FIFO 메시지 큐 + history.jsonl 영속화 (LLM 압축 제거)
 - **모델 적응형**: context window, thinking budget에 따른 자동 조정
 
 ### 외부 의존성
@@ -42,7 +42,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (919)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
+├── main.py                  (879)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
@@ -50,7 +50,7 @@ agent_cli/
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1749) AgentLoop 클래스 + ReAct 루프 + scratchpad/hook/run_skill
+├── loop.py                  (1148) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (158)  렌더러 디스패치 + load_renderer_by_name + 하위 호환 API
 │   ├── base.py              (91)   Renderer ABC (dispatch_progress 포함) (14개 메서드 인터페이스)
@@ -75,34 +75,34 @@ agent_cli/
 │   ├── result.py            (14)   ToolResult 데이터클래스 (모든 도구의 표준 반환 타입)
 │   ├── registry.py          (478)  스키마 정의, 검증, API 형식 변환, inline 가이드
 │   ├── run_skill.py         (66)   run_skill 도구 (LLM 자동 스킬 호출) → ToolResult
-│   ├── read_artifact.py     (141)  read_artifact 도구 (artifact 읽기/목록/검색) → ToolResult
+│   (read_artifact.py 삭제됨 — read_file로 대체)
 │   ├── read_file.py         (102)  파일 읽기 + hashline 포맷팅 + 부분 읽기 → ToolResult
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
 │   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 (재귀, 에러 힌트)
-│   ├── delegate.py          (598)  in-process 서브에이전트 위임 (tasks 배열, context 모드, 병렬 실행, agent 로딩, 산출물 개선)
+│   ├── delegate.py          (538)  in-process 서브에이전트 위임 (tasks 배열, fork/none 모드, 병렬 실행, delegate subdir)
 │   ├── context.py           (63)   read_context 도구 (세션 이력 조회) → ToolResult
 │   (truncation.py 삭제됨 — tool output은 잘림 없이 그대로 LLM에 전달)
 │
 ├── context/                        컨텍스트 관리
-│   ├── __init__.py          (34)   re-export
+│   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (429)  ContextManager (하이브리드 컴팩션, scratchpad, 스킬 컨텍스트)
-│   ├── scratchpad.py        (413)  Scratchpad + Artifact + ContextBudget + 세션/스킬 격리
+│   ├── manager.py           (235)  ContextManager (FIFO + history.jsonl + 자연어 변환)
+│   (scratchpad.py 삭제됨 — history.jsonl로 대체)
 │   └── session.py           (214)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (362)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Git 스냅샷, Agent 목록)
-│   └── compression_prompt.py (45)  하이브리드 요약 프롬프트 (LLM 3섹션 + 규칙 기반 Files Touched)
+│   ├── system_prompt.py     (368)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide)
+│   (compression_prompt.py 삭제됨 — FIFO로 대체)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
 │   ├── models.py            (21)   Skill 데이터 모델 (model/context/hooks/invocation)
 │   ├── loader.py            (103)  스킬 파일 검색/파싱 (ResourceLoader 기반, 캐싱)
-│   ├── executor.py          (127)  인자/변수/!`cmd` 치환 + model/context/skill_name 오버라이드
+│   ├── executor.py          (162)  인자 치환 + 도구 교집합 + Role 상속 + skill subdir 생성
 │   └── builtin/                    패키지 내장 스킬
 │       ├── create-skill.md         스킬 생성 메타 스킬
 │       ├── create-agent.md         에이전트 생성 메타 스킬
@@ -451,109 +451,61 @@ Stage 3: regex 필드 추출
 ReActResult (parse_stage=0, 모든 필드 None)
 ```
 
-### 5.4 컨텍스트 압축 (`context/manager.py`)
+### 5.4 컨텍스트 관리 (`context/manager.py`)
+
+> 상세 설계: `docs/context-redesign/DESIGN.md`
+
+#### FIFO 메시지 큐
 
 ```
 메시지 추가 (add)
     │
-    ▼
-Dual-gate 판정:
-  len(messages) > keep_recent * 2  AND  total_chars > max_context_chars?
+    ├─ 메모리 캐시 (deque, maxlen=N)에 append
+    │   └─ N 초과 시 가장 오래된 메시지 자동 제거
     │
-    ├─ 어느 하나라도 미충족 → 그대로 유지
-    │
-    ▼ 둘 다 충족
-_compress(user_instruction="") 호출
-    │
-    ├─ 규칙 기반: _extract_files_touched(old_msgs)
-    │   └─ assistant 메시지의 action/action_input.path에서 파일 경로 추출
-    │   └─ read_file → files_read, write_file/edit_file → files_modified
-    │
-    ├─ 증분: 기존 _summary에서 Files Touched 파싱 → 새 파일과 merge
-    │
-    ├─ LLM 요약 (의미적 판단이 필요한 3개 섹션만)
-    │   ├─ _summary 없음 (첫 압축)
-    │   │   └─ SUMMARIZATION_PROMPT → Goal, Working State, Conversation Direction
-    │   └─ _summary 있음 (후속 압축)
-    │       └─ INCREMENTAL_UPDATE_PROMPT → 기존 3개 섹션 증분 업데이트
-    │   ※ Progress/Decisions는 scratchpad에 위임 — 요약에서 제외
-    │   ※ Files Touched는 규칙 기반이 담당 — LLM에 요청하지 않음
-    │
-    ├─ 합치기: summary = LLM 요약 + Files Touched (규칙 기반) + artifact 힌트
-    │
-    └─ user_instruction 있으면 system prompt에 "## Additional Instruction"으로 추가
+    └─ history.jsonl에 JSON 한 줄 append (write-only)
 
-도구 결과는 2,000자로 절단 후 요약에 포함
-수동 트리거: /compact [prompt] 명령으로 즉시 압축 가능 (메시지 수 조건만 확인)
+LLM 호출 시:
+    캐시에서 마지막 N개를 자연어 변환 → messages 배열 구성
+
+세션 재개 시:
+    history.jsonl에서 마지막 N개 파싱 → 캐시 초기화 (유일한 read 시점)
 ```
 
-### 5.6 Scratchpad & Artifact 시스템
+- **LLM 기반 압축 없음.** 단순 FIFO (기본 N=100)
+- **Scratchpad 없음.** history.jsonl이 대화 기록이자 artifact 인덱스
+- **Context inject 없음.** LLM이 필요할 때 read_file로 pull
+- System prompt에 Context Recovery Guide 포함
 
-#### 설계 배경
+#### 저장과 표현의 분리
 
-On-premise LLM(128K context)에서 긴 태스크 수행 시 세 가지 문제가 발생:
-1. 초반 맥락 망각 — 턴이 많아지면 목표/결정을 잊고 반복
-2. 도구 결과 손실 — compaction 시 이전에 읽은 파일 디테일 소실
-3. 컨텍스트 오염 — 과거 도구 결과 자동 주입 시 LLM 혼란
-
-해결 전략: **Scratchpad(인덱스) + Artifact(데이터) + Lazy Loading**
-
-#### Scratchpad — 항상 보이는 나침반
+- **저장**: history.jsonl (JSON Lines) — 구조화된 메시지
+- **표현**: 자연어 변환 — LLM에 전달되는 user/assistant 메시지
 
 ```
-[Scratchpad — persistent task context]
----
-status: in_progress
----
-## Progress
-- [턴0] User: hooks.py 분석해줘
-- [턴1] read_file: hooks.py (215줄) → artifacts/step_0001.md
-- [턴2] User: 리팩토링해줘
-- [턴3] edit_file: hooks.py → artifacts/step_0003.md
-- [턴4] User: /optimize ./
-- [턴4] Used skill: optimize(./)
-## Decisions
-- [턴5] TX aggregation 별도 모듈 분리
+저장: {"role":"assistant","thought":"auth.py를 읽겠다","action":"read_file","action_input":{"path":"src/auth.py"}}
+표현: auth.py를 읽어 구조를 파악해야 한다. → read_file(src/auth.py)
 ```
 
-- 매 LLM 호출 시 `get_messages()` 맨 앞에 주입 (compaction에서 살아남음)
-- **스킬 내부 루프에서는 주입하지 않음** — 외부 태스크 정보가 스킬 LLM을 혼란시키는 것 방지
-- `run`과 `chat` 모두 동일하게 동작 — `run`도 세션 기반 scratchpad 사용
-- `--headless`(서브에이전트)는 `tempfile.mkdtemp()` 기반 tmpdir에 저장 — 프로세스 종료 시 자동 정리
-
-#### Artifact — 디스크에 보존, 필요할 때만 로드
+#### 세션 파일 구조
 
 ```
-.agent-cli/sessions/{session_id}/artifacts/
-  step_0003.md                     # 일반 도구 결과
-  step_0005_optimize/              # 스킬 내부 결과 (서브디렉토리)
-    step_0006.md
-    step_0007.md
+.agent-cli/sessions/{session_id}/
+├── history.jsonl                              ← main 대화 기록
+├── main_plan_e8d4_20260405T143112890.md       ← main artifact (flat)
+│
+├── delegate_coder_f1a9_20260405T143230456/    ← delegate subdir
+│   ├── history.jsonl                          ← delegate 내부 대화
+│   └── result.md                              ← delegate 최종 결과
+│
+└── skill_summarize_d4e1_20260405T143200100/   ← skill subdir
+    ├── history.jsonl                          ← skill 내부 대화
+    └── result.md                              ← skill 최종 결과
 ```
 
-- 매 턴 도구 결과를 YAML frontmatter + 원본으로 저장
-- 컨텍스트에 자동 주입하지 않음 (Lazy Loading)
-- LLM이 `read_artifact` 도구로 선택적 로드
-- 시스템 프롬프트에 사용법 안내, compaction 후 복구 힌트 제공
-
-#### ContextBudget — 모델 크기별 토큰 배분
-
-```python
-ContextBudget.for_model(context_window)
-# 8K:  scratchpad 10%, artifact 15%, conversation 52%
-# 32K: scratchpad 6%,  artifact 25%, conversation 51%
-# 128K+: scratchpad 3%, artifact 35%, conversation 50%
-```
-
-#### 스킬 내부 격리
-
-```
-외부 루프: get_messages() → [scratchpad + 대화]    ← scratchpad 주입
-  └─ run_skill(optimize)
-       └─ 내부 루프: get_messages() → [대화만]      ← scratchpad 스킵
-                     set_dispatch_context() → 서브디렉토리 라우팅
-                     end_turn() → artifacts/step_N_optimize/ 에 저장
-```
+- main: root에 flat artifact
+- delegate/skill: subdir에 history.jsonl + result.md (재귀 중첩 가능)
+- fork 모드: parent history.jsonl 복사 → delegate가 이어서 append
 
 ---
 
