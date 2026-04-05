@@ -1740,7 +1740,7 @@ class TestScratchpadIntegration:
         ctx.init_task()
 
         # Set skill context (simulating inside a skill)
-        ctx.set_skill_context(skill_name="summarize", parent_step=1)
+        ctx.set_dispatch_context(name="summarize", parent_step=1)
 
         msgs = ctx.get_messages()
         # Scratchpad should NOT be in messages
@@ -1748,7 +1748,7 @@ class TestScratchpadIntegration:
         assert "[Scratchpad" not in all_content
 
         # Reset — scratchpad should appear again
-        ctx.set_skill_context()
+        ctx.set_dispatch_context()
         msgs = ctx.get_messages()
         all_content = " ".join(m.get("content", "") for m in msgs)
         assert "[Scratchpad" in all_content

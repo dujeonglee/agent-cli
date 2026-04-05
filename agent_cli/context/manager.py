@@ -309,9 +309,13 @@ class ContextManager:
 
     # ── Scratchpad integration ────────────────────────────────
 
-    def set_skill_context(self, skill_name: str = "", parent_step: int = 0) -> None:
-        """Set skill context for artifact subdirectory routing."""
-        self._skill_name = skill_name
+    def set_dispatch_context(self, name: str = "", parent_step: int = 0) -> None:
+        """Set dispatch context for artifact subdirectory routing.
+
+        When name is set, artifacts are saved to:
+          artifacts/step_{parent_step}_{name}/step_{N}.md
+        """
+        self._skill_name = name
         self._skill_parent_step = parent_step
 
     def begin_turn(self, query: str, tags: list[str] | None = None) -> dict:

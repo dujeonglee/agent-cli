@@ -103,7 +103,7 @@ class TestContextManager:
         """Summary should still be injected even inside a skill context."""
         ctx = ContextManager(mock_provider, "test-model", caps, scratchpad_dir=tmp_path)
         ctx._summary = "Previous summary here"
-        ctx.set_skill_context(skill_name="test_skill", parent_step=1)
+        ctx.set_dispatch_context(name="test_skill", parent_step=1)
         ctx.add("user", "skill input")
         msgs = ctx.get_messages()
 

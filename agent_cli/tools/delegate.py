@@ -403,29 +403,38 @@ def _run_single(
             scratchpad_dir=scratchpad_dir,
         )
 
+    # Set dispatch context for artifact subdirectory routing
+    dispatch_label = agent_name or "delegate"
+    if ctx and context_mode != "inherit":
+        ctx.set_dispatch_context(name=dispatch_label, parent_step=ctx._step_count)
+
     t0 = time.monotonic()
 
-    result_str = run_loop(
-        query=task,
-        provider=provider,
-        capabilities=capabilities,
-        model=model,
-        provider_name=provider_name,
-        base_url=base_url,
-        api_key=api_key,
-        max_turns=max_turns,
-        verbose=False,
-        suppress_output=suppress_output,
-        depth=depth + 1,
-        max_depth=max_depth,
-        delegate_timeout=timeout,
-        active_tools=allowed_tools,
-        ctx=ctx,
-        session=session,
-        skill_stack=skill_stack,
-        stop_event=stop_event,
-        agent_role=agent_role,
-    )
+    try:
+        result_str = run_loop(
+            query=task,
+            provider=provider,
+            capabilities=capabilities,
+            model=model,
+            provider_name=provider_name,
+            base_url=base_url,
+            api_key=api_key,
+            max_turns=max_turns,
+            verbose=False,
+            suppress_output=suppress_output,
+            depth=depth + 1,
+            max_depth=max_depth,
+            delegate_timeout=timeout,
+            active_tools=allowed_tools,
+            ctx=ctx,
+            session=session,
+            skill_stack=skill_stack,
+            stop_event=stop_event,
+            agent_role=agent_role,
+        )
+    finally:
+        if ctx and context_mode != "inherit":
+            ctx.set_dispatch_context()  # Reset
 
     duration = time.monotonic() - t0
 

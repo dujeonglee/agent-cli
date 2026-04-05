@@ -257,8 +257,8 @@ class AgentLoop:
             if not load_scratchpad(self.ctx._scratchpad_dir):
                 self.ctx.init_task()
             # Set or clear skill context (for artifact subdirectory routing)
-            self.ctx.set_skill_context(
-                skill_name=self.skill_name,
+            self.ctx.set_dispatch_context(
+                name=self.skill_name,
                 parent_step=self.ctx._step_count if self.skill_name else 0,
             )
 
@@ -1212,7 +1212,7 @@ def _handle_run_skill(
 
     # Set skill context for subdirectory routing
     if ctx:
-        ctx.set_skill_context(skill_name=name, parent_step=ctx._step_count)
+        ctx.set_dispatch_context(name=name, parent_step=ctx._step_count)
         # Record skill invocation in scratchpad progress
         from agent_cli.context.scratchpad import append_progress
 
@@ -1274,7 +1274,7 @@ def _handle_run_skill(
     finally:
         # Reset skill context
         if ctx:
-            ctx.set_skill_context()
+            ctx.set_dispatch_context()
 
     return obs
 
