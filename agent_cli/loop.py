@@ -196,17 +196,10 @@ class AgentLoop:
             signal.signal(signal.SIGINT, self._prev_sigint_handler)
 
     def _on_interrupt(self) -> None:
-        """Handle graceful interrupt: record in ctx + scratchpad, return None."""
+        """Handle graceful interrupt: record in ctx, return None."""
         interrupt_msg = "⚡ User interrupted. Waiting for new instructions."
         if self.ctx:
             self.ctx.add("user", interrupt_msg)
-            from agent_cli.context.scratchpad import append_progress
-
-            append_progress(
-                step=self.ctx._step_count,
-                summary=f"⚡ Interrupted by user at iteration {self.turn}",
-                base=self.ctx._scratchpad_dir,
-            )
         if not self.suppress_output:
             from agent_cli.render import C, console
 
@@ -217,21 +210,20 @@ class AgentLoop:
         return None
 
     def _setup(self) -> None:
-        """Initialize system prompt, scratchpad, messages."""
+        """Initialize system prompt and messages."""
         _set_debug_verbose(self.verbose)
 
-        # Note: run_skill stays in tools_list -- skill_stack prevents recursion
-        # System prompt hides skills already in the stack from LLM
-        session_id = ""
-        if self.session and hasattr(self.session, "session_id"):
-            session_id = str(self.session.session_id)
+        # Build system prompt with session_dir for Context Recovery Guide
+        session_dir = ""
+        if self.ctx:
+            session_dir = str(self.ctx.session_dir)
         self.system = build_system_prompt(
             capabilities=self.capabilities,
             active_tools=self.tools_list,
             include_delegate=self.include_delegate,
             skill_stack=self.skill_stack,
-            session_id=session_id,
             agent_role=self.agent_role,
+            session_dir=session_dir,
         )
 
         if not self.suppress_output:
@@ -250,28 +242,6 @@ class AgentLoop:
                 {"iter": 0, "action": "query", "observation": self.query},
             )
 
-        # Scratchpad: auto-init on first run, set skill context if inside a skill
-        if self.ctx:
-            from agent_cli.context.scratchpad import load_scratchpad
-
-            if not load_scratchpad(self.ctx._scratchpad_dir):
-                self.ctx.init_task()
-            # Set or clear skill context (for artifact subdirectory routing)
-            self.ctx.set_dispatch_context(
-                name=self.skill_name,
-                parent_step=self.ctx._step_count if self.skill_name else 0,
-            )
-
-        # Record user query in scratchpad progress (not for skill internal loops)
-        if self.ctx and not self.skill_name:
-            from agent_cli.context.scratchpad import append_progress
-
-            append_progress(
-                step=self.ctx._step_count,
-                summary=f"User: {self.query[:80]}",
-                base=self.ctx._scratchpad_dir,
-            )
-
         # Message setup
         if self.ctx:
             self.ctx.add("user", self.query)
@@ -286,11 +256,7 @@ class AgentLoop:
         return self.max_turns <= 0 or self.turn < self.max_turns
 
     def _begin_iteration(self) -> None:
-        """Scratchpad begin_turn, skill progress, iter sep."""
-        # Scratchpad: begin turn for each iteration
-        if self.ctx:
-            self.ctx.begin_turn(self.query)
-        # Skill progress: shown per-tool after LLM response (see _render_skill_progress)
+        """Render iteration separator."""
         if not self.suppress_output:
             render_turn_sep(self.turn)
 
@@ -644,13 +610,6 @@ class AgentLoop:
                 render_step("observation", obs, self.turn, tool_name=tool_name)
             observations.append({"tool_call": tc, "output": obs})
 
-            # Scratchpad: save tool result as artifact
-            if self.ctx:
-                self.ctx.end_turn(
-                    content=obs,
-                    tags=_build_artifact_tags(tool_name, tool_input, self.skill_name),
-                    summary=_build_artifact_summary(tool_name, tool_input, obs),
-                )
 
             _log_tool_to_session(
                 self.session,
@@ -742,13 +701,6 @@ class AgentLoop:
                 thought=parsed.thought or "",
             )
 
-            # Scratchpad: save complete result
-            if self.ctx:
-                self.ctx.end_turn(
-                    content=answer,
-                    tags=_build_artifact_tags("complete", {}, self.skill_name),
-                    summary=_build_artifact_summary("complete", {}, answer),
-                )
             if self.ctx:
                 self.ctx.add("assistant", answer)
             if not self.suppress_output:
@@ -766,12 +718,6 @@ class AgentLoop:
                 echo_answer,
                 thought=parsed.thought or "",
             )
-            if self.ctx:
-                self.ctx.end_turn(
-                    content=echo_answer,
-                    tags=_build_artifact_tags("complete", {}, self.skill_name),
-                    summary=_build_artifact_summary("complete", {}, echo_answer),
-                )
             if self.ctx:
                 self.ctx.add("assistant", echo_answer)
             if not self.suppress_output:
@@ -935,13 +881,6 @@ class AgentLoop:
                     tool_name=tool_name,
                 )
 
-            # Scratchpad: save tool result as artifact
-            if self.ctx:
-                self.ctx.end_turn(
-                    content=observation,
-                    tags=_build_artifact_tags(tool_name, tool_input, self.skill_name),
-                    summary=_build_artifact_summary(tool_name, tool_input, observation),
-                )
 
             # Repeated call detection
             if _detect_repeated_calls(self.recent_tool_history):
@@ -1143,27 +1082,6 @@ def _render_skill_progress(
     )
 
 
-def _build_internal_skill_summary(ctx, step_before: int) -> str:
-    """Build a summary of internal skill calls that happened since step_before."""
-    if not ctx:
-        return ""
-    from agent_cli.context.scratchpad import build_artifact_index
-
-    index = build_artifact_index(ctx._scratchpad_dir)
-    internal = []
-    for a in index:
-        if a.step <= step_before:
-            continue
-        if "complete" not in a.tags:
-            continue
-        skill_tag = next((t for t in a.tags if t.startswith("skill:")), None)
-        if skill_tag:
-            internal.append(f"- run_skill({skill_tag[6:]}): {a.summary}")
-
-    if not internal:
-        return ""
-    return "\n[Internal skill calls during this execution:]\n" + "\n".join(internal)
-
 
 def _handle_run_skill(
     skill_input: dict,
@@ -1210,21 +1128,7 @@ def _handle_run_skill(
             error=f"Skill '{name}' is user-only (disable-model-invocation)."
         )
 
-    # Set skill context for subdirectory routing
-    if ctx:
-        ctx.set_dispatch_context(name=name, parent_step=ctx._step_count)
-        # Record skill invocation in scratchpad progress
-        from agent_cli.context.scratchpad import append_progress
-
-        args_hint = f"({arguments})" if arguments else ""
-        append_progress(
-            step=ctx._step_count,
-            summary=f"run_skill: {name}{args_hint}",
-            base=ctx._scratchpad_dir,
-        )
-
     render_status("running", f"Running skill: {name}...")
-    step_before = ctx._step_count if ctx else 0
 
     try:
         from agent_cli.providers import create_provider
@@ -1258,23 +1162,9 @@ def _handle_run_skill(
             f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
         )
         body = result or "(skill returned no result)"
-        internal = _build_internal_skill_summary(ctx, step_before)
-        # Extract files touched by the skill for parent context
-        files_info = ""
-        if ctx:
-            fr, fm = ctx._extract_files_touched(ctx.messages[step_before * 2 :])
-            if fr or fm:
-                parts = ["[Files touched by skill]"]
-                if fr:
-                    parts.append(f"- Read: {', '.join(sorted(fr))}")
-                if fm:
-                    parts.append(f"- Modified: {', '.join(sorted(fm))}")
-                files_info = "\n" + "\n".join(parts)
-        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}{internal}{files_info}")
+        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}")
     finally:
-        # Reset skill context
-        if ctx:
-            ctx.set_dispatch_context()
+        pass
 
     return obs
 
@@ -1311,20 +1201,12 @@ def _build_artifact_summary(tool_name: str, tool_input, obs: str = "") -> str:
 
 def _build_review_observation(query: str, summary: str, ctx=None) -> str:
     """Build the observation returned by ready_for_review tool."""
-    progress = ""
-    if ctx and hasattr(ctx, "_scratchpad_dir"):
-        from agent_cli.context.scratchpad import load_scratchpad
-
-        progress = load_scratchpad(ctx._scratchpad_dir)
-
     parts = [
         "--- ORIGINAL REQUEST ---",
         query,
         "--- YOUR SUMMARY ---",
         summary,
     ]
-    if progress:
-        parts.extend(["--- WORK LOG ---", progress])
     parts.extend(
         [
             "",
