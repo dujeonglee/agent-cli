@@ -303,7 +303,7 @@ def _build_context_recovery(session_dir: str) -> str:
         "## Context Recovery\n"
         "Only the most recent messages are included in this conversation.\n"
         "If you need earlier context or artifact details:\n"
-        f"  read_file(\"{session_dir}/history.jsonl\")"
+        f'  read_file("{session_dir}/history.jsonl")'
     )
 
 

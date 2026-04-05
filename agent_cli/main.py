@@ -737,9 +737,7 @@ def chat(
                 console.print(content, markup=False)
                 console.print()
             tokens = ctx.get_estimated_tokens()
-            console.print(
-                f"[{C['muted']}]── estimated {tokens} tokens ──[/]"
-            )
+            console.print(f"[{C['muted']}]── estimated {tokens} tokens ──[/]")
             continue
 
         # Agent dispatch: @agent-name task

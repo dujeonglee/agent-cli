@@ -62,7 +62,7 @@ class ContextManager:
                 if len(args) > 2:
                     capabilities = args[2]
                 if len(args) > 3:
-                    keep_recent = args[3]
+                    pass  # Legacy: keep_recent ignored
 
         # Resolve session_dir from legacy params if not provided directly
         if session_dir is None:
@@ -269,7 +269,11 @@ def _to_natural_language(msg: dict) -> dict:
     if action:
         # Tool call: thought + action summary
         args_summary = _summarize_action_args(action, action_input)
-        content = f"{thought}. → {action}({args_summary})" if thought else f"→ {action}({args_summary})"
+        content = (
+            f"{thought}. → {action}({args_summary})"
+            if thought
+            else f"→ {action}({args_summary})"
+        )
         return {"role": "assistant", "content": content.strip()}
 
     # Plain assistant message (fallback)
@@ -319,8 +323,8 @@ def _summarize_action_args(action: str, action_input) -> str:
             agent = first.get("agent", "")
             task = first.get("task", "")[:40]
             if len(tasks) > 1:
-                return f"{agent}, \"{task}\" +{len(tasks)-1} more"
-            return f"{agent}, \"{task}\""
+                return f'{agent}, "{task}" +{len(tasks) - 1} more'
+            return f'{agent}, "{task}"'
         return ""
     if action == "run_skill":
         name = action_input.get("name", "")
