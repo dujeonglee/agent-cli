@@ -6,7 +6,6 @@ Uses tasks array API: single item = sync, multiple items = parallel (threading).
 
 from __future__ import annotations
 
-import copy
 import json
 import re
 import tempfile
@@ -189,67 +188,37 @@ def _extract_last_actions(messages: list[dict], n: int = 5) -> list[str]:
     return result
 
 
-def _persist_delegate_result(
-    formatted: str,
-    task: str,
-    duration: float,
-    iterations: int,
-    success: bool,
-    scratchpad_dir: Path,
-    depth: int,
-) -> None:
-    """Save delegate result as session artifact.
+def _generate_delegate_dir_name(agent_name: str) -> str:
+    """Generate a unique delegate directory name: delegate_{name}_{hash}_{ts}"""
+    import os
 
-    Uses existing scratchpad infrastructure (save_artifact).
-    Scratchpad progress is recorded by the caller (_dispatch_agent or loop).
-    Errors are silently caught to avoid disrupting delegate flow.
-    """
-    from agent_cli.context.scratchpad import save_artifact
-
-    try:
-        status = "success" if success else "failed"
-        save_artifact(
-            step=0,
-            content=formatted,
-            tags=["delegate", f"depth:{depth}", status],
-            summary=f"delegate: {task[:60]}",
-            base=scratchpad_dir,
-        )
-    except Exception:
-        pass
+    name = agent_name or "task"
+    hash_part = os.urandom(3).hex()  # 6-char hex
+    ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+    ms = f"{int(time.time() * 1000) % 1000:03d}"
+    return f"delegate_{name}_{hash_part}_{ts}{ms}"
 
 
-def _fork_context(
-    parent_ctx: ContextManager,
-    provider: LLMProvider,
-    model: str,
-    capabilities: ModelCapabilities,
-    scratchpad_dir=None,
-) -> ContextManager:
-    """Deep copy parent context for fork mode."""
-    forked = ContextManager(
-        provider=provider,
-        model=model,
-        capabilities=capabilities,
-        scratchpad_dir=scratchpad_dir,
-    )
-    forked.messages = copy.deepcopy(parent_ctx.messages)
-    forked._summary = parent_ctx._summary
-    forked._msg_chars = parent_ctx._msg_chars
-    return forked
-
-
-def _resolve_scratchpad_dir(session, parent_ctx) -> Path:
-    """Determine scratchpad directory from session or parent context."""
+def _resolve_session_dir(session, parent_ctx) -> Path:
+    """Determine session directory from session or parent context."""
     if session and hasattr(session, "session_dir"):
         return Path(session.session_dir)
-    if (
-        parent_ctx
-        and hasattr(parent_ctx, "_scratchpad_dir")
-        and parent_ctx._scratchpad_dir
-    ):
-        return parent_ctx._scratchpad_dir
+    if parent_ctx and hasattr(parent_ctx, "session_dir"):
+        return parent_ctx.session_dir
     return Path(tempfile.mkdtemp(prefix="delegate_"))
+
+
+def _persist_delegate_result(
+    formatted: str,
+    delegate_dir: Path,
+) -> None:
+    """Save delegate result as result.md in delegate directory."""
+    try:
+        delegate_dir.mkdir(parents=True, exist_ok=True)
+        result_path = delegate_dir / "result.md"
+        result_path.write_text(formatted, encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _format_delegate_output(result: DelegateResult) -> str:
@@ -276,16 +245,7 @@ def _format_delegate_output(result: DelegateResult) -> str:
         for entry in result.last_actions:
             parts.append(f"- {entry}")
 
-    # 4. Files touched
-    if result.files_read or result.files_modified:
-        parts.append("")
-        parts.append("[Files touched]")
-        if result.files_read:
-            parts.append(f"- Read: {', '.join(sorted(result.files_read))}")
-        if result.files_modified:
-            parts.append(f"- Modified: {', '.join(sorted(result.files_modified))}")
-
-    # 5. Duration + Iterations
+    # 4. Duration + Iterations
     footer = []
     if result.duration_secs > 0:
         footer.append(f"[Duration: {result.duration_secs:.1f}s]")
@@ -381,72 +341,57 @@ def _run_single(
         if agent_model and isinstance(agent_model, str):
             model = agent_model
 
-    scratchpad_dir = _resolve_scratchpad_dir(session, parent_ctx)
+    # Resolve parent session dir and create delegate subdir
+    parent_session_dir = _resolve_session_dir(session, parent_ctx)
+    delegate_dir_name = _generate_delegate_dir_name(agent_name or "task")
+    delegate_dir = parent_session_dir / delegate_dir_name
 
+    # Create context based on mode (inherit removed)
     if context_mode == "fork":
         if parent_ctx is None:
             return ToolResult(
                 False, error="Delegation rejected: fork requires parent context"
             )
-        ctx = _fork_context(parent_ctx, provider, model, capabilities, scratchpad_dir)
+        # Fork: copy parent history.jsonl to delegate dir
+        parent_ctx.fork_history_to(delegate_dir)
+        ctx = ContextManager(session_dir=delegate_dir, resume=True)
     elif context_mode == "inherit":
-        if parent_ctx is None:
-            return ToolResult(
-                False, error="Delegation rejected: inherit requires parent context"
-            )
-        ctx = parent_ctx
+        # inherit removed — treat as none with warning
+        ctx = ContextManager(session_dir=delegate_dir)
     else:
-        ctx = ContextManager(
-            provider=provider,
-            model=model,
-            capabilities=capabilities,
-            scratchpad_dir=scratchpad_dir,
-        )
-
-    # Set dispatch context for artifact subdirectory routing
-    dispatch_label = agent_name or "delegate"
-    if ctx and context_mode != "inherit":
-        ctx.set_dispatch_context(name=dispatch_label, parent_step=ctx._step_count)
+        # none: fresh context
+        ctx = ContextManager(session_dir=delegate_dir)
 
     t0 = time.monotonic()
 
-    try:
-        result_str = run_loop(
-            query=task,
-            provider=provider,
-            capabilities=capabilities,
-            model=model,
-            provider_name=provider_name,
-            base_url=base_url,
-            api_key=api_key,
-            max_turns=max_turns,
-            verbose=False,
-            suppress_output=suppress_output,
-            depth=depth + 1,
-            max_depth=max_depth,
-            delegate_timeout=timeout,
-            active_tools=allowed_tools,
-            ctx=ctx,
-            session=session,
-            skill_stack=skill_stack,
-            stop_event=stop_event,
-            agent_role=agent_role,
-        )
-    finally:
-        if ctx and context_mode != "inherit":
-            ctx.set_dispatch_context()  # Reset
+    result_str = run_loop(
+        query=task,
+        provider=provider,
+        capabilities=capabilities,
+        model=model,
+        provider_name=provider_name,
+        base_url=base_url,
+        api_key=api_key,
+        max_turns=max_turns,
+        verbose=False,
+        suppress_output=suppress_output,
+        depth=depth + 1,
+        max_depth=max_depth,
+        delegate_timeout=timeout,
+        active_tools=allowed_tools,
+        ctx=ctx,
+        session=session,
+        skill_stack=skill_stack,
+        stop_event=stop_event,
+        agent_role=agent_role,
+    )
 
     duration = time.monotonic() - t0
 
     delegate_result = DelegateResult(output=result_str, duration_secs=duration)
 
-    if context_mode != "inherit":
-        files_read, files_modified = ctx._extract_files_touched(ctx.messages)
-        delegate_result.files_read = sorted(files_read)
-        delegate_result.files_modified = sorted(files_modified)
-
     # Activity log extraction
-    delegate_result.activity_log = _extract_activity_log(ctx.messages)
+    delegate_result.activity_log = _extract_activity_log(ctx.get_raw_messages())
 
     # Iterations count from activity log
     real_entries = [e for e in delegate_result.activity_log if not e.startswith("...")]
@@ -454,27 +399,22 @@ def _run_single(
 
     # Last actions on failure
     if result_str is None:
-        delegate_result.last_actions = _extract_last_actions(ctx.messages)
+        delegate_result.last_actions = _extract_last_actions(ctx.get_raw_messages())
 
     formatted = _format_delegate_output(delegate_result)
 
-    # Persist to disk
-    _persist_delegate_result(
-        formatted=formatted,
-        task=task,
-        duration=duration,
-        iterations=delegate_result.iterations,
-        success=result_str is not None,
-        scratchpad_dir=scratchpad_dir,
-        depth=depth,
-    )
+    # Persist result.md to delegate directory
+    _persist_delegate_result(formatted, delegate_dir)
 
     if result_str is not None:
-        return ToolResult(True, output=f"STATUS: success\nRESULT:\n{formatted}")
+        return ToolResult(
+            True,
+            output=f"STATUS: success\nRESULT:\n{formatted}\n→ {delegate_dir_name}/",
+        )
     else:
         return ToolResult(
             False,
-            error=f"STATUS: error\nERROR: Subagent did not complete\n{formatted}",
+            error=f"STATUS: error\nERROR: Subagent did not complete\n{formatted}\n→ {delegate_dir_name}/",
         )
 
 

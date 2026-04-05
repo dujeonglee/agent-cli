@@ -15,7 +15,6 @@ from agent_cli.tools.read_file import (
 )
 from agent_cli.tools.delegate import (
     tool_delegate,
-    _fork_context,
     _format_delegate_output,
     _format_parallel_results,
     DelegateResult,
