@@ -186,6 +186,9 @@ class MinimalRenderer(Renderer):
         # Stop any active spinner before printing progress
         self.spinner_stop()
 
+        # Delegate gets a crab 🦀, skills get lightning ⚡
+        action_icon = "🦀" if "delegate" in label else "⚡"
+
         if thought:
             t = thought.replace("\n", " ").strip()
             self.con.print(
@@ -199,6 +202,6 @@ class MinimalRenderer(Renderer):
             )
         else:
             self.con.print(
-                f"  [{_MUTED}]{label} [{turn}] ⚡ {tool_name}:{detail}[/]",
+                f"  [{_MUTED}]{label} [{turn}] {action_icon} {tool_name}:{detail}[/]",
                 highlight=False,
             )

@@ -364,7 +364,12 @@ class FancyRenderer(Renderer):
                 f"  [dim]{label} [{turn}] 💭 {t}[/]",
                 highlight=False,
             )
-        icon = "✅" if tool_name == "complete" else "⚡"
+        if tool_name == "complete":
+            icon = "✅"
+        elif "delegate" in label:
+            icon = "🦀"
+        else:
+            icon = "⚡"
         self.con.print(
             f"  [dim]{label} [{turn}] {icon} {tool_name}{detail}[/]",
             highlight=False,
