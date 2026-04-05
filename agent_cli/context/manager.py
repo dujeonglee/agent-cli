@@ -1,429 +1,352 @@
-"""Context manager with structured summarization and incremental compression.
+"""Context manager with FIFO message queue and history.jsonl persistence.
 
-Supports optional scratchpad + artifact persistence for long-running tasks.
-Scratchpad content survives compaction as a context anchor.
-Uses hybrid compaction: LLM for semantic summary, rule-based for file extraction.
+Stores full conversation in history.jsonl (JSON Lines, append-only).
+Maintains an in-memory FIFO cache of the last N messages.
+Converts JSON records to natural language for LLM consumption.
+
+No LLM-based compression. No scratchpad. No artifact injection.
 """
 
 from __future__ import annotations
 
 import json
+from collections import deque
 from pathlib import Path
 
-from agent_cli.constants import CHARS_PER_TOKEN
-from agent_cli.context.token_estimator import estimate_tokens_from_messages
-from agent_cli.prompts.compression_prompt import (
-    INCREMENTAL_UPDATE_PROMPT,
-    SUMMARIZATION_PROMPT,
-)
-from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.compat import ModelCapabilities
+
+# ── Default FIFO size ────────────────────────────────
+DEFAULT_FIFO_SIZE = 100
 
 
 class ContextManager:
-    """Manages conversation history with automatic structured compression.
+    """Manages conversation history with FIFO + history.jsonl persistence.
 
-    Uses LLM-based summarization with incremental updates (pi-mono pattern).
-    Adapts to model context window via ModelCapabilities.
-
-    Optional scratchpad mode: when enabled, maintains a persistent
-    scratchpad.md and per-turn artifacts that survive compaction.
+    - Stores every message as a JSON line in history.jsonl (append-only).
+    - Keeps the last N messages in memory for fast access.
+    - Converts JSON records to natural language when building LLM messages.
+    - On session resume, restores cache from history.jsonl tail.
     """
 
     def __init__(
         self,
-        provider: LLMProvider,
-        model: str,
-        capabilities: ModelCapabilities,
+        # New API: session_dir as first positional arg
+        # Legacy API: provider, model, capabilities as first 3 positional args
+        *args,
+        session_dir: Path | None = None,
+        fifo_size: int = DEFAULT_FIFO_SIZE,
+        resume: bool = False,
+        # Legacy kwargs
+        provider=None,
+        model: str = "",
+        capabilities=None,
         keep_recent: int = 4,
         session_id: str | None = None,
         scratchpad_base: Path | None = None,
         scratchpad_dir: Path | None = None,
     ):
-        if session_id is None and scratchpad_dir is None:
-            raise ValueError(
-                "session_id is required for ContextManager. "
-                "Pass session_id to create a session-scoped scratchpad."
-            )
+        # Detect call style from positional args
+        if args:
+            first = args[0]
+            if isinstance(first, Path) or (
+                isinstance(first, str) and "/" in str(first)
+            ):
+                # New API: ContextManager(session_dir, fifo_size=...)
+                session_dir = Path(first)
+                if len(args) > 1:
+                    fifo_size = args[1]
+            else:
+                # Legacy API: ContextManager(provider, model, capabilities, ...)
+                provider = first
+                if len(args) > 1:
+                    model = args[1]
+                if len(args) > 2:
+                    capabilities = args[2]
+                if len(args) > 3:
+                    keep_recent = args[3]
 
+        # Resolve session_dir from legacy params if not provided directly
+        if session_dir is None:
+            if scratchpad_dir is not None:
+                session_dir = Path(scratchpad_dir)
+            elif session_id is not None:
+                base = scratchpad_base or Path(".agent-cli")
+                session_dir = base / "sessions" / session_id
+            else:
+                raise ValueError(
+                    "session_dir or session_id is required for ContextManager."
+                )
+
+        self.session_dir = Path(session_dir)
+        self.fifo_size = fifo_size
+        self._cache: deque[dict] = deque(maxlen=fifo_size)
+        self._history_path = self.session_dir / "history.jsonl"
+
+        # Legacy attributes (for callers that still reference them)
         self.provider = provider
         self.model = model
         self.capabilities = capabilities
-        self.keep_recent = keep_recent
+        self.messages: list[dict] = []  # Legacy: some code reads ctx.messages
 
-        self.messages: list[dict] = []
-        self._summary: str | None = None
-        self._msg_chars: int = 0  # Running character count for O(1) add()
+        # Ensure session directory exists
+        self.session_dir.mkdir(parents=True, exist_ok=True)
 
-        # Scratchpad integration (always active, session-scoped)
-        if scratchpad_dir:
-            self._scratchpad_dir = scratchpad_dir
+        if resume and self._history_path.is_file():
+            self._restore_cache()
+
+    # ── Public API ────────────────────────────────────
+
+    def add(self, message_or_role, content: str | None = None) -> None:
+        """Add a message to cache and persist to history.jsonl.
+
+        Supports two call styles:
+            add({"role": "user", "content": "hello"})   # New API (dict)
+            add("user", "hello")                         # Legacy API (role, content)
+        """
+        if isinstance(message_or_role, str):
+            # Legacy: add("role", "content")
+            message = {"role": message_or_role, "content": content or ""}
         else:
-            from agent_cli.context.scratchpad import session_scratchpad_dir
-
-            base = scratchpad_base or Path(".agent-cli")
-            self._scratchpad_dir = session_scratchpad_dir(session_id, base)
-
-        self._step_count = 0
-        self._skill_name = ""
-        self._skill_parent_step = 0
-
-        from agent_cli.context.scratchpad import ContextBudget
-
-        self._budget = ContextBudget.for_model(capabilities.context_window)
-        # Max chars for conversation = budget's conversation allocation
-        self.max_context_chars = int(self._budget.conversation_tokens * CHARS_PER_TOKEN)
-        self._original_max_context_chars = self.max_context_chars
-        self._compress_failures = 0
-        self._max_compress_failures = 3
-
-    def add(self, role: str, content: str) -> None:
-        """Add a message and trigger compression if needed."""
-        self.messages.append({"role": role, "content": content})
-        self._msg_chars += len(content)
-        if (
-            len(self.messages) > self.keep_recent * 2
-            and self._total_chars() > self.max_context_chars
-        ):
-            self._compress()
+            message = message_or_role
+        self._cache.append(message)
+        self._append_to_history(message)
 
     def get_messages(self) -> list[dict]:
-        """Return messages with summary and scratchpad context prepended."""
-        msgs: list[dict] = []
+        """Return cached messages converted to natural language for LLM.
 
-        # Scratchpad anchor: injected unless inside a skill execution
-        # (skill internal loops should not see the outer task's scratchpad)
-        if not self._skill_name:
-            scratchpad_block = self._build_scratchpad_block()
-        else:
-            scratchpad_block = ""
-        if scratchpad_block:
-            msgs.append({"role": "user", "content": scratchpad_block})
-            msgs.append(
-                {
-                    "role": "assistant",
-                    "content": (
-                        "Understood. I have the scratchpad context "
-                        "and will avoid repeating completed work."
-                    ),
-                }
-            )
+        Returns a list of {"role": ..., "content": ...} dicts suitable
+        for chat completion API calls.
+        """
+        return [_to_natural_language(msg) for msg in self._cache]
 
-        if self._summary:
-            msgs.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "This conversation is being continued from earlier context "
-                        "that was compressed. The summary below covers the prior "
-                        "portion of the conversation.\n\n"
-                        f"Summary:\n{self._summary}\n\n"
-                        "Recent messages are preserved verbatim below. "
-                        "Continue the conversation from where it left off — "
-                        "do not acknowledge the summary, do not recap what was "
-                        "happening, and do not ask clarifying questions about "
-                        "prior context. Resume directly."
-                    ),
-                }
-            )
-            msgs.append(
-                {
-                    "role": "assistant",
-                    "content": "Understood. Resuming where we left off.",
-                }
-            )
-        msgs.extend(self.messages)
-        return msgs
+    def get_raw_messages(self) -> list[dict]:
+        """Return cached messages as raw JSON dicts (no conversion)."""
+        return list(self._cache)
+
+    @property
+    def history_path(self) -> Path:
+        """Path to this context's history.jsonl file."""
+        return self._history_path
+
+    # ── Persistence ───────────────────────────────────
+
+    def _append_to_history(self, message: dict) -> None:
+        """Append a single JSON line to history.jsonl."""
+        with open(self._history_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(message, ensure_ascii=False) + "\n")
+
+    def _restore_cache(self) -> None:
+        """Read history.jsonl and load the last N messages into cache."""
+        lines: list[str] = []
+        with open(self._history_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        # Take last N lines
+        tail = lines[-self.fifo_size :] if len(lines) > self.fifo_size else lines
+        for line in tail:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+                self._cache.append(msg)
+            except json.JSONDecodeError:
+                continue
+
+    # ── Legacy API bridge ──────────────────────────────
+    # These methods maintain backward compatibility with old ContextManager API.
+    # They will be removed once all callers are migrated to the new API.
+
+    def add_legacy(self, role: str, content: str) -> None:
+        """Legacy add(role, content) → new add(dict).
+
+        Stores as a simple {"role": ..., "content": ...} message.
+        Callers should migrate to add(dict) with structured fields.
+        """
+        self.add({"role": role, "content": content})
 
     def force_compress(self, user_instruction: str = "") -> None:
-        """Trigger compression immediately (for overflow recovery or /compact)."""
-        if len(self.messages) > self.keep_recent * 2:
-            self._compress(user_instruction=user_instruction)
+        """No-op. FIFO replaces compression."""
+        pass
 
     def get_estimated_tokens(self) -> int:
-        """Estimate current buffer size in tokens."""
-        return estimate_tokens_from_messages(self.get_messages())
+        """Rough token estimate from cache."""
+        total_chars = sum(
+            len(str(m.get("content", ""))) + len(str(m.get("thought", "")))
+            for m in self._cache
+        )
+        return total_chars // 4 + 1
 
-    def _total_chars(self) -> int:
-        extra = len(self._summary) if self._summary else 0
-        return extra + self._msg_chars
+    def begin_turn(self, query: str, tags: list[str] | None = None) -> dict:
+        """No-op. Scratchpad removed."""
+        return {}
 
-    def _compress(self, user_instruction: str = "") -> None:
-        """Compress older messages into a structured summary."""
-        keep = self.keep_recent * 2  # pairs of user+assistant
-        if len(self.messages) <= keep:
-            return
+    def end_turn(self, **kwargs) -> None:
+        """No-op. Scratchpad removed."""
+        return None
 
-        old_msgs = self.messages[:-keep]
-        kept_msgs = self.messages[-keep:]
+    def init_task(self) -> None:
+        """No-op. Scratchpad removed."""
+        pass
 
-        serialized = self._serialize_messages(old_msgs)
+    def set_dispatch_context(self, name: str = "", parent_step: int = 0) -> None:
+        """No-op. Scratchpad removed."""
+        pass
 
-        if self._summary is None:
-            # First compression: full summarization
-            prompt_text = f"Conversation to summarize:\n\n{serialized}"
-            system = SUMMARIZATION_PROMPT
-        else:
-            # Incremental update: add to existing summary
-            prompt_text = INCREMENTAL_UPDATE_PROMPT.format(
-                existing_summary=self._summary,
-                new_messages=serialized,
-            )
-            system = (
-                "You are a summarization assistant. Follow the instructions exactly."
-            )
+    @property
+    def _scratchpad_dir(self) -> Path:
+        """Legacy alias for session_dir."""
+        return self.session_dir
 
-        if user_instruction:
-            system += f"\n\n## Additional Instruction\n{user_instruction}"
-
-        try:
-            # Rule-based: extract files touched from messages being compressed
-            new_read, new_modified = self._extract_files_touched(old_msgs)
-
-            # Incremental: merge with files from prior summary
-            if self._summary:
-                prev_read, prev_modified = self._parse_files_from_summary(self._summary)
-                new_read |= prev_read
-                new_modified |= prev_modified
-
-            response = self.provider.call(
-                messages=[{"role": "user", "content": prompt_text}],
-                system=system,
-                model=self.model,
-                capabilities=self.capabilities,
-                skip_json_format=True,
-            )
-            llm_summary = response.content
-            files_section = self._format_files_touched(new_read, new_modified)
-            artifact_hint = (
-                "[Context was compressed. Previous tool outputs are no longer "
-                "in conversation history. Check the scratchpad Progress section "
-                "for artifact paths — use read_file to reload details if needed.]"
-            )
-            self._summary = f"{llm_summary}\n\n{files_section}\n\n{artifact_hint}"
-            self.messages = kept_msgs
-            self._msg_chars = sum(len(m["content"]) for m in kept_msgs)
-            # Reset failure tracking on success
-            self._compress_failures = 0
-            self.max_context_chars = self._original_max_context_chars
-        except Exception as e:
-            self._compress_failures += 1
-            import sys
-
-            if self._compress_failures <= self._max_compress_failures:
-                # Raise threshold temporarily, capped at 2x original
-                new_limit = min(
-                    int(self.max_context_chars * 1.3),
-                    self._original_max_context_chars * 2,
-                )
-                self.max_context_chars = new_limit
-                print(
-                    f"[warn] Context compression failed ({self._compress_failures}/"
-                    f"{self._max_compress_failures}): {e}",
-                    file=sys.stderr,
-                )
-            else:
-                # Too many failures — alert user via Rich console
-                from agent_cli.render import console, C
-
-                console.print(
-                    f"[{C['error']}]Context compression failed "
-                    f"{self._compress_failures} times. "
-                    f"Context may grow unbounded.[/]"
-                )
+    @property
+    def _step_count(self) -> int:
+        """Legacy stub. Always 0."""
+        return 0
 
     @staticmethod
     def _extract_files_touched(messages: list[dict]) -> tuple[set[str], set[str]]:
-        """Extract file paths from assistant tool-call messages (rule-based).
-
-        Returns (files_read, files_modified) sets.
-        """
-        read: set[str] = set()
-        modified: set[str] = set()
-        for msg in messages:
-            if msg.get("role") != "assistant":
-                continue
-            try:
-                data = json.loads(msg["content"])
-            except (json.JSONDecodeError, TypeError, KeyError):
-                continue
-            if not isinstance(data, dict):
-                continue
-            action = data.get("action", "")
-            action_input = data.get("action_input")
-            if not isinstance(action_input, dict):
-                continue
-            path = action_input.get("path", "")
-            if not path:
-                continue
-            if action == "read_file":
-                read.add(path)
-            elif action in ("write_file", "edit_file"):
-                modified.add(path)
-        return read, modified
-
-    @staticmethod
-    def _format_files_touched(read: set[str], modified: set[str]) -> str:
-        """Format extracted file sets into the Files Touched section."""
-        lines = ["## Files Touched"]
-        lines.append(f"- Read: {', '.join(sorted(read)) or '(none)'}")
-        lines.append(f"- Modified: {', '.join(sorted(modified)) or '(none)'}")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _parse_files_from_summary(summary: str) -> tuple[set[str], set[str]]:
-        """Parse existing Files Touched section from a prior summary."""
-        read: set[str] = set()
-        modified: set[str] = set()
-        in_files = False
-        for line in summary.splitlines():
-            if line.strip() == "## Files Touched":
-                in_files = True
-                continue
-            if in_files and line.startswith("##"):
-                break
-            if in_files and line.startswith("- Read:"):
-                paths = line[len("- Read:") :].strip()
-                if paths and paths != "(none)":
-                    read.update(p.strip() for p in paths.split(","))
-            elif in_files and line.startswith("- Modified:"):
-                paths = line[len("- Modified:") :].strip()
-                if paths and paths != "(none)":
-                    modified.update(p.strip() for p in paths.split(","))
-        return read, modified
-
-    def _serialize_messages(self, messages: list[dict]) -> str:
-        """Serialize messages to text format for summarization (pi-mono pattern)."""
-        parts = []
-        for m in messages:
-            role = m.get("role", "unknown").capitalize()
-            content = m.get("content", "")
-            # Truncate very long tool results for summarization
-            if len(content) > 2000:
-                content = (
-                    content[:2000]
-                    + f"\n[... {len(content) - 2000} more characters truncated]"
-                )
-            parts.append(f"[{role}]: {content}")
-        return "\n\n".join(parts)
-
-    # ── Scratchpad integration ────────────────────────────────
-
-    def set_dispatch_context(self, name: str = "", parent_step: int = 0) -> None:
-        """Set dispatch context for artifact subdirectory routing.
-
-        When name is set, artifacts are saved to:
-          artifacts/step_{parent_step}_{name}/step_{N}.md
-        """
-        self._skill_name = name
-        self._skill_parent_step = parent_step
-
-    def begin_turn(self, query: str, tags: list[str] | None = None) -> dict:
-        """Begin a turn: load scratchpad + select relevant artifacts.
-
-        Returns a dict with context info for debugging/logging.
-        """
-        self._step_count += 1
-        self._current_tags = tags or []
-
-        return {
-            "scratchpad_loaded": True,
-            "artifacts_loaded": 0,
-            "budget": self._budget.to_dict(),
-        }
-
-    def end_turn(
-        self,
-        content: str,
-        tags: list[str] | None = None,
-        summary: str = "",
-        decision: str | None = None,
-    ) -> str | None:
-        """End a turn: save artifact + update scratchpad.
-
-        Returns the artifact path if saved, None otherwise.
-        """
-        from agent_cli.context.scratchpad import (
-            append_decision,
-            append_progress,
-            save_artifact,
-        )
-
-        # Extract skill_name from tags if present
-        skill_name = ""
-        if tags:
-            for t in tags:
-                if t.startswith("skill:"):
-                    skill_name = t[6:]
-                    break
-
-        # Save result as artifact (always)
-        artifact_path = None
-        if content:
-            artifact_path = save_artifact(
-                step=self._step_count,
-                content=content,
-                tags=tags,
-                summary=summary,
-                base=self._scratchpad_dir,
-                skill_name=skill_name,
-                parent_step=self._skill_parent_step,
-            )
-
-        # Update scratchpad progress
-        if summary:
-            append_progress(
-                step=self._step_count,
-                summary=summary,
-                artifact_path=artifact_path,
-                base=self._scratchpad_dir,
-            )
-
-        # Record decision if any
-        if decision:
-            append_decision(
-                step=self._step_count,
-                decision=decision,
-                base=self._scratchpad_dir,
-            )
-
-        return artifact_path
-
-    def init_task(self) -> None:
-        """Initialize scratchpad."""
-        from agent_cli.context.scratchpad import init_scratchpad
-
-        init_scratchpad(self._scratchpad_dir)
-
-    def _build_scratchpad_block(self) -> str:
-        """Build the scratchpad context block for injection into messages."""
-        from agent_cli.context.scratchpad import (
-            load_scratchpad,
-        )
-
-        parts = []
-
-        # 1. Scratchpad (always loaded)
-        scratchpad = load_scratchpad(self._scratchpad_dir)
-        if scratchpad:
-            # Truncate if exceeds budget
-            max_chars = self._budget.scratchpad_tokens * CHARS_PER_TOKEN
-            if len(scratchpad) > max_chars:
-                scratchpad = scratchpad[:max_chars] + "\n[... scratchpad truncated]"
-            parts.append(f"[Scratchpad — persistent task context]\n{scratchpad}")
-
-        # 2. Artifact injection — disabled for now.
-        # Artifacts are saved to disk for persistence/recovery but NOT injected
-        # into context. Raw tool output (hashlines, STATUS: prefixes) confuses LLM
-        # when mixed with conversation. Scratchpad progress references are sufficient.
-        # TODO: Re-enable with proper summarization (not raw tool output).
-
-        return "\n\n---\n\n".join(parts) if parts else ""
+        """Legacy stub. Returns empty sets."""
+        return set(), set()
 
     def get_budget_info(self) -> dict:
-        """Return current token budget allocation (for /ctx_window display)."""
-        return {
-            "mode": "scratchpad",
-            "budget": self._budget.to_dict(),
-            "step_count": self._step_count,
-        }
+        """Legacy stub."""
+        return {"mode": "fifo", "fifo_size": self.fifo_size}
+
+    # ── Fork support ──────────────────────────────────
+
+    def fork_history_to(self, target_dir: Path) -> Path:
+        """Copy this context's history.jsonl to target_dir for fork mode.
+
+        Returns the path to the copied history.jsonl.
+        """
+        import shutil
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / "history.jsonl"
+        if self._history_path.is_file():
+            shutil.copy2(self._history_path, target_path)
+        return target_path
+
+
+# ── Natural language conversion ───────────────────────
+
+
+def _to_natural_language(msg: dict) -> dict:
+    """Convert a JSON history record to a natural language message for LLM.
+
+    Input formats (from history.jsonl):
+        User input:     {"role":"user", "content":"..."}
+        Tool result:    {"role":"user", "tool":"read_file", "args":{...}, "content":"...", "artifact":"..."}
+        Assistant act:  {"role":"assistant", "thought":"...", "action":"...", "action_input":{...}}
+        Complete:       {"role":"assistant", "thought":"...", "action":"complete", "action_input":{"result":"..."}}
+
+    Output format (for chat completion):
+        {"role": "user"|"assistant", "content": "...natural language..."}
+    """
+    role = msg.get("role", "user")
+
+    # User messages
+    if role == "user":
+        tool = msg.get("tool")
+        if tool:
+            return _convert_observation(msg)
+        return {"role": "user", "content": msg.get("content", "")}
+
+    # Assistant messages
+    thought = msg.get("thought", "")
+    action = msg.get("action", "")
+    action_input = msg.get("action_input", {})
+
+    if action == "complete":
+        # Final answer: thought + result, no action wrapper
+        result = ""
+        if isinstance(action_input, dict):
+            result = action_input.get("result", "")
+        elif isinstance(action_input, str):
+            result = action_input
+        content = f"{thought}. {result}" if thought else result
+        return {"role": "assistant", "content": content.strip()}
+
+    if action:
+        # Tool call: thought + action summary
+        args_summary = _summarize_action_args(action, action_input)
+        content = f"{thought}. → {action}({args_summary})" if thought else f"→ {action}({args_summary})"
+        return {"role": "assistant", "content": content.strip()}
+
+    # Plain assistant message (fallback)
+    content = msg.get("content", thought)
+    return {"role": "assistant", "content": content}
+
+
+def _convert_observation(msg: dict) -> dict:
+    """Convert a tool result message to natural language."""
+    tool = msg.get("tool", "")
+    content = msg.get("content", "")
+    artifact = msg.get("artifact", "")
+    args = msg.get("args", {})
+
+    # Build header
+    if isinstance(args, dict) and args:
+        # Pick the most relevant arg for summary
+        arg_summary = _summarize_tool_args(tool, args)
+        header = f"[{tool}] {arg_summary}"
+    else:
+        header = f"[{tool}]"
+
+    # Build body
+    parts = [header]
+    if content:
+        parts.append(content)
+    if artifact:
+        parts.append(f"→ {artifact}")
+
+    return {"role": "user", "content": "\n".join(parts)}
+
+
+def _summarize_action_args(action: str, action_input) -> str:
+    """Summarize action_input for the → action(...) display."""
+    if not isinstance(action_input, dict):
+        return str(action_input)[:80] if action_input else ""
+
+    if action in ("read_file", "write_file", "edit_file"):
+        return action_input.get("path", "")
+    if action == "shell":
+        cmd = action_input.get("command", "")
+        return cmd[:60] if cmd else ""
+    if action == "delegate":
+        tasks = action_input.get("tasks", [])
+        if tasks and isinstance(tasks, list):
+            first = tasks[0] if isinstance(tasks[0], dict) else {}
+            agent = first.get("agent", "")
+            task = first.get("task", "")[:40]
+            if len(tasks) > 1:
+                return f"{agent}, \"{task}\" +{len(tasks)-1} more"
+            return f"{agent}, \"{task}\""
+        return ""
+    if action == "run_skill":
+        name = action_input.get("name", "")
+        arguments = action_input.get("arguments", "")
+        return f"{name}({arguments})" if arguments else name
+
+    # Generic: first string value
+    for v in action_input.values():
+        if isinstance(v, str) and v:
+            return v[:60]
+    return ""
+
+
+def _summarize_tool_args(tool: str, args: dict) -> str:
+    """Summarize tool args for the [{tool}] header."""
+    if tool in ("read_file", "write_file", "edit_file"):
+        return args.get("path", "")
+    if tool == "shell":
+        return args.get("command", "")[:60]
+    if tool == "delegate":
+        agent = args.get("agent", "")
+        return agent
+    if tool == "run_skill":
+        return args.get("name", "")
+    # Generic
+    for v in args.values():
+        if isinstance(v, str) and v:
+            return v[:60]
+    return ""
