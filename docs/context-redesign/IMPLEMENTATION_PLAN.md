@@ -103,30 +103,30 @@ Anthropic/OpenAI native tool calling 제거. 모든 provider가 text parsing 방
 - [ ] 병렬 delegate 호출 순서 append 검증
 - [ ] 유닛 테스트 업데이트 (old API 테스트 10개 실패 중)
 
-## Phase 5: skills/executor.py 변경
+## Phase 5: skills/executor.py 변경 ✅
 
-- [ ] 도구 교집합 로직: skill allowed-tools ∩ parent allowed-tools
-- [ ] 빈 교집합 시 실행 거부 (에러 반환)
-- [ ] parent Role 상속: parent_role 파라미터 전달
-- [ ] skill subdir 구조 생성: `skill_{name}_{hash}_{ts}/`
-  - history.jsonl
-  - result.md
-- [ ] parent history.jsonl에 observation 기록 (결과 + artifact 경로)
-- [ ] 유닛 테스트
-  - 도구 교집합 계산
-  - 빈 교집합 실행 거부
-  - parent Role 상속 (main → 기본, delegate → Agent Role)
-  - skill subdir 구조 확인
-  - skill이 delegate 호출 시 재귀 중첩 디렉토리
+- [x] 도구 교집합 로직 (skill ∩ parent)
+- [x] 빈 교집합 시 실행 거부
+- [x] parent Role 상속 (parent_role → agent_role)
+- [x] skill subdir 구조 생성 (skill_{name}_{hash}_{ts}/)
+- [x] 유닛 테스트 (7 passed)
 
-## Phase 6: 정리
+## Phase 6: 정리 (진행 중)
 
-- [ ] agent_cli/context/scratchpad.py 삭제
-- [ ] agent_cli/prompts/compression_prompt.py 삭제
-- [ ] scratchpad 관련 import 제거 (manager.py, loop.py 등)
-- [ ] 기존 테스트 정리 (scratchpad, compression 관련 테스트 삭제)
-- [ ] ruff check + ruff format 통과
-- [ ] pytest tests/ -m "not ollama_integration" 전체 통과
-- [ ] 사용하지 않는 함수/클래스/import 정리 (전체 codebase grep)
+- [x] agent_cli/context/scratchpad.py 삭제 (-1873 lines)
+- [x] agent_cli/prompts/compression_prompt.py 삭제
+- [x] tests/test_context_manager.py 삭제 (v2로 대체)
+- [x] tests/test_scratchpad.py 삭제
+- [x] scratchpad exports 제거 (context/__init__.py)
+- [x] read_artifact.py stub으로 교체
+- [x] ruff check + format 통과
+- [ ] 실패 중인 old-behavior 테스트 50개 수정/삭제
+- [ ] test_tools_coverage.py hang 해결
+- [ ] 사용하지 않는 함수/클래스/import 정리
 - [ ] docs/ARCHITECTURE.md 업데이트
-- [ ] README.md 업데이트 (필요 시)
+- [ ] README.md 업데이트
+
+### 현재 테스트 상태
+- 새 테스트: 47/47 pass
+- 기존 테스트: 605 pass, 50 fail (old scratchpad/compression/git context)
+- test_tools_coverage.py: hang (delegate 테스트가 real run_loop 호출)

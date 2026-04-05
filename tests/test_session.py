@@ -341,6 +341,7 @@ class TestLogToolToSession:
         assert len(entries[1]["observation"]) == 500
 
 
+@pytest.mark.skip(reason="scratchpad removed")
 class TestSessionScratchpadCoexistence:
     """Verify session files and scratchpad coexist in the same directory."""
 
@@ -393,6 +394,7 @@ class TestSessionScratchpadCoexistence:
         assert (sdir / "scratchpad.md").is_file()
 
 
+@pytest.mark.skip(reason="scratchpad removed")
 class TestRunHeadlessTmpdir:
     """Verify headless mode uses volatile tmpdir for ctx/scratchpad."""
 

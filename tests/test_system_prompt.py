@@ -96,10 +96,10 @@ class TestBuildSystemPrompt:
         assert "JSON" in prompt
         assert "thought" in prompt
 
-    def test_session_id_included(self):
+    def test_session_id_no_longer_creates_section(self):
+        """session_id param accepted but no longer creates a ## Session section."""
         prompt = build_system_prompt(_make_caps(), ["shell"], session_id="1774882777")
-        assert "1774882777" in prompt
-        assert "Session" in prompt
+        assert "## Session" not in prompt
 
     @patch(
         "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
@@ -176,13 +176,10 @@ class TestBuildSystemPrompt:
         env_pos = prompt.index("## Environment")
         assert tools_pos < env_pos
 
-    def test_section_order_session_in_recency(self):
-        """Session ID should appear in the recency section, after tools."""
+    def test_section_order_no_session_section(self):
+        """Session ID no longer creates a section."""
         prompt = build_system_prompt(_make_caps(), ["shell"], session_id="12345")
-        tools_pos = prompt.index("## Available Tools")
-        session_pos = prompt.index("## Session")
-        env_pos = prompt.index("## Environment")
-        assert tools_pos < session_pos < env_pos
+        assert "## Session" not in prompt
 
     def test_static_tools_before_conditional(self):
         """Static tools (shell, read_file) should appear before conditional (edit_file)."""
@@ -194,9 +191,6 @@ class TestBuildSystemPrompt:
     def test_artifact_guide_inlined(self):
         prompt = build_system_prompt(_make_caps(), ["shell", "read_artifact"])
         assert "read_artifact" in prompt
-        assert "scratchpad" in prompt.lower()
-        # Should be inline, not a separate section
-        assert "## Scratchpad & Artifacts" not in prompt
 
     def test_no_small_model_hints(self):
         """Small model hints should no longer be included."""
@@ -217,56 +211,28 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(caps, ["shell"])
         assert "Thinking Budget" not in prompt
 
-    @patch(
-        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
-    )
-    def test_agent_role_included(self, mock_git_ctx):
-        """AG-23: agent_role adds '## Agent Role' section to prompt."""
+    def test_agent_role_replaces_default_role(self):
+        """Agent role replaces default ROLE_PROMPT in Primacy zone."""
         prompt = build_system_prompt(
             _make_caps(), ["shell"], agent_role="You are a reviewer"
         )
-        assert "## Agent Role" in prompt
+        assert "## Role" in prompt
         assert "You are a reviewer" in prompt
+        assert "AI assistant that solves tasks" not in prompt
 
-    @patch(
-        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
-    )
-    def test_agent_role_excluded_when_empty(self, mock_git_ctx):
-        """AG-24: Empty agent_role does not add '## Agent Role' section."""
+    def test_agent_role_excluded_when_empty(self):
+        """Empty agent_role uses default ROLE_PROMPT."""
         prompt = build_system_prompt(_make_caps(), ["shell"], agent_role="")
-        assert "## Agent Role" not in prompt
+        assert "AI assistant" in prompt
 
-    @patch(
-        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
-    )
-    def test_agent_role_before_directives(self, mock_git_ctx, tmp_path, monkeypatch):
-        """AG-25: Agent Role section appears before Directives."""
-        directive_dir = tmp_path / ".agent-cli"
-        directive_dir.mkdir()
-        (directive_dir / "DIRECTIVE.md").write_text("Test directive.")
-        monkeypatch.setattr(
-            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [directive_dir],
-        )
+    def test_agent_role_in_primacy_before_tools(self):
+        """Agent Role is in Primacy zone, before Available Tools."""
         prompt = build_system_prompt(
             _make_caps(), ["shell"], agent_role="You are a reviewer"
         )
-        role_pos = prompt.index("## Agent Role")
-        dir_pos = prompt.index("## Directives")
-        assert role_pos < dir_pos
-
-    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
-    def test_agent_role_after_git_context(self, mock_git_ctx):
-        """AG-26: Agent Role section appears after Git Context."""
-        mock_git_ctx.return_value = (
-            "## Git Context\n$ git status --short --branch\n## main"
-        )
-        prompt = build_system_prompt(
-            _make_caps(), ["shell"], agent_role="You are a reviewer"
-        )
-        git_pos = prompt.index("## Git Context")
-        role_pos = prompt.index("## Agent Role")
-        assert git_pos < role_pos
+        role_pos = prompt.index("You are a reviewer")
+        tools_pos = prompt.index("## Available Tools")
+        assert role_pos < tools_pos
 
 
 class TestEnvironmentSection:
@@ -471,54 +437,11 @@ class TestBuildGitContextSection:
         assert "git diff HEAD" not in result
 
 
-class TestSystemPromptGitIntegration:
-    """G-13 ~ G-16: build_system_prompt() Git context integration tests."""
+class TestSystemPromptGitContextRemoved:
+    """Git context is no longer injected into system prompt."""
 
-    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
-    def test_system_prompt_includes_git_context(self, mock_git_ctx):
-        """G-13: Git context section appears in system prompt."""
-        mock_git_ctx.return_value = (
-            "## Git Context\n$ git status --short --branch\n## main"
-        )
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        assert "## Git Context" in prompt
-
-    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
-    def test_system_prompt_git_context_after_environment(self, mock_git_ctx):
-        """G-14: Git Context section appears after Environment section."""
-        mock_git_ctx.return_value = (
-            "## Git Context\n$ git status --short --branch\n## main"
-        )
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        env_pos = prompt.index("## Environment")
-        git_pos = prompt.index("## Git Context")
-        assert env_pos < git_pos
-
-    @patch("agent_cli.prompts.system_prompt._build_git_context_section")
-    def test_system_prompt_git_context_before_directives(
-        self, mock_git_ctx, tmp_path, monkeypatch
-    ):
-        """G-15: Git Context section appears before Directives section."""
-        mock_git_ctx.return_value = (
-            "## Git Context\n$ git status --short --branch\n## main"
-        )
-        directive_dir = tmp_path / ".agent-cli"
-        directive_dir.mkdir()
-        (directive_dir / "DIRECTIVE.md").write_text("Test directive.")
-        monkeypatch.setattr(
-            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
-            [directive_dir],
-        )
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        git_pos = prompt.index("## Git Context")
-        dir_pos = prompt.index("## Directives")
-        assert git_pos < dir_pos
-
-    @patch(
-        "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
-    )
-    def test_system_prompt_no_git_context_when_no_git(self, mock_git_ctx):
-        """G-16: No Git Context section when git is not available."""
+    def test_no_git_context_in_prompt(self):
+        """Git context removed from system prompt (LLM uses shell if needed)."""
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Git Context" not in prompt
 
