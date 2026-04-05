@@ -132,18 +132,9 @@ def _dispatch_agent(
     if not task:
         return _AGENT_NOT_FOUND  # No task = not a valid agent call
 
-    # Record agent invocation in context + scratchpad
+    # Record in context (scratchpad is handled inside tool_delegate)
     if ctx:
         ctx.add("user", f"Delegate to @{agent_name}: {task}")
-        from agent_cli.context.scratchpad import append_progress, load_scratchpad
-
-        if not load_scratchpad(ctx._scratchpad_dir):
-            ctx.init_task()
-        append_progress(
-            step=ctx._step_count,
-            summary=f"User: @{agent_name} {task[:60]}",
-            base=ctx._scratchpad_dir,
-        )
 
     from agent_cli.render import render_status
 
