@@ -42,7 +42,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (925)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
+├── main.py                  (919)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
@@ -50,12 +50,12 @@ agent_cli/
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1763) AgentLoop 클래스 + ReAct 루프 + scratchpad/hook/run_skill
+├── loop.py                  (1749) AgentLoop 클래스 + ReAct 루프 + scratchpad/hook/run_skill
 ├── render/                         플러그인 가능 렌더링 시스템
-│   ├── __init__.py          (148)  렌더러 디스패치 + load_renderer_by_name + 하위 호환 API
-│   ├── base.py              (80)   Renderer ABC (14개 메서드 인터페이스)
-│   ├── minimal.py           (178)  MinimalRenderer (인덴트 스타일, spinner)
-│   └── fancy.py             (352)  FancyRenderer (컬러 박스, 애니메이션)
+│   ├── __init__.py          (158)  렌더러 디스패치 + load_renderer_by_name + 하위 호환 API
+│   ├── base.py              (91)   Renderer ABC (dispatch_progress 포함) (14개 메서드 인터페이스)
+│   ├── minimal.py           (212)  MinimalRenderer (인덴트 스타일, spinner)
+│   └── fancy.py             (378)  FancyRenderer (컬러 박스, 애니메이션)
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
@@ -89,7 +89,7 @@ agent_cli/
 │   ├── __init__.py          (34)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (423)  ContextManager (하이브리드 컴팩션, scratchpad, 스킬 컨텍스트)
+│   ├── manager.py           (429)  ContextManager (하이브리드 컴팩션, scratchpad, 스킬 컨텍스트)
 │   ├── scratchpad.py        (413)  Scratchpad + Artifact + ContextBudget + 세션/스킬 격리
 │   └── session.py           (214)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
 │
@@ -507,9 +507,9 @@ status: in_progress
 ---
 ## Progress
 - [턴0] User: hooks.py 분석해줘
-- [턴1] read_file: hooks.py (215줄) → artifacts/turn_0001.md
+- [턴1] read_file: hooks.py (215줄) → artifacts/step_0001.md
 - [턴2] User: 리팩토링해줘
-- [턴3] edit_file: hooks.py → artifacts/turn_0003.md
+- [턴3] edit_file: hooks.py → artifacts/step_0003.md
 - [턴4] User: /optimize ./
 - [턴4] Used skill: optimize(./)
 ## Decisions
@@ -525,10 +525,10 @@ status: in_progress
 
 ```
 .agent-cli/sessions/{session_id}/artifacts/
-  turn_0003.md                     # 일반 도구 결과
-  turn_0005_optimize/              # 스킬 내부 결과 (서브디렉토리)
-    turn_0006.md
-    turn_0007.md
+  step_0003.md                     # 일반 도구 결과
+  step_0005_optimize/              # 스킬 내부 결과 (서브디렉토리)
+    step_0006.md
+    step_0007.md
 ```
 
 - 매 턴 도구 결과를 YAML frontmatter + 원본으로 저장
@@ -551,8 +551,8 @@ ContextBudget.for_model(context_window)
 외부 루프: get_messages() → [scratchpad + 대화]    ← scratchpad 주입
   └─ run_skill(optimize)
        └─ 내부 루프: get_messages() → [대화만]      ← scratchpad 스킵
-                     set_skill_context() → 서브디렉토리 라우팅
-                     end_turn() → artifacts/turn_N_optimize/ 에 저장
+                     set_dispatch_context() → 서브디렉토리 라우팅
+                     end_turn() → artifacts/step_N_optimize/ 에 저장
 ```
 
 ---
