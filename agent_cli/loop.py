@@ -480,28 +480,7 @@ class AgentLoop:
             )
             return self._CONTINUE
 
-        # 10c. read_artifact -- needs ctx (text parsing path)
-        if parsed.action == "read_artifact":
-            art_input = (
-                parsed.action_input if isinstance(parsed.action_input, dict) else {}
-            )
-            from agent_cli.tools.read_artifact import tool_read_artifact
-
-            art_result = tool_read_artifact(art_input, ctx=self.ctx)
-            obs = art_result.output if art_result.success else art_result.error
-            if not self.suppress_output:
-                render_step(
-                    "observation",
-                    obs,
-                    self.turn,
-                    tool_name="read_artifact",
-                )
-            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
-            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
-            self.tools_called.append("read_artifact")
-            return self._CONTINUE
-
-        # 10d. ready_for_review -- return original query for self-check (text path)
+        # 10c. ready_for_review -- return original query for self-check (text path)
         if parsed.action == "ready_for_review":
             summary = ""
             if isinstance(parsed.action_input, dict):

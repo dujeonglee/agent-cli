@@ -16,7 +16,6 @@ from agent_cli.tools.registry import (
     get_tool_descriptions,
 )
 
-from agent_cli.tools.read_artifact import tool_read_artifact
 from agent_cli.tools.run_skill import tool_run_skill
 from agent_cli.tools.fetch import tool_fetch
 
@@ -36,14 +35,13 @@ TOOLS: dict[str, Any] = {
     ),
     "ask": lambda args: ToolResult(True, output=args.get("question", "(ask)")),
     "run_skill": tool_run_skill,
-    "read_artifact": tool_read_artifact,
     "ready_for_review": lambda args: ToolResult(True, output=args.get("summary", "")),
     "fetch": tool_fetch,
 }
 
 # Virtual tool names — intercepted by loop, excluded from tool descriptions
 VIRTUAL_TOOLS: frozenset[str] = frozenset(
-    {"complete", "ask", "run_skill", "read_artifact", "ready_for_review"}
+    {"complete", "ask", "run_skill", "ready_for_review"}
 )
 
 __all__ = [

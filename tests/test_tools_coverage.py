@@ -441,7 +441,7 @@ class TestToolsRegistry:
 
     def test_virtual_tools_frozenset(self):
         assert VIRTUAL_TOOLS == frozenset(
-            {"complete", "ask", "run_skill", "read_artifact", "ready_for_review"}
+            {"complete", "ask", "run_skill", "ready_for_review"}
         )
         assert isinstance(VIRTUAL_TOOLS, frozenset)
 

@@ -109,22 +109,10 @@ _DELEGATE_INLINE = """\
   - Parallel (independent): {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
   - Read-only: {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}\""""
 
-_ARTIFACT_INLINE = """\
-
-  A scratchpad tracks your task progress and decisions.
-  Each tool result is saved as an artifact file on disk.
-  The scratchpad Progress section shows what was done and where the artifact is stored.
-  To load details from a previous step:
-  - Read artifact: {"action": "read_artifact", "action_input": {"path": "artifacts/turn_0003.md"}}
-  - List artifacts: {"action": "read_artifact", "action_input": {"mode": "list"}}
-  - Search by tag:  {"action": "read_artifact", "action_input": {"mode": "search", "tag": "filename.py"}}
-  Do NOT read all artifacts — only load what is needed for the current step."""
-
 # Map tool names to their inline guides
 _TOOL_INLINE_GUIDES: dict[str, str] = {
     "edit_file": _HASHLINE_INLINE,
     "delegate": _DELEGATE_INLINE,
-    "read_artifact": _ARTIFACT_INLINE,
 }
 
 

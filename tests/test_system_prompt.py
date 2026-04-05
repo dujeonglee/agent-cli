@@ -188,9 +188,10 @@ class TestBuildSystemPrompt:
         edit_pos = prompt.index("- edit_file:")
         assert shell_pos < edit_pos
 
-    def test_artifact_guide_inlined(self):
-        prompt = build_system_prompt(_make_caps(), ["shell", "read_artifact"])
-        assert "read_artifact" in prompt
+    def test_read_artifact_removed(self):
+        """read_artifact tool removed from system prompt."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "read_artifact" not in prompt
 
     def test_no_small_model_hints(self):
         """Small model hints should no longer be included."""

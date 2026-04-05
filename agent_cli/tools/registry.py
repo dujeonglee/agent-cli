@@ -176,29 +176,6 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["summary"],
         },
     ),
-    "read_artifact": ToolSchema(
-        name="read_artifact",
-        description="Read saved artifacts from previous tool executions. "
-        "Use to recover detailed results after context compression. "
-        "Modes: provide 'path' to read, 'list' for index, 'search' with 'tag' to find.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Artifact file path (from scratchpad progress)",
-                },
-                "mode": {
-                    "type": "string",
-                    "description": "list (show all) or search (find by tag)",
-                },
-                "tag": {
-                    "type": "string",
-                    "description": "Tag to search for (e.g. filename, skill name)",
-                },
-            },
-        },
-    ),
     "fetch": ToolSchema(
         name="fetch",
         description="Fetch a web page and return its content as markdown. "
