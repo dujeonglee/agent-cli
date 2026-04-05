@@ -87,23 +87,55 @@ def execute_skill(
     session=None,
     skill_stack: list[str] | None = None,
     graceful_interrupt: bool = False,
+    parent_tools: list[str] | None = None,
+    parent_role: str = "",
 ) -> str | None:
-    """Execute a skill by substituting arguments and calling run_loop."""
+    """Execute a skill by substituting arguments and calling run_loop.
+
+    Tool intersection: skill's allowed_tools ∩ parent_tools.
+    If intersection is empty, execution is rejected.
+    Parent role is inherited for system prompt.
+    """
     from pathlib import Path
 
+    # Tool intersection: skill tools ∩ parent tools
+    effective_tools = skill.allowed_tools
+    if effective_tools and parent_tools:
+        effective_tools = [t for t in effective_tools if t in parent_tools]
+        if not effective_tools:
+            skill_tools = ", ".join(skill.allowed_tools)
+            parent_str = ", ".join(parent_tools)
+            return (
+                f"[error] Skill '{skill.name}' cannot run: "
+                f"no tools in common between skill ({skill_tools}) "
+                f"and parent ({parent_str})"
+            )
+    elif not effective_tools and parent_tools:
+        # Skill has no tool restriction → use parent's tools
+        effective_tools = parent_tools
+
     skill_dir = str(Path(skill.source_path).parent) if skill.source_path else ""
-    session_id = (
-        str(ctx.session.session_id)
-        if ctx and hasattr(ctx, "session") and ctx.session
-        else ""
-    )
+    session_id = ""
     prompt = substitute_arguments(
         skill.prompt_template, arguments, skill_dir=skill_dir, session_id=session_id
     )
 
     effective_max_turns = skill.max_turns if skill.max_turns > 0 else max_turns
     effective_model = skill.model if skill.model else model
-    effective_ctx = None if skill.context == "fork" else ctx
+
+    # Skill creates its own subdir with history.jsonl
+    skill_ctx = None
+    if ctx:
+        import os
+        import time as _time
+
+        name = skill.name or "skill"
+        hash_part = os.urandom(3).hex()
+        ts = _time.strftime("%Y%m%dT%H%M%S", _time.gmtime())
+        ms = f"{int(_time.time() * 1000) % 1000:03d}"
+        skill_dir_name = f"skill_{name}_{hash_part}_{ts}{ms}"
+        skill_session_dir = ctx.session_dir / skill_dir_name
+        skill_ctx = ContextManager(session_dir=skill_session_dir)
 
     return run_loop(
         query=prompt,
@@ -119,11 +151,12 @@ def execute_skill(
         depth=0,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
-        active_tools=skill.allowed_tools,
-        ctx=effective_ctx,
+        active_tools=effective_tools,
+        ctx=skill_ctx or ctx,
         session=session,
         skill_name=skill.name,
         skill_stack=skill_stack,
         skill_args=arguments,
         graceful_interrupt=graceful_interrupt,
+        agent_role=parent_role,
     )
