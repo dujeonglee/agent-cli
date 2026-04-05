@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -134,7 +135,7 @@ def _dispatch_agent(
 
     # Record agent invocation in context
     if ctx:
-        ctx.add("user", f"Delegate to @{agent_name}: {task}")
+        ctx.add({"role": "user", "content": f"Delegate to @{agent_name}: {task}"})
 
     from agent_cli.render import render_status
 
@@ -163,7 +164,7 @@ def _dispatch_agent(
 
     # Record result in context
     if ctx and answer:
-        ctx.add("assistant", answer)
+        ctx.add({"role": "assistant", "content": answer})
 
     return answer
 
@@ -199,7 +200,7 @@ def _dispatch_skill(
 
     # Record skill invocation in context
     if ctx:
-        ctx.add("user", f"Used skill: {cmd_name}({arguments}) — results follow")
+        ctx.add({"role": "user", "content": f"Used skill: {cmd_name}({arguments}) — results follow"})
 
     from agent_cli.render import render_status
 
@@ -225,7 +226,7 @@ def _dispatch_skill(
 
     # Record skill result in context
     if ctx and result:
-        ctx.add("assistant", result)
+        ctx.add({"role": "assistant", "content": result})
 
     return result
 
@@ -418,12 +419,7 @@ def run(
         from pathlib import Path as _Path
 
         _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
-        ctx = ContextManager(
-            provider=llm_provider,
-            model=resolved_model,
-            capabilities=capabilities,
-            scratchpad_dir=_Path(_tmpdir.name),
-        )
+        ctx = ContextManager(session_dir=_Path(_tmpdir.name))
     else:
         from agent_cli.context.session import create_session, save_meta
 
@@ -431,10 +427,7 @@ def run(
         session.query = query[:100]
         save_meta(session)
         ctx = ContextManager(
-            provider=llm_provider,
-            model=resolved_model,
-            capabilities=capabilities,
-            session_id=session.session_id,
+            session_dir=Path(".agent-cli") / "sessions" / session.session_id
         )
 
     # Skill dispatch: /skill-name args
@@ -650,10 +643,8 @@ def chat(
     save_meta(session)
 
     ctx = ContextManager(
-        provider=llm_provider,
-        model=resolved_model,
-        capabilities=capabilities,
-        session_id=session.session_id,
+        session_dir=Path(".agent-cli") / "sessions" / session.session_id,
+        resume=bool(resume),
     )
 
     console.print()
@@ -703,10 +694,7 @@ def chat(
 
         if query == "/clear":
             ctx = ContextManager(
-                provider=llm_provider,
-                model=resolved_model,
-                capabilities=capabilities,
-                session_id=session.session_id,
+                session_dir=Path(".agent-cli") / "sessions" / session.session_id,
             )
             console.print(f"[{C['accent']}]Context cleared.[/]")
             continue
