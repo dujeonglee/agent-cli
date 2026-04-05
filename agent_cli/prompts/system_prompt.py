@@ -56,7 +56,9 @@ After reviewing, call "complete" to finish:
 {"thought": "confirmed all requirements met", "action": "complete", "action_input": {"result": "your answer"}}
 
 Rules:
-1. Always include "thought" in your JSON.
+1. Always include "thought" in your JSON. Your thought MUST include:
+   - What you are trying to achieve (purpose)
+   - Why you chose this specific action (reason)
 2. "action_input" must match the tool's input schema.
 3. If an observation shows an error, fix parameters and retry.
 4. Respond in the same language as the user.
@@ -241,6 +243,8 @@ def build_system_prompt(
     skill_stack: list[str] | None = None,
     session_id: str = "",
     agent_role: str = "",
+    parent_role: str = "",
+    session_dir: str = "",
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools.
 
@@ -248,11 +252,22 @@ def build_system_prompt(
       Primacy  — identity and behavioral principles (strong attention)
       Middle   — reference material: tools, guides, skills (looked up as needed)
       Recency  — current context and user rules (strong attention)
+
+    Role selection:
+      - main: default ROLE_PROMPT
+      - delegate: agent_role replaces ROLE_PROMPT
+      - skill: parent_role (inherited from caller)
     """
     sections: list[str] = []
 
     # ── Primacy: identity + principles ──
-    sections.append(ROLE_PROMPT)
+    # Role: delegate's agent_role or skill's parent_role replaces default
+    if agent_role:
+        sections.append(f"## Role\n{agent_role}")
+    elif parent_role:
+        sections.append(f"## Role\n{parent_role}")
+    else:
+        sections.append(ROLE_PROMPT)
     sections.append(TASK_GUIDELINES)
     sections.append(FORMAT_RULES)
 
@@ -269,24 +284,27 @@ def build_system_prompt(
             sections.append(agent_desc)
 
     # ── Recency: current context + user rules ──
-    if session_id:
-        sections.append(f"## Session\nCurrent session ID: {session_id}")
-
-    sections.append(_build_environment_section())
-
-    git_context = _build_git_context_section()
-    if git_context:
-        sections.append(git_context)
-
-    # Agent role injection (before directives for strong attention)
-    if agent_role:
-        sections.append(f"## Agent Role\n{agent_role}")
-
     directives = _load_directives()
     if directives:
         sections.append(directives)
 
+    sections.append(_build_environment_section())
+
+    # Context Recovery Guide (replaces session_id + git context)
+    if session_dir:
+        sections.append(_build_context_recovery(session_dir))
+
     return "\n\n".join(sections)
+
+
+def _build_context_recovery(session_dir: str) -> str:
+    """Build Context Recovery Guide for system prompt."""
+    return (
+        "## Context Recovery\n"
+        "Only the most recent messages are included in this conversation.\n"
+        "If you need earlier context or artifact details:\n"
+        f"  read_file(\"{session_dir}/history.jsonl\")"
+    )
 
 
 def build_agent_descriptions() -> str:
