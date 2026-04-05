@@ -198,12 +198,13 @@ def _persist_delegate_result(
     scratchpad_dir: Path,
     depth: int,
 ) -> None:
-    """Save delegate result as session artifact and update scratchpad progress.
+    """Save delegate result as session artifact.
 
-    Uses existing scratchpad infrastructure (save_artifact, append_progress).
+    Uses existing scratchpad infrastructure (save_artifact).
+    Scratchpad progress is recorded by the caller (_dispatch_agent or loop).
     Errors are silently caught to avoid disrupting delegate flow.
     """
-    from agent_cli.context.scratchpad import append_progress, save_artifact
+    from agent_cli.context.scratchpad import save_artifact
 
     try:
         status = "success" if success else "failed"
@@ -212,16 +213,6 @@ def _persist_delegate_result(
             content=formatted,
             tags=["delegate", f"depth:{depth}", status],
             summary=f"delegate: {task[:60]}",
-            base=scratchpad_dir,
-        )
-
-        status_str = "completed" if success else "FAILED"
-        append_progress(
-            step=0,
-            summary=(
-                f"delegate {status_str}: {task[:60]} "
-                f"({duration:.1f}s, {iterations} iters)"
-            ),
             base=scratchpad_dir,
         )
     except Exception:
