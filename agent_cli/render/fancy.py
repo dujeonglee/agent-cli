@@ -368,6 +368,8 @@ class FancyRenderer(Renderer):
             icon = "✅"
         elif "delegate" in label:
             icon = "🦀"
+        elif "skill:" in label:
+            icon = "🪄"
         else:
             icon = "⚡"
         self.con.print(

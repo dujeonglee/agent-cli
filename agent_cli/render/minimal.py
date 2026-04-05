@@ -186,8 +186,13 @@ class MinimalRenderer(Renderer):
         # Stop any active spinner before printing progress
         self.spinner_stop()
 
-        # Delegate gets a crab 🦀, skills get lightning ⚡
-        action_icon = "🦀" if "delegate" in label else "⚡"
+        # Delegate 🦀, skill 🪄, other ⚡
+        if "delegate" in label:
+            action_icon = "🦀"
+        elif "skill:" in label:
+            action_icon = "🪄"
+        else:
+            action_icon = "⚡"
 
         if thought:
             t = thought.replace("\n", " ").strip()
