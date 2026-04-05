@@ -51,46 +51,46 @@ def get_renderer() -> Renderer:
 def render_header(
     provider: str,
     model: str,
-    max_iter: int,
+    max_turns: int,
     skill_name: str = "",
     skill_args: str = "",
 ) -> None:
     _renderer.header(
-        provider, model, max_iter, skill_name=skill_name, skill_args=skill_args
+        provider, model, max_turns, skill_name=skill_name, skill_args=skill_args
     )
 
 
 def render_step(
     step_type: str,
     content: str,
-    iteration: int,
+    turn: int,
     tool_name: str | None = None,
     tool_input: str | None = None,
 ) -> None:
     if step_type == "thought":
-        _renderer.thought(content, iteration)
+        _renderer.thought(content, turn)
     elif step_type == "action":
-        _renderer.action(tool_name or "", tool_input or "", iteration)
+        _renderer.action(tool_name or "", tool_input or "", turn)
     elif step_type == "observation":
-        _renderer.observation(content, iteration, tool_name)
+        _renderer.observation(content, turn, tool_name)
     elif step_type == "final":
-        _renderer.final(content, iteration)
+        _renderer.final(content, turn)
     elif step_type == "error":
-        _renderer.error(content, iteration)
+        _renderer.error(content, turn)
     else:
-        _renderer.status("info", content, iteration)
+        _renderer.status("info", content, turn)
 
 
-def render_raw(text: str, iteration: int, verbose: bool) -> None:
-    _renderer.raw(text, iteration, verbose)
+def render_raw(text: str, turn: int, verbose: bool) -> None:
+    _renderer.raw(text, turn, verbose)
 
 
-def render_iter_sep(iteration: int) -> None:
-    _renderer.iter_sep(iteration)
+def render_turn_sep(turn: int) -> None:
+    _renderer.turn_sep(turn)
 
 
-def render_status(state: str, message: str, iteration: int = 0) -> None:
-    _renderer.status(state, message, iteration)
+def render_status(state: str, message: str, turn: int = 0) -> None:
+    _renderer.status(state, message, turn)
 
 
 def render_model_detected(
@@ -103,8 +103,8 @@ def render_model_loaded(model: str, capabilities) -> None:
     _renderer.model_loaded(model, capabilities)
 
 
-def render_context_dump(messages: list[dict], iteration: int) -> None:
-    _renderer.context_dump(messages, iteration)
+def render_context_dump(messages: list[dict], turn: int) -> None:
+    _renderer.context_dump(messages, turn)
 
 
 def render_spinner_start(message: str = "thinking...") -> None:
@@ -117,12 +117,12 @@ def render_spinner_stop() -> None:
 
 def render_dispatch_progress(
     label: str,
-    iteration: int,
+    turn: int,
     tool_name: str,
     detail: str = "",
     thought: str = "",
 ) -> None:
-    _renderer.dispatch_progress(label, iteration, tool_name, detail, thought)
+    _renderer.dispatch_progress(label, turn, tool_name, detail, thought)
 
 
 def load_renderer_by_name(name: str) -> None:

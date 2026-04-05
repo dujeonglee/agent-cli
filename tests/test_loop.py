@@ -1343,9 +1343,9 @@ class TestAgentLoopClass:
             model="m",
             max_iter=5,
         )
-        loop.iteration = 4
+        loop.turn = 4
         assert loop._should_continue() is True
-        loop.iteration = 5
+        loop.turn = 5
         assert loop._should_continue() is False
 
     def test_should_continue_unlimited(self, caps):
@@ -1358,7 +1358,7 @@ class TestAgentLoopClass:
             model="m",
             max_iter=0,
         )
-        loop.iteration = 999
+        loop.turn = 999
         assert loop._should_continue() is True
 
     def test_run_returns_answer(self, caps):
@@ -1628,7 +1628,7 @@ class TestScratchpadIntegration:
             ctx=ctx,
         )
         # 2 iterations (read_file + complete) → turn_count >= 2
-        assert ctx._turn_count >= 2
+        assert ctx._step_count >= 2
 
     def test_tool_result_saved_as_artifact(self, caps, tmp_path):
         """Tool execution result is saved as artifact."""
@@ -2365,7 +2365,7 @@ class TestRunSkillIntercept:
             capabilities=caps,
             scratchpad_dir=tmp_path,
         )
-        # _turn_count starts at 0, so turn_before=0, messages[0:] will be scanned
+        # _step_count starts at 0, so turn_before=0, messages[0:] will be scanned
 
         mock_skills = {
             "analyze": Skill(

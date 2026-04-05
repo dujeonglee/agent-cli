@@ -66,7 +66,7 @@ class FancyRenderer(Renderer):
         self,
         provider: str,
         model: str,
-        max_iter: int,
+        max_turns: int,
         skill_name: str = "",
         skill_args: str = "",
     ) -> None:
@@ -76,8 +76,8 @@ class FancyRenderer(Renderer):
         details = {}
         if skill_name:
             details["Skill"] = f"{skill_name}{f'({skill_args})' if skill_args else ''}"
-        elif max_iter > 0:
-            details["Max Iterations"] = str(max_iter)
+        elif max_turns > 0:
+            details["Max Iterations"] = str(max_turns)
         else:
             details["Max Iterations"] = "∞"
 
@@ -85,17 +85,17 @@ class FancyRenderer(Renderer):
         self._divider()
         self.con.print()
 
-    def iter_sep(self, iteration: int) -> None:
-        """Separator between iterations with fancy styling."""
+    def turn_sep(self, turn: int) -> None:
+        """Separator between turns with fancy styling."""
         self.con.print()
         self._divider()
         self.con.print(
-            f"[bold {_FANCY['secondary']}]▶ Iteration {iteration} ▶[/]", highlight=False
+            f"[bold {_FANCY['secondary']}]▶ Turn {turn} ▶[/]", highlight=False
         )
         self._divider()
         self.con.print()
 
-    def thought(self, content: str, iteration: int) -> None:
+    def thought(self, content: str, turn: int) -> None:
         """LLM reasoning/thought with styled box."""
         self.con.print()
         panel = Panel(
@@ -106,7 +106,7 @@ class FancyRenderer(Renderer):
         )
         self.con.print(panel)
 
-    def action(self, tool_name: str, tool_input: str, iteration: int) -> None:
+    def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         """Tool call with styled display."""
         self.con.print()
         content = Text()
@@ -124,7 +124,7 @@ class FancyRenderer(Renderer):
         self.con.print(panel)
 
     def observation(
-        self, content: str, iteration: int, tool_name: str | None = None
+        self, content: str, turn: int, tool_name: str | None = None
     ) -> None:
         """Tool result with status styling."""
         first_line = content.split("\n", 1)[0].strip()
@@ -164,7 +164,7 @@ class FancyRenderer(Renderer):
         self.con.print()
         self.con.print(panel)
 
-    def final(self, content: str, iteration: int) -> None:
+    def final(self, content: str, turn: int) -> None:
         """Final answer with celebratory styling."""
         self.con.print()
         self._divider()
@@ -178,7 +178,7 @@ class FancyRenderer(Renderer):
         self._divider()
         self.con.print()
 
-    def error(self, content: str, iteration: int) -> None:
+    def error(self, content: str, turn: int) -> None:
         """Error message with error styling."""
         self.con.print()
         panel = Panel(
@@ -189,12 +189,12 @@ class FancyRenderer(Renderer):
         )
         self.con.print(panel)
 
-    def raw(self, text: str, iteration: int, verbose: bool) -> None:
+    def raw(self, text: str, turn: int, verbose: bool) -> None:
         """Raw LLM response with compact preview."""
         self.con.print()
         if not verbose:
             preview = Text(
-                f"📄 raw response iter {iteration} (use --verbose to view)",
+                f"📄 raw response turn {turn} (use --verbose to view)",
                 style=_FANCY["muted"],
             )
             panel = Panel(
@@ -206,7 +206,7 @@ class FancyRenderer(Renderer):
             return
 
         content = Text()
-        content.append(f"── raw response iter {iteration} ──\n", style=_FANCY["muted"])
+        content.append(f"── raw response turn {turn} ──\n", style=_FANCY["muted"])
         for line in text.split("\n"):
             content.append(f"{line}\n", style=_FANCY["muted"])
         content.append("── end raw ──", style=_FANCY["muted"])
@@ -219,7 +219,7 @@ class FancyRenderer(Renderer):
         )
         self.con.print(panel)
 
-    def status(self, state: str, message: str, iteration: int = 0) -> None:
+    def status(self, state: str, message: str, turn: int = 0) -> None:
         """Status update with colored badge."""
         state_colors = {
             "running": _FANCY["info"],
@@ -229,9 +229,7 @@ class FancyRenderer(Renderer):
         }
         style = state_colors.get(state.lower(), _FANCY["info"])
 
-        it_label = (
-            f"[italic {_FANCY['muted']}](iter {iteration})[/]" if iteration else ""
-        )
+        it_label = f"[italic {_FANCY['muted']}](turn {turn})[/]" if turn else ""
         self.con.print(f"  [bold {style}]●[/] {message} {it_label}", highlight=False)
 
     def model_detected(
@@ -290,13 +288,13 @@ class FancyRenderer(Renderer):
             highlight=False,
         )
 
-    def context_dump(self, messages: list[dict], iteration: int) -> None:
+    def context_dump(self, messages: list[dict], turn: int) -> None:
         """Debug context window dump with table."""
         self.con.print()
         self._divider()
         self.con.print(
             f"[bold {_FANCY['muted']}]📋 Context Dump[/] "
-            f"[italic]iter {iteration}, {len(messages)} messages[/]",
+            f"[italic]turn {turn}, {len(messages)} messages[/]",
             highlight=False,
         )
         self._divider()
@@ -354,7 +352,7 @@ class FancyRenderer(Renderer):
     def dispatch_progress(
         self,
         label: str,
-        iteration: int,
+        turn: int,
         tool_name: str,
         detail: str = "",
         thought: str = "",
@@ -363,11 +361,11 @@ class FancyRenderer(Renderer):
         if thought:
             t = thought.replace("\n", " ").strip()
             self.con.print(
-                f"  [dim]{label} [{iteration}] 💭 {t}[/]",
+                f"  [dim]{label} [{turn}] 💭 {t}[/]",
                 highlight=False,
             )
         icon = "✅" if tool_name == "complete" else "⚡"
         self.con.print(
-            f"  [dim]{label} [{iteration}] {icon} {tool_name}{detail}[/]",
+            f"  [dim]{label} [{turn}] {icon} {tool_name}{detail}[/]",
             highlight=False,
         )

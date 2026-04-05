@@ -20,7 +20,7 @@ from agent_cli.render import (
     render_context_dump,
     render_dispatch_progress,
     render_header,
-    render_iter_sep,
+    render_turn_sep,
     render_raw,
     render_spinner_start,
     render_spinner_stop,
@@ -127,7 +127,7 @@ class AgentLoop:
         self.skill_stack = skill_stack
 
         # Loop state
-        self.iteration = 0
+        self.turn = 0
         self.tools_called: list[str] = []
         self.overflow_retried = False
         self._interrupted = False
@@ -153,7 +153,7 @@ class AgentLoop:
             while self._should_continue():
                 if self._interrupted:
                     return self._on_interrupt()
-                self.iteration += 1
+                self.turn += 1
                 self._begin_iteration()
                 result = self._execute_iteration()
                 if result is not self._CONTINUE:
@@ -203,17 +203,17 @@ class AgentLoop:
             from agent_cli.context.scratchpad import append_progress
 
             append_progress(
-                turn=self.ctx._turn_count,
-                summary=f"⚡ Interrupted by user at iteration {self.iteration}",
+                turn=self.ctx._step_count,
+                summary=f"⚡ Interrupted by user at iteration {self.turn}",
                 base=self.ctx._scratchpad_dir,
             )
         if not self.suppress_output:
             from agent_cli.render import C, console
 
             console.print(
-                f"\n[{C['accent']}]⚡ Interrupted after iteration {self.iteration}.[/]"
+                f"\n[{C['accent']}]⚡ Interrupted after iteration {self.turn}.[/]"
             )
-        _debug_log(f"Graceful interrupt at iteration {self.iteration}")
+        _debug_log(f"Graceful interrupt at iteration {self.turn}")
         return None
 
     def _setup(self) -> None:
@@ -259,7 +259,7 @@ class AgentLoop:
             # Set or clear skill context (for artifact subdirectory routing)
             self.ctx.set_skill_context(
                 skill_name=self.skill_name,
-                parent_turn=self.ctx._turn_count if self.skill_name else 0,
+                parent_turn=self.ctx._step_count if self.skill_name else 0,
             )
 
         # Record user query in scratchpad progress (not for skill internal loops)
@@ -267,7 +267,7 @@ class AgentLoop:
             from agent_cli.context.scratchpad import append_progress
 
             append_progress(
-                turn=self.ctx._turn_count,
+                turn=self.ctx._step_count,
                 summary=f"User: {self.query[:80]}",
                 base=self.ctx._scratchpad_dir,
             )
@@ -283,7 +283,7 @@ class AgentLoop:
         if self.stop_event and self.stop_event.is_set():
             self._interrupted = True
             return False
-        return self.max_iter <= 0 or self.iteration < self.max_iter
+        return self.max_iter <= 0 or self.turn < self.max_iter
 
     def _begin_iteration(self) -> None:
         """Scratchpad begin_turn, skill progress, iter sep."""
@@ -292,7 +292,7 @@ class AgentLoop:
             self.ctx.begin_turn(self.query)
         # Skill progress: shown per-tool after LLM response (see _render_skill_progress)
         if not self.suppress_output:
-            render_iter_sep(self.iteration)
+            render_turn_sep(self.turn)
 
     def _execute_iteration(self) -> str | None:
         """Single iteration: checkpoint, overflow, LLM call, dispatch."""
@@ -331,7 +331,7 @@ class AgentLoop:
         llm_text = response.content
 
         if not self.suppress_output:
-            render_raw(llm_text, self.iteration, self.verbose)
+            render_raw(llm_text, self.turn, self.verbose)
 
         # 4. Native tool calling path (Anthropic/OpenAI)
         if response.tool_calls:
@@ -342,15 +342,15 @@ class AgentLoop:
 
     def _maybe_checkpoint(self) -> None:
         """Inject checkpoint message if iteration count is high."""
-        if self.iteration >= _CHECKPOINT_FIRST and (
-            (self.iteration - _CHECKPOINT_FIRST) % _CHECKPOINT_INTERVAL == 0
+        if self.turn >= _CHECKPOINT_FIRST and (
+            (self.turn - _CHECKPOINT_FIRST) % _CHECKPOINT_INTERVAL == 0
         ):
             recent = self.recent_tool_history[-_CHECKPOINT_INTERVAL:]
             history_summary = "\n".join(
                 f"  iter {h['iter']}: {h['tool']} → {h['result'][:100]}" for h in recent
             )
             checkpoint_msg = (
-                f"[SYSTEM] CHECKPOINT — {self.iteration} iterations used.\n"
+                f"[SYSTEM] CHECKPOINT — {self.turn} iterations used.\n"
                 f"Recent tool calls:\n{history_summary}\n\n"
                 f"You MUST now do ONE of:\n"
                 f'1. Use the complete tool: {{"thought": "...", "action": "complete", "action_input": {{"result": "your result"}}}}\n'
@@ -363,15 +363,15 @@ class AgentLoop:
             if self.ctx:
                 self.ctx.add("user", checkpoint_msg)
             if not self.suppress_output:
-                render_status("running", f"Checkpoint at iteration {self.iteration}")
+                render_status("running", f"Checkpoint at iteration {self.turn}")
 
     def _call_llm(self, call_kwargs: dict):
         """LLM call with overflow retry. Returns response or None on failure."""
         # Context dump (verbose only)
         if self.verbose and not self.suppress_output:
-            render_context_dump(self.messages, self.iteration)
+            render_context_dump(self.messages, self.turn)
         _debug_log(
-            f"LLM_CALL iter={self.iteration} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
+            f"LLM_CALL iter={self.turn} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
         )
 
         if self.skill_name:
@@ -394,15 +394,15 @@ class AgentLoop:
                     self.ctx.force_compress()
                     self.messages = self.ctx.get_messages()
                     self.overflow_retried = True
-                    self.iteration -= 1
+                    self.turn -= 1
                     return self._RETRY
             _debug_log(
-                f"LLM call failed: model={self.model} iter={self.iteration} skill={self.skill_name} error={e}"
+                f"LLM call failed: model={self.model} iter={self.turn} skill={self.skill_name} error={e}"
             )
             render_step(
                 "error",
-                f"LLM call failed (model={self.model}, iter={self.iteration}): {e}",
-                self.iteration,
+                f"LLM call failed (model={self.model}, iter={self.turn}): {e}",
+                self.turn,
             )
             return None
         finally:
@@ -413,15 +413,13 @@ class AgentLoop:
         """Handle native tool calling response (Anthropic/OpenAI)."""
         if len(response.tool_calls) == 1:
             first_toolcall = response.tool_calls[0]
-            _debug_log(
-                f"NATIVE_TOOL iter={self.iteration} action={first_toolcall['name']}"
-            )
+            _debug_log(f"NATIVE_TOOL iter={self.turn} action={first_toolcall['name']}")
 
             # 4a. Complete tool -> extract result and return
             if first_toolcall["name"] == "complete":
                 _render_skill_progress(
                     self.skill_name,
-                    self.iteration,
+                    self.turn,
                     "complete",
                     {},
                     self.suppress_output,
@@ -441,14 +439,14 @@ class AgentLoop:
                     render_status(
                         "error",
                         "Answer rejected — no tool actions performed yet.",
-                        self.iteration,
+                        self.turn,
                     )
                     # Fall through to execute as normal tool (will fail gracefully)
                 else:
                     _log_tool_to_session(
                         self.session,
                         self.depth,
-                        self.iteration,
+                        self.turn,
                         "complete",
                         answer,
                     )
@@ -462,7 +460,7 @@ class AgentLoop:
                     if self.ctx:
                         self.ctx.add("assistant", answer)
                     if not self.suppress_output:
-                        render_step("final", answer, self.iteration)
+                        render_step("final", answer, self.turn)
                     return answer
 
             # 4b. Ask tool -- prompt user (native path)
@@ -504,7 +502,7 @@ class AgentLoop:
                     render_step(
                         "observation",
                         obs,
-                        self.iteration,
+                        self.turn,
                         tool_name="run_skill",
                     )
                 _append_native_observation(
@@ -532,7 +530,7 @@ class AgentLoop:
                     render_step(
                         "observation",
                         obs,
-                        self.iteration,
+                        self.turn,
                         tool_name="read_artifact",
                     )
                 _append_native_observation(
@@ -553,7 +551,7 @@ class AgentLoop:
                 obs = _build_review_observation(self.query, summary, ctx=self.ctx)
                 _render_skill_progress(
                     self.skill_name,
-                    self.iteration,
+                    self.turn,
                     "ready_for_review",
                     {"summary": summary},
                     self.suppress_output,
@@ -563,7 +561,7 @@ class AgentLoop:
                     render_step(
                         "observation",
                         obs,
-                        self.iteration,
+                        self.turn,
                         tool_name="ready_for_review",
                     )
                 _append_native_observation(
@@ -589,7 +587,7 @@ class AgentLoop:
                 if self.ctx:
                     self.ctx.add("assistant", echo_answer)
                 if not self.suppress_output:
-                    render_step("final", echo_answer, self.iteration)
+                    render_step("final", echo_answer, self.turn)
                 return echo_answer
 
         observations = []
@@ -598,7 +596,7 @@ class AgentLoop:
             tool_input = tc["input"]
             _render_skill_progress(
                 self.skill_name,
-                self.iteration,
+                self.turn,
                 tool_name,
                 tool_input,
                 self.suppress_output,
@@ -609,7 +607,7 @@ class AgentLoop:
                 render_step(
                     "action",
                     "",
-                    self.iteration,
+                    self.turn,
                     tool_name=tool_name,
                     tool_input=json.dumps(tool_input, ensure_ascii=False)
                     if isinstance(tool_input, dict)
@@ -630,7 +628,7 @@ class AgentLoop:
                 self.delegate_timeout,
                 self.tools_called,
                 self.recent_tool_history,
-                self.iteration,
+                self.turn,
                 hooks_config=self.hooks_config,
                 delegate_ctx=self.ctx,
                 delegate_provider=self.provider,
@@ -643,7 +641,7 @@ class AgentLoop:
             )
 
             if not self.suppress_output:
-                render_step("observation", obs, self.iteration, tool_name=tool_name)
+                render_step("observation", obs, self.turn, tool_name=tool_name)
             observations.append({"tool_call": tc, "output": obs})
 
             # Scratchpad: save tool result as artifact
@@ -657,7 +655,7 @@ class AgentLoop:
             _log_tool_to_session(
                 self.session,
                 self.depth,
-                self.iteration,
+                self.turn,
                 tool_name,
                 obs,
                 action_input=_normalize_input(tool_input),
@@ -688,14 +686,14 @@ class AgentLoop:
 
         # 6. Thought
         if parsed.thought and not self.suppress_output:
-            render_step("thought", parsed.thought, self.iteration)
+            render_step("thought", parsed.thought, self.turn)
 
         # 7. Complete tool (text parsing path)
-        _debug_log(f"PARSED iter={self.iteration} action={parsed.action}")
+        _debug_log(f"PARSED iter={self.turn} action={parsed.action}")
         if parsed.action == "complete":
             _render_skill_progress(
                 self.skill_name,
-                self.iteration,
+                self.turn,
                 "complete",
                 {},
                 self.suppress_output,
@@ -731,14 +729,14 @@ class AgentLoop:
                 render_status(
                     "error",
                     "Answer rejected — no tool actions performed yet.",
-                    self.iteration,
+                    self.turn,
                 )
                 return self._CONTINUE
 
             _log_tool_to_session(
                 self.session,
                 self.depth,
-                self.iteration,
+                self.turn,
                 "complete",
                 answer,
                 thought=parsed.thought or "",
@@ -754,7 +752,7 @@ class AgentLoop:
             if self.ctx:
                 self.ctx.add("assistant", answer)
             if not self.suppress_output:
-                render_step("final", answer, self.iteration)
+                render_step("final", answer, self.turn)
             return answer
 
         # 9. Detect echo-as-final-answer (common small model pattern)
@@ -763,7 +761,7 @@ class AgentLoop:
             _log_tool_to_session(
                 self.session,
                 self.depth,
-                self.iteration,
+                self.turn,
                 "complete (echo)",
                 echo_answer,
                 thought=parsed.thought or "",
@@ -777,7 +775,7 @@ class AgentLoop:
             if self.ctx:
                 self.ctx.add("assistant", echo_answer)
             if not self.suppress_output:
-                render_step("final", echo_answer, self.iteration)
+                render_step("final", echo_answer, self.turn)
             return echo_answer
 
         # 10. Ask tool -- prompt user for input (text parsing path)
@@ -790,7 +788,7 @@ class AgentLoop:
                 _log_tool_to_session(
                     self.session,
                     self.depth,
-                    self.iteration,
+                    self.turn,
                     "ask",
                     user_response,
                     thought=parsed.thought or "",
@@ -816,14 +814,14 @@ class AgentLoop:
                 graceful_interrupt=self.graceful_interrupt,
             )
             if not self.suppress_output:
-                render_step("observation", obs, self.iteration, tool_name="run_skill")
+                render_step("observation", obs, self.turn, tool_name="run_skill")
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
             _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
             self.tools_called.append("run_skill")
             _log_tool_to_session(
                 self.session,
                 self.depth,
-                self.iteration,
+                self.turn,
                 "run_skill",
                 obs,
                 thought=parsed.thought or "",
@@ -844,7 +842,7 @@ class AgentLoop:
                 render_step(
                     "observation",
                     obs,
-                    self.iteration,
+                    self.turn,
                     tool_name="read_artifact",
                 )
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
@@ -860,7 +858,7 @@ class AgentLoop:
             obs = _build_review_observation(self.query, summary, ctx=self.ctx)
             _render_skill_progress(
                 self.skill_name,
-                self.iteration,
+                self.turn,
                 "ready_for_review",
                 {"summary": summary},
                 self.suppress_output,
@@ -870,7 +868,7 @@ class AgentLoop:
                 render_step(
                     "observation",
                     obs,
-                    self.iteration,
+                    self.turn,
                     tool_name="ready_for_review",
                 )
             obs_msg = (
@@ -885,7 +883,7 @@ class AgentLoop:
             tool_input = parsed.action_input or {}
             _render_skill_progress(
                 self.skill_name,
-                self.iteration,
+                self.turn,
                 tool_name,
                 tool_input,
                 self.suppress_output,
@@ -896,7 +894,7 @@ class AgentLoop:
                 render_step(
                     "action",
                     "",
-                    self.iteration,
+                    self.turn,
                     tool_name=tool_name,
                     tool_input=json.dumps(tool_input, ensure_ascii=False)
                     if isinstance(tool_input, dict)
@@ -917,7 +915,7 @@ class AgentLoop:
                 self.delegate_timeout,
                 self.tools_called,
                 self.recent_tool_history,
-                self.iteration,
+                self.turn,
                 hooks_config=self.hooks_config,
                 delegate_ctx=self.ctx,
                 delegate_provider=self.provider,
@@ -933,7 +931,7 @@ class AgentLoop:
                 render_step(
                     "observation",
                     observation,
-                    self.iteration,
+                    self.turn,
                     tool_name=tool_name,
                 )
 
@@ -961,7 +959,7 @@ class AgentLoop:
             _log_tool_to_session(
                 self.session,
                 self.depth,
-                self.iteration,
+                self.turn,
                 tool_name,
                 observation,
                 thought=parsed.thought or "",
@@ -982,7 +980,7 @@ class AgentLoop:
             render_status(
                 "error",
                 "Response has no action. Retrying...",
-                self.iteration,
+                self.turn,
             )
             retry_msg = (
                 "Your JSON was parsed but has no action. "
@@ -997,7 +995,7 @@ class AgentLoop:
             render_status(
                 "error",
                 "Invalid JSON response. Retrying...",
-                self.iteration,
+                self.turn,
             )
             retry_msg = (
                 "Your response was not valid JSON. "
@@ -1006,7 +1004,7 @@ class AgentLoop:
                 "No markdown fences, no extra text."
             )
         _append_text_observation(self.messages, self.ctx, llm_text, retry_msg)
-        self.iteration -= 1  # Don't count format retries
+        self.turn -= 1  # Don't count format retries
         return self._CONTINUE
 
     def _on_max_iter(self) -> None:
@@ -1111,7 +1109,7 @@ def _handle_ask(questions: list[str], suppress_output: bool) -> str:
 
 def _render_skill_progress(
     skill_name: str,
-    iteration: int,
+    turn: int,
     tool_name: str,
     tool_input,
     suppress_output: bool,
@@ -1138,7 +1136,7 @@ def _render_skill_progress(
 
     render_dispatch_progress(
         label=f"skill:{skill_name}",
-        iteration=iteration,
+        turn=turn,
         tool_name=tool_name,
         detail=detail,
         thought=thought,
@@ -1214,19 +1212,19 @@ def _handle_run_skill(
 
     # Set skill context for subdirectory routing
     if ctx:
-        ctx.set_skill_context(skill_name=name, parent_turn=ctx._turn_count)
+        ctx.set_skill_context(skill_name=name, parent_turn=ctx._step_count)
         # Record skill invocation in scratchpad progress
         from agent_cli.context.scratchpad import append_progress
 
         args_hint = f"({arguments})" if arguments else ""
         append_progress(
-            turn=ctx._turn_count,
+            turn=ctx._step_count,
             summary=f"run_skill: {name}{args_hint}",
             base=ctx._scratchpad_dir,
         )
 
     render_status("running", f"Running skill: {name}...")
-    turn_before = ctx._turn_count if ctx else 0
+    turn_before = ctx._step_count if ctx else 0
 
     try:
         from agent_cli.providers import create_provider

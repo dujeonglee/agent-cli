@@ -23,7 +23,7 @@ class MinimalRenderer(Renderer):
         self,
         provider: str,
         model: str,
-        max_iter: int,
+        max_turns: int,
         skill_name: str = "",
         skill_args: str = "",
     ) -> None:
@@ -36,18 +36,18 @@ class MinimalRenderer(Renderer):
                 highlight=False,
             )
         else:
-            iter_label = str(max_iter) if max_iter > 0 else "∞"
+            iter_label = str(max_turns) if max_turns > 0 else "∞"
             self.con.print(
                 f"  ● agent-cli  "
-                f"[{_MUTED}]{provider} · {model} · max_iter={iter_label}[/]",
+                f"[{_MUTED}]{provider} · {model} · max_turns={iter_label}[/]",
                 highlight=False,
             )
         self.con.print()
 
-    def iter_sep(self, iteration: int) -> None:
-        self.con.print(f"\n[{_MUTED}]→ iter {iteration}[/]\n")
+    def turn_sep(self, turn: int) -> None:
+        self.con.print(f"\n[{_MUTED}]→ turn {turn}[/]\n")
 
-    def thought(self, content: str, iteration: int) -> None:
+    def thought(self, content: str, turn: int) -> None:
         self.con.print()
         lines = content.split("\n")
         self.con.print(f"  💭 {lines[0]}", highlight=False)
@@ -55,11 +55,11 @@ class MinimalRenderer(Renderer):
             self.con.print(f"     {line}", highlight=False)
         self.con.print()
 
-    def action(self, tool_name: str, tool_input: str, iteration: int) -> None:
+    def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         self.con.print(f"  ⚡ {tool_name} → {tool_input}", highlight=False)
 
     def observation(
-        self, content: str, iteration: int, tool_name: str | None = None
+        self, content: str, turn: int, tool_name: str | None = None
     ) -> None:
         first_line = content.split("\n", 1)[0].strip()
         if first_line.startswith("STATUS:"):
@@ -79,7 +79,7 @@ class MinimalRenderer(Renderer):
 
         self.con.print(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
 
-    def final(self, content: str, iteration: int) -> None:
+    def final(self, content: str, turn: int) -> None:
         self.con.print()
         lines = content.split("\n")
         self.con.print(f"  ✅ {lines[0]}", highlight=False)
@@ -87,23 +87,22 @@ class MinimalRenderer(Renderer):
             self.con.print(f"     {line}", highlight=False)
         self.con.print()
 
-    def error(self, content: str, iteration: int) -> None:
+    def error(self, content: str, turn: int) -> None:
         self.con.print(f"  ✗ {content}", highlight=False)
 
-    def raw(self, text: str, iteration: int, verbose: bool) -> None:
+    def raw(self, text: str, turn: int, verbose: bool) -> None:
         if not verbose:
             self.con.print(
-                f"  [{_MUTED}]📄 raw response iter {iteration} "
-                f"(use --verbose to view)[/]"
+                f"  [{_MUTED}]📄 raw response turn {turn} (use --verbose to view)[/]"
             )
             return
-        self.con.print(f"\n  [{_MUTED}]── raw response iter {iteration} ──[/]")
+        self.con.print(f"\n  [{_MUTED}]── raw response turn {turn} ──[/]")
         for line in text.split("\n"):
             self.con.print(f"  [{_MUTED}]{line}[/]")
         self.con.print(f"  [{_MUTED}]── end raw ──[/]\n")
 
-    def status(self, state: str, message: str, iteration: int = 0) -> None:
-        it = f"  iter {iteration}" if iteration else ""
+    def status(self, state: str, message: str, turn: int = 0) -> None:
+        it = f"  turn {turn}" if turn else ""
         self.con.print(f"  ● {message}{it}", highlight=False)
 
     def model_detected(
@@ -140,10 +139,9 @@ class MinimalRenderer(Renderer):
             highlight=False,
         )
 
-    def context_dump(self, messages: list[dict], iteration: int) -> None:
+    def context_dump(self, messages: list[dict], turn: int) -> None:
         self.con.print(
-            f"\n  [{_MUTED}]── context dump "
-            f"(iter {iteration}, {len(messages)} msgs) ──[/]"
+            f"\n  [{_MUTED}]── context dump (turn {turn}, {len(messages)} msgs) ──[/]"
         )
         for i, m in enumerate(messages):
             role = m.get("role", "?")
@@ -180,7 +178,7 @@ class MinimalRenderer(Renderer):
     def dispatch_progress(
         self,
         label: str,
-        iteration: int,
+        turn: int,
         tool_name: str,
         detail: str = "",
         thought: str = "",
@@ -191,16 +189,16 @@ class MinimalRenderer(Renderer):
         if thought:
             t = thought.replace("\n", " ").strip()
             self.con.print(
-                f"  [{_MUTED}]{label} [{iteration}] 💭 {t}[/]",
+                f"  [{_MUTED}]{label} [{turn}] 💭 {t}[/]",
                 highlight=False,
             )
         if tool_name == "complete":
             self.con.print(
-                f"  [{_MUTED}]{label} [{iteration}] ✅ {tool_name}{detail}[/]",
+                f"  [{_MUTED}]{label} [{turn}] ✅ {tool_name}{detail}[/]",
                 highlight=False,
             )
         else:
             self.con.print(
-                f"  [{_MUTED}]{label} [{iteration}] ⚡ {tool_name}:{detail}[/]",
+                f"  [{_MUTED}]{label} [{turn}] ⚡ {tool_name}:{detail}[/]",
                 highlight=False,
             )

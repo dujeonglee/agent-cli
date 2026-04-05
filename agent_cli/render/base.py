@@ -17,44 +17,44 @@ class Renderer(ABC):
         self,
         provider: str,
         model: str,
-        max_iter: int,
+        max_turns: int,
         skill_name: str = "",
         skill_args: str = "",
     ) -> None:
         """Session or skill start banner."""
 
     @abstractmethod
-    def iter_sep(self, iteration: int) -> None:
-        """Separator between iterations."""
+    def turn_sep(self, turn: int) -> None:
+        """Separator between turns."""
 
     @abstractmethod
-    def thought(self, content: str, iteration: int) -> None:
+    def thought(self, content: str, turn: int) -> None:
         """LLM reasoning/thought."""
 
     @abstractmethod
-    def action(self, tool_name: str, tool_input: str, iteration: int) -> None:
+    def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         """Tool call (action)."""
 
     @abstractmethod
     def observation(
-        self, content: str, iteration: int, tool_name: str | None = None
+        self, content: str, turn: int, tool_name: str | None = None
     ) -> None:
         """Tool result (observation)."""
 
     @abstractmethod
-    def final(self, content: str, iteration: int) -> None:
+    def final(self, content: str, turn: int) -> None:
         """Final answer."""
 
     @abstractmethod
-    def error(self, content: str, iteration: int) -> None:
+    def error(self, content: str, turn: int) -> None:
         """Error message."""
 
     @abstractmethod
-    def raw(self, text: str, iteration: int, verbose: bool) -> None:
+    def raw(self, text: str, turn: int, verbose: bool) -> None:
         """Raw LLM response (verbose mode)."""
 
     @abstractmethod
-    def status(self, state: str, message: str, iteration: int = 0) -> None:
+    def status(self, state: str, message: str, turn: int = 0) -> None:
         """Status update (running/done/error)."""
 
     @abstractmethod
@@ -68,7 +68,7 @@ class Renderer(ABC):
         """Loaded model one-liner."""
 
     @abstractmethod
-    def context_dump(self, messages: list[dict], iteration: int) -> None:
+    def context_dump(self, messages: list[dict], turn: int) -> None:
         """Debug context window dump."""
 
     @abstractmethod
@@ -83,7 +83,7 @@ class Renderer(ABC):
     def dispatch_progress(
         self,
         label: str,
-        iteration: int,
+        turn: int,
         tool_name: str,
         detail: str = "",
         thought: str = "",

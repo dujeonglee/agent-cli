@@ -64,7 +64,7 @@ class ContextManager:
             base = scratchpad_base or Path(".agent-cli")
             self._scratchpad_dir = session_scratchpad_dir(session_id, base)
 
-        self._turn_count = 0
+        self._step_count = 0
         self._skill_name = ""
         self._skill_parent_turn = 0
 
@@ -319,7 +319,7 @@ class ContextManager:
 
         Returns a dict with context info for debugging/logging.
         """
-        self._turn_count += 1
+        self._step_count += 1
         self._current_tags = tags or []
 
         return {
@@ -357,7 +357,7 @@ class ContextManager:
         artifact_path = None
         if content:
             artifact_path = save_artifact(
-                turn=self._turn_count,
+                turn=self._step_count,
                 content=content,
                 tags=tags,
                 summary=summary,
@@ -369,7 +369,7 @@ class ContextManager:
         # Update scratchpad progress
         if summary:
             append_progress(
-                turn=self._turn_count,
+                turn=self._step_count,
                 summary=summary,
                 artifact_path=artifact_path,
                 base=self._scratchpad_dir,
@@ -378,7 +378,7 @@ class ContextManager:
         # Record decision if any
         if decision:
             append_decision(
-                turn=self._turn_count,
+                turn=self._step_count,
                 decision=decision,
                 base=self._scratchpad_dir,
             )
@@ -421,5 +421,5 @@ class ContextManager:
         return {
             "mode": "scratchpad",
             "budget": self._budget.to_dict(),
-            "turn_count": self._turn_count,
+            "turn_count": self._step_count,
         }

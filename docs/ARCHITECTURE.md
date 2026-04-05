@@ -331,9 +331,9 @@ AgentLoop.run()
     │    │
     │    ├─ ★ CHECK: _interrupted? → _on_interrupt() → return None
     │    │     ctx.add("user", "⚡ User interrupted...")
-    │    │     scratchpad progress: "⚡ Interrupted at iteration N"
+    │    │     scratchpad progress: "⚡ Interrupted at turn N"
     │    │
-    │    ├─ _begin_iteration() → turn 카운터, 체크포인트
+    │    ├─ _begin_turn() → turn 카운터, 체크포인트
     │    │
     │    ├─ _call_llm() → LLMResponse (overflow 시 압축 후 재시도)
     │    │                 ← Ctrl+C 와도 flag만 설정, 호출은 완료
@@ -360,7 +360,7 @@ AgentLoop.run()
 ```
 
 **Graceful Interrupt (`graceful_interrupt=True`, chat 전용):**
-- 1st Ctrl+C: `_interrupted` flag 설정 → 현재 스텝 완료 후 다음 iteration 시작 시 탈출
+- 1st Ctrl+C: `_interrupted` flag 설정 → 현재 스텝 완료 후 다음 turn 시작 시 탈출
 - 2nd Ctrl+C: `KeyboardInterrupt` 즉시 발생 (기본 핸들러 복원 후)
 - 인터럽트 시 ctx와 scratchpad에 기록되어 다음 사용자 입력에서 LLM이 맥락을 이어감
 
@@ -531,7 +531,7 @@ status: in_progress
     turn_0007.md
 ```
 
-- 매 이터레이션 도구 결과를 YAML frontmatter + 원본으로 저장
+- 매 턴 도구 결과를 YAML frontmatter + 원본으로 저장
 - 컨텍스트에 자동 주입하지 않음 (Lazy Loading)
 - LLM이 `read_artifact` 도구로 선택적 로드
 - 시스템 프롬프트에 사용법 안내, compaction 후 복구 힌트 제공
@@ -601,7 +601,7 @@ ContextBudget.for_model(context_window)
 **핵심 함수** (`tools/delegate.py`):
 - `_validate_agent_name(name)` — 이름 검증 (`[a-zA-Z0-9_-]`만 허용)
 - `_load_agent(name)` — 파일 탐색 + YAML frontmatter 파싱 → `(role_prompt, config, error)`
-- `_extract_activity_log(messages)` — 컨텍스트 메시지에서 per-iteration 액션 요약 추출
+- `_extract_activity_log(messages)` — 컨텍스트 메시지에서 per-turn 액션 요약 추출
 - `_summarize_action(action, action_input)` — 단일 액션을 한 줄 요약으로 포맷
 - `_extract_last_actions(messages, n)` — 마지막 N개 액션 + 에러 observation 추출
 - `_persist_delegate_result(...)` — scratchpad artifact/progress에 결과 저장
@@ -609,14 +609,14 @@ ContextBudget.for_model(context_window)
 - `_AGENT_SEARCH_PATHS` — 검색 경로 리스트
 - `_FRONTMATTER_PATTERN` — `---` frontmatter 정규식
 
-**DelegateResult 필드**: `output`, `files_read`, `files_modified`, `iterations`, `duration_secs`, `activity_log`, `last_actions`
+**DelegateResult 필드**: `output`, `files_read`, `files_modified`, `turns`, `duration_secs`, `activity_log`, `last_actions`
 
 **산출물 구조**: delegate 실행 결과는 다음 섹션을 포함:
 1. 서브에이전트 출력 (output 또는 "(subagent returned no result)")
-2. `[Subagent activity]` — per-iteration 액션 로그 (최대 20개)
+2. `[Subagent activity]` — per-turn 액션 로그 (최대 20개)
 3. `[Last actions before failure]` — 실패 시 마지막 5개 액션 + 에러 힌트
 4. `[Files touched]` — 읽기/수정 파일 목록
-5. `[Duration: Ns]` + `[Subagent used N iterations]` — 실행 메타데이터
+5. `[Duration: Ns]` + `[Subagent used N turns]` — 실행 메타데이터
 6. scratchpad에 artifact + progress로 디스크 영속화
 
 **적용 우선순위**: task에 명시된 `tools`/`model`이 agent 파일 설정보다 우선합니다.
@@ -957,7 +957,7 @@ agent-cli run "task description" [options]
   -m, --model       모델 ID                       (기본: 프로바이더 기본값)
   --base-url        API 엔드포인트
   --api-key         API 키 (환경 변수 자동 감지)
-  -n, --max-iter    최대 이터레이션 (0=무제한)
+  -n, --max-turns    최대 턴 (0=무제한)
   --max-depth       서브에이전트 중첩 깊이 (기본: 2)
   --delegate-timeout 서브에이전트 타임아웃 초 (기본: 300)
   -v, --verbose     원시 LLM 응답 표시
@@ -1048,7 +1048,7 @@ agent-cli chat [options]
 name: review-code
 description: Review code for bugs and security
 allowed-tools: [read_file]
-max-iter: 5
+max-turns: 5
 argument-hint: "<file_path>"
 ---
 
@@ -1060,7 +1060,7 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 | `name` | string | 슬래시 명령어 이름 |
 | `description` | string | 스킬 설명 |
 | `allowed-tools` | list[str] | 허용 도구 (미지정 시 전체) |
-| `max-iter` | int | 최대 이터레이션 (미지정 시 기본값) |
+| `max-turns` | int | 최대 턴 (미지정 시 기본값) |
 | `argument-hint` | string | 인자 힌트 |
 
 ### 13.3 인자 치환
@@ -1098,7 +1098,7 @@ load_skills() — 디스크에서 스킬 파일 검색/파싱
 substitute_arguments() — $ARGUMENTS → "src/auth.py" 치환
     │
     ▼
-run_loop(query=치환된_프롬프트, allowed_tools=["read_file"], max_iter=5)
+run_loop(query=치환된_프롬프트, allowed_tools=["read_file"], max_turns=5)
     │  └─ loop.py의 기존 인프라 그대로 활용
     ▼
 결과 반환

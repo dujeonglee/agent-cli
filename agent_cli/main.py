@@ -140,7 +140,7 @@ def _dispatch_agent(
         if not load_scratchpad(ctx._scratchpad_dir):
             ctx.init_task()
         append_progress(
-            turn=ctx._turn_count,
+            turn=ctx._step_count,
             summary=f"User: @{agent_name} {task[:60]}",
             base=ctx._scratchpad_dir,
         )
@@ -214,7 +214,7 @@ def _dispatch_skill(
         if not load_scratchpad(ctx._scratchpad_dir):
             ctx.init_task()
         append_progress(
-            turn=ctx._turn_count,
+            turn=ctx._step_count,
             summary=f"User: /{cmd_name} {arguments}".strip(),
             base=ctx._scratchpad_dir,
         )
@@ -373,7 +373,7 @@ def run(
     ),
     max_iter: int = typer.Option(
         0,
-        "--max-iter",
+        "--max-turns",
         "-n",
         help="Maximum iterations (0 = unlimited)",
     ),
@@ -612,7 +612,7 @@ def chat(
     ),
     max_iter: int = typer.Option(
         0,
-        "--max-iter",
+        "--max-turns",
         "-n",
         help="Maximum iterations per turn (0 = unlimited)",
     ),
