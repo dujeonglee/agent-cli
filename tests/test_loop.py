@@ -235,13 +235,13 @@ class TestRunLoopParseFailure:
             capabilities=caps,
             model="test-model",
             suppress_output=True,
-            max_iter=5,
+            max_turns=5,
         )
         assert result == "recovered"
 
 
 class TestRunLoopMaxIter:
-    def test_returns_none_on_max_iter(self, caps):
+    def test_returns_none_on_max_turns(self, caps):
         provider = _make_provider(
             json.dumps(
                 {
@@ -271,7 +271,7 @@ class TestRunLoopMaxIter:
             capabilities=caps,
             model="test-model",
             suppress_output=True,
-            max_iter=2,
+            max_turns=2,
         )
         assert result is None
 
@@ -1341,7 +1341,7 @@ class TestAgentLoopClass:
             provider=MagicMock(),
             capabilities=caps,
             model="m",
-            max_iter=5,
+            max_turns=5,
         )
         loop.turn = 4
         assert loop._should_continue() is True
@@ -1356,7 +1356,7 @@ class TestAgentLoopClass:
             provider=MagicMock(),
             capabilities=caps,
             model="m",
-            max_iter=0,
+            max_turns=0,
         )
         loop.turn = 999
         assert loop._should_continue() is True
@@ -2250,7 +2250,7 @@ class TestRunSkillIntercept:
                 name="summarize",
                 description="Summarize",
                 prompt_template="Summarize $ARGUMENTS. Reply with one sentence.",
-                max_iter=3,
+                max_turns=3,
             )
         }
 
@@ -2329,7 +2329,7 @@ class TestRunSkillIntercept:
                 name="summarize",
                 description="Sum",
                 prompt_template="Sum $ARGUMENTS",
-                max_iter=3,
+                max_turns=3,
             )
         }
         with patch("agent_cli.skills.load_skills", return_value=mock_skills):
@@ -2372,7 +2372,7 @@ class TestRunSkillIntercept:
                 name="analyze",
                 description="Analyze",
                 prompt_template="Analyze $ARGUMENTS",
-                max_iter=3,
+                max_turns=3,
             )
         }
 
@@ -2433,7 +2433,7 @@ class TestRunSkillIntercept:
                 name="greet",
                 description="Greet",
                 prompt_template="Say hi",
-                max_iter=3,
+                max_turns=3,
             )
         }
         with patch("agent_cli.skills.load_skills", return_value=mock_skills):
@@ -2568,7 +2568,7 @@ class TestRunSkillNoDuplicateArtifact:
                 name="simple",
                 description="Simple",
                 prompt_template="Say hello. Use complete to answer.",
-                max_iter=2,
+                max_turns=2,
             )
         }
 

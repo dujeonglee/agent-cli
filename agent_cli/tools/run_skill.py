@@ -58,7 +58,7 @@ def tool_run_skill(args: dict, **kwargs) -> ToolResult:
         provider_name=kwargs.get("provider_name", ""),
         base_url=kwargs.get("base_url", ""),
         api_key=kwargs.get("api_key", ""),
-        max_iter=skill.max_iter,
+        max_turns=skill.max_turns,
         suppress_output=True,
         session=kwargs.get("session"),
         graceful_interrupt=kwargs.get("graceful_interrupt", False),

@@ -30,7 +30,7 @@ class TestSimpleConversation:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=3,
+            max_turns=3,
         )
         assert result is not None
         assert len(result) > 0
@@ -50,7 +50,7 @@ class TestReadFile:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=5,
+            max_turns=5,
         )
         assert result is not None
         assert "UNIQUE_MARKER_XYZ789" in result
@@ -65,7 +65,7 @@ class TestShellCommand:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=5,
+            max_turns=5,
         )
         assert result is not None
         assert "INTEGRATION_TEST_PASS_42" in result
@@ -84,7 +84,7 @@ class TestWriteFile:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=8,
+            max_turns=8,
         )
         assert result is not None
         assert target.exists()
@@ -106,7 +106,7 @@ class TestEditFile:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=12,
+            max_turns=12,
         )
         assert result is not None
         content = f.read_text()
@@ -159,7 +159,7 @@ class TestMultiStepToolUse:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=10,
+            max_turns=10,
         )
         assert result is not None
         assert target.exists()
@@ -215,7 +215,7 @@ class TestSkillExecution:
             description="Review code",
             prompt_template="Read $ARGUMENTS and review for bugs. Be brief.",
             allowed_tools=["read_file"],
-            max_iter=5,
+            max_turns=5,
         )
 
         result = execute_skill(
@@ -246,7 +246,7 @@ class TestSkillExecution:
             description="Summarize",
             prompt_template="Read $ARGUMENTS and summarize in one paragraph.",
             allowed_tools=["read_file"],
-            max_iter=8,
+            max_turns=8,
         )
 
         result = execute_skill(
@@ -276,7 +276,7 @@ class TestSkillExecution:
             description="Read in fork",
             prompt_template="Read $ARGUMENTS and tell me the content.",
             allowed_tools=["read_file"],
-            max_iter=5,
+            max_turns=5,
             context="fork",
         )
 
@@ -309,7 +309,7 @@ class TestSkillExecution:
                 "The current date output is: !`date +%Y`\n"
                 "What year is shown above? Answer with just the year number."
             ),
-            max_iter=3,
+            max_turns=3,
         )
 
         result = execute_skill(
@@ -338,7 +338,7 @@ class TestSkillExecution:
                 "and tell me the output."
             ),
             allowed_tools=["shell"],
-            max_iter=5,
+            max_turns=5,
         )
 
         result = execute_skill(
@@ -398,7 +398,7 @@ class TestSkillExecution:
                 "Compare $ARGUMENTS[0] and $ARGUMENTS[1]. "
                 "Which is bigger? Answer in one sentence."
             ),
-            max_iter=3,
+            max_turns=3,
         )
 
         result = execute_skill(
@@ -435,7 +435,7 @@ class TestSkillHooks:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=5,
+            max_turns=5,
             hooks_config=hooks_config,
         )
         assert result is not None
@@ -465,7 +465,7 @@ class TestSkillHooks:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=5,
+            max_turns=5,
             hooks_config=hooks_config,
         )
         assert result is not None
@@ -536,7 +536,7 @@ class TestDelegateSubagent:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=5,
+            max_turns=5,
         )
         assert result is not None
         assert len(result) > 0
@@ -563,7 +563,7 @@ class TestDelegateSubagent:
             capabilities=model_capabilities,
             model=integration_model,
             suppress_output=True,
-            max_iter=8,
+            max_turns=8,
             ctx=ctx,
         )
         assert result is not None

@@ -78,7 +78,7 @@ def execute_skill(
     provider_name: str = "ollama",
     base_url: str = "",
     api_key: str = "",
-    max_iter: int = 0,
+    max_turns: int = 0,
     verbose: bool = False,
     suppress_output: bool = False,
     max_depth: int = 2,
@@ -101,7 +101,7 @@ def execute_skill(
         skill.prompt_template, arguments, skill_dir=skill_dir, session_id=session_id
     )
 
-    effective_max_iter = skill.max_iter if skill.max_iter > 0 else max_iter
+    effective_max_turns = skill.max_turns if skill.max_turns > 0 else max_turns
     effective_model = skill.model if skill.model else model
     effective_ctx = None if skill.context == "fork" else ctx
 
@@ -113,7 +113,7 @@ def execute_skill(
         provider_name=provider_name,
         base_url=base_url,
         api_key=api_key,
-        max_iter=effective_max_iter,
+        max_turns=effective_max_turns,
         verbose=verbose,
         suppress_output=suppress_output,
         depth=0,

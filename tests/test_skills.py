@@ -47,7 +47,7 @@ class TestSkillModel:
         )
         assert skill.name == "review"
         assert skill.allowed_tools is None
-        assert skill.max_iter == 0
+        assert skill.max_turns == 0
 
     def test_skill_with_tools(self):
         skill = Skill(
@@ -55,10 +55,10 @@ class TestSkillModel:
             description="Generate tests",
             prompt_template="Test $ARGUMENTS",
             allowed_tools=["read_file", "write_file"],
-            max_iter=10,
+            max_turns=10,
         )
         assert skill.allowed_tools == ["read_file", "write_file"]
-        assert skill.max_iter == 10
+        assert skill.max_turns == 10
 
     def test_model_default_none(self):
         """Skill.model defaults to None (no override)."""
@@ -219,7 +219,7 @@ class TestSkillLoader:
         assert skill.name == "review"
         assert skill.description == "Review code"
         assert skill.allowed_tools == ["read_file"]
-        assert skill.max_iter == 5
+        assert skill.max_turns == 5
         assert "Review $ARGUMENTS" in skill.prompt_template
 
     def test_parse_minimal_frontmatter(self, tmp_path):
@@ -231,7 +231,7 @@ class TestSkillLoader:
         assert skill is not None
         assert skill.name == "simple"
         assert skill.allowed_tools is None
-        assert skill.max_iter == 0
+        assert skill.max_turns == 0
 
     def test_parse_model_from_frontmatter(self, tmp_path):
         """Frontmatter with model field → skill.model populated."""
@@ -452,7 +452,7 @@ class TestSkillExecution:
             description="Review",
             prompt_template="Review $ARGUMENTS",
             allowed_tools=["read_file"],
-            max_iter=3,
+            max_turns=3,
         )
         result = execute_skill(
             skill=skill,
@@ -464,7 +464,7 @@ class TestSkillExecution:
         )
         assert result is not None
 
-    def test_execute_uses_skill_max_iter(self, caps):
+    def test_execute_uses_skill_max_turns(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
             content=json.dumps(
@@ -480,7 +480,7 @@ class TestSkillExecution:
             name="s",
             description="d",
             prompt_template="Do $ARGUMENTS",
-            max_iter=7,
+            max_turns=7,
         )
         execute_skill(
             skill=skill,
@@ -490,7 +490,7 @@ class TestSkillExecution:
             model="m",
             suppress_output=True,
         )
-        # Skill's max_iter should be used (verified by run_loop not exceeding it)
+        # Skill's max_turns should be used (verified by run_loop not exceeding it)
         assert provider.call.called
 
     def test_execute_passes_session(self, caps):

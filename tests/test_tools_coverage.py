@@ -1076,7 +1076,7 @@ class TestRunSkillTool:
                 name="summarize",
                 description="Summarize",
                 prompt_template="Summarize $ARGUMENTS",
-                max_iter=3,
+                max_turns=3,
             )
         }
         caps = ModelCapabilities(

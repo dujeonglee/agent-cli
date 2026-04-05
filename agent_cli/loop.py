@@ -75,7 +75,7 @@ class AgentLoop:
         provider_name: str = "ollama",
         base_url: str = "",
         api_key: str = "",
-        max_iter: int = 0,
+        max_turns: int = 0,
         verbose: bool = False,
         ctx: ContextManager | None = None,
         suppress_output: bool = False,
@@ -99,7 +99,7 @@ class AgentLoop:
         self.provider_name = provider_name
         self.base_url = base_url
         self.api_key = api_key
-        self.max_iter = max_iter
+        self.max_turns = max_turns
         self.verbose = verbose
         self.ctx = ctx
         self.suppress_output = suppress_output
@@ -158,7 +158,7 @@ class AgentLoop:
                 result = self._execute_iteration()
                 if result is not self._CONTINUE:
                     return result
-            return self._on_max_iter()
+            return self._on_max_turns()
         finally:
             if self.graceful_interrupt:
                 self._restore_signal_handler()
@@ -238,7 +238,7 @@ class AgentLoop:
             render_header(
                 self.provider_name,
                 self.model,
-                self.max_iter,
+                self.max_turns,
                 skill_name=self.skill_name,
                 skill_args=self.skill_args,
             )
@@ -283,7 +283,7 @@ class AgentLoop:
         if self.stop_event and self.stop_event.is_set():
             self._interrupted = True
             return False
-        return self.max_iter <= 0 or self.turn < self.max_iter
+        return self.max_turns <= 0 or self.turn < self.max_turns
 
     def _begin_iteration(self) -> None:
         """Scratchpad begin_turn, skill progress, iter sep."""
@@ -634,7 +634,7 @@ class AgentLoop:
                 delegate_provider=self.provider,
                 delegate_depth=self.depth,
                 delegate_max_depth=self.max_depth,
-                delegate_max_iter=self.max_iter,
+                delegate_max_turns=self.max_turns,
                 delegate_suppress=self.suppress_output,
                 delegate_session=self.session,
                 delegate_skill_stack=self.skill_stack,
@@ -921,7 +921,7 @@ class AgentLoop:
                 delegate_provider=self.provider,
                 delegate_depth=self.depth,
                 delegate_max_depth=self.max_depth,
-                delegate_max_iter=self.max_iter,
+                delegate_max_turns=self.max_turns,
                 delegate_suppress=self.suppress_output,
                 delegate_session=self.session,
                 delegate_skill_stack=self.skill_stack,
@@ -1007,12 +1007,12 @@ class AgentLoop:
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE
 
-    def _on_max_iter(self) -> None:
+    def _on_max_turns(self) -> None:
         """Handle max iterations reached."""
         if not self.suppress_output:
-            render_status("error", f"Max iterations ({self.max_iter}) reached.")
+            render_status("error", f"Max iterations ({self.max_turns}) reached.")
         _debug_log(
-            f"run_loop returning None: max_iter={self.max_iter} reached, skill_name={self.skill_name}"
+            f"run_loop returning None: max_turns={self.max_turns} reached, skill_name={self.skill_name}"
         )
         return None
 
@@ -1026,7 +1026,7 @@ def run_loop(
     provider_name: str = "ollama",
     base_url: str = "",
     api_key: str = "",
-    max_iter: int = 0,
+    max_turns: int = 0,
     verbose: bool = False,
     ctx: ContextManager | None = None,
     suppress_output: bool = False,
@@ -1055,7 +1055,7 @@ def run_loop(
         provider_name=provider_name,
         base_url=base_url,
         api_key=api_key,
-        max_iter=max_iter,
+        max_turns=max_turns,
         verbose=verbose,
         ctx=ctx,
         suppress_output=suppress_output,
@@ -1410,7 +1410,7 @@ def _execute_single_tool(
     delegate_provider=None,
     delegate_depth: int = 0,
     delegate_max_depth: int = 2,
-    delegate_max_iter: int = 0,
+    delegate_max_turns: int = 0,
     delegate_suppress: bool = False,
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
@@ -1435,7 +1435,7 @@ def _execute_single_tool(
         delegate_provider=delegate_provider,
         delegate_depth=delegate_depth,
         delegate_max_depth=delegate_max_depth,
-        delegate_max_iter=delegate_max_iter,
+        delegate_max_turns=delegate_max_turns,
         delegate_suppress=delegate_suppress,
         delegate_session=delegate_session,
         delegate_skill_stack=delegate_skill_stack,
@@ -1519,7 +1519,7 @@ def _do_execute_tool(
     delegate_provider=None,
     delegate_depth: int = 0,
     delegate_max_depth: int = 2,
-    delegate_max_iter: int = 0,
+    delegate_max_turns: int = 0,
     delegate_suppress: bool = False,
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
@@ -1566,7 +1566,7 @@ def _do_execute_tool(
             api_key=api_key,
             depth=delegate_depth,
             max_depth=delegate_max_depth,
-            max_iter=delegate_max_iter,
+            max_turns=delegate_max_turns,
             timeout=delegate_timeout,
             suppress_output=delegate_suppress,
             session=delegate_session,
