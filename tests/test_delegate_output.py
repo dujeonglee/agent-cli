@@ -377,7 +377,7 @@ class TestPersistDelegateResult:
         )
 
         artifacts_dir = tmp_path / "artifacts"
-        artifact_files = list(artifacts_dir.glob("turn_*.md"))
+        artifact_files = list(artifacts_dir.glob("step_*.md"))
         assert len(artifact_files) == 1
         content = artifact_files[0].read_text()
         assert "delegate" in content
@@ -423,7 +423,7 @@ class TestPersistDelegateResult:
         )
 
         artifacts_dir = tmp_path / "artifacts"
-        artifact_files = list(artifacts_dir.glob("turn_*.md"))
+        artifact_files = list(artifacts_dir.glob("step_*.md"))
         assert len(artifact_files) == 1
         content = artifact_files[0].read_text()
         assert "failed" in content
@@ -495,7 +495,7 @@ class TestPersistDelegateResult:
 
         assert result.success
         artifacts_dir = tmp_path / "artifacts"
-        artifact_files = list(artifacts_dir.glob("turn_*.md"))
+        artifact_files = list(artifacts_dir.glob("step_*.md"))
         assert len(artifact_files) >= 1
 
 
@@ -719,7 +719,7 @@ class TestIntegration:
 
         # Artifact file exists
         artifacts_dir = tmp_path / "artifacts"
-        assert len(list(artifacts_dir.glob("turn_*.md"))) >= 1
+        assert len(list(artifacts_dir.glob("step_*.md"))) >= 1
 
         # Scratchpad has progress
         scratchpad = load_scratchpad(tmp_path)

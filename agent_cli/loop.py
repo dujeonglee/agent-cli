@@ -203,7 +203,7 @@ class AgentLoop:
             from agent_cli.context.scratchpad import append_progress
 
             append_progress(
-                turn=self.ctx._step_count,
+                step=self.ctx._step_count,
                 summary=f"⚡ Interrupted by user at iteration {self.turn}",
                 base=self.ctx._scratchpad_dir,
             )
@@ -259,7 +259,7 @@ class AgentLoop:
             # Set or clear skill context (for artifact subdirectory routing)
             self.ctx.set_skill_context(
                 skill_name=self.skill_name,
-                parent_turn=self.ctx._step_count if self.skill_name else 0,
+                parent_step=self.ctx._step_count if self.skill_name else 0,
             )
 
         # Record user query in scratchpad progress (not for skill internal loops)
@@ -267,7 +267,7 @@ class AgentLoop:
             from agent_cli.context.scratchpad import append_progress
 
             append_progress(
-                turn=self.ctx._step_count,
+                step=self.ctx._step_count,
                 summary=f"User: {self.query[:80]}",
                 base=self.ctx._scratchpad_dir,
             )
@@ -1143,8 +1143,8 @@ def _render_skill_progress(
     )
 
 
-def _build_internal_skill_summary(ctx, turn_before: int) -> str:
-    """Build a summary of internal skill calls that happened since turn_before."""
+def _build_internal_skill_summary(ctx, step_before: int) -> str:
+    """Build a summary of internal skill calls that happened since step_before."""
     if not ctx:
         return ""
     from agent_cli.context.scratchpad import build_artifact_index
@@ -1152,7 +1152,7 @@ def _build_internal_skill_summary(ctx, turn_before: int) -> str:
     index = build_artifact_index(ctx._scratchpad_dir)
     internal = []
     for a in index:
-        if a.turn <= turn_before:
+        if a.step <= step_before:
             continue
         if "complete" not in a.tags:
             continue
@@ -1212,19 +1212,19 @@ def _handle_run_skill(
 
     # Set skill context for subdirectory routing
     if ctx:
-        ctx.set_skill_context(skill_name=name, parent_turn=ctx._step_count)
+        ctx.set_skill_context(skill_name=name, parent_step=ctx._step_count)
         # Record skill invocation in scratchpad progress
         from agent_cli.context.scratchpad import append_progress
 
         args_hint = f"({arguments})" if arguments else ""
         append_progress(
-            turn=ctx._step_count,
+            step=ctx._step_count,
             summary=f"run_skill: {name}{args_hint}",
             base=ctx._scratchpad_dir,
         )
 
     render_status("running", f"Running skill: {name}...")
-    turn_before = ctx._step_count if ctx else 0
+    step_before = ctx._step_count if ctx else 0
 
     try:
         from agent_cli.providers import create_provider
@@ -1258,11 +1258,11 @@ def _handle_run_skill(
             f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
         )
         body = result or "(skill returned no result)"
-        internal = _build_internal_skill_summary(ctx, turn_before)
+        internal = _build_internal_skill_summary(ctx, step_before)
         # Extract files touched by the skill for parent context
         files_info = ""
         if ctx:
-            fr, fm = ctx._extract_files_touched(ctx.messages[turn_before * 2 :])
+            fr, fm = ctx._extract_files_touched(ctx.messages[step_before * 2 :])
             if fr or fm:
                 parts = ["[Files touched by skill]"]
                 if fr:

@@ -1138,7 +1138,7 @@ class TestReadArtifactTool:
         from agent_cli.tools.read_artifact import tool_read_artifact
 
         path = save_artifact(
-            turn=1,
+            step=1,
             content="## Analysis\nFound 3 bugs.",
             tags=["read_file"],
             summary="Analysis result",
@@ -1166,8 +1166,8 @@ class TestReadArtifactTool:
         ctx._scratchpad_dir = tmp_path
         result = tool_read_artifact({"mode": "list"}, ctx=ctx)
         assert result.success
-        assert "turn_0001" in result.output
-        assert "turn_0002" in result.output
+        assert "step_0001" in result.output
+        assert "step_0002" in result.output
         assert "hooks.py" in result.output
 
     def test_search_by_tag(self, tmp_path):
@@ -1183,8 +1183,8 @@ class TestReadArtifactTool:
         ctx._scratchpad_dir = tmp_path
         result = tool_read_artifact({"mode": "search", "tag": "hooks.py"}, ctx=ctx)
         assert result.success
-        assert "turn_0001" in result.output
-        assert "turn_0002" not in result.output
+        assert "step_0001" in result.output
+        assert "step_0002" not in result.output
 
     def test_nonexistent_path(self):
         """Read nonexistent artifact → error."""
@@ -1210,15 +1210,15 @@ class TestReadArtifactTool:
             "skill read",
             tmp_path,
             skill_name="optimize",
-            parent_turn=1,
+            parent_step=1,
         )
 
         ctx = MagicMock()
         ctx._scratchpad_dir = tmp_path
         result = tool_read_artifact({"mode": "list"}, ctx=ctx)
         assert result.success
-        assert "turn_0001" in result.output  # flat
-        assert "turn_0002" in result.output  # skill subdir
+        assert "step_0001" in result.output  # flat
+        assert "step_0002" in result.output  # skill subdir
 
     def test_list_no_session(self):
         """List without ctx → error."""

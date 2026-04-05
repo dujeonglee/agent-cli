@@ -1,14 +1,14 @@
 """Scratchpad + Artifact persistent context management.
 
 Scratchpad: always loaded into context window, survives compaction.
-Artifacts: per-turn detailed results, loaded selectively via frontmatter index.
+Artifacts: per-step detailed results, loaded selectively via frontmatter index.
 
 File layout:
   .agent-cli/
     scratchpad.md            # always loaded (anchor)
     artifacts/
-      turn_001.md            # per-turn results with YAML frontmatter
-      turn_002.md
+      turn_001.md            # per-step results with YAML frontmatter
+      step_002.md
       ...
 """
 
@@ -46,7 +46,7 @@ class ArtifactMeta:
     """Frontmatter parsed from an artifact file."""
 
     entry_id: str
-    turn: int
+    step: int
     tags: list[str] = field(default_factory=list)
     summary: str = ""
     token_count: int = 0
@@ -185,7 +185,7 @@ def init_scratchpad(base: Path = _DEFAULT_BASE) -> str:
 
 
 def append_progress(
-    turn: int,
+    step: int,
     summary: str,
     artifact_path: str | None = None,
     base: Path = _DEFAULT_BASE,
@@ -196,7 +196,7 @@ def append_progress(
         return
 
     ref = f" → {artifact_path}" if artifact_path else ""
-    line = f"- [turn {turn}] {summary}{ref}\n"
+    line = f"- [step {step}] {summary}{ref}\n"
 
     # Append at end of "## Progress" section (chronological order)
     if "## Progress" in content:
@@ -224,7 +224,7 @@ def append_progress(
 
 
 def append_decision(
-    turn: int,
+    step: int,
     decision: str,
     base: Path = _DEFAULT_BASE,
 ) -> None:
@@ -233,7 +233,7 @@ def append_decision(
     if not content:
         return
 
-    line = f"- [turn {turn}] {decision}\n"
+    line = f"- [step {step}] {decision}\n"
 
     # Append at end of "## Decisions" section (chronological order)
     if "## Decisions" in content:
@@ -260,24 +260,24 @@ def append_decision(
 
 
 def save_artifact(
-    turn: int,
+    step: int,
     content: str,
     tags: list[str] | None = None,
     summary: str = "",
     base: Path = _DEFAULT_BASE,
     skill_name: str = "",
-    parent_turn: int = 0,
+    parent_step: int = 0,
 ) -> str:
-    """Save a turn artifact with YAML frontmatter. Returns the file path.
+    """Save a step artifact with YAML frontmatter. Returns the file path.
 
     If skill_name is set, artifact is stored in a subdirectory:
-      artifacts/turn_{parent_turn}_{skill_name}/turn_{turn}.md
+      artifacts/step_{parent_step}_{skill_name}/step_{step}.md
     """
     _ensure_dirs(base)
-    entry_id = f"turn_{turn:04d}"
+    entry_id = f"step_{step:04d}"
 
-    if skill_name and parent_turn > 0:
-        subdir = base / "artifacts" / f"turn_{parent_turn:04d}_{skill_name}"
+    if skill_name and parent_step > 0:
+        subdir = base / "artifacts" / f"step_{parent_step:04d}_{skill_name}"
         subdir.mkdir(parents=True, exist_ok=True)
         path = subdir / f"{entry_id}.md"
     else:
@@ -289,7 +289,7 @@ def save_artifact(
     text = render_frontmatter(
         {
             "entry_id": entry_id,
-            "turn": turn,
+            "step": step,
             "tags": tags or [],
             "summary": summary,
             "token_count": token_count,
@@ -305,12 +305,12 @@ def load_artifact(path: str | Path) -> tuple[ArtifactMeta, str]:
     """Load an artifact file, return (metadata, body)."""
     p = Path(path)
     if not p.is_file():
-        return ArtifactMeta(entry_id="", turn=0), ""
+        return ArtifactMeta(entry_id="", step=0), ""
     text = p.read_text(encoding="utf-8")
     meta_dict, body = parse_frontmatter(text)
     meta = ArtifactMeta(
         entry_id=meta_dict.get("entry_id", p.stem),
-        turn=meta_dict.get("turn", 0),
+        step=meta_dict.get("step", 0),
         tags=meta_dict.get("tags", []),
         summary=meta_dict.get("summary", ""),
         token_count=meta_dict.get("token_count", 0),
@@ -327,14 +327,14 @@ def build_artifact_index(base: Path = _DEFAULT_BASE) -> list[ArtifactMeta]:
         return []
 
     index = []
-    for f in sorted(artifacts_dir.rglob("turn_*.md")):
+    for f in sorted(artifacts_dir.rglob("step_*.md")):
         text = f.read_text(encoding="utf-8")
         meta_dict, _ = parse_frontmatter(text)
         if meta_dict:
             index.append(
                 ArtifactMeta(
                     entry_id=meta_dict.get("entry_id", f.stem),
-                    turn=meta_dict.get("turn", 0),
+                    step=meta_dict.get("step", 0),
                     tags=meta_dict.get("tags", []),
                     summary=meta_dict.get("summary", ""),
                     token_count=meta_dict.get("token_count", 0),
@@ -354,8 +354,8 @@ def select_artifacts(
     """Select relevant artifacts within token budget.
 
     Strategy (tag-based, replaceable):
-      1. Most recent N turns (recency bias)
-      2. Tag overlap scoring for older turns
+      1. Most recent N steps (recency bias)
+      2. Tag overlap scoring for older steps
       3. Fill within budget
     """
     if not index:

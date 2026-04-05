@@ -208,7 +208,7 @@ def _persist_delegate_result(
     try:
         status = "success" if success else "failed"
         save_artifact(
-            turn=0,
+            step=0,
             content=formatted,
             tags=["delegate", f"depth:{depth}", status],
             summary=f"delegate: {task[:60]}",
@@ -217,7 +217,7 @@ def _persist_delegate_result(
 
         status_str = "completed" if success else "FAILED"
         append_progress(
-            turn=0,
+            step=0,
             summary=(
                 f"delegate {status_str}: {task[:60]} "
                 f"({duration:.1f}s, {iterations} iters)"

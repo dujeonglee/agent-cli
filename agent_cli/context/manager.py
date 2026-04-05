@@ -66,7 +66,7 @@ class ContextManager:
 
         self._step_count = 0
         self._skill_name = ""
-        self._skill_parent_turn = 0
+        self._skill_parent_step = 0
 
         from agent_cli.context.scratchpad import ContextBudget
 
@@ -309,10 +309,10 @@ class ContextManager:
 
     # ── Scratchpad integration ────────────────────────────────
 
-    def set_skill_context(self, skill_name: str = "", parent_turn: int = 0) -> None:
+    def set_skill_context(self, skill_name: str = "", parent_step: int = 0) -> None:
         """Set skill context for artifact subdirectory routing."""
         self._skill_name = skill_name
-        self._skill_parent_turn = parent_turn
+        self._skill_parent_step = parent_step
 
     def begin_turn(self, query: str, tags: list[str] | None = None) -> dict:
         """Begin a turn: load scratchpad + select relevant artifacts.
@@ -357,19 +357,19 @@ class ContextManager:
         artifact_path = None
         if content:
             artifact_path = save_artifact(
-                turn=self._step_count,
+                step=self._step_count,
                 content=content,
                 tags=tags,
                 summary=summary,
                 base=self._scratchpad_dir,
                 skill_name=skill_name,
-                parent_turn=self._skill_parent_turn,
+                parent_step=self._skill_parent_step,
             )
 
         # Update scratchpad progress
         if summary:
             append_progress(
-                turn=self._step_count,
+                step=self._step_count,
                 summary=summary,
                 artifact_path=artifact_path,
                 base=self._scratchpad_dir,
@@ -378,7 +378,7 @@ class ContextManager:
         # Record decision if any
         if decision:
             append_decision(
-                turn=self._step_count,
+                step=self._step_count,
                 decision=decision,
                 base=self._scratchpad_dir,
             )
@@ -421,5 +421,5 @@ class ContextManager:
         return {
             "mode": "scratchpad",
             "budget": self._budget.to_dict(),
-            "turn_count": self._step_count,
+            "step_count": self._step_count,
         }

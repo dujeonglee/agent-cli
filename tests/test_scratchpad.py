@@ -116,17 +116,17 @@ class TestScratchpad:
 
     def test_append_progress(self, tmp_agent_dir):
         init_scratchpad(tmp_agent_dir)
-        append_progress(1, "Analyzed file.c", "artifacts/turn_0001.md", tmp_agent_dir)
+        append_progress(1, "Analyzed file.c", "artifacts/step_0001.md", tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        assert "[turn 1]" in content
+        assert "[step 1]" in content
         assert "Analyzed file.c" in content
-        assert "artifacts/turn_0001.md" in content
+        assert "artifacts/step_0001.md" in content
 
     def test_append_decision(self, tmp_agent_dir):
         init_scratchpad(tmp_agent_dir)
         append_decision(3, "Use pre-allocated pool", tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        assert "[turn 3]" in content
+        assert "[step 3]" in content
         assert "Use pre-allocated pool" in content
 
     def test_multiple_progress_entries(self, tmp_agent_dir):
@@ -134,8 +134,8 @@ class TestScratchpad:
         append_progress(1, "Step one", base=tmp_agent_dir)
         append_progress(2, "Step two", base=tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        assert "[turn 1]" in content
-        assert "[turn 2]" in content
+        assert "[step 1]" in content
+        assert "[step 2]" in content
 
     def test_progress_chronological_order(self, tmp_agent_dir):
         """Progress entries are in chronological order (oldest first)."""
@@ -144,9 +144,9 @@ class TestScratchpad:
         append_progress(1, "read_file: main.py", base=tmp_agent_dir)
         append_progress(2, "shell: ls", base=tmp_agent_dir)
         content = load_scratchpad(tmp_agent_dir)
-        idx0 = content.index("[turn 0]")
-        idx1 = content.index("[turn 1]")
-        idx2 = content.index("[turn 2]")
+        idx0 = content.index("[step 0]")
+        idx1 = content.index("[step 1]")
+        idx2 = content.index("[step 2]")
         assert idx0 < idx1 < idx2
 
     def test_decision_chronological_order(self, tmp_agent_dir):
@@ -176,7 +176,7 @@ class TestScratchpad:
 class TestArtifacts:
     def test_save_and_load(self, tmp_agent_dir):
         path = save_artifact(
-            turn=1,
+            step=1,
             content="## Analysis\nFound 3 functions.",
             tags=["tx", "analysis"],
             summary="TX path analysis",
@@ -185,8 +185,8 @@ class TestArtifacts:
         assert Path(path).is_file()
 
         meta, body = load_artifact(path)
-        assert meta.entry_id == "turn_0001"
-        assert meta.turn == 1
+        assert meta.entry_id == "step_0001"
+        assert meta.step == 1
         assert "tx" in meta.tags
         assert meta.summary == "TX path analysis"
         assert "Found 3 functions" in body
@@ -203,8 +203,8 @@ class TestArtifacts:
 
         index = build_artifact_index(tmp_agent_dir)
         assert len(index) == 3
-        assert index[0].turn == 1
-        assert index[2].turn == 3
+        assert index[0].step == 1
+        assert index[2].step == 3
 
     def test_build_index_empty(self, tmp_agent_dir):
         index = build_artifact_index(tmp_agent_dir)
@@ -215,8 +215,8 @@ class TestSelectArtifacts:
     def _make_index(self, n: int) -> list[ArtifactMeta]:
         return [
             ArtifactMeta(
-                entry_id=f"turn_{i:04d}",
-                turn=i,
+                entry_id=f"step_{i:04d}",
+                step=i,
                 tags=[f"tag{i % 3}"],
                 summary=f"Summary {i}",
                 token_count=100,
@@ -228,7 +228,7 @@ class TestSelectArtifacts:
     def test_recent_first(self):
         index = self._make_index(10)
         selected = select_artifacts(index, [], budget_tokens=500, recent_n=3)
-        turns = [s.turn for s in selected]
+        turns = [s.step for s in selected]
         assert 10 in turns
         assert 9 in turns
         assert 8 in turns
@@ -441,7 +441,7 @@ class TestSessionScopedPaths:
         assert "sess_1" in path
 
         meta, body = load_artifact(path)
-        assert meta.entry_id == "turn_0001"
+        assert meta.entry_id == "step_0001"
         assert "Detail content" in body
 
     def test_session_artifact_index(self, tmp_path):

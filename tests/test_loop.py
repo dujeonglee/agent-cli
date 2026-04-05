@@ -1627,7 +1627,7 @@ class TestScratchpadIntegration:
             suppress_output=True,
             ctx=ctx,
         )
-        # 2 iterations (read_file + complete) → turn_count >= 2
+        # 2 iterations (read_file + complete) → step_count >= 2
         assert ctx._step_count >= 2
 
     def test_tool_result_saved_as_artifact(self, caps, tmp_path):
@@ -1714,7 +1714,7 @@ class TestScratchpadIntegration:
         )
         content = load_scratchpad(tmp_path)
         assert "## Progress" in content
-        assert "turn" in content  # progress entries contain turn markers
+        assert "step" in content  # progress entries contain step markers
 
     def test_no_ctx_no_scratchpad(self, caps):
         """Without ctx, no scratchpad operations (no crash)."""
@@ -1740,7 +1740,7 @@ class TestScratchpadIntegration:
         ctx.init_task()
 
         # Set skill context (simulating inside a skill)
-        ctx.set_skill_context(skill_name="summarize", parent_turn=1)
+        ctx.set_skill_context(skill_name="summarize", parent_step=1)
 
         msgs = ctx.get_messages()
         # Scratchpad should NOT be in messages
@@ -2156,7 +2156,7 @@ class TestSkillSubdirectory:
 
         artifacts_dir = tmp_path / "artifacts"
         if artifacts_dir.exists():
-            md_files = list(artifacts_dir.glob("turn_*.md"))
+            md_files = list(artifacts_dir.glob("step_*.md"))
             assert len(md_files) >= 1  # flat files exist
 
     def test_rglob_indexes_all(self, caps, tmp_path):
@@ -2365,7 +2365,7 @@ class TestRunSkillIntercept:
             capabilities=caps,
             scratchpad_dir=tmp_path,
         )
-        # _step_count starts at 0, so turn_before=0, messages[0:] will be scanned
+        # _step_count starts at 0, so step_before=0, messages[0:] will be scanned
 
         mock_skills = {
             "analyze": Skill(
@@ -2468,17 +2468,17 @@ class TestRunSkillIntercept:
         )
         ctx.init_task()
 
-        # Simulate: turn_before=0, then internal skill created artifacts
+        # Simulate: step_before=0, then internal skill created artifacts
         ctx.begin_turn("q")  # turn 1
         save_artifact(
-            turn=2,
+            step=2,
             content="shell output",
             tags=["shell", "skill:summarize"],
             summary="shell: ls",
             base=tmp_path,
         )
         save_artifact(
-            turn=3,
+            step=3,
             content="optimize result",
             tags=["complete", "skill:optimize"],
             summary="Task completed: Analysis done",
@@ -2487,7 +2487,7 @@ class TestRunSkillIntercept:
 
         from agent_cli.loop import _build_internal_skill_summary
 
-        summary = _build_internal_skill_summary(ctx, turn_before=0)
+        summary = _build_internal_skill_summary(ctx, step_before=0)
         assert "optimize" in summary
         assert "Analysis done" in summary
 
