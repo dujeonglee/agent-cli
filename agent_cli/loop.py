@@ -407,7 +407,12 @@ class AgentLoop:
             )
 
             if self.ctx:
-                self.ctx.add({"role": "assistant", "content": answer})
+                self.ctx.add({
+                    "role": "assistant",
+                    "thought": parsed.thought or "",
+                    "action": "complete",
+                    "action_input": {"result": answer},
+                })
             if not self.suppress_output:
                 render_step("final", answer, self.turn)
             return answer
@@ -424,7 +429,12 @@ class AgentLoop:
                 thought=parsed.thought or "",
             )
             if self.ctx:
-                self.ctx.add({"role": "assistant", "content": echo_answer})
+                self.ctx.add({
+                    "role": "assistant",
+                    "thought": parsed.thought or "",
+                    "action": "complete",
+                    "action_input": {"result": echo_answer},
+                })
             if not self.suppress_output:
                 render_step("final", echo_answer, self.turn)
             return echo_answer
@@ -1140,9 +1150,33 @@ def _append_text_observation(
     llm_text: str,
     obs_msg: str,
 ) -> None:
-    """Text parsing: append assistant + observation + sync ctx."""
+    """Text parsing: append assistant + observation + sync ctx.
+
+    For the in-memory messages list (sent to LLM), raw JSON is kept as-is
+    since it's the format the LLM produced and expects to see.
+
+    For history.jsonl (via ctx.add), assistant messages are parsed into
+    structured dicts so _to_natural_language can convert them properly.
+    """
     messages.append({"role": "assistant", "content": llm_text})
     messages.append({"role": "user", "content": obs_msg})
     if ctx:
-        ctx.add({"role": "assistant", "content": llm_text})
+        ctx.add(_parse_assistant_for_history(llm_text))
         ctx.add({"role": "user", "content": obs_msg})
+
+
+def _parse_assistant_for_history(llm_text: str) -> dict:
+    """Parse raw LLM JSON text into a structured dict for history.jsonl.
+
+    Converts: '{"thought":"...", "action":"...", "action_input":{...}}'
+    Into:     {"role":"assistant", "thought":"...", "action":"...", "action_input":{...}}
+    """
+    try:
+        data = json.loads(llm_text)
+        if isinstance(data, dict) and ("thought" in data or "action" in data):
+            data["role"] = "assistant"
+            return data
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Fallback: plain content
+    return {"role": "assistant", "content": llm_text}
