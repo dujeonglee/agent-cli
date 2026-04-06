@@ -1383,7 +1383,8 @@ class TestSkillStack:
             skill_stack=["optimize"],  # different skill
         )
         # Should NOT contain "recursive" error
-        assert "recursive" not in obs.lower()
+        output = obs.output if obs.success else obs.error
+        assert "recursive" not in output.lower()
 
 
 class TestReadyForReviewTextPath:

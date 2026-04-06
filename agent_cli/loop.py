@@ -8,7 +8,7 @@ import signal
 import sys
 import time
 
-from agent_cli.constants import OBS_SUCCESS, OBS_ERROR, OBS_ERROR_HINT
+from agent_cli.constants import OBS_SUCCESS, OBS_ERROR
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.overflow import is_context_overflow
@@ -431,7 +431,7 @@ class AgentLoop:
             skill_input = (
                 parsed.action_input if isinstance(parsed.action_input, dict) else {}
             )
-            obs = _handle_run_skill(
+            skill_tool_result = _handle_run_skill(
                 skill_input,
                 self.provider_name,
                 self.base_url,
@@ -444,10 +444,17 @@ class AgentLoop:
                 skill_stack=self.skill_stack,
                 graceful_interrupt=self.graceful_interrupt,
             )
+            obs = skill_tool_result.output or skill_tool_result.error
             if not self.suppress_output:
                 render_step("observation", obs, self.turn, tool_name="run_skill")
             obs_msg = f"Observation: {obs}"
-            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+            _append_text_observation(
+                self.messages,
+                self.ctx,
+                llm_text,
+                obs_msg,
+                artifact=skill_tool_result.artifact,
+            )
             self.tools_called.append("run_skill")
             return self._CONTINUE
 
@@ -503,7 +510,7 @@ class AgentLoop:
                 )
 
             # Execute tool (shared logic -- tracks tools_called + history)
-            observation = _execute_single_tool(
+            tool_result = _execute_single_tool(
                 tool_name,
                 tool_input,
                 self.tools_list,
@@ -528,6 +535,10 @@ class AgentLoop:
                 delegate_skill_stack=self.skill_stack,
             )
 
+            observation = (
+                tool_result.output if tool_result.success else tool_result.error
+            )
+
             if not self.suppress_output:
                 render_step(
                     "observation",
@@ -549,9 +560,15 @@ class AgentLoop:
                 )
                 return None
 
-            # Inject observation
+            # Inject observation with structured artifact
             obs_msg = f"Observation: {observation}"
-            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+            _append_text_observation(
+                self.messages,
+                self.ctx,
+                llm_text,
+                obs_msg,
+                artifact=tool_result.artifact,
+            )
             return self._CONTINUE
 
         # 12. Missing action or parse failure -- retry with appropriate hint
@@ -798,15 +815,20 @@ def _handle_run_skill(
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")
-        return OBS_ERROR.format(error=f"run_skill({name}) failed: {e}")
+        from agent_cli.tools.result import ToolResult
+
+        return ToolResult(False, error=f"run_skill({name}) failed: {e}")
 
     if not skill_result.success:
         _debug_log(f"run_skill({name}) failed: {skill_result.error}")
 
     skill_header = f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
     body = skill_result.output or skill_result.error or "(skill returned no result)"
-    artifact_ref = f"\n→ {skill_result.artifact}" if skill_result.artifact else ""
-    return OBS_SUCCESS.format(result=f"{skill_header}{body}{artifact_ref}")
+    obs = OBS_SUCCESS.format(result=f"{skill_header}{body}")
+
+    from agent_cli.tools.result import ToolResult
+
+    return ToolResult(skill_result.success, output=obs, artifact=skill_result.artifact)
 
 
 def _build_review_observation(query: str, summary: str, ctx=None) -> str:
@@ -854,10 +876,10 @@ def _execute_single_tool(
     delegate_suppress: bool = False,
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
-) -> str:
-    """Execute a single tool, track history, and return observation string."""
+):
+    """Execute a single tool, track history, and return ToolResult."""
     _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
-    obs = _do_execute_tool(
+    result = _do_execute_tool(
         tool_name,
         tool_input,
         tools_list,
@@ -879,6 +901,8 @@ def _execute_single_tool(
         delegate_skill_stack=delegate_skill_stack,
     )
 
+    obs = result.output if result.success else result.error
+
     # Track tool usage
     if tools_called is not None:
         tools_called.append(tool_name)
@@ -892,7 +916,7 @@ def _execute_single_tool(
             }
         )
 
-    return obs
+    return result
 
 
 # Repeated call detection: if the same tool is called with identical input
@@ -961,8 +985,10 @@ def _do_execute_tool(
     delegate_suppress: bool = False,
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
-) -> str:
-    """Core tool execution logic (no tracking)."""
+):
+    """Core tool execution logic (no tracking). Returns ToolResult."""
+    from agent_cli.tools.result import ToolResult
+
     # PreToolUse hook
     input_dict = (
         tool_input if isinstance(tool_input, dict) else {"raw": str(tool_input)}
@@ -974,8 +1000,9 @@ def _do_execute_tool(
             "PreToolUse", tool_name, input_dict, hooks_config=hooks_config
         )
         if not pre_result.allowed:
-            return OBS_ERROR.format(
-                error=f"Blocked by PreToolUse hook: {pre_result.stderr or 'hook denied'}"
+            return ToolResult(
+                False,
+                error=f"Blocked by PreToolUse hook: {pre_result.stderr or 'hook denied'}",
             )
         if pre_result.updated_input is not None:
             tool_input = pre_result.updated_input
@@ -1010,34 +1037,31 @@ def _do_execute_tool(
             session=delegate_session,
             skill_stack=delegate_skill_stack,
         )
-        if result.success:
-            _run_post_hook(hooks_config, tool_name, input_dict, result.output)
-            return result.output
-        else:
-            obs = OBS_ERROR_HINT.format(
-                error=result.error, hint="Check task description and try again."
-            )
-            _run_post_hook(hooks_config, tool_name, input_dict, obs, success=False)
-            return obs
+        _run_post_hook(
+            hooks_config,
+            tool_name,
+            input_dict,
+            result.output if result.success else result.error,
+            success=result.success,
+        )
+        return result
 
     if tool_name in tools_list:
         valid, err = validate_tool_input(tool_name, tool_input)
         if not valid:
-            return OBS_ERROR_HINT.format(error=err, hint="Fix action_input and retry.")
+            return ToolResult(False, error=f"{err} Fix action_input and retry.")
         result = execute_tool(tool_name, tool_input)
-        if result.success:
-            obs = OBS_SUCCESS.format(result=result.output)
-            _run_post_hook(hooks_config, tool_name, input_dict, obs)
-            return obs
-        else:
-            obs = OBS_ERROR_HINT.format(
-                error=result.error, hint="Check parameters and try again."
-            )
-            _run_post_hook(hooks_config, tool_name, input_dict, obs, success=False)
-            return obs
+        _run_post_hook(
+            hooks_config,
+            tool_name,
+            input_dict,
+            result.output if result.success else result.error,
+            success=result.success,
+        )
+        return result
 
     avail = ", ".join(tools_list) + (", delegate" if include_delegate else "")
-    return OBS_ERROR.format(error=f"Unknown tool '{tool_name}'. Available: {avail}")
+    return ToolResult(False, error=f"Unknown tool '{tool_name}'. Available: {avail}")
 
 
 def _run_post_hook(hooks_config, tool_name, input_dict, obs, success=True):
@@ -1060,6 +1084,7 @@ def _append_text_observation(
     ctx,
     llm_text: str,
     obs_msg: str,
+    artifact: str = "",
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
 
@@ -1073,7 +1098,10 @@ def _append_text_observation(
     messages.append({"role": "user", "content": obs_msg})
     if ctx:
         ctx.add(_parse_assistant_for_history(llm_text))
-        ctx.add({"role": "user", "content": obs_msg})
+        obs_entry = {"role": "user", "content": obs_msg}
+        if artifact:
+            obs_entry["artifact"] = artifact
+        ctx.add(obs_entry)
 
 
 def _parse_assistant_for_history(llm_text: str) -> dict:
