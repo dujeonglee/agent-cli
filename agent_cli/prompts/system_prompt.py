@@ -92,13 +92,11 @@ _DELEGATE_INLINE = """\
   Always use the "tasks" array format. Single item = sync, multiple = parallel.
   Context modes per task:
   - "none" (default): subagent starts with no context. Task must be self-contained.
-  - "fork": subagent receives a copy of the current conversation context.
-  - "inherit": subagent shares your context directly (single task only, not parallel).
+  - "fork": subagent receives a copy of the current conversation history.
   - "tools": optionally restrict which tools the subagent can use.
   - "agent": optionally specify a predefined agent from .agent-cli/agents/{name}.md.
     The agent file defines the subagent's role/principles and can set allowed-tools/model.
   Constraints:
-  - inherit cannot be used with multiple tasks.
   - Multiple tasks run in PARALLEL. If task B depends on task A's result,
     call delegate twice: first A, then use A's result to call B.
   Examples:

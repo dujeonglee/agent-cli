@@ -221,8 +221,8 @@ DELEGATE_TOOL_SCHEMA = ToolSchema(
                         },
                         "context": {
                             "type": "string",
-                            "enum": ["none", "fork", "inherit"],
-                            "description": "none (independent), fork (copy context), inherit (share context)",
+                            "enum": ["none", "fork"],
+                            "description": "none (independent), fork (copy conversation history)",
                         },
                         "tools": {
                             "type": "array",

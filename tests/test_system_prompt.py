@@ -68,7 +68,6 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
         assert "none" in prompt
         assert "fork" in prompt
-        assert "inherit" in prompt
 
     def test_delegate_guide_mentions_parallel(self):
         prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)

@@ -1,6 +1,6 @@
 """In-process subagent delegation tool.
 
-Supports context modes: none (independent), fork (copy), inherit (shared).
+Supports context modes: none (independent), fork (copy conversation history).
 Uses tasks array API: single item = sync, multiple items = parallel (threading).
 """
 
@@ -354,7 +354,7 @@ def _run_single(
     delegate_dir_name = _generate_delegate_dir_name(agent_name or "task")
     delegate_dir = parent_session_dir / delegate_dir_name
 
-    # Create context based on mode (inherit removed)
+    # Create context based on mode
     if context_mode == "fork":
         if parent_ctx is None:
             return ToolResult(
@@ -363,9 +363,6 @@ def _run_single(
         # Fork: copy parent history.jsonl to delegate dir
         parent_ctx.fork_history_to(delegate_dir)
         ctx = ContextManager(session_dir=delegate_dir, resume=True)
-    elif context_mode == "inherit":
-        # inherit removed — treat as none with warning
-        ctx = ContextManager(session_dir=delegate_dir)
     else:
         # none: fresh context
         ctx = ContextManager(session_dir=delegate_dir)
@@ -451,14 +448,6 @@ def _run_parallel(
     stop_event=None,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading."""
-    # Validate: inherit not allowed with multiple tasks
-    for spec in task_specs:
-        if spec.get("context", "none") == "inherit":
-            return ToolResult(
-                False,
-                error="Delegation rejected: inherit mode cannot be used with multiple tasks",
-            )
-
     results: list[ToolResult | None] = [None] * len(task_specs)
     if stop_event is None:
         stop_event = threading.Event()
