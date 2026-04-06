@@ -311,6 +311,7 @@ def _run_single(
     suppress_output: bool = False,
     session=None,
     skill_stack: list[str] | None = None,
+    agent_stack: list[str] | None = None,
     stop_event=None,
 ) -> ToolResult:
     """Execute a single delegate task."""
@@ -322,6 +323,13 @@ def _run_single(
     if provider is None or capabilities is None:
         return ToolResult(
             False, error="Delegation rejected: missing provider/capabilities"
+        )
+
+    # Agent stack: prevent recursive calls (A→B→A)
+    if agent_name and agent_stack and agent_name in agent_stack:
+        return ToolResult(
+            False,
+            error=f"Recursive agent call blocked: '{agent_name}' is already in the call stack {agent_stack}.",
         )
 
     # ── Agent loading ──
@@ -382,6 +390,8 @@ def _run_single(
         ctx=ctx,
         session=session,
         skill_stack=skill_stack,
+        agent_stack=agent_stack,
+        agent_name=agent_name,
         stop_event=stop_event,
         agent_role=agent_role,
     )
@@ -437,6 +447,7 @@ def _run_parallel(
     timeout: int = 300,
     session=None,
     skill_stack: list[str] | None = None,
+    agent_stack: list[str] | None = None,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading."""
     # Validate: inherit not allowed with multiple tasks
@@ -470,6 +481,7 @@ def _run_parallel(
             suppress_output=True,  # Always suppress for parallel
             session=session,
             skill_stack=skill_stack,
+            agent_stack=agent_stack,
             stop_event=stop_event,
         )
 
@@ -501,6 +513,7 @@ def tool_delegate(
     suppress_output: bool = False,
     session=None,
     skill_stack: list[str] | None = None,
+    agent_stack: list[str] | None = None,
 ) -> ToolResult:
     """Delegate tasks to in-process subagents.
 
@@ -526,6 +539,7 @@ def tool_delegate(
         timeout=timeout,
         session=session,
         skill_stack=skill_stack,
+        agent_stack=agent_stack,
     )
 
     if len(tasks) == 1:

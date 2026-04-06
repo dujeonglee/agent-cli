@@ -86,10 +86,12 @@ class AgentLoop:
         hooks_config: dict | None = None,
         skill_name: str = "",
         skill_stack: list[str] | None = None,
+        agent_stack: list[str] | None = None,
         skill_args: str = "",
         graceful_interrupt: bool = False,
         stop_event=None,
         agent_role: str = "",
+        agent_name: str = "",
     ):
         self.query = query
         self.provider = provider
@@ -124,6 +126,12 @@ class AgentLoop:
         if skill_name:
             skill_stack = [*skill_stack, skill_name]
         self.skill_stack = skill_stack
+        # Build agent stack for recursive call prevention
+        if agent_stack is None:
+            agent_stack = []
+        if agent_name:
+            agent_stack = [*agent_stack, agent_name]
+        self.agent_stack = agent_stack
 
         # Loop state
         self.turn = 0
@@ -532,6 +540,7 @@ class AgentLoop:
                 delegate_suppress=self.suppress_output,
                 delegate_session=self.session,
                 delegate_skill_stack=self.skill_stack,
+                delegate_agent_stack=self.agent_stack,
             )
 
             observation = (
@@ -637,10 +646,12 @@ def run_loop(
     hooks_config: dict | None = None,
     skill_name: str = "",
     skill_stack: list[str] | None = None,
+    agent_stack: list[str] | None = None,
     skill_args: str = "",
     graceful_interrupt: bool = False,
     stop_event=None,
     agent_role: str = "",
+    agent_name: str = "",
 ) -> str | None:
     """Run the ReAct agent loop.
 
@@ -666,10 +677,12 @@ def run_loop(
         hooks_config=hooks_config,
         skill_name=skill_name,
         skill_stack=skill_stack,
+        agent_stack=agent_stack,
         skill_args=skill_args,
         graceful_interrupt=graceful_interrupt,
         stop_event=stop_event,
         agent_role=agent_role,
+        agent_name=agent_name,
     ).run()
 
 
@@ -875,6 +888,7 @@ def _execute_single_tool(
     delegate_suppress: bool = False,
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
+    delegate_agent_stack: list[str] | None = None,
 ):
     """Execute a single tool: hooks, execution, tracking. Returns ToolResult."""
     from agent_cli.tools.result import ToolResult
@@ -928,6 +942,7 @@ def _execute_single_tool(
             suppress_output=delegate_suppress,
             session=delegate_session,
             skill_stack=delegate_skill_stack,
+            agent_stack=delegate_agent_stack,
         )
         if hooks_config:
             from agent_cli.hooks import run_hooks
