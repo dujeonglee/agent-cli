@@ -422,7 +422,7 @@ class AgentLoop:
             questions = _extract_questions(parsed.action_input)
             if questions:
                 user_response = _handle_ask(questions, self.suppress_output)
-                obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
+                obs_msg = f"Observation: User responded:\n{user_response}"
                 _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
                 return self._CONTINUE
 
@@ -446,7 +446,7 @@ class AgentLoop:
             )
             if not self.suppress_output:
                 render_step("observation", obs, self.turn, tool_name="run_skill")
-            obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
+            obs_msg = f"Observation: {obs}"
             _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
             self.tools_called.append("run_skill")
             return self._CONTINUE
@@ -550,7 +550,7 @@ class AgentLoop:
                 return None
 
             # Inject observation
-            obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
+            obs_msg = f"Observation: {observation}"
             _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
             return self._CONTINUE
 
