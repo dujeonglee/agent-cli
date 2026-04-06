@@ -826,7 +826,7 @@ def _handle_run_skill(
         from agent_cli.providers import create_provider
 
         provider = create_provider(provider_name, base_url, api_key)
-        result = execute_skill(
+        result, skill_dir_name = execute_skill(
             skill=skill,
             arguments=arguments,
             provider=provider,
@@ -843,6 +843,7 @@ def _handle_run_skill(
         )
     except Exception as e:
         result = None
+        skill_dir_name = ""
         _debug_log(f"run_skill({name}) exception: {e}")
         obs = OBS_ERROR.format(error=f"run_skill({name}) failed: {e}")
     else:
@@ -854,7 +855,8 @@ def _handle_run_skill(
             f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
         )
         body = result or "(skill returned no result)"
-        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}")
+        artifact_ref = f"\n→ {skill_dir_name}/" if skill_dir_name else ""
+        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}{artifact_ref}")
     finally:
         pass
 

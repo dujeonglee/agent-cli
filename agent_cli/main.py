@@ -210,7 +210,7 @@ def _dispatch_skill(
     from agent_cli.render import render_status
 
     render_status("running", f"Running skill: {cmd_name}...")
-    result = execute_skill(
+    result, skill_dir_name = execute_skill(
         skill=skill,
         arguments=arguments,
         provider=llm_provider,
@@ -229,9 +229,15 @@ def _dispatch_skill(
         graceful_interrupt=graceful_interrupt,
     )
 
-    # Record skill result in context
+    # Record skill result in context with artifact path
     if ctx and result:
-        ctx.add({"role": "assistant", "content": result})
+        ctx.add({
+            "role": "user",
+            "tool": "run_skill",
+            "args": {"name": cmd_name, "arguments": arguments},
+            "content": result,
+            "artifact": f"{skill_dir_name}/" if skill_dir_name else "",
+        })
 
     return result
 

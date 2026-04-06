@@ -64,7 +64,7 @@ class TestToolIntersection:
         """Empty intersection → execution rejected with error."""
         skill = _make_skill(allowed_tools=["write_file", "fetch"])
 
-        result = execute_skill(
+        result, skill_dir = execute_skill(
             skill=skill,
             arguments="test",
             provider=MagicMock(),
@@ -75,6 +75,7 @@ class TestToolIntersection:
         )
         assert result is not None
         assert "[error]" in result
+        assert skill_dir == ""
         assert "no tools in common" in result
 
     def test_no_parent_tools_uses_skill_tools(self, caps, ctx):

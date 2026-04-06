@@ -108,7 +108,8 @@ def execute_skill(
             return (
                 f"[error] Skill '{skill.name}' cannot run: "
                 f"no tools in common between skill ({skill_tools}) "
-                f"and parent ({parent_str})"
+                f"and parent ({parent_str})",
+                "",
             )
     elif not effective_tools and parent_tools:
         # Skill has no tool restriction → use parent's tools
@@ -125,6 +126,7 @@ def execute_skill(
 
     # Skill creates its own subdir with history.jsonl
     skill_ctx = None
+    skill_dir_name = ""
     if ctx:
         import os
         import time as _time
@@ -137,7 +139,7 @@ def execute_skill(
         skill_session_dir = ctx.session_dir / skill_dir_name
         skill_ctx = ContextManager(session_dir=skill_session_dir)
 
-    return run_loop(
+    result = run_loop(
         query=prompt,
         provider=provider,
         capabilities=capabilities,
@@ -160,3 +162,13 @@ def execute_skill(
         graceful_interrupt=graceful_interrupt,
         agent_role=parent_role,
     )
+
+    # Save result.md in skill subdir
+    if skill_ctx and skill_dir_name and result:
+        try:
+            result_path = skill_ctx.session_dir / "result.md"
+            result_path.write_text(result, encoding="utf-8")
+        except Exception:
+            pass
+
+    return result, skill_dir_name

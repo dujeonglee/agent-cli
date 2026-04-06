@@ -667,7 +667,7 @@ class TestRunSkillTool:
         )
         with patch("agent_cli.skills.load_skills", return_value=mock_skills):
             with patch(
-                "agent_cli.skills.executor.execute_skill", return_value="Summary done"
+                "agent_cli.skills.executor.execute_skill", return_value=("Summary done", "")
             ):
                 result = tool_run_skill(
                     {"name": "summarize", "arguments": "README.md"},
