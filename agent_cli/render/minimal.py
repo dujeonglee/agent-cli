@@ -56,7 +56,8 @@ class MinimalRenderer(Renderer):
         self.con.print()
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
-        self.con.print(f"  ⚡ {tool_name} → {tool_input}", highlight=False)
+        display = tool_input[:200] + "..." if len(tool_input) > 200 else tool_input
+        self.con.print(f"  ⚡ {tool_name} → {display}", highlight=False, markup=False)
 
     def observation(
         self, content: str, turn: int, tool_name: str | None = None

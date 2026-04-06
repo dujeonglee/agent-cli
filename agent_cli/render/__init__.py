@@ -67,18 +67,31 @@ def render_step(
     tool_name: str | None = None,
     tool_input: str | None = None,
 ) -> None:
-    if step_type == "thought":
-        _renderer.thought(content, turn)
-    elif step_type == "action":
-        _renderer.action(tool_name or "", tool_input or "", turn)
-    elif step_type == "observation":
-        _renderer.observation(content, turn, tool_name)
-    elif step_type == "final":
-        _renderer.final(content, turn)
-    elif step_type == "error":
-        _renderer.error(content, turn)
-    else:
-        _renderer.status("info", content, turn)
+    try:
+        if step_type == "thought":
+            _renderer.thought(content, turn)
+        elif step_type == "action":
+            _renderer.action(tool_name or "", tool_input or "", turn)
+        elif step_type == "observation":
+            _renderer.observation(content, turn, tool_name)
+        elif step_type == "final":
+            _renderer.final(content, turn)
+        elif step_type == "error":
+            _renderer.error(content, turn)
+        else:
+            _renderer.status("info", content, turn)
+    except Exception:
+        # Fallback: print without markup to avoid Rich parsing crashes
+        try:
+            console.print(
+                f"  [{step_type}] {tool_name or ''}: {content[:200]}",
+                highlight=False,
+                markup=False,
+            )
+        except Exception:
+            import sys
+
+            print(f"  [{step_type}] (render failed)", file=sys.stderr)
 
 
 def render_raw(text: str, turn: int, verbose: bool) -> None:
