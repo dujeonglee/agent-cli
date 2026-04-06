@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-04-06
+> 최종 업데이트: 2026-04-07
 > 버전: 2.0.0-dev
-> 총 소스: 8,396 LOC (47 Python 파일) + 10,410 LOC 테스트 (33 파일)
-> 총 테스트: 654 유닛 + 62 통합 (88 ollama_integration deselected)
+> 총 소스: 7,827 LOC (47 Python 파일) + 9,356 LOC 테스트 (32 파일)
+> 총 테스트: 624 유닛 (88 ollama_integration deselected)
 
 ---
 
@@ -42,7 +42,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (879)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
+├── main.py                  (890)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
@@ -50,12 +50,13 @@ agent_cli/
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1182) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context)
+├── loop.py                  (1094) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context)
 ├── render/                         플러그인 가능 렌더링 시스템
-│   ├── __init__.py          (158)  렌더러 디스패치 + load_renderer_by_name + 하위 호환 API
-│   ├── base.py              (91)   Renderer ABC (dispatch_progress 포함) (14개 메서드 인터페이스)
-│   ├── minimal.py           (212)  MinimalRenderer (인덴트 스타일, spinner)
-│   └── fancy.py             (378)  FancyRenderer (컬러 박스, 애니메이션)
+│   ├── __init__.py          (171)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
+│   ├── base.py              (91)   Renderer ABC (dispatch_progress 포함) (15개 메서드 인터페이스)
+│   ├── minimal.py           (213)  MinimalRenderer (인덴트 스타일, spinner, markup 방어)
+│   ├── fancy.py             (378)  FancyRenderer (컬러 박스, 애니메이션)
+│   └── adaptive.py          (176)  SimpleRenderer (터미널 크기 적응형)
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
@@ -71,27 +72,25 @@ agent_cli/
 │   ├── json_repair.py       (175)  깨진 JSON 복구 (6단계 파이프라인)
 │
 ├── tools/                          도구 시스템
-│   ├── __init__.py          (67)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
-│   ├── result.py            (14)   ToolResult 데이터클래스 (모든 도구의 표준 반환 타입)
-│   ├── registry.py          (478)  스키마 정의, 검증, API 형식 변환, inline 가이드
+│   ├── __init__.py          (66)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
+│   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
+│   ├── registry.py          (455)  스키마 정의, 검증, inline 가이드
 │   ├── run_skill.py         (66)   run_skill 도구 (LLM 자동 스킬 호출) → ToolResult
-│   (read_artifact.py 삭제됨 — read_file로 대체)
 │   ├── read_file.py         (102)  파일 읽기 + hashline 포맷팅 + 부분 읽기 → ToolResult
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
 │   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
-│   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 (재귀, 에러 힌트)
-│   ├── delegate.py          (538)  in-process 서브에이전트 위임 (tasks 배열, fork/none 모드, 병렬 실행, delegate subdir)
-│   ├── context.py           (63)   read_context 도구 (세션 이력 조회) → ToolResult
-│   (truncation.py 삭제됨 — tool output은 잘림 없이 그대로 LLM에 전달)
+│   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
+│   ├── delegate.py          (560)  in-process 서브에이전트 (fork/none, 병렬, subdir, agent_stack, stop_event)
+│   ├── context.py           (72)   read_context 도구 (history.jsonl 기반 세션 이력 조회)
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (235)  ContextManager (FIFO + history.jsonl + 자연어 변환)
+│   ├── manager.py           (237)  ContextManager (FIFO + history.jsonl + 자연어 변환)
 │   (scratchpad.py 삭제됨 — history.jsonl로 대체)
-│   └── session.py           (214)  프로젝트 로컬 세션 영속화 (sessions/{id}/ 구조)
+│   └── session.py           (124)  세션 메타데이터 (session.jsonl: id, workspace, updated_at, query)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
@@ -102,7 +101,7 @@ agent_cli/
 │   ├── __init__.py          (7)    re-export
 │   ├── models.py            (21)   Skill 데이터 모델 (model/context/hooks/invocation)
 │   ├── loader.py            (103)  스킬 파일 검색/파싱 (ResourceLoader 기반, 캐싱)
-│   ├── executor.py          (162)  인자 치환 + 도구 교집합 + Role 상속 + skill subdir 생성
+│   ├── executor.py          (181)  인자 치환 + 도구 교집합 + Role 상속 + skill subdir + stop_event
 │   └── builtin/                    패키지 내장 스킬
 │       ├── create-skill.md         스킬 생성 메타 스킬
 │       ├── create-agent.md         에이전트 생성 메타 스킬
@@ -147,14 +146,13 @@ agent-cli.py                        하위 호환 래퍼 (4줄)
 │          ││        ││       ││        ││        │
 │anthropic ││react_  ││regis- ││manager ││system_ │
 │openai_   ││parser  ││try    ││overflow││prompt  │
-│compat    ││json_   ││read_  ││token_  ││compres-│
-│ollama    ││repair  ││write_ ││estima- ││sion_   │
-│compat    ││        ││edit_  ││tor     ││prompt  │
-│base      ││        ││shell  ││        ││        │
+│compat    ││json_   ││read_  ││token_  ││        │
+│ollama    ││repair  ││write_ ││estima- ││        │
+│compat    ││        ││edit_  ││tor     ││        │
+│base      ││        ││shell  ││session ││        │
+│          ││        ││fetch  ││        ││        │
 │          ││        ││dele-  ││        ││        │
 │          ││        ││gate   ││        ││        │
-│          ││        ││trun-  ││        ││        │
-│          ││        ││cation ││        ││        │
 └──────────┘└────────┘└───────┘└────────┘└────────┘
        │                  │         │
        ▼                  ▼         ▼
@@ -507,7 +505,8 @@ LLM 호출 시:
 | `edit_file` | hashline 기반 파일 편집 | `path`, `edits[]` | 편집 확인 메시지 |
 | `shell` | 셸 명령 실행 | `command` | stdout + stderr + exit code |
 | `delegate` | in-process 서브에이전트 위임 | `tasks[]` (각 항목: task, context?, tools?, agent?) | 구조화된 결과 (output + activity log + duration) + delegate subdir 경로, 복수 시 병렬 |
-| `read_context` | 이전 세션 이력 조회 | `mode` | 세션 목록 또는 상세 이력 |
+| `read_context` | 이전 세션 이력 조회 | `mode` | 세션 목록 또는 history.jsonl 기반 상세 |
+| `fetch` | 웹 페이지 fetch → 마크다운 변환 | `url` | 재귀 링크 추출, 에러 힌트 |
 
 **가상 도구** (`VIRTUAL_TOOLS`) — loop.py에서 인터셉트, 도구 설명에서 제외:
 

@@ -8,7 +8,7 @@ import signal
 import sys
 import time
 
-from agent_cli.constants import OBS_SUCCESS, OBS_ERROR
+from agent_cli.constants import OBS_SUCCESS
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.overflow import is_context_overflow
@@ -494,9 +494,7 @@ class AgentLoop:
                     self.turn,
                     tool_name="ready_for_review",
                 )
-            obs_msg = (
-                f"Observation: {obs}\n\nReview your work and respond with JSON only."
-            )
+            obs_msg = f"Observation: {obs}"
             _append_observation(self.messages, self.ctx, llm_text, obs_msg)
             return self._CONTINUE
 
@@ -793,25 +791,34 @@ def _handle_run_skill(
         arguments = str(arguments) if arguments else ""
 
     if not name:
-        return OBS_ERROR.format(error="run_skill: 'name' is required.")
+        from agent_cli.tools.result import ToolResult
+
+        return ToolResult(False, error="run_skill: 'name' is required.")
 
     # Skill stack: prevent recursive calls (A→B→A)
     if skill_stack and name in skill_stack:
-        return OBS_ERROR.format(
-            error=f"Recursive skill call blocked: '{name}' is already in the call stack {skill_stack}."
+        from agent_cli.tools.result import ToolResult
+
+        return ToolResult(
+            False,
+            error=f"Recursive skill call blocked: '{name}' is already in the call stack {skill_stack}.",
         )
 
     skills = load_skills()
     if name not in skills:
+        from agent_cli.tools.result import ToolResult
+
         available = ", ".join(skills.keys()) if skills else "(none)"
-        return OBS_ERROR.format(
-            error=f"Skill '{name}' not found. Available: {available}"
+        return ToolResult(
+            False, error=f"Skill '{name}' not found. Available: {available}"
         )
 
     skill = skills[name]
     if skill.disable_model_invocation:
-        return OBS_ERROR.format(
-            error=f"Skill '{name}' is user-only (disable-model-invocation)."
+        from agent_cli.tools.result import ToolResult
+
+        return ToolResult(
+            False, error=f"Skill '{name}' is user-only (disable-model-invocation)."
         )
 
     render_status("running", f"Running skill: {name}...")

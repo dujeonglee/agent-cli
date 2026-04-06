@@ -1362,7 +1362,8 @@ class TestSkillStack:
             parent_skill_name="",
             skill_stack=["optimize"],  # already in stack
         )
-        assert "recursive" in obs.lower() or "already" in obs.lower()
+        error = obs.error if hasattr(obs, 'error') else str(obs)
+        assert "recursive" in error.lower() or "already" in error.lower()
 
     def test_skill_stack_allows_different(self, caps, tmp_path):
         """Different skills in stack → allowed (A→B ok)."""
