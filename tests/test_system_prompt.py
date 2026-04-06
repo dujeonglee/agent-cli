@@ -53,7 +53,7 @@ class TestBuildSystemPrompt:
         assert "## Hashline" not in prompt
 
     def test_delegate_included(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert "delegate" in prompt.lower()
         assert "tasks" in prompt
 
@@ -61,25 +61,25 @@ class TestBuildSystemPrompt:
         "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
     )
     def test_delegate_excluded(self, mock_git_ctx):
-        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=False)
+        prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "delegate" not in prompt.split("## Available Tools")[1]
 
     def test_delegate_guide_mentions_context_modes(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert "none" in prompt
         assert "fork" in prompt
 
     def test_delegate_guide_mentions_parallel(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert "parallel" in prompt.lower()
 
     def test_delegate_guide_mentions_tasks_array(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert '"tasks"' in prompt
 
     def test_available_agents_shown_with_delegate(self):
         """When delegate is included, available agents are listed."""
-        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=True)
+        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert "Available Agents" in prompt
         assert "explorer" in prompt  # built-in agent
 
@@ -87,7 +87,7 @@ class TestBuildSystemPrompt:
         "agent_cli.prompts.system_prompt._build_git_context_section", return_value=""
     )
     def test_no_agents_without_delegate(self, mock_git):
-        prompt = build_system_prompt(_make_caps(), ["shell"], include_delegate=False)
+        prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "Available Agents" not in prompt
 
     def test_json_format_present(self):

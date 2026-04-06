@@ -25,6 +25,7 @@ TOOLS: dict[str, Any] = {
     "edit_file": tool_edit_file,
     "shell": tool_shell,
     "read_context": tool_read_context,
+    "delegate": lambda args: ToolResult(True, output="(delegate: intercepted by loop)"),
     # Virtual tools — intercepted by the loop before execute_tool
     "complete": lambda args: ToolResult(
         True,
@@ -41,7 +42,7 @@ TOOLS: dict[str, Any] = {
 
 # Virtual tool names — intercepted by loop, excluded from tool descriptions
 VIRTUAL_TOOLS: frozenset[str] = frozenset(
-    {"complete", "ask", "run_skill", "ready_for_review"}
+    {"complete", "ask", "run_skill", "ready_for_review", "delegate"}
 )
 
 __all__ = [

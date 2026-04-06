@@ -120,8 +120,10 @@ class AgentLoop:
         self.agent_role = agent_role
 
         # Derived state
-        self.include_delegate = depth < max_depth
         self.tools_list = active_tools or list(TOOLS.keys())
+        # Remove "delegate" when depth >= max_depth
+        if depth >= max_depth and "delegate" in self.tools_list:
+            self.tools_list = [t for t in self.tools_list if t != "delegate"]
         # Remove "ask" in non-interactive mode (no ctx or suppress_output)
         if (not ctx or suppress_output) and "ask" in self.tools_list:
             self.tools_list = [t for t in self.tools_list if t != "ask"]
@@ -232,7 +234,6 @@ class AgentLoop:
         self.system = build_system_prompt(
             capabilities=self.capabilities,
             active_tools=self.tools_list,
-            include_delegate=self.include_delegate,
             skill_stack=self.skill_stack,
             agent_role=self.agent_role,
             session_dir=session_dir,
@@ -527,7 +528,6 @@ class AgentLoop:
                 tool_name,
                 tool_input,
                 self.tools_list,
-                self.include_delegate,
                 self.capabilities,
                 self.provider_name,
                 self.model,
@@ -887,7 +887,6 @@ def _execute_single_tool(
     tool_name: str,
     tool_input,
     tools_list: list[str],
-    include_delegate: bool,
     capabilities: ModelCapabilities,
     provider_name: str = "",
     model: str = "",
@@ -932,8 +931,8 @@ def _execute_single_tool(
         if pre_result.updated_input is not None:
             tool_input = pre_result.updated_input
 
-    # Delegate tool
-    if tool_name == "delegate" and include_delegate:
+    # Delegate tool (intercepted here due to complex kwargs)
+    if tool_name == "delegate":
         raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
         if "tasks" not in raw and "task" in raw:
             raw = {
@@ -991,7 +990,7 @@ def _execute_single_tool(
                     tool_result=_obs,
                 )
     else:
-        avail = ", ".join(tools_list) + (", delegate" if include_delegate else "")
+        avail = ", ".join(tools_list)
         result = ToolResult(
             False, error=f"Unknown tool '{tool_name}'. Available: {avail}"
         )

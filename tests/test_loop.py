@@ -1178,7 +1178,7 @@ class TestAgentLoopClass:
             depth=0,
             max_depth=2,
         )
-        assert loop.include_delegate is True
+        # include_delegate removed — delegate in tools_list
         assert "complete" in loop.tools_list
 
     def test_should_continue(self, caps):

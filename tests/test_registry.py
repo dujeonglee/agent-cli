@@ -1,6 +1,7 @@
 """Tests for tools/registry."""
 
 from agent_cli.tools.registry import (
+    TOOL_SCHEMAS,
     validate_tool_input,
     get_tool_descriptions,
     convert_to_anthropic_tools,
@@ -94,12 +95,12 @@ class TestConvertToAnthropicTools:
         assert "ready_for_review" in names
 
     def test_with_delegate(self):
-        tools = convert_to_anthropic_tools(["shell"], include_delegate=True)
+        tools = convert_to_anthropic_tools(["shell", "delegate"])
         names = {t["name"] for t in tools}
         assert "delegate" in names
 
     def test_without_delegate(self):
-        tools = convert_to_anthropic_tools(["shell"], include_delegate=False)
+        tools = convert_to_anthropic_tools(["shell"])
         names = {t["name"] for t in tools}
         assert "delegate" not in names
 
@@ -128,52 +129,52 @@ class TestConvertToOpenAITools:
         assert "parameters" in t["function"]
 
     def test_with_delegate(self):
-        tools = convert_to_openai_tools(["shell"], include_delegate=True)
+        tools = convert_to_openai_tools(["shell", "delegate"])
         names = {t["function"]["name"] for t in tools}
         assert "delegate" in names
 
 
 class TestDelegateSchema:
     def test_delegate_has_tasks_param(self):
-        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+        
 
-        props = DELEGATE_TOOL_SCHEMA.parameters["properties"]
+        props = TOOL_SCHEMAS["delegate"].parameters["properties"]
         assert "tasks" in props
         assert props["tasks"]["type"] == "array"
 
     def test_delegate_tasks_is_array_of_objects(self):
-        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+        
 
-        items = DELEGATE_TOOL_SCHEMA.parameters["properties"]["tasks"]["items"]
+        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
         assert items["type"] == "object"
         assert "task" in items["properties"]
         assert "context" in items["properties"]
         assert "tools" in items["properties"]
 
     def test_delegate_tasks_required(self):
-        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+        
 
-        assert "tasks" in DELEGATE_TOOL_SCHEMA.parameters["required"]
+        assert "tasks" in TOOL_SCHEMAS["delegate"].parameters["required"]
 
     def test_delegate_no_top_level_task(self):
-        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+        
 
-        props = DELEGATE_TOOL_SCHEMA.parameters["properties"]
+        props = TOOL_SCHEMAS["delegate"].parameters["properties"]
         assert "task" not in props  # Only inside tasks array items
 
     def test_delegate_schema_has_agent_field(self):
-        """AG-29: DELEGATE_TOOL_SCHEMA items have agent field."""
-        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+        """AG-29: TOOL_SCHEMAS["delegate"] items have agent field."""
+        
 
-        items = DELEGATE_TOOL_SCHEMA.parameters["properties"]["tasks"]["items"]
+        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
         assert "agent" in items["properties"]
         assert items["properties"]["agent"]["type"] == "string"
 
     def test_delegate_schema_agent_not_required(self):
         """AG-30: agent field is not in required list."""
-        from agent_cli.tools.registry import DELEGATE_TOOL_SCHEMA
+        
 
-        items = DELEGATE_TOOL_SCHEMA.parameters["properties"]["tasks"]["items"]
+        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
         assert "agent" not in items["required"]
 
 

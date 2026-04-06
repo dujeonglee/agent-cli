@@ -196,51 +196,49 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["url"],
         },
     ),
-}
-
-
-DELEGATE_TOOL_SCHEMA = ToolSchema(
-    name="delegate",
-    description=(
-        "Delegate tasks to subagents. "
-        "Single task = sync, multiple tasks = parallel. "
-        "Use context mode to control what the subagent knows."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "tasks": {
-                "type": "array",
-                "description": "List of tasks. Single item = sync, multiple = parallel.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": "Task description for the subagent",
+    "delegate": ToolSchema(
+        name="delegate",
+        description=(
+            "Delegate tasks to subagents. "
+            "Single task = sync, multiple tasks = parallel. "
+            "Use context mode to control what the subagent knows."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "description": "List of tasks. Single item = sync, multiple = parallel.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "task": {
+                                "type": "string",
+                                "description": "Task description for the subagent",
+                            },
+                            "context": {
+                                "type": "string",
+                                "enum": ["none", "fork"],
+                                "description": "none (independent), fork (copy conversation history)",
+                            },
+                            "tools": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Allowed tools (omit for default set)",
+                            },
+                            "agent": {
+                                "type": "string",
+                                "description": "Agent name to load role/config from .agent-cli/agents/{name}.md",
+                            },
                         },
-                        "context": {
-                            "type": "string",
-                            "enum": ["none", "fork"],
-                            "description": "none (independent), fork (copy conversation history)",
-                        },
-                        "tools": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Allowed tools (omit for default set)",
-                        },
-                        "agent": {
-                            "type": "string",
-                            "description": "Agent name to load role/config from .agent-cli/agents/{name}.md",
-                        },
+                        "required": ["task"],
                     },
-                    "required": ["task"],
                 },
             },
+            "required": ["tasks"],
         },
-        "required": ["tasks"],
-    },
-)
+    ),
+}
 
 
 # Tools always included in API tool list regardless of allowed_tools
@@ -249,7 +247,6 @@ _ALWAYS_INCLUDE = ("complete", "ready_for_review")
 
 def _convert_tools(
     tool_names: list[str],
-    include_delegate: bool,
     formatter,
 ) -> list[dict]:
     """Shared logic for converting tool schemas to provider-specific format."""
@@ -258,18 +255,13 @@ def _convert_tools(
     for name in _ALWAYS_INCLUDE:
         if name not in tool_names and name in TOOL_SCHEMAS:
             schemas.append(TOOL_SCHEMAS[name])
-    if include_delegate:
-        schemas.append(DELEGATE_TOOL_SCHEMA)
     return [formatter(s) for s in schemas]
 
 
-def convert_to_anthropic_tools(
-    tool_names: list[str], include_delegate: bool = False
-) -> list[dict]:
+def convert_to_anthropic_tools(tool_names: list[str]) -> list[dict]:
     """Convert tool schemas to Anthropic API tool format."""
     return _convert_tools(
         tool_names,
-        include_delegate,
         lambda s: {
             "name": s.name,
             "description": s.description,
@@ -278,13 +270,10 @@ def convert_to_anthropic_tools(
     )
 
 
-def convert_to_openai_tools(
-    tool_names: list[str], include_delegate: bool = False
-) -> list[dict]:
+def convert_to_openai_tools(tool_names: list[str]) -> list[dict]:
     """Convert tool schemas to OpenAI API tool format."""
     return _convert_tools(
         tool_names,
-        include_delegate,
         lambda s: {
             "type": "function",
             "function": {
@@ -298,14 +287,12 @@ def convert_to_openai_tools(
 
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
-    include_delegate: bool = False,
     inline_guides: dict[str, str] | None = None,
 ) -> str:
     """Generate tool description text for system prompt.
 
     Args:
         tool_names: Filter to specific tools. None = all tools.
-        include_delegate: Whether to include delegate tool.
         inline_guides: Map of tool name → extra guide text to append.
 
     Tools are ordered: always-present first (KV cache stable),
@@ -338,14 +325,6 @@ def get_tool_descriptions(
         entry = f"- {name}: {schema.description}\n  Input JSON: {params_str}"
         if name in guides:
             entry += guides[name]
-        lines.append(entry)
-    if include_delegate:
-        entry = (
-            f"- delegate: {DELEGATE_TOOL_SCHEMA.description}\n"
-            f'  Input JSON: {{"task": "fully self-contained task description"}}'
-        )
-        if "delegate" in guides:
-            entry += guides["delegate"]
         lines.append(entry)
     return "\n".join(lines)
 

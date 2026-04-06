@@ -114,17 +114,12 @@ _TOOL_INLINE_GUIDES: dict[str, str] = {
 }
 
 
-def _build_tools_section(
-    active_tools: list[str],
-    include_delegate: bool = False,
-) -> str:
+def _build_tools_section(active_tools: list[str]) -> str:
     """Build Available Tools section with inline guides.
 
     Static tools come first (stable for KV cache), conditional tools last.
     """
-    tool_block = get_tool_descriptions(
-        active_tools, include_delegate, inline_guides=_TOOL_INLINE_GUIDES
-    )
+    tool_block = get_tool_descriptions(active_tools, inline_guides=_TOOL_INLINE_GUIDES)
     return f"## Available Tools\n{tool_block}"
 
 
@@ -225,7 +220,6 @@ def _load_directives() -> str:
 def build_system_prompt(
     capabilities: ModelCapabilities,
     active_tools: list[str],
-    include_delegate: bool = False,
     skill_stack: list[str] | None = None,
     session_id: str = "",
     agent_role: str = "",
@@ -258,13 +252,13 @@ def build_system_prompt(
     sections.append(FORMAT_RULES)
 
     # ── Middle: reference material ──
-    sections.append(_build_tools_section(active_tools, include_delegate))
+    sections.append(_build_tools_section(active_tools))
 
     skill_desc = build_skill_descriptions(exclude_names=skill_stack)
     if skill_desc:
         sections.append(skill_desc)
 
-    if include_delegate:
+    if "delegate" in active_tools:
         agent_desc = build_agent_descriptions()
         if agent_desc:
             sections.append(agent_desc)
