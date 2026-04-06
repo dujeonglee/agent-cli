@@ -281,6 +281,7 @@ class TestSkillExecution:
         )
 
         fake_ctx = MagicMock()
+        fake_ctx.session_dir = tmp_path
         result = execute_skill(
             skill=skill,
             arguments=str(test_file),

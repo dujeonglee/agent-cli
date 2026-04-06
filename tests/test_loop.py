@@ -520,11 +520,12 @@ class TestRunLoopHeadlessMode:
 class TestAskToolAvailability:
     """Verify ask tool inclusion/exclusion based on ctx and suppress_output."""
 
-    def test_ask_available_with_ctx_not_headless(self, caps):
+    def test_ask_available_with_ctx_not_headless(self, caps, tmp_path):
         """ctx present + suppress_output=False → ask included."""
         from agent_cli.loop import AgentLoop
 
         ctx = MagicMock()
+        ctx.session_dir = tmp_path
         loop = AgentLoop(
             query="Q",
             provider=MagicMock(),
@@ -535,11 +536,12 @@ class TestAskToolAvailability:
         )
         assert "ask" in loop.tools_list
 
-    def test_ask_hidden_when_headless(self, caps):
+    def test_ask_hidden_when_headless(self, caps, tmp_path):
         """suppress_output=True → ask removed even with ctx."""
         from agent_cli.loop import AgentLoop
 
         ctx = MagicMock()
+        ctx.session_dir = tmp_path
         loop = AgentLoop(
             query="Q",
             provider=MagicMock(),
@@ -1362,7 +1364,7 @@ class TestSkillStack:
             parent_skill_name="",
             skill_stack=["optimize"],  # already in stack
         )
-        error = obs.error if hasattr(obs, 'error') else str(obs)
+        error = obs.error if hasattr(obs, "error") else str(obs)
         assert "recursive" in error.lower() or "already" in error.lower()
 
     def test_skill_stack_allows_different(self, caps, tmp_path):
