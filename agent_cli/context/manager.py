@@ -150,12 +150,11 @@ def _to_natural_language(msg: dict) -> dict:
             result = action_input.get("result", "")
         elif isinstance(action_input, str):
             result = action_input
-        parts = []
         if thought:
-            parts.append(f"thought: {thought}")
-        if result:
-            parts.append(f"response: {result}")
-        return {"role": "assistant", "content": "\n".join(parts) or result}
+            content = f"thought: {thought}\n\n{result}"
+        else:
+            content = result
+        return {"role": "assistant", "content": content.strip()}
 
     if action:
         args_summary = _summarize_action_args(action, action_input)
