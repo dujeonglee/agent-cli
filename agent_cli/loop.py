@@ -450,6 +450,7 @@ class AgentLoop:
                 self.skill_name,
                 skill_stack=self.skill_stack,
                 graceful_interrupt=self.graceful_interrupt,
+                stop_event=self.stop_event,
             )
             obs = skill_tool_result.output or skill_tool_result.error
             if not self.suppress_output:
@@ -541,6 +542,7 @@ class AgentLoop:
                 delegate_session=self.session,
                 delegate_skill_stack=self.skill_stack,
                 delegate_agent_stack=self.agent_stack,
+                stop_event=self.stop_event,
             )
 
             observation = (
@@ -771,7 +773,8 @@ def _handle_run_skill(
     parent_skill_name: str = "",
     skill_stack: list[str] | None = None,
     graceful_interrupt: bool = False,
-) -> str:
+    stop_event=None,
+):
     """Handle run_skill at loop level with full ctx access."""
     from agent_cli.skills import load_skills
     from agent_cli.skills.executor import execute_skill
@@ -824,6 +827,7 @@ def _handle_run_skill(
             session=session,
             skill_stack=skill_stack,
             graceful_interrupt=graceful_interrupt,
+            stop_event=stop_event,
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")
@@ -889,6 +893,7 @@ def _execute_single_tool(
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
     delegate_agent_stack: list[str] | None = None,
+    stop_event=None,
 ):
     """Execute a single tool: hooks, execution, tracking. Returns ToolResult."""
     from agent_cli.tools.result import ToolResult
@@ -943,6 +948,7 @@ def _execute_single_tool(
             session=delegate_session,
             skill_stack=delegate_skill_stack,
             agent_stack=delegate_agent_stack,
+            stop_event=stop_event,
         )
         if hooks_config:
             from agent_cli.hooks import run_hooks

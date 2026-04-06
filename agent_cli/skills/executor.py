@@ -88,9 +88,10 @@ def execute_skill(
     session=None,
     skill_stack: list[str] | None = None,
     graceful_interrupt: bool = False,
+    stop_event=None,
     parent_tools: list[str] | None = None,
     parent_role: str = "",
-) -> str | None:
+):
     """Execute a skill by substituting arguments and calling run_loop.
 
     Tool intersection: skill's allowed_tools ∩ parent_tools.
@@ -161,6 +162,7 @@ def execute_skill(
         skill_stack=skill_stack,
         skill_args=arguments,
         graceful_interrupt=graceful_interrupt,
+        stop_event=stop_event,
         agent_role=parent_role,
     )
 

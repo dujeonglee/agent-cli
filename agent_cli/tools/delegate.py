@@ -448,6 +448,7 @@ def _run_parallel(
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
+    stop_event=None,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading."""
     # Validate: inherit not allowed with multiple tasks
@@ -459,7 +460,8 @@ def _run_parallel(
             )
 
     results: list[ToolResult | None] = [None] * len(task_specs)
-    stop_event = threading.Event()
+    if stop_event is None:
+        stop_event = threading.Event()
 
     def worker(index: int, spec: dict) -> None:
         results[index] = _run_single(
@@ -514,6 +516,7 @@ def tool_delegate(
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
+    stop_event=None,
 ) -> ToolResult:
     """Delegate tasks to in-process subagents.
 
@@ -550,7 +553,8 @@ def tool_delegate(
             allowed_tools=spec.get("tools"),
             agent_name=spec.get("agent", ""),
             suppress_output=suppress_output,
+            stop_event=stop_event,
             **common_kwargs,
         )
     else:
-        return _run_parallel(task_specs=tasks, **common_kwargs)
+        return _run_parallel(task_specs=tasks, stop_event=stop_event, **common_kwargs)
