@@ -676,18 +676,22 @@ def _extract_questions(action_input) -> list[str]:
 
 
 def _handle_ask(questions: list[str], suppress_output: bool) -> str:
-    """Display questions to the user and collect responses."""
+    """Display all questions at once and collect a single response."""
     from agent_cli.render import C, console
 
-    responses = []
-    for q in questions:
-        try:
-            console.print(f"\n[{C['accent']}]Agent asks:[/] {q}")
-            answer = input("Your answer: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            answer = "(no response)"
-        responses.append(f"Q: {q}\nA: {answer}")
-    return "\n".join(responses)
+    console.print(f"\n[{C['accent']}]Agent asks:[/]")
+    for i, q in enumerate(questions, 1):
+        if len(questions) > 1:
+            console.print(f"  {i}. {q}")
+        else:
+            console.print(f"  {q}")
+    try:
+        answer = input("\nYour answer: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        answer = "(no response)"
+
+    q_part = "\n".join(f"Q: {q}" for q in questions)
+    return f"{q_part}\nA: {answer}"
 
 
 def _render_skill_progress(
