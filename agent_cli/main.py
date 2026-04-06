@@ -845,9 +845,8 @@ def chat(
                 )
             continue
 
-        if not session.query:
-            session.query = query[:100]
-            save_meta(session)
+        session.query = query[:100]
+        save_meta(session)
 
         result = run_loop(
             query=query,
