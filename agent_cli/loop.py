@@ -48,10 +48,10 @@ def _debug_log(msg: str) -> None:
     print(f"[debug {time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
 
 
-# Checkpoint system: nudges LLM to self-assess when iteration count gets high.
-# _CHECKPOINT_FIRST: first check after N iterations. 50 chosen because most
-#   tasks complete in 10-30 iterations; 50 indicates potential stuck state.
-# _CHECKPOINT_INTERVAL: repeat every M iterations after first. 20 gives LLM
+# Checkpoint system: nudges LLM to self-assess when turn count gets high.
+# _CHECKPOINT_FIRST: first check after N turns. 50 chosen because most
+#   tasks complete in 10-30 turns; 50 indicates potential stuck state.
+# _CHECKPOINT_INTERVAL: repeat every M turns after first. 20 gives LLM
 #   enough room to recover without being too aggressive.
 # At each checkpoint, the last _CHECKPOINT_INTERVAL tool calls are shown.
 _CHECKPOINT_FIRST = 50
@@ -142,7 +142,7 @@ class AgentLoop:
     def run(self) -> str | None:
         """Main entry point -- replaces run_loop body.
 
-        Returns the final answer string, or None if max iterations reached
+        Returns the final answer string, or None if max turns reached
         or interrupted by user.
         """
         if self.graceful_interrupt:
@@ -153,8 +153,8 @@ class AgentLoop:
                 if self._interrupted:
                     return self._on_interrupt()
                 self.turn += 1
-                self._begin_iteration()
-                result = self._execute_iteration()
+                self._begin_turn()
+                result = self._execute_turn()
                 if result is not self._CONTINUE:
                     return result
             return self._on_max_turns()
@@ -202,10 +202,8 @@ class AgentLoop:
         if not self.suppress_output:
             from agent_cli.render import C, console
 
-            console.print(
-                f"\n[{C['accent']}]⚡ Interrupted after iteration {self.turn}.[/]"
-            )
-        _debug_log(f"Graceful interrupt at iteration {self.turn}")
+            console.print(f"\n[{C['accent']}]⚡ Interrupted after turn {self.turn}.[/]")
+        _debug_log(f"Graceful interrupt at turn {self.turn}")
         return None
 
     def _setup(self) -> None:
@@ -247,13 +245,13 @@ class AgentLoop:
             return False
         return self.max_turns <= 0 or self.turn < self.max_turns
 
-    def _begin_iteration(self) -> None:
-        """Render iteration separator."""
+    def _begin_turn(self) -> None:
+        """Render turn separator."""
         if not self.suppress_output:
             render_turn_sep(self.turn)
 
-    def _execute_iteration(self) -> str | None:
-        """Single iteration: checkpoint, LLM call, text parse, dispatch."""
+    def _execute_turn(self) -> str | None:
+        """Single turn: checkpoint, LLM call, text parse, dispatch."""
         self._maybe_checkpoint()
 
         response = self._call_llm({})
@@ -270,16 +268,16 @@ class AgentLoop:
         return self._handle_text_path(llm_text)
 
     def _maybe_checkpoint(self) -> None:
-        """Inject checkpoint message if iteration count is high."""
+        """Inject checkpoint message if turn count is high."""
         if self.turn >= _CHECKPOINT_FIRST and (
             (self.turn - _CHECKPOINT_FIRST) % _CHECKPOINT_INTERVAL == 0
         ):
             recent = self.recent_tool_history[-_CHECKPOINT_INTERVAL:]
             history_summary = "\n".join(
-                f"  iter {h['iter']}: {h['tool']} → {h['result'][:100]}" for h in recent
+                f"  turn {h['turn']}: {h['tool']} → {h['result'][:100]}" for h in recent
             )
             checkpoint_msg = (
-                f"[SYSTEM] CHECKPOINT — {self.turn} iterations used.\n"
+                f"[SYSTEM] CHECKPOINT — {self.turn} turns used.\n"
                 f"Recent tool calls:\n{history_summary}\n\n"
                 f"You MUST now do ONE of:\n"
                 f'1. Use the complete tool: {{"thought": "...", "action": "complete", "action_input": {{"result": "your result"}}}}\n'
@@ -292,7 +290,7 @@ class AgentLoop:
             if self.ctx:
                 self.ctx.add({"role": "user", "content": checkpoint_msg})
             if not self.suppress_output:
-                render_status("running", f"Checkpoint at iteration {self.turn}")
+                render_status("running", f"Checkpoint at turn {self.turn}")
 
     def _call_llm(self, call_kwargs: dict):
         """LLM call with overflow retry. Returns response or None on failure."""
@@ -593,9 +591,9 @@ class AgentLoop:
         return self._CONTINUE
 
     def _on_max_turns(self) -> None:
-        """Handle max iterations reached."""
+        """Handle max turns reached."""
         if not self.suppress_output:
-            render_status("error", f"Max iterations ({self.max_turns}) reached.")
+            render_status("error", f"Max turns ({self.max_turns}) reached.")
         _debug_log(
             f"run_loop returning None: max_turns={self.max_turns} reached, skill_name={self.skill_name}"
         )
@@ -630,7 +628,7 @@ def run_loop(
 ) -> str | None:
     """Run the ReAct agent loop.
 
-    Returns the final answer string, or None if max iterations reached.
+    Returns the final answer string, or None if max turns reached.
     """
     return AgentLoop(
         query=query,
@@ -851,7 +849,7 @@ def _execute_single_tool(
     delegate_timeout: int = 300,
     tools_called: list[str] | None = None,
     recent_tool_history: list[dict] | None = None,
-    iteration: int = 0,
+    turn: int = 0,
     hooks_config: dict | None = None,
     delegate_ctx=None,
     delegate_provider=None,
@@ -863,9 +861,7 @@ def _execute_single_tool(
     delegate_skill_stack: list[str] | None = None,
 ) -> str:
     """Execute a single tool, track history, and return observation string."""
-    _debug_log(
-        f"TOOL iter={iteration} action={tool_name} input={str(tool_input)[:200]}"
-    )
+    _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
     obs = _do_execute_tool(
         tool_name,
         tool_input,
@@ -897,7 +893,7 @@ def _execute_single_tool(
                 "tool": tool_name,
                 "input": _normalize_input(tool_input),
                 "result": obs[:200],
-                "iter": iteration,
+                "turn": turn,
             }
         )
 
