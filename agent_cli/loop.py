@@ -877,33 +877,93 @@ def _execute_single_tool(
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
 ):
-    """Execute a single tool, track history, and return ToolResult."""
-    _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
-    result = _do_execute_tool(
-        tool_name,
-        tool_input,
-        tools_list,
-        include_delegate,
-        capabilities,
-        provider_name,
-        model,
-        base_url,
-        api_key,
-        delegate_timeout,
-        hooks_config=hooks_config,
-        delegate_ctx=delegate_ctx,
-        delegate_provider=delegate_provider,
-        delegate_depth=delegate_depth,
-        delegate_max_depth=delegate_max_depth,
-        delegate_max_turns=delegate_max_turns,
-        delegate_suppress=delegate_suppress,
-        delegate_session=delegate_session,
-        delegate_skill_stack=delegate_skill_stack,
-    )
+    """Execute a single tool: hooks, execution, tracking. Returns ToolResult."""
+    from agent_cli.tools.result import ToolResult
 
-    obs = result.output if result.success else result.error
+    _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
+
+    # PreToolUse hook
+    input_dict = (
+        tool_input if isinstance(tool_input, dict) else {"raw": str(tool_input)}
+    )
+    if hooks_config:
+        from agent_cli.hooks import run_hooks
+
+        pre_result = run_hooks(
+            "PreToolUse", tool_name, input_dict, hooks_config=hooks_config
+        )
+        if not pre_result.allowed:
+            return ToolResult(
+                False,
+                error=f"Blocked by PreToolUse hook: {pre_result.stderr or 'hook denied'}",
+            )
+        if pre_result.updated_input is not None:
+            tool_input = pre_result.updated_input
+
+    # Delegate tool
+    if tool_name == "delegate" and include_delegate:
+        raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
+        if "tasks" not in raw and "task" in raw:
+            raw = {
+                "tasks": [
+                    {
+                        "task": raw["task"],
+                        "context": raw.get("context", "none"),
+                        **({"tools": raw["tools"]} if raw.get("tools") else {}),
+                    }
+                ]
+            }
+        result = tool_delegate(
+            args=raw,
+            parent_ctx=delegate_ctx,
+            provider=delegate_provider,
+            model=model,
+            capabilities=capabilities,
+            provider_name=provider_name,
+            base_url=base_url,
+            api_key=api_key,
+            depth=delegate_depth,
+            max_depth=delegate_max_depth,
+            max_turns=delegate_max_turns,
+            timeout=delegate_timeout,
+            suppress_output=delegate_suppress,
+            session=delegate_session,
+            skill_stack=delegate_skill_stack,
+        )
+        if hooks_config:
+            from agent_cli.hooks import run_hooks
+
+            _obs = result.output if result.success else result.error
+            _evt = "PostToolUse" if result.success else "PostToolUseFailure"
+            run_hooks(
+                _evt, tool_name, input_dict, hooks_config=hooks_config, tool_result=_obs
+            )
+    elif tool_name in tools_list:
+        valid, err = validate_tool_input(tool_name, tool_input)
+        if not valid:
+            result = ToolResult(False, error=f"{err} Fix action_input and retry.")
+        else:
+            result = execute_tool(tool_name, tool_input)
+            if hooks_config:
+                from agent_cli.hooks import run_hooks
+
+                _obs = result.output if result.success else result.error
+                _evt = "PostToolUse" if result.success else "PostToolUseFailure"
+                run_hooks(
+                    _evt,
+                    tool_name,
+                    input_dict,
+                    hooks_config=hooks_config,
+                    tool_result=_obs,
+                )
+    else:
+        avail = ", ".join(tools_list) + (", delegate" if include_delegate else "")
+        result = ToolResult(
+            False, error=f"Unknown tool '{tool_name}'. Available: {avail}"
+        )
 
     # Track tool usage
+    obs = result.output if result.success else result.error
     if tools_called is not None:
         tools_called.append(tool_name)
     if recent_tool_history is not None:
@@ -963,120 +1023,6 @@ def _detect_repeated_calls(history: list[dict]) -> bool:
     recent = history[-_REPEAT_THRESHOLD:]
     first = (recent[0]["tool"], recent[0]["input"])
     return all((h["tool"], h["input"]) == first for h in recent)
-
-
-def _do_execute_tool(
-    tool_name: str,
-    tool_input,
-    tools_list: list[str],
-    include_delegate: bool,
-    capabilities: ModelCapabilities,
-    provider_name: str = "",
-    model: str = "",
-    base_url: str = "",
-    api_key: str = "",
-    delegate_timeout: int = 300,
-    hooks_config: dict | None = None,
-    delegate_ctx=None,
-    delegate_provider=None,
-    delegate_depth: int = 0,
-    delegate_max_depth: int = 2,
-    delegate_max_turns: int = 0,
-    delegate_suppress: bool = False,
-    delegate_session=None,
-    delegate_skill_stack: list[str] | None = None,
-):
-    """Core tool execution logic (no tracking). Returns ToolResult."""
-    from agent_cli.tools.result import ToolResult
-
-    # PreToolUse hook
-    input_dict = (
-        tool_input if isinstance(tool_input, dict) else {"raw": str(tool_input)}
-    )
-    if hooks_config:
-        from agent_cli.hooks import run_hooks
-
-        pre_result = run_hooks(
-            "PreToolUse", tool_name, input_dict, hooks_config=hooks_config
-        )
-        if not pre_result.allowed:
-            return ToolResult(
-                False,
-                error=f"Blocked by PreToolUse hook: {pre_result.stderr or 'hook denied'}",
-            )
-        if pre_result.updated_input is not None:
-            tool_input = pre_result.updated_input
-
-    if tool_name == "delegate" and include_delegate:
-        raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
-        # Normalize: legacy {"task": "..."} → {"tasks": [{...}]}
-        if "tasks" not in raw and "task" in raw:
-            raw = {
-                "tasks": [
-                    {
-                        "task": raw["task"],
-                        "context": raw.get("context", "none"),
-                        **({"tools": raw["tools"]} if raw.get("tools") else {}),
-                    }
-                ]
-            }
-        result = tool_delegate(
-            args=raw,
-            parent_ctx=delegate_ctx,
-            provider=delegate_provider,
-            model=model,
-            capabilities=capabilities,
-            provider_name=provider_name,
-            base_url=base_url,
-            api_key=api_key,
-            depth=delegate_depth,
-            max_depth=delegate_max_depth,
-            max_turns=delegate_max_turns,
-            timeout=delegate_timeout,
-            suppress_output=delegate_suppress,
-            session=delegate_session,
-            skill_stack=delegate_skill_stack,
-        )
-        _run_post_hook(
-            hooks_config,
-            tool_name,
-            input_dict,
-            result.output if result.success else result.error,
-            success=result.success,
-        )
-        return result
-
-    if tool_name in tools_list:
-        valid, err = validate_tool_input(tool_name, tool_input)
-        if not valid:
-            return ToolResult(False, error=f"{err} Fix action_input and retry.")
-        result = execute_tool(tool_name, tool_input)
-        _run_post_hook(
-            hooks_config,
-            tool_name,
-            input_dict,
-            result.output if result.success else result.error,
-            success=result.success,
-        )
-        return result
-
-    avail = ", ".join(tools_list) + (", delegate" if include_delegate else "")
-    return ToolResult(False, error=f"Unknown tool '{tool_name}'. Available: {avail}")
-
-
-def _run_post_hook(hooks_config, tool_name, input_dict, obs, success=True):
-    """Fire PostToolUse or PostToolUseFailure hook if configured."""
-    if hooks_config:
-        from agent_cli.hooks import run_hooks
-
-        event = "PostToolUse" if success else "PostToolUseFailure"
-        run_hooks(
-            event,
-            tool_name,
-            input_dict,
-            hooks_config=hooks_config,
-            tool_result=obs,
-        )
 
 
 def _append_text_observation(
