@@ -1,14 +1,13 @@
 """Session persistence — project-local, session-scoped file management.
 
-Stores per-session iteration logs (JSONL) and summaries (markdown)
-alongside scratchpad and artifacts in the same session directory.
+Stores session metadata in session.jsonl (single line).
+Conversation history is managed by ContextManager (history.jsonl).
 
 File layout:
   {project}/.agent-cli/sessions/{session_id}/
-    session.jsonl          # append-only iteration log
-    session.summary.md     # generated on session end
-    scratchpad.md          # (managed by scratchpad.py)
-    artifacts/             # (managed by scratchpad.py)
+    session.jsonl          # single-line metadata (id, workspace, updated_at, query)
+    history.jsonl          # conversation history (managed by ContextManager)
+    skill_*/delegate_*/    # skill/delegate subdirectories
 """
 
 from __future__ import annotations
@@ -26,8 +25,8 @@ _SESSIONS_BASE = Path(".agent-cli")
 class SessionMeta:
     session_id: str
     workspace: str
-    created_at: str
-    query: str = ""  # first query (for identification)
+    updated_at: str
+    query: str = ""
 
 
 def get_session_dir(meta: SessionMeta) -> Path:
@@ -43,80 +42,28 @@ def create_session(workspace: str | None = None) -> SessionMeta:
     return SessionMeta(
         session_id=str(int(time.time())),
         workspace=ws,
-        created_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        updated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
 
-def get_log_path(meta: SessionMeta) -> Path:
-    """Path to the JSONL iteration log file."""
-    return get_session_dir(meta) / "session.jsonl"
-
-
-def get_summary_path(meta: SessionMeta) -> Path:
-    """Path to the session summary markdown file."""
-    return get_session_dir(meta) / "session.summary.md"
-
-
-def append_log(meta: SessionMeta, entry: dict) -> None:
-    """Append one iteration entry to the session log (JSONL)."""
-    path = get_log_path(meta)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def read_log(meta: SessionMeta) -> list[dict]:
-    """Read all entries from a session log."""
-    path = get_log_path(meta)
-    if not path.is_file():
-        return []
-    entries = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-    return entries
-
-
-def save_summary(meta: SessionMeta, summary: str) -> None:
-    """Save session summary to markdown file."""
-    path = get_summary_path(meta)
-    path.write_text(summary, encoding="utf-8")
-
-
-def load_summary(meta: SessionMeta) -> str | None:
-    """Load session summary from markdown file."""
-    path = get_summary_path(meta)
-    if path.is_file():
-        return path.read_text(encoding="utf-8")
-    return None
-
-
 def save_meta(meta: SessionMeta) -> None:
-    """Save or update session metadata (first line of JSONL)."""
-    path = get_log_path(meta)
+    """Save session metadata (single line in session.jsonl)."""
+    meta.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    d = _SESSIONS_BASE / "sessions" / meta.session_id
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "session.jsonl"
     header = json.dumps(
         {
             "_meta": {
                 "session_id": meta.session_id,
                 "workspace": meta.workspace,
-                "created_at": meta.created_at,
+                "updated_at": meta.updated_at,
                 "query": meta.query,
             }
         },
         ensure_ascii=False,
     )
-    if path.is_file() and path.stat().st_size > 0:
-        # Rewrite first line (meta), keep the rest (log entries)
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        lines[0] = header + "\n"
-        path.write_text("".join(lines), encoding="utf-8")
-    else:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(header + "\n")
+    path.write_text(header + "\n", encoding="utf-8")
 
 
 def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
@@ -138,10 +85,11 @@ def list_sessions(workspace: str | None = None) -> list[SessionMeta]:
             if first_line:
                 data = json.loads(first_line)
                 if "_meta" in data:
-                    meta = SessionMeta(**data["_meta"])
-                    if workspace and meta.workspace != workspace:
-                        continue
-                    sessions.append(meta)
+                    meta_data = data["_meta"]
+                    # Backward compat: created_at → updated_at
+                    if "created_at" in meta_data and "updated_at" not in meta_data:
+                        meta_data["updated_at"] = meta_data.pop("created_at")
+                    sessions.append(SessionMeta(**meta_data))
         except (json.JSONDecodeError, TypeError, KeyError):
             pass
 
@@ -160,62 +108,17 @@ def load_session(session_id: str) -> SessionMeta | None:
         if first_line:
             data = json.loads(first_line)
             if "_meta" in data:
-                return SessionMeta(**data["_meta"])
+                meta_data = data["_meta"]
+                # Backward compat: created_at → updated_at
+                if "created_at" in meta_data and "updated_at" not in meta_data:
+                    meta_data["updated_at"] = meta_data.pop("created_at")
+                return SessionMeta(**meta_data)
     except (json.JSONDecodeError, TypeError, KeyError):
         pass
     return None
 
 
-def _compact_observation(content: str) -> str:
-    """Replace verbose Observation tool output with short artifact reference.
-
-    Keeps the first line (STATUS + tool info) and replaces the body with
-    an artifact pointer so the resume context stays small.
-    """
-    if not content.startswith("Observation:"):
-        return content
-
-    # Extract first meaningful line after "Observation:"
-    lines = content.split("\n", 3)
-    # Typical: "Observation: STATUS: success\nRESULT:\n..."
-    first_line = lines[0]  # "Observation: STATUS: success"
-
-    # Trim to just the status + short hint
-    if len(content) <= 200:
-        return content  # short observations are fine as-is
-
-    return f"{first_line}\n[... tool output truncated — see artifacts for full content]"
-
-
-def _serialize_ctx_messages(messages: list[dict]) -> str:
-    """Serialize context messages to text for summary storage.
-
-    Observation messages (tool outputs) are compacted to avoid bloating
-    the session summary. Full tool output is preserved in artifacts.
-    """
-    parts = []
-    for m in messages:
-        role = m.get("role", "unknown").capitalize()
-        content = m.get("content", "")
-        # Compact Observation messages (user role, tool output)
-        if role == "User":
-            content = _compact_observation(content)
-        if len(content) > 2000:
-            content = (
-                content[:2000]
-                + f"\n[... {len(content) - 2000} more characters truncated]"
-            )
-        parts.append(f"[{role}]: {content}")
-    return "\n\n".join(parts)
-
-
 def finalize_session(meta, ctx=None) -> None:
-    """Save context window as session summary (no LLM call)."""
-    if ctx is None:
-        return
-    messages = ctx.get_messages()
-    if not messages:
-        return
-    summary = _serialize_ctx_messages(messages)
-    if summary:
-        save_summary(meta, summary)
+    """Update session metadata on session end."""
+    if meta:
+        save_meta(meta)

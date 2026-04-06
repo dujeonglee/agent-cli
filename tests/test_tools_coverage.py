@@ -564,40 +564,6 @@ class TestReadContextTool:
         assert result.success
         assert "No previous sessions" in result.output
 
-    def test_list_with_sessions(self, tmp_path, monkeypatch):
-        import agent_cli.context.session as session_mod
-
-        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
-        from agent_cli.context.session import create_session, save_meta, save_summary
-        from agent_cli.tools.context import tool_read_context
-
-        meta = create_session("/tmp/ws")
-        save_meta(meta)
-        save_summary(meta, "Test summary content")
-
-        result = tool_read_context({"mode": "list"})
-        assert result.success
-        assert meta.session_id in result.output
-        assert "Test summary" in result.output
-
-    def test_detail_valid_session(self, tmp_path, monkeypatch):
-        import agent_cli.context.session as session_mod
-
-        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
-        from agent_cli.context.session import append_log, create_session, save_meta
-        from agent_cli.tools.context import tool_read_context
-
-        meta = create_session("/tmp/ws")
-        save_meta(meta)
-        append_log(
-            meta, {"iter": 1, "action": "shell", "thought": "run", "observation": "ok"}
-        )
-
-        result = tool_read_context({"mode": "detail", "session_id": meta.session_id})
-        assert result.success
-        assert "shell" in result.output
-        assert "ok" in result.output
-
     def test_detail_missing_session_id(self, tmp_path, monkeypatch):
         from agent_cli.tools.context import tool_read_context
 
@@ -667,7 +633,8 @@ class TestRunSkillTool:
         )
         with patch("agent_cli.skills.load_skills", return_value=mock_skills):
             with patch(
-                "agent_cli.skills.executor.execute_skill", return_value=("Summary done", "")
+                "agent_cli.skills.executor.execute_skill",
+                return_value=("Summary done", ""),
             ):
                 result = tool_run_skill(
                     {"name": "summarize", "arguments": "README.md"},

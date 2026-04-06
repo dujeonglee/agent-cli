@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from agent_cli.context.session import (
     list_sessions,
     load_session,
-    load_summary,
-    read_log,
 )
 from agent_cli.tools.result import ToolResult
 
@@ -22,15 +23,7 @@ def tool_read_context(args: dict) -> ToolResult:
             return ToolResult(True, output="No previous sessions found.")
         lines = []
         for s in sessions:
-            summary = load_summary(s)
-            summary_preview = (
-                summary[:200] + "..."
-                if summary and len(summary) > 200
-                else summary or "(no summary)"
-            )
-            lines.append(
-                f"- {s.session_id} [{s.created_at}] {s.query or '(no query)'}\n  {summary_preview}"
-            )
+            lines.append(f"- {s.session_id} [{s.updated_at}] {s.query or '(no query)'}")
         return ToolResult(True, output="\n".join(lines))
 
     elif mode == "detail":
@@ -40,24 +33,34 @@ def tool_read_context(args: dict) -> ToolResult:
         meta = load_session(session_id)
         if not meta:
             return ToolResult(False, error=f"session '{session_id}' not found.")
-        entries = read_log(meta)
-        if not entries:
-            return ToolResult(
-                True, output=f"Session '{session_id}' has no log entries."
-            )
+
+        # Read from history.jsonl
+        history_path = Path(".agent-cli") / "sessions" / session_id / "history.jsonl"
+        if not history_path.is_file():
+            return ToolResult(True, output=f"Session '{session_id}' has no history.")
+
         parts = []
-        for e in entries:
-            if "_meta" in e:
-                continue
-            parts.append(
-                f"[iter {e.get('iter', '?')}] {e.get('action', '?')}: "
-                f"{e.get('thought', '')}\n  → {e.get('observation', '')[:300]}"
-            )
+        with open(history_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                role = msg.get("role", "?")
+                thought = msg.get("thought", "")
+                action = msg.get("action", "")
+                content = msg.get("content", "")[:300]
+                if thought:
+                    parts.append(f"[{role}] {thought[:100]} → {action}")
+                else:
+                    parts.append(f"[{role}] {content}")
+
         return ToolResult(
             True,
-            output="\n\n".join(parts)
-            if parts
-            else "No tool executions in this session.",
+            output="\n".join(parts) if parts else "No messages in this session.",
         )
 
     return ToolResult(False, error=f"unknown mode '{mode}'. Use 'list' or 'detail'.")

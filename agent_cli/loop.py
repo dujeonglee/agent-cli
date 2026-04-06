@@ -234,13 +234,6 @@ class AgentLoop:
                 skill_args=self.skill_args,
             )
 
-        # Log query to session (skip for skill internal loops)
-        if self.session and self.depth == 0 and not self.skill_name:
-            _log_to_session(
-                self.session,
-                {"iter": 0, "action": "query", "observation": self.query},
-            )
-
         # Message setup
         if self.ctx:
             self.ctx.add({"role": "user", "content": self.query})
@@ -397,22 +390,15 @@ class AgentLoop:
                 )
                 return self._CONTINUE
 
-            _log_tool_to_session(
-                self.session,
-                self.depth,
-                self.turn,
-                "complete",
-                answer,
-                thought=parsed.thought or "",
-            )
-
             if self.ctx:
-                self.ctx.add({
-                    "role": "assistant",
-                    "thought": parsed.thought or "",
-                    "action": "complete",
-                    "action_input": {"result": answer},
-                })
+                self.ctx.add(
+                    {
+                        "role": "assistant",
+                        "thought": parsed.thought or "",
+                        "action": "complete",
+                        "action_input": {"result": answer},
+                    }
+                )
             if not self.suppress_output:
                 render_step("final", answer, self.turn)
             return answer
@@ -420,21 +406,15 @@ class AgentLoop:
         # 9. Detect echo-as-final-answer (common small model pattern)
         echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
         if echo_answer:
-            _log_tool_to_session(
-                self.session,
-                self.depth,
-                self.turn,
-                "complete (echo)",
-                echo_answer,
-                thought=parsed.thought or "",
-            )
             if self.ctx:
-                self.ctx.add({
-                    "role": "assistant",
-                    "thought": parsed.thought or "",
-                    "action": "complete",
-                    "action_input": {"result": echo_answer},
-                })
+                self.ctx.add(
+                    {
+                        "role": "assistant",
+                        "thought": parsed.thought or "",
+                        "action": "complete",
+                        "action_input": {"result": echo_answer},
+                    }
+                )
             if not self.suppress_output:
                 render_step("final", echo_answer, self.turn)
             return echo_answer
@@ -446,14 +426,6 @@ class AgentLoop:
                 user_response = _handle_ask(questions, self.suppress_output)
                 obs_msg = f"Observation: User responded:\n{user_response}\n\nContinue. Respond with JSON only."
                 _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
-                _log_tool_to_session(
-                    self.session,
-                    self.depth,
-                    self.turn,
-                    "ask",
-                    user_response,
-                    thought=parsed.thought or "",
-                )
                 return self._CONTINUE
 
         # 10b. run_skill -- intercept at loop level (text parsing path)
@@ -479,15 +451,6 @@ class AgentLoop:
             obs_msg = f"Observation: {obs}\n\nContinue with the next step. Respond with JSON only."
             _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
             self.tools_called.append("run_skill")
-            _log_tool_to_session(
-                self.session,
-                self.depth,
-                self.turn,
-                "run_skill",
-                obs,
-                thought=parsed.thought or "",
-                action_input=_normalize_input(skill_input),
-            )
             return self._CONTINUE
 
         # 10c. ready_for_review -- return original query for self-check (text path)
@@ -587,16 +550,6 @@ class AgentLoop:
                     f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
                 )
                 return None
-
-            _log_tool_to_session(
-                self.session,
-                self.depth,
-                self.turn,
-                tool_name,
-                observation,
-                thought=parsed.thought or "",
-                action_input=_normalize_input(tool_input),
-            )
 
             # Inject observation
             obs_msg = f"Observation: {observation}\n\nContinue with the next step. Respond with JSON only."
@@ -883,41 +836,6 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
         ]
     )
     return "\n".join(parts)
-
-
-def _log_to_session(session, entry: dict) -> None:
-    """Append an iteration entry to the session log (no-op if no session)."""
-    if session is None:
-        return
-    from agent_cli.context.session import append_log
-
-    entry["ts"] = time.time()
-    append_log(session, entry)
-
-
-def _log_tool_to_session(
-    session,
-    depth: int,
-    iteration: int,
-    action: str,
-    observation: str,
-    thought: str = "",
-    action_input: str = "",
-) -> None:
-    """Log a tool execution to session (depth==0 only)."""
-    if depth != 0:
-        return
-    obs_str = str(observation) if not isinstance(observation, str) else observation
-    entry: dict = {
-        "iter": iteration,
-        "action": action,
-        "observation": obs_str[:500],
-    }
-    if thought:
-        entry["thought"] = thought
-    if action_input:
-        entry["action_input"] = action_input
-    _log_to_session(session, entry)
 
 
 def _execute_single_tool(

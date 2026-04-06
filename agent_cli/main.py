@@ -231,13 +231,15 @@ def _dispatch_skill(
 
     # Record skill result in context with artifact path
     if ctx and result:
-        ctx.add({
-            "role": "user",
-            "tool": "run_skill",
-            "args": {"name": cmd_name, "arguments": arguments},
-            "content": result,
-            "artifact": f"{skill_dir_name}/" if skill_dir_name else "",
-        })
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "run_skill",
+                "args": {"name": cmd_name, "arguments": arguments},
+                "content": result,
+                "artifact": f"{skill_dir_name}/" if skill_dir_name else "",
+            }
+        )
 
     return result
 
@@ -551,7 +553,7 @@ def sessions(
     ),
 ):
     """List previous chat sessions. Use with 'chat --resume <id>' to continue."""
-    from agent_cli.context.session import list_sessions as _list_sessions, load_summary
+    from agent_cli.context.session import list_sessions as _list_sessions
 
     ws = workspace or os.getcwd()
     session_list = _list_sessions(ws)
@@ -561,13 +563,9 @@ def sessions(
 
     console.print(f"\n[{C['accent']}]Sessions for {ws}:[/]\n")
     for s in session_list:
-        summary = load_summary(s)
-        preview = ""
-        if summary:
-            first_line = summary.strip().split("\n")[0]
-            preview = f" — {first_line[:80]}"
+        query_preview = f"  {s.query}" if s.query else ""
         console.print(
-            f"  [{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.created_at}{preview}[/]"
+            f"  [{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}{query_preview}[/]"
         )
     console.print()
 
@@ -785,9 +783,8 @@ def chat(
                 console.print(f"[{C['muted']}]Type @ to list available agents[/]")
                 continue
 
-            if not session.query:
-                session.query = query[:100]
-                save_meta(session)
+            session.query = query[:100]
+            save_meta(session)
             if result is not None:
                 console.print(f"\n[{C['final']}]{result}[/]")
             continue
@@ -833,9 +830,8 @@ def chat(
                 console.print(f"[{C['muted']}]Type /help for available commands[/]")
                 continue
 
-            if not session.query:
-                session.query = query[:100]
-                save_meta(session)
+            session.query = query[:100]
+            save_meta(session)
             # ctx.add already done inside _dispatch_skill
             if result is not None:
                 console.print(f"\n[{C['final']}]{result}[/]")
