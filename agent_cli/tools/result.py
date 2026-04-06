@@ -12,3 +12,4 @@ class ToolResult:
     success: bool
     output: str = ""
     error: str = ""
+    artifact: str = ""  # artifact path (delegate subdir, etc.)

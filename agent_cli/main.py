@@ -162,9 +162,17 @@ def _dispatch_agent(
 
     answer = result.output if result.success else result.error
 
-    # Record result in context
+    # Record result in context with artifact path
     if ctx and answer:
-        ctx.add({"role": "assistant", "content": answer})
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "delegate",
+                "args": {"agent": agent_name, "task": task[:60]},
+                "content": answer,
+                "artifact": result.artifact,
+            }
+        )
 
     return answer
 
@@ -210,7 +218,7 @@ def _dispatch_skill(
     from agent_cli.render import render_status
 
     render_status("running", f"Running skill: {cmd_name}...")
-    result, skill_dir_name = execute_skill(
+    skill_result = execute_skill(
         skill=skill,
         arguments=arguments,
         provider=llm_provider,
@@ -229,19 +237,21 @@ def _dispatch_skill(
         graceful_interrupt=graceful_interrupt,
     )
 
+    answer = skill_result.output if skill_result.success else skill_result.error
+
     # Record skill result in context with artifact path
-    if ctx and result:
+    if ctx and answer:
         ctx.add(
             {
                 "role": "user",
                 "tool": "run_skill",
                 "args": {"name": cmd_name, "arguments": arguments},
-                "content": result,
-                "artifact": f"{skill_dir_name}/" if skill_dir_name else "",
+                "content": answer,
+                "artifact": skill_result.artifact,
             }
         )
 
-    return result
+    return answer
 
 
 def _prompt_model_capabilities(model: str):

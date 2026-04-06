@@ -49,7 +49,7 @@ def tool_run_skill(args: dict, **kwargs) -> ToolResult:
             False, error="run_skill requires provider context (internal error)."
         )
 
-    result, skill_dir_name = execute_skill(
+    skill_result = execute_skill(
         skill=skill,
         arguments=arguments,
         provider=provider,
@@ -64,7 +64,4 @@ def tool_run_skill(args: dict, **kwargs) -> ToolResult:
         graceful_interrupt=kwargs.get("graceful_interrupt", False),
     )
 
-    output = result or "(skill returned no result)"
-    if skill_dir_name:
-        output += f"\n→ {skill_dir_name}/"
-    return ToolResult(True, output=output)
+    return skill_result

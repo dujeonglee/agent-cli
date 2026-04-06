@@ -781,7 +781,7 @@ def _handle_run_skill(
         from agent_cli.providers import create_provider
 
         provider = create_provider(provider_name, base_url, api_key)
-        result, skill_dir_name = execute_skill(
+        skill_result = execute_skill(
             skill=skill,
             arguments=arguments,
             provider=provider,
@@ -797,25 +797,16 @@ def _handle_run_skill(
             graceful_interrupt=graceful_interrupt,
         )
     except Exception as e:
-        result = None
-        skill_dir_name = ""
         _debug_log(f"run_skill({name}) exception: {e}")
-        obs = OBS_ERROR.format(error=f"run_skill({name}) failed: {e}")
-    else:
-        if not result:
-            _debug_log(
-                f"run_skill({name}) returned {repr(result)} (inner loop stopped without complete)"
-            )
-        skill_header = (
-            f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
-        )
-        body = result or "(skill returned no result)"
-        artifact_ref = f"\n→ {skill_dir_name}/" if skill_dir_name else ""
-        obs = OBS_SUCCESS.format(result=f"{skill_header}{body}{artifact_ref}")
-    finally:
-        pass
+        return OBS_ERROR.format(error=f"run_skill({name}) failed: {e}")
 
-    return obs
+    if not skill_result.success:
+        _debug_log(f"run_skill({name}) failed: {skill_result.error}")
+
+    skill_header = f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
+    body = skill_result.output or skill_result.error or "(skill returned no result)"
+    artifact_ref = f"\n→ {skill_result.artifact}" if skill_result.artifact else ""
+    return OBS_SUCCESS.format(result=f"{skill_header}{body}{artifact_ref}")
 
 
 def _build_review_observation(query: str, summary: str, ctx=None) -> str:

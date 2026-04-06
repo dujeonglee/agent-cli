@@ -406,15 +406,19 @@ def _run_single(
     # Persist result.md to delegate directory
     _persist_delegate_result(formatted, delegate_dir)
 
+    artifact = f"{delegate_dir_name}/"
+
     if result_str is not None:
         return ToolResult(
             True,
-            output=f"STATUS: success\nRESULT:\n{formatted}\n→ {delegate_dir_name}/",
+            output=f"STATUS: success\nRESULT:\n{formatted}",
+            artifact=artifact,
         )
     else:
         return ToolResult(
             False,
-            error=f"STATUS: error\nERROR: Subagent did not complete\n{formatted}\n→ {delegate_dir_name}/",
+            error=f"STATUS: error\nERROR: Subagent did not complete\n{formatted}",
+            artifact=artifact,
         )
 
 

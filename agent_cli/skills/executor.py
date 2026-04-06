@@ -10,6 +10,7 @@ from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.skills.models import Skill
+from agent_cli.tools.result import ToolResult
 
 # Pattern for !`command` dynamic context injection
 _SHELL_INJECT_PATTERN = re.compile(r"!`([^`]+)`")
@@ -105,11 +106,11 @@ def execute_skill(
         if not effective_tools:
             skill_tools = ", ".join(skill.allowed_tools)
             parent_str = ", ".join(parent_tools)
-            return (
-                f"[error] Skill '{skill.name}' cannot run: "
+            return ToolResult(
+                False,
+                error=f"Skill '{skill.name}' cannot run: "
                 f"no tools in common between skill ({skill_tools}) "
                 f"and parent ({parent_str})",
-                "",
             )
     elif not effective_tools and parent_tools:
         # Skill has no tool restriction → use parent's tools
@@ -171,4 +172,8 @@ def execute_skill(
         except Exception:
             pass
 
-    return result, skill_dir_name
+    artifact = f"{skill_dir_name}/" if skill_dir_name else ""
+    if result:
+        return ToolResult(True, output=result, artifact=artifact)
+    else:
+        return ToolResult(False, error="Skill returned no result", artifact=artifact)

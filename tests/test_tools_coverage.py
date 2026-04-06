@@ -631,10 +631,12 @@ class TestRunSkillTool:
             thinking_budget=0,
             supports_strict_schema=False,
         )
+        from agent_cli.tools.result import ToolResult as _TR
+
         with patch("agent_cli.skills.load_skills", return_value=mock_skills):
             with patch(
                 "agent_cli.skills.executor.execute_skill",
-                return_value=("Summary done", ""),
+                return_value=_TR(True, output="Summary done"),
             ):
                 result = tool_run_skill(
                     {"name": "summarize", "arguments": "README.md"},
