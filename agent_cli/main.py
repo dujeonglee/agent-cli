@@ -718,27 +718,10 @@ def chat(
             continue
 
         if query == "/ctx_window":
-            from agent_cli.prompts.system_prompt import build_system_prompt
-            from agent_cli.tools import TOOLS as _TOOLS
-
-            system = build_system_prompt(
-                capabilities=capabilities,
-                active_tools=list(_TOOLS.keys()),
-                include_delegate=True,
-                session_dir=str(ctx.session_dir),
-            )
             msgs = ctx.get_messages()
-
             console.print(
-                f"[{C['muted']}]── context window dump ──[/]"
-            )
-            # System prompt
-            console.print(f"[{C['accent']}][system] ({len(system)} chars)[/]")
-            console.print(system, markup=False)
-            console.print()
-            # Messages
-            console.print(
-                f"[{C['muted']}]── messages ({len(msgs)}, FIFO {ctx.fifo_size}) ──[/]"
+                f"[{C['muted']}]── context window dump ({len(msgs)} messages, "
+                f"FIFO {ctx.fifo_size}) ──[/]"
             )
             for i, m in enumerate(msgs):
                 role = m["role"]
@@ -747,11 +730,7 @@ def chat(
                 console.print(content, markup=False)
                 console.print()
             tokens = ctx.get_estimated_tokens()
-            sys_tokens = len(system) // 4 + 1
-            console.print(
-                f"[{C['muted']}]── system ~{sys_tokens} + messages ~{tokens} "
-                f"= ~{sys_tokens + tokens} tokens ──[/]"
-            )
+            console.print(f"[{C['muted']}]── estimated {tokens} tokens ──[/]")
             continue
 
         # Agent dispatch: @agent-name task
