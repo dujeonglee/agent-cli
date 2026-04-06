@@ -111,6 +111,11 @@ class AgentLoop:
         self.hooks_config = hooks_config
         self.skill_name = skill_name
         self.skill_args = skill_args
+        # Create stop_event if not provided (for Ctrl+C propagation to nested loops)
+        if stop_event is None:
+            import threading
+
+            stop_event = threading.Event()
         self.stop_event = stop_event
         self.agent_role = agent_role
 
@@ -189,6 +194,8 @@ class AgentLoop:
                 signal.signal(signal.SIGINT, signal.default_int_handler)
                 signal.default_int_handler(signum, frame)
             self._interrupted = True
+            if self.stop_event:
+                self.stop_event.set()
             print("\n⚡ Finishing current step...", file=sys.stderr)
 
         signal.signal(signal.SIGINT, _handle_sigint)
