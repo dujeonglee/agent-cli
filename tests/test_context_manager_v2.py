@@ -183,7 +183,7 @@ class TestNaturalLanguageConversion:
         result = _to_natural_language(msg)
         assert result["role"] == "assistant"
         assert "auth.py를 읽어 구조를 파악해야 한다" in result["content"]
-        assert "→ read_file(src/auth.py)" in result["content"]
+        assert "action: read_file(src/auth.py)" in result["content"]
 
     def test_assistant_complete(self):
         msg = {
@@ -208,7 +208,7 @@ class TestNaturalLanguageConversion:
             },
         }
         result = _to_natural_language(msg)
-        assert "→ delegate(explorer" in result["content"]
+        assert "action: delegate(explorer" in result["content"]
 
     def test_assistant_shell(self):
         msg = {
@@ -218,7 +218,7 @@ class TestNaturalLanguageConversion:
             "action_input": {"command": "pytest tests/ -v"},
         }
         result = _to_natural_language(msg)
-        assert "→ shell(pytest tests/ -v)" in result["content"]
+        assert "action: shell(pytest tests/ -v)" in result["content"]
 
     def test_assistant_run_skill(self):
         msg = {
@@ -228,7 +228,7 @@ class TestNaturalLanguageConversion:
             "action_input": {"name": "summarize", "arguments": "src/"},
         }
         result = _to_natural_language(msg)
-        assert "→ run_skill(summarize(src/))" in result["content"]
+        assert "action: run_skill(summarize(src/))" in result["content"]
 
     def test_observation_read_file(self):
         msg = {
@@ -274,7 +274,7 @@ class TestNaturalLanguageConversion:
             "action_input": {"path": "test.py"},
         }
         result = _to_natural_language(msg)
-        assert "→ read_file(test.py)" in result["content"]
+        assert "action: read_file(test.py)" in result["content"]
 
     def test_assistant_plain_content(self):
         """Fallback: assistant message with only content field."""
@@ -370,7 +370,7 @@ class TestGetMessagesIntegration:
         msgs = ctx.get_messages()
         assert len(msgs) == 4
         assert msgs[0] == {"role": "user", "content": "auth.py를 리팩토링 해줘"}
-        assert "→ read_file(src/auth.py)" in msgs[1]["content"]
+        assert "action: read_file(src/auth.py)" in msgs[1]["content"]
         assert "[read_file] src/auth.py" in msgs[2]["content"]
         assert "AuthManager 리팩토링 완료" in msgs[3]["content"]
         assert "→ complete" not in msgs[3]["content"]
