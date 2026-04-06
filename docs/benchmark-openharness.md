@@ -267,3 +267,83 @@ class PermissionChecker:
 - **10+ 채널 통합**: on-premise CLI 도구에 불필요한 복잡성
 - **React/Ink TUI**: 현재 render 모듈로 충분
 - **AsyncIO 전환**: threading 기반이 on-premise LLM 환경에서 더 단순
+
+## 12. Built-in 도구/에이전트/스킬 상세 비교
+
+### Tools 비교
+
+| 카테고리 | OpenHarness | Agent-CLI | 비고 |
+|---------|------------|----------|------|
+| **파일 I/O** | Bash, Read, Write, Edit, Glob, Grep (6) | shell, read_file, write_file, edit_file (4) | Glob/Grep 별도 도구 없음 |
+| **검색** | WebFetch, WebSearch, ToolSearch, LSP (4) | fetch (1) | WebSearch, LSP 없음 |
+| **에이전트** | Agent, SendMessage, Skill (3) | delegate, run_skill (2) | SendMessage 없음 |
+| **팀 관리** | TeamCreate, TeamDelete (2) | 없음 | |
+| **태스크 관리** | TaskCreate/Get/List/Update/Stop (5) | 없음 | 작업 추적 도구 부재 |
+| **MCP** | MCPTool, ListMcpResources, ReadMcpResource (3) | 없음 | MCP 미지원 |
+| **스케줄링** | CronCreate/List/Delete, RemoteTrigger (4) | 없음 | |
+| **모드 전환** | EnterPlanMode, ExitPlanMode, Worktree (3) | 없음 | PlanMode 미지원 |
+| **유틸리티** | Config, Brief, Sleep, AskUser (4) | ask, complete, ready_for_review, read_context (4) | 다른 종류 |
+| **노트북** | NotebookEdit (1) | 없음 | |
+| **합계** | **~35개** | **~12개** | |
+
+#### 눈에 띄는 격차
+
+| 도구 | 효과 | 접목 난이도 |
+|------|------|-----------|
+| **Glob/Grep** | shell로 대체 가능하나 별도 도구면 LLM이 더 정확하게 사용 | 낮음 |
+| **WebSearch** | 인터넷 검색 능력 추가 | 중간 (API 키 필요) |
+| **TaskCreate/Update/List** | LLM이 작업을 자기 관리 (TODO 리스트) | 낮음 |
+| **PlanMode** | 파일 수정 전 사용자 확인 | 낮음 (Hook 확장) |
+| **LSP** | 코드 정의/참조 탐색 | 높음 |
+| **SendMessage** | 에이전트 간 비동기 통신 | 중간 |
+
+### Skills 비교
+
+| OpenHarness (7개) | Agent-CLI (4개) | 비고 |
+|-------------------|----------------|------|
+| commit | - | git 커밋 자동화 |
+| debug | - | 디버깅 워크플로 |
+| diagnose | - | 문제 진단 |
+| plan | plan ✅ | 구현 계획 생성 |
+| review | - | 코드 리뷰 |
+| simplify | - | 코드 단순화 |
+| test | - | 테스트 생성 |
+| - | create-skill | 스킬 생성 메타 스킬 |
+| - | create-agent | 에이전트 생성 메타 스킬 |
+| - | create-team | 팀 구성 메타 스킬 |
+
+#### 격차 분석
+- OH의 실용 스킬: **commit, debug, review, test** — 일상 개발 작업에 바로 사용
+- Agent-CLI의 메타 스킬: **create-skill, create-agent, create-team** — 시스템 확장에 집중
+- **추가 우선순위**: commit > review > test > debug > diagnose > simplify
+
+### Agents 비교
+
+| OpenHarness (~7개) | Agent-CLI (1개) | 비고 |
+|-------------------|----------------|------|
+| general-purpose | - | 범용 에이전트 |
+| Explore | explorer ✅ | 읽기 전용 탐색 |
+| Plan | - | 구현 계획 수립 |
+| worker | - | 제한된 도구로 작업 실행 |
+| verification | - | 작업 결과 검증 |
+| statusline-setup | - | 설정 관련 |
+| claude-code-guide | - | 가이드/도움말 |
+
+#### 격차 분석
+- Agent-CLI는 **explorer 하나**만 존재
+- **추가 우선순위**: Plan > verification > worker (Coordinator 패턴과 함께)
+
+### 종합: Agent-CLI가 먼저 추가해야 할 것
+
+**즉시 추가 가능 (낮은 난이도):**
+1. ~~Glob/Grep 도구~~ (shell로 대체 가능, 우선순위 낮음)
+2. **TaskCreate/Update/List 도구** — LLM 자기 관리 작업 추적
+3. **commit 스킬** — git add + commit 자동화
+4. **review 스킬** — 코드 리뷰 워크플로
+5. **test 스킬** — 테스트 생성 워크플로
+
+**중기 추가 (중간 난이도):**
+6. **Plan 에이전트** — 빌트인 계획 수립 에이전트
+7. **verification 에이전트** — 작업 검증 에이전트
+8. **PlanMode** — 파일 수정 전 확인 모드
+9. **WebSearch 도구** — 인터넷 검색
