@@ -254,7 +254,7 @@ class AgentLoop:
         """Single turn: checkpoint, LLM call, text parse, dispatch."""
         self._maybe_checkpoint()
 
-        response = self._call_llm({})
+        response = self._call_llm()
         if response is None:
             return None
         if response == self._RETRY:
@@ -292,13 +292,13 @@ class AgentLoop:
             if not self.suppress_output:
                 render_status("running", f"Checkpoint at turn {self.turn}")
 
-    def _call_llm(self, call_kwargs: dict):
+    def _call_llm(self):
         """LLM call with overflow retry. Returns response or None on failure."""
         # Context dump (verbose only)
         if self.verbose and not self.suppress_output:
             render_context_dump(self.messages, self.turn)
         _debug_log(
-            f"LLM_CALL iter={self.turn} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
+            f"LLM_CALL turn={self.turn} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
         )
 
         if self.skill_name:
@@ -311,7 +311,6 @@ class AgentLoop:
                 system=self.system,
                 model=self.model,
                 capabilities=self.capabilities,
-                **call_kwargs,
             )
             return response
         except Exception as e:
@@ -380,7 +379,7 @@ class AgentLoop:
                     "tool actions (file operations, shell commands, etc.). "
                     "Please use the appropriate tools first, then call complete."
                 )
-                _append_text_observation(self.messages, self.ctx, llm_text, nudge)
+                _append_observation(self.messages, self.ctx, llm_text, nudge)
                 render_status(
                     "error",
                     "Answer rejected — no tool actions performed yet.",
@@ -423,7 +422,7 @@ class AgentLoop:
             if questions:
                 user_response = _handle_ask(questions, self.suppress_output)
                 obs_msg = f"Observation: User responded:\n{user_response}"
-                _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+                _append_observation(self.messages, self.ctx, llm_text, obs_msg)
                 return self._CONTINUE
 
         # 10b. run_skill -- intercept at loop level (text parsing path)
@@ -448,7 +447,7 @@ class AgentLoop:
             if not self.suppress_output:
                 render_step("observation", obs, self.turn, tool_name="run_skill")
             obs_msg = f"Observation: {obs}"
-            _append_text_observation(
+            _append_observation(
                 self.messages,
                 self.ctx,
                 llm_text,
@@ -482,7 +481,7 @@ class AgentLoop:
             obs_msg = (
                 f"Observation: {obs}\n\nReview your work and respond with JSON only."
             )
-            _append_text_observation(self.messages, self.ctx, llm_text, obs_msg)
+            _append_observation(self.messages, self.ctx, llm_text, obs_msg)
             return self._CONTINUE
 
         # 11. Tool execution (text parsing path)
@@ -562,7 +561,7 @@ class AgentLoop:
 
             # Inject observation with structured artifact
             obs_msg = f"Observation: {observation}"
-            _append_text_observation(
+            _append_observation(
                 self.messages,
                 self.ctx,
                 llm_text,
@@ -603,7 +602,7 @@ class AgentLoop:
                 '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
                 "No markdown fences, no extra text."
             )
-        _append_text_observation(self.messages, self.ctx, llm_text, retry_msg)
+        _append_observation(self.messages, self.ctx, llm_text, retry_msg)
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE
 
@@ -1025,7 +1024,7 @@ def _detect_repeated_calls(history: list[dict]) -> bool:
     return all((h["tool"], h["input"]) == first for h in recent)
 
 
-def _append_text_observation(
+def _append_observation(
     messages: list[dict],
     ctx,
     llm_text: str,

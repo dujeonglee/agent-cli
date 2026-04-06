@@ -1230,7 +1230,7 @@ class TestContextContinuity:
     """Verify context is properly maintained across turns and tools."""
 
     def test_tool_observation_in_ctx(self, caps, tmp_path):
-        """Tool result is saved to ctx via _append_text_observation."""
+        """Tool result is saved to ctx via _append_observation."""
         from agent_cli.context.manager import ContextManager
 
         test_file = tmp_path / "f.txt"
@@ -1315,14 +1315,14 @@ class TestContextContinuity:
 
 
 class TestAppendObservationHelpers:
-    """Test _append_native_observation and _append_text_observation."""
+    """Test _append_native_observation and _append_observation."""
 
-    def test_append_text_observation_no_ctx(self):
+    def test_append_observation_no_ctx(self):
         """Works without ctx (no crash)."""
-        from agent_cli.loop import _append_text_observation
+        from agent_cli.loop import _append_observation
 
         messages = []
-        _append_text_observation(messages, None, "llm", "obs")
+        _append_observation(messages, None, "llm", "obs")
         assert len(messages) == 2
 
 
