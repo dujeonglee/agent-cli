@@ -1,4 +1,4 @@
-"""Anthropic API provider adapter with native tool calling support."""
+"""Anthropic API provider adapter."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class AnthropicProvider:
             "messages": messages,
         }
 
-        # Native tool calling: pass tool definitions to API
+        # Tool calling: pass tool definitions to API (unused by loop, kept for API compat)
         tools = kwargs.get("tools")
         if capabilities.supports_tool_calling and tools:
             body["tools"] = tools

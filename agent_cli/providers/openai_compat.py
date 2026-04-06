@@ -1,4 +1,4 @@
-"""OpenAI-compatible API provider adapter with native tool calling support.
+"""OpenAI-compatible API provider adapter.
 
 Covers: OpenAI, vLLM, LM Studio, mlx-lm, and any /v1/chat/completions endpoint.
 """
@@ -43,7 +43,7 @@ class OpenAICompatProvider:
             "messages": msgs,
         }
 
-        # Native tool calling: pass tool definitions to API
+        # Tool calling: pass tool definitions to API (unused by loop, kept for API compat)
         tools = kwargs.get("tools")
         if capabilities.supports_tool_calling and tools:
             body["tools"] = tools
@@ -67,7 +67,7 @@ class OpenAICompatProvider:
         choice = data["choices"][0]
         content = choice["message"].get("content") or ""
 
-        # Parse native tool calls if present
+        # Parse tool calls if present
         tool_calls = None
         raw_tool_calls = choice["message"].get("tool_calls")
         if raw_tool_calls:
