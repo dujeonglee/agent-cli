@@ -281,8 +281,8 @@ def _build_context_recovery(session_dir: str) -> str:
     """Build Context Recovery Guide for system prompt."""
     return (
         "## Context Recovery\n"
-        "Only the most recent messages are included in this conversation.\n"
-        "If you need earlier context or artifact details:\n"
+        "Older messages may have been dropped from this conversation.\n"
+        "Only use this if the user references something you cannot find in the current messages:\n"
         f'  read_file("{session_dir}/history.jsonl")'
     )
 
