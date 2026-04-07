@@ -58,16 +58,35 @@ def _resolve_provider(
 
     config = load_config()
 
-    # CLI args override config, config overrides provider defaults
-    defaults = get_provider_defaults(config.get("provider", provider))
-    effective_provider = (
-        provider if provider != "ollama" else config.get("provider", provider)
-    )
-    resolved_url = base_url or config.get("base_url", "") or defaults.base_url
-    resolved_model = model or config.get("default_model", "") or defaults.default_model
+    # CLI -p flag overrides config provider; "ollama" is the CLI default,
+    # so only use it as fallback when config has no provider set.
+    config_provider = config.get("provider", "")
+    if provider != "ollama":
+        # Explicit CLI flag: use it
+        effective_provider = provider
+    elif config_provider:
+        # No explicit flag, but config has a provider
+        effective_provider = config_provider
+    else:
+        effective_provider = provider  # fallback to "ollama"
+
+    # Resolve: CLI args > config (only if same provider) > provider defaults
+    defaults = get_provider_defaults(effective_provider)
+    if config_provider == effective_provider:
+        resolved_url = base_url or config.get("base_url", "") or defaults.base_url
+        resolved_model = (
+            model or config.get("default_model", "") or defaults.default_model
+        )
+    else:
+        # Different provider than config — don't use config's URL/model
+        resolved_url = base_url or defaults.base_url
+        resolved_model = model or defaults.default_model
 
     if api_key is None:
-        api_key = config.get("api_key", "")
+        if config_provider == effective_provider:
+            api_key = config.get("api_key", "")
+        else:
+            api_key = ""
         if not api_key:
             env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
             api_key = os.environ.get(env_map.get(effective_provider, ""), "")
