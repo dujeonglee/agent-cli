@@ -383,6 +383,11 @@ def run(
         "-n",
         help="Maximum iterations (0 = unlimited)",
     ),
+    fifo_size: int = typer.Option(
+        0,
+        "--fifo-size",
+        help="FIFO message cache size (0 = default 100)",
+    ),
     max_depth: int = typer.Option(
         2,
         "--max-depth",
@@ -442,7 +447,7 @@ def run(
         from pathlib import Path as _Path
 
         _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
-        ctx = ContextManager(session_dir=_Path(_tmpdir.name))
+        ctx = ContextManager(session_dir=_Path(_tmpdir.name), fifo_size=fifo_size)
     else:
         from agent_cli.context.session import create_session, save_meta
 
@@ -450,7 +455,8 @@ def run(
         session.query = query[:100]
         save_meta(session)
         ctx = ContextManager(
-            session_dir=Path(".agent-cli") / "sessions" / session.session_id
+            session_dir=Path(".agent-cli") / "sessions" / session.session_id,
+            fifo_size=fifo_size,
         )
 
     # Skill dispatch: /skill-name args
@@ -610,6 +616,11 @@ def chat(
         "-n",
         help="Maximum iterations per turn (0 = unlimited)",
     ),
+    fifo_size: int = typer.Option(
+        0,
+        "--fifo-size",
+        help="FIFO message cache size (0 = default 100)",
+    ),
     max_depth: int = typer.Option(
         2,
         "--max-depth",
@@ -663,6 +674,7 @@ def chat(
 
     ctx = ContextManager(
         session_dir=Path(".agent-cli") / "sessions" / session.session_id,
+        fifo_size=fifo_size,
         resume=bool(resume),
     )
 
@@ -714,6 +726,7 @@ def chat(
         if query == "/clear":
             ctx = ContextManager(
                 session_dir=Path(".agent-cli") / "sessions" / session.session_id,
+                fifo_size=fifo_size,
             )
             console.print(f"[{C['accent']}]Context cleared.[/]")
             continue

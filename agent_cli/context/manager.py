@@ -33,7 +33,7 @@ class ContextManager:
         resume: bool = False,
     ):
         self.session_dir = Path(session_dir)
-        self.fifo_size = fifo_size
+        self.fifo_size = fifo_size if fifo_size > 0 else DEFAULT_FIFO_SIZE
         self._cache: deque[dict] = deque(maxlen=fifo_size)
         self._history_path = self.session_dir / "history.jsonl"
 
