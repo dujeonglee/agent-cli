@@ -91,7 +91,7 @@ def _resolve_provider(
             env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
             api_key = os.environ.get(env_map.get(effective_provider, ""), "")
 
-    return resolved_url, resolved_model, api_key
+    return effective_provider, resolved_url, resolved_model, api_key
 
 
 def _maybe_setup() -> None:
@@ -341,7 +341,7 @@ def _setup_provider(
     from agent_cli.providers.compat import DEFAULT_CAPABILITIES, was_runtime_detected
     from agent_cli.render import render_model_detected, render_model_loaded
 
-    resolved_url, resolved_model, resolved_key = _resolve_provider(
+    provider, resolved_url, resolved_model, resolved_key = _resolve_provider(
         provider,
         model,
         base_url,
@@ -368,7 +368,7 @@ def _setup_provider(
         else:
             render_model_loaded(resolved_model, capabilities)
 
-    return llm_provider, capabilities, resolved_model, resolved_url, resolved_key
+    return llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider
 
 
 @app.command()
@@ -452,7 +452,7 @@ def run(
         _run_shell_inline(cmd)
         raise typer.Exit(0)
 
-    llm_provider, capabilities, resolved_model, resolved_url, resolved_key = (
+    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
         _setup_provider(provider, model, base_url, api_key, quiet=headless)
     )
 
@@ -676,7 +676,7 @@ def chat(
         save_meta,
     )
 
-    llm_provider, capabilities, resolved_model, resolved_url, resolved_key = (
+    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
         _setup_provider(provider, model, base_url, api_key)
     )
 
