@@ -780,6 +780,53 @@ agent-cli sessions
 agent-cli chat --resume <session_id>
 ```
 
+### MCP (Model Context Protocol) 지원
+
+외부 MCP 서버의 도구를 agent-cli에서 사용할 수 있습니다.
+
+#### 설정
+
+`.agent-cli/mcp.json` 또는 `~/.agent-cli/mcp.json`에 서버를 정의합니다:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "remote-api": {
+      "url": "http://localhost:8080",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+- **stdio**: `command` + `args` — 로컬 프로세스로 실행
+- **SSE**: `url` + `transport: "sse"` — HTTP 원격 연결
+- `${VAR}` — 환경 변수 참조
+- 프로젝트 설정이 유저 설정보다 우선
+
+#### 사용
+
+세션 시작 시 자동 연결됩니다. MCP 도구는 `{server}.{tool}` 형식으로 LLM이 자동 사용:
+
+```json
+{"action": "github.list_issues", "action_input": {"repo": "owner/repo"}}
+```
+
+#### 관리 명령어 (chat 모드)
+
+```
+/mcp                     서버 상태 보기
+/mcp tools [server]      도구 목록
+/mcp resources <server>  리소스 목록
+/mcp connect <server>    서버 수동 연결
+/mcp disconnect <server> 서버 연결 해제
+```
+
 ### 체크포인트 시스템
 
 LLM이 도구를 반복 호출하며 `complete` 도구를 사용하지 않는 stuck 상태를 방지합니다:

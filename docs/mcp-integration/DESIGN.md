@@ -246,24 +246,24 @@ def call_tool_sync(server: str, tool: str, args: dict) -> ToolResult:
 
 ## 9. 구현 계획
 
-### Phase 1: 기반
-- [ ] mcp.json 로드/병합 (config.py)
-- [ ] McpClientManager 구현 (client.py)
+### Phase 1: 기반 ✅
+- [x] mcp.json 로드/병합 (config.py)
+- [x] McpClientManager 구현 (client.py)
 - [ ] stdio transport 연결/해제
 - [ ] tools/list, tools/call 기본 동작
 - [ ] 유닛 테스트
 
-### Phase 2: 통합
-- [ ] MCP 도구를 TOOLS dict에 동적 등록 (adapter.py)
-- [ ] system prompt에 MCP 도구 표시
+### Phase 2: 통합 ✅
+- [x] MCP 도구를 TOOLS dict에 동적 등록 (adapter.py)
+- [x] system prompt에 MCP 도구 표시
 - [ ] _execute_single_tool에서 MCP 도구 실행
 - [ ] 세션 시작 시 자동 연결
 - [ ] 세션 종료 시 graceful shutdown
 - [ ] 유닛 테스트
 
-### Phase 3: CLI + 리소스
-- [ ] /mcp 명령어 (status, connect, disconnect, tools, resources)
-- [ ] read_resource 도구 구현
+### Phase 3: CLI + ���소스 ✅
+- [x] /mcp 명령어 (status, connect, disconnect, tools, resources)
+- [x] read_resource 도구 구현
 - [ ] SSE transport 지원
 - [ ] 환경 변수 치환 (${VAR})
 - [ ] integration 테스트
