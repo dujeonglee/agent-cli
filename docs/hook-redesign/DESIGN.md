@@ -32,8 +32,7 @@
   │   │
   │   ├─ PreToolUse             ← 도구 실행 차단/입력 수정 (기존 유지)
   │   ├─ 도구 실행
-  │   ├─ PostToolUse            ← 결과 로깅 (기존 유지)
-  │   ├─ PostToolUseFailure     ← 에러 로깅 (기존 유지)
+  │   ├─ PostToolUse            ← 성공/실패 모두. ctx.tool_result.success로 구분
   │   │
   │   └─ OnTurnEnd              ← 턴 요약 → 메모리 저장
   │
@@ -46,7 +45,7 @@
   └─ OnSessionEnd               ← 세션 요약 → 메모리 저장, 정리
 ```
 
-총 12개 이벤트 (기존 3개 + 신규 9개).
+총 11개 이벤트 (PostToolUse가 성공/실패 통합).
 
 ## 4. HookContext — Hook이 받는 것
 
@@ -66,7 +65,7 @@ class HookContext:
     # 이벤트별 추가 데이터
     tool_name: str | None             # PreToolUse/PostToolUse 시
     tool_input: dict | None           # PreToolUse 시
-    tool_result: ToolResult | None    # PostToolUse 시
+    tool_result: ToolResult | None    # PostToolUse 시 (success/failure 모두)
     llm_response: str | None          # PostLLMCall 시
     delegate_result: ToolResult | None  # OnDelegateEnd 시
     skill_result: ToolResult | None   # OnSkillEnd 시
@@ -160,8 +159,7 @@ def on_session_end(ctx: HookContext):
 | PreLLMCall | `pre_llm_call(ctx)` |
 | PostLLMCall | `post_llm_call(ctx)` |
 | PreToolUse | `pre_tool_use(ctx)` |
-| PostToolUse | `post_tool_use(ctx)` |
-| PostToolUseFailure | `post_tool_use_failure(ctx)` |
+| PostToolUse | `post_tool_use(ctx)` — ctx.tool_result.success로 성공/실패 구분 |
 | OnTurnEnd | `on_turn_end(ctx)` |
 | OnDelegateStart | `on_delegate_start(ctx)` |
 | OnDelegateEnd | `on_delegate_end(ctx)` |
@@ -187,6 +185,7 @@ def on_session_end(ctx: HookContext):
 
 실행 순서: Python hooks → shell hooks (같은 이벤트 내).
 shell hook은 context 조작 불가 (기존 동작 유지).
+기존 PostToolUseFailure shell hook은 PostToolUse에서 실행 (호환 유지).
 
 ## 7. 메모리 통합 예시
 
