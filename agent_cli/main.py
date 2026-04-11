@@ -133,6 +133,109 @@ def _setup_mcp(quiet: bool = False):
     return manager, mcp_tools
 
 
+def _handle_mcp_command(query: str, mcp_manager) -> None:
+    """Handle /mcp CLI commands."""
+    parts = query.split()
+    subcmd = parts[1] if len(parts) > 1 else ""
+
+    if not mcp_manager:
+        console.print(f"[{C['muted']}]No MCP servers configured.[/]")
+        console.print(
+            f"[{C['muted']}]Add servers to .agent-cli/mcp.json or ~/.agent-cli/mcp.json[/]"
+        )
+        return
+
+    if not subcmd:
+        # Status: show all servers
+        connected = mcp_manager.connected_servers
+        if not connected:
+            console.print(f"[{C['muted']}]No MCP servers connected.[/]")
+            return
+        console.print(f"\n[{C['accent']}]MCP servers:[/]")
+        for name in connected:
+            tool_count = len(mcp_manager.list_tools(name))
+            console.print(f"  [green]●[/] {name} ({tool_count} tools)")
+        console.print()
+        return
+
+    server = parts[2] if len(parts) > 2 else ""
+
+    if subcmd == "tools":
+        if not server:
+            # List all tools from all servers
+            tools = mcp_manager.list_tools()
+        else:
+            tools = mcp_manager.list_tools(server)
+        if not tools:
+            console.print(f"[{C['muted']}]No tools found.[/]")
+            return
+        console.print(f"\n[{C['accent']}]MCP tools:[/]")
+        for t in tools:
+            desc = f" — {t.description}" if t.description else ""
+            console.print(f"  {t.server}.{t.name}{desc}")
+        console.print()
+        return
+
+    if subcmd == "resources":
+        if not server:
+            console.print(f"[{C['error']}]Usage: /mcp resources <server>[/]")
+            return
+        resources = mcp_manager.list_resources(server)
+        if not resources:
+            console.print(f"[{C['muted']}]No resources found for '{server}'.[/]")
+            return
+        console.print(f"\n[{C['accent']}]MCP resources ({server}):[/]")
+        for r in resources:
+            desc = f" — {r.description}" if r.description else ""
+            console.print(f"  {r.uri}{desc}")
+        console.print()
+        return
+
+    if subcmd == "connect":
+        if not server:
+            console.print(f"[{C['error']}]Usage: /mcp connect <server>[/]")
+            return
+        from agent_cli.mcp.config import load_mcp_config
+
+        configs = load_mcp_config()
+        if server not in configs:
+            console.print(f"[{C['error']}]Server '{server}' not in mcp.json[/]")
+            return
+        results = mcp_manager.connect_all({server: configs[server]})
+        status = results.get(server, "unknown")
+        if status == "connected":
+            from agent_cli.mcp.adapter import register_mcp_tools
+            from agent_cli.tools import TOOLS
+
+            new_tools = register_mcp_tools(mcp_manager)
+            TOOLS.update(new_tools)
+            tool_count = len(mcp_manager.list_tools(server))
+            console.print(f"  [green]●[/] {server}: connected ({tool_count} tools)")
+        else:
+            console.print(f"  [red]●[/] {server}: {status}")
+        return
+
+    if subcmd == "disconnect":
+        if not server:
+            console.print(f"[{C['error']}]Usage: /mcp disconnect <server>[/]")
+            return
+        # Remove tools from TOOLS dict
+        from agent_cli.tools import TOOLS
+
+        prefix = f"{server}."
+        to_remove = [k for k in TOOLS if k.startswith(prefix)]
+        for k in to_remove:
+            del TOOLS[k]
+        mcp_manager.disconnect(server)
+        console.print(f"  [{C['muted']}]{server}: disconnected[/]")
+        return
+
+    console.print(
+        f"[{C['error']}]Unknown /mcp command: {subcmd}[/]\n"
+        f"[{C['muted']}]Usage: /mcp [tools|resources|connect|disconnect] [server][/]"
+    )
+
+
 def _apply_style(style: str | None) -> None:
     """Apply renderer style if specified."""
     if style:
@@ -792,6 +895,9 @@ def chat(
             console.print("  @agents             List available agents")
             console.print("  @<agent> <task>     Delegate task to an agent")
             console.print("  /ctx_window         Dump context window (debug)")
+            console.print("  /mcp                MCP server status")
+            console.print("  /mcp tools <srv>    List MCP server tools")
+            console.print("  /mcp resources <srv> List MCP server resources")
             console.print()
             continue
 
@@ -830,6 +936,10 @@ def chat(
                 console.print()
             tokens = ctx.get_estimated_tokens()
             console.print(f"[{C['muted']}]── estimated {tokens} tokens ──[/]")
+            continue
+
+        if query == "/mcp" or query.startswith("/mcp "):
+            _handle_mcp_command(query, mcp_manager)
             continue
 
         # Agent dispatch: @agent-name task
