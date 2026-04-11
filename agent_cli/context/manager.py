@@ -1,7 +1,7 @@
 """Context manager with FIFO message queue and history.jsonl persistence.
 
 Stores full conversation in history.jsonl (JSON Lines, append-only).
-Maintains an in-memory FIFO cache of the last N messages.
+Maintains an in-memory context cache of the last N messages.
 Converts JSON records to natural language for LLM consumption.
 """
 
@@ -12,8 +12,8 @@ from collections import deque
 from pathlib import Path
 
 
-# ── Default FIFO size ──────────────────────────���─────
-DEFAULT_FIFO_SIZE = 100
+# ── Default max context messages ──────────────────────────���─────
+DEFAULT_MAX_CONTEXT_MESSAGES = 100
 
 
 class ContextManager:
@@ -28,13 +28,17 @@ class ContextManager:
     def __init__(
         self,
         session_dir: Path,
-        fifo_size: int = DEFAULT_FIFO_SIZE,
+        max_context_messages: int = DEFAULT_MAX_CONTEXT_MESSAGES,
         *,
         resume: bool = False,
     ):
         self.session_dir = Path(session_dir)
-        self.fifo_size = fifo_size if fifo_size > 0 else DEFAULT_FIFO_SIZE
-        self._cache: deque[dict] = deque(maxlen=fifo_size)
+        self.max_context_messages = (
+            max_context_messages
+            if max_context_messages > 0
+            else DEFAULT_MAX_CONTEXT_MESSAGES
+        )
+        self._cache: deque[dict] = deque(maxlen=self.max_context_messages)
         self._history_path = self.session_dir / "history.jsonl"
 
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -91,7 +95,11 @@ class ContextManager:
         with open(self._history_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-        tail = lines[-self.fifo_size :] if len(lines) > self.fifo_size else lines
+        tail = (
+            lines[-self.max_context_messages :]
+            if len(lines) > self.max_context_messages
+            else lines
+        )
         for line in tail:
             line = line.strip()
             if not line:

@@ -410,10 +410,10 @@ def run(
         "-n",
         help="Maximum iterations (0 = unlimited)",
     ),
-    fifo_size: int = typer.Option(
+    max_context_messages: int = typer.Option(
         0,
-        "--fifo-size",
-        help="FIFO message cache size (0 = default 100)",
+        "--max-context-messages",
+        help="Max messages in context window (0 = default 100)",
     ),
     max_depth: int = typer.Option(
         2,
@@ -474,7 +474,9 @@ def run(
         from pathlib import Path as _Path
 
         _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
-        ctx = ContextManager(session_dir=_Path(_tmpdir.name), fifo_size=fifo_size)
+        ctx = ContextManager(
+            session_dir=_Path(_tmpdir.name), max_context_messages=max_context_messages
+        )
     else:
         from agent_cli.context.session import create_session, save_meta
 
@@ -483,7 +485,7 @@ def run(
         save_meta(session)
         ctx = ContextManager(
             session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-            fifo_size=fifo_size,
+            max_context_messages=max_context_messages,
         )
 
     # Skill dispatch: /skill-name args
@@ -644,10 +646,10 @@ def chat(
         "-n",
         help="Maximum iterations per turn (0 = unlimited)",
     ),
-    fifo_size: int = typer.Option(
+    max_context_messages: int = typer.Option(
         0,
-        "--fifo-size",
-        help="FIFO message cache size (0 = default 100)",
+        "--max-context-messages",
+        help="Max messages in context window (0 = default 100)",
     ),
     max_depth: int = typer.Option(
         2,
@@ -702,7 +704,7 @@ def chat(
 
     ctx = ContextManager(
         session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-        fifo_size=fifo_size,
+        max_context_messages=max_context_messages,
         resume=bool(resume),
     )
 
@@ -754,7 +756,7 @@ def chat(
         if query == "/clear":
             ctx = ContextManager(
                 session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-                fifo_size=fifo_size,
+                max_context_messages=max_context_messages,
             )
             console.print(f"[{C['accent']}]Context cleared.[/]")
             continue
@@ -767,7 +769,7 @@ def chat(
 
         if query == "/compact" or query.startswith("/compact "):
             console.print(
-                f"[{C['muted']}]Context uses FIFO (last {ctx.fifo_size} messages). "
+                f"[{C['muted']}]Context: last {ctx.max_context_messages} messages. "
                 f"No compression needed.[/]"
             )
             continue
@@ -776,7 +778,7 @@ def chat(
             msgs = ctx.get_messages()
             console.print(
                 f"[{C['muted']}]── context window dump ({len(msgs)} messages, "
-                f"FIFO {ctx.fifo_size}) ──[/]"
+                f"{ctx.max_context_messages} msgs) ──[/]"
             )
             for i, m in enumerate(msgs):
                 role = m["role"]

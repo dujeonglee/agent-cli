@@ -17,7 +17,7 @@ def session_dir(tmp_path):
 
 @pytest.fixture
 def ctx(session_dir):
-    return ContextManager(session_dir, fifo_size=5)
+    return ContextManager(session_dir, max_context_messages=5)
 
 
 # ── FIFO Behavior ─────────────────────────────────────
@@ -44,7 +44,7 @@ class TestFIFO:
         for i in range(7):
             ctx.add({"role": "user", "content": f"msg-{i}"})
         msgs = ctx.get_raw_messages()
-        assert len(msgs) == 5  # fifo_size=5
+        assert len(msgs) == 5  # max_context_messages=5
         assert msgs[0]["content"] == "msg-2"
         assert msgs[-1]["content"] == "msg-6"
 
@@ -59,7 +59,7 @@ class TestFIFO:
                     "action_input": {"result": f"r{i}"},
                 }
             )
-        # fifo_size=5, so last 5 of 6 messages
+        # max_context_messages=5, so last 5 of 6 messages
         raw = ctx.get_raw_messages()
         assert len(raw) == 5
         assert raw[0]["role"] == "assistant"  # u0 evicted, a0 is first
@@ -106,24 +106,24 @@ class TestHistoryPersistence:
 class TestSessionResume:
     def test_resume_restores_cache(self, session_dir):
         # Write session
-        ctx1 = ContextManager(session_dir, fifo_size=5)
+        ctx1 = ContextManager(session_dir, max_context_messages=5)
         for i in range(3):
             ctx1.add({"role": "user", "content": f"msg-{i}"})
 
         # Resume session
-        ctx2 = ContextManager(session_dir, fifo_size=5, resume=True)
+        ctx2 = ContextManager(session_dir, max_context_messages=5, resume=True)
         raw = ctx2.get_raw_messages()
         assert len(raw) == 3
         assert raw[0]["content"] == "msg-0"
         assert raw[2]["content"] == "msg-2"
 
-    def test_resume_respects_fifo_size(self, session_dir):
+    def test_resume_respects_max_context_messages(self, session_dir):
         """Resume only loads last N messages."""
-        ctx1 = ContextManager(session_dir, fifo_size=3)
+        ctx1 = ContextManager(session_dir, max_context_messages=3)
         for i in range(10):
             ctx1.add({"role": "user", "content": f"msg-{i}"})
 
-        ctx2 = ContextManager(session_dir, fifo_size=3, resume=True)
+        ctx2 = ContextManager(session_dir, max_context_messages=3, resume=True)
         raw = ctx2.get_raw_messages()
         assert len(raw) == 3
         assert raw[0]["content"] == "msg-7"
@@ -131,10 +131,10 @@ class TestSessionResume:
 
     def test_resume_continues_append(self, session_dir):
         """After resume, new messages append to existing history."""
-        ctx1 = ContextManager(session_dir, fifo_size=5)
+        ctx1 = ContextManager(session_dir, max_context_messages=5)
         ctx1.add({"role": "user", "content": "old"})
 
-        ctx2 = ContextManager(session_dir, fifo_size=5, resume=True)
+        ctx2 = ContextManager(session_dir, max_context_messages=5, resume=True)
         ctx2.add({"role": "user", "content": "new"})
 
         lines = ctx2.history_path.read_text().strip().split("\n")
@@ -144,7 +144,7 @@ class TestSessionResume:
 
     def test_resume_no_file(self, session_dir):
         """Resume with no history file starts empty."""
-        ctx = ContextManager(session_dir, fifo_size=5, resume=True)
+        ctx = ContextManager(session_dir, max_context_messages=5, resume=True)
         assert ctx.get_raw_messages() == []
 
     def test_resume_handles_corrupt_lines(self, session_dir):
@@ -156,7 +156,7 @@ class TestSessionResume:
             "NOT JSON\n"
             '{"role":"user","content":"also good"}\n'
         )
-        ctx = ContextManager(session_dir, fifo_size=5, resume=True)
+        ctx = ContextManager(session_dir, max_context_messages=5, resume=True)
         raw = ctx.get_raw_messages()
         assert len(raw) == 2
         assert raw[0]["content"] == "good"
@@ -288,7 +288,7 @@ class TestNaturalLanguageConversion:
 
 class TestFork:
     def test_fork_copies_history(self, session_dir, tmp_path):
-        ctx = ContextManager(session_dir, fifo_size=5)
+        ctx = ContextManager(session_dir, max_context_messages=5)
         ctx.add({"role": "user", "content": "parent msg 1"})
         ctx.add(
             {
@@ -309,13 +309,13 @@ class TestFork:
 
     def test_fork_then_resume(self, session_dir, tmp_path):
         """Forked history can be used to create a new ContextManager."""
-        ctx = ContextManager(session_dir, fifo_size=5)
+        ctx = ContextManager(session_dir, max_context_messages=5)
         ctx.add({"role": "user", "content": "parent msg"})
 
         target = tmp_path / "delegate_test"
         ctx.fork_history_to(target)
 
-        child = ContextManager(target, fifo_size=5, resume=True)
+        child = ContextManager(target, max_context_messages=5, resume=True)
         assert len(child.get_raw_messages()) == 1
         assert child.get_raw_messages()[0]["content"] == "parent msg"
 
@@ -328,7 +328,7 @@ class TestFork:
 
     def test_fork_empty_history(self, session_dir, tmp_path):
         """Fork with no history creates empty target."""
-        ctx = ContextManager(session_dir, fifo_size=5)
+        ctx = ContextManager(session_dir, max_context_messages=5)
         target = tmp_path / "delegate_empty"
         copied_path = ctx.fork_history_to(target)
         # File doesn't exist since source doesn't exist
