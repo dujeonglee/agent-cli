@@ -47,7 +47,7 @@ class TestRunLoopComplete:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "42"
+        assert result.output == "42"
 
     def test_complete_after_tool(self, caps, tmp_path):
         test_file = tmp_path / "test.txt"
@@ -70,7 +70,7 @@ class TestRunLoopComplete:
             model="test-model",
             suppress_output=True,
         )
-        assert "hello world" in result
+        assert "hello world" in result.output
 
     def test_complete_with_string_action_input(self, caps):
         """LLM sends action_input as string instead of dict — should handle."""
@@ -90,7 +90,7 @@ class TestRunLoopComplete:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "Simple answer"
+        assert result.output == "Simple answer"
 
     def test_complete_rejected_without_tools(self, caps):
         """Fulfillment guard: complete rejected if task needs tools but none called."""
@@ -112,7 +112,7 @@ class TestRunLoopComplete:
             model="test-model",
             suppress_output=True,
         )
-        assert "Created file successfully" in result
+        assert "Created file successfully" in result.output
 
     def test_complete_empty_result_defaults(self, caps, tmp_path):
         """complete with empty result → returns '(completed)' instead of failing."""
@@ -143,7 +143,7 @@ class TestRunLoopComplete:
             suppress_output=True,
         )
         assert (
-            result
+            result.output
             == "(Completed without result — model may lack capability for this task)"
         )
 
@@ -176,7 +176,7 @@ class TestRunLoopComplete:
             suppress_output=True,
         )
         assert (
-            result
+            result.output
             == "(Completed without result — model may lack capability for this task)"
         )
 
@@ -200,7 +200,7 @@ class TestRunLoopToolExecution:
             model="test-model",
             suppress_output=True,
         )
-        assert result is not None
+        assert result.success
 
     def test_unknown_tool(self, caps):
         provider = _make_provider(
@@ -220,7 +220,7 @@ class TestRunLoopToolExecution:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "ok"
+        assert result.output == "ok"
 
 
 class TestRunLoopParseFailure:
@@ -237,7 +237,7 @@ class TestRunLoopParseFailure:
             suppress_output=True,
             max_turns=5,
         )
-        assert result == "recovered"
+        assert result.output == "recovered"
 
 
 class TestRunLoopMaxIter:
@@ -273,7 +273,7 @@ class TestRunLoopMaxIter:
             suppress_output=True,
             max_turns=2,
         )
-        assert result is None
+        assert not result.success
 
 
 class TestCheckpoint:
@@ -299,7 +299,7 @@ class TestCheckpoint:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "completed"
+        assert result.output == "completed"
         assert provider.call.call_count == 11
 
     def test_checkpoint_nudge_injected(self, caps):
@@ -326,7 +326,7 @@ class TestCheckpoint:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "done after checkpoint"
+        assert result.output == "done after checkpoint"
 
         last_call = provider.call.call_args
         messages = last_call.kwargs.get("messages") or last_call[1].get("messages")
@@ -368,7 +368,7 @@ class TestToolHistoryTracking:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "ok"
+        assert result.output == "ok"
 
 
 class TestEchoAsFinalAnswer:
@@ -393,7 +393,7 @@ class TestEchoAsFinalAnswer:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "Task completed successfully."
+        assert result.output == "Task completed successfully."
 
     def test_echo_with_pipe_not_intercepted(self, caps):
         """echo ... | grep should NOT be treated as final answer."""
@@ -414,7 +414,7 @@ class TestEchoAsFinalAnswer:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "found"
+        assert result.output == "found"
 
     def test_echo_with_redirect_not_intercepted(self, caps):
         """echo ... > file should NOT be treated as final answer."""
@@ -435,7 +435,7 @@ class TestEchoAsFinalAnswer:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "written"
+        assert result.output == "written"
 
 
 class TestRepeatedCallDetection:
@@ -459,7 +459,7 @@ class TestRepeatedCallDetection:
             model="test-model",
             suppress_output=True,
         )
-        assert result is None
+        assert not result.success
 
     def test_different_inputs_no_stop(self, caps, tmp_path):
         """Same tool with different inputs should NOT trigger repeat detection."""
@@ -501,7 +501,7 @@ class TestRepeatedCallDetection:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "ok"
+        assert result.output == "ok"
 
 
 class TestRunLoopHeadlessMode:
@@ -514,7 +514,7 @@ class TestRunLoopHeadlessMode:
             model="test-model",
             suppress_output=True,
         )
-        assert result == "answer"
+        assert result.output == "answer"
 
 
 class TestAskToolAvailability:
@@ -586,7 +586,7 @@ class TestGracefulInterrupt:
         )
         loop._interrupted = True
         result = loop.run()
-        assert result is None
+        assert not result.success
         # LLM should never be called
         provider.call.assert_not_called()
 
@@ -631,7 +631,7 @@ class TestGracefulInterrupt:
 
         result = loop.run()
         # First iteration completes (tool executed), then exits at checkpoint
-        assert result is None
+        assert not result.success
         # LLM was called once (first iteration)
         assert provider.call.call_count == 1
 
@@ -771,7 +771,7 @@ class TestGracefulInterrupt:
         )
         loop._interrupted = True
         result = loop.run()
-        assert result is None
+        assert not result.success
 
     def test_run_mode_keyboardinterrupt_propagates(self, caps):
         """Without graceful_interrupt, KeyboardInterrupt propagates up."""
@@ -836,7 +836,7 @@ class TestGracefulInterrupt:
 
         # Should NOT raise — graceful handler catches it
         result = loop.run()
-        assert result is None
+        assert not result.success
         assert loop._interrupted
 
     def test_chat_mode_ctx_preserved_after_interrupt(self, caps, tmp_path):
@@ -947,7 +947,7 @@ class TestAskTool:
             suppress_output=True,
             ctx=ctx,
         )
-        assert result == "Done after confirmation"
+        assert result.output == "Done after confirmation"
         assert provider.call.call_count == 2
 
     def test_ask_multiple_questions(self, caps, monkeypatch, tmp_path):
@@ -989,7 +989,7 @@ class TestAskTool:
             suppress_output=True,
             ctx=ctx,
         )
-        assert result == "Processing file.py in python"
+        assert result.output == "Processing file.py in python"
 
     def test_ask_string_coercion(self, caps, monkeypatch, tmp_path):
         """ask tool with string input (not array) — auto-coerced to list."""
@@ -1027,7 +1027,7 @@ class TestAskTool:
             suppress_output=True,
             ctx=ctx,
         )
-        assert result == "The answer is 42"
+        assert result.output == "The answer is 42"
 
     def test_ask_legacy_question_key(self, caps, monkeypatch, tmp_path):
         """ask tool with legacy 'question' key — backward compatible."""
@@ -1065,7 +1065,7 @@ class TestAskTool:
             suppress_output=True,
             ctx=ctx,
         )
-        assert result == "ok"
+        assert result.output == "ok"
 
     def test_ask_available_with_ctx(self, caps, tmp_path):
         """ask tool should be in system prompt when ctx is provided."""
@@ -1225,7 +1225,7 @@ class TestAgentLoopClass:
             suppress_output=True,
         )
         result = loop.run()
-        assert result == "42"
+        assert result.output == "42"
 
 
 class TestContextContinuity:
@@ -1277,7 +1277,7 @@ class TestContextContinuity:
             suppress_output=True,
             ctx=ctx,
         )
-        assert result == "final answer"
+        assert result.output == "final answer"
 
         # AgentLoop now adds the final answer to ctx
         msgs = ctx.get_messages()
@@ -1416,7 +1416,7 @@ class TestReadyForReviewTextPath:
             suppress_output=True,
             ctx=ctx,
         )
-        assert result == "Analysis complete"
+        assert result.output == "Analysis complete"
 
     def test_ready_for_review_returns_query_in_observation(self, caps, tmp_path):
         """The observation from ready_for_review contains the original query."""

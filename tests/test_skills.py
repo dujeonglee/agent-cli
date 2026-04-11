@@ -500,7 +500,9 @@ class TestSkillExecution:
 
         skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
         with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_run_loop.return_value = _TR(True, output="ok")
             execute_skill(
                 skill=skill,
                 arguments="task",
@@ -519,7 +521,9 @@ class TestSkillExecution:
 
         skill = Skill(name="s", description="d", prompt_template="Do $ARGUMENTS")
         with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_run_loop.return_value = _TR(True, output="ok")
             execute_skill(
                 skill=skill,
                 arguments="task",
@@ -537,7 +541,9 @@ class TestSkillExecution:
 
         skill = Skill(name="optimize", description="d", prompt_template="Do $ARGUMENTS")
         with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_run_loop.return_value = _TR(True, output="ok")
             execute_skill(
                 skill=skill,
                 arguments="./",
@@ -568,7 +574,9 @@ class TestSkillExecution:
             name="s", description="d", prompt_template="Do $ARGUMENTS", model=None
         )
         with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_run_loop.return_value = _TR(True, output="ok")
             execute_skill(
                 skill=skill,
                 arguments="task",
@@ -600,7 +608,9 @@ class TestSkillExecution:
             model="qwen3:8b",
         )
         with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
-            mock_run_loop.return_value = "ok"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_run_loop.return_value = _TR(True, output="ok")
             execute_skill(
                 skill=skill,
                 arguments="task",

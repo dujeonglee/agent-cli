@@ -369,7 +369,7 @@ def _run_single(
 
     t0 = time.monotonic()
 
-    result_str = run_loop(
+    loop_result = run_loop(
         query=task,
         provider=provider,
         capabilities=capabilities,
@@ -395,6 +395,7 @@ def _run_single(
 
     duration = time.monotonic() - t0
 
+    result_str = loop_result.output if loop_result.success else None
     delegate_result = DelegateResult(output=result_str, duration_secs=duration)
 
     # Activity log extraction

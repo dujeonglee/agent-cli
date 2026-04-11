@@ -368,7 +368,14 @@ def _setup_provider(
         else:
             render_model_loaded(resolved_model, capabilities)
 
-    return llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider
+    return (
+        llm_provider,
+        capabilities,
+        resolved_model,
+        resolved_url,
+        resolved_key,
+        provider,
+    )
 
 
 @app.command()
@@ -531,7 +538,7 @@ def run(
             return
 
     try:
-        answer = run_loop(
+        loop_result = run_loop(
             query=query,
             provider=llm_provider,
             capabilities=capabilities,
@@ -548,6 +555,7 @@ def run(
             ctx=ctx,
             session=session,
         )
+        answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
         answer = None
         if not headless:
@@ -890,7 +898,7 @@ def chat(
         session.query = query[:100]
         save_meta(session)
 
-        result = run_loop(
+        loop_result = run_loop(
             query=query,
             provider=llm_provider,
             capabilities=capabilities,
@@ -906,6 +914,7 @@ def chat(
             session=session,
             graceful_interrupt=True,
         )
+        result = loop_result.output if loop_result.success else None
 
         if result is None:
             console.print(

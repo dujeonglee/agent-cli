@@ -154,12 +154,8 @@ class AgentLoop:
         self._CONTINUE = object()  # keep looping
         self._RETRY = object()  # overflow retry
 
-    def run(self) -> str | None:
-        """Main entry point -- replaces run_loop body.
-
-        Returns the final answer string, or None if max turns reached
-        or interrupted by user.
-        """
+    def run(self):
+        """Main entry point. Returns ToolResult."""
         if self.graceful_interrupt:
             self._install_signal_handler()
         try:
@@ -211,8 +207,10 @@ class AgentLoop:
         if self._prev_sigint_handler is not None:
             signal.signal(signal.SIGINT, self._prev_sigint_handler)
 
-    def _on_interrupt(self) -> None:
-        """Handle graceful interrupt: record in ctx, return None."""
+    def _on_interrupt(self):
+        """Handle graceful interrupt: record in ctx, return ToolResult."""
+        from agent_cli.tools.result import ToolResult
+
         interrupt_msg = "⚡ User interrupted. Waiting for new instructions."
         if self.ctx:
             self.ctx.add({"role": "user", "content": interrupt_msg})
@@ -221,7 +219,7 @@ class AgentLoop:
 
             console.print(f"\n[{C['accent']}]⚡ Interrupted after turn {self.turn}.[/]")
         _debug_log(f"Graceful interrupt at turn {self.turn}")
-        return None
+        return ToolResult(False, error="Interrupted by user")
 
     def _setup(self) -> None:
         """Initialize system prompt and messages."""
@@ -266,13 +264,13 @@ class AgentLoop:
         if not self.suppress_output:
             render_turn_sep(self.turn)
 
-    def _execute_turn(self) -> str | None:
+    def _execute_turn(self):
         """Single turn: checkpoint, LLM call, text parse, dispatch."""
         self._maybe_checkpoint()
 
         response = self._call_llm()
-        if response is None:
-            return None
+        if hasattr(response, "success"):
+            return response  # ToolResult (LLM failure)
         if response == self._RETRY:
             return self._CONTINUE
 
@@ -345,7 +343,9 @@ class AgentLoop:
                 f"LLM call failed (model={self.model}, iter={self.turn}): {e}",
                 self.turn,
             )
-            return None
+            from agent_cli.tools.result import ToolResult
+
+            return ToolResult(False, error=f"LLM call failed: {e}")
         finally:
             if self.skill_name or not self.suppress_output:
                 render_spinner_stop()
@@ -414,7 +414,9 @@ class AgentLoop:
                 )
             if not self.suppress_output:
                 render_step("final", answer, self.turn)
-            return answer
+            from agent_cli.tools.result import ToolResult
+
+            return ToolResult(True, output=answer)
 
         # 9. Detect echo-as-final-answer (common small model pattern)
         echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
@@ -430,7 +432,9 @@ class AgentLoop:
                 )
             if not self.suppress_output:
                 render_step("final", echo_answer, self.turn)
-            return echo_answer
+            from agent_cli.tools.result import ToolResult
+
+            return ToolResult(True, output=echo_answer)
 
         # 10. Ask tool -- prompt user for input (text parsing path)
         if parsed.action == "ask":
@@ -573,7 +577,9 @@ class AgentLoop:
                     f"Repeated call detected: {last['tool']} called "
                     f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
                 )
-                return None
+                from agent_cli.tools.result import ToolResult
+
+                return ToolResult(False, error="Repeated tool call detected")
 
             # Inject observation with structured artifact
             obs_msg = f"Observation: {observation}"
@@ -622,14 +628,16 @@ class AgentLoop:
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE
 
-    def _on_max_turns(self) -> None:
+    def _on_max_turns(self):
         """Handle max turns reached."""
+        from agent_cli.tools.result import ToolResult
+
         if not self.suppress_output:
             render_status("error", f"Max turns ({self.max_turns}) reached.")
         _debug_log(
             f"run_loop returning None: max_turns={self.max_turns} reached, skill_name={self.skill_name}"
         )
-        return None
+        return ToolResult(False, error=f"Max turns ({self.max_turns}) reached")
 
 
 # Backward-compatible wrapper
@@ -659,11 +667,8 @@ def run_loop(
     stop_event=None,
     agent_role: str = "",
     agent_name: str = "",
-) -> str | None:
-    """Run the ReAct agent loop.
-
-    Returns the final answer string, or None if max turns reached.
-    """
+):
+    """Run the ReAct agent loop. Returns ToolResult."""
     return AgentLoop(
         query=query,
         provider=provider,

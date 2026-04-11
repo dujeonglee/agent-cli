@@ -141,7 +141,7 @@ def execute_skill(
         skill_session_dir = ctx.session_dir / skill_dir_name
         skill_ctx = ContextManager(session_dir=skill_session_dir)
 
-    result = run_loop(
+    loop_result = run_loop(
         query=prompt,
         provider=provider,
         capabilities=capabilities,
@@ -165,6 +165,8 @@ def execute_skill(
         stop_event=stop_event,
         agent_role=parent_role,
     )
+
+    result = loop_result.output if loop_result.success else None
 
     # Save result.md in skill subdir
     if skill_ctx and skill_dir_name and result:

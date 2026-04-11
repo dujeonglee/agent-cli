@@ -44,7 +44,9 @@ class TestToolIntersection:
         skill = _make_skill(allowed_tools=["read_file", "shell", "write_file"])
 
         with patch("agent_cli.skills.executor.run_loop") as mock_loop:
-            mock_loop.return_value = "done"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
             execute_skill(
                 skill=skill,
                 arguments="test",
@@ -83,7 +85,9 @@ class TestToolIntersection:
         skill = _make_skill(allowed_tools=["read_file", "write_file"])
 
         with patch("agent_cli.skills.executor.run_loop") as mock_loop:
-            mock_loop.return_value = "done"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
             execute_skill(
                 skill=skill,
                 arguments="test",
@@ -103,7 +107,9 @@ class TestToolIntersection:
         skill = _make_skill(allowed_tools=[])
 
         with patch("agent_cli.skills.executor.run_loop") as mock_loop:
-            mock_loop.return_value = "done"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
             execute_skill(
                 skill=skill,
                 arguments="test",
@@ -126,7 +132,9 @@ class TestParentRoleInheritance:
         skill = _make_skill()
 
         with patch("agent_cli.skills.executor.run_loop") as mock_loop:
-            mock_loop.return_value = "done"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
             execute_skill(
                 skill=skill,
                 arguments="test",
@@ -147,7 +155,9 @@ class TestParentRoleInheritance:
         skill = _make_skill()
 
         with patch("agent_cli.skills.executor.run_loop") as mock_loop:
-            mock_loop.return_value = "done"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
             execute_skill(
                 skill=skill,
                 arguments="test",
@@ -169,7 +179,9 @@ class TestSkillSubdir:
         skill = _make_skill(name="summarize")
 
         with patch("agent_cli.skills.executor.run_loop") as mock_loop:
-            mock_loop.return_value = "done"
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
             execute_skill(
                 skill=skill,
                 arguments="test",
