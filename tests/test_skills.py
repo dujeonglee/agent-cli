@@ -209,7 +209,7 @@ class TestSkillLoader:
             "name: review\n"
             "description: Review code\n"
             "allowed-tools: [read_file]\n"
-            "max-iter: 5\n"
+            "max-turns: 5\n"
             "argument-hint: <file>\n"
             "---\n\n"
             "Review $ARGUMENTS for bugs.\n"

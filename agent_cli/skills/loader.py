@@ -84,7 +84,7 @@ def _resource_to_skill(res) -> Skill | None:
         description=meta.get("description", ""),
         prompt_template=res.body,
         allowed_tools=meta.get("allowed-tools"),
-        max_turns=int(meta.get("max-iter", 0)),
+        max_turns=int(meta.get("max-turns", 0)),
         argument_hint=meta.get("argument-hint", ""),
         model=meta.get("model"),
         context=meta.get("context"),

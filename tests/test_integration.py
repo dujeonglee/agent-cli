@@ -366,7 +366,7 @@ class TestSkillExecution:
             "---\n"
             "name: greet\n"
             "description: Greet someone\n"
-            "max-iter: 5\n"
+            "max-turns: 5\n"
             "---\n\n"
             "Say hello to $ARGUMENTS. Answer with just the greeting.\n"
         )

@@ -23,12 +23,12 @@ def _handle_text_path(self, llm_text: str) -> str | None:  # ← 틀림
 
 **수정**: 타입 어노테이션 제거 또는 수정.
 
-### 3. YAML 스킬 메타데이터 키: `max-iter` vs `max-turns`
+### 3. YAML 스킬 메타데이터 키: `max-turns` vs `max-turns`
 
-skills/loader.py:87에서 `meta.get("max-iter")` 사용.
+skills/loader.py:87에서 `meta.get("max-turns")` 사용.
 다른 모든 코드는 `max_turns`. 다른 YAML 키는 kebab-case (`allowed-tools`, `argument-hint`).
 
-**수정**: `max-iter` → `max-turns`로 통일. 기존 스킬 파일 호환 위해 fallback 유지.
+**수정**: `max-turns` → `max-turns`로 통일. 기존 스킬 파일 호환 위해 fallback 유지.
 
 ## MEDIUM 우선순위
 

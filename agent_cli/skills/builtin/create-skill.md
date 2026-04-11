@@ -17,7 +17,7 @@ agent-cli skills are markdown files with YAML frontmatter:
 name: skill-name
 description: What the skill does (1-2 sentences)
 allowed-tools: [read_file, write_file, edit_file, shell]
-max-iter: 0
+max-turns: 0
 argument-hint: "<path>"
 model: null
 context: null
@@ -38,7 +38,7 @@ Use !`command` for inline shell execution in the prompt.
 | name | yes | | Skill identifier (used as /command) |
 | description | yes | | What the skill does — be specific for auto-invocation |
 | allowed-tools | no | all | Tools the skill can use: read_file, write_file, edit_file, shell, ask, delegate |
-| max-iter | no | 0 (global) | Max iterations for this skill |
+| max-turns | no | 0 (global) | Max iterations for this skill |
 | argument-hint | no | "" | Usage hint shown in /skills list |
 | model | no | caller's | Override model for this skill |
 | context | no | shared | "fork" for independent context |

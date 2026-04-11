@@ -11,7 +11,7 @@ Guide for creating skill files at `.agent-cli/skills/{name}.md` or `.agent-cli/s
 name: skill-name
 description: What this skill does — be specific for auto-trigger
 allowed-tools: [read_file, write_file, shell]
-max-iter: 0
+max-turns: 0
 argument-hint: "<path>"
 ---
 
@@ -25,7 +25,7 @@ Prompt template body. Use $ARGUMENTS for user input.
 | name | yes | | Skill identifier (/command name) |
 | description | yes | | Skill description (trigger mechanism) |
 | allowed-tools | no | all | Tools the skill can use |
-| max-iter | no | 0 (global) | Max iterations |
+| max-turns | no | 0 (global) | Max iterations |
 | argument-hint | no | "" | Usage hint shown in /skills |
 | model | no | caller's | Model override |
 | context | no | shared | "fork" for independent context |

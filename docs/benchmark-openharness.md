@@ -75,7 +75,7 @@ mcpServers: [code-search]             # MCP 의존성
 name: optimize
 description: Analyze source code for optimization
 allowed-tools: [read_file, shell, write_file]
-max-iter: 0
+max-turns: 0
 argument-hint: "<path>"
 ---
 ```
