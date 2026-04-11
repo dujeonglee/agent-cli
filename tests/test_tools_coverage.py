@@ -564,23 +564,6 @@ class TestReadContextTool:
         assert result.success
         assert "No previous sessions" in result.output
 
-    def test_detail_missing_session_id(self, tmp_path, monkeypatch):
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "detail"})
-        assert not result.success
-        assert "session_id is required" in result.error
-
-    def test_detail_nonexistent_session(self, tmp_path, monkeypatch):
-        import agent_cli.context.session as session_mod
-
-        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "detail", "session_id": "999"})
-        assert not result.success
-        assert "not found" in result.error
-
     def test_unknown_mode(self, tmp_path, monkeypatch):
         from agent_cli.tools.context import tool_read_context
 

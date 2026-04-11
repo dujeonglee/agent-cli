@@ -109,17 +109,17 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
     "read_context": ToolSchema(
         name="read_context",
         description="Read context from previous sessions. "
-        "Use mode='list' to see session list, mode='detail' with session_id to read full log.",
+        "mode='list': session list. mode='search': grep keyword across all sessions.",
         parameters={
             "type": "object",
             "properties": {
                 "mode": {
                     "type": "string",
-                    "description": "list or detail",
+                    "description": "list or search",
                 },
-                "session_id": {
+                "keyword": {
                     "type": "string",
-                    "description": "Session ID (required for mode=detail)",
+                    "description": "Search keyword (required for mode=search)",
                 },
             },
             "required": ["mode"],
