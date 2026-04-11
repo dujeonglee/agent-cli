@@ -7,6 +7,8 @@ import re
 
 import requests
 
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT
+
 from agent_cli.config import get_model_entry, save_model_entry
 
 
@@ -184,7 +186,7 @@ def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:
                     {"role": "user", "content": "What is 2+2?"},
                 ],
             },
-            timeout=30,
+            timeout=SHELL_COMMAND_TIMEOUT,
         )
         r.raise_for_status()
         msg = r.json().get("message", {})
@@ -234,7 +236,7 @@ def _detect_openai_compat_capabilities(
                 "max_tokens": 512,
             },
             headers=headers,
-            timeout=30,
+            timeout=SHELL_COMMAND_TIMEOUT,
         )
         r.raise_for_status()
         data = r.json()

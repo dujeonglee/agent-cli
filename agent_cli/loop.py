@@ -8,7 +8,7 @@ import signal
 import sys
 import time
 
-from agent_cli.constants import OBS_SUCCESS
+from agent_cli.constants import DELEGATE_DEFAULT_TIMEOUT, OBS_SUCCESS
 from agent_cli.tools.result import ToolResult
 
 from agent_cli.context.manager import ContextManager
@@ -81,7 +81,7 @@ class AgentLoop:
         suppress_output: bool = False,
         depth: int = 0,
         max_depth: int = 2,
-        delegate_timeout: int = 300,
+        delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
         active_tools: list[str] | None = None,
         session=None,  # SessionMeta — avoid circular import
         hooks_config: dict | None = None,
@@ -650,7 +650,7 @@ def run_loop(
     suppress_output: bool = False,
     depth: int = 0,
     max_depth: int = 2,
-    delegate_timeout: int = 300,
+    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     active_tools: list[str] | None = None,
     session=None,  # SessionMeta — avoid circular import
     hooks_config: dict | None = None,
@@ -881,7 +881,7 @@ def _execute_single_tool(
     model: str = "",
     base_url: str = "",
     api_key: str = "",
-    delegate_timeout: int = 300,
+    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     tools_called: list[str] | None = None,
     recent_tool_history: list[dict] | None = None,
     turn: int = 0,

@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agent_cli.constants import DELEGATE_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
@@ -307,7 +308,7 @@ def _run_single(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = 300,
+    timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     suppress_output: bool = False,
     session=None,
     skill_stack: list[str] | None = None,
@@ -442,7 +443,7 @@ def _run_parallel(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = 300,
+    timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
@@ -501,7 +502,7 @@ def tool_delegate(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = 300,
+    timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     suppress_output: bool = False,
     session=None,
     skill_stack: list[str] | None = None,

@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from agent_cli.config import get_provider_defaults
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT, DELEGATE_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers import create_provider, get_capabilities
@@ -35,7 +36,7 @@ def _run_shell_inline(cmd: str) -> None:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=SHELL_COMMAND_TIMEOUT,
         )
         if result.stdout:
             console.print(result.stdout, end="", highlight=False)
@@ -137,7 +138,7 @@ def _dispatch_agent(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    delegate_timeout: int = 300,
+    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,
@@ -207,7 +208,7 @@ def _dispatch_skill(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    delegate_timeout: int = 300,
+    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,

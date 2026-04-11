@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT, DELEGATE_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
@@ -21,7 +22,11 @@ def _execute_shell_inject(m: re.Match) -> str:
     cmd = m.group(1)
     try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=SHELL_COMMAND_TIMEOUT,
         )
         output = result.stdout.strip()
         if result.returncode != 0:
@@ -83,7 +88,7 @@ def execute_skill(
     verbose: bool = False,
     suppress_output: bool = False,
     max_depth: int = 2,
-    delegate_timeout: int = 300,
+    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
     ctx: ContextManager | None = None,
     session=None,
     skill_stack: list[str] | None = None,
