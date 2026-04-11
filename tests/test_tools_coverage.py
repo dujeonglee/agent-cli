@@ -571,6 +571,76 @@ class TestReadContextTool:
         assert not result.success
         assert "unknown mode" in result.error.lower()
 
+    def test_search_missing_keyword(self):
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "search"})
+        assert not result.success
+        assert "keyword" in result.error.lower()
+
+    def test_search_no_sessions(self, tmp_path, monkeypatch):
+        import agent_cli.tools.context as ctx_mod
+
+        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "empty")
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "search", "keyword": "test"})
+        assert result.success
+        assert "No sessions found" in result.output
+
+    def test_search_finds_match(self, tmp_path, monkeypatch):
+        import agent_cli.tools.context as ctx_mod
+
+        # Create fake session with history
+        session_dir = tmp_path / "sessions" / "12345"
+        session_dir.mkdir(parents=True)
+        history = session_dir / "history.jsonl"
+        history.write_text(
+            '{"role":"user","content":"hello world"}\n'
+            '{"role":"assistant","thought":"greeting","action":"complete","action_input":{"result":"hi"}}\n'
+        )
+
+        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "sessions")
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "search", "keyword": "hello"})
+        assert result.success
+        assert "hello world" in result.output
+        assert "12345" in result.output
+
+    def test_search_no_match(self, tmp_path, monkeypatch):
+        import agent_cli.tools.context as ctx_mod
+
+        session_dir = tmp_path / "sessions" / "12345"
+        session_dir.mkdir(parents=True)
+        history = session_dir / "history.jsonl"
+        history.write_text('{"role":"user","content":"hello"}\n')
+
+        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "sessions")
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "search", "keyword": "nonexistent"})
+        assert result.success
+        assert "No matches found" in result.output
+
+    def test_search_includes_subdirs(self, tmp_path, monkeypatch):
+        """Search finds matches in delegate/skill subdirectories."""
+        import agent_cli.tools.context as ctx_mod
+
+        session_dir = tmp_path / "sessions" / "12345"
+        delegate_dir = session_dir / "delegate_explorer_abc_123"
+        delegate_dir.mkdir(parents=True)
+        (delegate_dir / "history.jsonl").write_text(
+            '{"role":"assistant","thought":"found auth bug","action":"complete","action_input":{"result":"done"}}\n'
+        )
+
+        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "sessions")
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "search", "keyword": "auth bug"})
+        assert result.success
+        assert "delegate_explorer" in result.output
+
 
 class TestRunSkillTool:
     def test_run_skill_in_tools(self):

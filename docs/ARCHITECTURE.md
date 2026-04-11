@@ -82,7 +82,7 @@ agent_cli/
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
 │   ├── delegate.py          (560)  in-process 서브에이전트 (fork/none, 병렬, subdir, agent_stack, stop_event)
-│   ├── context.py           (72)   read_context 도구 (history.jsonl 기반 세션 이력 조회)
+│   ├── context.py           (115)  read_context 도구 (세션 목록 + 키워드 검색)
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
@@ -505,7 +505,7 @@ LLM 호출 시:
 | `edit_file` | hashline 기반 파일 편집 | `path`, `edits[]` | 편집 확인 메시지 |
 | `shell` | 셸 명령 실행 | `command` | stdout + stderr + exit code |
 | `delegate` | in-process 서브에이전트 위임 | `tasks[]` (각 항목: task, context?, tools?, agent?) | 구조화된 결과 (output + activity log + duration) + delegate subdir 경로, 복수 시 병렬 |
-| `read_context` | 이전 세션 이력 조회 | `mode` | 세션 목록 또는 history.jsonl 기반 상세 |
+| `read_context` | 이전 세션 이력 조회 | `mode`, `keyword` | 세션 목록 (list) 또는 키워드 검색 (search) |
 | `fetch` | 웹 페이지 fetch → 마크다운 변환 | `url` | 재귀 링크 추출, 에러 힌트 |
 
 **가상 도구** (`VIRTUAL_TOOLS`) — loop.py에서 인터셉트, 도구 설명에서 제외:

@@ -508,7 +508,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
-| `read_context` | 이전 세션 이력 조회 (목록/세부) |
+| `read_context` | 이전 세션 이력 조회 (목록/키워드 검색) |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
@@ -563,8 +563,11 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 이전 세션의 이력을 조회합니다. LLM이 과거 작업 맥락이 필요할 때 자발적으로 사용합니다.
 
 ```json
+// 세션 목록 (id, 마지막 활동 시간, 마지막 쿼리)
 {"action": "read_context", "action_input": {"mode": "list"}}
-{"action": "read_context", "action_input": {"mode": "detail", "session_id": "1774272070"}}
+
+// 키워드로 전체 세션 검색 (delegate/skill subdir 포함)
+{"action": "read_context", "action_input": {"mode": "search", "keyword": "인증"}}
 ```
 
 ### ask — 사용자에게 질문 (chat 모드 전용)

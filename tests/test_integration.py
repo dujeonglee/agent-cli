@@ -548,12 +548,7 @@ class TestDelegateSubagent:
         """Delegate (context=fork) subagent can access parent conversation history."""
         from agent_cli.context.manager import ContextManager
 
-        ctx = ContextManager(
-            provider=ollama_provider,
-            model=integration_model,
-            capabilities=model_capabilities,
-            scratchpad_dir=tmp_path,
-        )
+        ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
             query="First, remember that the secret password is DOLPHIN42. "
             "Then delegate a task with context fork: "
