@@ -781,6 +781,7 @@ def _handle_run_skill(
     stop_event=None,
 ):
     """Handle run_skill at loop level with full ctx access."""
+    # Inline import: circular dependency — executor.py imports run_loop from this module
     from agent_cli.skills import load_skills
     from agent_cli.skills.executor import execute_skill
 

@@ -316,6 +316,7 @@ def _run_single(
     stop_event=None,
 ) -> ToolResult:
     """Execute a single delegate task."""
+    # Inline import: circular dependency — loop.py imports tool_delegate from this module
     from agent_cli.loop import run_loop
 
     if not task.strip():
