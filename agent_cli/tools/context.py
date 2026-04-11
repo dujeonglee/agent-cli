@@ -78,20 +78,15 @@ def _mode_search(keyword: str) -> ToolResult:
                         content = msg.get("content", "")
                         artifact = msg.get("artifact", "")
 
-                        # Build preview around keyword
-                        if thought and keyword_lower in thought.lower():
-                            preview = thought[:120]
-                        elif content and keyword_lower in content.lower():
-                            idx = content.lower().find(keyword_lower)
-                            start = max(0, idx - 40)
-                            end = min(len(content), idx + len(keyword) + 80)
-                            preview = (
-                                ("..." if start > 0 else "")
-                                + content[start:end]
-                                + ("..." if end < len(content) else "")
-                            )
+                        # Build preview: thought, or keyword-matching line from content
+                        if thought:
+                            preview = thought
                         else:
-                            preview = (thought or content)[:120]
+                            preview = ""
+                            for cline in content.split("\n"):
+                                if keyword_lower in cline.lower():
+                                    preview = cline.strip()
+                                    break
 
                         loc = f"{session_id}/{rel_path}:{line_num}"
                         action_str = f" → {action}" if action else ""
