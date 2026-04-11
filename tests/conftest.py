@@ -19,6 +19,7 @@ DEFAULT_MODELS = [
     "qwen3-coder:30b",  # Thinking + coding specialized
     "glm-4.7-flash:q8_0",  # Non-thinking general purpose
     "qwen3.5:35b",  # Latest generation general purpose
+    "gemma4:31b-it-bf16",  # Google Gemma 4 multimodal
 ]
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
