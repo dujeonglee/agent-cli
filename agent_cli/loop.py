@@ -93,6 +93,7 @@ class AgentLoop:
         stop_event=None,
         agent_role: str = "",
         agent_name: str = "",
+        mcp_manager=None,
     ):
         self.query = query
         self.provider = provider
@@ -112,6 +113,7 @@ class AgentLoop:
         self.hooks_config = hooks_config
         self.skill_name = skill_name
         self.skill_args = skill_args
+        self.mcp_manager = mcp_manager
         # Create stop_event if not provided (for Ctrl+C propagation to nested loops)
         if stop_event is None:
             import threading
@@ -235,6 +237,7 @@ class AgentLoop:
             skill_stack=self.skill_stack,
             agent_role=self.agent_role,
             session_dir=session_dir,
+            mcp_manager=self.mcp_manager,
         )
 
         if not self.suppress_output:
@@ -662,6 +665,7 @@ def run_loop(
     stop_event=None,
     agent_role: str = "",
     agent_name: str = "",
+    mcp_manager=None,
 ):
     """Run the ReAct agent loop. Returns ToolResult."""
     return AgentLoop(
@@ -690,6 +694,7 @@ def run_loop(
         stop_event=stop_event,
         agent_role=agent_role,
         agent_name=agent_name,
+        mcp_manager=mcp_manager,
     ).run()
 
 

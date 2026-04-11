@@ -108,6 +108,31 @@ def _maybe_setup() -> None:
         SetupWizard().run()
 
 
+def _setup_mcp(quiet: bool = False):
+    """Initialize MCP servers from mcp.json. Returns (manager, mcp_tools) or (None, {})."""
+    from agent_cli.mcp.config import load_mcp_config
+    from agent_cli.mcp.client import McpClientManager
+    from agent_cli.mcp.adapter import register_mcp_tools
+
+    configs = load_mcp_config()
+    if not configs:
+        return None, {}
+
+    manager = McpClientManager()
+    results = manager.connect_all(configs)
+
+    if not quiet:
+        for name, status in results.items():
+            if status == "connected":
+                tool_count = len(manager.list_tools(name))
+                console.print(f"  [green]●[/] MCP {name}: {tool_count} tools")
+            else:
+                console.print(f"  [red]●[/] MCP {name}: {status}")
+
+    mcp_tools = register_mcp_tools(manager)
+    return manager, mcp_tools
+
+
 def _apply_style(style: str | None) -> None:
     """Apply renderer style if specified."""
     if style:
@@ -464,6 +489,13 @@ def run(
         _setup_provider(provider, model, base_url, api_key, quiet=headless)
     )
 
+    # MCP servers
+    mcp_manager, mcp_tools = _setup_mcp(quiet=headless)
+    if mcp_tools:
+        from agent_cli.tools import TOOLS
+
+        TOOLS.update(mcp_tools)
+
     # Session & context setup
     session = None
     ctx = None
@@ -557,6 +589,7 @@ def run(
             delegate_timeout=delegate_timeout,
             ctx=ctx,
             session=session,
+            mcp_manager=mcp_manager,
         )
         answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
@@ -567,11 +600,13 @@ def run(
     if headless and answer:
         print(answer)
 
-    _finalize_run(session, ctx, headless)
+    _finalize_run(session, ctx, headless, mcp_manager)
 
 
-def _finalize_run(session, ctx, headless: bool) -> None:
+def _finalize_run(session, ctx, headless: bool, mcp_manager=None) -> None:
     """Finalize session after run command (save summary, print session ID)."""
+    if mcp_manager:
+        mcp_manager.disconnect_all()
     if session is None:
         return
     from agent_cli.context.session import finalize_session
@@ -690,6 +725,13 @@ def chat(
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
         _setup_provider(provider, model, base_url, api_key)
     )
+
+    # MCP servers
+    mcp_manager, mcp_tools = _setup_mcp()
+    if mcp_tools:
+        from agent_cli.tools import TOOLS
+
+        TOOLS.update(mcp_tools)
 
     # Session setup
     if resume:
@@ -916,6 +958,7 @@ def chat(
             delegate_timeout=delegate_timeout,
             session=session,
             graceful_interrupt=True,
+            mcp_manager=mcp_manager,
         )
         result = loop_result.output if loop_result.success else None
 
@@ -928,7 +971,9 @@ def chat(
                 f"  - /quit to exit"
             )
 
-    # Save context window as session summary (instant, no LLM call)
+    # Cleanup
+    if mcp_manager:
+        mcp_manager.disconnect_all()
     console.print(f"[{C['muted']}]Saving session...[/]")
     finalize_session(session, ctx)
     console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")

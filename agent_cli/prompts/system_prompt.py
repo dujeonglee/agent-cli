@@ -225,6 +225,7 @@ def build_system_prompt(
     agent_role: str = "",
     parent_role: str = "",
     session_dir: str = "",
+    mcp_manager=None,
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools.
 
@@ -253,6 +254,14 @@ def build_system_prompt(
 
     # ── Middle: reference material ──
     sections.append(_build_tools_section(active_tools))
+
+    # MCP tools (if manager provided)
+    if mcp_manager:
+        from agent_cli.mcp.adapter import build_mcp_tool_descriptions
+
+        mcp_desc = build_mcp_tool_descriptions(mcp_manager)
+        if mcp_desc:
+            sections.append(f"## MCP Tools\n{mcp_desc}")
 
     skill_desc = build_skill_descriptions(exclude_names=skill_stack)
     if skill_desc:
