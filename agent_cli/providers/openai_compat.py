@@ -76,9 +76,13 @@ class OpenAICompatProvider:
 
     def _handle_stream(self, r, on_chunk) -> LLMResponse:
         """Process SSE streaming response."""
+        import time
+
         content = ""
         usage = None
         stop_reason = None
+        t0 = time.perf_counter_ns()
+        t_first = 0
 
         for line in r.iter_lines():
             if not line:
@@ -107,12 +111,24 @@ class OpenAICompatProvider:
             delta = choices[0].get("delta", {})
             chunk = delta.get("content", "")
             if chunk:
+                if not t_first:
+                    t_first = time.perf_counter_ns()
                 content += chunk
                 on_chunk(chunk)
 
             finish = choices[0].get("finish_reason")
             if finish:
                 stop_reason = finish
+
+        t_end = time.perf_counter_ns()
+        ttft_ns = (t_first - t0) if t_first else 0
+        decode_ns = (t_end - t_first) if t_first else 0
+
+        # Enrich usage with client-measured timing
+        if usage:
+            usage.prompt_eval_ns = ttft_ns
+            usage.eval_ns = decode_ns
+            usage.ttft_ns = ttft_ns
 
         return LLMResponse(
             content=content,

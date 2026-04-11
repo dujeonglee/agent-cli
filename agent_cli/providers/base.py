@@ -12,9 +12,11 @@ from agent_cli.providers.compat import ModelCapabilities
 class TokenUsage:
     input_tokens: int
     output_tokens: int
-    # Provider-specific durations (nanoseconds). Only Ollama provides these.
-    prompt_eval_ns: int = 0
-    eval_ns: int = 0
+    # Durations in nanoseconds.
+    # Ollama: server-reported values. OpenAI/Anthropic: client-measured via streaming.
+    prompt_eval_ns: int = 0  # prefill / time-to-first-token
+    eval_ns: int = 0  # decode / first-to-last token
+    ttft_ns: int = 0  # client-measured TTFT (all providers, streaming only)
 
 
 @dataclass

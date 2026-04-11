@@ -773,6 +773,8 @@ def run_loop(
 def _render_token_stats(usage, turn: int) -> None:
     """Render token throughput stats when duration data is available."""
     parts = []
+    if usage.ttft_ns > 0:
+        parts.append(f"ttft: {usage.ttft_ns / 1e6:.0f}ms")
     if usage.input_tokens:
         if usage.prompt_eval_ns > 0:
             speed = usage.input_tokens / (usage.prompt_eval_ns / 1e9)

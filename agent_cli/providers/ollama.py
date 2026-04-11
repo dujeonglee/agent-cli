@@ -98,19 +98,27 @@ class OllamaProvider:
 
     def _handle_stream(self, r, on_chunk) -> LLMResponse:
         """Process streaming NDJSON response."""
+        import time
+
         content = ""
         final_data = {}
+        t0 = time.perf_counter_ns()
+        t_first = 0
         for line in r.iter_lines():
             if not line:
                 continue
             data = json.loads(line)
             chunk = data.get("message", {}).get("content", "")
             if chunk:
+                if not t_first:
+                    t_first = time.perf_counter_ns()
                 content += chunk
                 on_chunk(chunk)
             if data.get("done"):
                 final_data = data
                 break
+
+        ttft_ns = (t_first - t0) if t_first else 0
 
         usage = None
         if "eval_count" in final_data or "prompt_eval_count" in final_data:
@@ -119,6 +127,7 @@ class OllamaProvider:
                 output_tokens=final_data.get("eval_count", 0),
                 prompt_eval_ns=final_data.get("prompt_eval_duration", 0),
                 eval_ns=final_data.get("eval_duration", 0),
+                ttft_ns=ttft_ns,
             )
 
         return LLMResponse(

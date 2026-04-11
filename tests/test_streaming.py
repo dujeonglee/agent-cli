@@ -317,3 +317,159 @@ class TestLoopStreamingWiring:
         call_kwargs = provider.call.call_args[1]
         assert "on_chunk" in call_kwargs
         assert callable(call_kwargs["on_chunk"])
+
+
+# ── TTFT Measurement ────────────────────────────────
+
+
+class TestTTFTMeasurement:
+    def test_ollama_ttft_measured(self):
+        """Ollama streaming records client-side TTFT alongside server durations."""
+        from agent_cli.providers.ollama import OllamaProvider
+
+        lines = []
+        lines.append(json.dumps({"message": {"content": "hi"}, "done": False}).encode())
+        lines.append(
+            json.dumps(
+                {
+                    "message": {"content": ""},
+                    "done": True,
+                    "eval_count": 1,
+                    "prompt_eval_count": 5,
+                    "prompt_eval_duration": 100_000_000,
+                    "eval_duration": 50_000_000,
+                }
+            ).encode()
+        )
+        resp = _make_response(lines)
+
+        with patch("agent_cli.providers.ollama.requests.post", return_value=resp):
+            provider = OllamaProvider("http://localhost:11434")
+            result = provider.call(
+                messages=[],
+                system="",
+                model="m",
+                capabilities=_CAPS,
+                on_chunk=lambda c: None,
+            )
+
+        assert result.usage is not None
+        assert result.usage.ttft_ns > 0
+        # Server-reported values preserved
+        assert result.usage.prompt_eval_ns == 100_000_000
+        assert result.usage.eval_ns == 50_000_000
+
+    def test_openai_ttft_measured(self):
+        """OpenAI streaming measures TTFT and decode time client-side."""
+        from agent_cli.providers.openai_compat import OpenAICompatProvider
+
+        lines = []
+        data = {"choices": [{"delta": {"content": "hi"}, "finish_reason": None}]}
+        lines.append(f"data: {json.dumps(data)}".encode())
+        final = {
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 1},
+        }
+        lines.append(f"data: {json.dumps(final)}".encode())
+        lines.append(b"data: [DONE]")
+        resp = _make_response(lines)
+
+        with patch(
+            "agent_cli.providers.openai_compat.requests.post", return_value=resp
+        ):
+            provider = OpenAICompatProvider("http://localhost:8000/v1", "key")
+            result = provider.call(
+                messages=[],
+                system="",
+                model="m",
+                capabilities=_CAPS,
+                on_chunk=lambda c: None,
+            )
+
+        assert result.usage is not None
+        assert result.usage.ttft_ns > 0
+        assert result.usage.prompt_eval_ns > 0  # client-measured
+        assert result.usage.eval_ns >= 0
+
+    def test_anthropic_ttft_measured(self):
+        """Anthropic streaming measures TTFT and decode time client-side."""
+        from agent_cli.providers.anthropic import AnthropicProvider
+
+        lines = []
+        lines.append(b"event: message_start")
+        start = {
+            "type": "message_start",
+            "message": {"usage": {"input_tokens": 5}},
+        }
+        lines.append(f"data: {json.dumps(start)}".encode())
+        lines.append(b"event: content_block_delta")
+        delta = {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "ok"},
+        }
+        lines.append(f"data: {json.dumps(delta)}".encode())
+        lines.append(b"event: message_delta")
+        md = {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"output_tokens": 1},
+        }
+        lines.append(f"data: {json.dumps(md)}".encode())
+        resp = _make_response(lines)
+
+        with patch("agent_cli.providers.anthropic.requests.post", return_value=resp):
+            provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+            result = provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="sys",
+                model="m",
+                capabilities=_CAPS,
+                on_chunk=lambda c: None,
+            )
+
+        assert result.usage is not None
+        assert result.usage.ttft_ns > 0
+        assert result.usage.prompt_eval_ns > 0
+        assert result.usage.eval_ns >= 0
+
+    def test_non_streaming_no_ttft(self):
+        """Non-streaming calls should have ttft_ns=0."""
+        from agent_cli.providers.ollama import OllamaProvider
+
+        resp = MagicMock()
+        resp.json.return_value = {
+            "message": {"content": "hi"},
+            "done": True,
+            "eval_count": 1,
+            "prompt_eval_count": 5,
+        }
+        resp.raise_for_status.return_value = None
+
+        with patch("agent_cli.providers.ollama.requests.post", return_value=resp):
+            provider = OllamaProvider("http://localhost:11434")
+            result = provider.call(
+                messages=[], system="", model="m", capabilities=_CAPS
+            )
+
+        assert result.usage is not None
+        assert result.usage.ttft_ns == 0
+
+    def test_render_token_stats_shows_ttft(self):
+        """_render_token_stats displays TTFT when available."""
+
+        from agent_cli.loop import _render_token_stats
+        from agent_cli.providers.base import TokenUsage
+
+        usage = TokenUsage(
+            input_tokens=100,
+            output_tokens=50,
+            prompt_eval_ns=200_000_000,
+            eval_ns=100_000_000,
+            ttft_ns=200_000_000,
+        )
+
+        with patch("agent_cli.loop.render_status") as mock_status:
+            _render_token_stats(usage, turn=1)
+            msg = mock_status.call_args[0][1]
+            assert "ttft: 200ms" in msg
+            assert "tok/s" in msg

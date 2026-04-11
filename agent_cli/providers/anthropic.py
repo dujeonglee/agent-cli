@@ -71,10 +71,14 @@ class AnthropicProvider:
 
     def _handle_stream(self, r, on_chunk) -> LLMResponse:
         """Process Anthropic SSE streaming response."""
+        import time
+
         content = ""
         stop_reason = None
         input_tokens = 0
         output_tokens = 0
+        t0 = time.perf_counter_ns()
+        t_first = 0
 
         for line in r.iter_lines():
             if not line:
@@ -99,6 +103,8 @@ class AnthropicProvider:
                     if delta.get("type") == "text_delta":
                         chunk = delta.get("text", "")
                         if chunk:
+                            if not t_first:
+                                t_first = time.perf_counter_ns()
                             content += chunk
                             on_chunk(chunk)
 
@@ -107,11 +113,18 @@ class AnthropicProvider:
                     usage = data.get("usage", {})
                     output_tokens = usage.get("output_tokens", output_tokens)
 
+        t_end = time.perf_counter_ns()
+        ttft_ns = (t_first - t0) if t_first else 0
+        decode_ns = (t_end - t_first) if t_first else 0
+
         usage = None
         if input_tokens or output_tokens:
             usage = TokenUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                prompt_eval_ns=ttft_ns,
+                eval_ns=decode_ns,
+                ttft_ns=ttft_ns,
             )
 
         return LLMResponse(
