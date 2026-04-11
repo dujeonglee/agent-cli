@@ -9,6 +9,7 @@ import sys
 import time
 
 from agent_cli.constants import OBS_SUCCESS
+from agent_cli.tools.result import ToolResult
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.overflow import is_context_overflow
@@ -209,7 +210,6 @@ class AgentLoop:
 
     def _on_interrupt(self):
         """Handle graceful interrupt: record in ctx, return ToolResult."""
-        from agent_cli.tools.result import ToolResult
 
         interrupt_msg = "⚡ User interrupted. Waiting for new instructions."
         if self.ctx:
@@ -343,14 +343,13 @@ class AgentLoop:
                 f"LLM call failed (model={self.model}, iter={self.turn}): {e}",
                 self.turn,
             )
-            from agent_cli.tools.result import ToolResult
 
             return ToolResult(False, error=f"LLM call failed: {e}")
         finally:
             if self.skill_name or not self.suppress_output:
                 render_spinner_stop()
 
-    def _handle_text_path(self, llm_text: str) -> str | None:
+    def _handle_text_path(self, llm_text: str):
         """Handle text parsing response (Ollama, fallback)."""
         parsed = parse_react(llm_text)
 
@@ -414,7 +413,6 @@ class AgentLoop:
                 )
             if not self.suppress_output:
                 render_step("final", answer, self.turn)
-            from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output=answer)
 
@@ -432,7 +430,6 @@ class AgentLoop:
                 )
             if not self.suppress_output:
                 render_step("final", echo_answer, self.turn)
-            from agent_cli.tools.result import ToolResult
 
             return ToolResult(True, output=echo_answer)
 
@@ -577,7 +574,6 @@ class AgentLoop:
                     f"Repeated call detected: {last['tool']} called "
                     f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
                 )
-                from agent_cli.tools.result import ToolResult
 
                 return ToolResult(False, error="Repeated tool call detected")
 
@@ -630,7 +626,6 @@ class AgentLoop:
 
     def _on_max_turns(self):
         """Handle max turns reached."""
-        from agent_cli.tools.result import ToolResult
 
         if not self.suppress_output:
             render_status("error", f"Max turns ({self.max_turns}) reached.")
@@ -796,14 +791,10 @@ def _handle_run_skill(
         arguments = str(arguments) if arguments else ""
 
     if not name:
-        from agent_cli.tools.result import ToolResult
-
         return ToolResult(False, error="run_skill: 'name' is required.")
 
     # Skill stack: prevent recursive calls (A→B→A)
     if skill_stack and name in skill_stack:
-        from agent_cli.tools.result import ToolResult
-
         return ToolResult(
             False,
             error=f"Recursive skill call blocked: '{name}' is already in the call stack {skill_stack}.",
@@ -811,8 +802,6 @@ def _handle_run_skill(
 
     skills = load_skills()
     if name not in skills:
-        from agent_cli.tools.result import ToolResult
-
         available = ", ".join(skills.keys()) if skills else "(none)"
         return ToolResult(
             False, error=f"Skill '{name}' not found. Available: {available}"
@@ -820,8 +809,6 @@ def _handle_run_skill(
 
     skill = skills[name]
     if skill.disable_model_invocation:
-        from agent_cli.tools.result import ToolResult
-
         return ToolResult(
             False, error=f"Skill '{name}' is user-only (disable-model-invocation)."
         )
@@ -850,7 +837,6 @@ def _handle_run_skill(
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")
-        from agent_cli.tools.result import ToolResult
 
         return ToolResult(False, error=f"run_skill({name}) failed: {e}")
 
@@ -860,8 +846,6 @@ def _handle_run_skill(
     skill_header = f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
     body = skill_result.output or skill_result.error or "(skill returned no result)"
     obs = OBS_SUCCESS.format(result=f"{skill_header}{body}")
-
-    from agent_cli.tools.result import ToolResult
 
     return ToolResult(skill_result.success, output=obs, artifact=skill_result.artifact)
 
@@ -914,7 +898,6 @@ def _execute_single_tool(
     stop_event=None,
 ):
     """Execute a single tool: hooks, execution, tracking. Returns ToolResult."""
-    from agent_cli.tools.result import ToolResult
 
     _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
 
