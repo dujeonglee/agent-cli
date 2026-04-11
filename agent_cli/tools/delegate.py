@@ -519,6 +519,8 @@ def tool_delegate(
     tasks = args.get("tasks", [])
     if not tasks:
         return ToolResult(False, error="Delegation rejected: empty tasks array")
+    # Normalize: LLM may send ["task text"] instead of [{"task": "task text"}]
+    tasks = [{"task": t} if isinstance(t, str) else t for t in tasks]
 
     common_kwargs = dict(
         parent_ctx=parent_ctx,

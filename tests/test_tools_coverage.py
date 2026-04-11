@@ -362,8 +362,10 @@ class TestParallelTimeout:
         provider.call.return_value = LLMResponse(content="mock")
 
         def slow_run_loop(**kwargs):
+            from agent_cli.tools.result import ToolResult
+
             time.sleep(3)  # Longer than timeout
-            return "late result"
+            return ToolResult(True, output="late result")
 
         with patch("agent_cli.loop.run_loop", side_effect=slow_run_loop):
             result = tool_delegate(
