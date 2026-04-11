@@ -775,7 +775,8 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
    - `message.thinking` 필드 (Ollama API — Qwen3, Qwen3.5, GLM 등)
    - `<think>`, `<thinking>`, `<reasoning>`, `<reflection>` 태그 in content (DeepSeek-R1 등)
 3. 감지되면 → `supports_thinking=True`, `thinking_format=감지방식`
-4. 결과를 `~/.agent-cli/models.json`에 저장 → 다음 실행 시 프로브 불필요
+4. 결과를 `~/.agent-cli/models.json`에 저장 (`_auto_detected: true`) → 다음 실행 시 프로브 불필요
+5. 모델 업데이트 시 자동 감지 항목은 재감지로 갱신됨 (수동 등록 항목은 보호)
 
 새 모델이 추가되어도 코드 수정 없이 자동 감지됩니다.
 

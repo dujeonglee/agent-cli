@@ -108,8 +108,10 @@ def save_model_entry(model: str, entry: dict) -> bool:
             print(f"[warn] Cannot read {target}: {e}", file=sys.stderr)
             return False
 
-    # Don't overwrite existing entries
-    if model in existing.get("models", {}):
+    # Don't overwrite manually registered entries;
+    # allow refresh for auto-detected ones (model updates, Ollama version changes)
+    existing_entry = existing.get("models", {}).get(model)
+    if existing_entry is not None and not existing_entry.get("_auto_detected"):
         return False
 
     # Add new model

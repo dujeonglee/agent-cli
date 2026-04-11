@@ -106,6 +106,65 @@ class TestSaveModelEntry:
         data = json.loads(target.read_text())
         assert data["models"]["existing:8b"]["context_window"] == 4096  # unchanged
 
+    def test_overwrite_auto_detected(self, tmp_path, monkeypatch):
+        """Auto-detected entries (_auto_detected=True) should be refreshable."""
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "gemma4:31b": {
+                            "context_window": 4096,
+                            "supports_thinking": False,
+                            "_auto_detected": True,
+                        }
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+
+        result = save_model_entry(
+            "gemma4:31b",
+            {
+                "context_window": 131072,
+                "supports_thinking": True,
+                "_auto_detected": True,
+            },
+        )
+
+        assert result is True
+        data = json.loads(target.read_text())
+        assert data["models"]["gemma4:31b"]["context_window"] == 131072
+        assert data["models"]["gemma4:31b"]["supports_thinking"] is True
+
+    def test_no_overwrite_manual_entry(self, tmp_path, monkeypatch):
+        """Manually registered entries (no _auto_detected) must be protected."""
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "custom:7b": {
+                            "context_window": 8192,
+                        }
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+
+        result = save_model_entry(
+            "custom:7b",
+            {"context_window": 99999, "_auto_detected": True},
+        )
+
+        assert result is False
+        data = json.loads(target.read_text())
+        assert data["models"]["custom:7b"]["context_window"] == 8192  # unchanged
+
     def test_creates_directory(self, tmp_path, monkeypatch):
         """Should create ~/.agent-cli/ if it doesn't exist."""
         target = tmp_path / "subdir" / "models.json"
