@@ -56,7 +56,7 @@ agent_cli/
 │   ├── loader.py            (88)   Python hook 파일 스캔/로드 (.agent-cli/hooks/*.py)
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1206) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context, hook 통합)
+├── loop.py                  (1248) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context, hook 통합, streaming)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (171)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
 │   ├── base.py              (91)   Renderer ABC (dispatch_progress 포함) (15개 메서드 인터페이스)
@@ -68,9 +68,9 @@ agent_cli/
 │   ├── __init__.py          (33)   create_provider() 팩토리
 │   ├── base.py              (36)   LLMProvider 프로토콜, LLMResponse, TokenUsage
 │   ├── compat.py            (306)  ModelCapabilities + 프로브 감지 + 자동 저장
-│   ├── anthropic.py         (91)   Anthropic Messages API (tool_use + thinking)
-│   ├── openai_compat.py     (101)  OpenAI 호환 API (function calling + reasoning)
-│   └── ollama.py            (104)  Ollama API (constrained decoding + thinking)
+│   ├── anthropic.py         (155)  Anthropic Messages API (tool_use + thinking + streaming)
+│   ├── openai_compat.py     (160)  OpenAI 호환 API (function calling + reasoning + streaming)
+│   └── ollama.py            (149)  Ollama API (constrained decoding + thinking + streaming)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult

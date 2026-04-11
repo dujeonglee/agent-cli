@@ -176,6 +176,16 @@ class MinimalRenderer(Renderer):
                 pass
             self._live = None
 
+    def stream_chunk(self, text: str) -> None:
+        if self.con.file:
+            self.con.file.write(text)
+            self.con.file.flush()
+
+    def stream_end(self) -> None:
+        if self.con.file:
+            self.con.file.write("\n")
+            self.con.file.flush()
+
     def dispatch_progress(
         self,
         label: str,

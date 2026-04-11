@@ -89,3 +89,9 @@ class Renderer(ABC):
         thought: str = "",
     ) -> None:
         """Show dispatched execution progress (skill, delegate, etc.)."""
+
+    def stream_chunk(self, text: str) -> None:
+        """Render a streaming chunk from LLM response. Default: no-op."""
+
+    def stream_end(self) -> None:
+        """Signal end of streaming. Default: no-op."""

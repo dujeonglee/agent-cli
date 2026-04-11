@@ -1,6 +1,8 @@
-"""Anthropic API provider adapter."""
+"""Anthropic API provider adapter with streaming support."""
 
 from __future__ import annotations
+
+import json
 
 import requests
 
@@ -25,6 +27,7 @@ class AnthropicProvider:
         capabilities: ModelCapabilities,
         **kwargs,
     ) -> LLMResponse:
+        on_chunk = kwargs.get("on_chunk")
         url = f"{self.base_url}/messages"
         headers = {
             "Content-Type": "application/json",
@@ -54,11 +57,72 @@ class AnthropicProvider:
                 capabilities.thinking_budget + capabilities.max_output_tokens
             )
 
+        if on_chunk:
+            body["stream"] = True
+            r = requests.post(
+                url, headers=headers, json=body, timeout=LLM_API_TIMEOUT, stream=True
+            )
+            r.raise_for_status()
+            return self._handle_stream(r, on_chunk)
+
         r = requests.post(url, headers=headers, json=body, timeout=LLM_API_TIMEOUT)
         r.raise_for_status()
-        data = r.json()
+        return self._parse_response(r.json())
 
-        # Parse response content blocks
+    def _handle_stream(self, r, on_chunk) -> LLMResponse:
+        """Process Anthropic SSE streaming response."""
+        content = ""
+        stop_reason = None
+        input_tokens = 0
+        output_tokens = 0
+
+        for line in r.iter_lines():
+            if not line:
+                continue
+            line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+
+            if line_str.startswith("data: "):
+                payload = line_str[6:]
+                try:
+                    data = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = data.get("type", "")
+
+                if event_type == "message_start":
+                    usage = data.get("message", {}).get("usage", {})
+                    input_tokens = usage.get("input_tokens", 0)
+
+                elif event_type == "content_block_delta":
+                    delta = data.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        chunk = delta.get("text", "")
+                        if chunk:
+                            content += chunk
+                            on_chunk(chunk)
+
+                elif event_type == "message_delta":
+                    stop_reason = data.get("delta", {}).get("stop_reason")
+                    usage = data.get("usage", {})
+                    output_tokens = usage.get("output_tokens", output_tokens)
+
+        usage = None
+        if input_tokens or output_tokens:
+            usage = TokenUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+        return LLMResponse(
+            content=content,
+            tool_calls=None,
+            usage=usage,
+            stop_reason=stop_reason,
+        )
+
+    def _parse_response(self, data: dict) -> LLMResponse:
+        """Parse non-streaming response."""
         content = ""
         tool_calls = None
         for block in data.get("content", []):
@@ -71,7 +135,7 @@ class AnthropicProvider:
                     {
                         "id": block["id"],
                         "name": block["name"],
-                        "input": block["input"],  # already a dict
+                        "input": block["input"],
                     }
                 )
 

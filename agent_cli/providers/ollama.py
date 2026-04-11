@@ -1,7 +1,8 @@
-"""Ollama API provider adapter with constrained decoding support."""
+"""Ollama API provider adapter with constrained decoding and streaming support."""
 
 from __future__ import annotations
 
+import json
 import sys
 
 import requests
@@ -38,12 +39,13 @@ class OllamaProvider:
         capabilities: ModelCapabilities,
         **kwargs,
     ) -> LLMResponse:
+        on_chunk = kwargs.get("on_chunk")
         url = f"{self.base_url}/api/chat"
         msgs = [{"role": "system", "content": system}] + messages
 
         body: dict = {
             "model": model,
-            "stream": False,
+            "stream": bool(on_chunk),
             "messages": msgs,
         }
 
@@ -64,7 +66,9 @@ class OllamaProvider:
             )
 
         try:
-            r = requests.post(url, json=body, timeout=LLM_API_TIMEOUT)
+            r = requests.post(
+                url, json=body, timeout=LLM_API_TIMEOUT, stream=bool(on_chunk)
+            )
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
             # Ollama < 0.5.0 does not support JSON Schema in format param.
@@ -81,12 +85,51 @@ class OllamaProvider:
                     file=sys.stderr,
                 )
                 body["format"] = "json"
+                body["stream"] = False
                 r = requests.post(url, json=body, timeout=LLM_API_TIMEOUT)
                 r.raise_for_status()
-            else:
-                raise
+                on_chunk = None  # fell back to non-streaming
+
+        if on_chunk:
+            return self._handle_stream(r, on_chunk)
 
         data = r.json()
+        return self._parse_response(data)
+
+    def _handle_stream(self, r, on_chunk) -> LLMResponse:
+        """Process streaming NDJSON response."""
+        content = ""
+        final_data = {}
+        for line in r.iter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            chunk = data.get("message", {}).get("content", "")
+            if chunk:
+                content += chunk
+                on_chunk(chunk)
+            if data.get("done"):
+                final_data = data
+                break
+
+        usage = None
+        if "eval_count" in final_data or "prompt_eval_count" in final_data:
+            usage = TokenUsage(
+                input_tokens=final_data.get("prompt_eval_count", 0),
+                output_tokens=final_data.get("eval_count", 0),
+                prompt_eval_ns=final_data.get("prompt_eval_duration", 0),
+                eval_ns=final_data.get("eval_duration", 0),
+            )
+
+        return LLMResponse(
+            content=content,
+            tool_calls=None,
+            usage=usage,
+            stop_reason=final_data.get("done_reason"),
+        )
+
+    def _parse_response(self, data: dict) -> LLMResponse:
+        """Parse non-streaming response."""
         content = data.get("message", {}).get("content", "")
 
         usage = None

@@ -1,4 +1,4 @@
-"""OpenAI-compatible API provider adapter.
+"""OpenAI-compatible API provider adapter with streaming support.
 
 Covers: OpenAI, vLLM, LM Studio, mlx-lm, and any /v1/chat/completions endpoint.
 """
@@ -30,6 +30,7 @@ class OpenAICompatProvider:
         capabilities: ModelCapabilities,
         **kwargs,
     ) -> LLMResponse:
+        on_chunk = kwargs.get("on_chunk")
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -60,10 +61,68 @@ class OpenAICompatProvider:
             else:
                 body["reasoning_effort"] = "high"
 
+        if on_chunk:
+            body["stream"] = True
+            body["stream_options"] = {"include_usage": True}
+            r = requests.post(
+                url, headers=headers, json=body, timeout=LLM_API_TIMEOUT, stream=True
+            )
+            r.raise_for_status()
+            return self._handle_stream(r, on_chunk)
+
         r = requests.post(url, headers=headers, json=body, timeout=LLM_API_TIMEOUT)
         r.raise_for_status()
-        data = r.json()
+        return self._parse_response(r.json())
 
+    def _handle_stream(self, r, on_chunk) -> LLMResponse:
+        """Process SSE streaming response."""
+        content = ""
+        usage = None
+        stop_reason = None
+
+        for line in r.iter_lines():
+            if not line:
+                continue
+            line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+            if not line_str.startswith("data: "):
+                continue
+            payload = line_str[6:]
+            if payload == "[DONE]":
+                break
+
+            data = json.loads(payload)
+
+            # Usage in final chunk (stream_options.include_usage)
+            usage_data = data.get("usage")
+            if usage_data:
+                usage = TokenUsage(
+                    input_tokens=usage_data.get("prompt_tokens", 0),
+                    output_tokens=usage_data.get("completion_tokens", 0),
+                )
+
+            choices = data.get("choices", [])
+            if not choices:
+                continue
+
+            delta = choices[0].get("delta", {})
+            chunk = delta.get("content", "")
+            if chunk:
+                content += chunk
+                on_chunk(chunk)
+
+            finish = choices[0].get("finish_reason")
+            if finish:
+                stop_reason = finish
+
+        return LLMResponse(
+            content=content,
+            tool_calls=None,
+            usage=usage,
+            stop_reason=stop_reason,
+        )
+
+    def _parse_response(self, data: dict) -> LLMResponse:
+        """Parse non-streaming response."""
         choice = data["choices"][0]
         content = choice["message"].get("content") or ""
 

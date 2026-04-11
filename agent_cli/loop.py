@@ -27,6 +27,8 @@ from agent_cli.render import (
     render_spinner_stop,
     render_status,
     render_step,
+    render_stream_chunk,
+    render_stream_end,
 )
 from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
@@ -357,7 +359,7 @@ class AgentLoop:
                 render_status("running", f"Checkpoint at turn {self.turn}")
 
     def _call_llm(self):
-        """LLM call with overflow retry. Returns response or None on failure."""
+        """LLM call with overflow retry and streaming. Returns response or sentinel."""
         # Context dump (verbose only)
         if self.verbose and not self.suppress_output:
             render_context_dump(self.messages, self.turn)
@@ -365,16 +367,31 @@ class AgentLoop:
             f"LLM_CALL turn={self.turn} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
         )
 
+        # Build streaming callback: stops spinner on first chunk, then streams
+        streaming = not self.suppress_output
+        spinner_active = True
+
+        def on_chunk(text: str) -> None:
+            nonlocal spinner_active
+            if spinner_active:
+                render_spinner_stop()
+                spinner_active = False
+            render_stream_chunk(text)
+
         if self.skill_name:
             render_spinner_start(f"skill:{self.skill_name} thinking...")
         elif not self.suppress_output:
             render_spinner_start("thinking...")
         try:
+            call_kwargs: dict = {}
+            if streaming:
+                call_kwargs["on_chunk"] = on_chunk
             response = self.provider.call(
                 messages=self.messages,
                 system=self.system,
                 model=self.model,
                 capabilities=self.capabilities,
+                **call_kwargs,
             )
             return response
         except Exception as e:
@@ -396,8 +413,10 @@ class AgentLoop:
 
             return ToolResult(False, error=f"LLM call failed: {e}")
         finally:
-            if self.skill_name or not self.suppress_output:
+            if spinner_active and (self.skill_name or not self.suppress_output):
                 render_spinner_stop()
+            if streaming and not spinner_active:
+                render_stream_end()
 
     def _handle_text_path(self, llm_text: str):
         """Handle text parsing response (Ollama, fallback)."""

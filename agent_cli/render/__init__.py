@@ -128,6 +128,14 @@ def render_spinner_stop() -> None:
     _renderer.spinner_stop()
 
 
+def render_stream_chunk(text: str) -> None:
+    _renderer.stream_chunk(text)
+
+
+def render_stream_end() -> None:
+    _renderer.stream_end()
+
+
 def render_dispatch_progress(
     label: str,
     turn: int,
