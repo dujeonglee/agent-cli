@@ -354,9 +354,97 @@ ${SESSION_ID} for the current session ID.
 
 ## Hooks
 
-도구 실행 전후에 셸 명령을 자동 실행하는 lifecycle hook 시스템입니다.
+에이전트 라이프사이클 전반에 걸쳐 동작하는 확장 시스템입니다. **Python hook**과 **Shell hook** 두 가지 방식을 지원합니다.
 
-### 설정
+### Python Hooks
+
+`.agent-cli/hooks/*.py` (프로젝트) 또는 `~/.agent-cli/hooks/*.py` (유저 전역):
+
+```python
+# .agent-cli/hooks/00_memory.py
+EVENTS = ["OnSessionStart", "OnTurnEnd", "OnSessionEnd"]
+
+def on_session_start(ctx):
+    """세션 시작 시 관련 메모리 로드."""
+    results = ctx.search_memory("project context")
+    if results:
+        ctx.inject_system_section("Memory", format_memories(results))
+
+def on_turn_end(ctx):
+    """중요 결정을 메모리에 저장."""
+    if ctx.messages:
+        last = ctx.messages[-1].get("content", "")
+        if "edit_file" in last:
+            ctx.store_memory([{
+                "name": f"change_turn_{ctx.turn}",
+                "entityType": "file_change",
+                "observations": [last[:200]],
+            }])
+
+def on_session_end(ctx):
+    """세션 요약 저장."""
+    ctx.store_memory([{
+        "name": f"session_{ctx.session_dir.name}",
+        "entityType": "session",
+        "observations": [f"Completed {ctx.turn} turns"],
+    }])
+```
+
+**파일 규칙:**
+- 숫자 prefix 순서 실행 (`00_` → `10_` → `20_`)
+- 프���젝트 hooks가 유저 hooks보다 먼저
+- `EVENTS` 리스트로 구독할 이벤트 선언
+- 에러 시 해당 hook 건너뜀 (에이전트 루프 중단 없음)
+
+### Hook 이벤트 (11개)
+
+| 이벤트 | 시점 | Python | Shell |
+|--------|------|--------|-------|
+| `OnSessionStart` | 세션 시작 | ✓ | |
+| `PreLLMCall` | LLM 호출 직전 (매 턴) | ✓ | |
+| `PostLLMCall` | LLM 응답 수신 후 | ✓ | |
+| `PreToolUse` | 도구 실행 직전 | ✓ block/modify | ✓ exit 2=block |
+| `PostToolUse` | 도구 실행 직후 | ✓ | ✓ |
+| `OnTurnEnd` | ��� 종료 후 | ✓ | |
+| `OnDelegateStart` | delegate 실행 직전 | ✓ | |
+| `OnDelegateEnd` | delegate 완료 후 | ✓ | |
+| `OnSkillStart` | skill 실행 직전 | ✓ | |
+| `OnSkillEnd` | skill 완료 후 | ✓ | |
+| `OnSessionEnd` | 세션 종료 | ✓ | |
+
+실행 순서: **Python hooks → Shell hooks** (같은 이벤트 내)
+
+### HookContext
+
+Python hook 함수가 받는 컨텍스�� 객체:
+
+```python
+def pre_llm_call(ctx):
+    ctx.event          # 이벤트 이름 ("PreLLMCall")
+    ctx.messages       # 현재 FIFO messages (읽기/쓰기)
+    ctx.turn           # 현재 턴 번호
+    ctx.session_dir    # 세션 디렉토리 Path
+    ctx.tool_name      # PreToolUse/PostToolUse 시 도구 이름
+    ctx.tool_input     # PreToolUse 시 도구 입력
+    ctx.tool_result    # PostToolUse 시 ToolResult
+    ctx.llm_response   # PostLLMCall 시 LLM 응답 텍스트
+
+    # Context 조작
+    ctx.inject_message("system", "remember this")
+    ctx.inject_system_section("Memory", "facts...")
+    ctx.remove_system_section("Memory")
+
+    # 도구 제어 (PreToolUse only)
+    ctx.block("reason")
+    ctx.modify_input({"command": "ls"})
+
+    # MCP 메모리 (MCP memory 서버 연결 시)
+    ctx.store_memory([{"name": "...", "entityType": "...", "observations": [...]}])
+    ctx.search_memory("query")
+    ctx.read_memory()
+```
+
+### Shell Hooks (기존 방식)
 
 `.agent-cli/hooks.json`:
 
@@ -365,31 +453,17 @@ ${SESSION_ID} for the current session ID.
   "PreToolUse": [
     {
       "matcher": "shell",
-      "hooks": [
-        {"command": "./block-dangerous.sh", "timeout": 30}
-      ]
+      "hooks": [{"command": "./block-dangerous.sh", "timeout": 30}]
     }
   ],
   "PostToolUse": [
     {
       "matcher": "edit_file",
-      "hooks": [
-        {"command": "ruff format $(cat | jq -r '.tool_input.path')"}
-      ]
+      "hooks": [{"command": "ruff format $(cat | jq -r '.tool_input.path')"}]
     }
   ]
 }
 ```
-
-### Hook 이벤트
-
-| 이벤트 | 시점 | 차단 가능 |
-|--------|------|-----------|
-| `PreToolUse` | 도구 실행 직전 | ✓ (exit 2) |
-| `PostToolUse` | 도구 성공 직후 | |
-| `PostToolUseFailure` | 도구 실패 직후 | |
-
-### 동작 방식
 
 - stdin으로 JSON 전달: `{"hook_event_name", "tool_name", "tool_input", "tool_result"}`
 - `matcher`: 도구 이름 regex (빈 문자열 = 모든 도구)
@@ -398,7 +472,7 @@ ${SESSION_ID} for the current session ID.
 
 ### 스킬 내 hooks
 
-스킬 frontmatter에서도 hooks를 정의할 수 있습니다 (해당 스킬 실행 중에만 활성):
+스킬 frontmatter에서도 shell hooks를 정의할 수 있습니다 (해당 스킬 실행 중에만 활성):
 
 ```yaml
 ---
@@ -849,15 +923,17 @@ agent_cli/
 ├── config.py            config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py             SetupWizard (첫 실행 설정 마법사)
 ├── constants.py         공유 상수 (타임아웃, 임계값)
-├── hooks.py             Hook 시스템 (PreToolUse/PostToolUse)
-├── render.py            Rich 터미널 렌더링
+├── hooks/               Hook 시스템 (Python + Shell 라이프사이클 훅 11개 이벤트)
+├── render/              플러그인 렌더링 시스템 (minimal, fancy, adaptive)
 ├── input_history.py     readline 히스토리 영속화
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI, Ollama)
 ├── parsing/             3단계 JSON 파서 + Thinking 블록 분리
-├── tools/               도구 (read/write/edit/shell/delegate/context) + 출력 압축
-├── context/             컨텍스트 관리 (scratchpad, artifact, 압축, 세션 영속화)
+├── tools/               도구 (read/write/edit/shell/delegate/context)
+├── context/             컨텍스트 관리 (FIFO + history.jsonl + 세션 메타)
 ├── prompts/             조건부 시스템 프롬프트
-└── skills/              프롬프트 스킬 시스템 (로더, 실행기, 모델)
+├── skills/              프롬프트 스킬 시스템 (로더, 실행기, 모델)
+├── agents/              에이전트 정의 (builtin: explorer)
+└── mcp/                 MCP 통합 (config, client, adapter)
 ```
 
 상세 아키텍처: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

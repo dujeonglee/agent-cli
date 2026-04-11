@@ -44,9 +44,9 @@ class TestLoadHooks:
             )
         )
 
-        import agent_cli.hooks as hooks_mod
+        import agent_cli.hooks.shell as hooks_shell
 
-        monkeypatch.setattr(hooks_mod, "_HOOKS_PATHS", [hooks_file])
+        monkeypatch.setattr(hooks_shell, "_HOOKS_PATHS", [hooks_file])
 
         result = load_hooks(use_cache=False)
         assert "PreToolUse" in result
@@ -56,9 +56,11 @@ class TestLoadHooks:
         assert result["PreToolUse"][0].hooks[0].timeout == 10
 
     def test_load_no_file(self, tmp_path, monkeypatch):
-        import agent_cli.hooks as hooks_mod
+        import agent_cli.hooks.shell as hooks_shell
 
-        monkeypatch.setattr(hooks_mod, "_HOOKS_PATHS", [tmp_path / "nonexistent.json"])
+        monkeypatch.setattr(
+            hooks_shell, "_HOOKS_PATHS", [tmp_path / "nonexistent.json"]
+        )
 
         result = load_hooks(use_cache=False)
         assert result == {}
@@ -80,7 +82,7 @@ class TestMatcherFiltering:
                 )
             ]
         }
-        with patch("agent_cli.hooks._execute_hook_command") as mock_exec:
+        with patch("agent_cli.hooks.shell._execute_hook_command") as mock_exec:
             mock_exec.return_value = HookResult(allowed=True)
             run_hooks("PreToolUse", "shell", {"command": "ls"}, hooks_config=config)
             assert mock_exec.called
@@ -94,7 +96,7 @@ class TestMatcherFiltering:
                 )
             ]
         }
-        with patch("agent_cli.hooks._execute_hook_command") as mock_exec:
+        with patch("agent_cli.hooks.shell._execute_hook_command") as mock_exec:
             mock_exec.return_value = HookResult(allowed=True)
             run_hooks("PreToolUse", "read_file", {"path": "a.py"}, hooks_config=config)
             assert not mock_exec.called
@@ -108,7 +110,7 @@ class TestMatcherFiltering:
                 )
             ]
         }
-        with patch("agent_cli.hooks._execute_hook_command") as mock_exec:
+        with patch("agent_cli.hooks.shell._execute_hook_command") as mock_exec:
             mock_exec.return_value = HookResult(allowed=True)
             run_hooks("PreToolUse", "read_file", {"path": "a.py"}, hooks_config=config)
             assert mock_exec.called
@@ -177,7 +179,7 @@ class TestPreToolUse:
 class TestPostToolUse:
     def test_fires_after_success(self):
         """PostToolUse hook executes after successful tool."""
-        with patch("agent_cli.hooks._execute_hook_command") as mock_exec:
+        with patch("agent_cli.hooks.shell._execute_hook_command") as mock_exec:
             mock_exec.return_value = HookResult(allowed=True)
             run_hooks(
                 "PostToolUse",
@@ -203,7 +205,7 @@ class TestPostToolUse:
 class TestPostToolUseFailure:
     def test_fires_after_failure(self):
         """PostToolUseFailure hook executes after failed tool."""
-        with patch("agent_cli.hooks._execute_hook_command") as mock_exec:
+        with patch("agent_cli.hooks.shell._execute_hook_command") as mock_exec:
             mock_exec.return_value = HookResult(allowed=True)
             run_hooks(
                 "PostToolUseFailure",

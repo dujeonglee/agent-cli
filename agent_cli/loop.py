@@ -94,6 +94,7 @@ class AgentLoop:
         agent_role: str = "",
         agent_name: str = "",
         mcp_manager=None,
+        hook_runner=None,
     ):
         self.query = query
         self.provider = provider
@@ -114,6 +115,7 @@ class AgentLoop:
         self.skill_name = skill_name
         self.skill_args = skill_args
         self.mcp_manager = mcp_manager
+        self.hook_runner = hook_runner
         # Create stop_event if not provided (for Ctrl+C propagation to nested loops)
         if stop_event is None:
             import threading
@@ -157,12 +159,40 @@ class AgentLoop:
         self._CONTINUE = object()  # keep looping
         self._RETRY = object()  # overflow retry
 
+    def _fire_hook(self, event: str, **kwargs):
+        """Fire a hook event if runner is available. Returns HookContext or None."""
+        if not self.hook_runner:
+            return None
+        return self.hook_runner.fire(
+            event,
+            messages=self.messages,
+            session_dir=self.ctx.session_dir if self.ctx else None,
+            turn=self.turn,
+            mcp_manager=self.mcp_manager,
+            **kwargs,
+        )
+
+    def _apply_system_sections(self, hook_ctx) -> None:
+        """Apply dynamic system prompt sections from hook context."""
+        if not hook_ctx or not hook_ctx.system_sections:
+            return
+        # Rebuild system prompt with dynamic sections appended
+        sections_text = "\n\n".join(
+            f"## {title}\n{content}"
+            for title, content in hook_ctx.system_sections.items()
+        )
+        # Strip any previously appended dynamic sections (delimited by marker)
+        marker = "\n\n<!-- HOOK_SECTIONS -->\n"
+        base = self.system.split(marker)[0]
+        self.system = f"{base}{marker}{sections_text}"
+
     def run(self):
         """Main entry point. Returns ToolResult."""
         if self.graceful_interrupt:
             self._install_signal_handler()
         try:
             self._setup()
+            self._fire_hook("OnSessionStart")
             while self._should_continue():
                 if self._interrupted:
                     return self._on_interrupt()
@@ -173,6 +203,7 @@ class AgentLoop:
                     return result
             return self._on_max_turns()
         finally:
+            self._fire_hook("OnSessionEnd")
             if self.graceful_interrupt:
                 self._restore_signal_handler()
 
@@ -268,8 +299,12 @@ class AgentLoop:
             render_turn_sep(self.turn)
 
     def _execute_turn(self):
-        """Single turn: checkpoint, LLM call, text parse, dispatch."""
+        """Single turn: checkpoint, hooks, LLM call, text parse, dispatch."""
         self._maybe_checkpoint()
+
+        # PreLLMCall hook — can inject system sections and messages
+        hook_ctx = self._fire_hook("PreLLMCall")
+        self._apply_system_sections(hook_ctx)
 
         response = self._call_llm()
         if hasattr(response, "success"):
@@ -279,10 +314,18 @@ class AgentLoop:
 
         llm_text = response.content
 
+        # PostLLMCall hook
+        self._fire_hook("PostLLMCall", llm_response=llm_text)
+
         if not self.suppress_output:
             render_raw(llm_text, self.turn, self.verbose)
 
-        return self._handle_text_path(llm_text)
+        result = self._handle_text_path(llm_text)
+
+        # OnTurnEnd hook
+        self._fire_hook("OnTurnEnd")
+
+        return result
 
     def _maybe_checkpoint(self) -> None:
         """Inject checkpoint message if turn count is high."""
@@ -463,6 +506,8 @@ class AgentLoop:
                 skill_stack=self.skill_stack,
                 graceful_interrupt=self.graceful_interrupt,
                 stop_event=self.stop_event,
+                hook_runner=self.hook_runner,
+                mcp_manager=self.mcp_manager,
             )
             obs = skill_tool_result.output or skill_tool_result.error
             if not self.suppress_output:
@@ -552,6 +597,8 @@ class AgentLoop:
                 delegate_skill_stack=self.skill_stack,
                 delegate_agent_stack=self.agent_stack,
                 stop_event=self.stop_event,
+                hook_runner=self.hook_runner,
+                mcp_manager=self.mcp_manager,
             )
 
             observation = (
@@ -666,6 +713,7 @@ def run_loop(
     agent_role: str = "",
     agent_name: str = "",
     mcp_manager=None,
+    hook_runner=None,
 ):
     """Run the ReAct agent loop. Returns ToolResult."""
     return AgentLoop(
@@ -695,6 +743,7 @@ def run_loop(
         agent_role=agent_role,
         agent_name=agent_name,
         mcp_manager=mcp_manager,
+        hook_runner=hook_runner,
     ).run()
 
 
@@ -784,6 +833,8 @@ def _handle_run_skill(
     skill_stack: list[str] | None = None,
     graceful_interrupt: bool = False,
     stop_event=None,
+    hook_runner=None,
+    mcp_manager=None,
 ):
     """Handle run_skill at loop level with full ctx access."""
     # Inline import: circular dependency — executor.py imports run_loop from this module
@@ -819,6 +870,15 @@ def _handle_run_skill(
             False, error=f"Skill '{name}' is user-only (disable-model-invocation)."
         )
 
+    # OnSkillStart hook
+    if hook_runner:
+        hook_runner.fire(
+            "OnSkillStart",
+            tool_name="run_skill",
+            tool_input=skill_input,
+            mcp_manager=mcp_manager,
+        )
+
     render_status("running", f"Running skill: {name}...")
 
     try:
@@ -843,10 +903,21 @@ def _handle_run_skill(
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")
+        skill_result = ToolResult(False, error=f"run_skill({name}) failed: {e}")
 
-        return ToolResult(False, error=f"run_skill({name}) failed: {e}")
+    # OnSkillEnd hook
+    if hook_runner:
+        hook_runner.fire(
+            "OnSkillEnd",
+            tool_name="run_skill",
+            tool_input=skill_input,
+            skill_result=skill_result,
+            mcp_manager=mcp_manager,
+        )
 
-    if not skill_result.success:
+    if isinstance(skill_result, ToolResult) and not skill_result.success:
+        if skill_result.error and skill_result.error.startswith("run_skill("):
+            return skill_result
         _debug_log(f"run_skill({name}) failed: {skill_result.error}")
 
     skill_header = f"SKILL: {name}({arguments})\n" if arguments else f"SKILL: {name}\n"
@@ -902,15 +973,34 @@ def _execute_single_tool(
     delegate_skill_stack: list[str] | None = None,
     delegate_agent_stack: list[str] | None = None,
     stop_event=None,
+    hook_runner=None,
+    mcp_manager=None,
 ):
     """Execute a single tool: hooks, execution, tracking. Returns ToolResult."""
 
     _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
 
-    # PreToolUse hook
     input_dict = (
         tool_input if isinstance(tool_input, dict) else {"raw": str(tool_input)}
     )
+
+    # PreToolUse — Python hooks (via runner) then shell hooks (backward compat)
+    if hook_runner:
+        pre_ctx = hook_runner.fire(
+            "PreToolUse",
+            tool_name=tool_name,
+            tool_input=input_dict,
+            turn=turn,
+            mcp_manager=mcp_manager,
+        )
+        if pre_ctx.is_blocked:
+            return ToolResult(
+                False,
+                error=f"Blocked by PreToolUse hook: {pre_ctx.block_reason or 'hook denied'}",
+            )
+        if pre_ctx.modified_input is not None:
+            tool_input = pre_ctx.modified_input
+            input_dict = tool_input
     if hooks_config:
         from agent_cli.hooks import run_hooks
 
@@ -926,7 +1016,19 @@ def _execute_single_tool(
             tool_input = pre_result.updated_input
 
     # Delegate tool (intercepted here due to complex kwargs)
-    if tool_name == "delegate":
+    is_delegate = tool_name == "delegate"
+
+    if is_delegate:
+        # OnDelegateStart hook
+        if hook_runner:
+            hook_runner.fire(
+                "OnDelegateStart",
+                tool_name=tool_name,
+                tool_input=input_dict,
+                turn=turn,
+                mcp_manager=mcp_manager,
+            )
+
         raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
         if "tasks" not in raw and "task" in raw:
             raw = {
@@ -957,13 +1059,16 @@ def _execute_single_tool(
             agent_stack=delegate_agent_stack,
             stop_event=stop_event,
         )
-        if hooks_config:
-            from agent_cli.hooks import run_hooks
 
-            _obs = result.output if result.success else result.error
-            _evt = "PostToolUse" if result.success else "PostToolUseFailure"
-            run_hooks(
-                _evt, tool_name, input_dict, hooks_config=hooks_config, tool_result=_obs
+        # OnDelegateEnd hook
+        if hook_runner:
+            hook_runner.fire(
+                "OnDelegateEnd",
+                tool_name=tool_name,
+                tool_input=input_dict,
+                delegate_result=result,
+                turn=turn,
+                mcp_manager=mcp_manager,
             )
     elif tool_name in tools_list:
         valid, err = validate_tool_input(tool_name, tool_input)
@@ -971,22 +1076,29 @@ def _execute_single_tool(
             result = ToolResult(False, error=f"{err} Fix action_input and retry.")
         else:
             result = execute_tool(tool_name, tool_input)
-            if hooks_config:
-                from agent_cli.hooks import run_hooks
-
-                _obs = result.output if result.success else result.error
-                _evt = "PostToolUse" if result.success else "PostToolUseFailure"
-                run_hooks(
-                    _evt,
-                    tool_name,
-                    input_dict,
-                    hooks_config=hooks_config,
-                    tool_result=_obs,
-                )
     else:
         avail = ", ".join(tools_list)
         result = ToolResult(
             False, error=f"Unknown tool '{tool_name}'. Available: {avail}"
+        )
+
+    # PostToolUse — Python hooks (via runner) then shell hooks (backward compat)
+    if hook_runner:
+        hook_runner.fire(
+            "PostToolUse",
+            tool_name=tool_name,
+            tool_input=input_dict,
+            tool_result=result,
+            turn=turn,
+            mcp_manager=mcp_manager,
+        )
+    if hooks_config:
+        from agent_cli.hooks import run_hooks
+
+        _obs = result.output if result.success else result.error
+        _evt = "PostToolUse" if result.success else "PostToolUseFailure"
+        run_hooks(
+            _evt, tool_name, input_dict, hooks_config=hooks_config, tool_result=_obs
         )
 
     # Track tool usage

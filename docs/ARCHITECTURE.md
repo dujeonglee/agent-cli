@@ -48,9 +48,15 @@ agent_cli/
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
 ├── constants.py             (20)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
-├── hooks.py                 (215)  Hook 시스템 (PreToolUse/PostToolUse/PostToolUseFailure)
+├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
+│   ├── __init__.py          (22)   shell hook API re-export (하위 호환)
+│   ├── shell.py             (215)  Shell hook (PreToolUse/PostToolUse/PostToolUseFailure)
+│   ├── events.py            (53)   11개 이벤트 상수 + EVENT_TO_FUNC 매핑
+│   ├── context.py           (145)  HookContext (messages 조작, system prompt 주입, MCP 메모리, 도구 제어)
+│   ├── loader.py            (88)   Python hook 파일 스캔/로드 (.agent-cli/hooks/*.py)
+│   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1094) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context)
+├── loop.py                  (1206) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context, hook 통합)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (171)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
 │   ├── base.py              (91)   Renderer ABC (dispatch_progress 포함) (15개 메서드 인터페이스)
@@ -1073,7 +1079,86 @@ A→B→A: 차단 (summarize → optimize → summarize)
 
 ---
 
-## 14. 설계 원칙
+## 14. Hook 시스템 (`hooks/`)
+
+### 14.1 개요
+
+Python hook + shell hook 두 가지 방식의 라이프사이클 훅을 지원한다.
+- **Python hook**: `.agent-cli/hooks/*.py` — context window 조작, MCP 메모리 접근 가능
+- **Shell hook**: `.agent-cli/hooks.json` — 외부 명령 실행 (기존 방식, 하위 호환)
+
+### 14.2 라이프사이클 이벤트 (11개)
+
+| 이벤트 | 시점 | 함수명 |
+|--------|------|--------|
+| OnSessionStart | 세션 시작 후 | `on_session_start(ctx)` |
+| PreLLMCall | LLM 호출 직전 (매 턴) | `pre_llm_call(ctx)` |
+| PostLLMCall | LLM 응답 수신 후 | `post_llm_call(ctx)` |
+| PreToolUse | 도구 실행 직전 | `pre_tool_use(ctx)` |
+| PostToolUse | 도구 실행 직후 | `post_tool_use(ctx)` |
+| OnTurnEnd | 턴 종료 후 | `on_turn_end(ctx)` |
+| OnDelegateStart | delegate 실행 직전 | `on_delegate_start(ctx)` |
+| OnDelegateEnd | delegate 완료 후 | `on_delegate_end(ctx)` |
+| OnSkillStart | skill 실행 직전 | `on_skill_start(ctx)` |
+| OnSkillEnd | skill 완료 후 | `on_skill_end(ctx)` |
+| OnSessionEnd | 세션 종료 시 | `on_session_end(ctx)` |
+
+### 14.3 Python Hook 파일 규약
+
+```python
+# .agent-cli/hooks/00_memory.py
+EVENTS = ["OnSessionStart", "OnTurnEnd"]
+
+def on_session_start(ctx):
+    memories = ctx.search_memory("project context")
+    if memories:
+        ctx.inject_system_section("Memory", format_memories(memories))
+
+def on_turn_end(ctx):
+    ctx.store_memory([{"name": "...", "entityType": "decision", "observations": [...]}])
+```
+
+- 파일명 숫자 prefix 순서 실행 (`00_` → `10_` → `20_`)
+- 프로젝트 hooks → 유저 hooks 순서
+- `EVENTS` 리스트로 구독할 이벤트 선언
+- 에러 발생 시 해당 hook 건너뜀 (에이전트 루프 중단 없음)
+
+### 14.4 HookContext
+
+hook 함수가 받는 컨텍스트 객체:
+- **읽기**: `event`, `messages`, `session_dir`, `turn`, `tool_name`, `tool_input`, `tool_result`, `llm_response`
+- **context 조작**: `inject_message()`, `inject_system_section()`, `remove_system_section()`
+- **도구 제어** (PreToolUse): `block(reason)`, `modify_input(new_input)`
+- **MCP 메모리**: `store_memory()`, `search_memory()`, `read_memory()`
+
+### 14.5 실행 순서
+
+```
+이벤트 발생 → HookContext 생성 → Python hooks (파일명 순) → Shell hooks (hooks.json)
+```
+
+### 14.6 loop.py 통합
+
+```
+AgentLoop.run()
+  ├─ _setup() → OnSessionStart
+  ├─ _execute_turn()
+  │   ├─ PreLLMCall → system_sections 적용
+  │   ├─ _call_llm()
+  │   ├─ PostLLMCall
+  │   ├─ _execute_single_tool()
+  │   │   ├─ PreToolUse (Python) → PreToolUse (Shell)
+  │   │   ├─ OnDelegateStart / OnSkillStart
+  │   │   ├─ 도구 실행
+  │   │   ├─ OnDelegateEnd / OnSkillEnd
+  │   │   └─ PostToolUse (Python) → PostToolUse (Shell)
+  │   └─ OnTurnEnd
+  └─ OnSessionEnd (finally)
+```
+
+---
+
+## 15. 설계 원칙
 
 1. **모델은 commodity, harness가 성패를 결정한다** — 파싱 폴백, 도구 출력 압축, 퍼지 편집 등 harness 레벨 최적화가 핵심
 2. **프로바이더별 최선의 방식 자동 선택** — 네이티브 tool calling > constrained decoding > 텍스트 파싱
