@@ -322,7 +322,7 @@ class TestSkillExecution:
             suppress_output=True,
         )
         assert result.success
-        assert str(datetime.datetime.now().year) in result
+        assert str(datetime.datetime.now().year) in result.output
 
     def test_skill_allowed_tools_restriction(
         self, integration_model, ollama_provider, model_capabilities
