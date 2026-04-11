@@ -32,8 +32,8 @@ class TestSimpleConversation:
             suppress_output=True,
             max_turns=3,
         )
-        assert result is not None
-        assert len(result) > 0
+        assert result.success
+        assert result.success and len(result.output) > 0
 
 
 class TestReadFile:
@@ -52,8 +52,8 @@ class TestReadFile:
             suppress_output=True,
             max_turns=5,
         )
-        assert result is not None
-        assert "UNIQUE_MARKER_XYZ789" in result
+        assert result.success
+        assert "UNIQUE_MARKER_XYZ789" in result.output
 
 
 class TestShellCommand:
@@ -67,8 +67,8 @@ class TestShellCommand:
             suppress_output=True,
             max_turns=5,
         )
-        assert result is not None
-        assert "INTEGRATION_TEST_PASS_42" in result
+        assert result.success
+        assert "INTEGRATION_TEST_PASS_42" in result.output
 
 
 class TestWriteFile:
@@ -86,7 +86,7 @@ class TestWriteFile:
             suppress_output=True,
             max_turns=8,
         )
-        assert result is not None
+        assert result.success
         assert target.exists()
         content = target.read_text()
         assert "hello from agent test" in content
@@ -108,7 +108,7 @@ class TestEditFile:
             suppress_output=True,
             max_turns=12,
         )
-        assert result is not None
+        assert result.success
         content = f.read_text()
         assert "NEW_VALUE" in content
 
@@ -161,7 +161,7 @@ class TestMultiStepToolUse:
             suppress_output=True,
             max_turns=10,
         )
-        assert result is not None
+        assert result.success
         assert target.exists()
 
 
@@ -226,8 +226,8 @@ class TestSkillExecution:
             model=integration_model,
             suppress_output=True,
         )
-        assert result is not None
-        assert len(result) > 10
+        assert result.success
+        assert result.success and len(result.output) > 10
 
     def test_summarize_skill(
         self, integration_model, ollama_provider, model_capabilities, tmp_path
@@ -257,8 +257,8 @@ class TestSkillExecution:
             model=integration_model,
             suppress_output=True,
         )
-        assert result is not None
-        assert len(result) > 10
+        assert result.success
+        assert result.success and len(result.output) > 10
 
     def test_skill_context_fork(
         self, integration_model, ollama_provider, model_capabilities, tmp_path
@@ -291,8 +291,8 @@ class TestSkillExecution:
             suppress_output=True,
             ctx=fake_ctx,
         )
-        assert result is not None
-        assert "FORK_CONTENT_ABC" in result
+        assert result.success
+        assert "FORK_CONTENT_ABC" in result.output
 
     def test_skill_dynamic_context_injection(
         self, integration_model, ollama_provider, model_capabilities
@@ -321,7 +321,7 @@ class TestSkillExecution:
             model=integration_model,
             suppress_output=True,
         )
-        assert result is not None
+        assert result.success
         assert str(datetime.datetime.now().year) in result
 
     def test_skill_allowed_tools_restriction(
@@ -350,8 +350,8 @@ class TestSkillExecution:
             model=integration_model,
             suppress_output=True,
         )
-        assert result is not None
-        assert "SHELL_ONLY_MARKER_99" in result
+        assert result.success
+        assert "SHELL_ONLY_MARKER_99" in result.output
 
     def test_skill_directory_structure(
         self, integration_model, ollama_provider, model_capabilities, tmp_path
@@ -382,8 +382,8 @@ class TestSkillExecution:
             model=integration_model,
             suppress_output=True,
         )
-        assert result is not None
-        assert len(result) > 0
+        assert result.success
+        assert result.success and len(result.output) > 0
 
     def test_skill_arguments_bracket_notation(
         self, integration_model, ollama_provider, model_capabilities
@@ -410,8 +410,8 @@ class TestSkillExecution:
             model=integration_model,
             suppress_output=True,
         )
-        assert result is not None
-        assert len(result) > 5
+        assert result.success
+        assert result.success and len(result.output) > 5
 
 
 class TestSkillHooks:
@@ -439,7 +439,7 @@ class TestSkillHooks:
             max_turns=5,
             hooks_config=hooks_config,
         )
-        assert result is not None
+        assert result.success
 
     def test_posttooluse_hook_logging(
         self, integration_model, ollama_provider, model_capabilities, tmp_path
@@ -469,7 +469,7 @@ class TestSkillHooks:
             max_turns=5,
             hooks_config=hooks_config,
         )
-        assert result is not None
+        assert result.success
         assert log_file.exists()
         assert "hook fired" in log_file.read_text()
 
@@ -539,8 +539,8 @@ class TestDelegateSubagent:
             suppress_output=True,
             max_turns=5,
         )
-        assert result is not None
-        assert len(result) > 0
+        assert result.success
+        assert result.success and len(result.output) > 0
 
     def test_delegate_fork_has_parent_context(
         self, integration_model, ollama_provider, model_capabilities, tmp_path
@@ -562,4 +562,4 @@ class TestDelegateSubagent:
             max_turns=8,
             ctx=ctx,
         )
-        assert result is not None
+        assert result.success
