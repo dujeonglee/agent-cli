@@ -114,13 +114,13 @@ agent_cli/
 │   ├── __init__.py          (1)
 │   └── builtin/                    패키지 내장 에이전트
 │       └── explorer.md             읽기 전용 코드베이스 탐색 에이전트
-
+│
 │
 ├── mcp/                            MCP (Model Context Protocol) 통합
-��   ├── __init__.py          (1)
-│   ├── config.py            (96)   mcp.json 로드/병합 (프로젝트 > ��저)
+│   ├── __init__.py          (1)
+│   ├── config.py            (96)   mcp.json 로드/병합 (프로젝트 > 유저)
 │   ├── client.py            (198)  McpClientManager (stdio/SSE 연결, 도구 호출)
-���   └── adapter.py           (82)   MCP 도구 → ToolResult 래핑, TOOLS dict 등록
+│   └── adapter.py           (82)   MCP 도구 → ToolResult 래핑, TOOLS dict 등록
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)
