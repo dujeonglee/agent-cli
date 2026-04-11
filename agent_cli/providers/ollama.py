@@ -94,6 +94,8 @@ class OllamaProvider:
             usage = TokenUsage(
                 input_tokens=data.get("prompt_eval_count", 0),
                 output_tokens=data.get("eval_count", 0),
+                prompt_eval_ns=data.get("prompt_eval_duration", 0),
+                eval_ns=data.get("eval_duration", 0),
             )
 
         return LLMResponse(

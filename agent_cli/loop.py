@@ -314,6 +314,10 @@ class AgentLoop:
 
         llm_text = response.content
 
+        # Show token stats if available (Ollama provides eval durations)
+        if not self.suppress_output and response.usage:
+            _render_token_stats(response.usage, self.turn)
+
         # PostLLMCall hook
         self._fire_hook("PostLLMCall", llm_response=llm_text)
 
@@ -745,6 +749,25 @@ def run_loop(
         mcp_manager=mcp_manager,
         hook_runner=hook_runner,
     ).run()
+
+
+def _render_token_stats(usage, turn: int) -> None:
+    """Render token throughput stats when duration data is available."""
+    parts = []
+    if usage.input_tokens:
+        if usage.prompt_eval_ns > 0:
+            speed = usage.input_tokens / (usage.prompt_eval_ns / 1e9)
+            parts.append(f"in: {usage.input_tokens} tok ({speed:.0f} tok/s)")
+        else:
+            parts.append(f"in: {usage.input_tokens} tok")
+    if usage.output_tokens:
+        if usage.eval_ns > 0:
+            speed = usage.output_tokens / (usage.eval_ns / 1e9)
+            parts.append(f"out: {usage.output_tokens} tok ({speed:.0f} tok/s)")
+        else:
+            parts.append(f"out: {usage.output_tokens} tok")
+    if parts:
+        render_status("running", " | ".join(parts), turn)
 
 
 def _extract_questions(action_input) -> list[str]:
