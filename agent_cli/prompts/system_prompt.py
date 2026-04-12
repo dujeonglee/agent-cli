@@ -352,6 +352,7 @@ def build_skill_descriptions(
     lines = [
         "## Available Skills",
         "Consider using skills for multi-step or specialized workflows.",
+        "Use the run_skill tool to invoke:",
         '  {"action": "run_skill", "action_input": {"name": "skill-name", "arguments": "..."}}',
     ]
     for skill in skills.values():
