@@ -270,6 +270,7 @@ class AgentLoop:
             capabilities=self.capabilities,
             active_tools=self.tools_list,
             skill_stack=self.skill_stack,
+            agent_stack=self.agent_stack,
             agent_role=self.agent_role,
             session_dir=session_dir,
             mcp_manager=self.mcp_manager,

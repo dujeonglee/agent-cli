@@ -222,6 +222,7 @@ def build_system_prompt(
     capabilities: ModelCapabilities,
     active_tools: list[str],
     skill_stack: list[str] | None = None,
+    agent_stack: list[str] | None = None,
     session_id: str = "",
     agent_role: str = "",
     parent_role: str = "",
@@ -269,7 +270,7 @@ def build_system_prompt(
         sections.append(skill_desc)
 
     if "delegate" in active_tools:
-        agent_desc = build_agent_descriptions()
+        agent_desc = build_agent_descriptions(exclude_names=agent_stack)
         if agent_desc:
             sections.append(agent_desc)
 
@@ -297,19 +298,23 @@ def _build_context_recovery(session_dir: str) -> str:
     )
 
 
-def build_agent_descriptions() -> str:
+def build_agent_descriptions(exclude_names: list[str] | None = None) -> str:
     """Build agent descriptions for system prompt injection.
 
     Uses the delegate module's agent loader to discover available agents.
+    Excludes agents in exclude_names (e.g. current agent_stack for recursion prevention).
     """
     try:
         from agent_cli.tools.delegate import _agent_loader
     except ImportError:
         return ""
 
+    excluded = set(exclude_names or [])
     resources = _agent_loader.load_all()
     agents = [
-        (name, res.meta.get("description", "")) for name, res in resources.items()
+        (name, res.meta.get("description", ""))
+        for name, res in resources.items()
+        if name not in excluded
     ]
 
     if not agents:
