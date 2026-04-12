@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from rich.console import Console
 from rich.live import Live
+from rich.markdown import Markdown
 from rich.spinner import Spinner
 from rich.text import Text
 
@@ -49,10 +50,8 @@ class MinimalRenderer(Renderer):
 
     def thought(self, content: str, turn: int) -> None:
         self.con.print()
-        lines = content.split("\n")
-        self.con.print(f"  💭 {lines[0]}", highlight=False)
-        for line in lines[1:]:
-            self.con.print(f"     {line}", highlight=False)
+        self.con.print("  💭", end=" ", highlight=False)
+        self.con.print(Markdown(content), highlight=False)
         self.con.print()
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
@@ -82,10 +81,8 @@ class MinimalRenderer(Renderer):
 
     def final(self, content: str, turn: int) -> None:
         self.con.print()
-        lines = content.split("\n")
-        self.con.print(f"  ✅ {lines[0]}", highlight=False)
-        for line in lines[1:]:
-            self.con.print(f"     {line}", highlight=False)
+        self.con.print("  ✅", end=" ", highlight=False)
+        self.con.print(Markdown(content), highlight=False)
         self.con.print()
 
     def error(self, content: str, turn: int) -> None:
