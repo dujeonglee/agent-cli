@@ -50,10 +50,13 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         if norm_hash == expected_hash:
             return line_num - 1, True
 
-        # Lenient fallback: trust the line number if it's in range.
-        # The agent likely has the right line, just a stale hash
-        # (file was modified in a previous turn without re-reading).
-        return line_num - 1, True
+        # Hash mismatch even after normalization — file likely changed.
+        # Return a clear error so the LLM re-reads the file.
+        raise RuntimeError(
+            f"Hash mismatch at line {line_num}: ref '{ref}' does not match "
+            f"current content. The file may have been modified in a previous turn. "
+            f"Re-read the file with read_file to get fresh hashline tags, then retry."
+        )
 
 
 def tool_edit_file(args: dict) -> ToolResult:
@@ -89,18 +92,21 @@ def tool_edit_file(args: dict) -> ToolResult:
             return ToolResult(
                 False, error=f"Unknown edit op: '{op}'. Use replace|append|prepend."
             )
-        if pos:
-            _, was_fuzzy = fuzzy_verify_ref(file_lines, pos)
-            if was_fuzzy:
-                fuzzy_warnings.append(
-                    f"[warn] Fuzzy match used for ref '{pos}' — hash mismatch tolerated"
-                )
-        if end:
-            _, was_fuzzy = fuzzy_verify_ref(file_lines, end)
-            if was_fuzzy:
-                fuzzy_warnings.append(
-                    f"[warn] Fuzzy match used for ref '{end}' — hash mismatch tolerated"
-                )
+        try:
+            if pos:
+                _, was_fuzzy = fuzzy_verify_ref(file_lines, pos)
+                if was_fuzzy:
+                    fuzzy_warnings.append(
+                        f"[warn] Fuzzy match used for ref '{pos}' — hash mismatch tolerated"
+                    )
+            if end:
+                _, was_fuzzy = fuzzy_verify_ref(file_lines, end)
+                if was_fuzzy:
+                    fuzzy_warnings.append(
+                        f"[warn] Fuzzy match used for ref '{end}' — hash mismatch tolerated"
+                    )
+        except RuntimeError as e:
+            return ToolResult(False, error=str(e))
 
     # Sort edits bottom-up so earlier splices don't shift later indices
     def _sort_key(edit):
