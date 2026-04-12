@@ -53,19 +53,6 @@ def _debug_log(msg: str) -> None:
     print(f"[debug {time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
 
 
-# Checkpoint system: nudges LLM to self-assess when turn count gets high.
-# _CHECKPOINT_FIRST: first check after N turns. 50 chosen because most
-#   tasks complete in 10-30 turns; 50 indicates potential stuck state.
-# _CHECKPOINT_INTERVAL: repeat every M turns after first. 20 gives LLM
-#   enough room to recover without being too aggressive.
-# At each checkpoint, the last _CHECKPOINT_INTERVAL tool calls are shown.
-_CHECKPOINT_FIRST = 50
-_CHECKPOINT_INTERVAL = 20
-assert _CHECKPOINT_FIRST >= _CHECKPOINT_INTERVAL, (
-    f"CHECKPOINT_FIRST ({_CHECKPOINT_FIRST}) must be >= "
-    f"CHECKPOINT_INTERVAL ({_CHECKPOINT_INTERVAL})"
-)
-
 
 class AgentLoop:
     """Encapsulates the ReAct agent loop state and execution."""
@@ -304,9 +291,7 @@ class AgentLoop:
             render_turn_sep(self.turn)
 
     def _execute_turn(self):
-        """Single turn: checkpoint, hooks, LLM call, text parse, dispatch."""
-        self._maybe_checkpoint()
-
+        """Single turn: hooks, LLM call, text parse, dispatch."""
         # PreLLMCall hook — can inject system sections and messages
         hook_ctx = self._fire_hook("PreLLMCall")
         self._apply_system_sections(hook_ctx)
@@ -335,31 +320,6 @@ class AgentLoop:
         self._fire_hook("OnTurnEnd")
 
         return result
-
-    def _maybe_checkpoint(self) -> None:
-        """Inject checkpoint message if turn count is high."""
-        if self.turn >= _CHECKPOINT_FIRST and (
-            (self.turn - _CHECKPOINT_FIRST) % _CHECKPOINT_INTERVAL == 0
-        ):
-            recent = self.recent_tool_history[-_CHECKPOINT_INTERVAL:]
-            history_summary = "\n".join(
-                f"  turn {h['turn']}: {h['tool']} → {h['result'][:100]}" for h in recent
-            )
-            checkpoint_msg = (
-                f"[SYSTEM] CHECKPOINT — {self.turn} turns used.\n"
-                f"Recent tool calls:\n{history_summary}\n\n"
-                f"You MUST now do ONE of:\n"
-                f'1. Use the complete tool: {{"thought": "...", "action": "complete", "action_input": {{"result": "your result"}}}}\n'
-                f"2. If genuinely incomplete, explain what SPECIFIC step remains and do it.\n\n"
-                f"Do NOT call echo, cat, or any tool just to confirm completion.\n"
-                f"Do NOT repeat previous tool calls.\n"
-                f"If you already completed the task, call the complete tool IMMEDIATELY."
-            )
-            self.messages.append({"role": "user", "content": checkpoint_msg})
-            if self.ctx:
-                self.ctx.add({"role": "user", "content": checkpoint_msg})
-            if not self.suppress_output:
-                render_status("running", f"Checkpoint at turn {self.turn}")
 
     def _call_llm(self):
         """LLM call with overflow retry and streaming. Returns response or sentinel."""

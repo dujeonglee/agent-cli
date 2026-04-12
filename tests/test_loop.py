@@ -276,68 +276,6 @@ class TestRunLoopMaxIter:
         assert not result.success
 
 
-class TestCheckpoint:
-    def test_no_checkpoint_before_threshold(self, caps):
-        """Under 50 iterations → no checkpoint nudge injected."""
-        responses = []
-        for i in range(10):
-            responses.append(
-                json.dumps(
-                    {
-                        "thought": f"step {i}",
-                        "action": "shell",
-                        "action_input": {"command": f"date +step{i}"},
-                    }
-                )
-            )
-        responses.append(_complete("completed"))
-        provider = _make_provider(*responses)
-        result = run_loop(
-            query="Run some commands",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-            suppress_output=True,
-        )
-        assert result.output == "completed"
-        assert provider.call.call_count == 11
-
-    def test_checkpoint_nudge_injected(self, caps):
-        """At 50+ iterations, checkpoint nudge should be injected into messages."""
-        from agent_cli.loop import _CHECKPOINT_FIRST
-
-        responses = []
-        for i in range(_CHECKPOINT_FIRST + 1):
-            responses.append(
-                json.dumps(
-                    {
-                        "thought": f"step {i}",
-                        "action": "shell",
-                        "action_input": {"command": f"date +step{i}"},
-                    }
-                )
-            )
-        responses.append(_complete("done after checkpoint"))
-        provider = _make_provider(*responses)
-        result = run_loop(
-            query="Keep running commands",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-            suppress_output=True,
-        )
-        assert result.output == "done after checkpoint"
-
-        last_call = provider.call.call_args
-        messages = last_call.kwargs.get("messages") or last_call[1].get("messages")
-        checkpoint_found = any(
-            "[SYSTEM] CHECKPOINT" in m.get("content", "")
-            for m in messages
-            if isinstance(m.get("content"), str)
-        )
-        assert checkpoint_found, "Checkpoint nudge was not found in messages"
-
-
 class TestToolHistoryTracking:
     def test_history_recorded(self, caps, tmp_path):
         """Tool execution should record history for checkpoint use."""

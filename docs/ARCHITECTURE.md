@@ -322,7 +322,6 @@ class ToolSchema:
 | LLM action | `{"role":"assistant", "thought":"...", "action":"...", "action_input":{...}}` |
 | 도구 결과 | `{"role":"user", "content":"Observation: ..."}` |
 | complete | `{"role":"assistant", "thought":"...", "action":"complete", "action_input":{"result":"..."}}` |
-| AgentLoop._maybe_checkpoint | `("user", checkpoint_msg)` |
 
 #### 루프 플로우
 
