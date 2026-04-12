@@ -136,6 +136,23 @@ def render_pop_depth() -> None:
     _renderer.pop_depth()
 
 
+def render_start_capture() -> None:
+    _renderer.start_capture()
+
+
+def render_stop_capture() -> list[str]:
+    return _renderer.stop_capture()
+
+
+def render_replay_captured(lines: list[str]) -> None:
+    """Replay captured lines at current depth with prefix."""
+    prefix = ""
+    if hasattr(_renderer, "_prefix"):
+        prefix = _renderer._prefix
+    for line in lines:
+        console.print(f"{prefix}{line}", highlight=False)
+
+
 def render_stream_chunk(text: str) -> None:
     _renderer.stream_chunk(text)
 

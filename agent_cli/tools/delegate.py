@@ -455,33 +455,49 @@ def _run_parallel(
     stop_event=None,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading."""
+    from agent_cli.render import (
+        render_push_depth,
+        render_pop_depth,
+        render_start_capture,
+        render_stop_capture,
+        render_replay_captured,
+        render_status,
+    )
+
     results: list[ToolResult | None] = [None] * len(task_specs)
+    captured: list[list[str]] = [[] for _ in task_specs]
     if stop_event is None:
         stop_event = threading.Event()
 
+    render_status("running", f"Running {len(task_specs)} tasks in parallel...")
+
     def worker(index: int, spec: dict) -> None:
-        results[index] = _run_single(
-            task=spec["task"],
-            context_mode=spec.get("context", "none"),
-            allowed_tools=spec.get("tools"),
-            agent_name=spec.get("agent", ""),
-            parent_ctx=parent_ctx,
-            provider=provider,
-            model=model,
-            capabilities=capabilities,
-            provider_name=provider_name,
-            base_url=base_url,
-            api_key=api_key,
-            depth=depth,
-            max_depth=max_depth,
-            max_turns=max_turns,
-            timeout=timeout,
-            suppress_output=True,  # Always suppress for parallel
-            session=session,
-            skill_stack=skill_stack,
-            agent_stack=agent_stack,
-            stop_event=stop_event,
-        )
+        render_start_capture()
+        try:
+            results[index] = _run_single(
+                task=spec["task"],
+                context_mode=spec.get("context", "none"),
+                allowed_tools=spec.get("tools"),
+                agent_name=spec.get("agent", ""),
+                parent_ctx=parent_ctx,
+                provider=provider,
+                model=model,
+                capabilities=capabilities,
+                provider_name=provider_name,
+                base_url=base_url,
+                api_key=api_key,
+                depth=depth,
+                max_depth=max_depth,
+                max_turns=max_turns,
+                timeout=timeout,
+                suppress_output=False,
+                session=session,
+                skill_stack=skill_stack,
+                agent_stack=agent_stack,
+                stop_event=stop_event,
+            )
+        finally:
+            captured[index] = render_stop_capture()
 
     threads = []
     for i, spec in enumerate(task_specs):
@@ -491,6 +507,17 @@ def _run_parallel(
 
     for t in threads:
         t.join()
+
+    # Replay each task's captured output with depth prefix
+    render_push_depth()
+    for i, spec in enumerate(task_specs):
+        label = spec.get("task", "")[:60]
+        status = "✓" if results[i] and results[i].success else "✗"
+        render_status("info", f"[{i + 1}] {label}")
+        if captured[i]:
+            render_replay_captured(captured[i])
+        render_status("info", f"{status} [{i + 1}] done")
+    render_pop_depth()
 
     return _format_parallel_results(task_specs, results)
 
