@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from io import StringIO
+
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -73,15 +75,20 @@ class MinimalRenderer(Renderer):
     def turn_sep(self, turn: int) -> None:
         self._p(f"\n[{_MUTED}]→ turn {turn}[/]\n")
 
+    def _render_markdown(self, icon: str, content: str) -> None:
+        """Render markdown content with icon, respecting depth prefix."""
+        buf = StringIO()
+        temp = Console(file=buf, width=max(self.con.width - len(self._prefix) - 4, 40))
+        temp.print(Markdown(content), highlight=False)
+        rendered = buf.getvalue().rstrip("\n")
+        lines = rendered.split("\n")
+        self._p(f"  {icon} {lines[0]}", highlight=False)
+        for line in lines[1:]:
+            self._p(f"     {line}", highlight=False)
+
     def thought(self, content: str, turn: int) -> None:
         self._p("")
-        if self._depth == 0 and not self.is_capturing:
-            self.con.print("  💭", end=" ", highlight=False)
-            self.con.print(Markdown(content), highlight=False)
-        else:
-            self._p(f"  💭 {content.split(chr(10))[0]}", highlight=False)
-            for line in content.split("\n")[1:]:
-                self._p(f"     {line}", highlight=False)
+        self._render_markdown("💭", content)
         self._p("")
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
@@ -111,13 +118,7 @@ class MinimalRenderer(Renderer):
 
     def final(self, content: str, turn: int) -> None:
         self._p("")
-        if self._depth == 0 and not self.is_capturing:
-            self.con.print("  ✅", end=" ", highlight=False)
-            self.con.print(Markdown(content), highlight=False)
-        else:
-            self._p(f"  ✅ {content.split(chr(10))[0]}", highlight=False)
-            for line in content.split("\n")[1:]:
-                self._p(f"     {line}", highlight=False)
+        self._render_markdown("✅", content)
         self._p("")
 
     def error(self, content: str, turn: int) -> None:
