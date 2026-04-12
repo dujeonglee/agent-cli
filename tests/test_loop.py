@@ -1331,22 +1331,17 @@ class TestAppendObservationHelpers:
 class TestSkillStack:
     """Skill stack prevents recursive calls (A→B ok, A→B→A blocked)."""
 
-    def test_skill_stack_passed_to_system_prompt(self, caps, tmp_path):
-        """System prompt hides skills already in the stack."""
-        from agent_cli.prompts.system_prompt import build_skill_descriptions
-        from agent_cli.skills.models import Skill
+    def test_execution_context_shows_stack(self, caps, tmp_path):
+        """System prompt shows execution context with call stack."""
+        from agent_cli.prompts.system_prompt import _build_execution_context
 
-        skills = {
-            "summarize": Skill(
-                name="summarize", description="Sum", prompt_template="$ARGUMENTS"
-            ),
-            "optimize": Skill(
-                name="optimize", description="Opt", prompt_template="$ARGUMENTS"
-            ),
-        }
-        desc = build_skill_descriptions(skills, exclude_names=["summarize"])
-        assert "optimize" in desc
-        assert "summarize" not in desc
+        ctx = _build_execution_context(
+            skill_stack=["summarize"], agent_stack=["reviewer"]
+        )
+        assert "Call stack: main → agent:reviewer → skill:summarize" in ctx
+        assert "summarize" in ctx
+        assert "reviewer" in ctx
+        assert "Do not delegate" in ctx
 
     def test_skill_stack_blocks_recursive(self, caps, tmp_path):
         """Same skill in stack → blocked with error."""

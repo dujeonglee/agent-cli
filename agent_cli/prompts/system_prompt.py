@@ -362,14 +362,10 @@ def build_agent_descriptions() -> str:
     return "\n".join(lines)
 
 
-def build_skill_descriptions(
-    skills: dict | None = None,
-    exclude_names: list[str] | None = None,
-) -> str:
+def build_skill_descriptions(skills: dict | None = None) -> str:
     """Build skill descriptions for system prompt injection.
 
-    Excludes skills with disable_model_invocation=True and
-    skills in exclude_names (e.g. current skill_stack for recursion prevention).
+    Excludes skills with disable_model_invocation=True.
     If skills is None, loads from disk.
     """
     if skills is None:
@@ -383,8 +379,6 @@ def build_skill_descriptions(
     if not skills:
         return ""
 
-    excluded = set(exclude_names or [])
-
     lines = [
         "## Available Skills",
         "Consider using skills for multi-step or specialized workflows.",
@@ -393,8 +387,6 @@ def build_skill_descriptions(
     ]
     for skill in skills.values():
         if skill.disable_model_invocation:
-            continue
-        if skill.name in excluded:
             continue
         hint = f" {skill.argument_hint}" if skill.argument_hint else ""
         lines.append(f"- `{skill.name}{hint}` — {skill.description}")
