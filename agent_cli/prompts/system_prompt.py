@@ -265,16 +265,22 @@ def build_system_prompt(
         if mcp_desc:
             sections.append(f"## MCP Tools\n{mcp_desc}")
 
-    skill_desc = build_skill_descriptions(exclude_names=skill_stack)
+    skill_desc = build_skill_descriptions()
     if skill_desc:
         sections.append(skill_desc)
 
     if "delegate" in active_tools:
-        agent_desc = build_agent_descriptions(exclude_names=agent_stack)
+        agent_desc = build_agent_descriptions()
         if agent_desc:
             sections.append(agent_desc)
 
     # ── Recency: current context + user rules ──
+
+    # Execution context: tell LLM where it is in the call stack
+    exec_ctx = _build_execution_context(skill_stack, agent_stack)
+    if exec_ctx:
+        sections.append(exec_ctx)
+
     directives = _load_directives()
     if directives:
         sections.append(directives)
@@ -288,6 +294,34 @@ def build_system_prompt(
     return "\n\n".join(sections)
 
 
+def _build_execution_context(
+    skill_stack: list[str] | None, agent_stack: list[str] | None
+) -> str:
+    """Build execution context showing current call stack position."""
+    if not skill_stack and not agent_stack:
+        return ""
+
+    lines = ["## Execution Context"]
+
+    stack_parts = ["main"]
+    if agent_stack:
+        stack_parts.extend(f"agent:{a}" for a in agent_stack)
+    if skill_stack:
+        stack_parts.extend(f"skill:{s}" for s in skill_stack)
+    lines.append(f"Call stack: {' → '.join(stack_parts)}")
+
+    blocked = []
+    if agent_stack:
+        blocked.extend(agent_stack)
+    if skill_stack:
+        blocked.extend(skill_stack)
+    lines.append(
+        f"Do not delegate to or invoke: {', '.join(blocked)} (already in call stack)."
+    )
+
+    return "\n".join(lines)
+
+
 def _build_context_recovery(session_dir: str) -> str:
     """Build Context Recovery Guide for system prompt."""
     return (
@@ -298,23 +332,19 @@ def _build_context_recovery(session_dir: str) -> str:
     )
 
 
-def build_agent_descriptions(exclude_names: list[str] | None = None) -> str:
+def build_agent_descriptions() -> str:
     """Build agent descriptions for system prompt injection.
 
     Uses the delegate module's agent loader to discover available agents.
-    Excludes agents in exclude_names (e.g. current agent_stack for recursion prevention).
     """
     try:
         from agent_cli.tools.delegate import _agent_loader
     except ImportError:
         return ""
 
-    excluded = set(exclude_names or [])
     resources = _agent_loader.load_all()
     agents = [
-        (name, res.meta.get("description", ""))
-        for name, res in resources.items()
-        if name not in excluded
+        (name, res.meta.get("description", "")) for name, res in resources.items()
     ]
 
     if not agents:
