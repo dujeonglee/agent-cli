@@ -754,6 +754,47 @@ def sessions(
     console.print()
 
 
+def _read_user_input(prompt: str) -> str:
+    """Read user input with paste detection and explicit multiline support.
+
+    - Single line: Enter sends immediately (unchanged behavior)
+    - Paste: detects buffered lines in stdin and reads them all
+    - Explicit multiline: start with \"\"\" and end with \"\"\"
+    """
+    import select
+    import sys
+
+    first_line = input(prompt).strip()
+    if not first_line:
+        return ""
+
+    # Explicit multiline: """ ... """
+    if first_line == '"""':
+        lines: list[str] = []
+        while True:
+            try:
+                line = input("... ")
+            except EOFError:
+                break
+            if line.strip() == '"""':
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
+    # Paste detection: check if stdin has more data immediately available
+    lines = [first_line]
+    try:
+        while select.select([sys.stdin], [], [], 0.05)[0]:
+            line = sys.stdin.readline()
+            if not line:  # EOF
+                break
+            lines.append(line.rstrip("\n"))
+    except (OSError, ValueError):
+        pass  # select not supported (e.g. Windows) — single line only
+
+    return "\n".join(lines)
+
+
 @app.command()
 def chat(
     provider: str = typer.Option(
@@ -869,7 +910,7 @@ def chat(
 
     while True:
         try:
-            query = input(_prompt).strip()
+            query = _read_user_input(_prompt)
         except (EOFError, KeyboardInterrupt):
             console.print(f"\n[{C['muted']}]Session ended.[/]")
             break
