@@ -38,7 +38,7 @@ TASK_GUIDELINES = """\
 - Keep changes tightly scoped to the request. Do not add unrelated cleanup or refactoring.
 - Do not create new files unless required to complete the task.
 - If an approach fails, diagnose the cause before switching tactics.
-- Be careful not to introduce security vulnerabilities (command injection, path traversal, etc.).
+- Do not introduce new security vulnerabilities in your changes.
 - Report outcomes honestly — if verification failed or was not run, say so explicitly."""
 
 # ── Section 3: Format Rules ──────────────────────
