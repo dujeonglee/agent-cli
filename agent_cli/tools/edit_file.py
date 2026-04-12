@@ -41,7 +41,6 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         # Check if the line at this position is "close enough" by comparing
         # normalized versions.
         actual_line = lines[line_num - 1]
-        actual_norm = _normalize_for_fuzzy(actual_line)
 
         # We don't have the original line content, only the hash.
         # So fuzzy matching works by trusting the line number
@@ -51,15 +50,10 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         if norm_hash == expected_hash:
             return line_num - 1, True
 
-        # Also try: maybe the file was re-saved with different whitespace
-        # but the line number is still correct. Accept with warning.
-        # This is a lenient fallback for small models.
-        if actual_norm and len(actual_norm) > 0:
-            # Accept if line number is valid and content is non-empty
-            # (the agent likely has the right line, just wrong hash)
-            return line_num - 1, True
-
-        raise exact_err
+        # Lenient fallback: trust the line number if it's in range.
+        # The agent likely has the right line, just a stale hash
+        # (file was modified in a previous turn without re-reading).
+        return line_num - 1, True
 
 
 def tool_edit_file(args: dict) -> ToolResult:
