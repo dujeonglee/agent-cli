@@ -128,6 +128,14 @@ def render_spinner_stop() -> None:
     _renderer.spinner_stop()
 
 
+def render_push_depth() -> None:
+    _renderer.push_depth()
+
+
+def render_pop_depth() -> None:
+    _renderer.pop_depth()
+
+
 def render_stream_chunk(text: str) -> None:
     _renderer.stream_chunk(text)
 

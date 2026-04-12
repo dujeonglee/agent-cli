@@ -544,15 +544,23 @@ def tool_delegate(
     )
 
     if len(tasks) == 1:
-        spec = tasks[0]
-        return _run_single(
-            task=spec.get("task", ""),
-            context_mode=spec.get("context", "none"),
-            allowed_tools=spec.get("tools"),
-            agent_name=spec.get("agent", ""),
-            suppress_output=suppress_output,
-            stop_event=stop_event,
-            **common_kwargs,
-        )
+        # Single delegate: nested rendering (push/pop depth)
+        from agent_cli.render import render_push_depth, render_pop_depth
+
+        render_push_depth()
+        try:
+            spec = tasks[0]
+            return _run_single(
+                task=spec.get("task", ""),
+                context_mode=spec.get("context", "none"),
+                allowed_tools=spec.get("tools"),
+                agent_name=spec.get("agent", ""),
+                suppress_output=False,
+                stop_event=stop_event,
+                **common_kwargs,
+            )
+        finally:
+            render_pop_depth()
     else:
+        # Parallel: suppress during execution, collect and display after
         return _run_parallel(task_specs=tasks, stop_event=stop_event, **common_kwargs)

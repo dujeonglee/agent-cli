@@ -10,7 +10,25 @@ class Renderer(ABC):
 
     Implement a subclass and call set_renderer() to swap output style.
     Each method corresponds to a distinct UI event in the agent loop.
+
+    Supports nested rendering via push_depth/pop_depth for skills/delegates.
     """
+
+    def __init__(self) -> None:
+        self._depth: int = 0
+
+    @property
+    def depth(self) -> int:
+        return self._depth
+
+    def push_depth(self) -> None:
+        """Increase nesting depth (enter skill/delegate)."""
+        self._depth += 1
+
+    def pop_depth(self) -> None:
+        """Decrease nesting depth (exit skill/delegate)."""
+        if self._depth > 0:
+            self._depth -= 1
 
     @abstractmethod
     def header(

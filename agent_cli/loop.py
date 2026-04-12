@@ -29,6 +29,8 @@ from agent_cli.render import (
     render_step,
     render_stream_chunk,
     render_stream_end,
+    render_push_depth,
+    render_pop_depth,
 )
 from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
@@ -932,6 +934,7 @@ def _handle_run_skill(
         )
 
     render_status("running", f"Running skill: {name}...")
+    render_push_depth()
 
     try:
         from agent_cli.providers import create_provider
@@ -946,7 +949,7 @@ def _handle_run_skill(
             provider_name=provider_name,
             base_url=base_url,
             api_key=api_key,
-            suppress_output=True,
+            suppress_output=False,
             ctx=ctx,
             session=session,
             skill_stack=skill_stack,
@@ -956,6 +959,8 @@ def _handle_run_skill(
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")
         skill_result = ToolResult(False, error=f"run_skill({name}) failed: {e}")
+    finally:
+        render_pop_depth()
 
     # OnSkillEnd hook
     if hook_runner:

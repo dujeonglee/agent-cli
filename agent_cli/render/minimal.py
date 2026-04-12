@@ -1,4 +1,4 @@
-"""Minimal indent renderer — no boxes, resize-safe."""
+"""Minimal indent renderer — no boxes, resize-safe, nested depth support."""
 
 from __future__ import annotations
 
@@ -14,11 +14,27 @@ _MUTED = "grey46"
 
 
 class MinimalRenderer(Renderer):
-    """Clean indented output with icons, no boxes or color-dependent structure."""
+    """Clean indented output with icons, no boxes or color-dependent structure.
+
+    Supports nested rendering for skills/delegates via push_depth/pop_depth.
+    Each depth level adds a "│ " prefix to all output.
+    """
 
     def __init__(self, console: Console):
+        super().__init__()
         self.con = console
         self._live: Live | None = None
+
+    @property
+    def _prefix(self) -> str:
+        """Depth-based prefix for nested rendering."""
+        if self._depth == 0:
+            return ""
+        return "  " + "│   " * self._depth
+
+    def _p(self, text: str, **kwargs) -> None:
+        """Print with depth prefix."""
+        self.con.print(f"{self._prefix}{text}", **kwargs)
 
     def header(
         self,
@@ -28,6 +44,8 @@ class MinimalRenderer(Renderer):
         skill_name: str = "",
         skill_args: str = "",
     ) -> None:
+        if self._depth > 0:
+            return  # Skip header for nested calls
         self.con.print()
         if skill_name:
             args_label = f"({skill_args})" if skill_args else ""
@@ -46,17 +64,22 @@ class MinimalRenderer(Renderer):
         self.con.print()
 
     def turn_sep(self, turn: int) -> None:
-        self.con.print(f"\n[{_MUTED}]→ turn {turn}[/]\n")
+        self._p(f"\n[{_MUTED}]→ turn {turn}[/]\n")
 
     def thought(self, content: str, turn: int) -> None:
-        self.con.print()
-        self.con.print("  💭", end=" ", highlight=False)
-        self.con.print(Markdown(content), highlight=False)
-        self.con.print()
+        self._p("")
+        self._p("  💭", end=" ", highlight=False)
+        # Markdown rendering doesn't support prefix easily, fall back for nested
+        if self._depth > 0:
+            for line in content.split("\n"):
+                self._p(f"     {line}", highlight=False)
+        else:
+            self.con.print(Markdown(content), highlight=False)
+        self._p("")
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         display = tool_input[:200] + "..." if len(tool_input) > 200 else tool_input
-        self.con.print(f"  ⚡ {tool_name} → {display}", highlight=False, markup=False)
+        self._p(f"  ⚡ {tool_name} → {display}", highlight=False, markup=False)
 
     def observation(
         self, content: str, turn: int, tool_name: str | None = None
@@ -77,31 +100,35 @@ class MinimalRenderer(Renderer):
                     detail = f"  {line}"
                     break
 
-        self.con.print(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
+        self._p(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
 
     def final(self, content: str, turn: int) -> None:
-        self.con.print()
-        self.con.print("  ✅", end=" ", highlight=False)
-        self.con.print(Markdown(content), highlight=False)
-        self.con.print()
+        self._p("")
+        self._p("  ✅", end=" ", highlight=False)
+        if self._depth > 0:
+            for line in content.split("\n"):
+                self._p(f"     {line}", highlight=False)
+        else:
+            self.con.print(Markdown(content), highlight=False)
+        self._p("")
 
     def error(self, content: str, turn: int) -> None:
-        self.con.print(f"  ✗ {content}", highlight=False)
+        self._p(f"  ✗ {content}", highlight=False)
 
     def raw(self, text: str, turn: int, verbose: bool) -> None:
         if not verbose:
-            self.con.print(
+            self._p(
                 f"  [{_MUTED}]📄 raw response turn {turn} (use --verbose to view)[/]"
             )
             return
-        self.con.print(f"\n  [{_MUTED}]── raw response turn {turn} ──[/]")
+        self._p(f"\n  [{_MUTED}]── raw response turn {turn} ──[/]")
         for line in text.split("\n"):
-            self.con.print(f"  [{_MUTED}]{line}[/]")
-        self.con.print(f"  [{_MUTED}]── end raw ──[/]\n")
+            self._p(f"  [{_MUTED}]{line}[/]")
+        self._p(f"  [{_MUTED}]── end raw ──[/]\n")
 
     def status(self, state: str, message: str, turn: int = 0) -> None:
         it = f"  turn {turn}" if turn else ""
-        self.con.print(f"  ● {message}{it}", highlight=False)
+        self._p(f"  ● {message}{it}", highlight=False)
 
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str
@@ -138,7 +165,7 @@ class MinimalRenderer(Renderer):
         )
 
     def context_dump(self, messages: list[dict], turn: int) -> None:
-        self.con.print(
+        self._p(
             f"\n  [{_MUTED}]── context dump (turn {turn}, {len(messages)} msgs) ──[/]"
         )
         for i, m in enumerate(messages):
@@ -150,14 +177,15 @@ class MinimalRenderer(Renderer):
                     preview += f"... ({len(content)} chars)"
             else:
                 preview = str(content)[:200]
-            self.con.print(f"  [{_MUTED}][{i}] {role}: {preview}[/]")
-        self.con.print(f"  [{_MUTED}]── end dump ──[/]\n")
+            self._p(f"  [{_MUTED}][{i}] {role}: {preview}[/]")
+        self._p(f"  [{_MUTED}]── end dump ──[/]\n")
 
     def spinner_start(self, message: str = "thinking...") -> None:
         if self._live is not None:
             return  # Already spinning
         try:
-            spinner = Spinner("dots", text=Text(f"  {message}", style=_MUTED))
+            prefix = self._prefix
+            spinner = Spinner("dots", text=Text(f"{prefix}  {message}", style=_MUTED))
             self._live = Live(
                 spinner, console=self.con, refresh_per_second=10, transient=True
             )
@@ -204,17 +232,17 @@ class MinimalRenderer(Renderer):
 
         if thought:
             t = thought.replace("\n", " ").strip()
-            self.con.print(
+            self._p(
                 f"  [{_MUTED}]{label} [{turn}] 💭 {t}[/]",
                 highlight=False,
             )
         if tool_name == "complete":
-            self.con.print(
+            self._p(
                 f"  [{_MUTED}]{label} [{turn}] ✅ {tool_name}{detail}[/]",
                 highlight=False,
             )
         else:
-            self.con.print(
+            self._p(
                 f"  [{_MUTED}]{label} [{turn}] {action_icon} {tool_name}:{detail}[/]",
                 highlight=False,
             )
