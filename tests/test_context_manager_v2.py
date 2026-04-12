@@ -17,7 +17,7 @@ def session_dir(tmp_path):
 
 @pytest.fixture
 def ctx(session_dir):
-    return ContextManager(session_dir, max_context_messages=5)
+    return ContextManager(session_dir, max_context_tokens=10000)
 
 
 # ── FIFO Behavior ─────────────────────────────────────
@@ -39,30 +39,26 @@ class TestFIFO:
         assert msgs[0]["role"] == "user"
         assert msgs[1]["role"] == "assistant"
 
-    def test_fifo_eviction(self, ctx):
-        """When cache exceeds N, oldest messages are evicted."""
+    def test_fifo_eviction(self, session_dir):
+        """When cache exceeds token budget, oldest messages are evicted."""
+        # Each "msg-N" message is 5 tokens. Budget 25 holds 5, so 7 → 5.
+        ctx = ContextManager(session_dir, max_context_tokens=25)
         for i in range(7):
             ctx.add({"role": "user", "content": f"msg-{i}"})
         msgs = ctx.get_raw_messages()
-        assert len(msgs) == 5  # max_context_messages=5
+        assert len(msgs) == 5
         assert msgs[0]["content"] == "msg-2"
         assert msgs[-1]["content"] == "msg-6"
 
-    def test_fifo_preserves_order(self, ctx):
-        for i in range(3):
+    def test_fifo_preserves_order(self, session_dir):
+        """Eviction preserves chronological order."""
+        # Each "u-N" message is 4 tokens. Budget 20 holds 5, so 6 → 5.
+        ctx = ContextManager(session_dir, max_context_tokens=20)
+        for i in range(6):
             ctx.add({"role": "user", "content": f"u{i}"})
-            ctx.add(
-                {
-                    "role": "assistant",
-                    "thought": f"t{i}",
-                    "action": "complete",
-                    "action_input": {"result": f"r{i}"},
-                }
-            )
-        # max_context_messages=5, so last 5 of 6 messages
         raw = ctx.get_raw_messages()
         assert len(raw) == 5
-        assert raw[0]["role"] == "assistant"  # u0 evicted, a0 is first
+        assert raw[0]["content"] == "u1"  # u0 evicted
 
     def test_empty_session(self, ctx):
         assert ctx.get_messages() == []
@@ -85,8 +81,10 @@ class TestHistoryPersistence:
         assert json.loads(lines[0])["content"] == "msg1"
         assert json.loads(lines[1])["content"] == "msg2"
 
-    def test_history_not_truncated_by_fifo(self, ctx):
+    def test_history_not_truncated_by_fifo(self, session_dir):
         """history.jsonl keeps all messages even when FIFO evicts."""
+        # Each "msg-N" is 5 tokens. Budget 25 holds 5.
+        ctx = ContextManager(session_dir, max_context_tokens=25)
         for i in range(10):
             ctx.add({"role": "user", "content": f"msg-{i}"})
         lines = ctx.history_path.read_text().strip().split("\n")
@@ -106,24 +104,24 @@ class TestHistoryPersistence:
 class TestSessionResume:
     def test_resume_restores_cache(self, session_dir):
         # Write session
-        ctx1 = ContextManager(session_dir, max_context_messages=5)
+        ctx1 = ContextManager(session_dir, max_context_tokens=25)
         for i in range(3):
             ctx1.add({"role": "user", "content": f"msg-{i}"})
 
         # Resume session
-        ctx2 = ContextManager(session_dir, max_context_messages=5, resume=True)
+        ctx2 = ContextManager(session_dir, max_context_tokens=25, resume=True)
         raw = ctx2.get_raw_messages()
         assert len(raw) == 3
         assert raw[0]["content"] == "msg-0"
         assert raw[2]["content"] == "msg-2"
 
-    def test_resume_respects_max_context_messages(self, session_dir):
-        """Resume only loads last N messages."""
-        ctx1 = ContextManager(session_dir, max_context_messages=3)
+    def test_resume_respects_token_budget(self, session_dir):
+        """Resume only loads messages that fit within token budget."""
+        ctx1 = ContextManager(session_dir, max_context_tokens=15)
         for i in range(10):
             ctx1.add({"role": "user", "content": f"msg-{i}"})
 
-        ctx2 = ContextManager(session_dir, max_context_messages=3, resume=True)
+        ctx2 = ContextManager(session_dir, max_context_tokens=15, resume=True)
         raw = ctx2.get_raw_messages()
         assert len(raw) == 3
         assert raw[0]["content"] == "msg-7"
@@ -131,10 +129,10 @@ class TestSessionResume:
 
     def test_resume_continues_append(self, session_dir):
         """After resume, new messages append to existing history."""
-        ctx1 = ContextManager(session_dir, max_context_messages=5)
+        ctx1 = ContextManager(session_dir, max_context_tokens=25)
         ctx1.add({"role": "user", "content": "old"})
 
-        ctx2 = ContextManager(session_dir, max_context_messages=5, resume=True)
+        ctx2 = ContextManager(session_dir, max_context_tokens=25, resume=True)
         ctx2.add({"role": "user", "content": "new"})
 
         lines = ctx2.history_path.read_text().strip().split("\n")
@@ -144,7 +142,7 @@ class TestSessionResume:
 
     def test_resume_no_file(self, session_dir):
         """Resume with no history file starts empty."""
-        ctx = ContextManager(session_dir, max_context_messages=5, resume=True)
+        ctx = ContextManager(session_dir, max_context_tokens=25, resume=True)
         assert ctx.get_raw_messages() == []
 
     def test_resume_handles_corrupt_lines(self, session_dir):
@@ -156,7 +154,7 @@ class TestSessionResume:
             "NOT JSON\n"
             '{"role":"user","content":"also good"}\n'
         )
-        ctx = ContextManager(session_dir, max_context_messages=5, resume=True)
+        ctx = ContextManager(session_dir, max_context_tokens=25, resume=True)
         raw = ctx.get_raw_messages()
         assert len(raw) == 2
         assert raw[0]["content"] == "good"
@@ -288,7 +286,7 @@ class TestNaturalLanguageConversion:
 
 class TestFork:
     def test_fork_copies_history(self, session_dir, tmp_path):
-        ctx = ContextManager(session_dir, max_context_messages=5)
+        ctx = ContextManager(session_dir, max_context_tokens=25)
         ctx.add({"role": "user", "content": "parent msg 1"})
         ctx.add(
             {
@@ -309,13 +307,13 @@ class TestFork:
 
     def test_fork_then_resume(self, session_dir, tmp_path):
         """Forked history can be used to create a new ContextManager."""
-        ctx = ContextManager(session_dir, max_context_messages=5)
+        ctx = ContextManager(session_dir, max_context_tokens=25)
         ctx.add({"role": "user", "content": "parent msg"})
 
         target = tmp_path / "delegate_test"
         ctx.fork_history_to(target)
 
-        child = ContextManager(target, max_context_messages=5, resume=True)
+        child = ContextManager(target, max_context_tokens=25, resume=True)
         assert len(child.get_raw_messages()) == 1
         assert child.get_raw_messages()[0]["content"] == "parent msg"
 
@@ -328,7 +326,7 @@ class TestFork:
 
     def test_fork_empty_history(self, session_dir, tmp_path):
         """Fork with no history creates empty target."""
-        ctx = ContextManager(session_dir, max_context_messages=5)
+        ctx = ContextManager(session_dir, max_context_tokens=25)
         target = tmp_path / "delegate_empty"
         copied_path = ctx.fork_history_to(target)
         # File doesn't exist since source doesn't exist
@@ -339,8 +337,9 @@ class TestFork:
 
 
 class TestGetMessagesIntegration:
-    def test_full_conversation_flow(self, ctx):
+    def test_full_conversation_flow(self, session_dir):
         """Simulate a realistic conversation and verify output."""
+        ctx = ContextManager(session_dir, max_context_tokens=10000)
         ctx.add({"role": "user", "content": "auth.py를 리팩토링 해줘"})
         ctx.add(
             {

@@ -1,26 +1,39 @@
-"""Context manager with FIFO message queue and history.jsonl persistence.
+"""Context manager with token-budget FIFO and history.jsonl persistence.
 
 Stores full conversation in history.jsonl (JSON Lines, append-only).
-Maintains an in-memory context cache of the last N messages.
+Maintains an in-memory context cache that fits within a token budget.
 Converts JSON records to natural language for LLM consumption.
 """
 
 from __future__ import annotations
 
 import json
-from collections import deque
 from pathlib import Path
 
+from agent_cli.context.token_estimator import estimate_tokens
 
-# ── Default max context messages ──────────────────────────���─────
-DEFAULT_MAX_CONTEXT_MESSAGES = 100
+
+# ── Default token budget ─────────────────────────────────
+# Used when no budget is specified and no capabilities are provided.
+DEFAULT_TOKEN_BUDGET = 100_000
+
+
+def compute_token_budget(context_window: int, max_output_tokens: int) -> int:
+    """Compute context token budget from model capabilities.
+
+    budget = context_window - max_output_tokens - system_prompt_reserve
+    System prompt reserve is estimated at 4000 tokens.
+    """
+    reserve = max_output_tokens + 4000
+    budget = context_window - reserve
+    return max(budget, 4000)  # floor: at least 4K tokens
 
 
 class ContextManager:
-    """Manages conversation history with FIFO + history.jsonl persistence.
+    """Manages conversation history with token-budget FIFO + history.jsonl.
 
     - Stores every message as a JSON line in history.jsonl (append-only).
-    - Keeps the last N messages in memory for fast access.
+    - Keeps recent messages in memory within a token budget.
     - Converts JSON records to natural language when building LLM messages.
     - On session resume, restores cache from history.jsonl tail.
     """
@@ -28,17 +41,16 @@ class ContextManager:
     def __init__(
         self,
         session_dir: Path,
-        max_context_messages: int = DEFAULT_MAX_CONTEXT_MESSAGES,
+        max_context_tokens: int = 0,
         *,
         resume: bool = False,
     ):
         self.session_dir = Path(session_dir)
-        self.max_context_messages = (
-            max_context_messages
-            if max_context_messages > 0
-            else DEFAULT_MAX_CONTEXT_MESSAGES
+        self.max_context_tokens = (
+            max_context_tokens if max_context_tokens > 0 else DEFAULT_TOKEN_BUDGET
         )
-        self._cache: deque[dict] = deque(maxlen=self.max_context_messages)
+        self._cache: list[dict] = []
+        self._cache_tokens: int = 0
         self._history_path = self.session_dir / "history.jsonl"
 
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -51,19 +63,17 @@ class ContextManager:
     def add(self, message: dict) -> None:
         """Add a message to cache and persist to history.jsonl.
 
-        Args:
-            message: A dict with at minimum {"role": "user"|"assistant", ...}.
-                     See DESIGN.md section 4.5 for full schema.
+        If adding the message exceeds the token budget, older messages
+        are dropped (whole messages only, never truncated).
         """
+        msg_tokens = _estimate_message_tokens(message)
         self._cache.append(message)
+        self._cache_tokens += msg_tokens
+        self._evict()
         self._append_to_history(message)
 
     def get_messages(self) -> list[dict]:
-        """Return cached messages converted to natural language for LLM.
-
-        Returns a list of {"role": ..., "content": ...} dicts suitable
-        for chat completion API calls.
-        """
+        """Return cached messages converted to natural language for LLM."""
         return [_to_natural_language(msg) for msg in self._cache]
 
     def get_raw_messages(self) -> list[dict]:
@@ -71,19 +81,23 @@ class ContextManager:
         return list(self._cache)
 
     def get_estimated_tokens(self) -> int:
-        """Rough token estimate from cache."""
-        total_chars = sum(
-            len(str(m.get("content", ""))) + len(str(m.get("thought", "")))
-            for m in self._cache
-        )
-        return total_chars // 4 + 1
+        """Current estimated token count of the cache."""
+        return self._cache_tokens
 
     @property
     def history_path(self) -> Path:
         """Path to this context's history.jsonl file."""
         return self._history_path
 
-    # ── Persistence ──��────────────────────────────────
+    # ── Eviction ─────────────────────────────────────
+
+    def _evict(self) -> None:
+        """Drop oldest messages until cache fits within token budget."""
+        while self._cache_tokens > self.max_context_tokens and len(self._cache) > 1:
+            removed = self._cache.pop(0)
+            self._cache_tokens -= _estimate_message_tokens(removed)
+
+    # ── Persistence ──────────────────────────────────
 
     def _append_to_history(self, message: dict) -> None:
         """Append a single JSON line to history.jsonl."""
@@ -91,31 +105,47 @@ class ContextManager:
             f.write(json.dumps(message, ensure_ascii=False) + "\n")
 
     def _restore_cache(self) -> None:
-        """Read history.jsonl and load the last N messages into cache."""
+        """Read history.jsonl and load messages within token budget."""
         with open(self._history_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-        tail = (
-            lines[-self.max_context_messages :]
-            if len(lines) > self.max_context_messages
-            else lines
-        )
-        for line in tail:
+        # Load from end, respecting token budget
+        messages: list[dict] = []
+        for line in reversed(lines):
             line = line.strip()
             if not line:
                 continue
             try:
-                self._cache.append(json.loads(line))
+                msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            messages.append(msg)
 
-    # ── Fork support ─────���────────────────────────────
+        # Reverse to chronological order, then add within budget
+        messages.reverse()
+        total = 0
+        start_idx = 0
+        for i, msg in enumerate(messages):
+            total += _estimate_message_tokens(msg)
+        # If total fits, use all; otherwise find the cut point
+        if total > self.max_context_tokens:
+            # Drop from the front until it fits
+            running = total
+            for i, msg in enumerate(messages):
+                if running <= self.max_context_tokens:
+                    start_idx = i
+                    break
+                running -= _estimate_message_tokens(msg)
+            else:
+                start_idx = len(messages) - 1
+
+        self._cache = messages[start_idx:]
+        self._cache_tokens = sum(_estimate_message_tokens(m) for m in self._cache)
+
+    # ── Fork support ─────────────────────────────────
 
     def fork_history_to(self, target_dir: Path) -> Path:
-        """Copy this context's history.jsonl to target_dir for fork mode.
-
-        Returns the path to the copied history.jsonl.
-        """
+        """Copy this context's history.jsonl to target_dir for fork mode."""
         import shutil
 
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -123,6 +153,29 @@ class ContextManager:
         if self._history_path.is_file():
             shutil.copy2(self._history_path, target_path)
         return target_path
+
+
+# ── Token estimation ─────────────────────────────────
+
+
+def _estimate_message_tokens(msg: dict) -> int:
+    """Estimate tokens for a single message dict."""
+    total = 4  # role + formatting overhead
+    for key in ("content", "thought", "action_input"):
+        val = msg.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str):
+            total += estimate_tokens(val)
+        elif isinstance(val, dict):
+            total += estimate_tokens(json.dumps(val, ensure_ascii=False))
+    action = msg.get("action", "")
+    if action:
+        total += estimate_tokens(action)
+    artifact = msg.get("artifact", "")
+    if artifact:
+        total += estimate_tokens(artifact)
+    return total
 
 
 # ── Natural language conversion ───────────────────────

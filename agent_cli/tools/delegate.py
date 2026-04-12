@@ -364,10 +364,14 @@ def _run_single(
             )
         # Fork: copy parent history.jsonl to delegate dir
         parent_ctx.fork_history_to(delegate_dir)
-        ctx = ContextManager(session_dir=delegate_dir, resume=True)
+        budget = parent_ctx.max_context_tokens
+        ctx = ContextManager(
+            session_dir=delegate_dir, max_context_tokens=budget, resume=True
+        )
     else:
-        # none: fresh context
-        ctx = ContextManager(session_dir=delegate_dir)
+        # none: fresh context (inherit parent budget if available)
+        budget = parent_ctx.max_context_tokens if parent_ctx else 0
+        ctx = ContextManager(session_dir=delegate_dir, max_context_tokens=budget)
 
     t0 = time.monotonic()
 

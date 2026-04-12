@@ -538,10 +538,10 @@ def run(
         "-n",
         help="Maximum iterations (0 = unlimited)",
     ),
-    max_context_messages: int = typer.Option(
+    max_context_tokens: int = typer.Option(
         0,
-        "--max-context-messages",
-        help="Max messages in context window (0 = default 100)",
+        "--max-context-tokens",
+        help="Max tokens in context window (0 = auto from model)",
     ),
     max_depth: int = typer.Option(
         2,
@@ -600,6 +600,14 @@ def run(
         TOOLS.update(mcp_tools)
 
     # Session & context setup
+    # Auto-compute token budget from model capabilities if not specified
+    if max_context_tokens <= 0:
+        from agent_cli.context.manager import compute_token_budget
+
+        max_context_tokens = compute_token_budget(
+            capabilities.context_window, capabilities.max_output_tokens
+        )
+
     session = None
     ctx = None
     _tmpdir = None  # prevent GC of TemporaryDirectory
@@ -610,7 +618,7 @@ def run(
 
         _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
         ctx = ContextManager(
-            session_dir=_Path(_tmpdir.name), max_context_messages=max_context_messages
+            session_dir=_Path(_tmpdir.name), max_context_tokens=max_context_tokens
         )
     else:
         from agent_cli.context.session import create_session, save_meta
@@ -620,7 +628,7 @@ def run(
         save_meta(session)
         ctx = ContextManager(
             session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-            max_context_messages=max_context_messages,
+            max_context_tokens=max_context_tokens,
         )
 
     # Skill dispatch: /skill-name args
@@ -837,10 +845,10 @@ def chat(
         "-n",
         help="Maximum iterations per turn (0 = unlimited)",
     ),
-    max_context_messages: int = typer.Option(
+    max_context_tokens: int = typer.Option(
         0,
-        "--max-context-messages",
-        help="Max messages in context window (0 = default 100)",
+        "--max-context-tokens",
+        help="Max tokens in context window (0 = auto from model)",
     ),
     max_depth: int = typer.Option(
         2,
@@ -900,9 +908,17 @@ def chat(
         session = create_session()
     save_meta(session)
 
+    # Auto-compute token budget from model capabilities if not specified
+    if max_context_tokens <= 0:
+        from agent_cli.context.manager import compute_token_budget
+
+        max_context_tokens = compute_token_budget(
+            capabilities.context_window, capabilities.max_output_tokens
+        )
+
     ctx = ContextManager(
         session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-        max_context_messages=max_context_messages,
+        max_context_tokens=max_context_tokens,
         resume=bool(resume),
     )
 
@@ -957,7 +973,7 @@ def chat(
         if query == "/clear":
             ctx = ContextManager(
                 session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-                max_context_messages=max_context_messages,
+                max_context_tokens=max_context_tokens,
             )
             console.print(f"[{C['accent']}]Context cleared.[/]")
             continue
@@ -970,7 +986,7 @@ def chat(
 
         if query == "/compact" or query.startswith("/compact "):
             console.print(
-                f"[{C['muted']}]Context: last {ctx.max_context_messages} messages. "
+                f"[{C['muted']}]Context: {ctx.get_estimated_tokens():,} / {ctx.max_context_tokens:,} tokens. "
                 f"No compression needed.[/]"
             )
             continue
@@ -979,7 +995,7 @@ def chat(
             msgs = ctx.get_messages()
             console.print(
                 f"[{C['muted']}]── context window dump ({len(msgs)} messages, "
-                f"{ctx.max_context_messages} msgs) ──[/]"
+                f"{ctx.get_estimated_tokens():,} / {ctx.max_context_tokens:,} tokens) ──[/]"
             )
             for i, m in enumerate(msgs):
                 role = m["role"]

@@ -144,7 +144,10 @@ def execute_skill(
         ms = f"{int(_time.time() * 1000) % 1000:03d}"
         skill_dir_name = f"skill_{name}_{hash_part}_{ts}{ms}"
         skill_session_dir = ctx.session_dir / skill_dir_name
-        skill_ctx = ContextManager(session_dir=skill_session_dir)
+        skill_ctx = ContextManager(
+            session_dir=skill_session_dir,
+            max_context_tokens=ctx.max_context_tokens,
+        )
 
     loop_result = run_loop(
         query=prompt,

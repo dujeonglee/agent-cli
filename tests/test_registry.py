@@ -136,14 +136,12 @@ class TestConvertToOpenAITools:
 
 class TestDelegateSchema:
     def test_delegate_has_tasks_param(self):
-        
 
         props = TOOL_SCHEMAS["delegate"].parameters["properties"]
         assert "tasks" in props
         assert props["tasks"]["type"] == "array"
 
     def test_delegate_tasks_is_array_of_objects(self):
-        
 
         items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
         assert items["type"] == "object"
@@ -152,19 +150,16 @@ class TestDelegateSchema:
         assert "tools" in items["properties"]
 
     def test_delegate_tasks_required(self):
-        
 
         assert "tasks" in TOOL_SCHEMAS["delegate"].parameters["required"]
 
     def test_delegate_no_top_level_task(self):
-        
 
         props = TOOL_SCHEMAS["delegate"].parameters["properties"]
         assert "task" not in props  # Only inside tasks array items
 
     def test_delegate_schema_has_agent_field(self):
         """AG-29: TOOL_SCHEMAS["delegate"] items have agent field."""
-        
 
         items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
         assert "agent" in items["properties"]
@@ -172,7 +167,6 @@ class TestDelegateSchema:
 
     def test_delegate_schema_agent_not_required(self):
         """AG-30: agent field is not in required list."""
-        
 
         items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
         assert "agent" not in items["required"]

@@ -25,9 +25,7 @@ def tool_read_context(args: dict) -> ToolResult:
     elif mode == "search":
         return _mode_search(args.get("keyword", ""))
 
-    return ToolResult(
-        False, error=f"unknown mode '{mode}'. Use 'list' or 'search'."
-    )
+    return ToolResult(False, error=f"unknown mode '{mode}'. Use 'list' or 'search'.")
 
 
 def _mode_list() -> ToolResult:
