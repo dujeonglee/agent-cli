@@ -213,11 +213,22 @@ class MinimalRenderer(Renderer):
             self._live = None
 
     def stream_chunk(self, text: str) -> None:
+        if self.is_capturing:
+            self._capture_line(text)
+            return
         if self.con.file:
+            # First chunk of a line: add depth prefix
+            if not hasattr(self, "_stream_started") or not self._stream_started:
+                self._stream_started = True
+                if self._depth > 0:
+                    self.con.file.write(self._prefix)
             self.con.file.write(text)
             self.con.file.flush()
 
     def stream_end(self) -> None:
+        self._stream_started = False
+        if self.is_capturing:
+            return
         if self.con.file:
             self.con.file.write("\n")
             self.con.file.flush()
