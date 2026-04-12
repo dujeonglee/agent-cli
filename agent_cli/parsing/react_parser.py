@@ -34,6 +34,7 @@ class ReActResult:
     raw: str = ""
     parse_stage: int = 0  # 0=failed, 1=json.loads, 2=json_repair, 3=regex
     thinking: str | None = None  # Extracted thinking block content
+    truncated: bool = False  # True if JSON was repaired (brackets/strings closed)
 
 
 def _sanitize_surrogates(text: str) -> str:
@@ -78,10 +79,11 @@ def parse_react(text: str) -> ReActResult:
         return result
 
     # Stage 2: JSON repair
-    data = repair_json(text)
+    data, was_truncated = repair_json(text)
     if data is not None:
         _populate_from_dict(result, data)
         result.parse_stage = 2
+        result.truncated = was_truncated
         return result
 
     # Stage 3: Regex extraction

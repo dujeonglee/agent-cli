@@ -15,26 +15,28 @@ import json
 import re
 
 
-def repair_json(text: str) -> dict | None:
+def repair_json(text: str) -> tuple[dict | None, bool]:
     """Attempt to repair malformed JSON text into a valid dict.
 
-    Returns the parsed dict on success, None on failure.
+    Returns (parsed_dict, was_truncated).
+    was_truncated is True if brackets/strings had to be closed.
     """
     cleaned = _extract_json_block(text)
     cleaned = _fix_quotes(cleaned)
     cleaned = _fix_unquoted_keys(cleaned)
     cleaned = _fix_trailing_commas(cleaned)
-    cleaned = _fix_unclosed_strings(cleaned)
-    cleaned = _fix_missing_brackets(cleaned)
+    cleaned, str_closed = _fix_unclosed_strings(cleaned)
+    cleaned, brackets_closed = _fix_missing_brackets(cleaned)
+    was_truncated = str_closed or brackets_closed
 
     try:
         result = json.loads(cleaned)
         if isinstance(result, dict):
-            return result
+            return result, was_truncated
     except (json.JSONDecodeError, ValueError):
         pass
 
-    return None
+    return None, False
 
 
 def _extract_json_block(text: str) -> str:
@@ -121,8 +123,11 @@ def _fix_trailing_commas(text: str) -> str:
     return re.sub(r",\s*([}\]])", r"\1", text)
 
 
-def _fix_unclosed_strings(text: str) -> str:
-    """Close unclosed string literals at end of text."""
+def _fix_unclosed_strings(text: str) -> tuple[str, bool]:
+    """Close unclosed string literals at end of text.
+
+    Returns (fixed_text, was_closed).
+    """
     in_string = False
     escape_next = False
 
@@ -137,13 +142,16 @@ def _fix_unclosed_strings(text: str) -> str:
             in_string = not in_string
 
     if in_string:
-        text += '"'
+        return text + '"', True
 
-    return text
+    return text, False
 
 
-def _fix_missing_brackets(text: str) -> str:
-    """Add missing closing brackets/braces."""
+def _fix_missing_brackets(text: str) -> tuple[str, bool]:
+    """Add missing closing brackets/braces.
+
+    Returns (fixed_text, was_closed).
+    """
     stack: list[str] = []
     in_string = False
     escape_next = False
@@ -170,6 +178,6 @@ def _fix_missing_brackets(text: str) -> str:
                 stack.pop()
 
     if stack:
-        text += "".join(reversed(stack))
+        return text + "".join(reversed(stack)), True
 
-    return text
+    return text, False

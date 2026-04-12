@@ -575,6 +575,12 @@ class AgentLoop:
         if parsed.action:
             tool_name = parsed.action
             tool_input = parsed.action_input or {}
+
+            # Truncation guard: if JSON was repaired (truncated response),
+            # strip the last element from edit_file's lines arrays
+            truncation_warning = ""
+            if parsed.truncated and tool_name == "edit_file":
+                tool_input, truncation_warning = _sanitize_truncated_edit(tool_input)
             _render_skill_progress(
                 self.skill_name,
                 self.turn,
@@ -627,6 +633,8 @@ class AgentLoop:
             observation = (
                 tool_result.output if tool_result.success else tool_result.error
             )
+            if truncation_warning:
+                observation = f"{observation}\n{truncation_warning}"
 
             if not self.suppress_output:
                 render_step(
@@ -1190,6 +1198,38 @@ def _try_echo_as_final(tool_name: str, tool_input) -> str | None:
     if m:
         return m.group(1).strip().strip("'\"")
     return None
+
+
+def _sanitize_truncated_edit(tool_input: dict) -> tuple[dict, str]:
+    """Strip the last line from the last edit when response was truncated.
+
+    Returns (sanitized_input, warning_message).
+    """
+    edits = tool_input.get("edits", [])
+    if not edits:
+        return tool_input, ""
+
+    total = len(edits)
+    last_edit = edits[-1]
+    lines = last_edit.get("lines", [])
+
+    if lines:
+        last_edit = {**last_edit, "lines": lines[:-1]}
+        edits = edits[:-1] + [last_edit]
+        tool_input = {**tool_input, "edits": edits}
+
+        # If the last edit has no lines left, drop the entire edit
+        if not last_edit["lines"] and last_edit.get("op") == "replace":
+            edits = edits[:-1]
+            tool_input = {**tool_input, "edits": edits}
+
+    applied = len(tool_input.get("edits", []))
+    warning = (
+        f"[warn] Response was truncated. "
+        f"Applied {applied} of {total} edits (last line dropped). "
+        f"Re-read the file to verify and complete remaining edits."
+    )
+    return tool_input, warning
 
 
 def _normalize_input(tool_input) -> str:
