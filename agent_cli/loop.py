@@ -488,12 +488,7 @@ class AgentLoop:
             return ToolResult(True, output=answer)
 
         # 9. Detect echo-as-final-answer (common small model pattern)
-        # Skip in skills/delegates — echo is often used for legitimate output
-        echo_answer = (
-            _try_echo_as_final(parsed.action, parsed.action_input)
-            if not self.skill_name and self.depth == 0
-            else None
-        )
+        echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
         if echo_answer:
             if self.ctx:
                 self.ctx.add(
