@@ -216,21 +216,26 @@ class MinimalRenderer(Renderer):
         if self.is_capturing:
             self._capture_line(text)
             return
+        if not hasattr(self, "_stream_buf"):
+            self._stream_buf = ""
+        self._stream_buf += text
         if self.con.file:
-            # First chunk of a line: add depth prefix
-            if not hasattr(self, "_stream_started") or not self._stream_started:
-                self._stream_started = True
-                if self._depth > 0:
-                    self.con.file.write(self._prefix)
-            self.con.file.write(text)
+            prefix = f"{self._prefix}  ◌ " if self._depth > 0 else "  ◌ "
+            width = self.con.width - len(prefix) - 1
+            # Show the tail of accumulated text (marquee effect)
+            visible = self._stream_buf.replace("\n", " ")
+            if len(visible) > width:
+                visible = "…" + visible[-(width - 1) :]
+            self.con.file.write(f"\r{prefix}{visible:<{width}}")
             self.con.file.flush()
 
     def stream_end(self) -> None:
-        self._stream_started = False
+        self._stream_buf = ""
         if self.is_capturing:
             return
         if self.con.file:
-            self.con.file.write("\n")
+            # Clear the streaming line
+            self.con.file.write(f"\r{' ' * self.con.width}\r")
             self.con.file.flush()
 
     def dispatch_progress(
