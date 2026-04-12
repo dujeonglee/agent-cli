@@ -316,7 +316,7 @@ def build_agent_descriptions() -> str:
 
     lines = [
         "## Available Agents",
-        "Use delegate with agent parameter to invoke:",
+        "Consider delegating parallelizable or independent subtasks to agents.",
         '  {"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
     ]
     for name, desc in agents:
@@ -351,8 +351,8 @@ def build_skill_descriptions(
 
     lines = [
         "## Available Skills",
-        "Use the run_skill tool to invoke these skills:",
-        '  Example: {"action": "run_skill", "action_input": {"name": "skill-name", "arguments": "..."}}',
+        "Consider using skills for multi-step or specialized workflows.",
+        '  {"action": "run_skill", "action_input": {"name": "skill-name", "arguments": "..."}}',
     ]
     for skill in skills.values():
         if skill.disable_model_invocation:
