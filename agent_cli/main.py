@@ -779,12 +779,24 @@ def _read_user_input(prompt: str) -> str:
             if line.strip() == '"""':
                 break
             lines.append(line)
+            # Drain any pasted lines buffered in stdin
+            try:
+                while select.select([sys.stdin], [], [], 0.1)[0]:
+                    buf_line = sys.stdin.readline()
+                    if not buf_line:
+                        break
+                    stripped = buf_line.rstrip("\n")
+                    if stripped.strip() == '"""':
+                        return "\n".join(lines)
+                    lines.append(stripped)
+            except (OSError, ValueError):
+                pass
         return "\n".join(lines)
 
     # Paste detection: check if stdin has more data immediately available
     lines = [first_line]
     try:
-        while select.select([sys.stdin], [], [], 0.05)[0]:
+        while select.select([sys.stdin], [], [], 0.1)[0]:
             line = sys.stdin.readline()
             if not line:  # EOF
                 break
