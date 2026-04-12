@@ -76,7 +76,7 @@ The agent's markdown body is injected as the subagent's role prompt.
 
 ## Task
 
-1. Parse the agent name from $ARGUMENTS. If not provided, ask the user.
+1. The first word of $ARGUMENTS is the agent name. The rest is the description. If $ARGUMENTS is empty, ask the user.
 2. Ask the user:
    - What role should this agent have?
    - What specific principles should it follow?
