@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 
 
@@ -11,11 +12,17 @@ class Renderer(ABC):
     Implement a subclass and call set_renderer() to swap output style.
     Each method corresponds to a distinct UI event in the agent loop.
 
-    Supports nested rendering via push_depth/pop_depth for skills/delegates.
+    Built-in support for:
+    - Nested rendering via push_depth/pop_depth for skills/delegates
+    - Thread-local output capture for parallel delegate buffering
     """
 
     def __init__(self) -> None:
         self._depth: int = 0
+        self._captures: dict[int, list[str]] = {}  # thread_id → captured lines
+        self._capture_lock = threading.Lock()
+
+    # ── Depth (nesting) ──────────────────────────────
 
     @property
     def depth(self) -> int:
@@ -29,6 +36,35 @@ class Renderer(ABC):
         """Decrease nesting depth (exit skill/delegate)."""
         if self._depth > 0:
             self._depth -= 1
+
+    # ── Capture (parallel buffering) ─────────────────
+
+    def start_capture(self) -> None:
+        """Start capturing output for the current thread."""
+        with self._capture_lock:
+            self._captures[threading.get_ident()] = []
+
+    def stop_capture(self) -> list[str]:
+        """Stop capturing and return collected lines for the current thread."""
+        with self._capture_lock:
+            return self._captures.pop(threading.get_ident(), [])
+
+    @property
+    def is_capturing(self) -> bool:
+        """True if the current thread is in capture mode."""
+        return threading.get_ident() in self._captures
+
+    def _capture_line(self, line: str) -> bool:
+        """Append line to capture buffer if capturing. Returns True if captured."""
+        tid = threading.get_ident()
+        with self._capture_lock:
+            buf = self._captures.get(tid)
+        if buf is not None:
+            buf.append(line)
+            return True
+        return False
+
+    # ── Abstract render methods ──────────────────────
 
     @abstractmethod
     def header(

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -26,8 +24,6 @@ class MinimalRenderer(Renderer):
         super().__init__()
         self.con = console
         self._live: Live | None = None
-        self._captures: dict[int, list[str]] = {}  # thread_id → captured lines
-        self._capture_lock = threading.Lock()
 
     @property
     def _prefix(self) -> str:
@@ -36,28 +32,14 @@ class MinimalRenderer(Renderer):
             return ""
         return "  " + "│   " * self._depth
 
-    def start_capture(self) -> None:
-        """Start capturing output for the current thread."""
-        with self._capture_lock:
-            self._captures[threading.get_ident()] = []
-
-    def stop_capture(self) -> list[str]:
-        """Stop capturing and return collected lines for the current thread."""
-        with self._capture_lock:
-            return self._captures.pop(threading.get_ident(), [])
-
     def _p(self, text: str, **kwargs) -> None:
         """Print with depth prefix. Captures to buffer if in capture mode."""
-        line = f"{self._prefix}{text}"
-        tid = threading.get_ident()
-        with self._capture_lock:
-            buf = self._captures.get(tid)
-        if buf is not None:
-            # Strip Rich markup for captured output (will be replayed with _p later)
-            import re
+        import re
 
-            clean = re.sub(r"\[/?[^\]]*\]", "", line)
-            buf.append(clean)
+        line = f"{self._prefix}{text}"
+        # Strip Rich markup for clean captured text
+        clean = re.sub(r"\[/?[^\]]*\]", "", line)
+        if self._capture_line(clean):
             return
         self.con.print(line, **kwargs)
 
@@ -91,13 +73,9 @@ class MinimalRenderer(Renderer):
     def turn_sep(self, turn: int) -> None:
         self._p(f"\n[{_MUTED}]→ turn {turn}[/]\n")
 
-    @property
-    def _is_capturing(self) -> bool:
-        return threading.get_ident() in self._captures
-
     def thought(self, content: str, turn: int) -> None:
         self._p("")
-        if self._depth == 0 and not self._is_capturing:
+        if self._depth == 0 and not self.is_capturing:
             self.con.print("  💭", end=" ", highlight=False)
             self.con.print(Markdown(content), highlight=False)
         else:
@@ -133,7 +111,7 @@ class MinimalRenderer(Renderer):
 
     def final(self, content: str, turn: int) -> None:
         self._p("")
-        if self._depth == 0 and not self._is_capturing:
+        if self._depth == 0 and not self.is_capturing:
             self.con.print("  ✅", end=" ", highlight=False)
             self.con.print(Markdown(content), highlight=False)
         else:
@@ -211,7 +189,7 @@ class MinimalRenderer(Renderer):
         self._p(f"  [{_MUTED}]── end dump ──[/]\n")
 
     def spinner_start(self, message: str = "thinking...") -> None:
-        if self._is_capturing:
+        if self.is_capturing:
             return  # No spinner in capture mode
         if self._live is not None:
             return  # Already spinning
