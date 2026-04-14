@@ -1180,6 +1180,10 @@ def chat(
         try:
             import termios
 
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, _saved_term)
+            termios.tcsetattr(sys.stdin, termios.TCSANOW, _saved_term)
         except (ImportError, termios.error):
             pass
+    # Fallback: stty sane resets terminal to known-good state
+    import os
+
+    os.system("stty sane 2>/dev/null")
