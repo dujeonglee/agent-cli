@@ -1175,15 +1175,17 @@ def chat(
     finalize_session(session, ctx)
     console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
 
+    # Flush stdin (MCP/readline may leave buffered data)
+    try:
+        import termios
+
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except (ImportError, termios.error):
+        pass
+
     # Restore terminal state (readline/Rich may have modified it)
     if _saved_term is not None:
         try:
-            import termios
-
             termios.tcsetattr(sys.stdin, termios.TCSANOW, _saved_term)
         except (ImportError, termios.error):
             pass
-    # Fallback: stty sane resets terminal to known-good state
-    import os
-
-    os.system("stty sane 2>/dev/null")
