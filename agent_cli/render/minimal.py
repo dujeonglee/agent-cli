@@ -15,6 +15,36 @@ from agent_cli.render.base import Renderer
 _MUTED = "grey46"
 
 
+def _display_width(text: str) -> int:
+    """Calculate display width accounting for CJK double-width characters."""
+    import unicodedata
+
+    w = 0
+    for ch in text:
+        eaw = unicodedata.east_asian_width(ch)
+        w += 2 if eaw in ("W", "F") else 1
+    return w
+
+
+def _truncate_to_width(text: str, max_width: int) -> str:
+    """Truncate text from the left to fit within max_width display columns."""
+    import unicodedata
+
+    total = _display_width(text)
+    if total <= max_width:
+        return text
+    # Drop characters from the front until it fits (with … prefix)
+    target = max_width - 1  # reserve 1 for …
+    w = 0
+    for i in range(len(text) - 1, -1, -1):
+        eaw = unicodedata.east_asian_width(text[i])
+        cw = 2 if eaw in ("W", "F") else 1
+        if w + cw > target:
+            return "…" + text[i + 1 :]
+        w += cw
+    return "…" + text
+
+
 class MinimalRenderer(Renderer):
     """Clean indented output with icons, no boxes or color-dependent structure.
 
@@ -221,12 +251,12 @@ class MinimalRenderer(Renderer):
         self._stream_buf += text
         if self.con.file:
             prefix = f"{self._prefix}  ◌ " if self._depth > 0 else "  ◌ "
-            width = self.con.width - len(prefix) - 1
+            max_width = self.con.width - _display_width(prefix) - 1
             # Show the tail of accumulated text (marquee effect)
             visible = self._stream_buf.replace("\n", " ")
-            if len(visible) > width:
-                visible = "…" + visible[-(width - 1) :]
-            self.con.file.write(f"\r{prefix}{visible:<{width}}")
+            visible = _truncate_to_width(visible, max_width)
+            pad = max_width - _display_width(visible)
+            self.con.file.write(f"\r{prefix}{visible}{' ' * pad}")
             self.con.file.flush()
 
     def stream_end(self) -> None:
