@@ -329,10 +329,13 @@ def get_tool_descriptions(
     return "\n".join(lines)
 
 
-def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | None]:
+def validate_tool_input(
+    tool_name: str, action_input: Any
+) -> tuple[bool, str | None, Any]:
     """Validate action_input against tool schema.
 
-    Returns (True, None) on success, (False, error_message) on failure.
+    Returns (True, None, converted_input) on success,
+    (False, error_message, original_input) on failure.
     Attempts auto-conversion of string inputs to dict.
     """
     schema = TOOL_SCHEMAS.get(tool_name)
@@ -340,6 +343,7 @@ def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | 
         return (
             False,
             f"Unknown tool: '{tool_name}'. Available: {', '.join(TOOL_SCHEMAS)}",
+            action_input,
         )
 
     # Auto-convert string to dict (common small model error)
@@ -355,13 +359,13 @@ def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | 
                 return False, (
                     f"action_input for '{tool_name}' must be a JSON object, "
                     f"got string: {action_input!r}"
-                )
+                ), action_input
 
     if not isinstance(action_input, dict):
         return False, (
             f"action_input for '{tool_name}' must be a JSON object, "
             f"got {type(action_input).__name__}"
-        )
+        ), action_input
 
     # Check required fields
     required = schema.parameters.get("required", [])
@@ -370,7 +374,7 @@ def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | 
         return False, (
             f"Missing required field(s) for '{tool_name}': {', '.join(missing)}. "
             f"Expected: {json.dumps(schema.parameters, indent=2)}"
-        )
+        ), action_input
 
     # Strip empty strings from optional fields (LLMs send "" for omitted params)
     properties = schema.parameters.get("properties", {})
@@ -391,9 +395,9 @@ def validate_tool_input(tool_name: str, action_input: Any) -> tuple[bool, str | 
                 return False, (
                     f"Field '{key}' for '{tool_name}' expected {expected_type}, "
                     f"got {type(value).__name__}: {value!r}"
-                )
+                ), action_input
 
-    return True, None
+    return True, None, action_input
 
 
 # Type mapping for validation

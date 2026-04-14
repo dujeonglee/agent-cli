@@ -1089,7 +1089,7 @@ def _execute_single_tool(
                 mcp_manager=mcp_manager,
             )
     elif tool_name in tools_list:
-        valid, err = validate_tool_input(tool_name, tool_input)
+        valid, err, tool_input = validate_tool_input(tool_name, tool_input)
         if not valid:
             result = ToolResult(False, error=f"{err} Fix action_input and retry.")
         else:

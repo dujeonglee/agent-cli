@@ -11,65 +11,67 @@ from agent_cli.tools.registry import (
 
 class TestValidateToolInput:
     def test_valid_read_file(self):
-        ok, err = validate_tool_input("read_file", {"path": "/tmp/test.py"})
+        ok, err, _ = validate_tool_input("read_file", {"path": "/tmp/test.py"})
         assert ok is True
         assert err is None
 
     def test_valid_shell(self):
-        ok, err = validate_tool_input("shell", {"command": "ls -la"})
+        ok, err, _ = validate_tool_input("shell", {"command": "ls -la"})
         assert ok is True
 
     def test_missing_required(self):
-        ok, err = validate_tool_input("read_file", {})
+        ok, err, _ = validate_tool_input("read_file", {})
         assert ok is False
         assert "path" in err
 
     def test_missing_multiple_required(self):
-        ok, err = validate_tool_input("write_file", {})
+        ok, err, _ = validate_tool_input("write_file", {})
         assert ok is False
         assert "path" in err
 
     def test_unknown_tool(self):
-        ok, err = validate_tool_input("nonexistent", {})
+        ok, err, _ = validate_tool_input("nonexistent", {})
         assert ok is False
         assert "Unknown tool" in err
 
     def test_string_auto_convert(self):
         """Small models sometimes send string instead of dict."""
-        ok, err = validate_tool_input("read_file", "/tmp/test.py")
+        ok, err, converted = validate_tool_input("read_file", "/tmp/test.py")
         assert ok is True
+        assert isinstance(converted, dict)
+        assert converted["path"] == "/tmp/test.py"
 
     def test_string_json_auto_convert(self):
-        ok, err = validate_tool_input("read_file", '{"path": "/tmp/test.py"}')
+        ok, err, _ = validate_tool_input("read_file", '{"path": "/tmp/test.py"}')
         assert ok is True
 
     def test_none_input(self):
-        ok, err = validate_tool_input("read_file", None)
+        ok, err, _ = validate_tool_input("read_file", None)
         assert ok is False
 
 
 class TestTypeValidation:
     def test_correct_types_pass(self):
-        ok, err = validate_tool_input("shell", {"command": "ls", "timeout": 30})
+        ok, err, _ = validate_tool_input("shell", {"command": "ls", "timeout": 30})
         assert ok is True
 
     def test_string_timeout_auto_coerced(self):
         """Small model sends "30" instead of 30 — auto-coerce."""
         inp = {"command": "ls", "timeout": "30"}
-        ok, err = validate_tool_input("shell", inp)
+        ok, err, _ = validate_tool_input("shell", inp)
         assert ok is True
         assert inp["timeout"] == 30  # coerced in-place
 
     def test_dict_edits_auto_coerced_to_array(self):
         """Small model sends dict instead of [dict] — auto-coerce."""
         inp = {"path": "a.py", "edits": {"op": "replace", "pos": "1#VR"}}
-        ok, err = validate_tool_input("edit_file", inp)
+        ok, err, _ = validate_tool_input("edit_file", inp)
         assert ok is True
         assert isinstance(inp["edits"], list)
 
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""
-        ok, err = validate_tool_input("read_file", {"path": [1, 2, 3]})
+        ok, err, _ = validate_tool_input("read_file", {"path": [1, 2, 3]})
         assert ok is False
         assert "expected string" in err
 
@@ -176,21 +178,21 @@ class TestEmptyStringStripping:
     def test_optional_empty_string_removed(self):
         """Empty string on optional field should be stripped before validation."""
         action_input = {"path": "/tmp/test.py", "line_start": "", "line_end": ""}
-        ok, err = validate_tool_input("read_file", action_input)
+        ok, err, _ = validate_tool_input("read_file", action_input)
         assert ok is True
         assert "line_start" not in action_input
         assert "line_end" not in action_input
 
     def test_required_empty_string_not_removed(self):
         """Empty string on required field should NOT be stripped — validation fails."""
-        ok, err = validate_tool_input("read_file", {"path": ""})
+        ok, err, _ = validate_tool_input("read_file", {"path": ""})
         # path="" is required and present, but it's an empty string — still valid type
         assert ok is True  # type check passes (string), tool itself handles empty
 
     def test_non_empty_optional_kept(self):
         """Non-empty optional fields should remain untouched."""
         action_input = {"path": "/tmp/test.py", "line_start": 10}
-        ok, err = validate_tool_input("read_file", action_input)
+        ok, err, _ = validate_tool_input("read_file", action_input)
         assert ok is True
         assert action_input["line_start"] == 10
 

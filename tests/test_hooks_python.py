@@ -560,7 +560,7 @@ class TestLoopHookIntegration:
 
         with patch("agent_cli.loop.execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="ok")
-            with patch("agent_cli.loop.validate_tool_input", return_value=(True, "")):
+            with patch("agent_cli.loop.validate_tool_input", return_value=(True, "", {"command": "ls"})):
                 _execute_single_tool(
                     "shell",
                     {"command": "rm -rf /"},
@@ -593,7 +593,7 @@ class TestLoopHookIntegration:
 
         with patch("agent_cli.loop.execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="file contents")
-            with patch("agent_cli.loop.validate_tool_input", return_value=(True, "")):
+            with patch("agent_cli.loop.validate_tool_input", return_value=(True, "", {"command": "ls"})):
                 result = _execute_single_tool(
                     "read_file",
                     {"path": "test.py"},
