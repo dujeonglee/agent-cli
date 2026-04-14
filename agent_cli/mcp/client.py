@@ -91,19 +91,20 @@ class McpClientManager:
 
     async def _connect_stdio(self, name: str, config: McpServerConfig) -> None:
         """Connect via stdio transport."""
+        import os
+
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
         params = StdioServerParameters(
             command=config.command,
             args=config.args,
-            env={**dict(__import__("os").environ), **config.env}
-            if config.env
-            else None,
+            env={**dict(os.environ), **config.env} if config.env else None,
         )
 
-        # Create context managers and enter them
-        transport_cm = stdio_client(params)
+        # Suppress MCP server stderr to prevent terminal state corruption
+        devnull = open(os.devnull, "w")  # noqa: SIM115
+        transport_cm = stdio_client(params, errlog=devnull)
         read, write = await transport_cm.__aenter__()
 
         session = ClientSession(read, write)

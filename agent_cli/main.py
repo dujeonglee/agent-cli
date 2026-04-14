@@ -936,24 +936,6 @@ def chat(
 
     from agent_cli.input_history import make_prompt, setup as _setup_input_history
 
-    # Save terminal state before readline/Rich can modify it
-    import sys
-
-    _saved_term = None
-    try:
-        import termios
-
-        _saved_term = termios.tcgetattr(sys.stdin)
-    except (ImportError, termios.error):
-        pass
-
-    # Register terminal reset as atexit — runs AFTER all other cleanup
-    # (registered BEFORE readline so LIFO order puts it last)
-    import atexit as _atexit
-    import os as _os
-
-    _atexit.register(lambda: _os.system("stty sane 2>/dev/null"))
-
     _setup_input_history()
     _prompt = make_prompt("You:")
 
@@ -1171,7 +1153,7 @@ def chat(
                 f"  - /quit to exit"
             )
 
-    # Cleanup: ensure terminal state is restored
+    # Cleanup
     from agent_cli.render import render_spinner_stop
 
     render_spinner_stop()
@@ -1181,18 +1163,3 @@ def chat(
     console.print(f"[{C['muted']}]Saving session...[/]")
     finalize_session(session, ctx)
     console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
-
-    # Flush stdin (MCP/readline may leave buffered data)
-    try:
-        import termios
-
-        termios.tcflush(sys.stdin, termios.TCIFLUSH)
-    except (ImportError, termios.error):
-        pass
-
-    # Restore terminal state (readline/Rich may have modified it)
-    if _saved_term is not None:
-        try:
-            termios.tcsetattr(sys.stdin, termios.TCSANOW, _saved_term)
-        except (ImportError, termios.error):
-            pass
