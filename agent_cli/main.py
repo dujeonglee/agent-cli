@@ -716,6 +716,9 @@ def run(
 
 def _finalize_run(session, ctx, headless: bool, mcp_manager=None) -> None:
     """Finalize session after run command (save summary, print session ID)."""
+    from agent_cli.render import render_spinner_stop
+
+    render_spinner_stop()
     if mcp_manager:
         mcp_manager.disconnect_all()
     if session is None:
@@ -1150,7 +1153,11 @@ def chat(
                 f"  - /quit to exit"
             )
 
-    # Cleanup
+    # Cleanup: ensure terminal state is restored
+    from agent_cli.render import render_spinner_stop
+
+    render_spinner_stop()
+
     if mcp_manager:
         mcp_manager.disconnect_all()
     console.print(f"[{C['muted']}]Saving session...[/]")
