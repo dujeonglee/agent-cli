@@ -936,6 +936,17 @@ def chat(
 
     from agent_cli.input_history import make_prompt, setup as _setup_input_history
 
+    # Save terminal state before readline/Rich can modify it
+    import sys
+
+    _saved_term = None
+    try:
+        import termios
+
+        _saved_term = termios.tcgetattr(sys.stdin)
+    except (ImportError, termios.error):
+        pass
+
     _setup_input_history()
     _prompt = make_prompt("You:")
 
@@ -1163,3 +1174,12 @@ def chat(
     console.print(f"[{C['muted']}]Saving session...[/]")
     finalize_session(session, ctx)
     console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
+
+    # Restore terminal state (readline/Rich may have modified it)
+    if _saved_term is not None:
+        try:
+            import termios
+
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, _saved_term)
+        except (ImportError, termios.error):
+            pass
