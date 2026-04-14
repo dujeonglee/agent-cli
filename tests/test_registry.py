@@ -42,11 +42,42 @@ class TestValidateToolInput:
         assert converted["path"] == "/tmp/test.py"
 
     def test_string_json_auto_convert(self):
-        ok, err, _ = validate_tool_input("read_file", '{"path": "/tmp/test.py"}')
+        ok, err, converted = validate_tool_input(
+            "read_file", '{"path": "/tmp/test.py"}'
+        )
         assert ok is True
+        assert converted["path"] == "/tmp/test.py"
+
+    def test_string_auto_convert_shell(self):
+        """String input for shell → {"command": "..."}."""
+        ok, err, converted = validate_tool_input("shell", "ls -la")
+        assert ok is True
+        assert converted["command"] == "ls -la"
+
+    def test_string_auto_convert_write_file(self):
+        """String input for write_file → {"path": "..."}."""
+        ok, err, converted = validate_tool_input("write_file", "/tmp/out.txt")
+        assert ok is False  # missing required "content" field
+        assert "content" in err
+
+    def test_string_auto_convert_edit_file(self):
+        """String input for edit_file → {"path": "..."}."""
+        ok, err, converted = validate_tool_input("edit_file", "src/main.py")
+        assert ok is False  # missing required "edits" field
+        assert "edits" in err
 
     def test_none_input(self):
         ok, err, _ = validate_tool_input("read_file", None)
+        assert ok is False
+
+    def test_int_input(self):
+        """Integer input should fail."""
+        ok, err, _ = validate_tool_input("read_file", 42)
+        assert ok is False
+
+    def test_list_input(self):
+        """List input should fail."""
+        ok, err, _ = validate_tool_input("read_file", ["/tmp/test.py"])
         assert ok is False
 
 
@@ -195,6 +226,43 @@ class TestEmptyStringStripping:
         ok, err, _ = validate_tool_input("read_file", action_input)
         assert ok is True
         assert action_input["line_start"] == 10
+
+
+class TestStringInputE2E:
+    """End-to-end: string action_input flows through validation to tool execution."""
+
+    def test_read_file_string_input(self, tmp_path):
+        """read_file with string input should work after auto-conversion."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import _execute_single_tool
+
+        test_file = tmp_path / "hello.txt"
+        test_file.write_text("hello world")
+
+        result = _execute_single_tool(
+            "read_file",
+            str(test_file),  # string, not dict
+            ["read_file"],
+            MagicMock(),
+        )
+        assert result.success
+        assert "hello world" in result.output
+
+    def test_shell_string_input(self):
+        """shell with string input should work after auto-conversion."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import _execute_single_tool
+
+        result = _execute_single_tool(
+            "shell",
+            "echo hello",  # string, not dict
+            ["shell"],
+            MagicMock(),
+        )
+        assert result.success
+        assert "hello" in result.output
 
 
 class TestGetToolDescriptions:
