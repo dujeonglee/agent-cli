@@ -947,6 +947,13 @@ def chat(
     except (ImportError, termios.error):
         pass
 
+    # Register terminal reset as atexit — runs AFTER all other cleanup
+    # (registered BEFORE readline so LIFO order puts it last)
+    import atexit as _atexit
+    import os as _os
+
+    _atexit.register(lambda: _os.system("stty sane 2>/dev/null"))
+
     _setup_input_history()
     _prompt = make_prompt("You:")
 
