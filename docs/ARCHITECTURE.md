@@ -42,7 +42,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (890)  CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
+├── main.py                  (1165) CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
@@ -56,11 +56,11 @@ agent_cli/
 │   ├── loader.py            (88)   Python hook 파일 스캔/로드 (.agent-cli/hooks/*.py)
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (67)   readline 설정 + 채팅 히스토리 영속화
-├── loop.py                  (1248) AgentLoop 클래스 + ReAct 루프 (text parsing only, FIFO context, hook 통합, streaming)
+├── loop.py                  (1256) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (171)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
-│   ├── base.py              (91)   Renderer ABC (dispatch_progress 포함) (15개 메서드 인터페이스)
-│   ├── minimal.py           (213)  MinimalRenderer (인덴트 스타일, spinner, markup 방어)
+│   ├── base.py              (132)  Renderer ABC (depth, capture, 17개 메서드)
+│   ├── minimal.py           (275)  MinimalRenderer (nested depth, markdown, streaming marquee, capture)
 │   ├── fancy.py             (378)  FancyRenderer (컬러 박스, 애니메이션)
 │   └── adaptive.py          (176)  SimpleRenderer (터미널 크기 적응형)
 │
@@ -68,9 +68,9 @@ agent_cli/
 │   ├── __init__.py          (33)   create_provider() 팩토리
 │   ├── base.py              (36)   LLMProvider 프로토콜, LLMResponse, TokenUsage
 │   ├── compat.py            (306)  ModelCapabilities + 프로브 감지 + 자동 저장
-│   ├── anthropic.py         (155)  Anthropic Messages API (tool_use + thinking + streaming)
-│   ├── openai_compat.py     (160)  OpenAI 호환 API (function calling + reasoning + streaming)
-│   └── ollama.py            (149)  Ollama API (constrained decoding + thinking + streaming)
+│   ├── anthropic.py         (168)  Anthropic Messages API (tool_use + thinking + streaming + TTFT)
+│   ├── openai_compat.py     (176)  OpenAI 호환 API (function calling + reasoning + streaming + TTFT)
+│   └── ollama.py            (158)  Ollama API (constrained decoding + thinking + streaming + TTFT)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
@@ -80,7 +80,7 @@ agent_cli/
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (66)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
-│   ├── registry.py          (455)  스키마 정의, 검증, inline 가이드
+│   ├── registry.py          (438)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
 │   ├── run_skill.py         (66)   run_skill 도구 (LLM 자동 스킬 호출) → ToolResult
 │   ├── read_file.py         (102)  파일 읽기 + hashline 포맷팅 + 부분 읽기 → ToolResult
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
@@ -94,7 +94,7 @@ agent_cli/
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (237)  ContextManager (FIFO + history.jsonl + 자연어 변환)
+│   ├── manager.py           (298)  ContextManager (토큰 budget FIFO + history.jsonl + 자연어 변환)
 │   (scratchpad.py 삭제됨 — history.jsonl로 대체)
 │   └── session.py           (124)  세션 메타데이터 (session.jsonl: id, workspace, updated_at, query)
 │
@@ -125,7 +125,7 @@ agent_cli/
 ├── mcp/                            MCP (Model Context Protocol) 통합
 │   ├── __init__.py          (1)
 │   ├── config.py            (96)   mcp.json 로드/병합 (프로젝트 > 유저)
-│   ├── client.py            (198)  McpClientManager (stdio/SSE 연결, 도구 호출)
+│   ├── client.py            (258)  McpClientManager (stdio/SSE 연결, 도구 호출, stderr 격리)
 │   └── adapter.py           (82)   MCP 도구 → ToolResult 래핑, TOOLS dict 등록
 
 pyproject.toml                      패키지 설정
@@ -450,27 +450,32 @@ ReActResult (parse_stage=0, 모든 필드 None)
 
 > 상세 설계: `docs/context-redesign/DESIGN.md`
 
-#### FIFO 메시지 큐
+#### 토큰 Budget 기반 FIFO
 
 ```
 메시지 추가 (add)
     │
-    ├─ 메모리 캐시 (deque, maxlen=N)에 append
-    │   └─ N 초과 시 가장 오래된 메시지 자동 제거
+    ├─ 메모리 캐시 (list)에 append + 토큰 추정치 누적
+    │   └─ budget 초과 시 가장 오래된 메시지 단위로 evict (메시지 중간 잘림 없음)
     │
     └─ history.jsonl에 JSON 한 줄 append (write-only)
 
+Budget 계산:
+    budget = context_window - max_output_tokens - 4000 (system prompt 예약)
+    예: 262K context → ~254K token budget
+
 LLM 호출 시:
-    캐시에서 마지막 N개를 자연어 변환 → messages 배열 구성
+    캐시에서 budget 내 메시지를 자연어 변환 → messages 배열 구성
 
 세션 재개 시:
-    history.jsonl에서 마지막 N개 파싱 → 캐시 초기화 (유일한 read 시점)
+    history.jsonl 뒤에서부터 budget 내 메시지 파싱 → 캐시 초기화
 ```
 
-- **LLM 기반 압축 없음.** 단순 FIFO (기본 N=100)
+- **LLM 기반 압축 없음.** 토큰 budget FIFO (모델 context_window에서 자동 계산)
 - **Scratchpad 없음.** history.jsonl이 대화 기록이자 artifact 인덱스
 - **Context inject 없음.** LLM이 필요할 때 read_file로 pull
 - System prompt에 Context Recovery Guide 포함
+- 스킬/delegate는 부모 budget 상속
 
 #### 저장과 표현의 분리
 
