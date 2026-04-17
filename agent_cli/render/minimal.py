@@ -166,10 +166,9 @@ class MinimalRenderer(Renderer):
         self._p(f"  ✗ {content}", highlight=False)
 
     def raw(self, text: str, turn: int, verbose: bool) -> None:
+        # Non-verbose: stay silent. The per-turn stats line carries a
+        # "(use --verbose to view raw response)" hint instead.
         if not verbose:
-            self._p(
-                f"  [{_MUTED}]📄 raw response turn {turn} (use --verbose to view)[/]"
-            )
             return
         self._p(f"\n  [{_MUTED}]── raw response turn {turn} ──[/]")
         for line in text.split("\n"):

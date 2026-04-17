@@ -190,20 +190,11 @@ class FancyRenderer(Renderer):
         self.con.print(panel)
 
     def raw(self, text: str, turn: int, verbose: bool) -> None:
-        """Raw LLM response with compact preview."""
-        self.con.print()
+        """Raw LLM response panel (verbose only)."""
         if not verbose:
-            preview = Text(
-                f"📄 raw response turn {turn} (use --verbose to view)",
-                style=_FANCY["muted"],
-            )
-            panel = Panel(
-                preview,
-                border_style=_FANCY["muted"],
-                box=ROUNDED,
-            )
-            self.con.print(panel)
+            # Hint lives on the per-turn stats line in non-verbose mode.
             return
+        self.con.print()
 
         content = Text()
         content.append(f"── raw response turn {turn} ──\n", style=_FANCY["muted"])

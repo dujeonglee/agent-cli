@@ -145,13 +145,12 @@ class SimpleRenderer(Renderer):
         )
 
     def raw(self, text: str, turn: int, verbose: bool):
-        """Raw LLM response (stub - not implemented in simple mode)."""
+        """Raw LLM response — only rendered in verbose mode.
+
+        Non-verbose mode leaves the hint on the per-turn stats line instead.
+        """
         if verbose:
             self._styled_panel(text, f"📝 Raw Response turn {turn}", self.MUTE)
-        else:
-            self.console.print(
-                f"  [dim]📄 raw response turn {turn} (use --verbose to view)[/]"
-            )
 
     def context_dump(self, messages: list[dict], turn: int):
         """Debug context dump (stub - not implemented in simple mode)."""

@@ -123,6 +123,26 @@ class TestFinalRendering:
         assert "All done!" in out
 
 
+class TestRawRendering:
+    def test_raw_non_verbose_is_silent(self):
+        """Non-verbose raw() prints nothing — hint lives on the stats line."""
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        r = MinimalRenderer(console)
+        r.raw("some raw LLM text", turn=1, verbose=False)
+        assert buf.getvalue() == ""
+
+    def test_raw_verbose_shows_content(self):
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        r = MinimalRenderer(console)
+        r.raw("some raw LLM text", turn=1, verbose=True)
+        out = buf.getvalue()
+        assert "raw response" in out
+        assert "some raw LLM text" in out
+        assert "end raw" in out
+
+
 class TestRendererSwap:
     def test_set_and_get(self):
         old = get_renderer()

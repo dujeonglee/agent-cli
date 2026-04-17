@@ -301,7 +301,7 @@ class AgentLoop:
 
         # Show token stats if available (Ollama provides eval durations)
         if response.usage:
-            _render_token_stats(response.usage, self.turn)
+            _render_token_stats(response.usage, self.turn, self.verbose)
 
         # PostLLMCall hook
         self._fire_hook("PostLLMCall", llm_response=llm_text)
@@ -697,8 +697,13 @@ def run_loop(
     ).run()
 
 
-def _render_token_stats(usage, turn: int) -> None:
-    """Render token throughput stats when duration data is available."""
+def _render_token_stats(usage, turn: int, verbose: bool = False) -> None:
+    """Render token throughput stats when duration data is available.
+
+    When verbose is False, append a short hint pointing at --verbose so users
+    know raw LLM responses are available on demand (the per-turn `📄 raw ...`
+    line is suppressed in non-verbose mode to keep the stream uncluttered).
+    """
     parts = []
     if usage.ttft_ns > 0:
         parts.append(f"ttft: {usage.ttft_ns / 1e6:.0f}ms")
@@ -714,8 +719,12 @@ def _render_token_stats(usage, turn: int) -> None:
             parts.append(f"out: {usage.output_tokens} tok ({speed:.0f} tok/s)")
         else:
             parts.append(f"out: {usage.output_tokens} tok")
-    if parts:
-        render_status("running", " | ".join(parts), turn)
+    if not parts:
+        return
+    msg = " | ".join(parts)
+    if not verbose:
+        msg += "  (use --verbose to view raw response)"
+    render_status("running", msg, turn)
 
 
 def _extract_questions(action_input) -> list[str]:

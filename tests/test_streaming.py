@@ -448,3 +448,39 @@ class TestTTFTMeasurement:
             msg = mock_status.call_args[0][1]
             assert "ttft: 200ms" in msg
             assert "tok/s" in msg
+
+    def test_render_token_stats_non_verbose_hints_raw_access(self):
+        """Non-verbose stats line tells users raw responses need --verbose."""
+        from agent_cli.loop import _render_token_stats
+        from agent_cli.providers.base import TokenUsage
+
+        usage = TokenUsage(
+            input_tokens=100,
+            output_tokens=50,
+            prompt_eval_ns=200_000_000,
+            eval_ns=100_000_000,
+            ttft_ns=200_000_000,
+        )
+
+        with patch("agent_cli.loop.render_status") as mock_status:
+            _render_token_stats(usage, turn=1, verbose=False)
+            msg = mock_status.call_args[0][1]
+            assert "--verbose" in msg
+
+    def test_render_token_stats_verbose_omits_hint(self):
+        """Verbose mode shows the raw response panel, so no hint on stats line."""
+        from agent_cli.loop import _render_token_stats
+        from agent_cli.providers.base import TokenUsage
+
+        usage = TokenUsage(
+            input_tokens=100,
+            output_tokens=50,
+            prompt_eval_ns=200_000_000,
+            eval_ns=100_000_000,
+            ttft_ns=200_000_000,
+        )
+
+        with patch("agent_cli.loop.render_status") as mock_status:
+            _render_token_stats(usage, turn=1, verbose=True)
+            msg = mock_status.call_args[0][1]
+            assert "--verbose" not in msg
