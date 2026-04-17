@@ -130,7 +130,7 @@ class MinimalRenderer(Renderer):
         self.set_thread_status(f"💭 {first_line}")
         self._p("")
         self._render_markdown("💭", content)
-        self._p("")
+        # No trailing blank — let the action/observation pair visually below
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         display = tool_input[:200] + "..." if len(tool_input) > 200 else tool_input
