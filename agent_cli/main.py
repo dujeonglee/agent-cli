@@ -363,27 +363,44 @@ def _dispatch_skill(
             }
         )
 
-    from agent_cli.render import render_status
-
-    render_status("running", f"Running skill: {cmd_name}...")
-    skill_result = execute_skill(
-        skill=skill,
-        arguments=arguments,
-        provider=llm_provider,
-        capabilities=capabilities,
-        model=resolved_model,
-        provider_name=provider,
-        base_url=resolved_url,
-        api_key=resolved_key,
-        max_turns=max_turns,
-        verbose=verbose,
-        suppress_output=True,
-        max_depth=max_depth,
-        delegate_timeout=delegate_timeout,
-        ctx=ctx,
-        session=session,
-        graceful_interrupt=graceful_interrupt,
+    from agent_cli.render import (
+        render_group_start,
+        render_group_end,
+        render_push_depth,
+        render_pop_depth,
     )
+    import time as _time
+
+    render_group_start(f"skill:{cmd_name}", icon="🪄")
+    render_push_depth()
+    _t0 = _time.monotonic()
+    skill_result = None
+    try:
+        skill_result = execute_skill(
+            skill=skill,
+            arguments=arguments,
+            provider=llm_provider,
+            capabilities=capabilities,
+            model=resolved_model,
+            provider_name=provider,
+            base_url=resolved_url,
+            api_key=resolved_key,
+            max_turns=max_turns,
+            verbose=verbose,
+            suppress_output=False,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
+            ctx=ctx,
+            session=session,
+            graceful_interrupt=graceful_interrupt,
+        )
+    finally:
+        render_pop_depth()
+        render_group_end(
+            f"skill:{cmd_name}",
+            success=bool(skill_result and skill_result.success),
+            duration_s=_time.monotonic() - _t0,
+        )
 
     answer = skill_result.output if skill_result.success else skill_result.error
 
