@@ -61,17 +61,19 @@ Reference scripts from the prompt: `!`bash ${SKILL_DIR}/scripts/run.sh``
 
 ## Task
 
-1. Parse the skill name from $ARGUMENTS. If not provided, ask the user.
-2. Ask the user what the skill should do (unless already described in arguments).
-3. Determine:
-   - Which tools are needed (read_file, write_file, edit_file, shell, ask, delegate)
-   - Whether scripts are needed (if yes, create scripts/ directory)
-   - Whether the skill should be model-invocable or user-only
-   - Whether it needs independent context (fork)
-4. Generate the SKILL.md file with appropriate frontmatter and prompt.
-5. If scripts are needed, create them in scripts/ with proper shebang and permissions.
-6. Write to `.agent-cli/skills/<name>.md` (flat) or `.agent-cli/skills/<name>/SKILL.md` (with scripts).
-7. Verify the file was created correctly by reading it back.
+1. The first word of $ARGUMENTS is the skill name. The rest is the description.
+   If $ARGUMENTS is empty, ask for the name.
+2. Bundle ALL clarifying questions into ONE `ask` call (use the `questions` array).
+   Do not issue sequential `ask` calls — ask everything at once:
+   - What should the skill do? (unless already clear from $ARGUMENTS)
+   - Which tools does it need? (read_file, write_file, edit_file, shell, ask, delegate)
+   - Does it need shell scripts? (if yes, we'll create scripts/ directory)
+   - Should it be model-invocable or user-only?
+   - Does it need independent context (fork) or share the caller's?
+3. Generate the SKILL.md file with appropriate frontmatter and prompt.
+4. If scripts are needed, create them in scripts/ with proper shebang and permissions.
+5. Write to `.agent-cli/skills/<name>.md` (flat) or `.agent-cli/skills/<name>/SKILL.md` (with scripts).
+6. Verify the file was created correctly by reading it back.
 
 ## Writing good prompts
 

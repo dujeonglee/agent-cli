@@ -77,7 +77,8 @@ The agent's markdown body is injected as the subagent's role prompt.
 ## Task
 
 1. The first word of $ARGUMENTS is the agent name. The rest is the description. If $ARGUMENTS is empty, ask the user.
-2. Ask the user:
+2. Bundle ALL clarifying questions into ONE `ask` call (use the `questions` array).
+   Do not issue sequential `ask` calls — ask everything at once:
    - What role should this agent have?
    - What specific principles should it follow?
    - Should it have tool restrictions? (read-only, no shell, etc.)
