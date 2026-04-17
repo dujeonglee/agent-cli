@@ -560,6 +560,16 @@ def _run_parallel(
         # Fallback: just wait without live display
         for t in threads:
             t.join()
+    finally:
+        # Restore terminal state after Rich Live (prevents readline cursor
+        # confusion with CJK input on subsequent prompts).
+        try:
+            import sys
+            import termios
+
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except (ImportError, OSError):
+            pass
 
     # Replay each task as a group block
     for i, spec in enumerate(task_specs):
