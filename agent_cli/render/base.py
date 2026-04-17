@@ -70,11 +70,14 @@ class Renderer(ABC):
             if buf is None:
                 return False
             buf.append(line)
-            # Track last non-empty line as live status
-            stripped = line.strip()
-            if stripped:
-                self._thread_status[tid] = stripped
         return True
+
+    def set_thread_status(self, status: str) -> None:
+        """Update the live status line for the current thread."""
+        tid = threading.get_ident()
+        with self._capture_lock:
+            if tid in self._captures:  # only when capturing
+                self._thread_status[tid] = status
 
     # ── Abstract render methods ──────────────────────
 

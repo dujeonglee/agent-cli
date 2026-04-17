@@ -125,6 +125,9 @@ class MinimalRenderer(Renderer):
             self._p(f"     {line}", highlight=False)
 
     def thought(self, content: str, turn: int) -> None:
+        # Update live status (first line of thought, shown in parallel progress panel)
+        first_line = content.strip().split("\n", 1)[0]
+        self.set_thread_status(f"💭 {first_line}")
         self._p("")
         self._render_markdown("💭", content)
         self._p("")
