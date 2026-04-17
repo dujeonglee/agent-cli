@@ -7,7 +7,6 @@ from io import StringIO
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
-from rich.spinner import Spinner
 from rich.text import Text
 
 from agent_cli.render.base import Renderer
@@ -232,9 +231,22 @@ class MinimalRenderer(Renderer):
             return  # Already spinning
         try:
             prefix = self._prefix
-            spinner = Spinner("dots", text=Text(f"{prefix}  {message}", style=_MUTED))
+            # Hourglass animates AFTER the message (Rich spinners go in front,
+            # so we use a get_renderable callback instead).
+            frames = ["⏳", "⌛"]
+            idx = [0]
+
+            def get_renderable():
+                frame = frames[idx[0] % len(frames)]
+                idx[0] += 1
+                return Text(f"{prefix}  {message} {frame}", style=_MUTED)
+
             self._live = Live(
-                spinner, console=self.con, refresh_per_second=10, transient=True
+                get_renderable(),
+                console=self.con,
+                refresh_per_second=2,
+                transient=True,
+                get_renderable=get_renderable,
             )
             self._live.start()
         except Exception:
