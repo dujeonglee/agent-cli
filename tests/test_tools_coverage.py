@@ -555,6 +555,101 @@ class TestReadFilePartial:
         assert "aaa" not in result.output
 
 
+class TestReadFilePreview:
+    def test_preview_shows_metadata(self, tmp_path):
+        """preview=True returns line count + size + first 20 lines."""
+        f = tmp_path / "big.py"
+        content = "\n".join(f"line {i}" for i in range(1, 101))
+        f.write_text(content)
+        result = tool_read_file({"path": str(f), "preview": True})
+        assert result.success
+        assert "[preview]" in result.output
+        assert "100 lines" in result.output
+        assert "bytes" in result.output or "KB" in result.output
+
+    def test_preview_shows_first_20_lines(self, tmp_path):
+        """preview returns first 20 lines with hashlines."""
+        f = tmp_path / "big.py"
+        content = "\n".join(f"line {i}" for i in range(1, 101))
+        f.write_text(content)
+        result = tool_read_file({"path": str(f), "preview": True})
+        assert "1#" in result.output
+        assert "20#" in result.output
+        assert "21#" not in result.output  # only first 20
+
+    def test_preview_small_file_shows_all(self, tmp_path):
+        """preview on small file shows all lines (less than 20)."""
+        f = tmp_path / "small.py"
+        f.write_text("a\nb\nc")
+        result = tool_read_file({"path": str(f), "preview": True})
+        assert result.success
+        assert "3 lines" in result.output
+
+    def test_preview_includes_guidance(self, tmp_path):
+        """preview output hints at line_start/search modes."""
+        f = tmp_path / "big.py"
+        f.write_text("\n".join(f"line {i}" for i in range(50)))
+        result = tool_read_file({"path": str(f), "preview": True})
+        assert "line_start" in result.output or "search" in result.output
+
+
+class TestReadFileSearch:
+    def test_search_finds_matches(self, tmp_path):
+        """search returns matching lines with context."""
+        f = tmp_path / "app.py"
+        content = (
+            "def foo():\n"
+            "    pass\n"
+            "\n"
+            "def login(user):\n"
+            "    return user\n"
+            "\n"
+            "def bar():\n"
+            "    pass\n"
+        )
+        f.write_text(content)
+        result = tool_read_file({"path": str(f), "search": "login", "context": 1})
+        assert result.success
+        assert "[search]" in result.output
+        assert "1 matches" in result.output
+        assert "login" in result.output
+        # Context: 1 line before (line 3) and 1 line after (line 5)
+        assert "3#" in result.output or "4#" in result.output
+
+    def test_search_no_matches(self, tmp_path):
+        f = tmp_path / "app.py"
+        f.write_text("def foo():\n    pass\n")
+        result = tool_read_file({"path": str(f), "search": "nonexistent"})
+        assert result.success
+        assert "no matches" in result.output
+
+    def test_search_regex_pattern(self, tmp_path):
+        f = tmp_path / "app.py"
+        f.write_text("x = 1\ny = 2\nz = 3\n")
+        result = tool_read_file({"path": str(f), "search": r"^[xz]\s*="})
+        assert result.success
+        assert "2 matches" in result.output
+
+    def test_search_invalid_regex(self, tmp_path):
+        f = tmp_path / "app.py"
+        f.write_text("hello\n")
+        result = tool_read_file({"path": str(f), "search": "[invalid"})
+        assert not result.success
+        assert "Invalid search pattern" in result.error
+
+    def test_search_merges_overlapping_context(self, tmp_path):
+        """Adjacent matches should share merged context (not duplicate lines)."""
+        f = tmp_path / "app.py"
+        content = "\n".join(f"line {i}" for i in range(1, 21))
+        # matches on line 5 and line 7, context=3 → ranges overlap → merged
+        f.write_text(content.replace("line 5", "MATCH").replace("line 7", "MATCH"))
+        result = tool_read_file({"path": str(f), "search": "MATCH", "context": 3})
+        assert result.success
+        assert "2 matches" in result.output
+        # Should have one merged range block, not two separate
+        assert result.output.count("─── lines") == 1
+
+
 class TestReadContextTool:
     def test_list_no_sessions(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod

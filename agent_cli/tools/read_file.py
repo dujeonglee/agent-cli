@@ -64,38 +64,114 @@ def _verify_ref(lines: list[str], ref: str) -> int:
     return line_num - 1  # 0-based
 
 
-def tool_read_file(args: dict) -> ToolResult:
-    """Read a file and return hashline-formatted content.
+_PREVIEW_LINES = 20  # lines shown in preview mode
+_DEFAULT_SEARCH_CONTEXT = 5  # lines before/after each match
 
-    Supports partial reads via line_start/line_end (1-based, inclusive).
+
+def _format_lines(all_lines: list[str], start_idx: int, end_idx: int) -> str:
+    """Format lines[start_idx:end_idx] with hashline tags (start_idx is 0-based)."""
+    out = []
+    for i, line in enumerate(all_lines[start_idx:end_idx], start_idx + 1):
+        tag = compute_line_hash(i, line)
+        out.append(f"{i}#{tag}:{line}")
+    return "\n".join(out)
+
+
+def _preview(path: str, text: str, all_lines: list[str]) -> ToolResult:
+    """Return file metadata + first N lines + guidance."""
+    total = len(all_lines)
+    size_bytes = len(text.encode("utf-8"))
+    size_label = (
+        f"{size_bytes:,} bytes"
+        if size_bytes < 10_000
+        else f"{size_bytes / 1024:.1f} KB"
+    )
+
+    head_end = min(_PREVIEW_LINES, total)
+    head = _format_lines(all_lines, 0, head_end)
+
+    hint = (
+        f"\n\n[File has {total} total lines. To continue:\n"
+        f"  - read_file(path, line_start=N, line_end=M) for a range\n"
+        f'  - read_file(path, search="keyword") to find specific content]'
+    )
+    return ToolResult(
+        True,
+        output=f"[preview] {path}: {total} lines, {size_label}\n{head}{hint}",
+    )
+
+
+def _search(path: str, all_lines: list[str], pattern: str, context: int) -> ToolResult:
+    """Return matches for pattern with surrounding context."""
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return ToolResult(False, error=f"Invalid search pattern '{pattern}': {e}")
+
+    matches = [i for i, line in enumerate(all_lines) if regex.search(line)]
+    if not matches:
+        return ToolResult(
+            True,
+            output=f"[search] {path}: no matches for {pattern!r} (in {len(all_lines)} lines)",
+        )
+
+    # Merge overlapping context ranges
+    ranges: list[tuple[int, int]] = []
+    for m in matches:
+        lo = max(0, m - context)
+        hi = min(len(all_lines), m + context + 1)
+        if ranges and lo <= ranges[-1][1]:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], hi))
+        else:
+            ranges.append((lo, hi))
+
+    parts = [f"[search] {path}: {len(matches)} matches for {pattern!r}"]
+    for lo, hi in ranges:
+        parts.append(f"\n─── lines {lo + 1}-{hi} ───")
+        parts.append(_format_lines(all_lines, lo, hi))
+    return ToolResult(True, output="\n".join(parts))
+
+
+def tool_read_file(args: dict) -> ToolResult:
+    """Read a file with optional preview, search, or partial read modes.
+
+    Modes (mutually exclusive, picked by args present):
+    - preview=True: metadata + first 20 lines + guidance (best for unknown/large files)
+    - search="pattern", context=N: grep-style matches with surrounding lines
+    - line_start/line_end: partial read (1-based inclusive)
+    - no mode: full file
     """
 
     path = args.get("path", "")
     line_start = args.get("line_start", 0)
     line_end = args.get("line_end", 0)
+    preview = bool(args.get("preview", False))
+    search = args.get("search", "") or ""
+    context = args.get("context", _DEFAULT_SEARCH_CONTEXT)
 
     # Coerce to int (LLMs sometimes send strings)
     try:
         line_start = int(line_start) if line_start else 0
         line_end = int(line_end) if line_end else 0
+        context = int(context) if context else _DEFAULT_SEARCH_CONTEXT
     except (ValueError, TypeError):
-        line_start, line_end = 0, 0
+        line_start, line_end, context = 0, 0, _DEFAULT_SEARCH_CONTEXT
 
     try:
         text = Path(path).read_text(encoding="utf-8")
         all_lines = text.split("\n")
         total = len(all_lines)
 
+        if preview:
+            return _preview(path, text, all_lines)
+
+        if search:
+            return _search(path, all_lines, search, context)
+
         if line_start > 0:
-            start = max(0, line_start - 1)  # 1-based to 0-based
+            start = max(0, line_start - 1)
             end = min(total, line_end) if line_end > 0 else total
-            selected = all_lines[start:end]
-            # Re-join and format with correct line numbers
-            out = []
-            for i, line in enumerate(selected, start + 1):
-                tag = compute_line_hash(i, line)
-                out.append(f"{i}#{tag}:{line}")
-            return ToolResult(True, output="\n".join(out))
+            return ToolResult(True, output=_format_lines(all_lines, start, end))
 
         return ToolResult(True, output=format_hashlines(text))
     except Exception as e:

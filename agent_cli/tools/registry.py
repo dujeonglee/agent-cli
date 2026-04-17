@@ -19,12 +19,28 @@ class ToolSchema:
 TOOL_SCHEMAS: dict[str, ToolSchema] = {
     "read_file": ToolSchema(
         name="read_file",
-        description="Read file contents. Lines are tagged as LINE#HASH:content for editing. "
-        "Use line_start/line_end for partial reads (1-based, inclusive).",
+        description=(
+            "Read file contents. Lines are tagged as LINE#HASH:content for editing. "
+            "For unknown/large files, start with preview=true to check size before reading all. "
+            "Use search='keyword' to find targeted content without reading the whole file. "
+            "Use line_start/line_end for partial reads (1-based, inclusive)."
+        ),
         parameters={
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to read"},
+                "preview": {
+                    "type": "boolean",
+                    "description": "Return metadata (line count, size) + first 20 lines only. Use for unknown/large files to decide read strategy.",
+                },
+                "search": {
+                    "type": "string",
+                    "description": "Regex pattern. Returns only matching lines with surrounding context. Efficient for targeted lookups.",
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "Lines of context before/after each search match (default 5).",
+                },
                 "line_start": {
                     "type": "integer",
                     "description": "Start line number (1-based). Omit to read from beginning.",

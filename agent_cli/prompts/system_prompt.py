@@ -108,8 +108,21 @@ _DELEGATE_INLINE = """\
   - Parallel (independent): {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
   - Read-only: {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}\""""
 
+_READ_FILE_INLINE = """\
+
+  Read strategy (pick one mode):
+  - Quick check first:    {"path": "app.py", "preview": true}
+                          → returns line count + size + first 20 lines
+  - Find specific content: {"path": "app.py", "search": "login", "context": 5}
+                          → returns only matching regions with surrounding lines
+  - Partial read:         {"path": "app.py", "line_start": 100, "line_end": 200}
+  - Full file:            {"path": "app.py"}
+  For files whose size you don't know, prefer `preview` or `search` over full read
+  — wasteful full reads fill the context window fast."""
+
 # Map tool names to their inline guides
 _TOOL_INLINE_GUIDES: dict[str, str] = {
+    "read_file": _READ_FILE_INLINE,
     "edit_file": _HASHLINE_INLINE,
     "delegate": _DELEGATE_INLINE,
 }
