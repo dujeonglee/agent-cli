@@ -48,6 +48,12 @@ def substitute_arguments(
     """Replace $ARGUMENTS, $N, ${SKILL_DIR}, ${SESSION_ID}, !`cmd` in template.
 
     ${CLAUDE_SKILL_DIR} is supported as an alias for Claude Code compatibility.
+
+    When a skill's prompt must document the template syntax itself (e.g.
+    create-skill showing what ${SKILL_DIR} looks like), put the
+    placeholder-bearing docs in a `references/` file and instruct the
+    LLM to read_file it at runtime. Tool results do not pass through
+    this substitution, so the literal placeholder survives to the LLM.
     """
     # Dynamic context injection: !`command` → command output
     result = _SHELL_INJECT_PATTERN.sub(_execute_shell_inject, template)
