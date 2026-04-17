@@ -459,20 +459,26 @@ def _run_parallel(
         render_start_capture,
         render_stop_capture,
         render_replay_captured,
-        render_status,
         render_group_start,
         render_group_end,
+        get_renderer,
+        console,
     )
+    from rich.live import Live
+    from rich.text import Text
 
     results: list[ToolResult | None] = [None] * len(task_specs)
     captured: list[list[str]] = [[] for _ in task_specs]
     durations: list[float] = [0.0] * len(task_specs)
+    thread_ids: list[int] = [0] * len(task_specs)
+    done_flags: list[bool] = [False] * len(task_specs)
     if stop_event is None:
         stop_event = threading.Event()
 
-    render_status("running", f"Running {len(task_specs)} tasks in parallel...")
+    renderer = get_renderer()
 
     def worker(index: int, spec: dict) -> None:
+        thread_ids[index] = threading.get_ident()
         render_start_capture()
         t0 = time.monotonic()
         try:
@@ -500,6 +506,7 @@ def _run_parallel(
         finally:
             durations[index] = time.monotonic() - t0
             captured[index] = render_stop_capture()
+            done_flags[index] = True
 
     threads = []
     for i, spec in enumerate(task_specs):
@@ -507,8 +514,52 @@ def _run_parallel(
         threads.append(t)
         t.start()
 
-    for t in threads:
-        t.join()
+    # Live status panel during parallel execution
+    spinner_frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+    frame_idx = [0]
+
+    def render_live():
+        lines = [Text(f"Running {len(task_specs)} tasks in parallel:", style="grey46")]
+        frame = spinner_frames[frame_idx[0] % len(spinner_frames)]
+        frame_idx[0] += 1
+        for i, spec in enumerate(task_specs):
+            task_text = spec.get("task", "")[:40]
+            agent = spec.get("agent", "")
+            label = (
+                f"[{i + 1}] {agent}: {task_text}" if agent else f"[{i + 1}] {task_text}"
+            )
+            if done_flags[i]:
+                ok = results[i] and results[i].success
+                icon = "✓" if ok else "✗"
+                lines.append(
+                    Text(f"  {icon} {label} ({durations[i]:.1f}s)", style="grey46")
+                )
+            else:
+                status = (
+                    renderer.get_thread_status(thread_ids[i])
+                    if thread_ids[i]
+                    else "starting..."
+                )
+                # Truncate long status lines
+                status_short = status[:100]
+                lines.append(Text(f"  {frame} {label}  {status_short}", style="grey46"))
+        group = Text("\n").join(lines)
+        return group
+
+    try:
+        with Live(
+            render_live(),
+            console=console,
+            refresh_per_second=8,
+            transient=True,
+            get_renderable=render_live,
+        ):
+            for t in threads:
+                t.join()
+    except Exception:
+        # Fallback: just wait without live display
+        for t in threads:
+            t.join()
 
     # Replay each task as a group block
     for i, spec in enumerate(task_specs):

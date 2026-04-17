@@ -20,6 +20,7 @@ class Renderer(ABC):
     def __init__(self) -> None:
         self._depth: int = 0
         self._captures: dict[int, list[str]] = {}  # thread_id → captured lines
+        self._thread_status: dict[int, str] = {}  # thread_id → last status line
         self._capture_lock = threading.Lock()
 
     # ── Depth (nesting) ──────────────────────────────
@@ -47,7 +48,14 @@ class Renderer(ABC):
     def stop_capture(self) -> list[str]:
         """Stop capturing and return collected lines for the current thread."""
         with self._capture_lock:
-            return self._captures.pop(threading.get_ident(), [])
+            tid = threading.get_ident()
+            self._thread_status.pop(tid, None)
+            return self._captures.pop(tid, [])
+
+    def get_thread_status(self, tid: int) -> str:
+        """Return the last captured status line for a given thread."""
+        with self._capture_lock:
+            return self._thread_status.get(tid, "")
 
     @property
     def is_capturing(self) -> bool:
@@ -59,10 +67,14 @@ class Renderer(ABC):
         tid = threading.get_ident()
         with self._capture_lock:
             buf = self._captures.get(tid)
-        if buf is not None:
+            if buf is None:
+                return False
             buf.append(line)
-            return True
-        return False
+            # Track last non-empty line as live status
+            stripped = line.strip()
+            if stripped:
+                self._thread_status[tid] = stripped
+        return True
 
     # ── Abstract render methods ──────────────────────
 
