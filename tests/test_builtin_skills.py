@@ -102,11 +102,36 @@ class TestBuiltinSkillContent:
         Without this, user-created skills end up with paths like
         /Users/<name>/... that point at the wrong directory (often the
         built-in skills tree instead of .agent-cli/skills/<name>/).
+
+        Guards:
+          - DO/DON'T block showing both the correct placeholder and
+            concrete anti-examples (previous revisions buried the rule
+            inside prose and the LLM routinely ignored it).
+          - Explicit verify step — the skill must read its own output
+            back and scan for forbidden substrings, not just trust that
+            it followed the rule.
+          - edit_file permission so the verify pass can actually fix a
+            slip instead of leaving a broken skill on disk.
         """
         path = _BUILTIN_DIR / "create-skill.md"
-        content = path.read_text().lower()
-        assert "never hardcode" in content or "do not write absolute" in content
-        assert "${skill_dir}" in content
+        content = path.read_text()
+        lower = content.lower()
+
+        # Core rule and placeholder name.
+        assert "${SKILL_DIR}" in content
+        assert "never hardcode" in lower or "do not write absolute" in lower
+
+        # Concrete DON'T examples that make the rule harder to miss.
+        assert "DO" in content and "DON'T" in content
+        assert "/users/" in lower  # at least one anti-example path
+        assert "agent_cli/skills/builtin" in content  # wrong-tree anti-example
+
+        # Verify step must actually scan the written file.
+        assert "scan" in lower and "forbidden" in lower
+
+        # Fix-up requires edit_file permission.
+        skill = _parse_skill_file(path)
+        assert "edit_file" in (skill.allowed_tools or [])
 
     def test_create_agent_has_format_docs(self):
         path = _BUILTIN_DIR / "create-agent.md"

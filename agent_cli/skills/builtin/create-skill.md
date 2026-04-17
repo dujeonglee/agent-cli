@@ -2,7 +2,7 @@
 name: create-skill
 description: Create a new skill file interactively. Generates SKILL.md with frontmatter, prompt template, and optional scripts. Use when asked to create, make, or add a new skill.
 argument-hint: "<skill-name> [description]"
-allowed-tools: [read_file, write_file, shell, ask]
+allowed-tools: [read_file, write_file, edit_file, shell, ask]
 disable-model-invocation: true
 ---
 
@@ -59,18 +59,36 @@ Use !`command` for inline shell execution at template-render time.
 
 ## Referencing scripts — always use ${SKILL_DIR}
 
-When the skill ships a script, the SKILL.md body MUST reference it through
-the `${SKILL_DIR}` placeholder. The executor substitutes `${SKILL_DIR}` at
-runtime with the absolute path to the skill's own directory (the parent
-of its SKILL.md), so the script is located correctly regardless of where
-the skill lives (`.agent-cli/skills/...`, `~/.agent-cli/skills/...`, or
-the built-in path).
+**Copy this rule verbatim into the SKILL.md body — do not paraphrase,
+do not "improve", do not substitute a real path:**
 
-**Rule — NEVER hardcode absolute paths in SKILL.md.** Do not write
-`/Users/...` or `/home/...` even if you know the current path. The skill
-may be copied, moved, or installed globally — hardcoded paths break
-silently. If you catch yourself inferring a path, stop and use
-`${SKILL_DIR}` instead.
+```
+bash ${SKILL_DIR}/scripts/run.sh
+```
+
+DO (literal placeholder, resolved at runtime):
+```
+bash ${SKILL_DIR}/scripts/run.sh
+bash ${SKILL_DIR}/scripts/helper.py "$1"
+```
+
+DON'T (hardcoded absolute paths — every one of these is wrong):
+```
+bash /Users/alice/workspace/proj/.agent-cli/skills/<name>/scripts/run.sh
+bash /Users/alice/workspace/proj/agent_cli/skills/builtin/scripts/run.sh
+bash /home/alice/.agent-cli/skills/<name>/scripts/run.sh
+bash ~/.agent-cli/skills/<name>/scripts/run.sh
+```
+
+Why: the executor substitutes `${SKILL_DIR}` at runtime with the parent
+directory of the skill's SKILL.md. That's the only reference form that
+keeps working when the skill is copied, moved, or installed globally.
+You may know the current working directory, but do NOT write it into
+the file — the path in SKILL.md must stay relocatable.
+
+If you notice yourself typing `/Users/`, `/home/`, `/opt/`, `C:\`, or
+`~/` into the script command, stop and replace the whole thing with
+`${SKILL_DIR}`.
 
 Two execution patterns exist — pick based on when the script should run:
 
@@ -135,8 +153,17 @@ pre-computed snippet.
    - Choose between Pattern A (`shell` tool at runtime) and Pattern B
      (`` !`cmd` `` at render time) per the "Referencing scripts" section.
 6. Write to `.agent-cli/skills/<name>.md` (flat) or `.agent-cli/skills/<name>/SKILL.md` (with scripts).
-7. Verify the file was created correctly by reading it back. If any
-   absolute path slipped into the body, rewrite it using `${SKILL_DIR}`.
+7. Verify the created SKILL.md — this step is mandatory, not optional:
+   - `read_file` the SKILL.md you just wrote.
+   - Scan the body for any of these forbidden substrings:
+     `/Users/`, `/home/`, `/opt/`, `C:\`, `~/`, the absolute path to the
+     current project, and the literal strings `agent_cli/skills/builtin`
+     or `.agent-cli/skills/<name>`.
+   - If you find ANY of them inside a shell command, `edit_file` the
+     SKILL.md and replace the offending path with `${SKILL_DIR}/...`.
+   - Re-read after editing to confirm the body contains `${SKILL_DIR}`
+     wherever a script is invoked and no forbidden substring remains.
+   - Only then report success to the user.
 
 ## Writing good prompts
 
