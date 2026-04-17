@@ -110,15 +110,20 @@ _DELEGATE_INLINE = """\
 
 _READ_FILE_INLINE = """\
 
-  Read strategy (pick one mode):
-  - Quick check first:    {"path": "app.py", "preview": true}
-                          → returns line count + size + first 20 lines
-  - Find specific content: {"path": "app.py", "search": "login", "context": 5}
-                          → returns only matching regions with surrounding lines
-  - Partial read:         {"path": "app.py", "line_start": 100, "line_end": 200}
-  - Full file:            {"path": "app.py"}
-  For files whose size you don't know, prefer `preview` or `search` over full read
-  — wasteful full reads fill the context window fast."""
+  IMPORTANT: Full reads waste context window. Pick the smallest mode that answers the question:
+
+  1. Unknown file size? Start with preview.
+       {"path": "app.py", "preview": true}
+       → returns line count + size + first 20 lines
+  2. Looking for something specific? Use search.
+       {"path": "app.py", "search": "login", "context": 5}
+       → returns only matching regions with surrounding lines
+  3. Know the exact range? Partial read.
+       {"path": "app.py", "line_start": 100, "line_end": 200}
+  4. Full read: only when the file is small (< ~100 lines) or you genuinely need everything.
+       {"path": "app.py"}
+
+  Default: if you don't know the file's size, use preview FIRST. Do not full-read unknown files."""
 
 # Map tool names to their inline guides
 _TOOL_INLINE_GUIDES: dict[str, str] = {
