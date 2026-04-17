@@ -523,7 +523,7 @@ def _run_parallel(
         frame = spinner_frames[frame_idx[0] % len(spinner_frames)]
         frame_idx[0] += 1
         for i, spec in enumerate(task_specs):
-            task_text = spec.get("task", "")[:40]
+            task_text = spec.get("task", "")
             agent = spec.get("agent", "")
             label = (
                 f"[{i + 1}] {agent}: {task_text}" if agent else f"[{i + 1}] {task_text}"
@@ -540,9 +540,9 @@ def _run_parallel(
                     if thread_ids[i]
                     else "starting..."
                 )
-                # Truncate long status lines
-                status_short = status[:100]
-                lines.append(Text(f"  {frame} {label}  {status_short}", style="grey46"))
+                lines.append(Text(f"  {frame} {label}", style="grey46"))
+                # Show thought on separate indented line below task
+                lines.append(Text(f"       {status}", style="grey46"))
         group = Text("\n").join(lines)
         return group
 
