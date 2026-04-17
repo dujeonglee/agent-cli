@@ -104,7 +104,7 @@ class TestPlanSkill:
         os.chdir(tmp_path)
 
         try:
-            skills = load_skills(use_cache=False)
+            skills = load_skills()
             assert "plan" in skills
 
             skill = skills["plan"]
@@ -150,7 +150,7 @@ class TestPlanSkill:
         os.chdir(tmp_path)
 
         try:
-            skills = load_skills(use_cache=False)
+            skills = load_skills()
             skill = skills["plan"]
 
             ctx = ContextManager(
@@ -182,7 +182,7 @@ class TestBuiltinSkillsAvailability:
         """All built-in skills should be available in load_skills()."""
         from agent_cli.skills import load_skills
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         expected = {"create-skill", "create-agent", "plan", "create-team"}
         for name in expected:
             assert name in skills, f"Built-in skill '{name}' not found"
@@ -191,7 +191,7 @@ class TestBuiltinSkillsAvailability:
         """All built-in skills should have non-empty descriptions."""
         from agent_cli.skills import load_skills
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         for name in ("create-skill", "create-agent", "plan", "create-team"):
             assert skills[name].description, f"Skill '{name}' has empty description"
 
@@ -199,21 +199,21 @@ class TestBuiltinSkillsAvailability:
         """create-skill should not be auto-invocable by LLM."""
         from agent_cli.skills import load_skills
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert skills["create-skill"].disable_model_invocation is True
 
     def test_create_agent_is_user_only(self):
         """create-agent should not be auto-invocable by LLM."""
         from agent_cli.skills import load_skills
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert skills["create-agent"].disable_model_invocation is True
 
     def test_plan_is_model_invocable(self):
         """plan skill should be invocable by LLM."""
         from agent_cli.skills import load_skills
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert skills["plan"].disable_model_invocation is False
 
 

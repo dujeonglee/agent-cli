@@ -1052,9 +1052,8 @@ You are a code reviewer. Read $ARGUMENTS and analyze for bugs.
 사용자 입력: /review-code src/auth.py
     │
     ▼
-load_skills(use_cache=False) — 디스크에서 스킬 파일 검색/파싱
-    │  └─ 디스패치 시점마다 강제 재스캔
-    │     (/create-skill로 방금 만든 스킬도 재시작 없이 즉시 인식)
+load_skills() — 호출 시점마다 디스크 재스캔, 파일 파싱
+    │  └─ 캐시 없음. /create-skill로 방금 만든 스킬도 재시작 없이 즉시 인식
     ▼
 스킬 매칭: "review-code" → Skill 객체
     │

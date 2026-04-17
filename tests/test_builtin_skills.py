@@ -51,7 +51,7 @@ class TestBuiltinSkillsLoading:
         loader._reset_loader()
 
     def test_builtin_included_in_load(self):
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert "create-skill" in skills
         assert "create-agent" in skills
         assert "plan" in skills
@@ -67,7 +67,7 @@ class TestBuiltinSkillsLoading:
         )
 
         loader._reset_loader([local_dir, _BUILTIN_DIR])
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert skills["create-skill"].description == "Custom override"
 
     def test_builtin_coexists_with_project(self, tmp_path, monkeypatch):
@@ -81,7 +81,7 @@ class TestBuiltinSkillsLoading:
         )
 
         loader._reset_loader([local_dir, _BUILTIN_DIR])
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert "my-custom" in skills
         assert "create-skill" in skills
         assert "create-agent" in skills

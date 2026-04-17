@@ -803,9 +803,7 @@ def _handle_run_skill(
             error=f"Recursive skill call blocked: '{name}' is already in the call stack {skill_stack}.",
         )
 
-    # Rescan so skills authored earlier in this session (e.g. via /create-skill)
-    # are visible to run_skill invocations without a restart.
-    skills = load_skills(use_cache=False)
+    skills = load_skills()
     if name not in skills:
         available = ", ".join(skills.keys()) if skills else "(none)"
         return ToolResult(

@@ -12,16 +12,7 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.skills.executor import execute_skill, substitute_arguments
 from agent_cli.skills.loader import _parse_skill_file, load_skills
-import agent_cli.skills.loader as _loader
 from agent_cli.skills.models import Skill
-
-
-@pytest.fixture(autouse=True)
-def _clear_skill_cache():
-    """Clear skill cache before each test."""
-    _loader._cached_skills = None
-    yield
-    _loader._cached_skills = None
 
 
 @pytest.fixture
@@ -380,7 +371,7 @@ class TestSkillLoader:
 
         loader._reset_loader([skills_dir])
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert "skill1" in skills
         assert "skill2" in skills
 
@@ -401,7 +392,7 @@ class TestSkillLoader:
 
         loader._reset_loader([local_dir, global_dir])
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert skills["review"].description == "Local"
 
     def test_load_flat_and_directory_mixed(self, tmp_path, monkeypatch):
@@ -424,7 +415,7 @@ class TestSkillLoader:
 
         loader._reset_loader([skills_dir])
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert "flat-skill" in skills
         assert "dir-skill" in skills
         assert skills["flat-skill"].description == "Flat"
@@ -448,12 +439,12 @@ class TestSkillLoader:
 
         loader._reset_loader([skills_dir])
 
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert "review" in skills
 
     def test_newly_created_skill_visible_without_restart(self, tmp_path):
-        """Creating a skill file after first load should be picked up by a
-        subsequent load_skills(use_cache=False) — no process restart needed.
+        """Every load_skills() call rescans disk, so skills authored mid-session
+        (e.g. via /create-skill) are immediately visible without a restart.
 
         Regression guard for /create-skill → /<new-skill> flow.
         """
@@ -468,7 +459,7 @@ class TestSkillLoader:
 
         loader._reset_loader([skills_dir])
 
-        first = load_skills()  # populates cache
+        first = load_skills()
         assert "alpha" in first
         assert "beta" not in first
 
@@ -477,17 +468,10 @@ class TestSkillLoader:
             "---\nname: beta\ndescription: Beta\n---\n\nDo $ARGUMENTS\n"
         )
 
-        # Cached call still returns stale data — that's the existing behaviour.
-        cached = load_skills()
-        assert "beta" not in cached
-
-        # Forced rescan surfaces the newly-authored skill and refreshes the cache.
-        refreshed = load_skills(use_cache=False)
+        # Next call rescans disk and picks up the new skill.
+        refreshed = load_skills()
         assert "beta" in refreshed
         assert "alpha" in refreshed
-
-        # Subsequent cached calls now see the fresh set.
-        assert "beta" in load_skills()
 
 
 class TestSkillExecution:
@@ -698,7 +682,7 @@ class TestYamlOptional:
         )
 
         loader._reset_loader([d])
-        skills = load_skills(use_cache=False)
+        skills = load_skills()
         assert "no-meta" not in skills
         assert "with-meta" in skills
 
