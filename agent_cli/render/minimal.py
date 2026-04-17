@@ -59,10 +59,14 @@ class MinimalRenderer(Renderer):
 
     @property
     def _prefix(self) -> str:
-        """Depth-based prefix for nested rendering."""
+        """Depth-based prefix for nested rendering.
+
+        Depth 0: no prefix (content has its own 2-space indent).
+        Depth 1+: │ at column 0, aligned with ┌─/└─ group brackets.
+        """
         if self._depth == 0:
             return ""
-        return "  " + "│   " * self._depth
+        return "│ " * self._depth
 
     def _p(self, text: str, **kwargs) -> None:
         """Print with depth prefix. Captures to buffer if in capture mode."""
@@ -103,7 +107,9 @@ class MinimalRenderer(Renderer):
         self.con.print()
 
     def turn_sep(self, turn: int) -> None:
-        self._p(f"\n[{_MUTED}]→ turn {turn}[/]\n")
+        # No-op: turn number is already shown in token stats line
+        # (e.g. "● ttft: 200ms | in: 1024 | out: 156  turn 1").
+        pass
 
     def _render_markdown(self, icon: str, content: str) -> None:
         """Render markdown content with icon, respecting depth prefix."""
