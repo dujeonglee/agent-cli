@@ -343,7 +343,9 @@ def _dispatch_skill(
     """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
     from agent_cli.skills import load_skills, execute_skill
 
-    skills = load_skills()
+    # Always rescan disk so newly-created skills (via /create-skill) are visible
+    # without a restart.
+    skills = load_skills(use_cache=False)
     parts = query.split(maxsplit=1)
     cmd_name = parts[0][1:]  # strip leading /
 
@@ -1088,7 +1090,7 @@ def chat(
             cmd_name = parts[0][1:]
 
             if cmd_name == "skills":
-                skills = _load_skills()
+                skills = _load_skills(use_cache=False)
                 user_skills = {k: v for k, v in skills.items() if v.user_invocable}
                 if not user_skills:
                     console.print(f"[{C['muted']}]No skills found.[/]")

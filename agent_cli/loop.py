@@ -738,20 +738,31 @@ def _extract_questions(action_input) -> list[str]:
 
 def _handle_ask(questions: list[str]) -> str:
     """Display all questions at once and collect a single response."""
-    from agent_cli.render import C, console
+    import re
 
-    console.print(f"\n[{C['accent']}]Agent asks:[/]")
+    from agent_cli.render import C, console, get_renderer
+
+    # Strip existing leading "1.", "2)", "- ", etc. so our numbering isn't doubled
+    def _strip_leading_marker(q: str) -> str:
+        return re.sub(r"^\s*(?:\d+[.):]|[-*•])\s+", "", q)
+
+    # Respect nested depth prefix (so ask inside skill/delegate aligns with │)
+    renderer = get_renderer()
+    prefix = getattr(renderer, "_prefix", "")
+
+    console.print(f"{prefix}\n{prefix}[{C['accent']}]Agent asks:[/]")
     for i, q in enumerate(questions, 1):
+        clean = _strip_leading_marker(q)
         if len(questions) > 1:
-            console.print(f"  {i}. {q}")
+            console.print(f"{prefix}  {i}. {clean}")
         else:
-            console.print(f"  {q}")
+            console.print(f"{prefix}  {clean}")
     try:
-        answer = input("\nYour answer: ").strip()
+        answer = input(f"{prefix}\n{prefix}Your answer: ").strip()
     except (EOFError, KeyboardInterrupt):
         answer = "(no response)"
 
-    q_part = "\n".join(f"Q: {q}" for q in questions)
+    q_part = "\n".join(f"Q: {_strip_leading_marker(q)}" for q in questions)
     return f"{q_part}\nA: {answer}"
 
 
@@ -792,7 +803,9 @@ def _handle_run_skill(
             error=f"Recursive skill call blocked: '{name}' is already in the call stack {skill_stack}.",
         )
 
-    skills = load_skills()
+    # Rescan so skills authored earlier in this session (e.g. via /create-skill)
+    # are visible to run_skill invocations without a restart.
+    skills = load_skills(use_cache=False)
     if name not in skills:
         available = ", ".join(skills.keys()) if skills else "(none)"
         return ToolResult(

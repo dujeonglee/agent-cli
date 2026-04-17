@@ -451,6 +451,44 @@ class TestSkillLoader:
         skills = load_skills(use_cache=False)
         assert "review" in skills
 
+    def test_newly_created_skill_visible_without_restart(self, tmp_path):
+        """Creating a skill file after first load should be picked up by a
+        subsequent load_skills(use_cache=False) — no process restart needed.
+
+        Regression guard for /create-skill → /<new-skill> flow.
+        """
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        (skills_dir / "alpha.md").write_text(
+            "---\nname: alpha\ndescription: Alpha\n---\n\nDo $ARGUMENTS\n"
+        )
+
+        import agent_cli.skills.loader as loader
+
+        loader._reset_loader([skills_dir])
+
+        first = load_skills()  # populates cache
+        assert "alpha" in first
+        assert "beta" not in first
+
+        # Simulate /create-skill writing a new skill mid-session.
+        (skills_dir / "beta.md").write_text(
+            "---\nname: beta\ndescription: Beta\n---\n\nDo $ARGUMENTS\n"
+        )
+
+        # Cached call still returns stale data — that's the existing behaviour.
+        cached = load_skills()
+        assert "beta" not in cached
+
+        # Forced rescan surfaces the newly-authored skill and refreshes the cache.
+        refreshed = load_skills(use_cache=False)
+        assert "beta" in refreshed
+        assert "alpha" in refreshed
+
+        # Subsequent cached calls now see the fresh set.
+        assert "beta" in load_skills()
+
 
 class TestSkillExecution:
     def test_execute_with_allowed_tools(self, caps):
