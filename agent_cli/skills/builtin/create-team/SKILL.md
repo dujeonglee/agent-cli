@@ -70,7 +70,7 @@ The orchestrator:
 3. Handles errors (retry once, then proceed with gaps)
 4. Collects and summarizes final results
 
-Template:
+Template (natural language — let the LLM compose the actual delegate JSON at runtime):
 ```markdown
 ---
 name: {workflow-name}
@@ -81,19 +81,24 @@ allowed-tools: [read_file, write_file, edit_file, shell, delegate]
 ## Workflow
 
 ### Step 1: {phase name}
-delegate with agent "{agent-name}":
-{"tasks": [{"task": "{specific task}", "agent": "{name}", "context": "fork"}]}
+Use the `delegate` tool with the `{agent-name}` agent to {specific goal}.
+Pass `context="fork"` so the subagent sees the current conversation history.
+Wait for the result before proceeding.
 
-### Step 2: {phase name}
-delegate parallel:
-{"tasks": [
-    {"task": "{task A}", "agent": "{agent-a}"},
-    {"task": "{task B}", "agent": "{agent-b}"}
-]}
+### Step 2 (parallel): {phase name}
+Use `delegate` with a multi-task `tasks` array — one task for `{agent-a}`,
+another for `{agent-b}`. They run independently in parallel; collect both outputs.
 
 ### Step 3: Collect and report
-Summarize results from all steps.
+Synthesize the results from Step 1 and Step 2 into a final summary for the user.
+Call `complete` with the summary when done.
 ```
+
+Why natural language instead of literal JSON:
+- The orchestrator is a prompt that guides the LLM's judgment, not a hardcoded script.
+- Natural language lets the LLM adapt task descriptions to the actual context.
+- Hardcoding JSON causes LLMs to copy placeholder strings verbatim
+  (e.g. `"task": "{specific task}"`).
 
 ### Phase 6: Verification
 
