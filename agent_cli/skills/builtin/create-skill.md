@@ -70,10 +70,15 @@ Reference scripts from the prompt: `!`bash ${SKILL_DIR}/scripts/run.sh``
    - Does it need shell scripts? (if yes, we'll create scripts/ directory)
    - Should it be model-invocable or user-only?
    - Does it need independent context (fork) or share the caller's?
-3. Generate the SKILL.md file with appropriate frontmatter and prompt.
-4. If scripts are needed, create them in scripts/ with proper shebang and permissions.
-5. Write to `.agent-cli/skills/<name>.md` (flat) or `.agent-cli/skills/<name>/SKILL.md` (with scripts).
-6. Verify the file was created correctly by reading it back.
+3. Map user answers to frontmatter fields:
+   - tools needed → `allowed-tools: [...]`
+   - user-only → `disable-model-invocation: true`
+   - independent context → `context: fork`
+   - scripts needed → create scripts/ directory (use subdirectory layout)
+4. Generate the SKILL.md file with appropriate frontmatter and prompt.
+5. If scripts are needed, create them in scripts/ with proper shebang and permissions.
+6. Write to `.agent-cli/skills/<name>.md` (flat) or `.agent-cli/skills/<name>/SKILL.md` (with scripts).
+7. Verify the file was created correctly by reading it back.
 
 ## Writing good prompts
 
