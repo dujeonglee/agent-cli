@@ -45,11 +45,15 @@ def substitute_arguments(
     skill_dir: str = "",
     session_id: str = "",
 ) -> str:
-    """Replace $ARGUMENTS, $N, ${CLAUDE_SKILL_DIR}, ${SESSION_ID}, !`cmd` in template."""
+    """Replace $ARGUMENTS, $N, ${SKILL_DIR}, ${SESSION_ID}, !`cmd` in template.
+
+    ${CLAUDE_SKILL_DIR} is supported as an alias for Claude Code compatibility.
+    """
     # Dynamic context injection: !`command` → command output
     result = _SHELL_INJECT_PATTERN.sub(_execute_shell_inject, template)
 
-    # Built-in variables
+    # Built-in variables (${SKILL_DIR} is the primary form; ${CLAUDE_SKILL_DIR} for compat)
+    result = result.replace("${SKILL_DIR}", skill_dir)
     result = result.replace("${CLAUDE_SKILL_DIR}", skill_dir)
     result = result.replace("${SESSION_ID}", session_id)
 

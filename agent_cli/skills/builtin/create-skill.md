@@ -28,7 +28,9 @@ user-invocable: true
 Prompt template body here. This is the instruction given to the LLM.
 Use $ARGUMENTS for user input, $ARGUMENTS[0], $ARGUMENTS[1] for positional args.
 Use ${SKILL_DIR} to reference the skill's directory (for scripts/).
-Use !`command` for inline shell execution in the prompt.
+  (${CLAUDE_SKILL_DIR} is also accepted as an alias for Claude Code compatibility.)
+Use ${SESSION_ID} for the current session ID.
+Use !`command` for inline shell execution at template-render time.
 ```
 
 ## Frontmatter fields

@@ -132,13 +132,31 @@ class TestArgumentSubstitution:
         assert "src/main.py" in result
 
     def test_skill_dir_substitution(self):
-        """${CLAUDE_SKILL_DIR} replaced with skill directory path."""
+        """${SKILL_DIR} replaced with skill directory path (primary form)."""
+        result = substitute_arguments(
+            "python ${SKILL_DIR}/scripts/run.py",
+            "",
+            skill_dir="/home/user/.agent-cli/skills/my-skill",
+        )
+        assert result == "python /home/user/.agent-cli/skills/my-skill/scripts/run.py"
+
+    def test_claude_skill_dir_alias(self):
+        """${CLAUDE_SKILL_DIR} also works (Claude Code compat alias)."""
         result = substitute_arguments(
             "python ${CLAUDE_SKILL_DIR}/scripts/run.py",
             "",
             skill_dir="/home/user/.agent-cli/skills/my-skill",
         )
         assert result == "python /home/user/.agent-cli/skills/my-skill/scripts/run.py"
+
+    def test_both_skill_dir_forms_work_together(self):
+        """Template mixing both forms substitutes both."""
+        result = substitute_arguments(
+            "a=${SKILL_DIR} b=${CLAUDE_SKILL_DIR}",
+            "",
+            skill_dir="/path",
+        )
+        assert result == "a=/path b=/path"
 
     def test_session_id_substitution(self):
         """${SESSION_ID} replaced with current session ID."""
