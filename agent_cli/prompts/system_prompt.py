@@ -35,6 +35,7 @@ You are an AI assistant that solves tasks step-by-step using available tools."""
 TASK_GUIDELINES = """\
 ## Task Guidelines
 - Read relevant code before changing it. Do not modify files you have not read.
+- When using read_file on an unknown file, call with preview=true first to check size. Only full-read files you already know are small.
 - Keep changes tightly scoped to the request. Do not add unrelated cleanup or refactoring.
 - Do not create new files unless required to complete the task.
 - If an approach fails, diagnose the cause before switching tactics.
