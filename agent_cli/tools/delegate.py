@@ -546,20 +546,27 @@ def _run_parallel(
         group = Text("\n").join(lines)
         return group
 
+    # Skip Live panel if we're already inside a capturing thread
+    # (nested parallel delegate — outer Live would compete with this one).
+    show_live = not renderer.is_capturing
     try:
-        with Live(
-            render_live(),
-            console=console,
-            refresh_per_second=8,
-            transient=True,
-            get_renderable=render_live,
-        ):
+        if show_live:
+            try:
+                with Live(
+                    render_live(),
+                    console=console,
+                    refresh_per_second=8,
+                    transient=True,
+                    get_renderable=render_live,
+                ):
+                    for t in threads:
+                        t.join()
+            except Exception:
+                for t in threads:
+                    t.join()
+        else:
             for t in threads:
                 t.join()
-    except Exception:
-        # Fallback: just wait without live display
-        for t in threads:
-            t.join()
     finally:
         # Restore terminal state after Rich Live (prevents readline cursor
         # confusion with CJK input on subsequent prompts).

@@ -1,11 +1,12 @@
 """Tests for input_history module (readline setup + persistent history)."""
 
-import readline
 from unittest.mock import patch
 
 import pytest
 
 import agent_cli.input_history as ih
+
+readline = ih.readline  # Use whatever readline module ih loaded (gnureadline or stdlib)
 
 
 @pytest.fixture(autouse=True)
