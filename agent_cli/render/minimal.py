@@ -231,9 +231,9 @@ class MinimalRenderer(Renderer):
             return  # Already spinning
         try:
             prefix = self._prefix
-            # Hourglass animates AFTER the message (Rich spinners go in front,
-            # so we use a get_renderable callback instead).
-            frames = ["⏳", "⌛"]
+            # Spinner animates AFTER the message (Rich's built-in Spinner
+            # puts it at the front, so we use get_renderable instead).
+            frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
             idx = [0]
 
             def get_renderable():
@@ -244,7 +244,7 @@ class MinimalRenderer(Renderer):
             self._live = Live(
                 get_renderable(),
                 console=self.con,
-                refresh_per_second=2,
+                refresh_per_second=10,
                 transient=True,
                 get_renderable=get_renderable,
             )
