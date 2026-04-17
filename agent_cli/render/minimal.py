@@ -278,7 +278,8 @@ class MinimalRenderer(Renderer):
 
     def stream_chunk(self, text: str) -> None:
         if self.is_capturing:
-            self._capture_line(text)
+            # Skip streaming in capture mode (parallel delegates).
+            # Marquee-style output doesn't make sense when replayed line-by-line.
             return
         if not hasattr(self, "_stream_buf"):
             self._stream_buf = ""
