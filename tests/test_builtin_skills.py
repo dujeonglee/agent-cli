@@ -96,6 +96,18 @@ class TestBuiltinSkillContent:
         assert "${SKILL_DIR}" in content
         assert "scripts/" in content
 
+    def test_create_skill_warns_against_hardcoded_paths(self):
+        """The skill must tell the LLM not to bake absolute paths into SKILL.md.
+
+        Without this, user-created skills end up with paths like
+        /Users/<name>/... that point at the wrong directory (often the
+        built-in skills tree instead of .agent-cli/skills/<name>/).
+        """
+        path = _BUILTIN_DIR / "create-skill.md"
+        content = path.read_text().lower()
+        assert "never hardcode" in content or "do not write absolute" in content
+        assert "${skill_dir}" in content
+
     def test_create_agent_has_format_docs(self):
         path = _BUILTIN_DIR / "create-agent.md"
         content = path.read_text()
