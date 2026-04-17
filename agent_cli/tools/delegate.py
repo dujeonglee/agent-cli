@@ -462,10 +462,13 @@ def _run_parallel(
         render_stop_capture,
         render_replay_captured,
         render_status,
+        render_group_start,
+        render_group_end,
     )
 
     results: list[ToolResult | None] = [None] * len(task_specs)
     captured: list[list[str]] = [[] for _ in task_specs]
+    durations: list[float] = [0.0] * len(task_specs)
     if stop_event is None:
         stop_event = threading.Event()
 
@@ -473,6 +476,7 @@ def _run_parallel(
 
     def worker(index: int, spec: dict) -> None:
         render_start_capture()
+        t0 = time.monotonic()
         try:
             results[index] = _run_single(
                 task=spec["task"],
@@ -497,6 +501,7 @@ def _run_parallel(
                 stop_event=stop_event,
             )
         finally:
+            durations[index] = time.monotonic() - t0
             captured[index] = render_stop_capture()
 
     threads = []
@@ -508,16 +513,19 @@ def _run_parallel(
     for t in threads:
         t.join()
 
-    # Replay each task's captured output with depth prefix
-    render_push_depth()
+    # Replay each task as a group block
     for i, spec in enumerate(task_specs):
-        label = spec.get("task", "")[:60]
-        status = "✓" if results[i] and results[i].success else "✗"
-        render_status("info", f"[{i + 1}] {label}")
+        task_text = spec.get("task", "")[:40]
+        agent = spec.get("agent", "")
+        label = f"[{i + 1}] {agent}: {task_text}" if agent else f"[{i + 1}] {task_text}"
+        success = bool(results[i] and results[i].success)
+
+        render_group_start(label, icon="🦀")
+        render_push_depth()
         if captured[i]:
             render_replay_captured(captured[i])
-        render_status("info", f"{status} [{i + 1}] done")
-    render_pop_depth()
+        render_pop_depth()
+        render_group_end(label, success=success, duration_s=durations[i])
 
     return _format_parallel_results(task_specs, results)
 
@@ -571,23 +579,40 @@ def tool_delegate(
     )
 
     if len(tasks) == 1:
-        # Single delegate: nested rendering (push/pop depth)
-        from agent_cli.render import render_push_depth, render_pop_depth
+        # Single delegate: grouped nested rendering
+        from agent_cli.render import (
+            render_group_start,
+            render_group_end,
+            render_push_depth,
+            render_pop_depth,
+        )
 
+        spec = tasks[0]
+        agent_name = spec.get("agent", "")
+        label = f"delegate:{agent_name}" if agent_name else "delegate"
+
+        render_group_start(label, icon="🦀")
         render_push_depth()
+        t0 = time.monotonic()
+        result = None
         try:
-            spec = tasks[0]
-            return _run_single(
+            result = _run_single(
                 task=spec.get("task", ""),
                 context_mode=spec.get("context", "none"),
                 allowed_tools=spec.get("tools"),
-                agent_name=spec.get("agent", ""),
+                agent_name=agent_name,
                 suppress_output=False,
                 stop_event=stop_event,
                 **common_kwargs,
             )
+            return result
         finally:
             render_pop_depth()
+            render_group_end(
+                label,
+                success=result.success if result else False,
+                duration_s=time.monotonic() - t0,
+            )
     else:
         # Parallel: suppress during execution, collect and display after
         return _run_parallel(task_specs=tasks, stop_event=stop_event, **common_kwargs)

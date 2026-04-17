@@ -131,3 +131,133 @@ class TestRendererSwap:
         set_renderer(new)
         assert get_renderer() is new
         set_renderer(old)
+
+
+# ── Group rendering (skill/delegate blocks) ─────────
+
+
+def _capture_direct(setup_fn) -> str:
+    """Capture with direct renderer access (setup_fn gets the renderer)."""
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=True, width=120)
+    r = MinimalRenderer(console)
+    setup_fn(r)
+    return buf.getvalue()
+
+
+class TestGroupRendering:
+    def test_group_start_shows_top_border(self):
+        """group_start prints ┌─ with icon and label."""
+        out = _capture_direct(lambda r: r.group_start("skill:plan", icon="🪄"))
+        assert "┌─" in out
+        assert "🪄" in out
+        assert "skill:plan" in out
+
+    def test_group_start_without_icon(self):
+        """group_start works without icon."""
+        out = _capture_direct(lambda r: r.group_start("delegate"))
+        assert "┌─" in out
+        assert "delegate" in out
+
+    def test_group_end_success(self):
+        """group_end shows ✓ for success with duration."""
+        out = _capture_direct(
+            lambda r: r.group_end("skill:plan", success=True, duration_s=12.3)
+        )
+        assert "└─" in out
+        assert "✓" in out
+        assert "skill:plan" in out
+        assert "12.3s" in out
+
+    def test_group_end_failure(self):
+        """group_end shows ✗ for failure."""
+        out = _capture_direct(lambda r: r.group_end("skill:bad", success=False))
+        assert "└─" in out
+        assert "✗" in out
+        assert "skill:bad" in out
+
+    def test_group_end_no_duration(self):
+        """duration_s=0 omits the time display."""
+        out = _capture_direct(lambda r: r.group_end("skill:x", success=True))
+        assert "└─" in out
+        assert "(0" not in out  # No "(0.0s)" shown
+
+    def test_group_contains_nested_output(self):
+        """Full cycle: start → push → inner output → pop → end."""
+
+        def run(r):
+            r.group_start("skill:plan", icon="🪄")
+            r.push_depth()
+            r.turn_sep(1)
+            r.thought("analyzing", 1)
+            r.pop_depth()
+            r.group_end("skill:plan", success=True, duration_s=5.0)
+
+        out = _capture_direct(run)
+        assert "┌─" in out
+        assert "└─" in out
+        # Inner content should have │ prefix (depth=1)
+        assert "│" in out
+        assert "analyzing" in out
+
+    def test_group_respects_current_depth(self):
+        """Nested groups (skill → delegate) stack prefixes correctly."""
+
+        def run(r):
+            r.group_start("skill:a", icon="🪄")
+            r.push_depth()
+            r.group_start("delegate:b", icon="🦀")
+            r.push_depth()
+            r.thought("inner", 1)
+            r.pop_depth()
+            r.group_end("delegate:b", success=True, duration_s=1.0)
+            r.pop_depth()
+            r.group_end("skill:a", success=True, duration_s=5.0)
+
+        out = _capture_direct(run)
+        # Outer skill at depth 0
+        assert "┌─ 🪄 skill:a" in out
+        # Inner delegate at depth 1 → prefixed with │
+        assert "│" in out
+        assert "delegate:b" in out
+        # Both groups closed
+        assert out.count("└─") == 2
+
+    def test_group_captured_during_parallel(self):
+        """group_start/end inside capture mode goes to buffer."""
+
+        def run(r):
+            r.start_capture()
+            r.group_start("delegate:x", icon="🦀")
+            r.thought("captured", 1)
+            r.group_end("delegate:x", success=True, duration_s=2.0)
+            captured = r.stop_capture()
+            # Nothing was printed to console
+            # (captured buffer has the events stripped of markup)
+            assert captured  # non-empty
+            assert any("delegate:x" in line for line in captured)
+
+        _capture_direct(run)
+
+
+class TestGroupDelegatingFunctions:
+    """Test render_group_start / render_group_end wrappers."""
+
+    def test_delegating_functions(self):
+        from agent_cli.render import render_group_start, render_group_end
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        old = get_renderer()
+        set_renderer(MinimalRenderer(console))
+        try:
+            render_group_start("skill:test", icon="🪄")
+            render_group_end("skill:test", success=True, duration_s=1.5)
+        finally:
+            set_renderer(old)
+
+        out = buf.getvalue()
+        assert "┌─" in out
+        assert "└─" in out
+        assert "skill:test" in out
+        assert "1.5s" in out

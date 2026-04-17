@@ -136,6 +136,14 @@ def render_pop_depth() -> None:
     _renderer.pop_depth()
 
 
+def render_group_start(label: str, icon: str = "") -> None:
+    _renderer.group_start(label, icon)
+
+
+def render_group_end(label: str, success: bool = True, duration_s: float = 0) -> None:
+    _renderer.group_end(label, success, duration_s)
+
+
 def render_start_capture() -> None:
     _renderer.start_capture()
 

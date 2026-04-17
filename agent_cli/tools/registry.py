@@ -356,25 +356,37 @@ def validate_tool_input(
             if required:
                 action_input = {required[0]: action_input}
             else:
-                return False, (
-                    f"action_input for '{tool_name}' must be a JSON object, "
-                    f"got string: {action_input!r}"
-                ), action_input
+                return (
+                    False,
+                    (
+                        f"action_input for '{tool_name}' must be a JSON object, "
+                        f"got string: {action_input!r}"
+                    ),
+                    action_input,
+                )
 
     if not isinstance(action_input, dict):
-        return False, (
-            f"action_input for '{tool_name}' must be a JSON object, "
-            f"got {type(action_input).__name__}"
-        ), action_input
+        return (
+            False,
+            (
+                f"action_input for '{tool_name}' must be a JSON object, "
+                f"got {type(action_input).__name__}"
+            ),
+            action_input,
+        )
 
     # Check required fields
     required = schema.parameters.get("required", [])
     missing = [f for f in required if f not in action_input]
     if missing:
-        return False, (
-            f"Missing required field(s) for '{tool_name}': {', '.join(missing)}. "
-            f"Expected: {json.dumps(schema.parameters, indent=2)}"
-        ), action_input
+        return (
+            False,
+            (
+                f"Missing required field(s) for '{tool_name}': {', '.join(missing)}. "
+                f"Expected: {json.dumps(schema.parameters, indent=2)}"
+            ),
+            action_input,
+        )
 
     # Strip empty strings from optional fields (LLMs send "" for omitted params)
     properties = schema.parameters.get("properties", {})
@@ -392,10 +404,14 @@ def validate_tool_input(
             if coerced is not None:
                 action_input[key] = coerced
             else:
-                return False, (
-                    f"Field '{key}' for '{tool_name}' expected {expected_type}, "
-                    f"got {type(value).__name__}: {value!r}"
-                ), action_input
+                return (
+                    False,
+                    (
+                        f"Field '{key}' for '{tool_name}' expected {expected_type}, "
+                        f"got {type(value).__name__}: {value!r}"
+                    ),
+                    action_input,
+                )
 
     return True, None, action_input
 

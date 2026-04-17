@@ -31,6 +31,8 @@ from agent_cli.render import (
     render_stream_end,
     render_push_depth,
     render_pop_depth,
+    render_group_start,
+    render_group_end,
 )
 from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
@@ -51,7 +53,6 @@ def _debug_log(msg: str) -> None:
     import sys
 
     print(f"[debug {time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
-
 
 
 class AgentLoop:
@@ -894,8 +895,9 @@ def _handle_run_skill(
             mcp_manager=mcp_manager,
         )
 
-    render_status("running", f"Running skill: {name}...")
+    render_group_start(f"skill:{name}", icon="🪄")
     render_push_depth()
+    t0 = time.monotonic()
 
     try:
         from agent_cli.providers import create_provider
@@ -922,6 +924,11 @@ def _handle_run_skill(
         skill_result = ToolResult(False, error=f"run_skill({name}) failed: {e}")
     finally:
         render_pop_depth()
+        render_group_end(
+            f"skill:{name}",
+            success=skill_result.success if skill_result else False,
+            duration_s=time.monotonic() - t0,
+        )
 
     # OnSkillEnd hook
     if hook_runner:

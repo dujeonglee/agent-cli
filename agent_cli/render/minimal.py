@@ -242,6 +242,19 @@ class MinimalRenderer(Renderer):
                 pass
             self._live = None
 
+    def group_start(self, label: str, icon: str = "") -> None:
+        """Print ┌─ at current depth. Call BEFORE push_depth."""
+        icon_part = f"{icon} " if icon else ""
+        self._p(f"┌─ {icon_part}{label}", highlight=False)
+
+    def group_end(
+        self, label: str, success: bool = True, duration_s: float = 0
+    ) -> None:
+        """Print └─ at current depth. Call AFTER pop_depth."""
+        status = "✓" if success else "✗"
+        dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
+        self._p(f"└─ {status} {label}{dur}", highlight=False)
+
     def stream_chunk(self, text: str) -> None:
         if self.is_capturing:
             self._capture_line(text)

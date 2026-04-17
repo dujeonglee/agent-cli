@@ -149,3 +149,11 @@ class Renderer(ABC):
 
     def stream_end(self) -> None:
         """Signal end of streaming. Default: no-op."""
+
+    def group_start(self, label: str, icon: str = "") -> None:
+        """Start a nested block (skill/delegate). Default: no-op."""
+
+    def group_end(
+        self, label: str, success: bool = True, duration_s: float = 0
+    ) -> None:
+        """End a nested block. Default: no-op."""
