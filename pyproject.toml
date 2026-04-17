@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# macOS: install gnureadline for proper CJK width in chat input
+macos = ["gnureadline>=8.0; sys_platform == 'darwin'"]
 
 [project.scripts]
 agent-cli = "agent_cli.main:app"
