@@ -19,7 +19,6 @@ from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities, needs_tool_action
 from agent_cli.render import (
     render_context_dump,
-    render_dispatch_progress,
     render_header,
     render_turn_sep,
     render_raw,
@@ -70,7 +69,6 @@ class AgentLoop:
         max_turns: int = 0,
         verbose: bool = False,
         ctx: ContextManager | None = None,
-        suppress_output: bool = False,
         depth: int = 0,
         max_depth: int = 2,
         delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
@@ -98,7 +96,6 @@ class AgentLoop:
         self.max_turns = max_turns
         self.verbose = verbose
         self.ctx = ctx
-        self.suppress_output = suppress_output
         self.depth = depth
         self.max_depth = max_depth
         self.delegate_timeout = delegate_timeout
@@ -121,8 +118,8 @@ class AgentLoop:
         # Remove "delegate" when depth >= max_depth
         if depth >= max_depth and "delegate" in self.tools_list:
             self.tools_list = [t for t in self.tools_list if t != "delegate"]
-        # Remove "ask" in non-interactive mode (no ctx or suppress_output)
-        if (not ctx or suppress_output) and "ask" in self.tools_list:
+        # Remove "ask" in non-interactive mode (no ctx)
+        if not ctx and "ask" in self.tools_list:
             self.tools_list = [t for t in self.tools_list if t != "ask"]
         # Build skill stack for recursive call prevention
         if skill_stack is None:
@@ -239,10 +236,9 @@ class AgentLoop:
         interrupt_msg = "⚡ User interrupted. Waiting for new instructions."
         if self.ctx:
             self.ctx.add({"role": "user", "content": interrupt_msg})
-        if not self.suppress_output:
-            from agent_cli.render import C, console
+        from agent_cli.render import C, console
 
-            console.print(f"\n[{C['accent']}]⚡ Interrupted after turn {self.turn}.[/]")
+        console.print(f"\n[{C['accent']}]⚡ Interrupted after turn {self.turn}.[/]")
         _debug_log(f"Graceful interrupt at turn {self.turn}")
         return ToolResult(False, error="Interrupted by user")
 
@@ -264,14 +260,13 @@ class AgentLoop:
             mcp_manager=self.mcp_manager,
         )
 
-        if not self.suppress_output:
-            render_header(
-                self.provider_name,
-                self.model,
-                self.max_turns,
-                skill_name=self.skill_name,
-                skill_args=self.skill_args,
-            )
+        render_header(
+            self.provider_name,
+            self.model,
+            self.max_turns,
+            skill_name=self.skill_name,
+            skill_args=self.skill_args,
+        )
 
         # Message setup
         if self.ctx:
@@ -288,8 +283,7 @@ class AgentLoop:
 
     def _begin_turn(self) -> None:
         """Render turn separator."""
-        if not self.suppress_output:
-            render_turn_sep(self.turn)
+        render_turn_sep(self.turn)
 
     def _execute_turn(self):
         """Single turn: hooks, LLM call, text parse, dispatch."""
@@ -306,14 +300,13 @@ class AgentLoop:
         llm_text = response.content
 
         # Show token stats if available (Ollama provides eval durations)
-        if not self.suppress_output and response.usage:
+        if response.usage:
             _render_token_stats(response.usage, self.turn)
 
         # PostLLMCall hook
         self._fire_hook("PostLLMCall", llm_response=llm_text)
 
-        if not self.suppress_output:
-            render_raw(llm_text, self.turn, self.verbose)
+        render_raw(llm_text, self.turn, self.verbose)
 
         result = self._handle_text_path(llm_text)
 
@@ -325,14 +318,13 @@ class AgentLoop:
     def _call_llm(self):
         """LLM call with overflow retry and streaming. Returns response or sentinel."""
         # Context dump (verbose only)
-        if self.verbose and not self.suppress_output:
+        if self.verbose:
             render_context_dump(self.messages, self.turn)
         _debug_log(
             f"LLM_CALL turn={self.turn} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
         )
 
         # Build streaming callback: stops spinner on first chunk, then streams
-        streaming = not self.suppress_output
         spinner_active = True
 
         def on_chunk(text: str) -> None:
@@ -344,18 +336,15 @@ class AgentLoop:
 
         if self.skill_name:
             render_spinner_start(f"skill:{self.skill_name} thinking...")
-        elif not self.suppress_output:
+        else:
             render_spinner_start("thinking...")
         try:
-            call_kwargs: dict = {}
-            if streaming:
-                call_kwargs["on_chunk"] = on_chunk
             response = self.provider.call(
                 messages=self.messages,
                 system=self.system,
                 model=self.model,
                 capabilities=self.capabilities,
-                **call_kwargs,
+                on_chunk=on_chunk,
             )
             return response
         except Exception as e:
@@ -377,9 +366,9 @@ class AgentLoop:
 
             return ToolResult(False, error=f"LLM call failed: {e}")
         finally:
-            if spinner_active and (self.skill_name or not self.suppress_output):
+            if spinner_active:
                 render_spinner_stop()
-            if streaming and not spinner_active:
+            else:
                 render_stream_end()
 
     def _handle_text_path(self, llm_text: str):
@@ -387,20 +376,12 @@ class AgentLoop:
         parsed = parse_react(llm_text)
 
         # 6. Thought
-        if parsed.thought and not self.suppress_output:
+        if parsed.thought:
             render_step("thought", parsed.thought, self.turn)
 
         # 7. Complete tool (text parsing path)
         _debug_log(f"PARSED iter={self.turn} action={parsed.action}")
         if parsed.action == "complete":
-            _render_skill_progress(
-                self.skill_name,
-                self.turn,
-                "complete",
-                {},
-                self.suppress_output,
-                thought=parsed.thought or "",
-            )
             if isinstance(parsed.action_input, dict):
                 raw = parsed.action_input.get("result")
                 answer = (
@@ -444,8 +425,7 @@ class AgentLoop:
                         "action_input": {"result": answer},
                     }
                 )
-            if not self.suppress_output:
-                render_step("final", answer, self.turn)
+            render_step("final", answer, self.turn)
 
             return ToolResult(True, output=answer)
 
@@ -461,8 +441,7 @@ class AgentLoop:
                         "action_input": {"result": echo_answer},
                     }
                 )
-            if not self.suppress_output:
-                render_step("final", echo_answer, self.turn)
+            render_step("final", echo_answer, self.turn)
 
             return ToolResult(True, output=echo_answer)
 
@@ -470,7 +449,7 @@ class AgentLoop:
         if parsed.action == "ask":
             questions = _extract_questions(parsed.action_input)
             if questions:
-                user_response = _handle_ask(questions, self.suppress_output)
+                user_response = _handle_ask(questions)
                 obs_msg = f"Observation: User responded:\n{user_response}"
                 _append_observation(self.messages, self.ctx, llm_text, obs_msg)
                 return self._CONTINUE
@@ -497,8 +476,7 @@ class AgentLoop:
                 mcp_manager=self.mcp_manager,
             )
             obs = skill_tool_result.output or skill_tool_result.error
-            if not self.suppress_output:
-                render_step("observation", obs, self.turn, tool_name="run_skill")
+            render_step("observation", obs, self.turn, tool_name="run_skill")
             obs_msg = f"Observation: {obs}"
             _append_observation(
                 self.messages,
@@ -516,15 +494,7 @@ class AgentLoop:
             if isinstance(parsed.action_input, dict):
                 summary = parsed.action_input.get("summary", "")
             obs = _build_review_observation(self.query, summary, ctx=self.ctx)
-            _render_skill_progress(
-                self.skill_name,
-                self.turn,
-                "ready_for_review",
-                {"summary": summary},
-                self.suppress_output,
-                thought=parsed.thought or "",
-            )
-            if not self.skill_name and not self.suppress_output:
+            if not self.skill_name:
                 render_step(
                     "observation",
                     obs,
@@ -545,25 +515,16 @@ class AgentLoop:
             truncation_warning = ""
             if parsed.truncated and tool_name == "edit_file":
                 tool_input, truncation_warning = _sanitize_truncated_edit(tool_input)
-            _render_skill_progress(
-                self.skill_name,
-                self.turn,
-                tool_name,
-                tool_input,
-                self.suppress_output,
-                thought=parsed.thought or "",
-            )
 
-            if not self.suppress_output:
-                render_step(
-                    "action",
-                    "",
-                    self.turn,
-                    tool_name=tool_name,
-                    tool_input=json.dumps(tool_input, ensure_ascii=False)
-                    if isinstance(tool_input, dict)
-                    else str(tool_input),
-                )
+            render_step(
+                "action",
+                "",
+                self.turn,
+                tool_name=tool_name,
+                tool_input=json.dumps(tool_input, ensure_ascii=False)
+                if isinstance(tool_input, dict)
+                else str(tool_input),
+            )
 
             # Execute tool (shared logic -- tracks tools_called + history)
             tool_result = _execute_single_tool(
@@ -585,7 +546,6 @@ class AgentLoop:
                 delegate_depth=self.depth,
                 delegate_max_depth=self.max_depth,
                 delegate_max_turns=self.max_turns,
-                delegate_suppress=self.suppress_output,
                 delegate_session=self.session,
                 delegate_skill_stack=self.skill_stack,
                 delegate_agent_stack=self.agent_stack,
@@ -600,13 +560,12 @@ class AgentLoop:
             if truncation_warning:
                 observation = f"{observation}\n{truncation_warning}"
 
-            if not self.suppress_output:
-                render_step(
-                    "observation",
-                    observation,
-                    self.turn,
-                    tool_name=tool_name,
-                )
+            render_step(
+                "observation",
+                observation,
+                self.turn,
+                tool_name=tool_name,
+            )
 
             # Repeated call detection
             if _detect_repeated_calls(self.recent_tool_history):
@@ -671,9 +630,7 @@ class AgentLoop:
 
     def _on_max_turns(self):
         """Handle max turns reached."""
-
-        if not self.suppress_output:
-            render_status("error", f"Max turns ({self.max_turns}) reached.")
+        render_status("error", f"Max turns ({self.max_turns}) reached.")
         _debug_log(
             f"run_loop returning None: max_turns={self.max_turns} reached, skill_name={self.skill_name}"
         )
@@ -692,7 +649,6 @@ def run_loop(
     max_turns: int = 0,
     verbose: bool = False,
     ctx: ContextManager | None = None,
-    suppress_output: bool = False,
     depth: int = 0,
     max_depth: int = 2,
     delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
@@ -722,7 +678,6 @@ def run_loop(
         max_turns=max_turns,
         verbose=verbose,
         ctx=ctx,
-        suppress_output=suppress_output,
         depth=depth,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
@@ -781,7 +736,7 @@ def _extract_questions(action_input) -> list[str]:
     return []
 
 
-def _handle_ask(questions: list[str], suppress_output: bool) -> str:
+def _handle_ask(questions: list[str]) -> str:
     """Display all questions at once and collect a single response."""
     from agent_cli.render import C, console
 
@@ -798,42 +753,6 @@ def _handle_ask(questions: list[str], suppress_output: bool) -> str:
 
     q_part = "\n".join(f"Q: {q}" for q in questions)
     return f"{q_part}\nA: {answer}"
-
-
-def _render_skill_progress(
-    skill_name: str,
-    turn: int,
-    tool_name: str,
-    tool_input,
-    suppress_output: bool,
-    thought: str = "",
-) -> None:
-    """Show skill/dispatch progress via renderer. Shows even when suppress_output=True (for skills)."""
-    if not skill_name:
-        return
-
-    # Build action detail from tool input
-    detail = ""
-    if isinstance(tool_input, dict):
-        if tool_name in ("read_file", "write_file", "edit_file"):
-            path = tool_input.get("path", "")
-            if path:
-                detail = f" {path}"
-        elif tool_name == "shell":
-            cmd = tool_input.get("command", "")
-            if cmd:
-                detail = f" {cmd[:60]}"
-        elif tool_name == "run_skill":
-            name = tool_input.get("name", "")
-            detail = f" {name}"
-
-    render_dispatch_progress(
-        label=f"skill:{skill_name}",
-        turn=turn,
-        tool_name=tool_name,
-        detail=detail,
-        thought=thought,
-    )
 
 
 def _handle_run_skill(
@@ -912,7 +831,6 @@ def _handle_run_skill(
             provider_name=provider_name,
             base_url=base_url,
             api_key=api_key,
-            suppress_output=False,
             ctx=ctx,
             session=session,
             skill_stack=skill_stack,
@@ -993,7 +911,6 @@ def _execute_single_tool(
     delegate_depth: int = 0,
     delegate_max_depth: int = 2,
     delegate_max_turns: int = 0,
-    delegate_suppress: bool = False,
     delegate_session=None,
     delegate_skill_stack: list[str] | None = None,
     delegate_agent_stack: list[str] | None = None,
@@ -1078,7 +995,6 @@ def _execute_single_tool(
             max_depth=delegate_max_depth,
             max_turns=delegate_max_turns,
             timeout=delegate_timeout,
-            suppress_output=delegate_suppress,
             session=delegate_session,
             skill_stack=delegate_skill_stack,
             agent_stack=delegate_agent_stack,

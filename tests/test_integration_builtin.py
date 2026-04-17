@@ -44,7 +44,6 @@ class TestExplorerAgent:
             provider_name="ollama",
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
             api_key="",
-            suppress_output=True,
             max_turns=5,
         )
         assert result.success
@@ -75,7 +74,6 @@ class TestExplorerAgent:
             provider_name="ollama",
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
             api_key="",
-            suppress_output=True,
             max_turns=5,
         )
         assert result.success
@@ -124,7 +122,6 @@ class TestPlanSkill:
                 provider=ollama_provider,
                 capabilities=model_capabilities,
                 model=integration_model,
-                suppress_output=True,
                 ctx=ctx,
             )
 
@@ -169,7 +166,6 @@ class TestPlanSkill:
                 provider=ollama_provider,
                 capabilities=model_capabilities,
                 model=integration_model,
-                suppress_output=True,
                 ctx=ctx,
             )
 

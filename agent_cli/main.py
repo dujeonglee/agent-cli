@@ -301,7 +301,6 @@ def _dispatch_agent(
         max_depth=max_depth,
         max_turns=max_turns,
         timeout=delegate_timeout,
-        suppress_output=False,
         session=session,
     )
 
@@ -387,7 +386,6 @@ def _dispatch_skill(
             api_key=resolved_key,
             max_turns=max_turns,
             verbose=verbose,
-            suppress_output=False,
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,
             ctx=ctx,
@@ -711,7 +709,6 @@ def run(
             api_key=resolved_key,
             max_turns=max_turns,
             verbose=verbose,
-            suppress_output=headless,
             depth=depth,
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,

@@ -272,32 +272,8 @@ class TestAnthropicStreaming:
 
 
 class TestLoopStreamingWiring:
-    def test_suppress_output_no_streaming(self):
-        """When suppress_output=True, on_chunk should NOT be passed."""
-        from agent_cli.loop import AgentLoop
-
-        provider = MagicMock()
-        provider.call.return_value = LLMResponse(
-            content='{"thought":"hi","action":"complete","action_input":{"result":"done"}}'
-        )
-
-        loop = AgentLoop(
-            query="test",
-            provider=provider,
-            capabilities=_CAPS,
-            model="test",
-            suppress_output=True,
-        )
-        loop._setup()
-        loop.turn = 1
-        loop._call_llm()
-
-        # Verify on_chunk was NOT passed
-        call_kwargs = provider.call.call_args[1]
-        assert "on_chunk" not in call_kwargs
-
-    def test_normal_output_has_streaming(self):
-        """When suppress_output=False, on_chunk should be passed."""
+    def test_on_chunk_always_passed(self):
+        """on_chunk is always passed (streaming is default behavior now)."""
         from agent_cli.loop import AgentLoop
 
         provider = MagicMock()
@@ -308,7 +284,6 @@ class TestLoopStreamingWiring:
             provider=provider,
             capabilities=_CAPS,
             model="test",
-            suppress_output=False,
         )
         loop._setup()
         loop.turn = 1

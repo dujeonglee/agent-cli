@@ -45,7 +45,6 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "42"
 
@@ -68,7 +67,6 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert "hello world" in result.output
 
@@ -88,7 +86,6 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "Simple answer"
 
@@ -110,7 +107,6 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert "Created file successfully" in result.output
 
@@ -140,7 +136,6 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert (
             result.output
@@ -173,7 +168,6 @@ class TestRunLoopComplete:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert (
             result.output
@@ -198,7 +192,6 @@ class TestRunLoopToolExecution:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.success
 
@@ -218,7 +211,6 @@ class TestRunLoopToolExecution:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "ok"
 
@@ -234,7 +226,6 @@ class TestRunLoopParseFailure:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
             max_turns=5,
         )
         assert result.output == "recovered"
@@ -270,7 +261,6 @@ class TestRunLoopMaxIter:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
             max_turns=2,
         )
         assert not result.success
@@ -304,7 +294,6 @@ class TestToolHistoryTracking:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "ok"
 
@@ -329,7 +318,6 @@ class TestEchoAsFinalAnswer:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "Task completed successfully."
 
@@ -350,7 +338,6 @@ class TestEchoAsFinalAnswer:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "found"
 
@@ -371,7 +358,6 @@ class TestEchoAsFinalAnswer:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "written"
 
@@ -395,7 +381,6 @@ class TestRepeatedCallDetection:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert not result.success
 
@@ -437,7 +422,6 @@ class TestRepeatedCallDetection:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "ok"
 
@@ -450,16 +434,15 @@ class TestRunLoopHeadlessMode:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result.output == "answer"
 
 
 class TestAskToolAvailability:
-    """Verify ask tool inclusion/exclusion based on ctx and suppress_output."""
+    """Verify ask tool inclusion/exclusion based on ctx presence."""
 
-    def test_ask_available_with_ctx_not_headless(self, caps, tmp_path):
-        """ctx present + suppress_output=False → ask included."""
+    def test_ask_available_with_ctx(self, caps, tmp_path):
+        """ctx present → ask included."""
         from agent_cli.loop import AgentLoop
 
         ctx = MagicMock()
@@ -470,28 +453,11 @@ class TestAskToolAvailability:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            suppress_output=False,
         )
         assert "ask" in loop.tools_list
 
-    def test_ask_hidden_when_headless(self, caps, tmp_path):
-        """suppress_output=True → ask removed even with ctx."""
-        from agent_cli.loop import AgentLoop
-
-        ctx = MagicMock()
-        ctx.session_dir = tmp_path
-        loop = AgentLoop(
-            query="Q",
-            provider=MagicMock(),
-            capabilities=caps,
-            model="m",
-            ctx=ctx,
-            suppress_output=True,
-        )
-        assert "ask" not in loop.tools_list
-
     def test_ask_hidden_without_ctx(self, caps):
-        """ctx=None → ask removed regardless of suppress_output."""
+        """ctx=None → ask removed (non-interactive mode)."""
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(
@@ -500,7 +466,6 @@ class TestAskToolAvailability:
             capabilities=caps,
             model="m",
             ctx=None,
-            suppress_output=False,
         )
         assert "ask" not in loop.tools_list
 
@@ -520,7 +485,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
         )
         loop._interrupted = True
         result = loop.run()
@@ -554,7 +518,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
         )
 
         # Monkey-patch: set interrupted after first LLM call
@@ -589,7 +552,6 @@ class TestGracefulInterrupt:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            suppress_output=True,
         )
         # Set interrupt before first iteration (after setup adds user query)
         loop._interrupted = True
@@ -617,7 +579,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
             graceful_interrupt=True,
         )
         loop.run()
@@ -639,7 +600,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
             graceful_interrupt=False,
         )
         loop.run()
@@ -657,7 +617,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
         )
         loop._install_signal_handler()
         try:
@@ -681,7 +640,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
         )
         loop._install_signal_handler()
         try:
@@ -705,7 +663,6 @@ class TestGracefulInterrupt:
             capabilities=caps,
             model="m",
             ctx=None,
-            suppress_output=True,
         )
         loop._interrupted = True
         result = loop.run()
@@ -723,7 +680,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
             graceful_interrupt=False,
         )
         with pytest.raises(KeyboardInterrupt):
@@ -755,7 +711,6 @@ class TestGracefulInterrupt:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
             graceful_interrupt=True,
         )
 
@@ -808,7 +763,6 @@ class TestGracefulInterrupt:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            suppress_output=True,
             graceful_interrupt=True,
         )
 
@@ -882,7 +836,6 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
             ctx=ctx,
         )
         assert result.output == "Done after confirmation"
@@ -924,7 +877,6 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
             ctx=ctx,
         )
         assert result.output == "Processing file.py in python"
@@ -962,7 +914,6 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
             ctx=ctx,
         )
         assert result.output == "The answer is 42"
@@ -1000,7 +951,6 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
             ctx=ctx,
         )
         assert result.output == "ok"
@@ -1025,7 +975,6 @@ class TestAskTool:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
             ctx=ctx,
         )
         call_args = provider.call.call_args
@@ -1160,7 +1109,6 @@ class TestAgentLoopClass:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
         )
         result = loop.run()
         assert result.output == "42"
@@ -1192,7 +1140,6 @@ class TestContextContinuity:
             provider=provider,
             capabilities=caps,
             model="test",
-            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1212,7 +1159,6 @@ class TestContextContinuity:
             provider=provider,
             capabilities=caps,
             model="test",
-            suppress_output=True,
             ctx=ctx,
         )
         assert result.output == "final answer"
@@ -1245,7 +1191,6 @@ class TestContextContinuity:
             provider=provider,
             capabilities=caps,
             model="test",
-            suppress_output=True,
             ctx=ctx,
         )
 
@@ -1346,7 +1291,6 @@ class TestReadyForReviewTextPath:
             provider=provider,
             capabilities=caps,
             model="test",
-            suppress_output=True,
             ctx=ctx,
         )
         assert result.output == "Analysis complete"
@@ -1372,7 +1316,6 @@ class TestReadyForReviewTextPath:
             provider=provider,
             capabilities=caps,
             model="test",
-            suppress_output=True,
             ctx=ctx,
         )
         # The query should have appeared in the messages (as review observation)
@@ -1403,7 +1346,6 @@ class TestReadyForReviewTextPath:
                 provider=provider,
                 capabilities=caps,
                 model="test",
-                suppress_output=False,
                 ctx=ctx,
             )
             # render_step should have been called for ready_for_review observation
@@ -1438,7 +1380,6 @@ class TestReadyForReviewTextPath:
                 provider=provider,
                 capabilities=caps,
                 model="test",
-                suppress_output=False,
                 skill_name="greet",
                 ctx=ctx,
             )
@@ -1479,7 +1420,6 @@ class TestNoOutputTruncation:
             provider=provider,
             capabilities=caps,
             model="test",
-            suppress_output=True,
             ctx=ctx,
         )
         # Verify the observation contains all 500 lines (hashline format: "500#xx:")

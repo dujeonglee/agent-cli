@@ -460,7 +460,6 @@ class TestSkillExecution:
             provider=provider,
             capabilities=caps,
             model="test-model",
-            suppress_output=True,
         )
         assert result is not None
 
@@ -488,7 +487,6 @@ class TestSkillExecution:
             provider=provider,
             capabilities=caps,
             model="m",
-            suppress_output=True,
         )
         # Skill's max_turns should be used (verified by run_loop not exceeding it)
         assert provider.call.called
@@ -509,7 +507,6 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="m",
-                suppress_output=True,
                 session=fake_session,
             )
             _, kwargs = mock_run_loop.call_args
@@ -530,7 +527,6 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="m",
-                suppress_output=True,
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["session"] is None
@@ -550,7 +546,6 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="m",
-                suppress_output=True,
                 skill_stack=["summarize"],
             )
             _, kwargs = mock_run_loop.call_args
@@ -583,7 +578,6 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="original-model",
-                suppress_output=True,
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["model"] == "original-model"
@@ -617,7 +611,6 @@ class TestSkillExecution:
                 provider=provider,
                 capabilities=caps,
                 model="original-model",
-                suppress_output=True,
             )
             _, kwargs = mock_run_loop.call_args
             assert kwargs["model"] == "qwen3:8b"

@@ -16,7 +16,6 @@ from agent_cli.tools.registry import (
     get_tool_descriptions,
 )
 
-from agent_cli.tools.run_skill import tool_run_skill
 from agent_cli.tools.fetch import tool_fetch
 
 TOOLS: dict[str, Any] = {
@@ -35,7 +34,9 @@ TOOLS: dict[str, Any] = {
         ),
     ),
     "ask": lambda args: ToolResult(True, output=args.get("question", "(ask)")),
-    "run_skill": tool_run_skill,
+    "run_skill": lambda args: ToolResult(
+        True, output="(run_skill: intercepted by loop)"
+    ),
     "ready_for_review": lambda args: ToolResult(True, output=args.get("summary", "")),
     "fetch": tool_fetch,
 }

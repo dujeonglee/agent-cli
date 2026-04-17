@@ -661,62 +661,8 @@ class TestRunSkillTool:
         schema = TOOL_SCHEMAS["run_skill"]
         assert "name" in schema.parameters["required"]
 
-    def test_run_skill_valid_skill(self, tmp_path, monkeypatch):
-        """run_skill with valid skill name → executes and returns result."""
-        from unittest.mock import MagicMock, patch
+    def test_run_skill_is_virtual_tool(self):
+        """run_skill is intercepted by loop (virtual tool), not executed directly."""
+        from agent_cli.tools import VIRTUAL_TOOLS
 
-        from agent_cli.providers.compat import ModelCapabilities
-        from agent_cli.skills.models import Skill
-        from agent_cli.tools.run_skill import tool_run_skill
-
-        mock_skills = {
-            "summarize": Skill(
-                name="summarize",
-                description="Summarize",
-                prompt_template="Summarize $ARGUMENTS",
-                max_turns=3,
-            )
-        }
-        caps = ModelCapabilities(
-            context_window=32768,
-            max_output_tokens=4096,
-            supports_structured_output=False,
-            supports_tool_calling=False,
-            supports_thinking=False,
-            thinking_budget=0,
-            supports_strict_schema=False,
-        )
-        from agent_cli.tools.result import ToolResult as _TR
-
-        with patch("agent_cli.skills.load_skills", return_value=mock_skills):
-            with patch(
-                "agent_cli.skills.executor.execute_skill",
-                return_value=_TR(True, output="Summary done"),
-            ):
-                result = tool_run_skill(
-                    {"name": "summarize", "arguments": "README.md"},
-                    provider=MagicMock(),
-                    capabilities=caps,
-                    model="test",
-                )
-                assert result.success
-                assert "Summary done" in result.output
-
-    def test_run_skill_unknown(self, tmp_path, monkeypatch):
-        """run_skill with unknown skill name → error message."""
-        from unittest.mock import patch
-
-        from agent_cli.tools.run_skill import tool_run_skill
-
-        with patch("agent_cli.skills.loader.load_skills", return_value={}):
-            result = tool_run_skill({"name": "nonexistent", "arguments": ""})
-            assert not result.success
-            assert "not found" in result.error.lower()
-
-    def test_run_skill_no_name(self):
-        """run_skill without name → error."""
-        from agent_cli.tools.run_skill import tool_run_skill
-
-        result = tool_run_skill({"arguments": "something"})
-        assert not result.success
-        assert "name" in result.error.lower()
+        assert "run_skill" in VIRTUAL_TOOLS

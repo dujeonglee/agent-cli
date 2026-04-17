@@ -29,7 +29,6 @@ class TestSimpleConversation:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=3,
         )
         assert result.success
@@ -49,7 +48,6 @@ class TestReadFile:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=5,
         )
         assert result.success
@@ -64,7 +62,6 @@ class TestShellCommand:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=5,
         )
         assert result.success
@@ -83,7 +80,6 @@ class TestWriteFile:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=8,
         )
         assert result.success
@@ -105,7 +101,6 @@ class TestEditFile:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=12,
         )
         assert result.success
@@ -158,7 +153,6 @@ class TestMultiStepToolUse:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=10,
         )
         assert result.success
@@ -224,7 +218,6 @@ class TestSkillExecution:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
         )
         assert result.success
         assert result.success and len(result.output) > 10
@@ -255,7 +248,6 @@ class TestSkillExecution:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
         )
         assert result.success
         assert result.success and len(result.output) > 10
@@ -288,7 +280,6 @@ class TestSkillExecution:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             ctx=fake_ctx,
         )
         assert result.success
@@ -319,7 +310,6 @@ class TestSkillExecution:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
         )
         assert result.success
         assert str(datetime.datetime.now().year) in result.output
@@ -348,7 +338,6 @@ class TestSkillExecution:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
         )
         assert result.success
         assert "SHELL_ONLY_MARKER_99" in result.output
@@ -380,7 +369,6 @@ class TestSkillExecution:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
         )
         assert result.success
         assert result.success and len(result.output) > 0
@@ -408,7 +396,6 @@ class TestSkillExecution:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
         )
         assert result.success
         assert result.success and len(result.output) > 5
@@ -435,7 +422,6 @@ class TestSkillHooks:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=5,
             hooks_config=hooks_config,
         )
@@ -465,7 +451,6 @@ class TestSkillHooks:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=5,
             hooks_config=hooks_config,
         )
@@ -536,7 +521,6 @@ class TestDelegateSubagent:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=5,
         )
         assert result.success
@@ -558,7 +542,6 @@ class TestDelegateSubagent:
             provider=ollama_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            suppress_output=True,
             max_turns=8,
             ctx=ctx,
         )
