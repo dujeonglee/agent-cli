@@ -274,6 +274,10 @@ class TestSkillExecution:
 
         fake_ctx = MagicMock()
         fake_ctx.session_dir = tmp_path
+        # executor creates its own ContextManager from ctx.max_context_tokens;
+        # that constructor does `max_context_tokens > 0` so the mock has to
+        # return a real int, not an auto-generated MagicMock.
+        fake_ctx.max_context_tokens = 32768
         result = execute_skill(
             skill=skill,
             arguments=str(test_file),
