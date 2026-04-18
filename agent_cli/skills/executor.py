@@ -105,14 +105,21 @@ def execute_skill(
     stop_event=None,
     parent_tools: list[str] | None = None,
     parent_role: str = "",
+    parent_hooks_config: dict | None = None,
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
     Tool intersection: skill's allowed_tools ∩ parent_tools.
     If intersection is empty, execution is rejected.
     Parent role is inherited for system prompt.
+
+    Hooks: parent_hooks_config is merged with the skill's own frontmatter
+    hooks (skill.hooks) so skill-local matchers layer on top of the
+    caller's hooks for the duration of this skill's execution.
     """
     from pathlib import Path
+
+    from agent_cli.hooks import merge_hooks_configs
 
     # Tool intersection: skill tools ∩ parent tools
     effective_tools = skill.allowed_tools
@@ -158,6 +165,8 @@ def execute_skill(
             max_context_tokens=ctx.max_context_tokens,
         )
 
+    effective_hooks_config = merge_hooks_configs(parent_hooks_config, skill.hooks)
+
     loop_result = run_loop(
         query=prompt,
         provider=provider,
@@ -174,6 +183,7 @@ def execute_skill(
         active_tools=effective_tools,
         ctx=skill_ctx or ctx,
         session=session,
+        hooks_config=effective_hooks_config,
         skill_name=skill.name,
         skill_stack=skill_stack,
         skill_args=arguments,

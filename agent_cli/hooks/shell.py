@@ -105,6 +105,27 @@ def load_hooks(use_cache: bool = True) -> dict[str, list[HookMatcher]]:
     return result
 
 
+def merge_hooks_configs(
+    *configs: dict[str, list[HookMatcher]] | None,
+) -> dict[str, list[HookMatcher]] | None:
+    """Combine multiple hooks_config dicts by concatenating matcher lists.
+
+    Later configs append their matchers after earlier ones, so calling
+    `merge_hooks_configs(parent, skill)` yields parent's matchers first,
+    then skill-local ones — both fire for the same event. Returns None
+    when every input is empty so callers can stay on the `if cfg:` path.
+    """
+    merged: dict[str, list[HookMatcher]] = {}
+    for cfg in configs:
+        if not cfg:
+            continue
+        for event, matchers in cfg.items():
+            if not matchers:
+                continue
+            merged.setdefault(event, []).extend(matchers)
+    return merged or None
+
+
 def parse_hooks_config(
     raw: dict,
 ) -> dict[str, list[HookMatcher]]:

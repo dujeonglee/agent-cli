@@ -30,9 +30,6 @@ C = {
     "accent": "bright_cyan",
 }
 
-YES_MARK = "✓"
-NO_MARK = "✗"
-
 
 def set_renderer(renderer: Renderer) -> None:
     """Swap the active renderer."""

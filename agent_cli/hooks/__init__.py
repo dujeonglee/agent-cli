@@ -8,6 +8,7 @@ from agent_cli.hooks.shell import (  # noqa: F401
     HookMatcher,
     HookResult,
     load_hooks,
+    merge_hooks_configs,
     parse_hooks_config,
     run_hooks,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "HookMatcher",
     "HookResult",
     "load_hooks",
+    "merge_hooks_configs",
     "parse_hooks_config",
     "run_hooks",
 ]

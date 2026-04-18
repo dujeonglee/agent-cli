@@ -474,6 +474,7 @@ class AgentLoop:
                 stop_event=self.stop_event,
                 hook_runner=self.hook_runner,
                 mcp_manager=self.mcp_manager,
+                parent_hooks_config=self.hooks_config,
             )
             obs = skill_tool_result.output or skill_tool_result.error
             render_step("observation", obs, self.turn, tool_name="run_skill")
@@ -797,6 +798,7 @@ def _handle_run_skill(
     stop_event=None,
     hook_runner=None,
     mcp_manager=None,
+    parent_hooks_config: dict | None = None,
 ):
     """Handle run_skill at loop level with full ctx access."""
     # Inline import: circular dependency — executor.py imports run_loop from this module
@@ -863,6 +865,7 @@ def _handle_run_skill(
             skill_stack=skill_stack,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
+            parent_hooks_config=parent_hooks_config,
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")

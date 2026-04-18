@@ -1107,6 +1107,7 @@ A→B→A: 차단 (summarize → optimize → summarize)
 Python hook + shell hook 두 가지 방식의 라이프사이클 훅을 지원한다.
 - **Python hook**: `.agent-cli/hooks/*.py` — context window 조작, MCP 메모리 접근 가능
 - **Shell hook**: `.agent-cli/hooks.json` — 외부 명령 실행 (기존 방식, 하위 호환)
+- **Skill-local shell hook**: SKILL.md frontmatter의 `hooks:` 섹션 — 해당 스킬이 실행되는 동안만 적용되는 로컬 matcher. 호출자의 hooks_config와 `merge_hooks_configs(parent, skill.hooks)`로 합쳐져서 부모 훅과 함께 발동.
 
 ### 14.2 라이프사이클 이벤트 (11개)
 
