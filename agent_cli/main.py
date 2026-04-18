@@ -780,56 +780,10 @@ def sessions(
 
 
 def _read_user_input(prompt: str) -> str:
-    """Read user input with paste detection and explicit multiline support.
+    """REPL wrapper over the shared rich-input reader."""
+    from agent_cli.input_history import read_rich_input
 
-    - Single line: Enter sends immediately (unchanged behavior)
-    - Paste: detects buffered lines in stdin and reads them all
-    - Explicit multiline: start with \"\"\" and end with \"\"\"
-    """
-    import select
-    import sys
-
-    first_line = input(prompt).strip()
-    if not first_line:
-        return ""
-
-    # Explicit multiline: """ ... """
-    if first_line == '"""':
-        lines: list[str] = []
-        while True:
-            try:
-                line = input("... ")
-            except EOFError:
-                break
-            if line.strip() == '"""':
-                break
-            lines.append(line)
-            # Drain any pasted lines buffered in stdin
-            try:
-                while select.select([sys.stdin], [], [], 0.1)[0]:
-                    buf_line = sys.stdin.readline()
-                    if not buf_line:
-                        break
-                    stripped = buf_line.rstrip("\n")
-                    if stripped.strip() == '"""':
-                        return "\n".join(lines)
-                    lines.append(stripped)
-            except (OSError, ValueError):
-                pass
-        return "\n".join(lines)
-
-    # Paste detection: check if stdin has more data immediately available
-    lines = [first_line]
-    try:
-        while select.select([sys.stdin], [], [], 0.1)[0]:
-            line = sys.stdin.readline()
-            if not line:  # EOF
-                break
-            lines.append(line.rstrip("\n"))
-    except (OSError, ValueError):
-        pass  # select not supported (e.g. Windows) — single line only
-
-    return "\n".join(lines)
+    return read_rich_input(prompt)
 
 
 @app.command()

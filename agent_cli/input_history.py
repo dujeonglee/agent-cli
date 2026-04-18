@@ -81,3 +81,64 @@ def save() -> None:
         readline.write_history_file(str(_HISTORY_FILE))
     except OSError:
         pass  # best-effort, don't crash on exit
+
+
+def read_rich_input(prompt: str, continuation: str = "... ") -> str:
+    """Read user input with paste detection and explicit multiline support.
+
+    Shared by the main REPL and in-skill ask prompts so both behave the
+    same way:
+      - Single line: Enter sends immediately.
+      - Paste: drains extra lines buffered in stdin after the first line.
+      - Explicit multiline: first line is `\"\"\"` (or `'''`) alone, then
+        keep reading until a closing `\"\"\"`/`'''` line.
+
+    `prompt` is used for the first input() call; `continuation` for the
+    subsequent multiline lines (main.py uses the default, ask prompts
+    may want a depth-prefixed continuation).
+    """
+    import select
+    import sys
+
+    first_line = input(prompt).strip()
+    if not first_line:
+        return ""
+
+    # Explicit multiline: first line is """ or '''
+    if first_line in ('"""', "'''"):
+        close = first_line
+        lines: list[str] = []
+        while True:
+            try:
+                line = input(continuation)
+            except EOFError:
+                break
+            if line.strip() == close:
+                break
+            lines.append(line)
+            # Drain any pasted lines buffered in stdin
+            try:
+                while select.select([sys.stdin], [], [], 0.1)[0]:
+                    buf_line = sys.stdin.readline()
+                    if not buf_line:
+                        break
+                    stripped = buf_line.rstrip("\n")
+                    if stripped.strip() == close:
+                        return "\n".join(lines)
+                    lines.append(stripped)
+            except (OSError, ValueError):
+                pass
+        return "\n".join(lines)
+
+    # Paste detection: check if stdin has more data immediately available
+    lines = [first_line]
+    try:
+        while select.select([sys.stdin], [], [], 0.1)[0]:
+            line = sys.stdin.readline()
+            if not line:  # EOF
+                break
+            lines.append(line.rstrip("\n"))
+    except (OSError, ValueError):
+        pass  # select not supported (e.g. Windows) — single line only
+
+    return "\n".join(lines)

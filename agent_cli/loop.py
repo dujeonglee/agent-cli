@@ -766,8 +766,15 @@ def _handle_ask(questions: list[str]) -> str:
             console.print(f"{prefix}  {i}. {clean}")
         else:
             console.print(f"{prefix}  {clean}")
+    # Use the shared rich-input reader so paste and """ ... """ multiline
+    # work here just like they do at the top-level REPL prompt.
+    from agent_cli.input_history import read_rich_input
+
     try:
-        answer = input(f"{prefix}\n{prefix}Your answer: ").strip()
+        answer = read_rich_input(
+            f"{prefix}\n{prefix}Your answer: ",
+            continuation=f"{prefix}... ",
+        ).strip()
     except (EOFError, KeyboardInterrupt):
         answer = "(no response)"
 
