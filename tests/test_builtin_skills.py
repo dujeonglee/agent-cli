@@ -166,21 +166,18 @@ class TestBuiltinSkillContent:
         because the docs were inline and the ${SKILL_DIR} examples were
         substituted before the LLM ever saw the literal placeholder.
 
-        Current design splits the rule across two files:
-          - SKILL.md body carries the verify step + edit_file permission
-            so the builder can self-correct any slip.
-          - references/format.md carries the DO/DON'T block with concrete
-            anti-examples, reachable via a read_file call at runtime.
+        Current design puts the placeholder-heavy teaching in
+        references/format.md (read via read_file at runtime, so the
+        literal `${SKILL_DIR}` strings survive) and keeps the SKILL.md
+        body slim — one primacy-zone reminder in Task step 5 plus the
+        DO/DON'T evidence below.
         """
-        body = _CREATE_SKILL_PATH.read_text()
-        body_lower = body.lower()
+        # Body must still remind the LLM not to write absolute paths.
+        body_lower = _CREATE_SKILL_PATH.read_text().lower()
+        assert "/users/" in body_lower  # anti-example in Task step 5
+        assert "never" in body_lower
 
-        # Body must define the verify step and tool permissions.
-        assert "scan" in body_lower and "forbidden" in body_lower
-        skill = _parse_skill_file(_CREATE_SKILL_PATH)
-        assert "edit_file" in (skill.allowed_tools or [])
-
-        # Reference must carry the DO/DON'T evidence.
+        # Reference carries the full DO/DON'T evidence.
         ref = _CREATE_SKILL_FORMAT_REF.read_text()
         ref_lower = ref.lower()
         assert "DO" in ref and "DON'T" in ref

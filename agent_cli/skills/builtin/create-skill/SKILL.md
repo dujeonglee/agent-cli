@@ -2,7 +2,7 @@
 name: create-skill
 description: Create a new skill file interactively. Generates SKILL.md with frontmatter, prompt template, and optional scripts. Use when asked to create, make, or add a new skill.
 argument-hint: "<skill-name> [description]"
-allowed-tools: [read_file, write_file, edit_file, shell, ask]
+allowed-tools: [read_file, write_file, shell, ask]
 disable-model-invocation: true
 ---
 
@@ -48,17 +48,6 @@ absolute paths instead of the portable placeholder.
    absolute `/Users/...`, `/home/...`, or `~/...` path.
 6. Write to `.agent-cli/skills/<name>.md` (flat) or
    `.agent-cli/skills/<name>/SKILL.md` (with scripts).
-7. Verify the created SKILL.md — mandatory:
-   - `read_file` the SKILL.md you just wrote.
-   - Scan the body for any of these forbidden substrings:
-     `/Users/`, `/home/`, `/opt/`, `C:\`, `~/`, the absolute path to
-     the current project, and the literal strings
-     `agent_cli/skills/builtin` or `.agent-cli/skills/<name>`.
-   - If you find any of them inside a shell command, `edit_file` the
-     SKILL.md and replace the offending path with the
-     script-directory placeholder form from the reference.
-   - Re-read after editing to confirm no forbidden substring remains.
-   - Only then report success to the user.
 
 ## Writing good prompts
 
