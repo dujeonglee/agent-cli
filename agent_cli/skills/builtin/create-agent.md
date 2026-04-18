@@ -52,6 +52,7 @@ You are a [role]. Your job is to [what you do].
 | description | "" | Brief role description |
 | allowed-tools | all | Tools this agent can use when delegated |
 | model | caller's | Override model for this agent |
+| hooks | (none) | Agent-local shell hooks merged on top of the caller's. Same YAML shape as a project `hooks.json` or a skill's `hooks:` block. Useful for per-agent PreToolUse/PostToolUse policies that shouldn't apply when other agents or the top-level loop run. Example: auditing every shell call a security-reviewer agent makes, or blocking write_file for a sandbox agent. |
 
 ## Agent file locations
 

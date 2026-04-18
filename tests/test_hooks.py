@@ -701,3 +701,238 @@ class TestDelegateHooksWiring:
             )
 
         assert captured.get("hooks_config") is None
+
+
+class TestAgentFrontmatterHooks:
+    """Agents may declare a `hooks:` field in their definition's YAML
+    frontmatter. When a delegate call names that agent, its hooks are
+    parsed and merged on top of the caller's hooks_config for the
+    duration of that subagent's run — parent matchers first, agent
+    matchers appended, same contract as Skill.hooks.
+    """
+
+    def _caps(self):
+        from agent_cli.providers.compat import ModelCapabilities
+
+        return ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+            thinking_format="",
+        )
+
+    def _stub_load_agent(
+        self, role: str = "you are a test agent", hooks_raw: dict | None = None
+    ):
+        """Build a _load_agent return tuple: (role_prompt, config, error)."""
+        config: dict = {"allowed-tools": ["shell"]}
+        if hooks_raw is not None:
+            config["hooks"] = hooks_raw
+        return (role, config, None)
+
+    def test_agent_frontmatter_hooks_merged_with_parent(self):
+        """Parent hook matchers fire first, then agent-local matchers —
+        matching the merge_hooks_configs ordering contract."""
+        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.tools.result import ToolResult
+
+        parent_hooks = {
+            "PreToolUse": [HookMatcher(matcher="", hooks=[HookEntry("echo parent")])]
+        }
+        agent_hooks_raw = {
+            "PreToolUse": [
+                {
+                    "matcher": "shell",
+                    "hooks": [{"command": "echo agent", "timeout": 5}],
+                }
+            ]
+        }
+
+        captured: dict = {}
+
+        def fake_run_loop(**kwargs):
+            captured.update(kwargs)
+            return ToolResult(True, output="done")
+
+        with patch(
+            "agent_cli.tools.delegate._load_agent",
+            return_value=self._stub_load_agent(hooks_raw=agent_hooks_raw),
+        ):
+            with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+                tool_delegate(
+                    args={"tasks": [{"task": "t", "agent": "probe"}]},
+                    provider=object(),
+                    capabilities=self._caps(),
+                    model="m",
+                    hooks_config=parent_hooks,
+                )
+
+        forwarded = captured.get("hooks_config")
+        assert forwarded is not None, "agent hooks must reach run_loop"
+        matchers = forwarded["PreToolUse"]
+        cmds = [m.hooks[0].command for m in matchers]
+        # Parent first (general matcher), agent second (shell-scoped).
+        assert cmds == ["echo parent", "echo agent"], (
+            f"expected parent→agent order, got {cmds}"
+        )
+
+    def test_agent_hooks_only_when_parent_has_none(self):
+        """With no parent hooks_config, the agent's own hooks still
+        reach run_loop — agents aren't gated on parent presence."""
+        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.tools.result import ToolResult
+
+        agent_hooks_raw = {
+            "PreToolUse": [
+                {
+                    "matcher": "shell",
+                    "hooks": [{"command": "echo agent-only", "timeout": 5}],
+                }
+            ]
+        }
+
+        captured: dict = {}
+
+        def fake_run_loop(**kwargs):
+            captured.update(kwargs)
+            return ToolResult(True, output="done")
+
+        with patch(
+            "agent_cli.tools.delegate._load_agent",
+            return_value=self._stub_load_agent(hooks_raw=agent_hooks_raw),
+        ):
+            with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+                tool_delegate(
+                    args={"tasks": [{"task": "t", "agent": "probe"}]},
+                    provider=object(),
+                    capabilities=self._caps(),
+                    model="m",
+                )
+
+        forwarded = captured.get("hooks_config")
+        assert forwarded is not None
+        assert forwarded["PreToolUse"][0].hooks[0].command == "echo agent-only"
+
+    def test_agent_without_hooks_passes_parent_through_unchanged(self):
+        """An agent whose frontmatter has no `hooks:` field must leave
+        the parent's hooks_config intact — not wipe it to None."""
+        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.tools.result import ToolResult
+
+        parent_hooks = {
+            "PreToolUse": [HookMatcher(matcher="", hooks=[HookEntry("echo parent")])]
+        }
+
+        captured: dict = {}
+
+        def fake_run_loop(**kwargs):
+            captured.update(kwargs)
+            return ToolResult(True, output="done")
+
+        with patch(
+            "agent_cli.tools.delegate._load_agent",
+            return_value=self._stub_load_agent(hooks_raw=None),
+        ):
+            with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+                tool_delegate(
+                    args={"tasks": [{"task": "t", "agent": "probe"}]},
+                    provider=object(),
+                    capabilities=self._caps(),
+                    model="m",
+                    hooks_config=parent_hooks,
+                )
+
+        assert captured.get("hooks_config") is parent_hooks
+
+    def test_agent_frontmatter_hook_fires_subprocess_e2e(self, tmp_path):
+        """Full E2E: write a real agent file with a PreToolUse hook,
+        delegate to it with a mocked LLM, and verify the hook's
+        subprocess actually ran and wrote to the log file.
+
+        Uses `printf` instead of `echo` to avoid loop._try_echo_as_final
+        shortcut-intercepting the tool call before the hook fires (same
+        gotcha as the skill E2E tests above).
+        """
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.tools import delegate as delegate_mod
+        from agent_cli.tools.delegate import tool_delegate
+
+        log_file = tmp_path / "hook.log"
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_file = agents_dir / "probe.md"
+        agent_file.write_text(
+            "---\n"
+            "name: probe\n"
+            "allowed-tools: [shell]\n"
+            "hooks:\n"
+            "  PreToolUse:\n"
+            "    - matcher: shell\n"
+            "      hooks:\n"
+            f"        - command: \"cat >> {log_file}; echo '' >> {log_file}\"\n"
+            "          timeout: 5\n"
+            "---\n\n"
+            "You are the probe agent.\n"
+        )
+
+        # Point the agent loader at this tmp dir so _load_agent('probe')
+        # finds our definition instead of a real one.
+        delegate_mod._reset_agent_loader([agents_dir])
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "call shell",
+                        "action": "shell",
+                        "action_input": {"command": "printf marker"},
+                    }
+                )
+            ),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "done",
+                        "action": "complete",
+                        "action_input": {"result": "ok"},
+                    }
+                )
+            ),
+        ]
+
+        parent_ctx = ContextManager(
+            session_dir=tmp_path / "parent_session",
+            max_context_tokens=32768,
+        )
+
+        try:
+            tool_delegate(
+                args={"tasks": [{"task": "Go.", "agent": "probe"}]},
+                parent_ctx=parent_ctx,
+                provider=provider,
+                capabilities=self._caps(),
+                model="test",
+            )
+
+            assert log_file.exists(), (
+                "PreToolUse hook did not run — agent frontmatter hooks "
+                "not reaching run_hooks"
+            )
+            payload = json.loads(log_file.read_text().strip().splitlines()[0])
+            assert payload["hook_event_name"] == "PreToolUse"
+            assert payload["tool_name"] == "shell"
+            assert payload["tool_input"]["command"] == "printf marker"
+        finally:
+            # Restore default agent search paths so later tests in the
+            # same process aren't pointed at the tmp dir. conftest.py's
+            # autouse fixture does this too — belt and suspenders.
+            delegate_mod._reset_agent_loader()

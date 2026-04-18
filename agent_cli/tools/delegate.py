@@ -351,6 +351,16 @@ def _run_single(
         if agent_model and isinstance(agent_model, str):
             model = agent_model
 
+        # Agent-local shell hooks — merged on top of the caller's
+        # hooks_config so parent matchers still apply. Mirrors Skill.hooks
+        # semantics: the overlay only applies while this agent is running.
+        raw_agent_hooks = agent_config.get("hooks")
+        if isinstance(raw_agent_hooks, dict):
+            from agent_cli.hooks import merge_hooks_configs, parse_hooks_config
+
+            agent_hooks = parse_hooks_config(raw_agent_hooks) or None
+            hooks_config = merge_hooks_configs(hooks_config, agent_hooks)
+
     # Resolve parent session dir and create delegate subdir
     parent_session_dir = _resolve_session_dir(session, parent_ctx)
     delegate_dir_name = _generate_delegate_dir_name(agent_name or "task")
