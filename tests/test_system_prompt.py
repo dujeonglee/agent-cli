@@ -179,16 +179,17 @@ class TestBuildSystemPrompt:
         assert ctx_pos < guidelines_pos < format_pos < tools_pos
 
     def test_no_redundant_read_file_preview_rule(self):
-        """The peek=true reminder moved into Context Discipline, so the
+        """The stat=true reminder moved into Context Discipline, so the
         old Task Guidelines bullet that duplicated it must be gone. Also
-        guard against the legacy 'preview' name creeping back in — it
-        was renamed to 'peek' because the LLM interpreted 'preview' as
+        guard against the legacy names ('preview', then 'peek') creeping
+        back in — both were renamed because the LLM treated them as
         'I already looked at the file' and stopped after the first 20
-        lines."""
+        lines. 'stat' was chosen for its Unix-metadata connotation."""
         prompt = build_system_prompt(_make_caps(), ["read_file"])
         assert "call with preview=true first" not in prompt
         assert "preview=true" not in prompt
-        assert "peek" in prompt
+        assert "peek=true" not in prompt
+        assert "stat" in prompt
 
     def test_section_order_tools_before_environment(self):
         """Available Tools should appear before Environment (recency section)."""

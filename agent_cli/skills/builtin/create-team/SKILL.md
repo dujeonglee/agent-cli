@@ -14,7 +14,7 @@ You are a team architect for agent-cli. Analyze a project and create a complete 
 
 1. Understand the project efficiently — DO NOT full-read large files:
    - `shell` with `ls`/`find` to list files
-   - `read_file` with `peek=true` for a sizing check on any unknown file (follow up with a real read mode — peek alone only shows the first 20 lines)
+   - `read_file` with `stat=true` for a metadata query on any unknown file (follow up with a real read mode — stat alone only shows the first 20 lines)
    - `read_file` with `search="<keyword>"` for specific implementations
    - Only full-read small config files (<100 lines, e.g. README, pyproject.toml if small)
 2. Check existing agents/skills via `shell ls .agent-cli/agents/` and `.agent-cli/skills/`.

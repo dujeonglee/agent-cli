@@ -43,13 +43,12 @@ information gets dropped and reasoning quality degrades with it.
 
 Treat every token you add as a cost:
 
-- Read only what you need — but `peek` is a sizing check, not a substitute
-  for reading. After peeking, pick the right follow-up: full read (file is
-  small or central to the task), targeted line range (you know the region),
-  or specific search (hunting a symbol). Leaving a relevant file at
-  peek-only means you have not read it. Narrow shell commands and search
-  patterns at the source instead of dumping whole files or scrolling past
-  noise.
+- Read only what you need — but `stat` is a metadata query, not a read.
+  After stat, pick the right follow-up: full read (file is small or
+  central to the task), targeted line range (you know the region), or
+  specific search (hunting a symbol). Leaving a relevant file at stat-only
+  means you have not read it. Narrow shell commands and search patterns
+  at the source instead of dumping whole files or scrolling past noise.
 - Keep thoughts focused. State purpose and reason in one short paragraph
   — do not restate what the observation already shows.
 - Large irrelevant context (unrelated code, huge JSON dumps, verbose logs)
@@ -138,9 +137,9 @@ _READ_FILE_INLINE = """\
   Pick the smallest mode that answers the question — full reads burn
   context budget:
 
-  1. peek — sizing check, NOT a read. Returns line count + size + first
-     20 lines so you can pick a real read mode below.
-       {"path": "app.py", "peek": true}
+  1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
+     count + size + the first 20 lines so you can pick a real read mode.
+       {"path": "app.py", "stat": true}
   2. search — grep-style targeted lookup. Returns only matching regions
      with surrounding context.
        {"path": "app.py", "search": "login", "context": 5}
@@ -150,8 +149,8 @@ _READ_FILE_INLINE = """\
      genuinely need the whole thing.
        {"path": "app.py"}
 
-  Flow: for an unknown file, peek first to get its size, then pick one
-  of modes 2–4. peek alone is never enough — if you stop after peeking,
+  Flow: for an unknown file, stat first to get its size, then pick one
+  of modes 2–4. stat alone is never enough — if you stop after stat,
   you have only seen the first 20 lines."""
 
 # Map tool names to their inline guides

@@ -555,43 +555,44 @@ class TestReadFilePartial:
         assert "aaa" not in result.output
 
 
-class TestReadFilePeek:
-    def test_peek_shows_metadata(self, tmp_path):
-        """peek=True returns line count + size + first 20 lines."""
+class TestReadFileStat:
+    def test_stat_shows_metadata(self, tmp_path):
+        """stat=True returns line count + size + first 20 lines."""
         f = tmp_path / "big.py"
         content = "\n".join(f"line {i}" for i in range(1, 101))
         f.write_text(content)
-        result = tool_read_file({"path": str(f), "peek": True})
+        result = tool_read_file({"path": str(f), "stat": True})
         assert result.success
-        assert "[peek]" in result.output
+        assert "[stat]" in result.output
         assert "100 lines" in result.output
         assert "bytes" in result.output or "KB" in result.output
 
-    def test_peek_shows_first_20_lines(self, tmp_path):
-        """peek returns first 20 lines with hashlines."""
+    def test_stat_shows_first_20_lines(self, tmp_path):
+        """stat returns first 20 lines with hashlines."""
         f = tmp_path / "big.py"
         content = "\n".join(f"line {i}" for i in range(1, 101))
         f.write_text(content)
-        result = tool_read_file({"path": str(f), "peek": True})
+        result = tool_read_file({"path": str(f), "stat": True})
         assert "1#" in result.output
         assert "20#" in result.output
         assert "21#" not in result.output  # only first 20
 
-    def test_peek_small_file_shows_all(self, tmp_path):
-        """peek on small file shows all lines (less than 20)."""
+    def test_stat_small_file_shows_all(self, tmp_path):
+        """stat on small file shows all lines (less than 20)."""
         f = tmp_path / "small.py"
         f.write_text("a\nb\nc")
-        result = tool_read_file({"path": str(f), "peek": True})
+        result = tool_read_file({"path": str(f), "stat": True})
         assert result.success
         assert "3 lines" in result.output
 
-    def test_peek_includes_followup_guidance(self, tmp_path):
-        """peek output must tell the LLM this is a sizing check and point
-        at real read modes — otherwise the LLM treats peek-only as 'read'.
+    def test_stat_includes_followup_guidance(self, tmp_path):
+        """stat output must tell the LLM this is a metadata query and
+        point at real read modes — otherwise the LLM treats stat-only
+        as 'read'.
         """
         f = tmp_path / "big.py"
         f.write_text("\n".join(f"line {i}" for i in range(50)))
-        result = tool_read_file({"path": str(f), "peek": True})
+        result = tool_read_file({"path": str(f), "stat": True})
         assert "have NOT read" in result.output or "not read" in result.output.lower()
         assert "line_start" in result.output
         assert "search" in result.output
