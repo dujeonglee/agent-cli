@@ -374,6 +374,12 @@ def _dispatch_skill(
     render_push_depth()
     _t0 = _time.monotonic()
     skill_result = None
+    # Pull disk-loaded shell hooks (~/.agent-cli/hooks.json /
+    # .agent-cli/hooks.json) so the skill sees them merged with its own
+    # frontmatter hooks. load_hooks() caches, so repeat calls are cheap.
+    from agent_cli.hooks import load_hooks as _load_hooks
+
+    _parent_hooks = _load_hooks() or None
     try:
         skill_result = execute_skill(
             skill=skill,
@@ -391,6 +397,7 @@ def _dispatch_skill(
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
+            parent_hooks_config=_parent_hooks,
         )
     finally:
         render_pop_depth()
@@ -698,6 +705,9 @@ def run(
             _finalize_run(session, ctx, headless)
             return
 
+    from agent_cli.hooks import load_hooks as _load_hooks
+
+    _disk_hooks = _load_hooks() or None
     try:
         loop_result = run_loop(
             query=query,
@@ -715,6 +725,7 @@ def run(
             ctx=ctx,
             session=session,
             mcp_manager=mcp_manager,
+            hooks_config=_disk_hooks,
         )
         answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
@@ -1093,6 +1104,9 @@ def chat(
         session.query = query[:100]
         save_meta(session)
 
+        from agent_cli.hooks import load_hooks as _load_hooks
+
+        _disk_hooks = _load_hooks() or None
         loop_result = run_loop(
             query=query,
             provider=llm_provider,
@@ -1109,6 +1123,7 @@ def chat(
             session=session,
             graceful_interrupt=True,
             mcp_manager=mcp_manager,
+            hooks_config=_disk_hooks,
         )
         result = loop_result.output if loop_result.success else None
 
