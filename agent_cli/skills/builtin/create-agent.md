@@ -52,7 +52,31 @@ You are a [role]. Your job is to [what you do].
 | description | "" | Brief role description |
 | allowed-tools | all | Tools this agent can use when delegated |
 | model | caller's | Override model for this agent |
-| hooks | (none) | Agent-local shell hooks merged on top of the caller's. Same YAML shape as a project `hooks.json` or a skill's `hooks:` block. Useful for per-agent PreToolUse/PostToolUse policies that shouldn't apply when other agents or the top-level loop run. Example: auditing every shell call a security-reviewer agent makes, or blocking write_file for a sandbox agent. |
+| hooks | (none) | Agent-local shell hooks merged on top of the caller's. See "Hook block shape" below. Useful for per-agent PreToolUse/PostToolUse policies that shouldn't apply when other agents or the top-level loop run. Example: auditing every shell call a security-reviewer agent makes, or blocking write_file for a sandbox agent. |
+
+### Hook block shape (when `hooks:` is used)
+
+Use this YAML structure **exactly** — the parser looks for `matcher:`
+(string), `hooks:` (list of dicts), and `command:` (string). It does
+NOT recognise alternative keys like `cmd`, `shell:`, or nested dicts
+as matchers.
+
+```yaml
+hooks:
+  PreToolUse:               # or PostToolUse / PostToolUseFailure
+    - matcher: shell        # tool name regex; "" matches every tool
+      hooks:
+        - command: "cat >> /tmp/agent.log; echo '' >> /tmp/agent.log"
+          timeout: 5        # seconds, optional (default 30)
+```
+
+Runtime behaviour:
+- stdin receives a JSON payload: `{hook_event_name, tool_name, tool_input[, tool_result]}`.
+- exit 0 → allow; exit 2 → block the tool (PreToolUse only); stdout
+  JSON with `updatedInput` → replace the tool's input dict.
+- Multiple matchers under the same event fire in order. Parent hooks
+  (from `hooks.json` or caller overlays) fire first, agent hooks
+  appended.
 
 ## Agent file locations
 
