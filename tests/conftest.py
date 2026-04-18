@@ -16,9 +16,9 @@ import requests
 # Change these to use different models for E2E testing.
 # Or set INTEGRATION_MODELS env var (comma-separated).
 DEFAULT_MODELS = [
-    "qwen3-coder:30b",  # Thinking + coding specialized
-    "glm-4.7-flash:q8_0",  # Non-thinking general purpose
-    "qwen3.5:35b",  # Latest generation general purpose
+    "qwen3-coder-next:q8_0",  # Thinking + coding specialized
+    "gpt-oss:120b",  # Non-thinking general purpose
+    "qwen3.5:122b",  # Latest generation general purpose
     "gemma4:31b-it-bf16",  # Google Gemma 4 multimodal
 ]
 

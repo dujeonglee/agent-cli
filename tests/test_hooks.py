@@ -422,3 +422,183 @@ class TestSkillHooksWiring:
             )
 
         assert captured.get("hooks_config") is None
+
+
+class TestSkillHooksEndToEnd:
+    """Run execute_skill against a real run_loop with a mocked LLM, so
+    the whole chain (executor → run_loop → tool execution → run_hooks →
+    subprocess) actually fires. The unit tests above prove the wiring
+    exists; these tests prove it works when the subprocess actually
+    runs.
+
+    Regression guard for the original "Skill.hooks is write-only dead
+    data" bug and the follow-on "parent hooks never reach the skill"
+    bug.
+    """
+
+    def _caps(self):
+        from agent_cli.providers.compat import ModelCapabilities
+
+        return ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+            thinking_format="",
+        )
+
+    def _mock_provider(self, *responses):
+        from unittest.mock import MagicMock
+
+        from agent_cli.providers.base import LLMResponse
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
+        return provider
+
+    # Tests below use `printf` instead of `echo` for the mocked shell
+    # command: loop._try_echo_as_final intercepts plain `echo ...` shell
+    # calls and treats them as a final answer (a shortcut for small
+    # models that use echo as a stand-in for the complete tool). That
+    # shortcut bypasses tool execution entirely, which would mean no
+    # PreToolUse hook ever fires and these tests trivially "pass for
+    # the wrong reason". Using `printf` keeps tool dispatch on the real
+    # path.
+
+    def _write_probe_skill(self, skill_root, log_file):
+        """Write a SKILL.md that logs every PreToolUse shell invocation
+        to `log_file` via `cat` of the hook stdin payload."""
+        skill_dir = skill_root / "probe"
+        skill_dir.mkdir(parents=True)
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(
+            "---\n"
+            "name: probe\n"
+            "description: e2e hook probe\n"
+            "allowed-tools: [shell]\n"
+            "hooks:\n"
+            "  PreToolUse:\n"
+            "    - matcher: shell\n"
+            "      hooks:\n"
+            f"        - command: \"cat >> {log_file}; echo '' >> {log_file}\"\n"
+            "          timeout: 5\n"
+            "---\n\n"
+            "Run shell with command `printf marker`, then complete.\n"
+        )
+        return skill_md
+
+    def test_skill_frontmatter_hook_fires_subprocess(self, tmp_path):
+        """SKILL.md's frontmatter PreToolUse hook must actually spawn a
+        subprocess that writes to the log file when the skill's shell
+        tool is invoked."""
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.loader import _parse_skill_file
+
+        log_file = tmp_path / "hook.log"
+        skill_md = self._write_probe_skill(tmp_path / "skills", log_file)
+
+        skill = _parse_skill_file(skill_md)
+        assert skill is not None and skill.hooks, (
+            "parser must populate Skill.hooks for this wiring test to mean anything"
+        )
+
+        provider = self._mock_provider(
+            json.dumps(
+                {
+                    "thought": "call shell",
+                    "action": "shell",
+                    "action_input": {"command": "printf marker"},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "complete",
+                    "action_input": {"result": "ok"},
+                }
+            ),
+        )
+
+        execute_skill(
+            skill=skill,
+            arguments="",
+            provider=provider,
+            capabilities=self._caps(),
+            model="test",
+        )
+
+        assert log_file.exists(), (
+            "PreToolUse hook subprocess did not run — "
+            "Skill.hooks likely not forwarded to run_hooks"
+        )
+        payload = json.loads(log_file.read_text().strip().splitlines()[0])
+        assert payload["hook_event_name"] == "PreToolUse"
+        assert payload["tool_name"] == "shell"
+        assert payload["tool_input"]["command"] == "printf marker"
+
+    def test_parent_and_skill_hooks_both_fire_in_order(self, tmp_path):
+        """When execute_skill receives parent_hooks_config, both parent's
+        and the skill's PreToolUse matchers must fire, parent first —
+        per the merge_hooks_configs contract that skill-local hooks
+        layer on top of the caller's."""
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.loader import _parse_skill_file
+
+        log_file = tmp_path / "hook.log"
+        skill_md = self._write_probe_skill(tmp_path / "skills", log_file)
+
+        # Parent hook emits a distinctive marker before the skill hook's
+        # JSON dump, so ordering is observable from the log file alone.
+        parent_hooks = {
+            "PreToolUse": [
+                HookMatcher(
+                    matcher="shell",
+                    hooks=[
+                        HookEntry(
+                            command=f"echo '=== PARENT ===' >> {log_file}",
+                            timeout=5,
+                        )
+                    ],
+                )
+            ]
+        }
+
+        skill = _parse_skill_file(skill_md)
+        provider = self._mock_provider(
+            json.dumps(
+                {
+                    "thought": "call shell",
+                    "action": "shell",
+                    "action_input": {"command": "printf marker"},
+                }
+            ),
+            json.dumps(
+                {
+                    "thought": "done",
+                    "action": "complete",
+                    "action_input": {"result": "ok"},
+                }
+            ),
+        )
+
+        execute_skill(
+            skill=skill,
+            arguments="",
+            provider=provider,
+            capabilities=self._caps(),
+            model="test",
+            parent_hooks_config=parent_hooks,
+        )
+
+        contents = log_file.read_text()
+        parent_pos = contents.find("=== PARENT ===")
+        skill_pos = contents.find("hook_event_name")
+        assert parent_pos >= 0, "parent hook did not fire"
+        assert skill_pos >= 0, "skill hook did not fire"
+        assert parent_pos < skill_pos, (
+            "parent hook must fire before skill hook "
+            "(merge_hooks_configs ordering contract)"
+        )
