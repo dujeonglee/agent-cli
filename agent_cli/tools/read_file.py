@@ -64,7 +64,7 @@ def _verify_ref(lines: list[str], ref: str) -> int:
     return line_num - 1  # 0-based
 
 
-_PREVIEW_LINES = 20  # lines shown in preview mode
+_PEEK_LINES = 20  # lines shown in peek mode
 _DEFAULT_SEARCH_CONTEXT = 5  # lines before/after each match
 
 
@@ -77,8 +77,13 @@ def _format_lines(all_lines: list[str], start_idx: int, end_idx: int) -> str:
     return "\n".join(out)
 
 
-def _preview(path: str, text: str, all_lines: list[str]) -> ToolResult:
-    """Return file metadata + first N lines + guidance."""
+def _peek(path: str, text: str, all_lines: list[str]) -> ToolResult:
+    """Return file metadata + first N lines + guidance.
+
+    peek is a sizing check, not a read — the caller is expected to pick
+    one of the read modes (full / line_start+line_end / search) as a
+    follow-up.
+    """
     total = len(all_lines)
     size_bytes = len(text.encode("utf-8"))
     size_label = (
@@ -87,17 +92,19 @@ def _preview(path: str, text: str, all_lines: list[str]) -> ToolResult:
         else f"{size_bytes / 1024:.1f} KB"
     )
 
-    head_end = min(_PREVIEW_LINES, total)
+    head_end = min(_PEEK_LINES, total)
     head = _format_lines(all_lines, 0, head_end)
 
     hint = (
-        f"\n\n[File has {total} total lines. To continue:\n"
-        f"  - read_file(path, line_start=N, line_end=M) for a range\n"
-        f'  - read_file(path, search="keyword") to find specific content]'
+        f"\n\n[File has {total} total lines. This is a peek — you have NOT read "
+        f"the file yet. Pick a follow-up read mode:\n"
+        f"  - read_file(path) for a full read (if the file is small or central to the task)\n"
+        f"  - read_file(path, line_start=N, line_end=M) for a specific range\n"
+        f'  - read_file(path, search="keyword") to hunt for specific content]'
     )
     return ToolResult(
         True,
-        output=f"[preview] {path}: {total} lines, {size_label}\n{head}{hint}",
+        output=f"[peek] {path}: {total} lines, {size_label}\n{head}{hint}",
     )
 
 
@@ -133,10 +140,10 @@ def _search(path: str, all_lines: list[str], pattern: str, context: int) -> Tool
 
 
 def tool_read_file(args: dict) -> ToolResult:
-    """Read a file with optional preview, search, or partial read modes.
+    """Read a file with optional peek, search, or partial read modes.
 
     Modes (mutually exclusive, picked by args present):
-    - preview=True: metadata + first 20 lines + guidance (best for unknown/large files)
+    - peek=True: metadata + first 20 lines + guidance (sizing check, NOT a read)
     - search="pattern", context=N: grep-style matches with surrounding lines
     - line_start/line_end: partial read (1-based inclusive)
     - no mode: full file
@@ -145,7 +152,7 @@ def tool_read_file(args: dict) -> ToolResult:
     path = args.get("path", "")
     line_start = args.get("line_start", 0)
     line_end = args.get("line_end", 0)
-    preview = bool(args.get("preview", False))
+    peek = bool(args.get("peek", False))
     search = args.get("search", "") or ""
     context = args.get("context", _DEFAULT_SEARCH_CONTEXT)
 
@@ -162,8 +169,8 @@ def tool_read_file(args: dict) -> ToolResult:
         all_lines = text.split("\n")
         total = len(all_lines)
 
-        if preview:
-            return _preview(path, text, all_lines)
+        if peek:
+            return _peek(path, text, all_lines)
 
         if search:
             return _search(path, all_lines, search, context)

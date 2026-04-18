@@ -21,7 +21,8 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
         name="read_file",
         description=(
             "Read file contents. Lines are tagged as LINE#HASH:content for editing. "
-            "For unknown/large files, start with preview=true to check size before reading all. "
+            "For unknown/large files, start with peek=true to check size before reading. "
+            "peek is a sizing check, not a read — follow it with a full read, line_start/line_end range, or search. "
             "Use search='keyword' to find targeted content without reading the whole file. "
             "Use line_start/line_end for partial reads (1-based, inclusive)."
         ),
@@ -29,9 +30,9 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to read"},
-                "preview": {
+                "peek": {
                     "type": "boolean",
-                    "description": "Return metadata (line count, size) + first 20 lines only. Use for unknown/large files to decide read strategy.",
+                    "description": "Sizing check only — returns line count, file size, and first 20 lines. Not a substitute for reading: after peeking, pick a real read mode (full / line_start+line_end / search).",
                 },
                 "search": {
                     "type": "string",

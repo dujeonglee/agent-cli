@@ -555,42 +555,46 @@ class TestReadFilePartial:
         assert "aaa" not in result.output
 
 
-class TestReadFilePreview:
-    def test_preview_shows_metadata(self, tmp_path):
-        """preview=True returns line count + size + first 20 lines."""
+class TestReadFilePeek:
+    def test_peek_shows_metadata(self, tmp_path):
+        """peek=True returns line count + size + first 20 lines."""
         f = tmp_path / "big.py"
         content = "\n".join(f"line {i}" for i in range(1, 101))
         f.write_text(content)
-        result = tool_read_file({"path": str(f), "preview": True})
+        result = tool_read_file({"path": str(f), "peek": True})
         assert result.success
-        assert "[preview]" in result.output
+        assert "[peek]" in result.output
         assert "100 lines" in result.output
         assert "bytes" in result.output or "KB" in result.output
 
-    def test_preview_shows_first_20_lines(self, tmp_path):
-        """preview returns first 20 lines with hashlines."""
+    def test_peek_shows_first_20_lines(self, tmp_path):
+        """peek returns first 20 lines with hashlines."""
         f = tmp_path / "big.py"
         content = "\n".join(f"line {i}" for i in range(1, 101))
         f.write_text(content)
-        result = tool_read_file({"path": str(f), "preview": True})
+        result = tool_read_file({"path": str(f), "peek": True})
         assert "1#" in result.output
         assert "20#" in result.output
         assert "21#" not in result.output  # only first 20
 
-    def test_preview_small_file_shows_all(self, tmp_path):
-        """preview on small file shows all lines (less than 20)."""
+    def test_peek_small_file_shows_all(self, tmp_path):
+        """peek on small file shows all lines (less than 20)."""
         f = tmp_path / "small.py"
         f.write_text("a\nb\nc")
-        result = tool_read_file({"path": str(f), "preview": True})
+        result = tool_read_file({"path": str(f), "peek": True})
         assert result.success
         assert "3 lines" in result.output
 
-    def test_preview_includes_guidance(self, tmp_path):
-        """preview output hints at line_start/search modes."""
+    def test_peek_includes_followup_guidance(self, tmp_path):
+        """peek output must tell the LLM this is a sizing check and point
+        at real read modes — otherwise the LLM treats peek-only as 'read'.
+        """
         f = tmp_path / "big.py"
         f.write_text("\n".join(f"line {i}" for i in range(50)))
-        result = tool_read_file({"path": str(f), "preview": True})
-        assert "line_start" in result.output or "search" in result.output
+        result = tool_read_file({"path": str(f), "peek": True})
+        assert "have NOT read" in result.output or "not read" in result.output.lower()
+        assert "line_start" in result.output
+        assert "search" in result.output
 
 
 class TestReadFileSearch:

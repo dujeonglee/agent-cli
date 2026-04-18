@@ -43,9 +43,13 @@ information gets dropped and reasoning quality degrades with it.
 
 Treat every token you add as a cost:
 
-- Read only what you need. Prefer read_file preview or search over full
-  reads; prefer specific grep patterns over dumping whole files; narrow
-  shell commands at the source instead of scrolling past noise.
+- Read only what you need — but `peek` is a sizing check, not a substitute
+  for reading. After peeking, pick the right follow-up: full read (file is
+  small or central to the task), targeted line range (you know the region),
+  or specific search (hunting a symbol). Leaving a relevant file at
+  peek-only means you have not read it. Narrow shell commands and search
+  patterns at the source instead of dumping whole files or scrolling past
+  noise.
 - Keep thoughts focused. State purpose and reason in one short paragraph
   — do not restate what the observation already shows.
 - Large irrelevant context (unrelated code, huge JSON dumps, verbose logs)
@@ -131,20 +135,24 @@ _DELEGATE_INLINE = """\
 
 _READ_FILE_INLINE = """\
 
-  IMPORTANT: Full reads waste context window. Pick the smallest mode that answers the question:
+  Pick the smallest mode that answers the question — full reads burn
+  context budget:
 
-  1. Unknown file size? Start with preview.
-       {"path": "app.py", "preview": true}
-       → returns line count + size + first 20 lines
-  2. Looking for something specific? Use search.
+  1. peek — sizing check, NOT a read. Returns line count + size + first
+     20 lines so you can pick a real read mode below.
+       {"path": "app.py", "peek": true}
+  2. search — grep-style targeted lookup. Returns only matching regions
+     with surrounding context.
        {"path": "app.py", "search": "login", "context": 5}
-       → returns only matching regions with surrounding lines
-  3. Know the exact range? Partial read.
+  3. Partial — you know the exact region.
        {"path": "app.py", "line_start": 100, "line_end": 200}
-  4. Full read: only when the file is small (< ~100 lines) or you genuinely need everything.
+  4. Full — the file is small, or it is central to the task and you
+     genuinely need the whole thing.
        {"path": "app.py"}
 
-  Default: if you don't know the file's size, use preview FIRST. Do not full-read unknown files."""
+  Flow: for an unknown file, peek first to get its size, then pick one
+  of modes 2–4. peek alone is never enough — if you stop after peeking,
+  you have only seen the first 20 lines."""
 
 # Map tool names to their inline guides
 _TOOL_INLINE_GUIDES: dict[str, str] = {
