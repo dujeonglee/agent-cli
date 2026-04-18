@@ -285,8 +285,10 @@ def _dispatch_agent(
     if ctx:
         ctx.add({"role": "user", "content": f"Delegate to @{agent_name}: {task}"})
 
+    from agent_cli.hooks import load_hooks as _load_hooks
     from agent_cli.render import render_status
 
+    _parent_hooks = _load_hooks() or None
     render_status("running", f"Running agent: {agent_name}...")
     result = tool_delegate(
         args={"tasks": [{"task": task, "agent": agent_name, "context": "fork"}]},
@@ -302,6 +304,7 @@ def _dispatch_agent(
         max_turns=max_turns,
         timeout=delegate_timeout,
         session=session,
+        hooks_config=_parent_hooks,
     )
 
     if not result.success and "not found" in (result.error or ""):
