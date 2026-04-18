@@ -16,7 +16,7 @@ from agent_cli.context.overflow import is_context_overflow
 from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.compat import ModelCapabilities, needs_tool_action
+from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.render import (
     render_context_dump,
     render_header,
@@ -400,21 +400,6 @@ class AgentLoop:
                     if parsed.action_input
                     else "(Completed without result — model may lack capability for this task)"
                 )
-
-            # Fulfillment guard -- no tools used yet
-            if not self.tools_called and needs_tool_action(self.query):
-                nudge = (
-                    "You called the complete tool, but the task likely requires "
-                    "tool actions (file operations, shell commands, etc.). "
-                    "Please use the appropriate tools first, then call complete."
-                )
-                _append_observation(self.messages, self.ctx, llm_text, nudge)
-                render_status(
-                    "error",
-                    "Answer rejected — no tool actions performed yet.",
-                    self.turn,
-                )
-                return self._CONTINUE
 
             if self.ctx:
                 self.ctx.add(

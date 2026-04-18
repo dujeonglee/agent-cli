@@ -89,27 +89,6 @@ class TestRunLoopComplete:
         )
         assert result.output == "Simple answer"
 
-    def test_complete_rejected_without_tools(self, caps):
-        """Fulfillment guard: complete rejected if task needs tools but none called."""
-        provider = _make_provider(
-            _complete("Created file"),  # rejected — no tools used
-            json.dumps(
-                {
-                    "thought": "write",
-                    "action": "write_file",
-                    "action_input": {"path": "/tmp/test.txt", "content": "hello"},
-                }
-            ),
-            _complete("Created file successfully"),
-        )
-        result = run_loop(
-            query="Create a new file",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-        )
-        assert "Created file successfully" in result.output
-
     def test_complete_empty_result_defaults(self, caps, tmp_path):
         """complete with empty result → returns '(completed)' instead of failing."""
         test_file = tmp_path / "test.txt"

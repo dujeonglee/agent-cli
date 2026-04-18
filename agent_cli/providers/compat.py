@@ -103,10 +103,6 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
 
 
 # Compiled patterns for efficiency
-_ACTION_KEYWORDS = re.compile(
-    r"\b(write|create|save|make|generate|edit|modify|update|delete|remove|run|execute)\b",
-    re.I,
-)
 _THINKING_TAGS = ["think", "thinking", "reasoning", "reflection"]
 _THINKING_TAG_PATTERN = re.compile(
     r"<(" + "|".join(_THINKING_TAGS) + r")>",
@@ -301,8 +297,3 @@ def _detect_openai_context_window(base_url: str, model: str, api_key: str = "") 
         pass
 
     return 4096  # conservative default
-
-
-def needs_tool_action(query: str) -> bool:
-    """Check if a query likely needs tool action based on action keywords."""
-    return bool(_ACTION_KEYWORDS.search(query))
