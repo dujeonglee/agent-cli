@@ -119,6 +119,22 @@ class TestBuiltinSkillContent:
         assert "scripts/" in content
         assert "Pattern A" in content and "Pattern B" in content
 
+    def test_create_skill_format_reference_documents_hooks_field(self):
+        """The reference must describe the `hooks:` frontmatter field so
+        LLM-generated skills can use it. Guard: if someone prunes the
+        table row, skills silently lose the ability to declare overlays."""
+        content = _CREATE_SKILL_FORMAT_REF.read_text()
+        assert "| hooks " in content  # table row present
+        assert "PreToolUse" in content  # concrete event example
+        assert "matcher:" in content  # YAML shape example
+
+    def test_create_agent_docs_hooks_field(self):
+        """Symmetric guard for create-agent: the frontmatter table must
+        list the `hooks:` field so /create-agent produces agents that
+        can declare overlays."""
+        content = (_BUILTIN_DIR / "create-agent.md").read_text()
+        assert "| hooks " in content
+
     def test_create_skill_rendered_prompt_preserves_placeholder_teaching(self):
         """Render create-skill's SKILL.md through substitute_arguments and
         check that the LLM ends up with a prompt that (a) still points at

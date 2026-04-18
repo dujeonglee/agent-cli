@@ -43,6 +43,22 @@ Use !`command` for inline shell execution at template-render time.
 | context | no | shared | "fork" for independent context |
 | disable-model-invocation | no | false | true = LLM cannot auto-invoke, user only |
 | user-invocable | no | true | false = hidden from /skills menu |
+| hooks | no | (none) | Skill-local shell hooks merged on top of the caller's for the duration of this skill's execution. Same YAML shape as `hooks.json` or an agent's `hooks:` block. Use for skill-scoped PreToolUse/PostToolUse policies (audit logging, input rewriting, conditional blocking) that shouldn't apply outside this skill. Skip unless the skill needs a deterministic, tool-level policy beyond what allowed-tools can express. |
+
+### Hook block shape (when `hooks:` is used)
+
+```yaml
+hooks:
+  PreToolUse:               # or PostToolUse / PostToolUseFailure
+    - matcher: shell        # tool name regex; "" matches all
+      hooks:
+        - command: "echo audit >> /tmp/skill.log"
+          timeout: 5        # seconds, optional (default 30)
+```
+
+Runtime behaviour:
+- stdin receives a JSON payload: `{hook_event_name, tool_name, tool_input[, tool_result]}`.
+- exit 0 → allow; exit 2 → block the tool (PreToolUse only); stdout JSON with `updatedInput` → replace the tool's input dict.
 
 ## Directory structure (for skills with scripts)
 
