@@ -155,18 +155,34 @@ class TestBuildSystemPrompt:
         assert "## Task Guidelines" in prompt
         assert "Read relevant code" in prompt
 
+    def test_context_discipline_present(self):
+        """Primacy section teaching the LLM that the context window is a
+        finite, shared resource and that each observation costs budget."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "## Context Window Discipline" in prompt
+        assert "single most important resource" in prompt
+        assert "Read only what you need" in prompt
+
     def test_format_rules_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Response Format" in prompt
         assert "only valid JSON" in prompt
 
     def test_section_order_primacy_before_tools(self):
-        """Task Guidelines and Format Rules should appear before Available Tools."""
+        """Context Discipline → Task Guidelines → Response Format, all in
+        the primacy zone ahead of Available Tools."""
         prompt = build_system_prompt(_make_caps(), ["shell"])
+        ctx_pos = prompt.index("## Context Window Discipline")
         guidelines_pos = prompt.index("## Task Guidelines")
         format_pos = prompt.index("## Response Format")
         tools_pos = prompt.index("## Available Tools")
-        assert guidelines_pos < format_pos < tools_pos
+        assert ctx_pos < guidelines_pos < format_pos < tools_pos
+
+    def test_no_redundant_read_file_preview_rule(self):
+        """The preview=true reminder moved into Context Discipline, so the
+        old Task Guidelines bullet that duplicated it must be gone."""
+        prompt = build_system_prompt(_make_caps(), ["read_file"])
+        assert "call with preview=true first" not in prompt
 
     def test_section_order_tools_before_environment(self):
         """Available Tools should appear before Environment (recency section)."""

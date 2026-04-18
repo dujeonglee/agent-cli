@@ -823,7 +823,10 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     │
     ├─ ROLE_PROMPT (항상 포함 — 에이전트 역할 정의)
     │
-    ├─ TASK_GUIDELINES (항상 포함 — 코드 작업 원칙 6개)
+    ├─ CONTEXT_DISCIPLINE (항상 포함 — 컨텍스트 창이 핵심 리소스임을 교육)
+    │   └─ "읽을 것만 읽어라 / thought 간결 / 불필요한 덤프 금지"
+    │
+    ├─ TASK_GUIDELINES (항상 포함 — 코드 작업 원칙 7개)
     │   └─ 코드 읽기 선행, 범위 제한, 보안, 정직한 보고 등
     │
     ├─ FORMAT_RULES (항상 포함 — JSON ReAct 포맷 + 규칙 8개)
