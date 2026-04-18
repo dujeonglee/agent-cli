@@ -1014,6 +1014,7 @@ def _execute_single_tool(
             skill_stack=delegate_skill_stack,
             agent_stack=delegate_agent_stack,
             stop_event=stop_event,
+            hooks_config=hooks_config,
         )
 
         # OnDelegateEnd hook

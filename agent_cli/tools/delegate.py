@@ -313,6 +313,7 @@ def _run_single(
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
     stop_event=None,
+    hooks_config: dict | None = None,
 ) -> ToolResult:
     """Execute a single delegate task."""
     # Inline import: circular dependency — loop.py imports tool_delegate from this module
@@ -395,6 +396,7 @@ def _run_single(
         agent_name=agent_name,
         stop_event=stop_event,
         agent_role=agent_role,
+        hooks_config=hooks_config,
     )
 
     duration = time.monotonic() - t0
@@ -451,6 +453,7 @@ def _run_parallel(
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
     stop_event=None,
+    hooks_config: dict | None = None,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading."""
     from agent_cli.render import (
@@ -502,6 +505,7 @@ def _run_parallel(
                 skill_stack=skill_stack,
                 agent_stack=agent_stack,
                 stop_event=stop_event,
+                hooks_config=hooks_config,
             )
         finally:
             durations[index] = time.monotonic() - t0
@@ -612,6 +616,7 @@ def tool_delegate(
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
     stop_event=None,
+    hooks_config: dict | None = None,
 ) -> ToolResult:
     """Delegate tasks to in-process subagents.
 
@@ -640,6 +645,7 @@ def tool_delegate(
         session=session,
         skill_stack=skill_stack,
         agent_stack=agent_stack,
+        hooks_config=hooks_config,
     )
 
     if len(tasks) == 1:

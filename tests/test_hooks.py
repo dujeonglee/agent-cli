@@ -602,3 +602,102 @@ class TestSkillHooksEndToEnd:
             "parent hook must fire before skill hook "
             "(merge_hooks_configs ordering contract)"
         )
+
+
+class TestDelegateHooksWiring:
+    """Regression guard: tool_delegate must forward the caller's
+    hooks_config into the subagent's run_loop. Without this, disk-loaded
+    shell hooks (and any skill-scoped hooks the parent is carrying)
+    silently stop applying as soon as the LLM delegates — an invisible
+    security regression.
+
+    Agents intentionally do NOT get their own frontmatter hooks field
+    (YAGNI — Skill.hooks existed as a half-built dataclass field and
+    got finished; agents never had one and no concrete use case has
+    surfaced). So this test only covers propagation, not per-agent
+    overlay.
+    """
+
+    def test_tool_delegate_forwards_hooks_config_to_subagent(self, tmp_path):
+        from unittest.mock import patch
+
+        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.tools.result import ToolResult
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+            thinking_format="",
+        )
+        parent_hooks = {
+            "PreToolUse": [HookMatcher(matcher="", hooks=[HookEntry("echo parent")])]
+        }
+
+        captured: dict = {}
+
+        def fake_run_loop(**kwargs):
+            captured.update(kwargs)
+            return ToolResult(True, output="done")
+
+        # delegate.py imports run_loop lazily inside _run_single (to
+        # break the circular dependency with loop.py), so patch at the
+        # source module — the inline import picks up the patched value.
+        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+            tool_delegate(
+                args={"tasks": [{"task": "trivial"}]},
+                provider=object(),  # non-None, not actually used by fake run_loop
+                capabilities=caps,
+                model="m",
+                hooks_config=parent_hooks,
+            )
+
+        assert captured.get("hooks_config") is parent_hooks, (
+            "delegate dropped the caller's hooks_config — "
+            "tool calls inside the subagent loop would fire without the "
+            "parent's matchers attached."
+        )
+
+    def test_tool_delegate_no_hooks_stays_none(self, tmp_path):
+        """Clean flow when no hooks configured anywhere: delegate must
+        still forward the None so downstream `if hooks_config:` branches
+        short-circuit normally."""
+        from unittest.mock import patch
+
+        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.tools.result import ToolResult
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_tool_calling=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+            thinking_format="",
+        )
+        captured: dict = {}
+
+        def fake_run_loop(**kwargs):
+            captured.update(kwargs)
+            return ToolResult(True, output="done")
+
+        # delegate.py imports run_loop lazily inside _run_single (to
+        # break the circular dependency with loop.py), so patch at the
+        # source module — the inline import picks up the patched value.
+        with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
+            tool_delegate(
+                args={"tasks": [{"task": "trivial"}]},
+                provider=object(),
+                capabilities=caps,
+                model="m",
+            )
+
+        assert captured.get("hooks_config") is None
