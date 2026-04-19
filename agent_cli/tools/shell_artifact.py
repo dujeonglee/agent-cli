@@ -9,13 +9,14 @@ Why this exists — pattern shared with read_file's full-read guard:
 2. When stdout is large, we write the full output to a session-scoped
    artifact file under ``session_dir/shell/`` and return a compact
    preview (head+tail + narrow recovery options only). The preview
-   lists ``search=`` and ``line_start/line_end`` but deliberately
-   does NOT mention ``full=true``. If the LLM actually needs the
-   whole thing, it calls ``read_file(path)`` bare on the artifact,
-   which trips read_file's own full-read guard and surfaces
-   ``full=true`` from inside that refusal — the just-in-time
-   disclosure principle stays intact (full=true only appears after a
-   refusal, never on a first view).
+   lists ``search=`` and ``line_start/line_end``. If the LLM actually
+   needs the whole artifact, it calls ``read_file(path)`` bare on the
+   artifact, trips read_file's full-read guard, and the refusal
+   response spells out the exact
+   ``read_file(path, line_start=1, line_end=<total>)`` call that
+   delivers the whole file. No hidden escape-hatch parameter — the
+   same line-range form the LLM already knows about covers both
+   "specific region" and "whole file" use cases.
 3. LRU eviction keeps ``session_dir/shell/`` bounded: newest
    ``AGENT_CLI_SHELL_ARTIFACT_KEEP`` files live, older ones get pruned
    on each write. Reads also bump mtime (touched via the loop-level
@@ -205,14 +206,12 @@ def build_preview(
         "← targeted\n"
         f'  - read_file(path="{artifact_path}", line_start=N, line_end=M) '
         "← specific region]"
-        # `full=true` is intentionally NOT listed here. Advertising it
-        # on the first preview would defeat the just-in-time disclosure
-        # principle — the LLM would pick the cheapest-to-type option
-        # and bypass the whole savings story. If the LLM calls
-        # read_file(path) bare on a large artifact, read_file's own
-        # guard fires and surfaces full=true inside that refusal
-        # message. That extra roundtrip is the "conscious choice"
-        # gate.
+        # Preview intentionally lists only the narrow options. If the
+        # LLM bare-reads the artifact and it's large enough to trip
+        # read_file's guard, the refusal message tells it exactly how
+        # to request the whole artifact via
+        # `line_start=1, line_end=<total>` — same line-range form, no
+        # separate escape-hatch parameter.
     )
     return "\n".join(parts)
 

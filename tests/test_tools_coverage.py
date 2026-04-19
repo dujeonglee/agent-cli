@@ -601,8 +601,12 @@ class TestReadFileStat:
 class TestReadFileFullReadGuard:
     """Bare full reads on large files are refused so the LLM can't
     silently dump whole modules into the context window. The refusal
-    surfaces a `full=true` escape hatch just-in-time — that parameter
-    is intentionally hidden from the tool schema and the inline guide.
+    tells the caller exactly how to request the whole file if they
+    genuinely need it — via `line_start=1, line_end=<total>`. There
+    is NO dedicated escape-hatch parameter; reusing line_start/line_end
+    keeps the API surface small and forces the caller to type the
+    total line count (a stronger conscious-choice signal than a
+    one-word boolean flag).
     """
 
     def _make_file(self, tmp_path, lines: int):
@@ -626,28 +630,53 @@ class TestReadFileFullReadGuard:
         assert result.success  # refusal is a "successful" soft response, not an error
         assert "[refused-full-read]" in result.output
         assert "400 lines" in result.output
-        # Refusal must name every recovery path — LLM copies from here.
+        # Refusal must name the two recovery paths — LLM copies from here.
         assert "search=" in result.output
         assert "line_start" in result.output
-        assert "full=true" in result.output
         # First 20 lines come along so the LLM can shape its next call.
         assert "1#" in result.output
         assert "20#" in result.output
         # But NOT the rest of the file.
         assert "21#" not in result.output
 
-    def test_large_file_full_true_bypasses_guard(self, tmp_path):
-        """full=True is the escape hatch disclosed in the refusal message."""
+    def test_refusal_spells_out_whole_file_range(self, tmp_path):
+        """The refusal must include the exact `line_start=1, line_end=<total>`
+        call the LLM would use to get everything, with <total> resolved
+        to the actual line count. This is the concrete whole-file path
+        in place of the removed full=true escape hatch.
+        """
+        f = self._make_file(tmp_path, 400)
+        result = tool_read_file({"path": str(f)})
+        assert "line_start=1, line_end=400" in result.output
+        # And emphatically NOT the old escape hatch anywhere.
+        assert "full=true" not in result.output
+        assert "full=True" not in result.output
+
+    def test_legacy_full_true_param_is_ignored(self, tmp_path):
+        """Regression guard: `full=True` is no longer honoured. A caller
+        who passed it expecting a bypass must still hit the refusal, so
+        that the removal of the escape hatch doesn't silently regress
+        back if future changes re-introduce a `full` parameter without
+        thinking it through.
+        """
         f = self._make_file(tmp_path, 400)
         result = tool_read_file({"path": str(f), "full": True})
+        assert "[refused-full-read]" in result.output
+
+    def test_whole_file_via_line_range_succeeds(self, tmp_path):
+        """The path the refusal message points at: `line_start=1,
+        line_end=<total>` must actually return the whole file. This is
+        the replacement for full=true — specifying the range IS the
+        conscious choice."""
+        f = self._make_file(tmp_path, 400)
+        result = tool_read_file({"path": str(f), "line_start": 1, "line_end": 400})
         assert result.success
         assert "[refused-full-read]" not in result.output
-        # Got the whole file.
+        # Every line present, hashline-tagged from 1 to 400.
         assert "1#" in result.output and "400#" in result.output
 
     def test_large_file_search_bypasses_guard(self, tmp_path):
-        """Targeted search is always allowed — the whole point is to
-        avoid dragging the full file in. No `full=true` needed."""
+        """Targeted search is a conscious narrowing — never refused."""
         f = tmp_path / "big.py"
         body = ["pad"] * 400 + ["def spinner_start(): pass"] + ["pad"] * 50
         f.write_text("\n".join(body))
@@ -659,8 +688,8 @@ class TestReadFileFullReadGuard:
         assert "spinner_start" in result.output
 
     def test_large_file_line_range_bypasses_guard(self, tmp_path):
-        """Explicit line_start/line_end signals the caller knows what they
-        want — not a bare full read, so the guard stays out of the way."""
+        """Explicit line_start/line_end signals conscious intent — not
+        refused regardless of how wide or narrow the range is."""
         f = self._make_file(tmp_path, 400)
         result = tool_read_file({"path": str(f), "line_start": 100, "line_end": 105})
         assert result.success
@@ -698,49 +727,29 @@ class TestReadFileFullReadGuard:
         result = tool_read_file({"path": str(f)})
         assert "[refused-full-read]" not in result.output
 
-    def test_schema_hides_full_parameter(self):
-        """`full` is accepted by the implementation but intentionally
-        absent from the tool schema so the LLM's default decision tree
-        doesn't consider it. The refusal message surfaces it
-        just-in-time."""
+    def test_schema_does_not_expose_full_parameter(self):
+        """Guard against a future change re-adding `full` to the tool
+        schema. Listing it would advertise a one-word full-read
+        shortcut and undo the whole point of forcing the line-range
+        form."""
         from agent_cli.tools.registry import TOOL_SCHEMAS
 
         props = TOOL_SCHEMAS["read_file"].parameters["properties"]
-        assert "full" not in props, (
-            "read_file schema must hide `full`; exposing it defeats the "
-            "purpose of the guard (LLM picks it by default)."
-        )
+        assert "full" not in props
         # The modes we DO want the LLM to see.
         assert "stat" in props
         assert "search" in props
         assert "line_start" in props
 
-    def test_inline_guide_hides_full_parameter(self):
-        """Same invariant for the prompt-level inline guide — mentioning
-        full=true there would leak it into the default decision tree."""
+    def test_inline_guide_does_not_mention_full(self):
+        """Same invariant at the prompt layer — `_READ_FILE_INLINE` must
+        not teach full=true. Learning about the whole-file path happens
+        through the refusal message, not the baseline guide."""
         from agent_cli.prompts.system_prompt import _READ_FILE_INLINE
 
         assert "full=true" not in _READ_FILE_INLINE
+        assert "full=True" not in _READ_FILE_INLINE
         assert '"full"' not in _READ_FILE_INLINE
-
-    def test_validator_accepts_undocumented_full_parameter(self, tmp_path):
-        """`full` isn't in the schema, but validate_tool_input must not
-        reject it — the LLM sees the parameter name in the refusal
-        message and needs to be able to re-call with it. The validator
-        silently passes unknown keys (see registry.py), so the call
-        should round-trip through the normal dispatch path without
-        error."""
-        from agent_cli.tools.registry import validate_tool_input
-
-        f = self._make_file(tmp_path, 400)
-        valid, err, converted = validate_tool_input(
-            "read_file", {"path": str(f), "full": True}
-        )
-        assert valid, f"validator rejected full=True: {err}"
-        # And the tool actually honours it end-to-end.
-        result = tool_read_file(converted)
-        assert result.success
-        assert "[refused-full-read]" not in result.output
 
 
 class TestReadFileSearch:
