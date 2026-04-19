@@ -8,10 +8,14 @@ Why this exists — pattern shared with read_file's full-read guard:
    context window.
 2. When stdout is large, we write the full output to a session-scoped
    artifact file under ``session_dir/shell/`` and return a compact
-   preview (head+tail + recovery options). The LLM dereferences the
-   artifact with read_file(path, search=...) / line_start+line_end /
-   full=true — reusing the existing read_file guard without any new
-   hidden parameters on shell itself.
+   preview (head+tail + narrow recovery options only). The preview
+   lists ``search=`` and ``line_start/line_end`` but deliberately
+   does NOT mention ``full=true``. If the LLM actually needs the
+   whole thing, it calls ``read_file(path)`` bare on the artifact,
+   which trips read_file's own full-read guard and surfaces
+   ``full=true`` from inside that refusal — the just-in-time
+   disclosure principle stays intact (full=true only appears after a
+   refusal, never on a first view).
 3. LRU eviction keeps ``session_dir/shell/`` bounded: newest
    ``AGENT_CLI_SHELL_ARTIFACT_KEEP`` files live, older ones get pruned
    on each write. Reads also bump mtime (touched via the loop-level
@@ -200,9 +204,15 @@ def build_preview(
         f'  - read_file(path="{artifact_path}", search="<keyword>")       '
         "← targeted\n"
         f'  - read_file(path="{artifact_path}", line_start=N, line_end=M) '
-        "← specific region\n"
-        f'  - read_file(path="{artifact_path}", full=true)                '
-        "← full log if genuinely needed]"
+        "← specific region]"
+        # `full=true` is intentionally NOT listed here. Advertising it
+        # on the first preview would defeat the just-in-time disclosure
+        # principle — the LLM would pick the cheapest-to-type option
+        # and bypass the whole savings story. If the LLM calls
+        # read_file(path) bare on a large artifact, read_file's own
+        # guard fires and surfaces full=true inside that refusal
+        # message. That extra roundtrip is the "conscious choice"
+        # gate.
     )
     return "\n".join(parts)
 

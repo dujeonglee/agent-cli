@@ -161,14 +161,32 @@ class TestBuildPreview:
         assert "line 80" in preview and "line 99" in preview
         # Middle omitted marker.
         assert "omitted" in preview
-        # Three recovery options must all be named.
+        # Only the NARROW recovery options are named up front.
         assert 'search="<keyword>"' in preview
         assert "line_start=N" in preview
-        assert "full=true" in preview
         # Artifact path must be present so the LLM can dereference it.
         assert str(path) in preview
         # Command echoed for context.
         assert "grep x ." in preview
+
+    def test_preview_hides_full_true_escape_hatch(self, tmp_path):
+        """Just-in-time disclosure invariant: the shell preview must
+        NOT advertise ``full=true``. Surfacing it here would let the
+        LLM skip straight to reloading the whole artifact, defeating
+        the entire savings story. If the LLM actually needs the full
+        log it must call ``read_file(path)`` bare on the artifact —
+        read_file's own guard then refuses with a message that *does*
+        disclose ``full=true``. That extra roundtrip is the conscious-
+        choice gate we want.
+        """
+        path = tmp_path / "shell" / "big.log"
+        path.parent.mkdir()
+        output = "\n".join(f"line {i}" for i in range(200))
+        preview = sa.build_preview("find /", output, path)
+
+        assert "full=true" not in preview
+        assert "full=True" not in preview  # guard against casing drift
+        assert '"full"' not in preview
 
     def test_failure_biases_tail(self, tmp_path):
         """On a failed command, preview should show more tail lines —

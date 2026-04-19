@@ -665,6 +665,16 @@ context를 통째로 집어삼키는 것을 방지.
 | Escape hatch 위치 | `read_file(full=true)` 재호출 | **별도 escape hatch 없음** — artifact 생성 후 read_file이 맡음 |
 | Output 유실 | 없음 (파일은 그대로) | 없음 (artifact에 전체 저장) |
 
+**Just-in-time disclosure 원칙 유지**: shell preview는 `search=` 와
+`line_start/line_end` 두 옵션만 공개. `full=true`는 **일부러 숨김** —
+shell 쪽에서 노출하면 LLM이 바로 그걸 골라 read_file의 guard를
+건너뛰므로 절약 효과 0. LLM이 정말 전체가 필요하면 `read_file(path)`
+bare로 artifact를 읽으려 시도 → 1299줄짜리 artifact라면 read_file의
+full-read guard가 refuse → 그 refused 메시지 안에서 `full=true`가
+공개됨. 즉 shell→read_file 체인 전체에서 `full=true`는 **오직 한
+refusal 메시지에서만** 등장하고, 도달하려면 "벽 부딪히기"라는
+conscious-choice gate를 통과해야 함.
+
 **동작 흐름** (loop-level 후처리 — tool_shell 시그니처 불변):
 
 ```
