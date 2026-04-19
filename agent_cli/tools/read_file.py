@@ -66,6 +66,25 @@ def _verify_ref(lines: list[str], ref: str) -> int:
 
 _STAT_HEAD_LINES = 20  # lines shown alongside metadata in stat mode
 _DEFAULT_SEARCH_CONTEXT = 5  # lines before/after each match
+_DEFAULT_FULL_READ_LIMIT = 300  # line-count ceiling for bare full reads
+
+
+def _full_read_limit() -> int:
+    """Line-count ceiling above which a bare full read is refused.
+
+    Env var AGENT_CLI_READ_FILE_LIMIT overrides the default. Set to 0 or
+    a negative value to disable the guard entirely (any full read
+    allowed).
+    """
+    import os
+
+    raw = os.environ.get("AGENT_CLI_READ_FILE_LIMIT")
+    if raw is None:
+        return _DEFAULT_FULL_READ_LIMIT
+    try:
+        return int(raw)
+    except ValueError:
+        return _DEFAULT_FULL_READ_LIMIT
 
 
 def _format_lines(all_lines: list[str], start_idx: int, end_idx: int) -> str:
@@ -109,6 +128,46 @@ def _stat(path: str, text: str, all_lines: list[str]) -> ToolResult:
     )
 
 
+def _refuse_large_full_read(
+    path: str, text: str, all_lines: list[str], limit: int
+) -> ToolResult:
+    """Return a stat-shaped refusal when a bare read_file(path) hits a
+    file larger than the configured limit.
+
+    The response exposes the `full=true` escape hatch *here and only
+    here* — the parameter is intentionally omitted from the tool
+    schema and the inline guide so the LLM's default decision tree
+    only considers stat/search/line_start+line_end. The escape hatch
+    is disclosed just-in-time, paired with "you genuinely need the
+    whole file", so using it feels like a considered override rather
+    than a default option.
+    """
+    total = len(all_lines)
+    size_bytes = len(text.encode("utf-8"))
+    size_label = (
+        f"{size_bytes:,} bytes"
+        if size_bytes < 10_000
+        else f"{size_bytes / 1024:.1f} KB"
+    )
+
+    head_end = min(_STAT_HEAD_LINES, total)
+    head = _format_lines(all_lines, 0, head_end)
+
+    hint = (
+        f"\n\n[refused: full read of {total}-line file exceeds limit "
+        f"({limit} lines). Pick one:\n"
+        f'  - read_file(path, search="<pattern>")        ← targeted lookup\n'
+        f"  - read_file(path, line_start=N, line_end=M)  ← specific region\n"
+        f"  - read_file(path, full=true)                 ← you genuinely "
+        f"need the whole file\n"
+        f"First {head_end} lines shown above for context.]"
+    )
+    return ToolResult(
+        True,
+        output=f"[refused-full-read] {path}: {total} lines, {size_label}\n{head}{hint}",
+    )
+
+
 def _search(path: str, all_lines: list[str], pattern: str, context: int) -> ToolResult:
     """Return matches for pattern with surrounding context."""
     try:
@@ -147,7 +206,14 @@ def tool_read_file(args: dict) -> ToolResult:
     - stat=True: metadata + first 20 lines + guidance (metadata query, NOT a read)
     - search="pattern", context=N: grep-style matches with surrounding lines
     - line_start/line_end: partial read (1-based inclusive)
-    - no mode: full file
+    - no mode: full file (refused for files larger than AGENT_CLI_READ_FILE_LIMIT
+      lines — default 300 — unless full=True is set)
+
+    Hidden parameter:
+    - full=True: force a full read even on a file larger than the limit.
+      Deliberately NOT documented in the tool schema or the inline read
+      guide. The refusal response surfaces it just-in-time so the LLM's
+      default decision tree doesn't pick it casually.
     """
 
     path = args.get("path", "")
@@ -156,6 +222,7 @@ def tool_read_file(args: dict) -> ToolResult:
     stat = bool(args.get("stat", False))
     search = args.get("search", "") or ""
     context = args.get("context", _DEFAULT_SEARCH_CONTEXT)
+    full = bool(args.get("full", False))
 
     # Coerce to int (LLMs sometimes send strings)
     try:
@@ -180,6 +247,13 @@ def tool_read_file(args: dict) -> ToolResult:
             start = max(0, line_start - 1)
             end = min(total, line_end) if line_end > 0 else total
             return ToolResult(True, output=_format_lines(all_lines, start, end))
+
+        # Bare full read. Guard against silently dumping huge files into
+        # the context window — refuse unless the caller explicitly opted
+        # in via full=True. Limit <= 0 disables the guard.
+        limit = _full_read_limit()
+        if not full and limit > 0 and total > limit:
+            return _refuse_large_full_read(path, text, all_lines, limit)
 
         return ToolResult(True, output=format_hashlines(text))
     except Exception as e:

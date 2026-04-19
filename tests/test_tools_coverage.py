@@ -598,6 +598,151 @@ class TestReadFileStat:
         assert "search" in result.output
 
 
+class TestReadFileFullReadGuard:
+    """Bare full reads on large files are refused so the LLM can't
+    silently dump whole modules into the context window. The refusal
+    surfaces a `full=true` escape hatch just-in-time — that parameter
+    is intentionally hidden from the tool schema and the inline guide.
+    """
+
+    def _make_file(self, tmp_path, lines: int):
+        f = tmp_path / "big.py"
+        f.write_text("\n".join(f"line {i}" for i in range(1, lines + 1)))
+        return f
+
+    def test_small_file_bare_read_succeeds(self, tmp_path):
+        """Files under the limit read normally — no refusal, no opt-in needed."""
+        f = self._make_file(tmp_path, 50)
+        result = tool_read_file({"path": str(f)})
+        assert result.success
+        assert "[refused-full-read]" not in result.output
+        # Full content returned, hashline-tagged.
+        assert "1#" in result.output and "50#" in result.output
+
+    def test_large_file_bare_read_refused(self, tmp_path):
+        """Default threshold is 300 lines. A 400-line file triggers the guard."""
+        f = self._make_file(tmp_path, 400)
+        result = tool_read_file({"path": str(f)})
+        assert result.success  # refusal is a "successful" soft response, not an error
+        assert "[refused-full-read]" in result.output
+        assert "400 lines" in result.output
+        # Refusal must name every recovery path — LLM copies from here.
+        assert "search=" in result.output
+        assert "line_start" in result.output
+        assert "full=true" in result.output
+        # First 20 lines come along so the LLM can shape its next call.
+        assert "1#" in result.output
+        assert "20#" in result.output
+        # But NOT the rest of the file.
+        assert "21#" not in result.output
+
+    def test_large_file_full_true_bypasses_guard(self, tmp_path):
+        """full=True is the escape hatch disclosed in the refusal message."""
+        f = self._make_file(tmp_path, 400)
+        result = tool_read_file({"path": str(f), "full": True})
+        assert result.success
+        assert "[refused-full-read]" not in result.output
+        # Got the whole file.
+        assert "1#" in result.output and "400#" in result.output
+
+    def test_large_file_search_bypasses_guard(self, tmp_path):
+        """Targeted search is always allowed — the whole point is to
+        avoid dragging the full file in. No `full=true` needed."""
+        f = tmp_path / "big.py"
+        body = ["pad"] * 400 + ["def spinner_start(): pass"] + ["pad"] * 50
+        f.write_text("\n".join(body))
+        result = tool_read_file(
+            {"path": str(f), "search": "spinner_start", "context": 0}
+        )
+        assert result.success
+        assert "[refused-full-read]" not in result.output
+        assert "spinner_start" in result.output
+
+    def test_large_file_line_range_bypasses_guard(self, tmp_path):
+        """Explicit line_start/line_end signals the caller knows what they
+        want — not a bare full read, so the guard stays out of the way."""
+        f = self._make_file(tmp_path, 400)
+        result = tool_read_file({"path": str(f), "line_start": 100, "line_end": 105})
+        assert result.success
+        assert "[refused-full-read]" not in result.output
+        assert "100#" in result.output
+        assert "105#" in result.output
+
+    def test_large_file_stat_bypasses_guard(self, tmp_path):
+        """stat already exists for the "just tell me the size" case."""
+        f = self._make_file(tmp_path, 400)
+        result = tool_read_file({"path": str(f), "stat": True})
+        assert result.success
+        assert "[stat]" in result.output
+        assert "[refused-full-read]" not in result.output
+
+    def test_env_var_overrides_limit(self, tmp_path, monkeypatch):
+        """AGENT_CLI_READ_FILE_LIMIT tunes the threshold at runtime."""
+        f = self._make_file(tmp_path, 120)
+
+        # With a tighter limit, the 120-line file now trips the guard.
+        monkeypatch.setenv("AGENT_CLI_READ_FILE_LIMIT", "50")
+        refused = tool_read_file({"path": str(f)})
+        assert "[refused-full-read]" in refused.output
+
+        # With a generous limit, the same file reads through.
+        monkeypatch.setenv("AGENT_CLI_READ_FILE_LIMIT", "500")
+        allowed = tool_read_file({"path": str(f)})
+        assert "[refused-full-read]" not in allowed.output
+
+    def test_env_var_zero_disables_guard(self, tmp_path, monkeypatch):
+        """Setting the limit to 0 turns the guard off entirely — for
+        CI/batch use cases where full reads of known files are fine."""
+        f = self._make_file(tmp_path, 10_000)
+        monkeypatch.setenv("AGENT_CLI_READ_FILE_LIMIT", "0")
+        result = tool_read_file({"path": str(f)})
+        assert "[refused-full-read]" not in result.output
+
+    def test_schema_hides_full_parameter(self):
+        """`full` is accepted by the implementation but intentionally
+        absent from the tool schema so the LLM's default decision tree
+        doesn't consider it. The refusal message surfaces it
+        just-in-time."""
+        from agent_cli.tools.registry import TOOL_SCHEMAS
+
+        props = TOOL_SCHEMAS["read_file"].parameters["properties"]
+        assert "full" not in props, (
+            "read_file schema must hide `full`; exposing it defeats the "
+            "purpose of the guard (LLM picks it by default)."
+        )
+        # The modes we DO want the LLM to see.
+        assert "stat" in props
+        assert "search" in props
+        assert "line_start" in props
+
+    def test_inline_guide_hides_full_parameter(self):
+        """Same invariant for the prompt-level inline guide — mentioning
+        full=true there would leak it into the default decision tree."""
+        from agent_cli.prompts.system_prompt import _READ_FILE_INLINE
+
+        assert "full=true" not in _READ_FILE_INLINE
+        assert '"full"' not in _READ_FILE_INLINE
+
+    def test_validator_accepts_undocumented_full_parameter(self, tmp_path):
+        """`full` isn't in the schema, but validate_tool_input must not
+        reject it — the LLM sees the parameter name in the refusal
+        message and needs to be able to re-call with it. The validator
+        silently passes unknown keys (see registry.py), so the call
+        should round-trip through the normal dispatch path without
+        error."""
+        from agent_cli.tools.registry import validate_tool_input
+
+        f = self._make_file(tmp_path, 400)
+        valid, err, converted = validate_tool_input(
+            "read_file", {"path": str(f), "full": True}
+        )
+        assert valid, f"validator rejected full=True: {err}"
+        # And the tool actually honours it end-to-end.
+        result = tool_read_file(converted)
+        assert result.success
+        assert "[refused-full-read]" not in result.output
+
+
 class TestReadFileSearch:
     def test_search_finds_matches(self, tmp_path):
         """search returns matching lines with context."""

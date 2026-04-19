@@ -1376,7 +1376,12 @@ class TestNoOutputTruncation:
     """Verify tool output is passed to LLM without truncation."""
 
     def test_large_file_not_truncated(self, caps, tmp_path):
-        """A large file should be returned in full, not truncated."""
+        """A large file requested with full=True is returned in full,
+        not truncated. (Without full=True the default read-guard would
+        refuse a 500-line bare read; that behaviour is covered in
+        TestReadFileFullReadGuard — here we're verifying the separate
+        invariant that once the caller *has* opted into the full read,
+        nothing along the pipeline truncates.)"""
         large_content = "\n".join(f"line {i}: {'x' * 100}" for i in range(500))
         test_file = tmp_path / "large.txt"
         test_file.write_text(large_content)
@@ -1386,7 +1391,7 @@ class TestNoOutputTruncation:
                 {
                     "thought": "read large file",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"path": str(test_file), "full": True},
                 }
             ),
             _complete("Read 500 lines"),

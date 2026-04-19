@@ -24,7 +24,8 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "For unknown/large files, start with stat=true to inspect size before reading. "
             "stat returns metadata (line count, file size) and is not a read — follow it with a full read, line_start/line_end range, or search. "
             "Use search='keyword' to find targeted content without reading the whole file. "
-            "Use line_start/line_end for partial reads (1-based, inclusive)."
+            "Use line_start/line_end for partial reads (1-based, inclusive). "
+            "Bare full reads on large files (~300+ lines) are refused with a stat-style response that lists the available recovery options — follow them."
         ),
         parameters={
             "type": "object",

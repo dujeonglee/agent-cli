@@ -147,6 +147,7 @@ agent-cli run "task" -m nemotron:120b
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `OLLAMA_BASE_URL` | — | Ollama 엔드포인트 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
+| `AGENT_CLI_READ_FILE_LIMIT` | — | `read_file` full-read 거부 threshold (줄 수, 기본 300). ≤0 = 비활성 |
 | `INTEGRATION_MODELS` | — | 통합 테스트 모델 |
 
 ## 모델 권장 사양

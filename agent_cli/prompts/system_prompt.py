@@ -135,17 +135,18 @@ _READ_FILE_INLINE = """\
      count + size + the first 20 lines so you can pick a real read mode.
        {"path": "app.py", "stat": true}
   2. search — grep-style targeted lookup. Returns only matching regions
-     with surrounding context.
+     with surrounding context. Prefer this when the user names a
+     specific function, class, or symbol — even if the file looks small.
        {"path": "app.py", "search": "login", "context": 5}
   3. Partial — you know the exact region.
        {"path": "app.py", "line_start": 100, "line_end": 200}
-  4. Full — the file is small, or it is central to the task and you
-     genuinely need the whole thing.
+  4. Full — the file is known-small or central to the task.
        {"path": "app.py"}
 
   Flow: for an unknown file, stat first to get its size, then pick one
   of modes 2–4. stat alone is never enough — if you stop after stat,
-  you have only seen the first 20 lines."""
+  you have only seen the first 20 lines. A bare full read on a large
+  file (~300+ lines) will be refused with instructions; follow them."""
 
 # Map tool names to their inline guides
 _TOOL_INLINE_GUIDES: dict[str, str] = {
