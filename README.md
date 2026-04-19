@@ -148,6 +148,10 @@ agent-cli run "task" -m nemotron:120b
 | `OLLAMA_BASE_URL` | — | Ollama 엔드포인트 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
 | `AGENT_CLI_READ_FILE_LIMIT` | — | `read_file` full-read 거부 threshold (줄 수, 기본 300). ≤0 = 비활성 |
+| `AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES` | — | shell output이 이 줄 수 초과 시 artifact로 저장 (기본 500). ≤0 = 해당 axis 비활성 |
+| `AGENT_CLI_SHELL_OUTPUT_LIMIT_BYTES` | — | shell output이 이 바이트 초과 시 artifact로 저장 (기본 20 KB). ≤0 = 해당 axis 비활성. 두 axis OR. |
+| `AGENT_CLI_SHELL_ARTIFACT_MAX_SIZE` | — | 단일 shell artifact 파일의 최대 크기 (바이트, 기본 5 MB). 초과 시 truncate + 주석. |
+| `AGENT_CLI_SHELL_ARTIFACT_KEEP` | — | 세션당 유지할 shell artifact 최대 개수 (기본 20, mtime-LRU). ≤0 = 비활성 |
 | `INTEGRATION_MODELS` | — | 통합 테스트 모델 |
 
 ## 모델 권장 사양

@@ -538,6 +538,7 @@ class AgentLoop:
                 stop_event=self.stop_event,
                 hook_runner=self.hook_runner,
                 mcp_manager=self.mcp_manager,
+                session_dir=(self.ctx.session_dir if self.ctx else None),
             )
 
             observation = (
@@ -932,8 +933,17 @@ def _execute_single_tool(
     stop_event=None,
     hook_runner=None,
     mcp_manager=None,
+    session_dir=None,
 ):
-    """Execute a single tool: hooks, execution, tracking. Returns ToolResult."""
+    """Execute a single tool: hooks, execution, tracking. Returns ToolResult.
+
+    session_dir, when provided, enables two observation-size guards:
+    shell output larger than AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES/_BYTES
+    is written to ``session_dir/shell/<name>.log`` and replaced with a
+    head+tail preview pointing at the artifact; a successful read_file
+    of any path inside that same artifact dir bumps the file's mtime so
+    the LRU eviction keeps actively-referenced logs around.
+    """
 
     _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
 
@@ -1038,6 +1048,43 @@ def _execute_single_tool(
         result = ToolResult(
             False, error=f"Unknown tool '{tool_name}'. Available: {avail}"
         )
+
+    # Observation-size guards (loop-level post-process) ─────────────
+    # Both are best-effort: on any failure we leave `result` untouched
+    # and continue with whatever the tool produced.
+    if session_dir is not None and result.success:
+        # Shell: oversized stdout → artifact + head/tail preview.
+        if tool_name == "shell":
+            from agent_cli.tools.shell_artifact import (
+                build_preview,
+                exceeds_limit,
+                save_artifact,
+            )
+
+            if exceeds_limit(result.output):
+                cmd = (
+                    input_dict.get("command", "")
+                    if isinstance(input_dict, dict)
+                    else ""
+                )
+                artifact_path = save_artifact(session_dir, cmd, result.output)
+                if artifact_path is not None:
+                    preview = build_preview(
+                        cmd,
+                        result.output,
+                        artifact_path,
+                        # Failure tail-bias: stderr + nonzero-exit lines
+                        # cluster near the end.
+                        succeeded=("[exit code:" not in result.output),
+                    )
+                    result = ToolResult(True, output=preview)
+        # read_file: if target was a shell artifact in THIS session's
+        # shell dir, bump mtime so the LRU treats active reads as recent.
+        elif tool_name == "read_file":
+            from agent_cli.tools.shell_artifact import touch_if_artifact
+
+            path = input_dict.get("path", "") if isinstance(input_dict, dict) else ""
+            touch_if_artifact(path, session_dir)
 
     # PostToolUse — Python hooks (via runner) then shell hooks (backward compat)
     if hook_runner:
