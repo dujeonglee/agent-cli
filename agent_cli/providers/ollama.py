@@ -121,6 +121,14 @@ class OllamaProvider:
             if not line:
                 continue
             data = json.loads(line)
+            # Ollama keeps HTTP 200 but can emit {"error": "..."} lines
+            # mid-stream (e.g., mlx runner failure, cache corruption).
+            # raise_for_status() is already past; the only signal is the
+            # top-level `error` key, which normal chunks never carry.
+            # Surfacing it avoids silently collapsing to empty content
+            # and looping on "Invalid JSON" retries.
+            if "error" in data:
+                raise RuntimeError(f"Ollama streaming error: {data['error']}")
             chunk = data.get("message", {}).get("content", "")
             if chunk:
                 if not t_first:
@@ -152,6 +160,12 @@ class OllamaProvider:
 
     def _parse_response(self, data: dict) -> LLMResponse:
         """Parse non-streaming response."""
+        # Mirror of the streaming guard: Ollama sometimes returns HTTP
+        # 200 with a body shaped {"error": "..."} (no message, no done).
+        # raise_for_status() won't catch that; surface it explicitly so
+        # the loop can render the failure instead of seeing empty content.
+        if "error" in data:
+            raise RuntimeError(f"Ollama error: {data['error']}")
         content = data.get("message", {}).get("content", "")
 
         usage = None

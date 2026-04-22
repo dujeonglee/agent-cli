@@ -120,6 +120,69 @@ class TestOllamaStreaming:
         call_body = mock_post.call_args[1]["json"]
         assert call_body["stream"] is False
 
+    def test_mid_stream_error_raises(self):
+        """Reproducer: Ollama keeps HTTP 200 but emits an {"error": "..."}
+        NDJSON line mid-stream (observed with an mlx runner failure on
+        qwen3.6:35b-a3b-coding-bf16). Before the fix the line was
+        silently ignored, provider returned content="", and the loop
+        span on 'Invalid JSON' retries."""
+        import pytest
+        from agent_cli.providers.ollama import OllamaProvider
+
+        lines = [
+            json.dumps(
+                {"message": {"content": "", "thinking": "?"}, "done": False}
+            ).encode(),
+            json.dumps({"error": "mlx runner failed: cache corruption"}).encode(),
+        ]
+        resp = _make_response(lines)
+
+        with patch("agent_cli.providers.ollama.requests.post", return_value=resp):
+            provider = OllamaProvider("http://localhost:11434")
+            with pytest.raises(RuntimeError, match="mlx runner failed"):
+                provider.call(
+                    messages=[{"role": "user", "content": "hi"}],
+                    system="sys",
+                    model="qwen3.6:35b-a3b-coding-bf16",
+                    capabilities=_CAPS,
+                    on_chunk=lambda c: None,
+                )
+
+    def test_error_as_first_line_raises(self):
+        """Edge case: error line arrives immediately, no prior chunks."""
+        import pytest
+        from agent_cli.providers.ollama import OllamaProvider
+
+        lines = [json.dumps({"error": "model not loaded"}).encode()]
+        resp = _make_response(lines)
+
+        with patch("agent_cli.providers.ollama.requests.post", return_value=resp):
+            provider = OllamaProvider("http://localhost:11434")
+            with pytest.raises(RuntimeError, match="model not loaded"):
+                provider.call(
+                    messages=[],
+                    system="",
+                    model="m",
+                    capabilities=_CAPS,
+                    on_chunk=lambda c: None,
+                )
+
+    def test_non_streaming_error_body_raises(self):
+        """Mirror of the streaming guard: non-streaming 200 + body with
+        an `error` key (no message, no done) must raise. raise_for_status
+        wouldn't catch a 200 status."""
+        import pytest
+        from agent_cli.providers.ollama import OllamaProvider
+
+        resp = MagicMock()
+        resp.json.return_value = {"error": "model runner crashed"}
+        resp.raise_for_status.return_value = None
+
+        with patch("agent_cli.providers.ollama.requests.post", return_value=resp):
+            provider = OllamaProvider("http://localhost:11434")
+            with pytest.raises(RuntimeError, match="model runner crashed"):
+                provider.call(messages=[], system="", model="m", capabilities=_CAPS)
+
 
 # ── OpenAI Streaming ────────────────────────────────
 
