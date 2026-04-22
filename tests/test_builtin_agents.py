@@ -88,6 +88,31 @@ class TestExplorerPromptIntent:
         body = self._body()
         assert "doc" in body and "code" in body
 
+    def test_body_warns_about_partial_read_trap(self):
+        """Symptom observed after the first rewrite: agent stopped using
+        stat but started sampling the first 100 lines of a 1200-line
+        file instead. Prompt must reject arbitrary-range partial reads
+        explicitly."""
+        body = self._body()
+        assert (
+            "arbitrary" in body
+            or "sample" in body
+            or "sampling" in body
+            or "false sense" in body
+        )
+
+    def test_body_forbids_fabricated_citations(self):
+        """Symptom observed after the first rewrite: agent added
+        `file:1` citations for files it never opened. Prompt must rule
+        this out directly."""
+        body = self._body()
+        assert (
+            "actually read" in body
+            or "fabricat" in body
+            or "did not read" in body
+            or "never opened" in body
+        )
+
 
 class TestBuiltinAgentPriority:
     def test_project_overrides_builtin(self, tmp_path, monkeypatch):
