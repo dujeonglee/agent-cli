@@ -13,6 +13,7 @@ from agent_cli.constants import LLM_API_TIMEOUT
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.http import post_with_retry
 
 
 class OpenAICompatProvider:
@@ -64,13 +65,20 @@ class OpenAICompatProvider:
         if on_chunk:
             body["stream"] = True
             body["stream_options"] = {"include_usage": True}
-            r = requests.post(
-                url, headers=headers, json=body, timeout=LLM_API_TIMEOUT, stream=True
+            r = post_with_retry(
+                requests.post,
+                url,
+                headers=headers,
+                json=body,
+                timeout=LLM_API_TIMEOUT,
+                stream=True,
             )
             r.raise_for_status()
             return self._handle_stream(r, on_chunk)
 
-        r = requests.post(url, headers=headers, json=body, timeout=LLM_API_TIMEOUT)
+        r = post_with_retry(
+            requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
+        )
         r.raise_for_status()
         return self._parse_response(r.json())
 

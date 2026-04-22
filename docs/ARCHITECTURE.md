@@ -56,7 +56,8 @@ agent_cli/
 │   ├── loader.py            (88)   Python hook 파일 스캔/로드 (.agent-cli/hooks/*.py)
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (83)   readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원)
-├── loop.py                  (1179) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
+├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
+├── loop.py                  (1227) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (171)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
 │   ├── base.py              (174)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드)
@@ -68,9 +69,10 @@ agent_cli/
 │   ├── __init__.py          (33)   create_provider() 팩토리
 │   ├── base.py              (36)   LLMProvider 프로토콜, LLMResponse, TokenUsage
 │   ├── compat.py            (306)  ModelCapabilities + 프로브 감지 + 자동 저장
-│   ├── anthropic.py         (168)  Anthropic Messages API (tool_use + thinking + streaming + TTFT)
-│   ├── openai_compat.py     (176)  OpenAI 호환 API (function calling + reasoning + streaming + TTFT)
-│   └── ollama.py            (158)  Ollama API (constrained decoding + thinking + streaming + TTFT)
+│   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
+│   ├── anthropic.py         (176)  Anthropic Messages API (tool_use + thinking + streaming + TTFT)
+│   ├── openai_compat.py     (184)  OpenAI 호환 API (function calling + reasoning + streaming + TTFT)
+│   └── ollama.py            (165)  Ollama API (constrained decoding + thinking + streaming + TTFT)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
@@ -181,9 +183,11 @@ agent-cli.py                        하위 호환 래퍼 (4줄)
 ```
 config.py           → (외부만: json, pathlib)
 constants.py        → (외부만: 없음, 순수 상수)
+verbose.py          → (외부만: sys, time) — providers/http, loop가 공유
 providers/compat.py → config
 providers/base.py   → providers/compat
-providers/*.py      → providers/base, providers/compat
+providers/http.py   → verbose, render (lazy)
+providers/*.py      → providers/base, providers/compat, providers/http
 parsing/json_repair → (외부만: json, re)
 parsing/react_parser→ parsing/json_repair
 tools/result.py     → (외부만: dataclasses, 순수 데이터 타입)
@@ -200,7 +204,7 @@ context/manager.py  → (외부만: json, collections, pathlib)
 prompts/system_pr.  → providers/compat, tools/registry
 loop.py             → constants, context/manager, context/overflow, parsing/react_parser,
                       prompts/system_prompt, providers/base, providers/compat,
-                      render, tools, tools/delegate, tools/registry
+                      render, tools, tools/delegate, tools/registry, verbose
 skills/loader.py    → skills/models, resource_loader
 resource_loader.py  → yaml (optional)
 skills/executor.py  → loop, skills/models, providers/base, providers/compat
@@ -796,6 +800,31 @@ Thinking 블록 처리 플로우:
 2. `parse_react()`가 `_strip_thinking_blocks()`로 블록 분리
 3. 분리된 thinking 내용은 `ReActResult.thinking`에 보존
 4. 나머지 텍스트(JSON)만 파싱 → Stage 1 직접 성공률 향상
+
+### 7.5 재시도 헬퍼 (`providers/http.py`)
+
+세 프로바이더 모두 동일한 재시도 래퍼 `post_with_retry(requests.post, url, **kwargs)`를 거쳐 HTTP를 발송합니다. 목적은 on-prem LLM 서버(Ollama / vLLM)에서 간헐적으로 발생하는 일시적 네트워크 오류 — 서버 재시작 직후의 `ConnectionError`, 첫 호출 시 모델 로딩이 늦어서 발생하는 `Timeout` — 을 사용자 레벨로 노출하지 않고 복구하는 것입니다.
+
+**범위: pre-stream only.** `requests.post()` 호출 자체에서 발생한 예외만 재시도합니다. 스트리밍이 시작된 이후(즉 `requests.post(stream=True)`가 Response를 돌려준 뒤) 청크를 읽다가 발생한 오류는 재시도 대상 아님 — 이미 소비된 청크가 중복되면 LLM 출력이 깨지기 때문.
+
+**재시도 대상 예외:**
+- `requests.Timeout` (ConnectTimeout, ReadTimeout 포함)
+- `requests.ConnectionError`
+- HTTP 4xx/5xx는 재시도 **안 함**. `raise_for_status()`는 `post_with_retry` 반환 *뒤에* 호출되어 서버의 거절 응답을 그대로 caller로 전달. Ollama의 "400 → JSON Schema fallback" 로직은 이 경계 바깥에서 동작하므로 건드리지 않음.
+
+**백오프:** 고정 1초 (지수 아님). on-prem 단일 사용자 전제라 rate-limit / thundering-herd 대책이 필요 없고, `ConnectionError` 직후 서버 부팅 마무리에만 약간의 헤드룸을 주면 충분. `Timeout`은 이미 긴 대기였으므로 추가 대기 효과는 작지만 해롭지도 않음.
+
+**설정:**
+- `AGENT_CLI_LLM_RETRY_ATTEMPTS` (기본 3, 최초 포함 총 시도 횟수; 0/음수는 1로 clamp)
+- `AGENT_CLI_LLM_RETRY_DELAY` (기본 1.0초)
+
+**가시성:** 재시도 시 `render_status("running", ...)` 한 줄로 사용자에게 표시(예: `LLM request failed (Timeout) — retrying (2/3)`). spinner는 계속 돌아감. 모두 실패하면 `render_status("error", ...)` 후 마지막 예외를 그대로 raise. verbose 모드에서는 `agent_cli.verbose.debug_log`로 stderr에도 한 줄 남김.
+
+**테스트 호환:** `post_with_retry`는 `post_fn`을 인자로 받고, 각 프로바이더는 자기 네임스페이스의 `requests.post`를 명시적으로 넘깁니다. 덕분에 기존 테스트가 `agent_cli.providers.{name}.requests.post`를 패치하는 패턴이 그대로 동작.
+
+### 7.6 공용 debug 유틸 (`verbose.py`)
+
+`agent_cli/verbose.py`가 verbose 플래그와 `debug_log()`의 단일 소유자입니다. 과거에는 `loop.py` 모듈 안에 `_debug_verbose` / `_debug_log`로 있었으나, `providers/http.py`가 재시도 로그를 찍어야 하면서 provider 레이어가 loop를 역참조하지 않도록 추출했습니다. `loop.py`는 하위 호환을 위해 해당 심볼을 그대로 재-export합니다.
 
 ---
 

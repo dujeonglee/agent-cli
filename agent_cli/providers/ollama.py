@@ -11,6 +11,7 @@ from agent_cli.constants import LLM_API_TIMEOUT
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.http import post_with_retry
 
 # JSON Schema for ReAct format used with Ollama's constrained decoding.
 # "thought" is free-form string; action/action_input are schema-enforced.
@@ -66,8 +67,12 @@ class OllamaProvider:
             )
 
         try:
-            r = requests.post(
-                url, json=body, timeout=LLM_API_TIMEOUT, stream=bool(on_chunk)
+            r = post_with_retry(
+                requests.post,
+                url,
+                json=body,
+                timeout=LLM_API_TIMEOUT,
+                stream=bool(on_chunk),
             )
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -86,7 +91,9 @@ class OllamaProvider:
                 )
                 body["format"] = "json"
                 body["stream"] = False
-                r = requests.post(url, json=body, timeout=LLM_API_TIMEOUT)
+                r = post_with_retry(
+                    requests.post, url, json=body, timeout=LLM_API_TIMEOUT
+                )
                 r.raise_for_status()
                 on_chunk = None  # fell back to non-streaming
 

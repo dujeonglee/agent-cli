@@ -152,6 +152,8 @@ agent-cli run "task" -m nemotron:120b
 | `AGENT_CLI_SHELL_OUTPUT_LIMIT_BYTES` | — | shell output이 이 바이트 초과 시 artifact로 저장 (기본 20 KB). ≤0 = 해당 axis 비활성. 두 axis OR. |
 | `AGENT_CLI_SHELL_ARTIFACT_MAX_SIZE` | — | 단일 shell artifact 파일의 최대 크기 (바이트, 기본 5 MB). 초과 시 truncate + 주석. |
 | `AGENT_CLI_SHELL_ARTIFACT_KEEP` | — | 세션당 유지할 shell artifact 최대 개수 (기본 20, mtime-LRU). ≤0 = 비활성 |
+| `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 3 = 최초 + 재시도 2회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. |
+| `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
 | `INTEGRATION_MODELS` | — | 통합 테스트 모델 |
 
 ## 모델 권장 사양

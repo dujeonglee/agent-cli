@@ -36,22 +36,7 @@ from agent_cli.render import (
 from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
 from agent_cli.tools.delegate import tool_delegate
 
-_debug_verbose = False
-
-
-def _set_debug_verbose(v: bool) -> None:
-    """Enable/disable debug logging to stderr."""
-    global _debug_verbose
-    _debug_verbose = v
-
-
-def _debug_log(msg: str) -> None:
-    """Print debug message to stderr (only when verbose mode is on)."""
-    if not _debug_verbose:
-        return
-    import sys
-
-    print(f"[debug {time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
+from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
 
 
 class AgentLoop:
