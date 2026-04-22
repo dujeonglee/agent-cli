@@ -76,26 +76,32 @@ class OllamaProvider:
             )
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            # Ollama < 0.5.0 does not support JSON Schema in format param.
-            # Fall back to basic "json" mode.
-            if (
+            # Only one recovery path lives here: Ollama < 0.5.0 rejects
+            # JSON Schema in the `format` field with 400. Anything else —
+            # 401 (no API key), 403 (cloud model subscription required),
+            # 429, 5xx — must bubble up so the user sees the real error
+            # instead of an empty-response retry loop. Earlier versions
+            # caught but never re-raised non-400 HTTPErrors; the 403
+            # response body would then be streamed as if it were normal
+            # content and produce "" on every turn.
+            is_json_schema_400 = (
                 capabilities.supports_structured_output
                 and e.response is not None
                 and e.response.status_code == 400
-            ):
-                print(
-                    "[warn] Ollama rejected JSON Schema format. "
-                    "Falling back to basic JSON mode. "
-                    "Upgrade Ollama to 0.5.0+ for constrained decoding.",
-                    file=sys.stderr,
-                )
-                body["format"] = "json"
-                body["stream"] = False
-                r = post_with_retry(
-                    requests.post, url, json=body, timeout=LLM_API_TIMEOUT
-                )
-                r.raise_for_status()
-                on_chunk = None  # fell back to non-streaming
+            )
+            if not is_json_schema_400:
+                raise
+            print(
+                "[warn] Ollama rejected JSON Schema format. "
+                "Falling back to basic JSON mode. "
+                "Upgrade Ollama to 0.5.0+ for constrained decoding.",
+                file=sys.stderr,
+            )
+            body["format"] = "json"
+            body["stream"] = False
+            r = post_with_retry(requests.post, url, json=body, timeout=LLM_API_TIMEOUT)
+            r.raise_for_status()
+            on_chunk = None  # fell back to non-streaming
 
         if on_chunk:
             return self._handle_stream(r, on_chunk)

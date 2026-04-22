@@ -205,6 +205,117 @@ class TestOllamaProvider:
         body = mock_post.call_args.kwargs["json"]
         assert body["format"] == "json"
 
+    @patch("agent_cli.providers.ollama.requests.post")
+    def test_403_surfaces_as_httperror(self, mock_post, caps_structured):
+        """Repro: Ollama Cloud returns 403 for unsubscribed models.
+        Before the fix, the provider caught the HTTPError silently (it
+        only checked for 400) and let the loop see an empty content,
+        which span forever on "Invalid JSON" retries. Now 403 must
+        surface as an exception out of provider.call so the loop's
+        error path can render it."""
+        import requests as _requests
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        err = _requests.exceptions.HTTPError("403 Forbidden")
+        err.response = mock_resp
+        mock_resp.raise_for_status.side_effect = err
+        mock_post.return_value = mock_resp
+
+        provider = OllamaProvider("http://localhost:11434")
+        with pytest.raises(_requests.exceptions.HTTPError):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="sys",
+                model="glm-5.1:cloud",
+                capabilities=caps_structured,
+            )
+        # Exactly one call — the 400 fallback must NOT fire on 403.
+        assert mock_post.call_count == 1
+
+    @patch("agent_cli.providers.ollama.requests.post")
+    def test_5xx_surfaces_as_httperror(self, mock_post, caps_structured):
+        """Same contract for 5xx — no silent swallowing."""
+        import requests as _requests
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        err = _requests.exceptions.HTTPError("500 Internal Server Error")
+        err.response = mock_resp
+        mock_resp.raise_for_status.side_effect = err
+        mock_post.return_value = mock_resp
+
+        provider = OllamaProvider("http://localhost:11434")
+        with pytest.raises(_requests.exceptions.HTTPError):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="sys",
+                model="qwen3:32b",
+                capabilities=caps_structured,
+            )
+        assert mock_post.call_count == 1
+
+    @patch("agent_cli.providers.ollama.requests.post")
+    def test_400_json_schema_fallback_still_works(self, mock_post, caps_structured):
+        """Regression guard: the 400-fallback must keep working after
+        the fix tightens the except scope."""
+        import requests as _requests
+
+        # First call: 400 HTTPError on raise_for_status (JSON Schema rejected)
+        first = MagicMock()
+        first.status_code = 400
+        err = _requests.exceptions.HTTPError("400 Bad Request")
+        err.response = first
+        first.raise_for_status.side_effect = err
+
+        # Second call (fallback): 200 with normal content
+        second = MagicMock()
+        second.status_code = 200
+        second.raise_for_status.return_value = None
+        second.json.return_value = {
+            "message": {"content": '{"thought": "hi"}'},
+            "prompt_eval_count": 1,
+            "eval_count": 1,
+        }
+
+        mock_post.side_effect = [first, second]
+
+        provider = OllamaProvider("http://localhost:11434")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="qwen3:32b",
+            capabilities=caps_structured,
+        )
+        # Two calls: the first with REACT_JSON_SCHEMA, the second with "json".
+        assert mock_post.call_count == 2
+        second_body = mock_post.call_args_list[1].kwargs["json"]
+        assert second_body["format"] == "json"
+        assert result.content == '{"thought": "hi"}'
+
+    @patch("agent_cli.providers.ollama.requests.post")
+    def test_400_without_structured_output_surfaces(self, mock_post, caps_basic):
+        """If we're NOT sending JSON Schema (caps_basic), a 400 has
+        nothing to do with the fallback and must surface, not be eaten."""
+        import requests as _requests
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        err = _requests.exceptions.HTTPError("400 Bad Request")
+        err.response = mock_resp
+        mock_resp.raise_for_status.side_effect = err
+        mock_post.return_value = mock_resp
+
+        provider = OllamaProvider("http://localhost:11434")
+        with pytest.raises(_requests.exceptions.HTTPError):
+            provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="sys",
+                model="old-model",
+                capabilities=caps_basic,
+            )
+        assert mock_post.call_count == 1
+
 
 @pytest.fixture
 def caps_tool_calling():
