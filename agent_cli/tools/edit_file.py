@@ -50,12 +50,19 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         if norm_hash == expected_hash:
             return line_num - 1, True
 
-        # Hash mismatch even after normalization — file likely changed.
-        # Return a clear error so the LLM re-reads the file.
+        # Hash mismatch even after normalization. Two possible causes:
+        # (1) external mutation — file changed since the last read_file,
+        #     fix is to re-read and retry;
+        # (2) same-call mutation — in a multi-edit call, an earlier edit
+        #     mutated the lines this later ref points at, fix is to
+        #     combine overlapping edits into a single 'replace' op.
+        # The message covers both so the caller can diagnose.
         raise RuntimeError(
             f"Hash mismatch at line {line_num}: ref '{ref}' does not match "
-            f"current content. The file may have been modified in a previous turn. "
-            f"Re-read the file with read_file to get fresh hashline tags, then retry."
+            f"current content. Re-read the file with read_file to get fresh "
+            f"hashline tags, then retry. If this is a multi-edit call, verify "
+            f"that no earlier edit mutates lines your later refs target — "
+            f"combine overlapping edits into a single 'replace' operation."
         )
 
 
@@ -82,6 +89,35 @@ def tool_edit_file(args: dict) -> ToolResult:
 
     file_lines = text.split("\n")
     fuzzy_warnings: list[str] = []
+
+    # Ambiguity check: when the same hashline ref appears in multiple
+    # edits (same pos twice, or pos in one edit equals end/pos in
+    # another), the first edit's mutation invalidates the shared ref
+    # for later edits. Historically this manifested as a mid-apply
+    # "Hash mismatch" RuntimeError that blamed "a previous turn" —
+    # misleading because the mutation happened in the same call.
+    # Catching it here gives the model an actionable message. A ref
+    # that is both pos and end of the SAME edit (degenerate single-line
+    # range) is fine and not flagged.
+    ref_sources: dict[str, set[int]] = {}
+    for i, edit in enumerate(edits):
+        for ref in (edit.get("pos"), edit.get("end")):
+            if not ref:
+                continue
+            ref_sources.setdefault(ref, set()).add(i)
+    duplicates = sorted(r for r, idxs in ref_sources.items() if len(idxs) > 1)
+    if duplicates:
+        refs_str = ", ".join(f"'{r}'" for r in duplicates)
+        return ToolResult(
+            False,
+            error=(
+                f"Ambiguous edit: reference(s) {refs_str} appear in multiple "
+                f"edits of this call. Earlier edits mutate the file and "
+                f"invalidate the hash for later edits that target the same "
+                f"line. Combine overlapping edits into a single 'replace' "
+                f"operation with the final intended content."
+            ),
+        )
 
     # Pre-validate all refs before mutating
     for edit in edits:
@@ -118,39 +154,48 @@ def tool_edit_file(args: dict) -> ToolResult:
 
     sorted_edits = sorted(edits, key=_sort_key)
 
-    for edit in sorted_edits:
-        op = edit["op"]
-        pos = edit.get("pos")
-        end = edit.get("end")
-        new_lines = edit.get("lines")
-        if isinstance(new_lines, str):
-            new_lines = new_lines.split("\n")
-        if new_lines is None:
-            new_lines = []
+    # Apply each edit against the mutating file_lines. The ambiguity
+    # check above catches the common multi-edit interaction patterns
+    # up-front, but `fuzzy_verify_ref` can still raise for genuine
+    # edge cases (e.g. overlapping ranges that don't share a ref
+    # string). Wrap the apply loop so those surface as a clean
+    # ToolResult error instead of an unhandled exception.
+    try:
+        for edit in sorted_edits:
+            op = edit["op"]
+            pos = edit.get("pos")
+            end = edit.get("end")
+            new_lines = edit.get("lines")
+            if isinstance(new_lines, str):
+                new_lines = new_lines.split("\n")
+            if new_lines is None:
+                new_lines = []
 
-        if op == "replace":
-            if not pos:
-                return ToolResult(False, error="replace requires 'pos'.")
-            start_idx, _ = fuzzy_verify_ref(file_lines, pos)
-            if end:
-                end_idx, _ = fuzzy_verify_ref(file_lines, end)
-                file_lines[start_idx : end_idx + 1] = new_lines
-            else:
-                file_lines[start_idx : start_idx + 1] = new_lines
+            if op == "replace":
+                if not pos:
+                    return ToolResult(False, error="replace requires 'pos'.")
+                start_idx, _ = fuzzy_verify_ref(file_lines, pos)
+                if end:
+                    end_idx, _ = fuzzy_verify_ref(file_lines, end)
+                    file_lines[start_idx : end_idx + 1] = new_lines
+                else:
+                    file_lines[start_idx : start_idx + 1] = new_lines
 
-        elif op == "append":
-            if pos:
-                idx, _ = fuzzy_verify_ref(file_lines, pos)
-                file_lines[idx + 1 : idx + 1] = new_lines
-            else:
-                file_lines.extend(new_lines)
+            elif op == "append":
+                if pos:
+                    idx, _ = fuzzy_verify_ref(file_lines, pos)
+                    file_lines[idx + 1 : idx + 1] = new_lines
+                else:
+                    file_lines.extend(new_lines)
 
-        elif op == "prepend":
-            if pos:
-                idx, _ = fuzzy_verify_ref(file_lines, pos)
-                file_lines[idx:idx] = new_lines
-            else:
-                file_lines[0:0] = new_lines
+            elif op == "prepend":
+                if pos:
+                    idx, _ = fuzzy_verify_ref(file_lines, pos)
+                    file_lines[idx:idx] = new_lines
+                else:
+                    file_lines[0:0] = new_lines
+    except RuntimeError as e:
+        return ToolResult(False, error=f"edit_file apply failed: {e}")
 
     result_text = "\n".join(file_lines)
     try:
