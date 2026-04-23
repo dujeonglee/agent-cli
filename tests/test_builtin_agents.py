@@ -113,6 +113,46 @@ class TestExplorerPromptIntent:
             or "never opened" in body
         )
 
+    def test_body_expands_source_scope_beyond_python(self):
+        """A1 — Source must include skill/agent markdown and config, not
+        just .py. Symptom: earlier runs treated 'source' as python-only
+        and ignored .md-backed subsystems (skills, agents)."""
+        body = self._body()
+        # One of the non-.py source types must appear in the scope guidance.
+        assert (
+            ".md" in body
+            or "markdown" in body
+            or "yaml frontmatter" in body
+            or "configuration" in body
+        )
+
+    def test_body_has_broad_survey_stop_criterion(self):
+        """A3 — Broad questions ("analyze the workspace") must constrain
+        the answer to subsystems with an actual implementation read.
+        Symptom: describing mcp/skills/providers internals from only
+        reading their __init__.py."""
+        body = self._body()
+        assert "broad-survey" in body or "broad survey" in body or "broad" in body
+        # Concrete instruction about only describing read subsystems.
+        assert (
+            "subsystems where you actually read" in body
+            or "read fewer" in body
+            or "only the subsystems" in body
+        )
+
+    def test_body_cross_reference_rule(self):
+        """Cross-reference rule — doc claims that are testable against
+        authoritative sources (e.g., pyproject.toml for deps) must be
+        verified before repeating. Symptom: explorer claimed
+        `python-json-repair` was a dependency by repeating the README
+        without checking pyproject.toml."""
+        body = self._body()
+        assert (
+            "pyproject" in body
+            or "cross-reference" in body
+            or "authoritative source" in body
+        )
+
 
 class TestBuiltinAgentPriority:
     def test_project_overrides_builtin(self, tmp_path, monkeypatch):
