@@ -104,7 +104,18 @@ _HASHLINE_INLINE = """\
   Constraints:
   - Always read the file first to get current hashline tags.
   - If a hash mismatch error occurs, re-read the file and retry with fresh tags.
-  - Use write_file only for creating new files, not for editing existing ones."""
+  - Use write_file only for creating new files, not for editing existing ones.
+
+  Multi-edit notes:
+  - Each edit in `edits` references the ORIGINAL file state — the array
+    is NOT a sequential "apply then re-read" pipeline.
+  - Edits that overlap (same region or ref string) are rejected —
+    combine them into a single `replace` op with the final intended
+    content.
+  - If a later edit depends on the RESULT of an earlier edit (e.g.,
+    modifying a line that an earlier edit just created), use separate
+    edit_file calls with read_file between them. Observation sync is
+    how you "see" the intermediate state."""
 
 _DELEGATE_INLINE = """\
 

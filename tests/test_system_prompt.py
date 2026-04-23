@@ -42,6 +42,29 @@ class TestBuildSystemPrompt:
         # Should be inline, not a separate section
         assert "## Hashline" not in prompt
 
+    def test_hashline_guide_has_multi_edit_notes(self):
+        """Multi-edit notes in _HASHLINE_INLINE prevent the three
+        recurring drift patterns observed in S25FE-kernel session
+        1776946589:
+          1. Model assumes edits apply sequentially and uses
+             post-edit-1 hashes in edit 2.
+          2. Model submits overlapping edits (same ref / same region).
+          3. Model tries to modify lines that an earlier edit in the
+             same batch created.
+        All three are intent-level tripwires, not literal-string
+        checks. Whitespace is collapsed because the inline guide wraps
+        across lines."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["edit_file"])
+        flat = re.sub(r"\s+", " ", prompt)
+        # (1) ORIGINAL state, not sequential pipeline
+        assert "ORIGINAL file state" in flat
+        # (2) overlap rejection with the fix instruction
+        assert "overlap" in flat.lower()
+        # (3) separate calls for dependent changes
+        assert "separate edit_file calls" in flat
+
     def test_delegate_included(self):
         prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert "delegate" in prompt.lower()
