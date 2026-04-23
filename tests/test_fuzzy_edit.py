@@ -180,6 +180,185 @@ class TestDuplicateRefDetection:
         assert f"1#{h1}" not in result.error  # unique ref not flagged
 
 
+class TestRangeOverlapDetection:
+    """A: When two edits touch overlapping line ranges — even with
+    *different* ref strings — the batch is ambiguous. First edit's
+    mutation will invalidate the second edit's target lines (shift
+    them, delete them, or rewrite their content). Pre-validate via
+    range comparison and reject with a specific error.
+
+    Distinct from TestDuplicateRefDetection: those cases share the
+    same ref string, caught by the dict-based dedup. These cases have
+    *different* ref strings that happen to cover overlapping line
+    regions, caught by numeric range intersection."""
+
+    def _write(self, tmp_path, lines):
+        path = tmp_path / "f.c"
+        path.write_text("\n".join(lines))
+        return path
+
+    def test_overlapping_replaces_different_refs_rejected(self, tmp_path):
+        """Two replaces covering overlapping line ranges, no shared
+        ref string. Must be rejected AT PRE-VALIDATE (not via
+        apply-time hash mismatch) so the caller sees the structural
+        problem clearly instead of a generic "Hash mismatch" message."""
+        from agent_cli.tools.edit_file import tool_edit_file
+
+        lines = ["l1", "l2", "l3", "l4", "l5", "l6"]
+        path = self._write(tmp_path, lines)
+        h2 = compute_line_hash(2, lines[1])
+        h4 = compute_line_hash(4, lines[3])
+        h3 = compute_line_hash(3, lines[2])
+        h5 = compute_line_hash(5, lines[4])
+        args = {
+            "path": str(path),
+            "edits": [
+                # [2..4] and [3..5] overlap on lines 3 and 4
+                {"op": "replace", "pos": f"2#{h2}", "end": f"4#{h4}", "lines": ["A"]},
+                {"op": "replace", "pos": f"3#{h3}", "end": f"5#{h5}", "lines": ["B"]},
+            ],
+        }
+        result = tool_edit_file(args)
+        assert not result.success
+        # Pre-validate path — structural ambiguity error, not apply-time
+        # hash mismatch.
+        assert "Ambiguous edit" in result.error
+        assert path.read_text() == "\n".join(lines)
+
+    def test_append_inside_replace_range_rejected(self, tmp_path):
+        """Replace covers [10..15], append targets a line inside the
+        range — clear conflict even though ref strings differ."""
+        from agent_cli.tools.edit_file import tool_edit_file
+
+        lines = [f"l{i}" for i in range(1, 21)]
+        path = self._write(tmp_path, lines)
+        h10 = compute_line_hash(10, lines[9])
+        h12 = compute_line_hash(12, lines[11])
+        h15 = compute_line_hash(15, lines[14])
+        args = {
+            "path": str(path),
+            "edits": [
+                {
+                    "op": "replace",
+                    "pos": f"10#{h10}",
+                    "end": f"15#{h15}",
+                    "lines": ["X"],
+                },
+                {"op": "append", "pos": f"12#{h12}", "lines": ["Y"]},
+            ],
+        }
+        result = tool_edit_file(args)
+        assert not result.success
+        assert "Ambiguous edit" in result.error
+        assert path.read_text() == "\n".join(lines)
+
+    def test_replace_and_replace_at_same_line_different_refs_rejected(self, tmp_path):
+        """Two single-line replaces at the same pos with different ref
+        hashes — pathological but must be caught. (In practice hashes
+        would match for the same line, so duplicate-ref would fire
+        first. This test pins the belt-and-braces behavior.)"""
+        from agent_cli.tools.edit_file import tool_edit_file
+
+        lines = ["l1", "l2", "l3"]
+        path = self._write(tmp_path, lines)
+        h2 = compute_line_hash(2, lines[1])
+        args = {
+            "path": str(path),
+            "edits": [
+                {"op": "replace", "pos": f"2#{h2}", "lines": ["A"]},
+                # Manually different hash (would fail hash verify but
+                # range check fires first).
+                {"op": "replace", "pos": "2#ZZ", "lines": ["B"]},
+            ],
+        }
+        result = tool_edit_file(args)
+        assert not result.success
+        # Either the dup check on pos string (same "2#" prefix, different
+        # hash though — actually different strings) or range check can
+        # catch this. We just require SOME rejection.
+        assert "multiple edits" in result.error or "overlap" in result.error.lower()
+        assert path.read_text() == "\n".join(lines)
+
+    def test_adjacent_non_overlapping_replaces_succeed(self, tmp_path):
+        """[1..3] and [4..6] are adjacent but do NOT overlap — both
+        edits must apply cleanly."""
+        from agent_cli.tools.edit_file import tool_edit_file
+
+        lines = ["l1", "l2", "l3", "l4", "l5", "l6", "l7"]
+        path = self._write(tmp_path, lines)
+        h1 = compute_line_hash(1, lines[0])
+        h3 = compute_line_hash(3, lines[2])
+        h4 = compute_line_hash(4, lines[3])
+        h6 = compute_line_hash(6, lines[5])
+        args = {
+            "path": str(path),
+            "edits": [
+                {"op": "replace", "pos": f"1#{h1}", "end": f"3#{h3}", "lines": ["A"]},
+                {"op": "replace", "pos": f"4#{h4}", "end": f"6#{h6}", "lines": ["B"]},
+            ],
+        }
+        result = tool_edit_file(args)
+        assert result.success, result.error
+        assert path.read_text().splitlines() == ["A", "B", "l7"]
+
+    def test_disjoint_appends_succeed(self, tmp_path):
+        """Appends at different lines with no range overlap are fine."""
+        from agent_cli.tools.edit_file import tool_edit_file
+
+        lines = ["l1", "l2", "l3", "l4"]
+        path = self._write(tmp_path, lines)
+        h1 = compute_line_hash(1, lines[0])
+        h3 = compute_line_hash(3, lines[2])
+        args = {
+            "path": str(path),
+            "edits": [
+                {"op": "append", "pos": f"1#{h1}", "lines": ["AFTER1"]},
+                {"op": "append", "pos": f"3#{h3}", "lines": ["AFTER3"]},
+            ],
+        }
+        result = tool_edit_file(args)
+        assert result.success, result.error
+        assert path.read_text().splitlines() == [
+            "l1",
+            "AFTER1",
+            "l2",
+            "l3",
+            "AFTER3",
+            "l4",
+        ]
+
+    def test_append_at_end_of_replace_boundary_rejected(self, tmp_path):
+        """Replace [10..15] + append at line 15 — the append's target
+        line is the last line of the replaced range. Rejected because
+        the intent is ambiguous: does the append insert AFTER the new
+        replaced block, or into the original line 15 that's about to
+        be deleted? Force caller to be explicit."""
+        from agent_cli.tools.edit_file import tool_edit_file
+
+        lines = [f"l{i}" for i in range(1, 21)]
+        path = self._write(tmp_path, lines)
+        h10 = compute_line_hash(10, lines[9])
+        h15 = compute_line_hash(15, lines[14])
+        args = {
+            "path": str(path),
+            "edits": [
+                {
+                    "op": "replace",
+                    "pos": f"10#{h10}",
+                    "end": f"15#{h15}",
+                    "lines": ["X"],
+                },
+                {"op": "append", "pos": f"15#{h15}", "lines": ["Y"]},
+            ],
+        }
+        result = tool_edit_file(args)
+        assert not result.success
+        # This also hits duplicate-ref (15#hash shared). Either error is
+        # acceptable — both tell the caller to combine edits.
+        assert "multiple edits" in result.error or "overlap" in result.error.lower()
+        assert path.read_text() == "\n".join(lines)
+
+
 class TestHashMismatchMessage:
     """C: fuzzy_verify_ref's error message must cover both scenarios:
     external modification (re-read needed) AND same-call earlier-edit

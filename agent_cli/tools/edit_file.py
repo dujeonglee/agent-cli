@@ -66,6 +66,37 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         )
 
 
+def _edit_range(edit: dict) -> tuple[int, int] | None:
+    """Return the [start_line, end_line] range this edit touches, or
+    None if there is no ref to compare against (e.g., append-to-EOF
+    with no pos). Used for overlap detection only — the line numbers
+    are extracted from refs syntactically and do not verify hashes.
+
+    For replace ops, the range is inclusive [pos_line, end_line] (or
+    [pos_line, pos_line] when end is omitted). For append/prepend
+    insertion points we use [pos_line, pos_line] — the edit depends
+    on that line's existence and siblings at that position, so any
+    other edit touching the same line is a conflict.
+    """
+    pos = edit.get("pos")
+    if not pos:
+        return None
+    try:
+        start_line, _ = _parse_ref(pos)
+    except RuntimeError:
+        # Malformed ref — pre-validate will catch it with a proper
+        # error later; skip it for overlap purposes.
+        return None
+    end = edit.get("end")
+    if end:
+        try:
+            end_line, _ = _parse_ref(end)
+            return (start_line, max(start_line, end_line))
+        except RuntimeError:
+            return (start_line, start_line)
+    return (start_line, start_line)
+
+
 def tool_edit_file(args: dict) -> ToolResult:
     """Apply hashline-based edits to a file with fuzzy matching support."""
 
@@ -90,15 +121,14 @@ def tool_edit_file(args: dict) -> ToolResult:
     file_lines = text.split("\n")
     fuzzy_warnings: list[str] = []
 
-    # Ambiguity check: when the same hashline ref appears in multiple
-    # edits (same pos twice, or pos in one edit equals end/pos in
-    # another), the first edit's mutation invalidates the shared ref
-    # for later edits. Historically this manifested as a mid-apply
-    # "Hash mismatch" RuntimeError that blamed "a previous turn" —
-    # misleading because the mutation happened in the same call.
-    # Catching it here gives the model an actionable message. A ref
-    # that is both pos and end of the SAME edit (degenerate single-line
-    # range) is fine and not flagged.
+    # Ambiguity checks — two complementary layers:
+    #
+    # Layer 1: shared ref string across edits. When the same hashline
+    # ref appears in multiple edits (same pos twice, or pos in one
+    # edit equals end/pos in another), the first edit's mutation
+    # invalidates the shared ref for later edits. A ref that is both
+    # pos and end of the SAME edit (degenerate single-line range) is
+    # fine and not flagged.
     ref_sources: dict[str, set[int]] = {}
     for i, edit in enumerate(edits):
         for ref in (edit.get("pos"), edit.get("end")):
@@ -118,6 +148,36 @@ def tool_edit_file(args: dict) -> ToolResult:
                 f"operation with the final intended content."
             ),
         )
+
+    # Layer 2: overlapping line-number ranges with *different* ref
+    # strings. Layer 1 matches on ref string equality; if two edits
+    # target the same line via different hashes (pathological), or
+    # their replace-ranges span overlapping regions with distinct
+    # endpoint refs, Layer 1 misses them and they'd only surface as
+    # a cryptic apply-time hash mismatch. Compute each edit's
+    # effective line range and reject on any pairwise intersection.
+    edit_ranges: list[tuple[int, tuple[int, int]]] = []
+    for i, edit in enumerate(edits):
+        r = _edit_range(edit)
+        if r is not None:
+            edit_ranges.append((i, r))
+    for a_i in range(len(edit_ranges)):
+        idx_a, (a_start, a_end) = edit_ranges[a_i]
+        for b_i in range(a_i + 1, len(edit_ranges)):
+            idx_b, (b_start, b_end) = edit_ranges[b_i]
+            if a_start <= b_end and b_start <= a_end:
+                return ToolResult(
+                    False,
+                    error=(
+                        f"Ambiguous edit: edit #{idx_a + 1} "
+                        f"(lines {a_start}-{a_end}) and edit #{idx_b + 1} "
+                        f"(lines {b_start}-{b_end}) touch overlapping line "
+                        f"regions. Combine overlapping edits into a single "
+                        f"'replace' operation with the final intended "
+                        f"content, or split dependent changes into separate "
+                        f"edit_file calls with read_file between them."
+                    ),
+                )
 
     # Pre-validate all refs before mutating
     for edit in edits:
