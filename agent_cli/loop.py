@@ -699,8 +699,49 @@ def _render_token_stats(usage, turn: int, verbose: bool = False) -> None:
     render_status("running", msg, turn)
 
 
+# Fields a model might use to wrap a question's text inside a dict —
+# e.g. `questions=[{"question": "..."}]` drift observed with qwen3.6
+# in S25FE-kernel session 1776954600. Checked in priority order, so a
+# `question` key wins over `text` when both are present.
+_QUESTION_TEXT_KEYS = ("question", "text", "content", "q")
+
+
+def _extract_question_text(item) -> str | None:
+    """Pull the text out of a single question item, or return None if
+    the item can't be interpreted as a question.
+
+    Strings are returned as-is (when non-empty). Dicts are probed for
+    one of the known text-bearing field names. Anything else — nested
+    lists, numbers, dicts without a recognizable text field, dicts
+    whose value is itself a non-string — returns None so the caller
+    can drop the item rather than rendering a raw repr.
+    """
+    if isinstance(item, str):
+        return item if item else None
+    if isinstance(item, dict):
+        for key in _QUESTION_TEXT_KEYS:
+            v = item.get(key)
+            if isinstance(v, str) and v:
+                return v
+    return None
+
+
 def _extract_questions(action_input) -> list[str]:
-    """Extract questions list from ask tool input, handling all formats."""
+    """Extract a list of question strings from an `ask` tool input,
+    tolerating the various shapes models emit:
+
+    - {"questions": ["a", "b"]}                 — the canonical form
+    - {"questions": "single"}                   — single-string variant
+    - {"question": "legacy"}                    — older singular field
+    - "direct question"                         — bare string
+    - ["q1", "q2"]                              — bare list
+    - {"questions": [{"question": "..."}, ...]} — list of dict items
+      with a nested text field (qwen3.6 drift)
+    - {"questions": {"question": "..."}}        — single dict wrapper
+
+    Dict items without a recognizable text field drop silently instead
+    of rendering as `str(dict)` repr noise.
+    """
     if isinstance(action_input, dict):
         raw_questions = action_input.get("questions") or action_input.get("question")
     elif isinstance(action_input, str):
@@ -709,11 +750,15 @@ def _extract_questions(action_input) -> list[str]:
         raw_questions = action_input
     else:
         return []
+
     # Normalize to list
     if isinstance(raw_questions, str):
         return [raw_questions] if raw_questions else []
     if isinstance(raw_questions, list):
-        return [str(q) for q in raw_questions if q]
+        return [t for q in raw_questions if (t := _extract_question_text(q))]
+    if isinstance(raw_questions, dict):
+        text = _extract_question_text(raw_questions)
+        return [text] if text else []
     return []
 
 

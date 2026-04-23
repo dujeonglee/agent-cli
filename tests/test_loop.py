@@ -1010,6 +1010,67 @@ class TestExtractQuestions:
 
         assert _extract_questions(["a", "", "b"]) == ["a", "b"]
 
+    def test_list_of_dicts_with_question_key(self):
+        """S25FE-kernel session 1776954600 repro: model emitted
+        `questions=[{"question":"..."}]` instead of a list of strings.
+        Previously the dict fell through to `str(q)` and the rendered
+        question was the dict repr `{'question': '...'}`. Now extract
+        the text from the dict."""
+        from agent_cli.loop import _extract_questions
+
+        result = _extract_questions({"questions": [{"question": "What next?"}]})
+        assert result == ["What next?"]
+
+    def test_list_of_dicts_with_text_key(self):
+        """Common alternate field name."""
+        from agent_cli.loop import _extract_questions
+
+        result = _extract_questions({"questions": [{"text": "Pick one"}]})
+        assert result == ["Pick one"]
+
+    def test_list_of_dicts_with_content_key(self):
+        from agent_cli.loop import _extract_questions
+
+        result = _extract_questions({"questions": [{"content": "Ready?"}]})
+        assert result == ["Ready?"]
+
+    def test_list_mixed_strings_and_dicts(self):
+        """Extraction works item-by-item regardless of homogeneity."""
+        from agent_cli.loop import _extract_questions
+
+        result = _extract_questions(
+            {"questions": ["plain string", {"question": "nested"}, "another"]}
+        )
+        assert result == ["plain string", "nested", "another"]
+
+    def test_raw_questions_is_single_dict(self):
+        """`action_input.get("questions")` returns a dict, not a list —
+        treat as a single question."""
+        from agent_cli.loop import _extract_questions
+
+        result = _extract_questions({"questions": {"question": "Solo?"}})
+        assert result == ["Solo?"]
+
+    def test_dict_without_known_text_field_skipped(self):
+        """Dict items without any recognizable text key drop out of the
+        list rather than becoming `str(dict)` noise."""
+        from agent_cli.loop import _extract_questions
+
+        result = _extract_questions(
+            {"questions": ["good", {"unknown_field": "value"}, "also good"]}
+        )
+        assert result == ["good", "also good"]
+
+    def test_dict_with_non_string_value_skipped(self):
+        """If the text field exists but isn't a string (e.g. nested
+        dict), skip that item rather than str()-ing it."""
+        from agent_cli.loop import _extract_questions
+
+        result = _extract_questions(
+            {"questions": [{"question": {"nested": "obj"}}, "clean"]}
+        )
+        assert result == ["clean"]
+
 
 class TestAgentLoopClass:
     """Test AgentLoop class directly."""
