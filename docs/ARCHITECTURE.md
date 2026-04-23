@@ -451,21 +451,26 @@ Stage 3: regex 필드 추출
 ReActResult (parse_stage=0, 모든 필드 None)
 ```
 
-#### 가상 툴 payload hoist (드리프트 정규화)
+#### 형제 키 정규화 (action_input hoist, 2-레이어)
 
-일부 모델(특히 qwen3 계열)은 가상 툴 응답에서 payload를 `action_input` 안에 중첩하지 않고 **top-level 필드로 뽑아내는** 드리프트를 보입니다. 예:
+일부 모델(qwen3 계열 등)은 action 인자를 `action_input` 안에 **중첩하지 않고 top-level 형제 키로** 뱉는 드리프트를 보입니다:
 
 ```json
-// 드리프트
+// 드리프트 A: 가상 툴 payload가 top-level
 {"thought": "done", "action": "complete", "result": "final answer"}
 
-// 기대
-{"thought": "done", "action": "complete", "action_input": {"result": "final answer"}}
+// 드리프트 B: 실제 툴 인자가 top-level (pcie_scsc 세션에서 관찰)
+{"thought": "find files", "action": "shell", "command": "ls"}
+
+// 둘 다의 기대 형태
+{"thought": "...", "action": "...", "action_input": {...}}
 ```
 
-JSON 자체는 valid하고 `action` 이름도 올바르지만, loop의 complete 핸들러가 `action_input.result`를 기대하기 때문에 조용히 "Completed without result — model may lack capability for this task" 메시지로 끝남. 이 증상은 strict JSON Schema로도 막히지 않음 — 과거 `REACT_JSON_SCHEMA`가 `thought`만 required로 두고 additionalProperties 제한이 없었기 때문.
+JSON 자체는 valid하고 action 이름도 올바른데, loop이 `action_input.X`를 찾기 때문에 조용히 실패 (가상 툴은 "Completed without result", 실제 툴은 "Missing required field" → repeated-call guard). strict JSON Schema로도 막히지 않음 — 과거 schema가 `thought`만 required로 두고 `additionalProperties` 제한이 없었기 때문.
 
-`_hoist_virtual_tool_payload()`가 파싱 직후 정규화:
+`_normalize_action_input()`이 파싱 직후 두 레이어로 정규화합니다 (`parsing/react_parser.py`):
+
+**Layer 1 — 가상 툴 별칭 매핑.** `complete` / `ready_for_review` / `ask`에 대해 정해진 후보 키를 canonical target 키로 매핑:
 
 | action | target key | top-level fallback 순위 |
 |---|---|---|
@@ -473,7 +478,29 @@ JSON 자체는 valid하고 `action` 이름도 올바르지만, loop의 complete 
 | `ready_for_review` | `action_input.summary` | `summary` |
 | `ask` | `action_input.questions` | `questions` > `question` (`_extract_questions`가 str→list 처리) |
 
-이미 `action_input`이 있으면 hoist 안 함. 비가상 툴(`read_file` 등)은 정책 밖 — top-level 드리프트를 묵인하지 않고 그대로 둬서 오류를 드러냄.
+알려진 가상 툴인데 후보가 하나도 없으면 **fall-through 안 함** — `action_input=None` 유지해서 downstream이 "no payload" 경로로 처리 (복귀 가능).
+
+**Layer 2 — 실제 툴 / 미지의 action의 형제 키 번들링.** 가상 툴이 아니고 `action_input`이 없으면, 예약되지 않은 top-level 키 전부를 `action_input`으로 모아줌:
+
+```json
+// 입력
+{"thought":"...", "action":"shell", "command":"ls", "timeout":10}
+// 정규화 후
+{"thought":"...", "action":"shell", "action_input":{"command":"ls","timeout":10}}
+```
+
+MCP 제공 툴처럼 `action` 이름이 레지스트리에 없어도 같은 룰 적용.
+
+**예약어 블랙리스트 (`_REACT_RESERVED`).** 다음 키들은 형제로 나타나도 `action_input`에 담기지 않습니다:
+
+- `thought` / `action` / `action_input` — ReAct 프로토콜 필드
+- `observation` — 시스템 프롬프트가 금지하지만 드리프트 시 혼입 가능
+- `reasoning` / `reflection` — thinking 태그 변종 (태그로 나타나면 `_strip_thinking_blocks`가 잡지만 top-level 키 형태로도 등장 가능)
+- `role` / `_meta` — 저장/세션 계층 메타 필드
+
+**우선순위 규칙.** `action_input`이 이미 있고 truthy면 Layer 1, 2 모두 skip — 모델이 명시적으로 nested를 선택했다고 보고 형제 키는 무시. `action_input`이 `None` 또는 `{}`면 레이어 로직 발동.
+
+이 정규화는 strict JSON Schema 도입 없이 작동하며, flat form을 정식 canonical로 승격하는 미래 변경(`plan/schema-flatten.md` 참조)의 파서 기반이 됩니다.
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 

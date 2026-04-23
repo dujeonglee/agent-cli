@@ -257,14 +257,17 @@ class TestVirtualToolPayloadHoist:
         result = parse_react(text)
         assert result.action_input == {"questions": ["A", "B"]}
 
-    def test_non_virtual_tool_does_not_hoist(self):
-        """Regular tools must not have their top-level siblings hoisted —
-        read_file is not a virtual tool and its input must come from
-        action_input verbatim."""
-        text = '{"thought": "read it", "action": "read_file", "path": "a.py"}'
+    def test_virtual_tool_with_unknown_sibling_only_stays_none(self):
+        """When a virtual tool has no known-alias sibling, action_input
+        stays None — we do NOT fall through to the real-tool hoist for
+        virtual tools. Rationale: complete/ready_for_review/ask have
+        well-defined payload shapes; arbitrary sibling keys shouldn't
+        be blindly stuffed into action_input and pretend to be the
+        payload."""
+        text = '{"thought": "blank", "action": "complete", "unknown_field": "x"}'
         result = parse_react(text)
-        assert result.action == "read_file"
-        assert result.action_input is None  # `path` at top level is not hoisted
+        assert result.action == "complete"
+        assert result.action_input is None
 
     def test_no_fallback_keys_leaves_action_input_none(self):
         """complete without action_input AND without any known fallback
@@ -282,3 +285,159 @@ class TestVirtualToolPayloadHoist:
         result = parse_react(text)
         assert result.parse_stage == 2
         assert result.action_input == {"result": "done"}
+
+
+class TestRealToolArgHoist:
+    """Layer 2 normalization: when the action is a real tool (shell,
+    read_file, etc. — anything NOT in the virtual tool payload map) and
+    action_input is missing/empty, bundle non-reserved top-level keys
+    into action_input. Pins the pcie_scsc-session drift where qwen3.6
+    kept emitting {"action":"shell","command":"..."} with command as a
+    sibling of action rather than nested inside action_input."""
+
+    def test_shell_hoists_top_level_command(self):
+        """The exact drift observed in session 1776942600."""
+        text = '{"thought": "find files", "action": "shell", "command": "ls"}'
+        result = parse_react(text)
+        assert result.action == "shell"
+        assert result.action_input == {"command": "ls"}
+
+    def test_shell_hoists_command_and_timeout_together(self):
+        """All non-reserved siblings bundle as a whole — tool-specific
+        multi-arg shapes work without the parser knowing the schema."""
+        text = (
+            '{"thought": "sleep then exit", "action": "shell", '
+            '"command": "sleep 5", "timeout": 10}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"command": "sleep 5", "timeout": 10}
+
+    def test_read_file_hoists_multiple_args(self):
+        text = (
+            '{"thought": "read", "action": "read_file", '
+            '"path": "a.py", "line_start": 1, "line_end": 50}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"path": "a.py", "line_start": 1, "line_end": 50}
+
+    def test_edit_file_hoists_edits_array(self):
+        """Nested array payloads (like edit_file's edits list) hoist
+        correctly — parser just treats the value opaquely."""
+        text = (
+            '{"thought": "edit", "action": "edit_file", '
+            '"path": "loop.py", '
+            '"edits": [{"op": "replace", "pos": "1#AA", "lines": ["x"]}]}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {
+            "path": "loop.py",
+            "edits": [{"op": "replace", "pos": "1#AA", "lines": ["x"]}],
+        }
+
+    def test_nested_action_input_takes_priority_over_siblings(self):
+        """If action_input is present and truthy, siblings are ignored.
+        Defensive choice: assume model explicitly picked the nested form
+        and any sibling was unrelated metadata."""
+        text = (
+            '{"thought": "...", "action": "shell", '
+            '"action_input": {"command": "nested"}, '
+            '"command": "sibling-ignored"}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"command": "nested"}
+
+    def test_empty_action_input_triggers_hoist(self):
+        """action_input={} is falsy — siblings ARE hoisted. This covers
+        models that emit an empty placeholder plus siblings."""
+        text = (
+            '{"thought": "...", "action": "shell", "action_input": {}, "command": "ls"}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"command": "ls"}
+
+    def test_shell_no_siblings_leaves_action_input_none(self):
+        """Nothing to hoist — action_input stays None and the loop's
+        validator will catch the missing required field (unchanged
+        behavior)."""
+        text = '{"thought": "...", "action": "shell"}'
+        result = parse_react(text)
+        assert result.action == "shell"
+        assert result.action_input is None
+
+    def test_real_tool_hoist_survives_json_repair(self):
+        """Truncated sibling-form JSON still hoists after stage 2 repair."""
+        text = '{"thought": "...", "action": "shell", "command": "ls"'
+        result = parse_react(text)
+        assert result.parse_stage == 2
+        assert result.action_input == {"command": "ls"}
+
+    def test_unknown_action_hoists_like_real_tool(self):
+        """Unknown actions (e.g. MCP-provided tools not in our virtual
+        map) follow the real-tool rule — bundle siblings."""
+        text = (
+            '{"thought": "call MCP", "action": "myserver.search", '
+            '"query": "python", "limit": 10}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"query": "python", "limit": 10}
+
+
+class TestReservedKeyBlacklist:
+    """Keys that might appear in model output but must NEVER be bundled
+    into action_input — they are ReAct protocol fields or meta keys.
+    These tests pin the blacklist so an accidental drift (e.g. a model
+    emitting `role:"assistant"` alongside action) does not poison tool
+    input."""
+
+    def test_role_not_hoisted(self):
+        """`role` is added at history storage time, but a confused model
+        might emit it. Blacklisted."""
+        text = (
+            '{"thought": "...", "action": "shell", '
+            '"command": "ls", "role": "assistant"}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"command": "ls"}
+
+    def test_observation_not_hoisted(self):
+        """System prompt forbids `observation` in model output. If a
+        model emits it anyway, it isn't a tool arg."""
+        text = (
+            '{"thought": "...", "action": "shell", '
+            '"command": "ls", "observation": "fake"}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"command": "ls"}
+
+    def test_reasoning_and_reflection_not_hoisted(self):
+        """`reasoning` and `reflection` are thinking-tag variants. A
+        model that emits them at top level has drifted in a different
+        way (wrong field name for `thought`); the right fix is prompt
+        correction, not stuffing them into a tool's argument dict."""
+        text = (
+            '{"thought": "...", "action": "shell", '
+            '"command": "ls", "reasoning": "x", "reflection": "y"}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"command": "ls"}
+
+    def test_meta_key_not_hoisted(self):
+        """`_meta` is an internal marker for session/history records,
+        never a tool arg."""
+        text = (
+            '{"thought": "...", "action": "shell", '
+            '"command": "ls", "_meta": {"session": "abc"}}'
+        )
+        result = parse_react(text)
+        assert result.action_input == {"command": "ls"}
+
+    def test_only_blacklisted_siblings_leaves_action_input_none(self):
+        """Every sibling is blacklisted → nothing real to hoist,
+        action_input stays None."""
+        text = (
+            '{"thought": "...", "action": "shell", '
+            '"role": "assistant", "observation": "x"}'
+        )
+        result = parse_react(text)
+        assert result.action == "shell"
+        assert result.action_input is None

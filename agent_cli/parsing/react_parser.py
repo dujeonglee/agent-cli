@@ -151,6 +151,31 @@ def _regex_extract(text: str) -> dict | None:
     return result if result else None
 
 
+# Keys that are part of the ReAct protocol or are reserved for internal
+# use. They must NEVER be hoisted into action_input even when siblings
+# of `action`. Seeding this blacklist defensively:
+#   - thought / action / action_input : the ReAct protocol trio
+#   - observation: system prompt forbids it in model output; if emitted
+#     it's a drift, not a tool arg
+#   - reasoning / reflection: thinking-tag variants (already stripped by
+#     _strip_thinking_blocks when they appear as tags, but models
+#     occasionally emit them as top-level keys too)
+#   - role / _meta: added by our own storage / session layer; a confused
+#     model could echo them back
+_REACT_RESERVED: frozenset[str] = frozenset(
+    {
+        "thought",
+        "action",
+        "action_input",
+        "observation",
+        "reasoning",
+        "reflection",
+        "role",
+        "_meta",
+    }
+)
+
+
 # Virtual-tool payload hoisting map.
 #
 # Some models (observed with qwen3 family) emit responses like:
@@ -160,15 +185,12 @@ def _regex_extract(text: str) -> dict | None:
 # nothing downstream catches it — the complete handler just sees
 # action_input=None and reports "Completed without result".
 #
-# The drift happens most often on the "final answer" virtual tools
-# (complete, ready_for_review) because conceptually they feel like a
-# direct reply, not a tool call. Strict JSON Schema would not have
-# prevented it either: the old REACT_JSON_SCHEMA only marked `thought`
-# as required and placed no additionalProperties cap, so top-level
-# `result` was always allowed.
-#
 # Entry shape: action_name -> (target_key_in_action_input, top_level_fallback_keys)
 # The first matching top-level key's value is placed under target_key.
+# For virtual tools we deliberately do NOT fall through to the real-tool
+# bundling rule: if none of the known alias keys are present, leave
+# action_input as None so the downstream handler can render its "no
+# payload" path rather than dispatching with an arbitrary sibling.
 _VIRTUAL_TOOL_PAYLOAD_HOIST: dict[str, tuple[str, tuple[str, ...]]] = {
     "complete": ("result", ("result", "answer", "response", "final", "output")),
     "ready_for_review": ("summary", ("summary",)),
@@ -179,20 +201,48 @@ _VIRTUAL_TOOL_PAYLOAD_HOIST: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
-def _hoist_virtual_tool_payload(result: ReActResult, data: dict) -> None:
-    """Synthesize action_input from top-level keys when a virtual tool
-    response omits action_input. Quiet no-op for non-virtual tools,
-    already-populated action_input, or actions without a hoist entry."""
+def _normalize_action_input(result: ReActResult, data: dict) -> None:
+    """Normalize sibling-emitted tool arguments back into action_input.
+
+    Two layers:
+
+    1. **Virtual tools** (complete / ready_for_review / ask). The payload
+       key can drift under several aliases (complete's `result` ↔
+       `answer` ↔ `response`); map the first matching alias back to the
+       canonical key. If no alias matches, leave action_input=None so
+       the downstream handler shows its "no payload" message.
+
+    2. **Real tools and unknown actions**. Bundle every non-reserved
+       top-level key into action_input. This catches the pcie_scsc-style
+       drift where a model emits:
+           {"thought":"...","action":"shell","command":"ls"}
+       with `command` as a sibling of `action` rather than nested inside
+       action_input. Reserved keys (_REACT_RESERVED) are filtered out so
+       protocol fields or meta keys can't poison tool input.
+
+    Precedence rule: if action_input is already present and truthy, use
+    it verbatim and ignore any siblings. Empty dicts and None both
+    trigger the layer logic.
+    """
     if not result.action or result.action_input:
         return
+
+    # Layer 1: virtual tool alias mapping.
     spec = _VIRTUAL_TOOL_PAYLOAD_HOIST.get(result.action)
-    if spec is None:
+    if spec is not None:
+        target_key, candidates = spec
+        for key in candidates:
+            if key in data:
+                result.action_input = {target_key: data[key]}
+                return
+        # Known virtual tool with no alias match — leave action_input
+        # None rather than bundling stray siblings as payload.
         return
-    target_key, candidates = spec
-    for key in candidates:
-        if key in data:
-            result.action_input = {target_key: data[key]}
-            return
+
+    # Layer 2: real tool / unknown action sibling bundling.
+    extras = {k: v for k, v in data.items() if k not in _REACT_RESERVED}
+    if extras:
+        result.action_input = extras
 
 
 def _populate_from_dict(result: ReActResult, data: dict) -> None:
@@ -200,4 +250,4 @@ def _populate_from_dict(result: ReActResult, data: dict) -> None:
     result.thought = data.get("thought")
     result.action = data.get("action")
     result.action_input = data.get("action_input")
-    _hoist_virtual_tool_payload(result, data)
+    _normalize_action_input(result, data)
