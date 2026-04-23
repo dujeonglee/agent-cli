@@ -203,3 +203,82 @@ class TestThinkingBlockStripping:
         assert result.thought == "summary"
         assert result.action == "shell"
         assert result.parse_stage == 1
+
+
+class TestVirtualToolPayloadHoist:
+    """Models (qwen3 notably) sometimes put the final-answer payload at
+    the top level instead of nesting inside action_input. These tests
+    pin down the normalization that hoists it back."""
+
+    def test_complete_hoists_top_level_result(self):
+        """The exact drift observed with qwen3.6:35b-a3b-bf16."""
+        text = '{"thought": "done", "action": "complete", "result": "42"}'
+        result = parse_react(text)
+        assert result.action == "complete"
+        assert result.action_input == {"result": "42"}
+
+    def test_complete_hoists_answer_as_result(self):
+        text = '{"thought": "done", "action": "complete", "answer": "the final answer"}'
+        result = parse_react(text)
+        assert result.action_input == {"result": "the final answer"}
+
+    def test_complete_hoists_response_as_result(self):
+        text = '{"thought": "done", "action": "complete", "response": "hello"}'
+        result = parse_react(text)
+        assert result.action_input == {"result": "hello"}
+
+    def test_complete_prefers_result_over_other_fallbacks(self):
+        """When multiple candidate keys are present, `result` wins."""
+        text = '{"thought": "done", "action": "complete", "result": "primary", "answer": "secondary"}'
+        result = parse_react(text)
+        assert result.action_input == {"result": "primary"}
+
+    def test_complete_with_existing_action_input_unchanged(self):
+        """Hoist must NOT overwrite a real action_input."""
+        text = '{"thought": "done", "action": "complete", "action_input": {"result": "kept"}, "result": "ignored"}'
+        result = parse_react(text)
+        assert result.action_input == {"result": "kept"}
+
+    def test_ready_for_review_hoists_summary(self):
+        text = '{"thought": "checking", "action": "ready_for_review", "summary": "verified all edits"}'
+        result = parse_react(text)
+        assert result.action == "ready_for_review"
+        assert result.action_input == {"summary": "verified all edits"}
+
+    def test_ask_hoists_top_level_question_as_questions(self):
+        text = '{"thought": "need input", "action": "ask", "question": "What color?"}'
+        result = parse_react(text)
+        assert result.action == "ask"
+        # Normalized under "questions" — _extract_questions handles str→list
+        assert result.action_input == {"questions": "What color?"}
+
+    def test_ask_hoists_top_level_questions_list(self):
+        text = '{"thought": "need input", "action": "ask", "questions": ["A", "B"]}'
+        result = parse_react(text)
+        assert result.action_input == {"questions": ["A", "B"]}
+
+    def test_non_virtual_tool_does_not_hoist(self):
+        """Regular tools must not have their top-level siblings hoisted —
+        read_file is not a virtual tool and its input must come from
+        action_input verbatim."""
+        text = '{"thought": "read it", "action": "read_file", "path": "a.py"}'
+        result = parse_react(text)
+        assert result.action == "read_file"
+        assert result.action_input is None  # `path` at top level is not hoisted
+
+    def test_no_fallback_keys_leaves_action_input_none(self):
+        """complete without action_input AND without any known fallback
+        key → action_input stays None, loop will render the 'no result'
+        message as before."""
+        text = '{"thought": "blank", "action": "complete"}'
+        result = parse_react(text)
+        assert result.action == "complete"
+        assert result.action_input is None
+
+    def test_hoist_works_after_json_repair(self):
+        """Drift + truncation both — stage 2 repair yields the dict,
+        and the hoist still fires."""
+        text = '{"thought": "ok", "action": "complete", "result": "done"'
+        result = parse_react(text)
+        assert result.parse_stage == 2
+        assert result.action_input == {"result": "done"}

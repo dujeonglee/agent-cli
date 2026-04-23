@@ -451,6 +451,30 @@ Stage 3: regex 필드 추출
 ReActResult (parse_stage=0, 모든 필드 None)
 ```
 
+#### 가상 툴 payload hoist (드리프트 정규화)
+
+일부 모델(특히 qwen3 계열)은 가상 툴 응답에서 payload를 `action_input` 안에 중첩하지 않고 **top-level 필드로 뽑아내는** 드리프트를 보입니다. 예:
+
+```json
+// 드리프트
+{"thought": "done", "action": "complete", "result": "final answer"}
+
+// 기대
+{"thought": "done", "action": "complete", "action_input": {"result": "final answer"}}
+```
+
+JSON 자체는 valid하고 `action` 이름도 올바르지만, loop의 complete 핸들러가 `action_input.result`를 기대하기 때문에 조용히 "Completed without result — model may lack capability for this task" 메시지로 끝남. 이 증상은 strict JSON Schema로도 막히지 않음 — 과거 `REACT_JSON_SCHEMA`가 `thought`만 required로 두고 additionalProperties 제한이 없었기 때문.
+
+`_hoist_virtual_tool_payload()`가 파싱 직후 정규화:
+
+| action | target key | top-level fallback 순위 |
+|---|---|---|
+| `complete` | `action_input.result` | `result` > `answer` > `response` > `final` > `output` |
+| `ready_for_review` | `action_input.summary` | `summary` |
+| `ask` | `action_input.questions` | `questions` > `question` (`_extract_questions`가 str→list 처리) |
+
+이미 `action_input`이 있으면 hoist 안 함. 비가상 툴(`read_file` 등)은 정책 밖 — top-level 드리프트를 묵인하지 않고 그대로 둬서 오류를 드러냄.
+
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 
 > 상세 설계: `docs/context-redesign/DESIGN.md`
