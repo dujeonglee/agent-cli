@@ -444,7 +444,6 @@ class TestLoopHookIntegration:
             context_window=4096,
             max_output_tokens=2048,
             supports_structured_output=False,
-            supports_tool_calling=False,
             supports_thinking=False,
             thinking_budget=0,
             supports_strict_schema=False,

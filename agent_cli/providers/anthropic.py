@@ -42,11 +42,6 @@ class AnthropicProvider:
             "messages": messages,
         }
 
-        # Tool calling: pass tool definitions to API (unused by loop, kept for API compat)
-        tools = kwargs.get("tools")
-        if capabilities.supports_tool_calling and tools:
-            body["tools"] = tools
-
         # Thinking budget: enable extended thinking with budget
         if capabilities.supports_thinking and capabilities.thinking_budget > 0:
             body["thinking"] = {

@@ -253,12 +253,6 @@ class FancyRenderer(Renderer):
             "✓" if capabilities.supports_structured_output else "✗",
         )
 
-        # Tool calling
-        table.add_row(
-            "Tool Calling",
-            "✓" if capabilities.supports_tool_calling else "✗",
-        )
-
         panel = Panel(
             table,
             title=f"[bold {_FANCY['primary']}]🔍 Model Detected: {model} ({provider})[/]",

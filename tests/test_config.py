@@ -38,7 +38,8 @@ class TestGetModelEntry:
     def test_anthropic_model(self):
         entry = get_model_entry("claude-sonnet-4-20250514")
         assert entry is not None
-        assert entry["supports_tool_calling"] is True
+        assert entry["provider"] == "anthropic"
+        assert entry["supports_thinking"] is True
 
 
 class TestGetProviderDefaults:

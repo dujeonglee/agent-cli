@@ -538,7 +538,6 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
       "context_window": 32768,
       "max_output_tokens": 4096,
       "supports_structured_output": true,
-      "supports_tool_calling": false,
       "supports_thinking": true,
       "thinking_budget": 4096,
       "supports_strict_schema": false,
@@ -569,7 +568,6 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 | `context_window` | 컨텍스트 윈도우 크기 (토큰) |
 | `max_output_tokens` | 최대 출력 토큰 |
 | `supports_structured_output` | Basic JSON mode 사용 가능 (Ollama `format="json"` / OpenAI `response_format`) |
-| `supports_tool_calling` | 네이티브 tool calling API |
 | `supports_thinking` | Thinking/reasoning 지원 |
 | `thinking_budget` | Thinking 토큰 예산 |
 | `thinking_format` | Thinking 블록 태그 (`"think"`, `""`) |

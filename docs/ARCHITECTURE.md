@@ -242,7 +242,6 @@ class ModelCapabilities:
     context_window: int               # 컨텍스트 윈도우 크기 (토큰)
     max_output_tokens: int            # 최대 출력 토큰
     supports_structured_output: bool  # basic JSON mode 가능 (Ollama format="json" / OpenAI response_format)
-    supports_tool_calling: bool       # 네이티브 function/tool calling API
     supports_thinking: bool           # thinking/reasoning 지원
     thinking_budget: int              # thinking 토큰 예산 (0=비활성)
     supports_strict_schema: bool      # (dormant) strict JSON Schema 표식 — 현재 어떤 provider도 이 플래그로 동작 분기 안 함. 향후 opt-in strict schema 재도입 시 사용 예정.
@@ -379,36 +378,30 @@ depth 기반 prefix(`│ `)를 사용. 병렬 delegate는 worker별 capture 후 
 
 ### 5.2 프로바이더별 도구 호출 방식
 
-```
-                    ┌─ supports_tool_calling=True ─┐
-                    │                               │
-              ┌─────┴──────┐                ┌──────┴──────┐
-              │ Anthropic  │                │ OpenAI      │
-              │ tool_use   │                │ tool_calls  │
-              │ 블록       │                │ function    │
-              └────────────┘                └─────────────┘
-                    파싱 불필요                  파싱 불필요
-                    (구조화된 블록)              (구조화된 응답)
+모든 프로바이더가 **ReAct 텍스트 파싱**만 씁니다. 네이티브 tool calling API (Anthropic `tool_use`, OpenAI `function calling`)는 **사용하지 않습니다** — 프로바이더 편차 제거와 구현 단순성을 위한 선택. 따라서 `supports_tool_calling` 같은 플래그는 존재하지 않고, 모든 분기는 JSON 출력 여부 (`supports_structured_output`) 하나로 수렴합니다.
 
+```
               ┌─ supports_structured_output=True ─┐
               │                                    │
-        ┌─────┴──────┐                             │
-        │ Ollama     │                             │
-        │ format:    │                             │
-        │ JSON Schema│                             │
-        └────────────┘                             │
-              파싱 필요                              │
-              (구조화된 JSON)                        │
+        ┌─────┴──────┐                     ┌──────┴──────┐
+        │ Ollama     │                     │ OpenAI      │
+        │ format:    │                     │ response_   │
+        │ "json"     │                     │ format      │
+        │ (basic)    │                     │ json_object │
+        └────────────┘                     └─────────────┘
+              파싱 필요                             파싱 필요
+              (JSON 출력)                          (JSON 출력)
 
-              ┌─ 둘 다 False ──────────────────────┘
-              │
-        ┌─────┴──────┐
-        │ 텍스트     │
-        │ 3단계 폴백  │
-        │ 파서       │
-        └────────────┘
-              파싱 필요
-              (비구조화 텍스트)
+              ┌─ False ─────────────────────────────┐
+              │                                      │
+        ┌─────┴──────┐                              │
+        │ 텍스트 자유  │                              │
+        │ 형식        │                              │
+        └────────────┘                              │
+              파싱 필요                               │
+              (비구조화 텍스트)                         │
+
+  모든 경우: 3단계 폴백 파서 (json.loads → json_repair → regex)가 도구 호출 추출
 ```
 
 ### 5.3 3단계 파싱 폴백 (`parsing/react_parser.py`)
@@ -795,11 +788,13 @@ class LLMProvider(Protocol):
 
 ### 7.2 프로바이더별 구현
 
-| 프로바이더 | 엔드포인트 | 인증 | 구조화 출력 | 네이티브 Tool Calling | Thinking |
-|-----------|-----------|------|-----------|---------------------|---------|
-| **Anthropic** | `/messages` | x-api-key | - | tool_use 블록 | budget_tokens |
-| **OpenAI Compat** | `/chat/completions` | Bearer token | `response_format={"type":"json_object"}` (basic JSON) | function calling | reasoning_effort |
-| **Ollama** | `/api/chat` | 없음 | `format="json"` (basic JSON) | - | num_predict |
+| 프로바이더 | 엔드포인트 | 인증 | 구조화 출력 | Thinking |
+|-----------|-----------|------|-----------|---------|
+| **Anthropic** | `/messages` | x-api-key | - | budget_tokens |
+| **OpenAI Compat** | `/chat/completions` | Bearer token | `response_format={"type":"json_object"}` (basic JSON) | reasoning_effort |
+| **Ollama** | `/api/chat` | 없음 | `format="json"` (basic JSON) | num_predict |
+
+네이티브 tool calling (Anthropic `tool_use`, OpenAI `function calling`)은 **사용하지 않습니다**. 모든 프로바이더가 동일하게 ReAct 텍스트 파싱을 거치므로 provider-specific 코드 경로가 줄고, 프로바이더 편차가 거의 없어집니다.
 
 **구조화 출력 정책**: 세 프로바이더 모두 **basic JSON mode**만 사용하고, **strict JSON Schema는 쓰지 않습니다**. 이는 확장성을 위한 선택이며 다음과 같은 배경이 있습니다:
 
@@ -906,7 +901,6 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
       "context_window": 32768,
       "max_output_tokens": 4096,
       "supports_structured_output": true,
-      "supports_tool_calling": false,
       "supports_thinking": true,
       "thinking_budget": 4096,
       "supports_strict_schema": false
@@ -1147,7 +1141,6 @@ agent-cli chat [options]
   "context_window": 16384,
   "max_output_tokens": 4096,
   "supports_structured_output": true,
-  "supports_tool_calling": false,
   "supports_thinking": false,
   "thinking_budget": 0,
   "supports_strict_schema": false

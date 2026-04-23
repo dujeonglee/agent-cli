@@ -25,7 +25,6 @@ class TestGetCapabilities:
         assert caps.context_window == 32768
         assert caps.max_output_tokens == 4096
         assert caps.supports_structured_output is True
-        assert caps.supports_tool_calling is False
         assert caps.supports_thinking is True
         assert caps.thinking_budget == 4096
 
@@ -38,7 +37,6 @@ class TestGetCapabilities:
     def test_openai_model(self):
         caps = get_capabilities("gpt-4o")
         assert caps.supports_structured_output is True
-        assert caps.supports_tool_calling is True
         assert caps.context_window == 128000
 
     def test_thinking_format_registered(self):
@@ -97,7 +95,6 @@ class TestOllamaRuntimeDetection:
         assert caps is not None
         assert caps.context_window == 8192
         assert caps.supports_structured_output is True
-        assert caps.supports_tool_calling is False
         assert caps.thinking_format == ""
 
     @patch("agent_cli.providers.compat.requests.post")

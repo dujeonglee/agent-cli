@@ -17,7 +17,6 @@ class ModelCapabilities:
     context_window: int
     max_output_tokens: int
     supports_structured_output: bool
-    supports_tool_calling: bool
     supports_thinking: bool
     thinking_budget: int
     supports_strict_schema: bool
@@ -29,7 +28,6 @@ DEFAULT_CAPABILITIES = ModelCapabilities(
     context_window=4096,
     max_output_tokens=2048,
     supports_structured_output=False,
-    supports_tool_calling=False,
     supports_thinking=False,
     thinking_budget=0,
     supports_strict_schema=False,
@@ -79,7 +77,6 @@ def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
         "context_window": caps.context_window,
         "max_output_tokens": caps.max_output_tokens,
         "supports_structured_output": caps.supports_structured_output,
-        "supports_tool_calling": caps.supports_tool_calling,
         "supports_thinking": caps.supports_thinking,
         "thinking_budget": caps.thinking_budget,
         "supports_strict_schema": caps.supports_strict_schema,
@@ -90,11 +87,13 @@ def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
 
 
 def _build_from_entry(entry: dict) -> ModelCapabilities:
+    # Legacy field `supports_tool_calling` — silently ignored if present in
+    # older models.json entries; the loop uses ReAct text parsing, not the
+    # native tool-calling API on any provider.
     return ModelCapabilities(
         context_window=entry.get("context_window", 4096),
         max_output_tokens=entry.get("max_output_tokens", 2048),
         supports_structured_output=entry.get("supports_structured_output", False),
-        supports_tool_calling=entry.get("supports_tool_calling", False),
         supports_thinking=entry.get("supports_thinking", False),
         thinking_budget=entry.get("thinking_budget", 0),
         supports_strict_schema=entry.get("supports_strict_schema", False),
@@ -149,7 +148,6 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
             context_window=context_length,
             max_output_tokens=max_output,
             supports_structured_output=True,
-            supports_tool_calling=False,
             supports_thinking=supports_thinking,
             thinking_budget=thinking_budget,
             supports_strict_schema=False,
@@ -252,7 +250,6 @@ def _detect_openai_compat_capabilities(
             context_window=context_window,
             max_output_tokens=max_output,
             supports_structured_output=False,
-            supports_tool_calling=False,
             supports_thinking=supports_thinking,
             thinking_budget=4096 if supports_thinking else 0,
             supports_strict_schema=False,

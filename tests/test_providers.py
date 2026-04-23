@@ -18,7 +18,6 @@ def caps_structured():
         context_window=32768,
         max_output_tokens=4096,
         supports_structured_output=True,
-        supports_tool_calling=False,
         supports_thinking=False,
         thinking_budget=0,
         supports_strict_schema=False,
@@ -31,7 +30,6 @@ def caps_basic():
         context_window=4096,
         max_output_tokens=2048,
         supports_structured_output=False,
-        supports_tool_calling=False,
         supports_thinking=False,
         thinking_budget=0,
         supports_strict_schema=False,
@@ -301,208 +299,11 @@ class TestOllamaProvider:
 
 
 @pytest.fixture
-def caps_tool_calling():
-    return ModelCapabilities(
-        context_window=128000,
-        max_output_tokens=4096,
-        supports_structured_output=True,
-        supports_tool_calling=True,
-        supports_thinking=False,
-        thinking_budget=0,
-        supports_strict_schema=True,
-    )
-
-
-class TestAnthropicToolCalling:
-    @patch("agent_cli.providers.anthropic.requests.post")
-    def test_tool_use_extracted(self, mock_post, caps_tool_calling):
-        mock_post.return_value = _mock_response(
-            {
-                "content": [
-                    {"type": "text", "text": "I'll read the file."},
-                    {
-                        "type": "tool_use",
-                        "id": "tu_1",
-                        "name": "read_file",
-                        "input": {"path": "a.py"},
-                    },
-                ],
-                "usage": {"input_tokens": 10, "output_tokens": 5},
-                "stop_reason": "tool_use",
-            }
-        )
-
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
-        tools = [
-            {
-                "name": "read_file",
-                "description": "Read file",
-                "input_schema": {"type": "object"},
-            }
-        ]
-        result = provider.call(
-            messages=[{"role": "user", "content": "read a.py"}],
-            system="sys",
-            model="claude-sonnet-4-20250514",
-            capabilities=caps_tool_calling,
-            tools=tools,
-        )
-
-        assert result.tool_calls is not None
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0]["name"] == "read_file"
-        assert result.tool_calls[0]["input"] == {"path": "a.py"}
-        assert result.tool_calls[0]["id"] == "tu_1"
-        assert result.content == "I'll read the file."
-
-    @patch("agent_cli.providers.anthropic.requests.post")
-    def test_tools_sent_in_request(self, mock_post, caps_tool_calling):
-        mock_post.return_value = _mock_response(
-            {
-                "content": [{"type": "text", "text": "ok"}],
-                "stop_reason": "end_turn",
-            }
-        )
-
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
-        tools = [
-            {
-                "name": "shell",
-                "description": "Run cmd",
-                "input_schema": {"type": "object"},
-            }
-        ]
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="claude-sonnet-4-20250514",
-            capabilities=caps_tool_calling,
-            tools=tools,
-        )
-
-        body = mock_post.call_args.kwargs["json"]
-        assert "tools" in body
-        assert body["tools"] == tools
-
-    @patch("agent_cli.providers.anthropic.requests.post")
-    def test_no_tool_calling_regression(self, mock_post, caps_basic):
-        """When supports_tool_calling=False, tool_calls should be None."""
-        mock_post.return_value = _mock_response(
-            {
-                "content": [{"type": "text", "text": '{"thought": "t"}'}],
-                "stop_reason": "end_turn",
-            }
-        )
-
-        provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
-        result = provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="claude-sonnet-4-20250514",
-            capabilities=caps_basic,
-        )
-
-        assert result.tool_calls is None
-        body = mock_post.call_args.kwargs["json"]
-        assert "tools" not in body
-
-
-class TestOpenAIToolCalling:
-    @patch("agent_cli.providers.openai_compat.requests.post")
-    def test_tool_calls_extracted(self, mock_post, caps_tool_calling):
-        mock_post.return_value = _mock_response(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": "call_1",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "shell",
-                                        "arguments": '{"command": "ls"}',
-                                    },
-                                }
-                            ],
-                        },
-                        "finish_reason": "tool_calls",
-                    }
-                ],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-            }
-        )
-
-        provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
-        tools = [{"type": "function", "function": {"name": "shell", "parameters": {}}}]
-        result = provider.call(
-            messages=[{"role": "user", "content": "ls"}],
-            system="sys",
-            model="gpt-4o",
-            capabilities=caps_tool_calling,
-            tools=tools,
-        )
-
-        assert result.tool_calls is not None
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0]["name"] == "shell"
-        assert result.tool_calls[0]["input"] == {"command": "ls"}
-
-    @patch("agent_cli.providers.openai_compat.requests.post")
-    def test_tools_sent_no_response_format(self, mock_post, caps_tool_calling):
-        """When tool calling is used, response_format should NOT be set."""
-        mock_post.return_value = _mock_response(
-            {
-                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-            }
-        )
-
-        provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
-        tools = [{"type": "function", "function": {"name": "shell", "parameters": {}}}]
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="gpt-4o",
-            capabilities=caps_tool_calling,
-            tools=tools,
-        )
-
-        body = mock_post.call_args.kwargs["json"]
-        assert "tools" in body
-        assert "response_format" not in body
-
-    @patch("agent_cli.providers.openai_compat.requests.post")
-    def test_no_tool_calling_regression(self, mock_post, caps_basic):
-        """When supports_tool_calling=False, should use response_format instead."""
-        mock_post.return_value = _mock_response(
-            {
-                "choices": [
-                    {"message": {"content": '{"thought":"t"}'}, "finish_reason": "stop"}
-                ],
-            }
-        )
-
-        provider = OpenAICompatProvider("http://localhost:8080/v1", "")
-        result = provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="local",
-            capabilities=caps_basic,
-        )
-
-        assert result.tool_calls is None
-        body = mock_post.call_args.kwargs["json"]
-        assert "tools" not in body
-
-
-@pytest.fixture
 def caps_thinking():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
         supports_structured_output=True,
-        supports_tool_calling=False,
         supports_thinking=True,
         thinking_budget=4096,
         supports_strict_schema=False,
@@ -515,7 +316,6 @@ def caps_no_thinking():
         context_window=32768,
         max_output_tokens=4096,
         supports_structured_output=True,
-        supports_tool_calling=False,
         supports_thinking=False,
         thinking_budget=0,
         supports_strict_schema=False,

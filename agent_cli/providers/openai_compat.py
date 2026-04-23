@@ -45,12 +45,7 @@ class OpenAICompatProvider:
             "messages": msgs,
         }
 
-        # Tool calling: pass tool definitions to API (unused by loop, kept for API compat)
-        tools = kwargs.get("tools")
-        if capabilities.supports_tool_calling and tools:
-            body["tools"] = tools
-            # Don't use response_format with tool calling (mutually exclusive)
-        elif capabilities.supports_structured_output:
+        if capabilities.supports_structured_output:
             body["response_format"] = {"type": "json_object"}
 
         # Thinking/reasoning effort for reasoning models (o1, o3, etc.)

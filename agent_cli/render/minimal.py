@@ -196,7 +196,6 @@ class MinimalRenderer(Renderer):
             f"    context={capabilities.context_window:,}  "
             f"output={capabilities.max_output_tokens:,}  "
             f"structured={'yes' if capabilities.supports_structured_output else 'no'}  "
-            f"tools={'yes' if capabilities.supports_tool_calling else 'no'}  "
             f"thinking={thinking_info}",
             highlight=False,
         )
