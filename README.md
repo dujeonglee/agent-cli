@@ -568,12 +568,12 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 |------|------|
 | `context_window` | 컨텍스트 윈도우 크기 (토큰) |
 | `max_output_tokens` | 최대 출력 토큰 |
-| `supports_structured_output` | Constrained decoding 지원 |
+| `supports_structured_output` | Basic JSON mode 사용 가능 (Ollama `format="json"` / OpenAI `response_format`) |
 | `supports_tool_calling` | 네이티브 tool calling API |
 | `supports_thinking` | Thinking/reasoning 지원 |
 | `thinking_budget` | Thinking 토큰 예산 |
 | `thinking_format` | Thinking 블록 태그 (`"think"`, `""`) |
-| `supports_strict_schema` | Strict JSON Schema 모드 |
+| `supports_strict_schema` | (현재 미사용, dormant) strict JSON Schema 표식 — 현재 어떤 provider도 이 플래그로 동작 분기 안 함 |
 
 **설정 우선순위**: `.agent-cli/models.json` (프로젝트) > `~/.agent-cli/models.json` (전역) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
 
@@ -766,9 +766,11 @@ The agent-cli directory contains a ReAct pattern-based agent CLI...
 
 | 프로바이더 | JSON 출력 보장 | 파싱 |
 |-----------|--------------|------|
-| Ollama | Constrained decoding (JSON Schema) | JSON 파싱 |
-| OpenAI-compat | `response_format: json_object` | JSON 파싱 |
+| Ollama | `format: json` (basic JSON mode) | JSON 파싱 |
+| OpenAI-compat | `response_format: json_object` (basic JSON mode) | JSON 파싱 |
 | Anthropic | 텍스트 출력 | 3단계 폴백 파싱 |
+
+Strict JSON Schema(Ollama `format=<schema>`, OpenAI `json_schema`)는 **사용하지 않습니다**. mlx 엔진으로 패키징된 일부 Ollama 모델에서 스키마가 깨지는 이슈가 있어, 확장성을 위해 basic JSON mode만 사용. ReAct 구조 강제는 시스템 프롬프트 + 3단계 파서가 담당합니다 (32B+ 권장 사양에서 실질 품질 손실 거의 없음, 7-14B는 포맷 drift 가능).
 
 ### 3단계 파싱 폴백
 

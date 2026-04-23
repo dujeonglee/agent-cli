@@ -1,9 +1,31 @@
-"""Ollama API provider adapter with constrained decoding and streaming support."""
+"""Ollama API provider adapter with basic JSON mode and streaming support.
+
+Format strategy
+---------------
+We send ``format="json"`` (basic JSON mode) when the model supports any
+JSON output, and no format otherwise. We intentionally do NOT send a
+strict JSON Schema via ``format=<schema>``:
+
+- Strict schema worked on llama.cpp-backed models but broke silently on
+  Ollama's mlx engine for some packagings (HTTP 200 + mid-stream
+  ``{"error": "mlx runner failed"}`` with no useful diagnosis).
+- Schema-level guarantees are a nice-to-have; the ReAct JSON we need
+  is handled robustly by the 3-stage parser (json.loads → json_repair
+  → regex). On 30B+ models basic JSON mode produces valid ReAct JSON
+  reliably; the loss is mostly on 7-14B models, which are already
+  marked unsupported in the README guidance.
+- Keeping the surface consistent with the OpenAI-compat provider,
+  which also uses basic JSON mode (``response_format={"type":
+  "json_object"}``).
+
+If a specific backend in the future needs strict schema, it can be
+reintroduced behind an explicit opt-in — don't re-enable by default
+without checking against mlx-packaged models.
+"""
 
 from __future__ import annotations
 
 import json
-import sys
 
 import requests
 
@@ -12,18 +34,6 @@ from agent_cli.constants import LLM_API_TIMEOUT
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.providers.http import post_with_retry
-
-# JSON Schema for ReAct format used with Ollama's constrained decoding.
-# "thought" is free-form string; action/action_input are schema-enforced.
-REACT_JSON_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "thought": {"type": "string"},
-        "action": {"type": "string"},
-        "action_input": {},
-    },
-    "required": ["thought"],
-}
 
 
 class OllamaProvider:
@@ -50,14 +60,14 @@ class OllamaProvider:
             "messages": msgs,
         }
 
-        # format control: skip_json_format=True disables all JSON forcing
-        # (needed for plan generation where free-form text is expected)
+        # format control: skip_json_format=True disables JSON forcing
+        # (needed for plan generation where free-form text is expected).
+        # Otherwise we send basic JSON mode when the model claims any
+        # structured-output support. See the module docstring for why
+        # we don't send a strict schema.
         skip_json = kwargs.get("skip_json_format", False)
-        if not skip_json:
-            if capabilities.supports_structured_output:
-                body["format"] = REACT_JSON_SCHEMA
-            else:
-                body["format"] = "json"
+        if not skip_json and capabilities.supports_structured_output:
+            body["format"] = "json"
 
         # Thinking budget: allocate enough output tokens for thinking + response
         if capabilities.supports_thinking and capabilities.thinking_budget > 0:
@@ -66,42 +76,14 @@ class OllamaProvider:
                 capabilities.thinking_budget + capabilities.max_output_tokens
             )
 
-        try:
-            r = post_with_retry(
-                requests.post,
-                url,
-                json=body,
-                timeout=LLM_API_TIMEOUT,
-                stream=bool(on_chunk),
-            )
-            r.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            # Only one recovery path lives here: Ollama < 0.5.0 rejects
-            # JSON Schema in the `format` field with 400. Anything else —
-            # 401 (no API key), 403 (cloud model subscription required),
-            # 429, 5xx — must bubble up so the user sees the real error
-            # instead of an empty-response retry loop. Earlier versions
-            # caught but never re-raised non-400 HTTPErrors; the 403
-            # response body would then be streamed as if it were normal
-            # content and produce "" on every turn.
-            is_json_schema_400 = (
-                capabilities.supports_structured_output
-                and e.response is not None
-                and e.response.status_code == 400
-            )
-            if not is_json_schema_400:
-                raise
-            print(
-                "[warn] Ollama rejected JSON Schema format. "
-                "Falling back to basic JSON mode. "
-                "Upgrade Ollama to 0.5.0+ for constrained decoding.",
-                file=sys.stderr,
-            )
-            body["format"] = "json"
-            body["stream"] = False
-            r = post_with_retry(requests.post, url, json=body, timeout=LLM_API_TIMEOUT)
-            r.raise_for_status()
-            on_chunk = None  # fell back to non-streaming
+        r = post_with_retry(
+            requests.post,
+            url,
+            json=body,
+            timeout=LLM_API_TIMEOUT,
+            stream=bool(on_chunk),
+        )
+        r.raise_for_status()
 
         if on_chunk:
             return self._handle_stream(r, on_chunk)

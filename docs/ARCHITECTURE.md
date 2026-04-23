@@ -18,7 +18,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 
 - **멀티 프로바이더**: Anthropic, OpenAI 호환(vLLM, LM Studio, mlx-lm), Ollama
 - **3단계 파싱 폴백**: json.loads → JSON repair → regex 추출
-- **Constrained Decoding**: Ollama JSON Schema, OpenAI response_format, Anthropic tool calling
+- **Basic JSON Mode**: Ollama `format="json"`, OpenAI `response_format={"type":"json_object"}`, Anthropic tool calling (strict JSON Schema는 확장성 위해 미사용)
 - **Hashline 편집**: CRC32 해시 기반 정밀 파일 편집 + 퍼지 매칭
 - **컨텍스트 관리**: FIFO 메시지 큐 + history.jsonl 영속화 (LLM 압축 제거)
 - **모델 적응형**: context window, thinking budget에 따른 자동 조정
@@ -72,7 +72,7 @@ agent_cli/
 │   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
 │   ├── anthropic.py         (176)  Anthropic Messages API (tool_use + thinking + streaming + TTFT)
 │   ├── openai_compat.py     (184)  OpenAI 호환 API (function calling + reasoning + streaming + TTFT)
-│   └── ollama.py            (165)  Ollama API (constrained decoding + thinking + streaming + TTFT)
+│   └── ollama.py            (167)  Ollama API (basic JSON mode + thinking + streaming + TTFT)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
@@ -241,11 +241,11 @@ class LLMResponse:
 class ModelCapabilities:
     context_window: int               # 컨텍스트 윈도우 크기 (토큰)
     max_output_tokens: int            # 최대 출력 토큰
-    supports_structured_output: bool  # constrained decoding (Ollama format, OpenAI json_schema)
+    supports_structured_output: bool  # basic JSON mode 가능 (Ollama format="json" / OpenAI response_format)
     supports_tool_calling: bool       # 네이티브 function/tool calling API
     supports_thinking: bool           # thinking/reasoning 지원
     thinking_budget: int              # thinking 토큰 예산 (0=비활성)
-    supports_strict_schema: bool      # strict JSON Schema 모드
+    supports_strict_schema: bool      # (dormant) strict JSON Schema 표식 — 현재 어떤 provider도 이 플래그로 동작 분기 안 함. 향후 opt-in strict schema 재도입 시 사용 예정.
     thinking_format: str = ""         # thinking 블록 태그 ("think", "reasoning", "")
 ```
 
@@ -774,8 +774,17 @@ class LLMProvider(Protocol):
 | 프로바이더 | 엔드포인트 | 인증 | 구조화 출력 | 네이티브 Tool Calling | Thinking |
 |-----------|-----------|------|-----------|---------------------|---------|
 | **Anthropic** | `/messages` | x-api-key | - | tool_use 블록 | budget_tokens |
-| **OpenAI Compat** | `/chat/completions` | Bearer token | response_format | function calling | reasoning_effort |
-| **Ollama** | `/api/chat` | 없음 | format (JSON Schema) | - | num_predict |
+| **OpenAI Compat** | `/chat/completions` | Bearer token | `response_format={"type":"json_object"}` (basic JSON) | function calling | reasoning_effort |
+| **Ollama** | `/api/chat` | 없음 | `format="json"` (basic JSON) | - | num_predict |
+
+**구조화 출력 정책**: 세 프로바이더 모두 **basic JSON mode**만 사용하고, **strict JSON Schema는 쓰지 않습니다**. 이는 확장성을 위한 선택이며 다음과 같은 배경이 있습니다:
+
+- 이전 구현은 Ollama에서 `format=<REACT_JSON_SCHEMA>`(strict)를 보냈지만, Ollama의 mlx 엔진으로 패키징된 일부 모델(예: safetensors 포맷)에서 HTTP 200 + 스트림 중간 `{"error": "mlx runner failed"}`로 조용히 깨졌음.
+- Basic JSON mode(`format="json"` / `response_format={"type":"json_object"}`)는 "유효한 JSON을 내라"는 신호만 주고 스키마는 강제하지 않음. 거의 모든 백엔드가 지원.
+- ReAct JSON 구조 강제는 대신 시스템 프롬프트의 `FORMAT_RULES`와 3단계 파서(json.loads → json_repair → regex)가 담당. 32B+ 모델에서 신뢰성 충분.
+- 7-14B 모델은 schema 없을 때 포맷 drift가 늘지만, 이 사이즈는 README에서 이미 비권장 구간.
+
+향후 특정 백엔드가 strict schema를 반드시 필요로 하면, 현재 기본값을 건드리지 말고 **opt-in 플래그**로 다시 도입할 것. mlx 패키지 모델에서 재발 여지가 있으므로 기본 활성화는 금지.
 
 ### 7.3 프로바이더 팩토리 (`providers/__init__.py`)
 
@@ -810,7 +819,7 @@ Thinking 블록 처리 플로우:
 **재시도 대상 예외:**
 - `requests.Timeout` (ConnectTimeout, ReadTimeout 포함)
 - `requests.ConnectionError`
-- HTTP 4xx/5xx는 재시도 **안 함**. `raise_for_status()`는 `post_with_retry` 반환 *뒤에* 호출되어 서버의 거절 응답을 그대로 caller로 전달. Ollama의 "400 → JSON Schema fallback" 로직은 이 경계 바깥에서 동작하므로 건드리지 않음.
+- HTTP 4xx/5xx는 재시도 **안 함**. `raise_for_status()`는 `post_with_retry` 반환 *뒤에* 호출되어 서버의 거절 응답을 그대로 caller로 전달.
 
 **백오프:** 고정 1초 (지수 아님). on-prem 단일 사용자 전제라 rate-limit / thundering-herd 대책이 필요 없고, `ConnectionError` 직후 서버 부팅 마무리에만 약간의 헤드룸을 주면 충분. `Timeout`은 이미 긴 대기였으므로 추가 대기 효과는 작지만 해롭지도 않음.
 
@@ -1309,7 +1318,7 @@ AgentLoop.run()
 ## 15. 설계 원칙
 
 1. **모델은 commodity, harness가 성패를 결정한다** — 파싱 폴백, 도구 출력 압축, 퍼지 편집 등 harness 레벨 최적화가 핵심
-2. **프로바이더별 최선의 방식 자동 선택** — 네이티브 tool calling > constrained decoding > 텍스트 파싱
+2. **프로바이더별 최선의 방식 자동 선택** — 네이티브 tool calling > basic JSON mode > 텍스트 파싱 (strict JSON Schema는 확장성 이슈로 미사용)
 3. **소형 모델 우선 설계** — 보수적 기본값, 적응형 출력 압축, 스키마 자동 변환
 4. **비용 제로 보정 우선** — LLM 재호출 없이 harness에서 보정 (퍼지 매칭, 타입 변환)
 5. **점진적 기능 저하** — 기능 미지원 시 에러 대신 다음 폴백으로 graceful degradation
