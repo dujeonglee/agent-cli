@@ -255,8 +255,15 @@ class ModelCapabilities:
 
 능력치 조회 우선순위:
 1. `models.json` 정적 설정 (최우선)
-2. 런타임 API 감지 (Ollama `/api/show`)
+2. 런타임 API 감지 (Ollama `/api/show` + thinking probe + format probe)
 3. 보수적 기본값 (4096 context, 모든 기능 비활성)
+
+**런타임 감지 세부 (Ollama):**
+1. `/api/show` — 메타데이터 (context_length 등)
+2. thinking probe — `"What is 2+2?"`를 평문으로 보내 `message.thinking` 필드 혹은 `<think>` 태그 여부 검사 → `supports_thinking`, `thinking_format` 결정
+3. **format probe** — `format="json"`을 붙여 똑같이 단순 요청을 보낸 뒤 HTTP 200 + `error` 없는 응답이 오는지 검사. mlx 엔진으로 패키징된 일부 모델(예: bf16 safetensors) 이 `format` 파라미터에서 깨지기 때문에 사전에 걸러냄. 실패 시 `supports_structured_output=False`로 저장하고 stderr에 `[warn]` 한 줄 기록 → 이후 실 요청이 `format` 파라미터 자체를 생략.
+
+첫 감지 시 probe 2번(thinking, format)이 `/api/chat`에 가기 때문에 cold-load 비용이 1회 발생 (~10초). 감지 결과는 `~/.agent-cli/models.json`에 저장되어 이후엔 재실행 없음.
 
 ### 4.3 ReAct 파서 결과 (`parsing/react_parser.py`)
 

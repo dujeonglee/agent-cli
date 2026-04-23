@@ -556,9 +556,10 @@ agent-cli run "task" -p openai --base-url http://localhost:8000/v1 -m my-model
 | 3 | `agent_cli/default_models.json` | 패키지 기본값 | 안 함 (읽기만) |
 
 - 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json`에 저장
-  - Ollama: `/api/show` (메타데이터) + 프로브 (thinking 감지)
+  - Ollama: `/api/show` (메타데이터) + thinking 프로브 + **format 프로브**
   - OpenAI 호환: 프로브 (thinking 감지)
   - Thinking 감지: 프로브 프롬프트 → `message.thinking` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동)
+  - Format 프로브 (Ollama만): `format="json"` 요청을 한 번 보내 에러 응답이 오는지 검사. mlx 엔진 일부 모델(예: bf16 safetensors)은 `format` 파라미터 자체에서 깨지므로, 실패 시 `supports_structured_output=False`로 저장하고 stderr에 `[warn]` 한 줄 기록 → 이후 실 요청이 `format`을 생략해서 안전하게 동작.
 - 런타임 감지도 실패하면 사용자에게 대화형으로 context window, thinking 지원 여부를 질문 → `~/.agent-cli/models.json`에 저장
 - 이미 등록된 모델은 덮어쓰지 않음 (사용자 설정 보호)
 - 다음 실행 시 저장된 설정에서 로딩 (프로브/질문 재실행 없음)

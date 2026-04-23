@@ -144,10 +144,16 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
         supports_thinking, thinking_format = _probe_thinking_support(base_url, model)
         thinking_budget = 4096 if supports_thinking else 0
 
+        # Step 3: Probe for format-parameter tolerance. Some Ollama model
+        # packagings (mlx-backed bf16 safetensors builds) break the moment
+        # `format` is set even for basic JSON mode; we need to know that
+        # at detection time so live requests can skip the parameter.
+        supports_format = _probe_format_support(base_url, model)
+
         return ModelCapabilities(
             context_window=context_length,
             max_output_tokens=max_output,
-            supports_structured_output=True,
+            supports_structured_output=supports_format,
             supports_thinking=supports_thinking,
             thinking_budget=thinking_budget,
             supports_strict_schema=False,
@@ -158,6 +164,78 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
 
         print(f"[warn] Ollama detection failed for {model}: {e}", file=sys.stderr)
         return None
+
+
+def _probe_format_support(base_url: str, model: str) -> bool:
+    """Check if the Ollama model tolerates the ``format`` parameter.
+
+    Some model packagings — notably mlx-engine-backed bf16 safetensors
+    builds like ``qwen3.6:35b-a3b-coding-bf16`` — return either HTTP 500
+    or HTTP 200 with a mid-stream/body ``{"error": "mlx runner failed"}``
+    the moment ``format`` is set, even for ``format="json"`` (basic JSON
+    mode). Other model packagings in the same family work fine. We can't
+    predict this from ``/api/show`` metadata alone, so we probe once and
+    cache the result in the model's capability entry.
+
+    Returns True if the probe comes back cleanly, False otherwise. On
+    False the caller should set ``supports_structured_output=False`` so
+    subsequent real requests skip ``format`` entirely — which our live
+    testing confirmed is the path that works on broken packagings.
+
+    Emits a stderr warn on failure naming the model and the detection
+    signal, so operators notice when a model gets auto-downgraded (and
+    can revisit after Ollama updates).
+    """
+    import sys
+
+    url = f"{base_url.rstrip('/')}/api/chat"
+    body = {
+        "model": model,
+        "stream": False,
+        "messages": [{"role": "user", "content": "ok"}],
+        "format": "json",
+    }
+    try:
+        # Generous timeout: first-time probe includes the model's
+        # cold-load into VRAM which can take 10s+ for big models.
+        r = requests.post(url, json=body, timeout=60)
+    except Exception as e:
+        print(
+            f"[warn] Ollama format probe for {model} failed ({type(e).__name__}: "
+            f"{e}); setting supports_structured_output=False",
+            file=sys.stderr,
+        )
+        return False
+
+    if r.status_code != 200:
+        print(
+            f"[warn] Ollama format probe for {model} returned HTTP "
+            f"{r.status_code}; setting supports_structured_output=False",
+            file=sys.stderr,
+        )
+        return False
+
+    try:
+        data = r.json()
+    except Exception:
+        # Unparseable body: treat as broken, same as an error body.
+        print(
+            f"[warn] Ollama format probe for {model} returned non-JSON body; "
+            f"setting supports_structured_output=False",
+            file=sys.stderr,
+        )
+        return False
+
+    if "error" in data:
+        err_preview = str(data["error"])[:120]
+        print(
+            f"[warn] Ollama format probe for {model} returned error body "
+            f"({err_preview}); setting supports_structured_output=False",
+            file=sys.stderr,
+        )
+        return False
+
+    return True
 
 
 def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:

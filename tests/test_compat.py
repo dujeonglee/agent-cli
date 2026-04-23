@@ -9,7 +9,19 @@ from agent_cli.providers.compat import (
     DEFAULT_CAPABILITIES,
     get_capabilities,
     _detect_ollama_capabilities,
+    _probe_format_support,
 )
+
+
+def _ok_probe_resp(**extra) -> MagicMock:
+    """Mock a successful probe /api/chat response (200 + message.content)."""
+    resp = MagicMock()
+    resp.status_code = 200
+    base_body = {"message": {"content": "ok"}}
+    base_body.update(extra)
+    resp.json.return_value = base_body
+    resp.raise_for_status.return_value = None
+    return resp
 
 
 @pytest.fixture(autouse=True)
@@ -87,7 +99,8 @@ class TestOllamaRuntimeDetection:
         }
         probe_resp.raise_for_status.return_value = None
 
-        mock_post.side_effect = [show_resp, probe_resp]
+        # 3 calls: /api/show (metadata), thinking probe, format probe.
+        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
 
         caps = _detect_ollama_capabilities(
             "http://localhost:11434", "llama3.1:8b-custom"
@@ -115,8 +128,8 @@ class TestOllamaRuntimeDetection:
         }
         probe_resp.raise_for_status.return_value = None
 
-        # First call = /api/show, second call = /api/chat (probe)
-        mock_post.side_effect = [show_resp, probe_resp]
+        # 3 calls: /api/show, thinking probe, format probe.
+        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
 
         caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3:14b")
         assert caps is not None
@@ -142,7 +155,7 @@ class TestOllamaRuntimeDetection:
         }
         probe_resp.raise_for_status.return_value = None
 
-        mock_post.side_effect = [show_resp, probe_resp]
+        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
 
         caps = _detect_ollama_capabilities("http://localhost:11434", "llama3:8b")
         assert caps is not None
@@ -170,7 +183,7 @@ class TestOllamaRuntimeDetection:
         }
         probe_resp.raise_for_status.return_value = None
 
-        mock_post.side_effect = [show_resp, probe_resp]
+        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
 
         caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3.5:35b")
         assert caps is not None
@@ -195,7 +208,7 @@ class TestOllamaRuntimeDetection:
         }
         probe_resp.raise_for_status.return_value = None
 
-        mock_post.side_effect = [show_resp, probe_resp]
+        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
 
         caps = _detect_ollama_capabilities(
             "http://localhost:11434", "qwen3-coder-next:q8_0"
@@ -405,3 +418,98 @@ class TestPromptModelCapabilities:
 
         caps = _prompt_model_capabilities("test-model")
         assert caps is None
+
+
+class TestFormatSupportProbe:
+    """Unit tests for _probe_format_support in isolation."""
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_clean_response_returns_true(self, mock_post):
+        mock_post.return_value = _ok_probe_resp()
+        assert _probe_format_support("http://localhost:11434", "qwen3:32b") is True
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_http_500_returns_false(self, mock_post, capsys):
+        """HTTP 500 (the non-streaming mlx-runner-fail shape)."""
+        resp = MagicMock()
+        resp.status_code = 500
+        mock_post.return_value = resp
+        assert _probe_format_support("http://localhost:11434", "mlx-bad:bf16") is False
+        captured = capsys.readouterr()
+        assert "HTTP 500" in captured.err
+        assert "mlx-bad:bf16" in captured.err
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_200_with_error_body_returns_false(self, mock_post, capsys):
+        """The exact shape Ollama emits when mlx runner fails mid-request:
+        HTTP 200 plus a body-level {"error": "..."}."""
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"error": "mlx runner failed: pipeline.go:129 msg=..."}
+        mock_post.return_value = resp
+        assert (
+            _probe_format_support(
+                "http://localhost:11434", "qwen3.6:35b-a3b-coding-bf16"
+            )
+            is False
+        )
+        captured = capsys.readouterr()
+        assert "mlx runner failed" in captured.err
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_connection_error_returns_false(self, mock_post, capsys):
+        import requests as _requests
+
+        mock_post.side_effect = _requests.ConnectionError("refused")
+        assert _probe_format_support("http://localhost:11434", "model") is False
+        captured = capsys.readouterr()
+        assert "ConnectionError" in captured.err
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_non_json_body_returns_false(self, mock_post, capsys):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("not json")
+        mock_post.return_value = resp
+        assert _probe_format_support("http://localhost:11434", "model") is False
+        captured = capsys.readouterr()
+        assert "non-JSON" in captured.err
+
+
+class TestDetectionWiresProbeResult:
+    """Integration: _detect_ollama_capabilities must carry the format probe
+    result into the returned ModelCapabilities.supports_structured_output."""
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_broken_format_sets_false(self, mock_post):
+        """Emulate coding-bf16: /api/show succeeds, thinking probe
+        succeeds, format probe comes back with the mlx error body."""
+        show_resp = MagicMock()
+        show_resp.status_code = 200
+        show_resp.json.return_value = {
+            "model_info": {"qwen3moe.context_length": 262144},
+            "details": {"family": "qwen3moe"},
+        }
+        show_resp.raise_for_status.return_value = None
+
+        thinking_resp = MagicMock()
+        thinking_resp.status_code = 200
+        thinking_resp.json.return_value = {
+            "message": {"content": "ok", "thinking": "pondering"},
+        }
+        thinking_resp.raise_for_status.return_value = None
+
+        format_fail_resp = MagicMock()
+        format_fail_resp.status_code = 200
+        format_fail_resp.json.return_value = {"error": "mlx runner failed: ..."}
+
+        mock_post.side_effect = [show_resp, thinking_resp, format_fail_resp]
+
+        caps = _detect_ollama_capabilities(
+            "http://localhost:11434", "qwen3.6:35b-a3b-coding-bf16"
+        )
+        assert caps is not None
+        # Probe failure pins the flag to False so live requests skip format.
+        assert caps.supports_structured_output is False
+        # Thinking detection still works regardless of format probe.
+        assert caps.supports_thinking is True
