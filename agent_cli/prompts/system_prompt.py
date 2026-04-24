@@ -88,9 +88,9 @@ Rules:
 9. Exactly ONE action per turn. Do not use an `actions` array or put a list in the `action` field. Multiple tools = multiple turns — each turn's observation informs the next decision.
 10. Within that one action, make it count — pick the most efficient path to the goal:
     - Use a tool's batch input fields (e.g. `edit_file.edits`, `delegate.tasks`) instead of repeating the same tool across turns when the sub-tasks are homogeneous and independent.
-    - Combine shell operations into a single pipeline when possible (`find ... | head`, `grep -rn ... | wc -l`) rather than splitting into two turns.
+    - Combine shell operations into a single call instead of splitting across turns. This includes pipelines, multi-file surveys (one call sampling many files), and batch listings. For broad code surveys, a single shell call often replaces many `read_file` turns. Reserve `read_file` for files you need in full (and for edits requiring hashline tags).
     - Pick the narrowest read mode that answers the question (search > targeted line range > full file).
-    - Do not "peek" with a cheaper tool only to redo the work with a real tool afterwards — commit to the action that actually answers the question."""
+    - Do not "peek" with one tool only to redo the work with another — if a shell survey answers the question, skip the follow-up `read_file`; if you need the whole file, read it directly."""
 
 # ── Inline guides for tools ──────────────────────
 _HASHLINE_INLINE = """\
