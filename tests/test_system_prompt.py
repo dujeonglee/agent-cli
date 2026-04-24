@@ -42,6 +42,40 @@ class TestBuildSystemPrompt:
         # Should be inline, not a separate section
         assert "## Hashline" not in prompt
 
+    def test_format_rules_enforce_single_action_per_turn(self):
+        """Rule 9: explicit single-action enforcement. Prior to this
+        rule the single-action shape was only implied by the example
+        JSON. Nothing told the model that an `actions` array or a
+        list in `action` was off-limits."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        flat = re.sub(r"\s+", " ", prompt)
+        # "Exactly ONE action" or similar phrasing
+        assert "ONE action" in flat or "exactly one" in flat.lower()
+        # Explicitly rejects actions array / list-valued action
+        assert "actions" in flat.lower()  # names the wrong shape
+        assert "array" in flat.lower() or "list" in flat.lower()
+
+    def test_format_rules_nudge_efficient_action(self):
+        """Rule 10: within a single action, favor turn-efficient
+        choices — batch input fields, shell pipelines, narrow reads,
+        no peek-then-redo. Intent-level checks so rewording doesn't
+        break the test."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["shell", "edit_file"])
+        flat = re.sub(r"\s+", " ", prompt)
+        # Batch input fields named (at least one of edit_file.edits /
+        # delegate.tasks appears in the guidance)
+        assert "edits" in flat or "tasks" in flat
+        # Shell pipeline concept — | operator or word "pipeline"
+        assert "pipeline" in flat.lower() or "|" in flat
+        # Narrow read guidance (search / targeted / narrow)
+        assert "narrow" in flat.lower() or "targeted" in flat.lower()
+        # No peek-then-redo anti-pattern
+        assert "peek" in flat.lower() or "commit to" in flat.lower()
+
     def test_hashline_guide_has_multi_edit_notes(self):
         """Multi-edit notes in _HASHLINE_INLINE prevent the three
         recurring drift patterns observed in S25FE-kernel session

@@ -84,7 +84,13 @@ Rules:
 5. Do not include "observation" — it is injected by the system.
 6. Output only valid JSON, nothing else.
 7. Do not invoke yourself recursively — do not run agent-cli or any command that starts this tool again via shell.
-8. Before calling complete, always call ready_for_review first to verify your work."""
+8. Before calling complete, always call ready_for_review first to verify your work.
+9. Exactly ONE action per turn. Do not use an `actions` array or put a list in the `action` field. Multiple tools = multiple turns — each turn's observation informs the next decision.
+10. Within that one action, make it count — pick the most efficient path to the goal:
+    - Use a tool's batch input fields (e.g. `edit_file.edits`, `delegate.tasks`) instead of repeating the same tool across turns when the sub-tasks are homogeneous and independent.
+    - Combine shell operations into a single pipeline when possible (`find ... | head`, `grep -rn ... | wc -l`) rather than splitting into two turns.
+    - Pick the narrowest read mode that answers the question (search > targeted line range > full file).
+    - Do not "peek" with a cheaper tool only to redo the work with a real tool afterwards — commit to the action that actually answers the question."""
 
 # ── Inline guides for tools ──────────────────────
 _HASHLINE_INLINE = """\
