@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 import re
 
 import requests
@@ -10,6 +11,34 @@ import requests
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 
 from agent_cli.config import get_model_entry, save_model_entry
+
+
+# Optional progress callback — set by the caller (main.py) before
+# runtime capability detection so the user sees what each probe step
+# is doing. Cold-load + two probes can take 20-30s for a large model
+# the first time; without progress the CLI appears frozen. Default
+# None keeps compat.py callable in isolation (tests, scripts).
+_progress_cb: Callable[[str], None] | None = None
+
+
+def set_progress_callback(cb: Callable[[str], None] | None) -> None:
+    """Register (or clear) a progress callback. Called once by main.py
+    around the get_capabilities() invocation that might hit runtime
+    detection. Pass None to disable."""
+    global _progress_cb
+    _progress_cb = cb
+
+
+def _emit_progress(msg: str) -> None:
+    """Emit a single progress message through the registered callback,
+    if any. Safe no-op when no callback is set."""
+    cb = _progress_cb
+    if cb is not None:
+        try:
+            cb(msg)
+        except Exception:
+            # Never let a progress UI error derail capability detection.
+            pass
 
 
 @dataclass(frozen=True)
@@ -124,6 +153,8 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
     """Query Ollama /api/show for model info, then probe for thinking support."""
     try:
         # Step 1: Get model metadata
+        _emit_progress(f"First run for {model} — detecting capabilities")
+        _emit_progress(f"Loading model metadata via /api/show ({model})")
         url = f"{base_url.rstrip('/')}/api/show"
         r = requests.post(url, json={"model": model}, timeout=10)
         r.raise_for_status()
@@ -141,6 +172,9 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
         max_output = min(context_length // 4, 4096)
 
         # Step 2: Probe for thinking support by sending a simple prompt
+        _emit_progress(
+            f"Probing thinking support ({model}) — may take ~10s on cold load"
+        )
         supports_thinking, thinking_format = _probe_thinking_support(base_url, model)
         thinking_budget = 4096 if supports_thinking else 0
 
@@ -148,7 +182,10 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
         # packagings (mlx-backed bf16 safetensors builds) break the moment
         # `format` is set even for basic JSON mode; we need to know that
         # at detection time so live requests can skip the parameter.
+        _emit_progress(f"Probing JSON format tolerance ({model})")
         supports_format = _probe_format_support(base_url, model)
+
+        _emit_progress(f"Detection complete for {model}")
 
         return ModelCapabilities(
             context_window=context_length,
@@ -293,10 +330,16 @@ def _detect_openai_compat_capabilities(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        _emit_progress(f"First run for {model} — detecting capabilities")
+
         # Step 1: Try to get context window from /v1/models
+        _emit_progress(f"Querying context window via /v1/models ({model})")
         context_window = _detect_openai_context_window(base, model, api_key)
 
         # Step 2: Probe for thinking support
+        _emit_progress(
+            f"Probing thinking support ({model}) — may take ~10s on cold load"
+        )
         url = f"{base}/chat/completions"
         r = requests.post(
             url,
@@ -323,6 +366,8 @@ def _detect_openai_compat_capabilities(
             thinking_format = match.group(1).lower()
 
         max_output = min(context_window // 4, 4096)
+
+        _emit_progress(f"Detection complete for {model}")
 
         return ModelCapabilities(
             context_window=context_window,

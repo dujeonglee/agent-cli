@@ -8,8 +8,10 @@ from agent_cli.config import reload_registry
 from agent_cli.providers.compat import (
     DEFAULT_CAPABILITIES,
     get_capabilities,
+    set_progress_callback,
     _detect_ollama_capabilities,
     _probe_format_support,
+    _emit_progress,
 )
 
 
@@ -513,3 +515,90 @@ class TestDetectionWiresProbeResult:
         assert caps.supports_structured_output is False
         # Thinking detection still works regardless of format probe.
         assert caps.supports_thinking is True
+
+
+class TestProgressCallback:
+    """Runtime detection emits progress messages through a registered
+    callback so the CLI can show the user what each probe step is
+    doing (cold load + 2 probes can take 20-30s on first run)."""
+
+    def test_emit_noop_when_no_callback(self):
+        """Default: no callback registered → _emit_progress is a
+        silent no-op. Backward-compat guarantee."""
+        set_progress_callback(None)
+        _emit_progress("should go nowhere")  # must not raise
+
+    def test_emit_calls_registered_callback(self):
+        """With a callback registered, messages flow through."""
+        messages: list[str] = []
+        set_progress_callback(messages.append)
+        try:
+            _emit_progress("first")
+            _emit_progress("second")
+        finally:
+            set_progress_callback(None)
+        assert messages == ["first", "second"]
+
+    def test_emit_swallows_callback_exceptions(self):
+        """A broken progress UI must not derail detection."""
+
+        def broken(_msg):
+            raise RuntimeError("ui is on fire")
+
+        set_progress_callback(broken)
+        try:
+            # Must not propagate the RuntimeError.
+            _emit_progress("hello")
+        finally:
+            set_progress_callback(None)
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_detect_ollama_emits_step_messages(self, mock_post):
+        """Ollama runtime detection emits one message per stage: show,
+        thinking probe, format probe, plus a start/end bookend. Pins
+        that the probe UI sees each step, not silence until done."""
+        show_resp = MagicMock()
+        show_resp.status_code = 200
+        show_resp.json.return_value = {
+            "model_info": {"qwen3.context_length": 32768},
+            "details": {"family": "qwen3"},
+        }
+        show_resp.raise_for_status.return_value = None
+
+        thinking_resp = MagicMock()
+        thinking_resp.status_code = 200
+        thinking_resp.json.return_value = {"message": {"content": "<think>x</think>4"}}
+        thinking_resp.raise_for_status.return_value = None
+
+        mock_post.side_effect = [show_resp, thinking_resp, _ok_probe_resp()]
+
+        messages: list[str] = []
+        set_progress_callback(messages.append)
+        try:
+            caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3:14b")
+        finally:
+            set_progress_callback(None)
+
+        assert caps is not None
+        # Three distinct stages plus a start/completion bookend, all
+        # naming the model so the user can tell which probe is running.
+        joined = "\n".join(messages)
+        assert "metadata" in joined  # /api/show
+        assert "thinking" in joined  # thinking probe
+        assert "format" in joined  # format probe
+        assert any("qwen3:14b" in m for m in messages)
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_cached_capability_silent(self, mock_post):
+        """Cache hit (models.json entry) must NOT fire the progress
+        callback — probes don't run, user shouldn't see phantom
+        messages."""
+        messages: list[str] = []
+        set_progress_callback(messages.append)
+        try:
+            caps = get_capabilities("qwen3:32b")  # in default_models.json
+        finally:
+            set_progress_callback(None)
+        assert caps.context_window == 32768  # came from registry
+        assert messages == []  # no probes, no messages
+        mock_post.assert_not_called()

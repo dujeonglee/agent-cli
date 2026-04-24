@@ -490,8 +490,16 @@ def _setup_provider(
 ):
     """Resolve settings + create provider + get capabilities. Returns tuple."""
     _maybe_setup()
-    from agent_cli.providers.compat import DEFAULT_CAPABILITIES, was_runtime_detected
-    from agent_cli.render import render_model_detected, render_model_loaded
+    from agent_cli.providers.compat import (
+        DEFAULT_CAPABILITIES,
+        set_progress_callback,
+        was_runtime_detected,
+    )
+    from agent_cli.render import (
+        render_model_detected,
+        render_model_loaded,
+        render_status,
+    )
 
     provider, resolved_url, resolved_model, resolved_key = _resolve_provider(
         provider,
@@ -500,9 +508,18 @@ def _setup_provider(
         api_key,
     )
     llm_provider = create_provider(provider, resolved_url, resolved_key)
-    capabilities = get_capabilities(
-        resolved_model, provider, resolved_url, resolved_key
-    )
+    # Surface runtime-detection probe steps to the user. Only emits
+    # when the model isn't cached in models.json — silent fast path
+    # otherwise. Cleared in finally so a later detection doesn't
+    # inherit this callback.
+    if not quiet:
+        set_progress_callback(lambda msg: render_status("running", msg))
+    try:
+        capabilities = get_capabilities(
+            resolved_model, provider, resolved_url, resolved_key
+        )
+    finally:
+        set_progress_callback(None)
 
     # Interactive fallback: ask user when detection fails
     if capabilities == DEFAULT_CAPABILITIES and not quiet:

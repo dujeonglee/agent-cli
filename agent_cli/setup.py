@@ -6,6 +6,7 @@ Saves configuration to ~/.agent-cli/config.json or .agent-cli/config.json.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import requests
@@ -72,6 +73,7 @@ class SetupWizard:
     def run(self) -> dict | None:
         """Run the setup wizard. Returns config dict or None if cancelled."""
         self._welcome()
+        self._show_existing_configs()
         provider = self._select_provider()
         base_url, api_key = self._configure_connection(provider)
         default_model = self._select_model(provider, base_url, api_key)
@@ -95,6 +97,56 @@ class SetupWizard:
                 Text("Agent-CLI Setup", justify="center", style="bold bright_cyan"),
                 subtitle="ReAct pattern agent CLI for on-premise LLMs",
                 padding=(1, 2),
+            )
+        )
+        self.console.print()
+
+    def _show_existing_configs(self) -> None:
+        """Display any existing global or project configs so the user
+        can reference them before picking new values. Silent when no
+        config exists (first-time setup)."""
+        candidates = [
+            ("Project", Path.cwd() / ".agent-cli" / "config.json"),
+            ("User (global)", Path.home() / ".agent-cli" / "config.json"),
+        ]
+        entries: list[tuple[str, Path, dict]] = []
+        for label, path in candidates:
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            entries.append((label, path, data))
+
+        if not entries:
+            return
+
+        table = Table(show_header=True, header_style="bold cyan", padding=(0, 1))
+        table.add_column("Scope", style="cyan", no_wrap=True)
+        table.add_column("Provider")
+        table.add_column("Base URL")
+        table.add_column("Default Model")
+        table.add_column("API Key")
+        table.add_column("Path", style="grey46")
+        for label, path, data in entries:
+            has_key = bool(data.get("api_key"))
+            table.add_row(
+                label,
+                str(data.get("provider") or "(unset)"),
+                str(data.get("base_url") or "(unset)"),
+                str(data.get("default_model") or "(unset)"),
+                "***" if has_key else "(none)",
+                str(path),
+            )
+        self.console.print(
+            Panel(
+                table,
+                title="Existing configuration",
+                subtitle="for reference — new choices below can override these",
+                border_style="grey46",
             )
         )
         self.console.print()
