@@ -310,7 +310,7 @@ class AgentLoop:
         if self.verbose and response.thinking:
             render_thinking(response.thinking, self.turn)
 
-        result = self._handle_text_path(llm_text, response.thinking)
+        result = self._handle_text_path(llm_text)
 
         # OnTurnEnd hook
         self._fire_hook("OnTurnEnd")
@@ -373,15 +373,12 @@ class AgentLoop:
             else:
                 render_stream_end()
 
-    def _handle_text_path(self, llm_text: str, thinking_field: str = ""):
+    def _handle_text_path(self, llm_text: str):
         """Handle text parsing response (Ollama, fallback).
 
-        ``thinking_field`` carries reasoning content surfaced via a
-        provider-side field (Ollama ``message.thinking``, Anthropic
-        thinking blocks, vLLM ``reasoning_content``). Tag-based
-        thinking inside ``llm_text`` is extracted by parse_react into
-        ``parsed.thinking``. The retry builders prefer the field-based
-        source and fall back to the parsed/tag-based one.
+        Recovery primitives consume only the emitted text (``llm_text``)
+        — the thinking channel is intentionally excluded from the
+        recovery path (see ``docs/robust-harness/DESIGN.md`` §2.2).
         """
         parsed = parse_react(llm_text)
 
@@ -598,11 +595,10 @@ class AgentLoop:
             return self._CONTINUE
 
         # 12. Missing action or parse failure -- retry with appropriate hint.
-        # Echo both the model's failed output AND its prior reasoning
-        # back as failure grounding. Content shows structural drift
-        # (YAML-style keys, function-call syntax, bare prose); thinking
-        # shows self-correction beats when the model produced any.
-        prior_thinking = thinking_field or (parsed.thinking or "")
+        # Echo the model's failed output back as failure grounding (content
+        # shows structural drift: YAML-style keys, function-call syntax,
+        # bare prose). Thinking-channel echo is excluded from v1 — see
+        # docs/robust-harness/DESIGN.md §2.2.
         if parsed.parse_stage > 0:
             # JSON parsed OK but no action -- LLM forgot to include action
             _debug_log(
@@ -613,10 +609,7 @@ class AgentLoop:
                 "Response has no action. Retrying...",
                 self.turn,
             )
-            retry_msg = format_no_action_retry(
-                prior_content=llm_text,
-                prior_thinking=prior_thinking,
-            )
+            retry_msg = format_no_action_retry(prior_content=llm_text)
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
@@ -625,10 +618,7 @@ class AgentLoop:
                 "Invalid JSON response. Retrying...",
                 self.turn,
             )
-            retry_msg = format_no_json_retry(
-                prior_content=llm_text,
-                prior_thinking=prior_thinking,
-            )
+            retry_msg = format_no_json_retry(prior_content=llm_text)
         _append_observation(self.messages, self.ctx, llm_text, retry_msg)
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE

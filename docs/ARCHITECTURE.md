@@ -46,7 +46,10 @@ agent_cli/
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (217)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
-├── constants.py             (153)  공유 상수 + 실패 회복 retry 빌더 (`format_no_json_retry` / `format_no_action_retry`, content head + thinking tail echo)
+├── constants.py             (~95)  공유 상수 + 실패 회복 retry thin-wrapper (`format_no_json_retry` / `format_no_action_retry` — `recovery/primitives.py` 합성)
+├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
+│   ├── __init__.py                 primitive 재export
+│   └── primitives.py        (~70)  순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`) — provider/모델/채널 이름 모름
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
 │   ├── __init__.py          (24)   shell hook API re-export (하위 호환)
@@ -239,7 +242,7 @@ class LLMResponse:
 - 위 채널이 없으면 `""` (plain OpenAI Chat Completions 등 — graceful)
 - `<think>...</think>` 태그가 content 안에 있는 경우는 별도 — `parse_react`가 `ReActResult.thinking`으로 분리 추출
 
-`loop.py`의 retry 분기는 두 채널을 OR로 결합해 retry 메시지에 echo: `response.thinking or parsed.thinking or ""`.
+**소비처 (v1):** verbose 모드의 `render_thinking` 디버그 출력 *전용*. recovery 레이어(`format_no_*_retry`, `recovery/primitives.py`)는 thinking을 *읽지 않음* — primitive contract가 channel-agnostic이어야 누더기를 막기 때문 (`docs/robust-harness/DESIGN.md` §2.2).
 
 ### 4.2 모델 능력치 (`providers/compat.py`)
 
@@ -510,33 +513,30 @@ MCP 제공 툴처럼 `action` 이름이 레지스트리에 없어도 같은 룰 
 
 이 정규화는 strict JSON Schema 도입 없이 작동하며, flat form을 정식 canonical로 승격하는 미래 변경(`plan/schema-flatten.md` 참조)의 파서 기반이 됩니다.
 
-#### Failure Grounding Retry (`constants.py` + `loop.py`)
+#### Failure Grounding Retry (`recovery/primitives.py` + `constants.py` + `loop.py`)
 
-3단계 파싱이 모두 실패하거나(JSON 깨짐 — `parse_stage=0`) JSON은 파싱됐는데 `action`이 없으면 (`parse_stage>0` & `action=None`), `loop.py`가 user role 메시지를 한 개 주입하고 같은 turn을 재시도합니다 (`turn -= 1`로 카운트 제외). retry 메시지는 `format_no_json_retry()` / `format_no_action_retry()` 빌더가 생성:
+> 설계 문서: `docs/robust-harness/DESIGN.md` (4-layer 디자인, primitive 도구함, playbook)
+
+3단계 파싱이 모두 실패하거나(JSON 깨짐 — `parse_stage=0`) JSON은 파싱됐는데 `action`이 없으면 (`parse_stage>0` & `action=None`), `loop.py`가 user role 메시지를 한 개 주입하고 같은 turn을 재시도합니다 (`turn -= 1`로 카운트 제외). 메시지는 `recovery/primitives.py`의 순수 함수들을 합성한 결과:
 
 ```
 Your response was not valid JSON.
 
-Your prior output:               ← head 400자 (구조 마커 보존)
+Your prior output:               ← echo_prior_output: head 400자 (구조 마커 보존)
 ---
 {LLM이 방금 토출한 content}
 ---
 
-Your prior reasoning:            ← tail 400자 (self-correction 비트 보존)
----
-{response.thinking 또는 parsed.thinking}
----
-
-Honor that. Output ONLY a JSON object: {...}.
+Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 ```
 
-**채널 우선순위 — `loop.py`에서 OR 결합:**
-- `prior_content = llm_text` (failed content를 head-truncate)
-- `prior_thinking = response.thinking or parsed.thinking or ""` (provider field-based가 우선, 없으면 `<think>` 태그 추출본)
+**v1 design — content-only echo.** thinking 채널 echo는 격리 측정값 없이 runtime 의존성만 유발하므로 v1에서 제외. Step 2 observability (TurnRecord JSONL) 데이터로 필요성이 검증되면 별도 primitive로 추가. (자세한 결정 배경은 `docs/robust-harness/DESIGN.md` §2.2.)
 
-둘 다 비면 정적 fallback (`RETRY_HINT_NO_JSON` / `RETRY_HINT_NO_ACTION`) — graceful path: plain OpenAI Chat Completions 같은 thinking 미노출 환경.
+`prior_content`가 비면 정적 fallback (`RETRY_HINT_NO_JSON` / `RETRY_HINT_NO_ACTION`) — graceful path.
 
-**근거 (failure grounding):** 추상적 *"your response was invalid"*는 모델이 무엇을 위반했는지 모르게 함 — 같은 출력을 반복할 가능성 높음. retry에 자기 출력을 인용해 보여주면 모델이 자기 드리프트(YAML-style 키, 함수-호출 신택스, bare prose, empty content 등)를 직접 보고 self-diagnose 가능. content는 head-truncate (구조 마커는 보통 시작 부분), thinking은 tail-truncate (self-correction은 보통 끝 부분).
+**근거 (failure grounding):** 추상적 *"your response was invalid"*는 모델이 무엇을 위반했는지 모르게 함 — 같은 출력을 반복할 가능성 높음. retry에 자기 출력을 인용해 보여주면 모델이 자기 드리프트(YAML-style 키, 함수-호출 신택스, bare prose 등)를 직접 보고 self-diagnose 가능. 구조 마커가 보통 출력 시작 부분이라 head-truncate.
+
+**Primitive 계약 (누더기 방지):** primitive는 provider/모델/채널 이름을 절대 참조하지 않음. 새 실패 모드는 *primitive 합성과 매핑 한 줄*로 처리 — `if "ollama"`, `response.thinking` 같은 분기를 primitive 시그니처에 두면 invariant 위반.
 
 **Prefix 호환성:** retry 메시지 시작은 항상 정적 템플릿과 같은 문장 (`"Your response was not valid JSON."` / `"Your JSON was parsed but has no action."`)으로 시작하므로 `SYSTEM_USER_PREFIXES` 매칭이 그대로 유지됨 → resume 시 자연어 변환에서 noise로 표시되지 않음.
 

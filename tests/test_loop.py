@@ -209,11 +209,10 @@ class TestRunLoopParseFailure:
         assert result.output == "recovered"
 
     def test_retry_echoes_content_back(self, caps):
-        """The failing content is the primary failure-grounding signal —
-        always echoed when present, regardless of whether the provider
-        exposed a thinking channel. This is what lets the model see its
-        own structural drift (YAML-style keys, function-call syntax,
-        bare prose) and self-diagnose."""
+        """The failing content is the failure-grounding signal — echoed
+        when present so the model sees its own structural drift
+        (YAML-style keys, function-call syntax, bare prose) and
+        self-diagnoses."""
         provider = MagicMock()
         bad_output = "thought: drifted into YAML\naction: complete"
         provider.call.side_effect = [
@@ -235,15 +234,20 @@ class TestRunLoopParseFailure:
         assert "Your prior output:" in retry_msg
         assert retry_msg.startswith("Your response was not valid JSON.")
 
-    def test_retry_echoes_thinking_field_back(self, caps):
-        """When the provider exposed a thinking channel, that channel is
-        echoed alongside content (Ollama qwen3 / Anthropic / vLLM
-        reasoning_content)."""
+    def test_retry_does_not_echo_thinking_channel(self, caps):
+        """v1 design invariant: the thinking channel is *not* consumed by
+        the recovery layer (see docs/robust-harness/DESIGN.md §2.2). This
+        test guards against accidental re-introduction.
+
+        Even when the provider surfaces a non-empty thinking field, the
+        retry message echoes only ``content`` — the thinking text must
+        not appear in the injected retry."""
         provider = MagicMock()
+        thinking_text = "I keep failing to provide valid JSON."
         provider.call.side_effect = [
             LLMResponse(
                 content="Plain prose, no JSON envelope here.",
-                thinking="I keep failing to provide valid JSON. Let me try.",
+                thinking=thinking_text,
             ),
             LLMResponse(content=_complete("recovered")),
         ]
@@ -258,51 +262,16 @@ class TestRunLoopParseFailure:
 
         second_call_messages = provider.call.call_args_list[1].kwargs["messages"]
         retry_msg = second_call_messages[-1]["content"]
-        # Both channels echoed
         assert "Plain prose, no JSON envelope here." in retry_msg
-        assert "I keep failing to provide valid JSON. Let me try." in retry_msg
-        assert "Your prior output:" in retry_msg
-        assert "Your prior reasoning:" in retry_msg
-        # Output section comes before reasoning section
-        assert retry_msg.index("Your prior output:") < retry_msg.index(
-            "Your prior reasoning:"
-        )
+        # Recovery layer must not echo thinking
+        assert thinking_text not in retry_msg
+        assert "Your prior reasoning:" not in retry_msg
 
-    def test_retry_echoes_tag_based_thinking_back(self, caps):
-        """Tag-based thinking (<think>...</think> inside content,
-        DeepSeek-R1 style) is extracted by parse_react into
-        ReActResult.thinking. The retry builder should pick that up
-        when the field-based channel is empty."""
-        provider = MagicMock()
-        provider.call.side_effect = [
-            LLMResponse(
-                content="<think>Need to format as JSON next time.</think>"
-                "Plain prose answer with no envelope.",
-                thinking="",  # field channel empty — tag channel used
-            ),
-            LLMResponse(content=_complete("recovered")),
-        ]
-
-        run_loop(
-            query="anything",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-            max_turns=5,
-        )
-
-        second_call_messages = provider.call.call_args_list[1].kwargs["messages"]
-        retry_msg = second_call_messages[-1]["content"]
-        assert "Need to format as JSON next time." in retry_msg
-
-    def test_retry_no_signals_uses_static_template(self, caps):
-        """Both channels empty → static fallback. Path must stay clean
-        for providers that expose neither (plain OpenAI Chat, non-
-        reasoning models)."""
-        # An empty content string also means content channel is empty
-        # (the strip-then-check rule in _truncate_head). Use a string
-        # that's purely whitespace to exercise that path while still
-        # producing parse_stage=0.
+    def test_retry_no_content_uses_static_template(self, caps):
+        """Empty content → static fallback. Path stays clean for
+        providers that produce no echoable signal."""
+        # Whitespace-only content is treated as empty by _truncate_head,
+        # so the echo block produces nothing and the fallback fires.
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content="   ", thinking=""),
@@ -320,9 +289,8 @@ class TestRunLoopParseFailure:
         second_call_messages = provider.call.call_args_list[1].kwargs["messages"]
         retry_msg = second_call_messages[-1]["content"]
         assert retry_msg.startswith("Your response was not valid JSON.")
-        # No echo sections
+        # No echo block
         assert "Your prior output:" not in retry_msg
-        assert "Your prior reasoning:" not in retry_msg
         assert result.output == "recovered"
 
 
