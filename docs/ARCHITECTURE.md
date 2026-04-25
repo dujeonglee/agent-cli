@@ -42,11 +42,11 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (1179) CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style
+├── main.py                  (1200) CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style, resume preview
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
-├── constants.py             (20)   공유 상수 (타임아웃, 임계값, 메시지 템플릿)
+├── constants.py             (39)   공유 상수 (타임아웃, 임계값, observation/retry 메시지 템플릿)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
 │   ├── __init__.py          (22)   shell hook API re-export (하위 호환)
@@ -57,7 +57,7 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (1227) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
+├── loop.py                  (1267) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (171)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
 │   ├── base.py              (174)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드)
@@ -97,7 +97,7 @@ agent_cli/
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
 │   ├── manager.py           (298)  ContextManager (토큰 budget FIFO + history.jsonl + 자연어 변환)
 │   (scratchpad.py 삭제됨 — history.jsonl로 대체)
-│   └── session.py           (124)  세션 메타데이터 (session.jsonl: id, workspace, updated_at, query)
+│   └── session.py           (184)  세션 메타데이터 (session.jsonl) + resume용 user↔assistant 페어 추출 (recent_exchanges)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)

@@ -122,3 +122,63 @@ def finalize_session(meta, ctx=None) -> None:
     """Update session metadata on session end."""
     if meta:
         save_meta(meta)
+
+
+def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
+    """Return the last `n` (user_query, assistant_final) pairs from
+    history.jsonl, in chronological order.
+
+    A "user query" is a role=user message that is neither a tool
+    observation (content starting with "Observation:" or carrying a
+    `tool` field) nor a loop-emitted system notice (retry hints,
+    interrupt notices — see `SYSTEM_USER_PREFIXES`). Those all share
+    the role=user shape but are not real user input.
+
+    The paired final is the next role=assistant `complete` action's
+    result. If a new user query arrives before the previous one
+    completes, the previous pair is closed with "(no completion)" so
+    interrupted runs still surface.
+    """
+    from agent_cli.constants import SYSTEM_USER_PREFIXES
+
+    if not history_path.is_file():
+        return []
+
+    pairs: list[tuple[str, str]] = []
+    pending: str | None = None
+
+    with open(history_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            role = msg.get("role")
+            if role == "user":
+                content = msg.get("content", "")
+                if content.startswith("Observation:") or msg.get("tool"):
+                    continue
+                if any(content.startswith(p) for p in SYSTEM_USER_PREFIXES):
+                    continue
+                if pending is not None:
+                    pairs.append((pending, "(no completion)"))
+                pending = content
+            elif role == "assistant" and msg.get("action") == "complete":
+                if pending is None:
+                    continue
+                action_input = msg.get("action_input", {})
+                if isinstance(action_input, dict):
+                    result = action_input.get("result", "")
+                else:
+                    result = str(action_input) if action_input else ""
+                pairs.append((pending, result))
+                pending = None
+
+    if pending is not None:
+        pairs.append((pending, "(no completion)"))
+
+    return pairs[-n:] if n > 0 else pairs

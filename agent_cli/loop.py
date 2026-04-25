@@ -8,7 +8,13 @@ import signal
 import sys
 import time
 
-from agent_cli.constants import DELEGATE_DEFAULT_TIMEOUT, OBS_SUCCESS
+from agent_cli.constants import (
+    DELEGATE_DEFAULT_TIMEOUT,
+    INTERRUPT_NOTICE,
+    OBS_SUCCESS,
+    RETRY_HINT_NO_ACTION,
+    RETRY_HINT_NO_JSON,
+)
 from agent_cli.tools.result import ToolResult
 
 from agent_cli.context.manager import ContextManager
@@ -218,7 +224,7 @@ class AgentLoop:
     def _on_interrupt(self):
         """Handle graceful interrupt: record in ctx, return ToolResult."""
 
-        interrupt_msg = "⚡ User interrupted. Waiting for new instructions."
+        interrupt_msg = INTERRUPT_NOTICE
         if self.ctx:
             self.ctx.add({"role": "user", "content": interrupt_msg})
         from agent_cli.render import C, console
@@ -575,13 +581,7 @@ class AgentLoop:
                 "Response has no action. Retrying...",
                 self.turn,
             )
-            retry_msg = (
-                "Your JSON was parsed but has no action. "
-                "You MUST include an action. Either use a tool: "
-                '{"thought": "...", "action": "tool_name", "action_input": {...}} '
-                "or complete the task: "
-                '{"thought": "...", "action": "complete", "action_input": {"result": "..."}}'
-            )
+            retry_msg = RETRY_HINT_NO_ACTION
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
@@ -590,12 +590,7 @@ class AgentLoop:
                 "Invalid JSON response. Retrying...",
                 self.turn,
             )
-            retry_msg = (
-                "Your response was not valid JSON. "
-                "Output ONLY a JSON object: "
-                '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
-                "No markdown fences, no extra text."
-            )
+            retry_msg = RETRY_HINT_NO_JSON
         _append_observation(self.messages, self.ctx, llm_text, retry_msg)
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE

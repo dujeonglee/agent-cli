@@ -201,6 +201,8 @@ $ agent-cli run "Analyze the project structure"
 $ agent-cli chat --resume 1774752167   # 이전 작업 이어서 대화
 ```
 
+resume 시 마지막 사용자 질문↔어시스턴트 최종 답변 페어 10개를 화면에 미리 표시해 어디서 끊겼는지 바로 확인할 수 있습니다 (중간 도구 호출/관찰은 제외).
+
 ### `chat` — 대화형 모드
 
 ```bash

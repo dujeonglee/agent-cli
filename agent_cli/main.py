@@ -815,6 +815,37 @@ def _read_user_input(prompt: str) -> str:
     return read_rich_input(prompt)
 
 
+def _print_recent_exchanges(history_path, n: int = 10) -> None:
+    """On resume, print the last `n` user↔assistant pairs so the user
+    can pick up where they left off without scrolling the session log.
+
+    Tool calls and observations are collapsed away by `recent_exchanges`
+    — only the user's actual queries and the assistant's final answers
+    are shown."""
+    from agent_cli.context.session import recent_exchanges
+
+    pairs = recent_exchanges(history_path, n=n)
+    if not pairs:
+        return
+
+    def _truncate(text: str, limit: int) -> str:
+        text = text.strip()
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + "…"
+
+    console.print(
+        f"\n[{C['muted']}]── Last {len(pairs)} exchange(s) ──[/]",
+        highlight=False,
+    )
+    for user_q, asst_a in pairs:
+        console.print(f"[{C['accent']}]You:[/] {_truncate(user_q, 200)}")
+        console.print(
+            f"[{C['final']}]Assistant:[/] {_truncate(asst_a, 400)}\n",
+            highlight=False,
+        )
+
+
 @app.command()
 def chat(
     provider: str = typer.Option(
@@ -921,6 +952,9 @@ def chat(
         max_context_tokens=max_context_tokens,
         resume=bool(resume),
     )
+
+    if resume:
+        _print_recent_exchanges(ctx.history_path)
 
     console.print()
     console.print(
