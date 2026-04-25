@@ -543,6 +543,73 @@ class TestGracefulInterrupt:
         ]
         assert len(interrupt_msgs) == 1
 
+    def test_stop_event_between_turns_reports_interrupt(self, caps, tmp_path):
+        """Repro for the "Max turns (0) reached" misreport: a Ctrl+C during
+        a turn sets `stop_event` but the body finishes its work (e.g. an
+        ask answer comes back) and returns `_CONTINUE`. On the next
+        iteration `_should_continue` sees `stop_event` and returns False —
+        the body's `if self._interrupted` check never re-runs, so before
+        the fix the loop fell through to `_on_max_turns()` and reported
+        "Max turns (0) reached" even when max_turns was 0 (= unlimited).
+
+        After the fix, the post-loop branch checks `_interrupted` and
+        returns the interrupt result with the correct error message."""
+        import json as _json
+        import threading
+        from agent_cli.loop import AgentLoop
+        from agent_cli.context.manager import ContextManager
+
+        # First turn: tool call. After this returns `_CONTINUE`, the test
+        # sets stop_event to simulate Ctrl+C arriving between turns.
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello")
+        responses = [
+            _json.dumps(
+                {
+                    "thought": "reading",
+                    "action": "read_file",
+                    "action_input": {"path": str(test_file)},
+                }
+            ),
+            # Second response is never consumed — `_should_continue` should
+            # gate the loop before the LLM is called again.
+            _complete("never reached"),
+        ]
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
+
+        stop_event = threading.Event()
+        ctx = ContextManager(session_dir=tmp_path / "session")
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            max_turns=0,  # unlimited — must NOT be reported as max-turns hit
+            ctx=ctx,
+            stop_event=stop_event,
+        )
+
+        # Wedge stop_event setting at the end of turn 1: after the turn
+        # completes, the next `_should_continue()` call will return False.
+        original_execute = loop._execute_turn
+
+        def _execute_then_stop():
+            result = original_execute()
+            stop_event.set()
+            return result
+
+        loop._execute_turn = _execute_then_stop
+
+        result = loop.run()
+
+        assert not result.success
+        # The fix: error must say "Interrupted", NOT "Max turns".
+        assert "Interrupted" in (result.error or "")
+        assert "Max turns" not in (result.error or "")
+        # Only the first turn's LLM call ran.
+        assert provider.call.call_count == 1
+
     def test_signal_handler_installed_and_restored(self, caps):
         """Signal handler is installed during run() and restored after."""
         import signal

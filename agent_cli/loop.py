@@ -181,6 +181,14 @@ class AgentLoop:
                 result = self._execute_turn()
                 if result is not self._CONTINUE:
                     return result
+            # Loop exited. Distinguish "interrupted between turns"
+            # (stop_event set after the previous turn finished — the body's
+            # _interrupted check never re-runs) from a real max_turns hit.
+            # Without this branch, a Ctrl+C that arrives mid-turn is reported
+            # as "Max turns (0) reached" once the turn wraps up, which is
+            # misleading when max_turns is unset.
+            if self._interrupted:
+                return self._on_interrupt()
             return self._on_max_turns()
         finally:
             self._fire_hook("OnSessionEnd")
