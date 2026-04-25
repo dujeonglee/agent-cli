@@ -610,9 +610,22 @@ LLM이 사용할 수 있는 도구 목록:
 {"action": "read_file", "action_input": {"path": "src/main.py", "line_start": 100, "line_end": 200}}
 ```
 
-- `line_start`: 시작 줄 번호 (1-based, 생략 시 처음부터)
-- `line_end`: 끝 줄 번호 (1-based, inclusive, 생략 시 끝까지)
-- 큰 파일이 truncation되면 `[To read the rest, use: read_file with line_start=N]` 가이드가 표시됩니다.
+검색 모드 (정규식 grep + 주변 컨텍스트):
+
+```json
+{"action": "read_file", "action_input": {"path": "agent_cli/loop.py", "search": "_handle_ask", "context": 3}}
+```
+
+stat 모드 (메타데이터 + 앞 20줄):
+
+```json
+{"action": "read_file", "action_input": {"path": "src/main.py", "stat": true}}
+```
+
+- `line_start` / `line_end`: 1-based, inclusive. 둘 다 생략하면 full read.
+- `search`: 정규식 패턴. 매칭 줄 + 주변 `context` 줄을 반환 (기본 3).
+- `stat`: 파일 크기/총 줄 수 + 앞 20줄.
+- **Full-read 가드**: mode 없이 큰 파일을 읽으면 (`AGENT_CLI_READ_FILE_LIMIT` env, 기본 300줄) 거부 응답이 와서 `line_start=1, line_end=<total>` 같은 명시적 호출을 유도합니다. `search`/`stat`/`line_start`+`line_end` 사용 시 가드 무시.
 
 ### edit_file — Hashline 편집
 
@@ -668,6 +681,8 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 ```json
 {"action": "shell", "action_input": {"command": "find agent_cli -name '*.py' | wc -l"}}
 ```
+
+대용량 출력은 자동으로 `<session>/shell/`에 artifact로 저장되고 head/tail 미리보기로 치환됩니다 (`find /`, `grep -r` 같은 명령이 컨텍스트를 통째로 잡아먹는 것 방지). 임계치는 `AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES`/`_BYTES` env로 조정.
 
 ### write_file — 파일 생성
 

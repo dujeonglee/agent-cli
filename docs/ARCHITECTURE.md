@@ -44,13 +44,13 @@ agent_cli/
 ├── __main__.py              (5)    python -m agent_cli 진입점
 ├── main.py                  (1200) CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style, resume preview
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
-├── config.py                (215)  config.json 3레이어 로딩 + models.json 레지스트리
-├── setup.py                 (229)  SetupWizard (Rich TUI, 첫 실행 설정 마법사)
-├── constants.py             (39)   공유 상수 (타임아웃, 임계값, observation/retry 메시지 템플릿)
+├── config.py                (217)  config.json 3레이어 로딩 + models.json 레지스트리
+├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
+├── constants.py             (39)   공유 상수 (타임아웃, 임계값, observation/retry 메시지 템플릿, 시스템 user-message prefix)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
-│   ├── __init__.py          (22)   shell hook API re-export (하위 호환)
-│   ├── shell.py             (215)  Shell hook (PreToolUse/PostToolUse/PostToolUseFailure)
+│   ├── __init__.py          (24)   shell hook API re-export (하위 호환)
+│   ├── shell.py             (236)  Shell hook (PreToolUse/PostToolUse/PostToolUseFailure)
 │   ├── events.py            (53)   11개 이벤트 상수 + EVENT_TO_FUNC 매핑
 │   ├── context.py           (145)  HookContext (messages 조작, system prompt 주입, MCP 메모리, 도구 제어)
 │   ├── loader.py            (88)   Python hook 파일 스캔/로드 (.agent-cli/hooks/*.py)
@@ -61,52 +61,51 @@ agent_cli/
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (210)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
 │   ├── base.py              (174)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드)
-│   └── minimal.py           (341)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, streaming marquee, capture, group blocks, CJK width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
+│   └── minimal.py           (396)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, streaming marquee with resize-recovery, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
-│   ├── base.py              (36)   LLMProvider 프로토콜, LLMResponse, TokenUsage
-│   ├── compat.py            (306)  ModelCapabilities + 프로브 감지 + 자동 저장
+│   ├── base.py              (41)   LLMProvider 프로토콜, LLMResponse, TokenUsage
+│   ├── compat.py            (419)  ModelCapabilities + 프로브 감지 (thinking + format) + 진행 콜백 + 자동 저장
 │   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
-│   ├── anthropic.py         (176)  Anthropic Messages API (tool_use + thinking + streaming + TTFT)
-│   ├── openai_compat.py     (184)  OpenAI 호환 API (function calling + reasoning + streaming + TTFT)
+│   ├── anthropic.py         (171)  Anthropic Messages API (tool_use + thinking + streaming + TTFT)
+│   ├── openai_compat.py     (179)  OpenAI 호환 API (function calling + reasoning + streaming + TTFT)
 │   └── ollama.py            (167)  Ollama API (basic JSON mode + thinking + streaming + TTFT)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
-│   ├── react_parser.py      (156)  3단계 폴백 ReAct 파서 + thinking 분리
-│   ├── json_repair.py       (175)  깨진 JSON 복구 (6단계 파이프라인)
+│   ├── react_parser.py      (253)  3단계 폴백 ReAct 파서 + thinking 분리 + action_input 정규화 (가상 도구 alias + sibling key bundling)
+│   ├── json_repair.py       (183)  깨진 JSON 복구 (6단계 파이프라인)
 │
 ├── tools/                          도구 시스템
-│   ├── __init__.py          (66)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
+│   ├── __init__.py          (68)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
-│   ├── registry.py          (454)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
-│   ├── read_file.py         (102)  파일 읽기 + hashline 포맷팅 + 부분 읽기 → ToolResult
+│   ├── registry.py          (472)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
+│   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
 │   ├── write_file.py        (21)   파일 생성 → ToolResult
-│   ├── edit_file.py         (164)  파일 편집 (hashline + 퍼지 매칭 + edits 필터링) → ToolResult
+│   ├── edit_file.py         (269)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링) → ToolResult
 │   ├── shell.py             (40)   셸 명령 실행 → ToolResult
+│   ├── shell_artifact.py    (249)  Shell stdout 대용량 가드: 한도 초과 시 `<session>/shell/`에 저장하고 head/tail 미리보기로 치환, LRU 회전
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
-│   ├── delegate.py          (681)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널, subdir, agent_stack, stop_event)
-│   ├── context.py           (115)  read_context 도구 (세션 목록 + 키워드 검색)
+│   ├── delegate.py          (697)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널, subdir, agent_stack, stop_event)
+│   ├── context.py           (106)  read_context 도구 (세션 목록 + 키워드 검색)
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
 │   ├── manager.py           (298)  ContextManager (토큰 budget FIFO + history.jsonl + 자연어 변환)
-│   (scratchpad.py 삭제됨 — history.jsonl로 대체)
 │   └── session.py           (184)  세션 메타데이터 (session.jsonl) + resume용 user↔assistant 페어 추출 (recent_exchanges)
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   ├── system_prompt.py     (368)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide)
-│   (compression_prompt.py 삭제됨 — FIFO로 대체)
+│   └── system_prompt.py     (410)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 10개 — 단일 액션 강제 + 효율성 가이드 포함)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
 │   ├── models.py            (21)   Skill 데이터 모델 (model/context/hooks/invocation)
-│   ├── loader.py            (103)  스킬 파일 검색/파싱 (ResourceLoader 기반, 캐싱)
-│   ├── executor.py          (181)  인자 치환 + 도구 교집합 + Role 상속 + skill subdir + stop_event
+│   ├── loader.py            (95)   스킬 파일 검색/파싱 (ResourceLoader 기반, 캐싱)
+│   ├── executor.py          (209)  인자 치환 + 도구 교집합 + Role 상속 + skill subdir + stop_event
 │   └── builtin/                    패키지 내장 스킬
 │       ├── create-skill.md         스킬 생성 메타 스킬
 │       ├── create-agent.md         에이전트 생성 메타 스킬
@@ -120,12 +119,11 @@ agent_cli/
 │   └── builtin/                    패키지 내장 에이전트
 │       └── explorer.md             읽기 전용 코드베이스 탐색 에이전트
 │
-│
 ├── mcp/                            MCP (Model Context Protocol) 통합
 │   ├── __init__.py          (1)
-│   ├── config.py            (96)   mcp.json 로드/병합 (프로젝트 > 유저)
+│   ├── config.py            (108)  mcp.json 로드/병합 (프로젝트 > 유저)
 │   ├── client.py            (258)  McpClientManager (stdio/SSE 연결, 도구 호출, stderr 격리)
-│   └── adapter.py           (82)   MCP 도구 → ToolResult 래핑, TOOLS dict 등록
+│   └── adapter.py           (95)   MCP 도구 → ToolResult 래핑, TOOLS dict 등록
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)
@@ -274,6 +272,7 @@ class ReActResult:
     raw: str = ""                # 원본 LLM 텍스트 (thinking 제거 후)
     parse_stage: int = 0         # 0=실패, 1=json.loads, 2=json_repair, 3=regex
     thinking: str | None = None  # 추출된 thinking 블록 내용
+    truncated: bool = False      # JSON 복구가 닫지 못한 브래킷/문자열을 보충했을 때 True
 ```
 
 ### 4.4 도구 스키마 (`tools/registry.py`)
@@ -676,13 +675,16 @@ def hello():    →    1#VR:def hello():
 
 퍼지 매칭 (`edit_file.py`): 해시 불일치 시 공백/따옴표/대시 정규화 후 재매칭. LLM 재호출 없이 비용 제로 보정.
 
+**Multi-edit 안전장치.** `edits[]` 한 호출에 여러 편집이 들어올 때 두 가지 모호성을 사전에 거부:
+
+- **중복 ref 거부 (Layer 1)** — 두 편집이 같은 `pos` 또는 같은 `end` 태그를 참조하면 reject. 같은 줄을 두 번 다른 방식으로 바꾸려는 의도가 정의되지 않음.
+- **범위 겹침 거부 (Layer 2)** — 각 edit을 (start_line, end_line) 구간으로 환산해 pairwise 검사. 범위가 겹치면 어느 쪽이 먼저 적용돼야 할지 모호하므로 reject. 같은 위치에 append/prepend 같이 의도적으로 동일 좌표를 쓰는 케이스는 별도로 허용.
+
+거부 시 단일 fail 메시지로 전체 호출이 atomically 실패 — 일부만 적용된 후 hash mismatch로 멈추는 케이스 차단.
+
 ### 6.5 Tool Output 전달 방식
 
-Tool output은 **잘림(truncation) 없이 전체를 그대로** LLM에 전달합니다.
-context가 넘치면 `context/manager.py`의 대화 압축이 오래된 메시지를 요약하여 처리합니다.
-
-이전에는 tool output을 context window의 3% 비율로 잘랐으나 (`tools/truncation.py`),
-이로 인해 LLM이 불완전한 정보로 판단하는 성능 열화가 확인되어 제거되었습니다.
+Tool output은 **잘림(truncation) 없이 전체를 그대로** LLM에 전달합니다. 이전에는 context window의 3% 비율로 잘랐으나(`tools/truncation.py`, 삭제됨), LLM이 불완전한 정보로 판단하는 성능 열화가 확인되어 제거. context가 넘치면 `context/manager.py`의 토큰-budget FIFO가 오래된 메시지부터 통째로 떨어냄 (요약 압축 아님).
 
 ### 6.5.0 `read_file` Full-Read Guard
 
@@ -966,9 +968,11 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 
 1. `models.json` 정적 설정 (병합된 결과)
 2. 런타임 감지 → **`~/.agent-cli/models.json`에 자동 저장**
-   - Ollama: `/api/show` (메타데이터) + `/api/chat` (thinking 프로브)
+   - Ollama: `/api/show` (메타데이터) + `/api/chat` (thinking 프로브 + format 프로브)
    - OpenAI 호환: `/chat/completions` (thinking 프로브)
 3. `DEFAULT_CAPABILITIES` (context_window=4096, 모든 기능 비활성)
+
+프로브는 진행 콜백을 받아 첫 실행 시 어느 단계가 돌고 있는지 사용자에게 표시 (`set_progress_callback`). 한 번 감지된 결과는 `_auto_detected: true` 마커와 함께 저장되어 재실행 시 프로브 생략.
 
 ### 8.6 Thinking 감지 방식
 
@@ -984,6 +988,10 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 새 모델이 추가되어도 코드 수정 없이 자동 감지됩니다.
 
 OpenAI 호환 서버(vLLM 등)에서는 `/v1/models` API로 context window도 감지합니다 (`max_model_len` 필드).
+
+#### Format 프로브 (Ollama 전용)
+
+일부 모델/백엔드 조합 (예: Ollama의 mlx tensor 포맷)은 `format="json"` 파라미터를 받으면 런타임 에러를 냅니다. 프로브가 형식 강제 호출을 한 번 시도해 성공하면 `supports_structured_output=True`, 실패하면 False — 결과는 모델별로 캐시되어 이후 호출에서 자동 적용. 사용자가 직접 모델 호환성을 추측할 필요가 없습니다.
 
 ### 8.5 모델 정보 출력
 
@@ -1012,8 +1020,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     ├─ TASK_GUIDELINES (항상 포함 — 코드 작업 원칙 7개)
     │   └─ 코드 읽기 선행, 범위 제한, 보안, 정직한 보고 등
     │
-    ├─ FORMAT_RULES (항상 포함 — JSON ReAct 포맷 + 규칙 8개)
-    │   └─ ready_for_review → complete 워크플로, 재귀 금지 등
+    ├─ FORMAT_RULES (항상 포함 — JSON ReAct 포맷 + 규칙 10개)
+    │   └─ ready_for_review → complete 워크플로, 재귀 금지, 단일 액션 강제,
+    │      효율적 액션 선택 (batch 필드 활용 / shell 파이프라이닝 / 좁은 read 모드 우선)
     │
     │  ── Middle: 레퍼런스 (필요시 참조) ──
     │
