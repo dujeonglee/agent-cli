@@ -10,7 +10,6 @@ from rich.console import Console
 
 from agent_cli.render.base import Renderer
 from agent_cli.render.minimal import MinimalRenderer
-from agent_cli.render.fancy import FancyRenderer as FancyRenderer
 
 # ── Global state ──────────────────────────────────
 console = Console()
@@ -180,7 +179,9 @@ def load_renderer_by_name(name: str) -> None:
     """Load and activate a renderer by filename (without .py).
 
     Looks for agent_cli/render/{name}.py with a class that subclasses Renderer.
-    Example: load_renderer_by_name("fancy") → loads FancyRenderer from fancy.py
+    Example: load_renderer_by_name("minimal") → loads MinimalRenderer from minimal.py.
+    Drop a custom `mystyle.py` with a Renderer subclass into this directory and
+    `--style mystyle` will pick it up.
     """
     import importlib
 

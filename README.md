@@ -189,7 +189,7 @@ agent-cli run "task description" [options]
 | `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
-| `--style` | 렌더러 스타일 (minimal, fancy 등) | `minimal` |
+| `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 
 `run` 실행 후 세션이 자동 저장됩니다. `chat --resume <id>`로 이어서 작업할 수 있습니다:
 
@@ -220,7 +220,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
 | `--resume <id>` | 이전 세션 이어서 작업 | |
-| `--style` | 렌더러 스타일 (minimal, fancy 등) | `minimal` |
+| `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 
 대화 중 명령어:
 
@@ -929,7 +929,7 @@ agent_cli/
 ├── setup.py             SetupWizard (첫 실행 설정 마법사)
 ├── constants.py         공유 상수 (타임아웃, 임계값)
 ├── hooks/               Hook 시스템 (Python + Shell 라이프사이클 훅 11개 이벤트)
-├── render/              플러그인 렌더링 시스템 (minimal, fancy, adaptive)
+├── render/              플러그인 렌더링 시스템 (minimal — 커스텀 추가 가능)
 ├── input_history.py     readline 히스토리 영속화
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI, Ollama)
 ├── parsing/             3단계 JSON 파서 + Thinking 블록 분리

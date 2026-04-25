@@ -15,14 +15,6 @@ class TestLoadRendererByName:
         assert isinstance(get_renderer(), MinimalRenderer)
         set_renderer(old)
 
-    def test_load_fancy(self):
-        from agent_cli.render.fancy import FancyRenderer
-
-        old = get_renderer()
-        load_renderer_by_name("fancy")
-        assert isinstance(get_renderer(), FancyRenderer)
-        set_renderer(old)
-
     def test_load_nonexistent_raises(self):
         import pytest
 
@@ -77,14 +69,16 @@ class TestApplyStyle:
         assert isinstance(get_renderer(), MinimalRenderer)
         set_renderer(old)
 
-    def test_apply_style_fancy(self):
+    def test_apply_style_unknown_exits(self):
+        """Removed bundled renderers (fancy/adaptive) — passing one of
+        their names should now hit the dispatcher's "not found" path
+        and exit cleanly via typer rather than crashing."""
+        import pytest
+        import typer
         from agent_cli.main import _apply_style
-        from agent_cli.render.fancy import FancyRenderer
 
-        old = get_renderer()
-        _apply_style("fancy")
-        assert isinstance(get_renderer(), FancyRenderer)
-        set_renderer(old)
+        with pytest.raises(typer.Exit):
+            _apply_style("fancy")
 
 
 class TestDispatchAgent:

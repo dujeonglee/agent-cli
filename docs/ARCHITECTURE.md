@@ -59,11 +59,9 @@ agent_cli/
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
 ├── loop.py                  (1267) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
 ├── render/                         플러그인 가능 렌더링 시스템
-│   ├── __init__.py          (171)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
+│   ├── __init__.py          (210)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
 │   ├── base.py              (174)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드)
-│   ├── minimal.py           (343)  MinimalRenderer (nested depth, markdown, streaming marquee, capture, group blocks, CJK width)
-│   ├── fancy.py             (378)  FancyRenderer (컬러 박스, 애니메이션)
-│   └── adaptive.py          (176)  SimpleRenderer (터미널 크기 적응형)
+│   └── minimal.py           (341)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, streaming marquee, capture, group blocks, CJK width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리

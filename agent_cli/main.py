@@ -614,7 +614,7 @@ def run(
     style: Optional[str] = typer.Option(
         None,
         "--style",
-        help="Renderer style: minimal (default), fancy, or custom renderer name",
+        help="Renderer style: minimal (default) or custom renderer name",
     ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
@@ -905,7 +905,7 @@ def chat(
     style: Optional[str] = typer.Option(
         None,
         "--style",
-        help="Renderer style: minimal (default), fancy, or custom renderer name",
+        help="Renderer style: minimal (default) or custom renderer name",
     ),
 ):
     """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
