@@ -214,6 +214,20 @@ class MinimalRenderer(Renderer):
 
         self._p(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
 
+        # `write_file` / `edit_file` append a Rich-marked unified diff
+        # to the observation (see agent_cli.tools._diff.format_diff).
+        # The summary above only conveys "what tool ran"; the diff is
+        # what tells the user *what changed*. The diff is preceded by
+        # a blank line and starts with a Rich-styled `--- a/...` header
+        # — slicing from that header would split the `[bold]` open tag
+        # in half, so we anchor on the full styled prefix instead.
+        diff_marker = "[bold]--- a/"
+        diff_idx = content.find(diff_marker)
+        if diff_idx != -1:
+            diff_block = content[diff_idx:].rstrip("\n")
+            for line in diff_block.split("\n"):
+                self._p(f"     {line}", highlight=False)
+
     def final(self, content: str, turn: int) -> None:
         self._p("")
         self._render_markdown("✅", content)

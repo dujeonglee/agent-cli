@@ -90,6 +90,39 @@ class TestObservationCompact:
         assert "shell" in out
         assert "╭" not in out
 
+    def test_diff_rendered_after_summary(self):
+        """When write_file/edit_file emit a unified diff in the
+        observation, the renderer must show it under the summary line.
+        Otherwise the user has no way to see what changed."""
+        from agent_cli.tools._diff import format_diff
+
+        diff = format_diff("hello\n", "hello world\n", "f.txt")
+        obs = f"File saved: f.txt (12 bytes)\n\n{diff}"
+        out = _capture(
+            lambda: render_step("observation", obs, 1, tool_name="write_file")
+        )
+        # Summary still appears.
+        assert "write_file" in out
+        # Diff hunk markers must appear in the rendered output.
+        assert "@@" in out
+        # Some change line ('+hello world' or similar) must be present.
+        assert "hello world" in out
+
+    def test_no_diff_when_observation_lacks_one(self):
+        """Observations without a unified diff (most tools) render the
+        same single-line summary as before — no regression."""
+        out = _capture(
+            lambda: render_step(
+                "observation",
+                "STATUS: success\nRESULT:\nok",
+                1,
+                tool_name="read_file",
+            )
+        )
+        assert "✓" in out
+        assert "--- a/" not in out
+        assert "@@" not in out
+
 
 class TestThoughtRendering:
     def test_thought_icon(self):
