@@ -495,12 +495,12 @@ class TestStreamMarqueeResize:
 
 class TestStreamTalkingFace:
     """The streaming progress indicator is a small ASCII-art talking face
-    plus a token estimate: `(•_•) < hello! ~N tokens`. Replaces the old
-    marquee that scrolled response text — the marquee was hard to track
-    when it moved fast and prone to overflow/wrap on resize. Frame
-    advancement is throttled to `_FRAME_INTERVAL` so fast streams don't
-    blur the animation; rapid chunks within one tick reuse the same
-    frame but still grow the token count."""
+    plus a token estimate: `(•_•) < blahblah? ~N tokens`. Replaces the
+    old marquee that scrolled response text — the marquee was hard to
+    track when it moved fast and prone to overflow/wrap on resize.
+    Frame advancement is throttled to `_FRAME_INTERVAL` so fast streams
+    don't blur the animation; rapid chunks within one tick reuse the
+    same frame but still grow the token count."""
 
     def _renderer_with_width(self, width):
         from rich.console import Console

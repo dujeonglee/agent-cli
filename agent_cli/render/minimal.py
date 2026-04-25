@@ -36,21 +36,22 @@ _WIDE_EAW = ("W", "F", "A")
 # every chunk would be wasteful, so we pad once at module load.
 _TALK_FRAMES_RAW = (
     "(•_•) < ...",
-    "(•o•) < hel",
-    "(•O•) < hello",
-    "(•_•) < hello!",
+    "(•o•) < bla",
+    "(•O•) < blahblah",
+    "(•_•) < blahblah?",
 )
 
-# Thinking animation: face + accumulating thought (dot → o → O) → "?"
-# realization → "!" eureka. Loops back to a fresh dot. Used by
-# `spinner_start` via Rich Live at 10 fps; the frames are self-describing
-# so the old "thinking..." text prefix becomes redundant.
+# Thinking animation: face + accumulating "hmmm" murmur → "?"
+# realization → "!" eureka. Loops back to a fresh "hmm". Used by
+# `spinner_start` via Rich Live at 10 fps; the frames are
+# self-describing so the old "thinking..." text prefix becomes
+# redundant.
 _THINK_FRAMES_RAW = (
-    "(•_•) .",
-    "(•_•) . o",
-    "(•_•) . o O",
-    "(•_•) . o O ( ? )",
-    "(•_•) . o O ( ! )",
+    "(•_•) hmm",
+    "(•_•) hmmm",
+    "(•_•) hmmm...",
+    "(•_•) hmmm...?",
+    "(•_•) hmmm...!",
 )
 
 # Cap streaming frame advancement at ~7 fps so multi-character frames
