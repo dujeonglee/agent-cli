@@ -34,6 +34,29 @@ if not os.environ.get("AGENT_CLI_NO_READLINE"):
 _HISTORY_FILE = Path.home() / ".agent-cli" / "chat_history"
 _MAX_HISTORY = 1000
 _initialized = False
+_decode_warning_shown = False
+
+
+def _warn_decode_error_once(err: UnicodeDecodeError) -> None:
+    """Print a one-shot hint when input() fails on non-UTF-8 bytes.
+
+    Observed when a paste contains bytes from a non-UTF-8 source
+    (e.g. CP949 clipboard) or an IME composition is interrupted
+    mid-character. Returning empty lets the caller treat it like a
+    missed input rather than crashing the CLI.
+    """
+    global _decode_warning_shown
+    if _decode_warning_shown:
+        return
+    _decode_warning_shown = True
+    import sys
+
+    print(
+        f"\n[warn] Input decode error ({err}). The terminal sent non-UTF-8 "
+        "bytes — usually a paste from a non-UTF-8 source or an interrupted "
+        "IME composition. Please retype.",
+        file=sys.stderr,
+    )
 
 
 def setup() -> None:
@@ -100,7 +123,11 @@ def read_rich_input(prompt: str, continuation: str = "... ") -> str:
     import select
     import sys
 
-    first_line = input(prompt).strip()
+    try:
+        first_line = input(prompt).strip()
+    except UnicodeDecodeError as e:
+        _warn_decode_error_once(e)
+        return ""
     if not first_line:
         return ""
 
@@ -112,6 +139,9 @@ def read_rich_input(prompt: str, continuation: str = "... ") -> str:
             try:
                 line = input(continuation)
             except EOFError:
+                break
+            except UnicodeDecodeError as e:
+                _warn_decode_error_once(e)
                 break
             if line.strip() == close:
                 break

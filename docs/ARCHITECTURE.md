@@ -55,7 +55,7 @@ agent_cli/
 │   ├── context.py           (145)  HookContext (messages 조작, system prompt 주입, MCP 메모리, 도구 제어)
 │   ├── loader.py            (88)   Python hook 파일 스캔/로드 (.agent-cli/hooks/*.py)
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
-├── input_history.py         (83)   readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원)
+├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
 ├── loop.py                  (1227) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
 ├── render/                         플러그인 가능 렌더링 시스템

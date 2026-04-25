@@ -110,6 +110,89 @@ class TestReadRichInputDirect:
         assert all(p == "│ ... " for p in seen_prompts[1:])
 
 
+class TestReadRichInputDecodeError:
+    """Bytes that fail UTF-8 decoding inside `input()` must NOT crash the
+    CLI. Observed in the wild (session 1777073776) when the user pasted
+    or IME-typed something that produced invalid UTF-8 mid-stream — the
+    raw `UnicodeDecodeError` propagated up to the REPL/ask handler and
+    aborted the session. The reader now catches it, prints one warning,
+    and returns empty so the caller treats it as a missed line."""
+
+    def _decode_err(self):
+        # bytes 0xec at position 3 is the exact failure mode reported
+        # in the bug — a Korean leading byte without continuation.
+        return UnicodeDecodeError(
+            "utf-8", b"abc\xec", 3, 4, "invalid continuation byte"
+        )
+
+    def test_first_line_decode_error_returns_empty(self):
+        from agent_cli import input_history as ih
+        from agent_cli.input_history import read_rich_input
+
+        ih._decode_warning_shown = False  # reset for assertion below
+        with patch("builtins.input", side_effect=self._decode_err()):
+            result = read_rich_input("You: ")
+        assert result == ""
+
+    def test_first_line_decode_warning_only_shown_once(self, capsys):
+        """Two consecutive decode errors → exactly one warning printed."""
+        from agent_cli import input_history as ih
+        from agent_cli.input_history import read_rich_input
+
+        ih._decode_warning_shown = False
+        with patch("builtins.input", side_effect=self._decode_err()):
+            read_rich_input("You: ")
+        first_err = capsys.readouterr().err
+        assert "Input decode error" in first_err
+
+        with patch("builtins.input", side_effect=self._decode_err()):
+            read_rich_input("You: ")
+        second_err = capsys.readouterr().err
+        assert second_err == ""
+
+    def test_multiline_continuation_decode_error_terminates_block(self):
+        """If the decode error hits inside a triple-quote block, end the
+        block with whatever was collected so far rather than crashing."""
+        from agent_cli import input_history as ih
+        from agent_cli.input_history import read_rich_input
+
+        ih._decode_warning_shown = False
+        inputs = ['"""', "first line", self._decode_err()]
+
+        def fake_input(prompt=""):
+            v = inputs.pop(0)
+            if isinstance(v, UnicodeDecodeError):
+                raise v
+            return v
+
+        with patch("builtins.input", side_effect=fake_input):
+            result = read_rich_input("You: ")
+        assert result == "first line"
+
+    def test_ask_handler_survives_decode_error(self):
+        """End-to-end: the ask handler in loop.py must not crash either —
+        the previous bug surfaced specifically through `_handle_ask`."""
+        from agent_cli import input_history as ih
+        from agent_cli.loop import _handle_ask
+
+        ih._decode_warning_shown = False
+        with patch("builtins.input", side_effect=self._decode_err()):
+            result = _handle_ask(["원하는 입력을 알려주세요"])
+        # Empty answer reaches the model rather than a stack trace.
+        assert "A: " in result
+        assert "Q: 원하는 입력을 알려주세요" in result
+
+    def test_main_repl_input_survives_decode_error(self):
+        """Same guarantee for the main REPL wrapper."""
+        from agent_cli import input_history as ih
+        from agent_cli.main import _read_user_input
+
+        ih._decode_warning_shown = False
+        with patch("builtins.input", side_effect=self._decode_err()):
+            result = _read_user_input("You: ")
+        assert result == ""
+
+
 class TestAskHandlerMultiline:
     """/ask inside a skill must accept the same multiline syntax as the
     top-level REPL — the bug was that _handle_ask called input() directly
