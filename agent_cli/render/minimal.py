@@ -29,7 +29,12 @@ _WIDE_EAW = ("W", "F", "A")
 # `_FRAME_INTERVAL` so fast streams don't blur it. `•` (U+2022) is East
 # Asian Ambiguous; we treat it as 2 cols throughout so width calc agrees
 # with how CJK-locale terminals render it.
-_TALK_FRAMES = (
+#
+# Each frame is padded with trailing spaces so all frames have the same
+# rendered display width — this keeps the `~N tokens` counter that
+# follows the frame anchored at a fixed column. Recomputing per-frame
+# every chunk would be wasteful, so we pad once at module load.
+_TALK_FRAMES_RAW = (
     "(•_•) < ...",
     "(•o•) < hel",
     "(•O•) < hello",
@@ -40,7 +45,7 @@ _TALK_FRAMES = (
 # realization → "!" eureka. Loops back to a fresh dot. Used by
 # `spinner_start` via Rich Live at 10 fps; the frames are self-describing
 # so the old "thinking..." text prefix becomes redundant.
-_THINK_FRAMES = (
+_THINK_FRAMES_RAW = (
     "(•_•) .",
     "(•_•) . o",
     "(•_•) . o O",
@@ -68,6 +73,22 @@ def _display_width(text: str) -> int:
         eaw = unicodedata.east_asian_width(ch)
         w += 2 if eaw in _WIDE_EAW else 1
     return w
+
+
+def _pad_to_width(frames: tuple[str, ...]) -> tuple[str, ...]:
+    """Right-pad each frame with spaces so all share the widest frame's
+    display width. Keeps following content (token counter, thought
+    bubble) anchored at a fixed column instead of jiggling as the face
+    cycles through different mouth shapes."""
+    target = max(_display_width(f) for f in frames)
+    return tuple(f + " " * (target - _display_width(f)) for f in frames)
+
+
+# Width-aligned frame tuples — the public constants used by the
+# renderer. Padding happens once at import; the raw tuples remain
+# available for tests that want to verify the underlying glyphs.
+_TALK_FRAMES = _pad_to_width(_TALK_FRAMES_RAW)
+_THINK_FRAMES = _pad_to_width(_THINK_FRAMES_RAW)
 
 
 def _truncate_to_width(text: str, max_width: int) -> str:

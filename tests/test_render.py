@@ -689,6 +689,60 @@ class TestThinkingSpinner:
         assert "!" in _THINK_FRAMES[-1]
 
 
+class TestFrameWidthAlignment:
+    """All animation frames within a set must render at the same display
+    width. Otherwise the content following the frame (token counter for
+    talk frames, task label for the parallel-delegate Live panel) would
+    jiggle horizontally as the face cycles. We pad once at module load
+    rather than per-paint."""
+
+    def test_talk_frames_share_width(self):
+        from agent_cli.render.minimal import _TALK_FRAMES, _display_width
+
+        widths = {_display_width(f) for f in _TALK_FRAMES}
+        assert len(widths) == 1, f"Talk frames have varying widths: {widths}"
+
+    def test_think_frames_share_width(self):
+        from agent_cli.render.minimal import _THINK_FRAMES, _display_width
+
+        widths = {_display_width(f) for f in _THINK_FRAMES}
+        assert len(widths) == 1, f"Think frames have varying widths: {widths}"
+
+    def test_padding_preserves_glyphs(self):
+        """Padding only adds trailing spaces — no glyphs are lost. The
+        raw frames must still appear (left-trimmed) inside the padded
+        ones."""
+        from agent_cli.render.minimal import (
+            _TALK_FRAMES,
+            _TALK_FRAMES_RAW,
+            _THINK_FRAMES,
+            _THINK_FRAMES_RAW,
+        )
+
+        for raw, padded in zip(_TALK_FRAMES_RAW, _TALK_FRAMES):
+            assert padded.startswith(raw)
+            assert padded.rstrip(" ") == raw
+        for raw, padded in zip(_THINK_FRAMES_RAW, _THINK_FRAMES):
+            assert padded.startswith(raw)
+            assert padded.rstrip(" ") == raw
+
+    def test_parallel_delegate_uses_think_frames(self):
+        """The parallel-delegate Live panel must reuse `_THINK_FRAMES`
+        so its per-task spinner matches the single-task thinking
+        spinner. A regression here would split the user's mental
+        model of "agent is working" across two visual languages."""
+        import inspect
+
+        from agent_cli.tools import delegate
+
+        # The frames are imported lazily inside `_run_parallel`, so we
+        # grep the source rather than checking module attributes.
+        src = inspect.getsource(delegate)
+        assert "_THINK_FRAMES" in src
+        # The old Braille frame literal must be gone.
+        assert "⣾" not in src
+
+
 class TestGroupDelegatingFunctions:
     """Test render_group_start / render_group_end wrappers."""
 

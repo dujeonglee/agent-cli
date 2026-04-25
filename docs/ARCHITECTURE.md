@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-04-07
+> 최종 업데이트: 2026-04-25
 > 버전: 2.0.0-dev
-> 총 소스: 7,827 LOC (47 Python 파일) + 9,356 LOC 테스트 (32 파일)
-> 총 테스트: 624 유닛 (88 ollama_integration deselected)
+> 총 소스: 10,974 LOC (56 Python 파일) + 15,180 LOC 테스트 (37 파일)
+> 총 테스트: 985 유닛 + 22 통합 (36 ollama_integration deselected)
 
 ---
 
@@ -61,7 +61,7 @@ agent_cli/
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
 │   ├── base.py              (181)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드, observation success 인자)
-│   └── minimal.py           (473)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
+│   └── minimal.py           (494)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner (delegate 병렬 패널과 공유), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
@@ -88,7 +88,7 @@ agent_cli/
 │   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult
 │   ├── shell_artifact.py    (249)  Shell stdout 대용량 가드: 한도 초과 시 `<session>/shell/`에 저장하고 head/tail 미리보기로 치환, LRU 회전
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
-│   ├── delegate.py          (697)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널, subdir, agent_stack, stop_event)
+│   ├── delegate.py          (708)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널 with _THINK_FRAMES, subdir, agent_stack, stop_event)
 │   ├── context.py           (106)  read_context 도구 (세션 목록 + 키워드 검색)
 │
 ├── context/                        컨텍스트 관리
@@ -630,7 +630,7 @@ LLM 호출 시:
 **병렬 delegate Live 패널** (`_run_parallel`):
 - 각 worker thread는 `render_start_capture()`로 출력을 버퍼에 수집
 - 메인 thread는 Rich `Live`로 per-task 진행 상황 실시간 표시:
-  - Braille dots 스피너 + task 라벨 (전체)
+  - `_THINK_FRAMES` 페이스 (단일 작업 thinking 스피너와 동일, `_FRAME_INTERVAL`로 throttle) + task 라벨 (전체)
   - 현재 thought (별도 라인, `renderer.get_thread_status(tid)`로 조회)
   - 완료 시 ✓/✗ + duration
 - 모든 worker join 후 Live 종료 → 각 task를 `┌─ 🦀 [N] ... └─` 그룹 블록으로 replay
@@ -1066,9 +1066,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 22 | 663 | `pytest tests/ -m "not ollama_integration"` |
-| 통합 테스트 | 1 | 62 | `pytest tests/test_integration.py` |
-| **전체** | **22** | **725** | `pytest tests/` |
+| 유닛 테스트 | 36 | 985 | `pytest tests/ -m "not ollama_integration"` |
+| 통합 테스트 | 1 | 22 | `pytest tests/test_integration.py` |
+| **전체** | **37** | **1007** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

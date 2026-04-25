@@ -528,14 +528,25 @@ def _run_parallel(
         threads.append(t)
         t.start()
 
-    # Live status panel during parallel execution
-    spinner_frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+    # Live status panel during parallel execution. Reuses the main
+    # renderer's `_THINK_FRAMES` so the parallel-delegate spinner matches
+    # the single-task thinking spinner — consistent face/thought-bubble
+    # animation across all "agent is working" indicators. Frame advances
+    # are throttled to `_FRAME_INTERVAL` so multi-character frames stay
+    # readable at the Live's 8 fps refresh.
+    from agent_cli.render.minimal import _FRAME_INTERVAL, _THINK_FRAMES
+
+    spinner_frames = _THINK_FRAMES
     frame_idx = [0]
+    last_advance = [0.0]
 
     def render_live():
         lines = [Text(f"Running {len(task_specs)} tasks in parallel:", style="grey46")]
+        now = time.monotonic()
+        if now - last_advance[0] >= _FRAME_INTERVAL:
+            frame_idx[0] += 1
+            last_advance[0] = now
         frame = spinner_frames[frame_idx[0] % len(spinner_frames)]
-        frame_idx[0] += 1
         for i, spec in enumerate(task_specs):
             task_text = spec.get("task", "")
             agent = spec.get("agent", "")

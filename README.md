@@ -940,7 +940,7 @@ agent-cli chat --resume <session_id>   # 이전 세션 이어서 작업
 ### 스트리밍 출력
 
 모든 프로바이더(Ollama, OpenAI, Anthropic)에서 LLM 응답을 실시간 스트리밍합니다:
-- 전광판 스타일 한 줄 표시 (marquee effect)
+- ASCII-art 말하는 얼굴 애니메이션 + 누적 토큰 카운터 (한 줄, 시간 기반 throttle)
 - 스트리밍 완료 후 thought/action을 Markdown 렌더링
 - 토큰 throughput 표시: `ttft: 200ms | in: 1024 tok (892 tok/s) | out: 156 tok (201 tok/s)`
 - TTFT (Time-to-First-Token) 모든 프로바이더에서 측정 (Ollama: 서버 보고값, 나머지: 클라이언트 측정)
