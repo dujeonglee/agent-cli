@@ -80,7 +80,7 @@ agent_cli/
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (68)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
-│   ├── registry.py          (472)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
+│   ├── registry.py          (481)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
 │   ├── _diff.py             (79)   write_file/edit_file 공용 unified-diff 포매터 (Rich markup, 100줄 cap)
 │   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
 │   ├── write_file.py        (37)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
@@ -100,7 +100,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   └── system_prompt.py     (410)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 10개 — 단일 액션 강제 + 효율성 가이드 포함)
+│   └── system_prompt.py     (438)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 10개 — 단일 액션 강제 + 효율성 가이드 + ask vs complete 구분 가이드)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export

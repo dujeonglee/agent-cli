@@ -86,6 +86,51 @@ class TestBuildSystemPrompt:
         # No peek-then-redo anti-pattern.
         assert "peek" in flat.lower() or "commit to" in flat.lower()
 
+    def test_ask_description_bars_conversational_use(self):
+        """Tool description for `ask` must explicitly forbid
+        conversational closures. Repro: model emitted goodbyes
+        ("see you next time!", "was that helpful?") via `ask` instead
+        of `complete`, keeping the loop alive waiting for replies the
+        user had no reason to give. Intent-level checks — at least one
+        of "goodbye", "pleasantr", "satisfact", "closure" must show
+        up alongside a "DO NOT" / "do not" type prohibition."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["ask"])
+        flat = re.sub(r"\s+", " ", prompt).lower()
+        # Description names what `ask` is for and what it isn't.
+        assert "ask" in flat
+        # A negative — the description tells the model NOT to use ask
+        # for certain things.
+        assert "do not use" in flat or "not for" in flat or "not use" in flat
+        # And at least one of the conversational categories is named.
+        assert (
+            "goodbye" in flat
+            or "pleasantr" in flat
+            or "satisfact" in flat
+            or "closure" in flat
+            or "closer" in flat
+        )
+
+    def test_ask_inline_guide_contrasts_with_complete(self):
+        """Inline guide for `ask` must explicitly contrast it with
+        `complete` so the model has both halves of the decision in
+        one place. Without this, the description alone (one paragraph
+        in the tool listing) was getting drowned out and the model
+        kept defaulting to `ask` for any non-task-oriented turn."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["ask"])
+        flat = re.sub(r"\s+", " ", prompt).lower()
+        # The guide places ask and complete side-by-side.
+        assert "complete" in flat
+        # And gives the model a concrete heuristic for picking.
+        assert (
+            "rule of thumb" in flat
+            or "if your" in flat
+            or "could be a statement" in flat
+        )
+
     def test_hashline_guide_has_multi_edit_notes(self):
         """Multi-edit notes in _HASHLINE_INLINE prevent the three
         recurring drift patterns observed in S25FE-kernel session

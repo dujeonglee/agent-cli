@@ -145,8 +145,17 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
     ),
     "ask": ToolSchema(
         name="ask",
-        description="Ask the user questions and wait for their responses. "
-        "Use this when you need clarification or additional information.",
+        description=(
+            "Ask the user one or more questions and WAIT for their reply. "
+            "Use ONLY when you cannot proceed without specific input from the "
+            "user — a missing requirement, an ambiguous instruction, or a "
+            "decision among alternatives you cannot resolve yourself. "
+            "DO NOT use for goodbyes, pleasantries, acknowledgements, or "
+            "checking whether your answer was satisfactory — those are "
+            "conversational closers and belong in `complete`. If you have "
+            "nothing actionable that requires user input, end the turn with "
+            "`complete`; the user can always reply if they want to continue."
+        ),
         parameters={
             "type": "object",
             "properties": {

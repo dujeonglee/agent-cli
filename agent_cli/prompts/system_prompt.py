@@ -165,11 +165,39 @@ _READ_FILE_INLINE = """\
   you have only seen the first 20 lines. A bare full read on a large
   file (~300+ lines) will be refused with instructions; follow them."""
 
+_ASK_INLINE = """\
+
+  `ask` vs `complete` — pick by intent, not tone:
+  - `ask`: you GENUINELY cannot proceed without information from the
+    user. A real question with real alternatives where you don't know
+    the right answer. "Which of these two paths should I take?",
+    "What's the production database name?", "Should I overwrite this
+    file or keep both?".
+  - `complete`: every other ending. Task done, user said goodbye, user
+    said thanks, user gave a casual reply, you finished your answer
+    and have nothing else to do. The conversation does NOT need a
+    question to continue — the user can simply reply at the next
+    prompt if they want more.
+
+  Common mistakes that keep the loop alive when it should end:
+  - "Was that helpful?" / "Anything else?" / "Let me know if you have
+    questions" — these are pleasantries, not questions. Use `complete`.
+  - "Goodbye!" / "See you next time!" / "👋" — closing remarks. Use
+    `complete`.
+  - Restating the user's last message back as a question
+    ("So you want X?") when their meaning was already clear. Use
+    `complete` and answer.
+
+  Rule of thumb: if your "question" could be a statement and the
+  conversation would still flow, it's not a real question — use
+  `complete`."""
+
 # Map tool names to their inline guides
 _TOOL_INLINE_GUIDES: dict[str, str] = {
     "read_file": _READ_FILE_INLINE,
     "edit_file": _HASHLINE_INLINE,
     "delegate": _DELEGATE_INLINE,
+    "ask": _ASK_INLINE,
 }
 
 
