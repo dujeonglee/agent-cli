@@ -1,4 +1,4 @@
-"""Tests for skills/executor.py redesign (Phase 5)."""
+"""Tests for skills/executor.py."""
 
 import pytest
 from unittest.mock import MagicMock, patch

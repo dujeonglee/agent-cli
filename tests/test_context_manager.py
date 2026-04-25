@@ -1,4 +1,4 @@
-"""Tests for the redesigned ContextManager (FIFO + history.jsonl)."""
+"""Tests for ContextManager (FIFO + history.jsonl)."""
 
 import json
 
