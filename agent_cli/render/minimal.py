@@ -36,9 +36,9 @@ _WIDE_EAW = ("W", "F", "A")
 # every chunk would be wasteful, so we pad once at module load.
 _TALK_FRAMES_RAW = (
     "(•_•) < ...",
-    "(•o•) < bla",
-    "(•O•) < blahblah",
-    "(•_•) < blahblah?",
+    "(•o•) < blah",
+    "(•O•) < blah-blah",
+    "(•_•) < blah-blah?",
 )
 
 # Thinking animation: face + accumulating "hmmm" murmur → "?"
