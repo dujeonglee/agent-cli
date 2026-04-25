@@ -61,7 +61,7 @@ agent_cli/
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (210)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
 │   ├── base.py              (174)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드)
-│   └── minimal.py           (396)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, streaming marquee with resize-recovery, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
+│   └── minimal.py           (418)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, talking-face streaming progress with token counter + resize-recovery, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리

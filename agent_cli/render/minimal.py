@@ -23,6 +23,18 @@ _MUTED = "grey46"
 # only mildly conservative (a column or two of unused tail) elsewhere.
 _WIDE_EAW = ("W", "F", "A")
 
+# Talking-face progress animation: 4 frames cycling on each chunk, mouth
+# opens (._.) → (.o.) → (.O.) → (.o.) → ... ASCII-only so it renders
+# identically on every terminal — no CJK / emoji / VS16 width drift.
+# Fixed 5-char width: even with the token counter and depth prefix the
+# whole line stays well under any terminal we'd reasonably support, so
+# overflow / wrap can't happen.
+_TALK_FRAMES = ("(._.)", "(.o.)", "(.O.)", "(.o.)")
+
+# `chars / 4` matches `agent_cli.context.token_estimator.estimate_tokens`,
+# so the streaming counter speaks the same units as the budget plumbing.
+_CHARS_PER_TOKEN = 4
+
 
 def _display_width(text: str) -> int:
     """Calculate display width accounting for CJK double-width characters."""
@@ -327,27 +339,37 @@ class MinimalRenderer(Renderer):
     def stream_chunk(self, text: str) -> None:
         if self.is_capturing:
             # Skip streaming in capture mode (parallel delegates).
-            # Marquee-style output doesn't make sense when replayed line-by-line.
+            # The talking-face progress indicator is for live TTY only.
             return
         if not hasattr(self, "_stream_buf"):
             self._stream_buf = ""
+            self._stream_chunks = 0
         self._stream_buf += text
+        self._stream_chunks += 1
         if self.con.file:
             self._erase_reflowed_marquee()
-            prefix = f"{self._prefix}  ◌ " if self._depth > 0 else "  ◌ "
-            max_width = self.con.width - _display_width(prefix) - 1
-            # Show the tail of accumulated text (marquee effect)
-            visible = self._stream_buf.replace("\n", " ")
-            visible = _truncate_to_width(visible, max_width)
-            pad = max_width - _display_width(visible)
-            self.con.file.write(f"\r{prefix}{visible}{' ' * pad}")
+            prefix = f"{self._prefix}  " if self._depth > 0 else "  "
+            # Talking-face animation: 4-frame mouth cycle, ASCII only,
+            # fixed 5-char width — no CJK / emoji width drift, no chance
+            # of overflowing even on tiny terminals.
+            frame = _TALK_FRAMES[self._stream_chunks % len(_TALK_FRAMES)]
+            # Token estimate matches `context/token_estimator.estimate_tokens`
+            # (chars / 4) so the count here is consistent with the
+            # token-budget plumbing the rest of the system uses.
+            tokens = len(self._stream_buf) // _CHARS_PER_TOKEN
+            line = f"{prefix}{frame} ~{tokens} tokens"
+            self.con.file.write(f"\r{line}")
+            # Pad to terminal width so a previous longer paint (e.g.
+            # 4-digit token count → 3-digit) doesn't leave residue.
+            pad = max(0, self.con.width - _display_width(line) - 1)
+            self.con.file.write(" " * pad)
             self.con.file.flush()
-            # Track this paint so a subsequent shrink can erase it.
             self._last_term_w = self.con.width
-            self._last_painted_w = _display_width(prefix) + max_width
+            self._last_painted_w = _display_width(line) + pad
 
     def stream_end(self) -> None:
         self._stream_buf = ""
+        self._stream_chunks = 0
         if self.is_capturing:
             return
         if self.con.file:

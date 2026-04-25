@@ -472,6 +472,124 @@ class TestStreamMarqueeResize:
         assert renderer._last_painted_w == 0
 
 
+class TestStreamTalkingFace:
+    """The streaming progress indicator is a 4-frame ASCII talking face
+    plus a token estimate: `(._.) ~N tokens`. Replaces the old marquee
+    that scrolled response text — the marquee was hard to track when it
+    moved fast and prone to overflow/wrap on resize. The fixed-width
+    face is universally compatible (ASCII only) and the line stays
+    short enough that overflow can't happen on any reasonable terminal."""
+
+    def _renderer_with_width(self, width):
+        from rich.console import Console
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=width)
+        return MinimalRenderer(console), buf, console
+
+    def test_first_chunk_paints_face_and_token_count(self):
+        renderer, buf, _ = self._renderer_with_width(80)
+        renderer.stream_chunk("hello world")  # 11 chars → ~2 tokens
+
+        out = buf.getvalue()
+        # Some frame from the cycle must appear.
+        from agent_cli.render.minimal import _TALK_FRAMES
+
+        assert any(f in out for f in _TALK_FRAMES)
+        # Token count: 11 // 4 = 2
+        assert "~2 tokens" in out
+
+    def test_frames_cycle_across_chunks(self):
+        """Each chunk advances to the next frame. After 4 chunks all
+        4 frames have appeared; after 5 chunks the cycle has wrapped."""
+        from agent_cli.render.minimal import _TALK_FRAMES
+
+        renderer, buf, _ = self._renderer_with_width(80)
+        seen = []
+        for i in range(4):
+            renderer.stream_chunk("x")
+            # The latest frame is the last one drawn — it's the one
+            # at position (i+1) % 4. We collect them all from buf.
+            current = buf.getvalue()
+            for f in _TALK_FRAMES:
+                if f in current and f not in seen:
+                    seen.append(f)
+
+        # All four distinct mouth shapes should have been painted at
+        # least once across the 4 chunks. (._.) and (.o.) are repeated
+        # in the cycle but the SET of distinct shapes is 3: closed,
+        # small-open, wide-open.
+        distinct = set(_TALK_FRAMES)
+        assert distinct.issubset(set(seen))
+
+    def test_token_count_increases_with_buffer(self):
+        renderer, buf, _ = self._renderer_with_width(80)
+        renderer.stream_chunk("a" * 100)  # 100 chars → 25 tokens
+        renderer.stream_chunk("b" * 100)  # +100 → 50 tokens total
+
+        out = buf.getvalue()
+        assert "~25 tokens" in out
+        assert "~50 tokens" in out
+
+    def test_line_fits_in_small_terminal(self):
+        """Even on a 30-col terminal, the painted line never exceeds
+        the terminal width — the talking-face line is fixed and short."""
+        from agent_cli.render.minimal import _display_width
+
+        renderer, buf, _ = self._renderer_with_width(30)
+        renderer.stream_chunk("a" * 1000)  # huge buffer, big counter
+
+        # Pull the latest paint between `\r` markers.
+        out = buf.getvalue()
+        last_paint = out.rsplit("\r", 1)[-1]
+        # Strip ANSI escapes (none expected here on first paint, but
+        # be safe in case Rich adds any).
+        import re
+
+        last_paint = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", last_paint)
+        # Width of all printed columns must fit terminal width.
+        assert _display_width(last_paint) < 30
+
+    def test_no_response_text_leaks(self):
+        """The old marquee echoed accumulated response text. The new
+        indicator must not — sensitive content / model errors stay
+        out of the streaming display."""
+        renderer, buf, _ = self._renderer_with_width(80)
+        secret = "PRIVATE-API-KEY-xyz"
+        renderer.stream_chunk(secret)
+        assert secret not in buf.getvalue()
+
+    def test_pure_ascii_output(self):
+        """No CJK / emoji / variation selectors — the painted indicator
+        must be pure ASCII so it renders identically everywhere."""
+        renderer, buf, _ = self._renderer_with_width(80)
+        for _ in range(8):
+            renderer.stream_chunk("data")
+
+        # Pull just the painted indicator — strip ANSI + surrounding
+        # whitespace and check every char is in printable ASCII.
+        import re
+
+        out = buf.getvalue()
+        out = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", out)
+        out = out.replace("\r", "").replace("\n", "")
+        for ch in out.strip():
+            assert ord(ch) < 128, f"Non-ASCII char in indicator: {ch!r}"
+
+    def test_stream_end_resets_chunk_counter(self):
+        """A fresh stream starts at frame 0 — the per-chunk counter
+        must reset in stream_end so consecutive streams animate the
+        same way."""
+        renderer, _, _ = self._renderer_with_width(80)
+        renderer.stream_chunk("a")
+        renderer.stream_chunk("b")
+        renderer.stream_chunk("c")
+        assert renderer._stream_chunks == 3
+        renderer.stream_end()
+        assert renderer._stream_chunks == 0
+
+
 class TestGroupDelegatingFunctions:
     """Test render_group_start / render_group_end wrappers."""
 
