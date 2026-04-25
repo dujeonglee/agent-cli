@@ -495,7 +495,7 @@ class TestStreamMarqueeResize:
 
 class TestStreamTalkingFace:
     """The streaming progress indicator is a small ASCII-art talking face
-    plus a token estimate: `(•_•) < blah-blah? ~N tokens`. Replaces the
+    plus a token estimate: `(•_•) < blah-blah ~N tokens`. Replaces the
     old marquee that scrolled response text — the marquee was hard to
     track when it moved fast and prone to overflow/wrap on resize.
     Frame advancement is throttled to `_FRAME_INTERVAL` so fast streams

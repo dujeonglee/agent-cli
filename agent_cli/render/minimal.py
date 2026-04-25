@@ -38,7 +38,7 @@ _TALK_FRAMES_RAW = (
     "(•_•) < ...",
     "(•o•) < blah",
     "(•O•) < blah-blah",
-    "(•_•) < blah-blah?",
+    "(•_•) < blah-blah",
 )
 
 # Thinking animation: face + accumulating "hmmm" murmur → "?"
