@@ -25,16 +25,14 @@ def _capture(fn) -> str:
 
 class TestObservationCompact:
     def test_success_shows_checkmark(self):
-        out = _capture(
-            lambda: render_step("observation", "STATUS: success\nRESULT:\nok", 1)
-        )
+        out = _capture(lambda: render_step("observation", "ok", 1, success=True))
         assert "✓" in out
         assert "success" in out
 
     def test_error_shows_x_mark(self):
         out = _capture(
             lambda: render_step(
-                "observation", "STATUS: error\nERROR: file not found", 1
+                "observation", "ERROR: file not found", 1, success=False
             )
         )
         assert "✗" in out
@@ -43,7 +41,7 @@ class TestObservationCompact:
     def test_error_includes_detail(self):
         out = _capture(
             lambda: render_step(
-                "observation", "STATUS: error\nERROR: permission denied", 1
+                "observation", "ERROR: permission denied", 1, success=False
             )
         )
         assert "permission denied" in out
@@ -51,39 +49,29 @@ class TestObservationCompact:
     def test_tool_name_displayed(self):
         out = _capture(
             lambda: render_step(
-                "observation", "STATUS: success\nRESULT:\nok", 1, tool_name="read_file"
+                "observation", "ok", 1, tool_name="read_file", success=True
             )
         )
         assert "read_file" in out
 
     def test_no_tool_name(self):
-        out = _capture(
-            lambda: render_step("observation", "STATUS: success\nRESULT:\nok", 1)
-        )
+        out = _capture(lambda: render_step("observation", "ok", 1, success=True))
         assert "✓" in out
         assert "success" in out
 
-    def test_unknown_status(self):
-        out = _capture(lambda: render_step("observation", "some unexpected output", 1))
-        assert "●" in out
-        assert "done" in out
-
     def test_compact_no_full_result(self):
         long_result = "x" * 500
-        out = _capture(
-            lambda: render_step(
-                "observation", f"STATUS: success\nRESULT:\n{long_result}", 1
-            )
-        )
+        out = _capture(lambda: render_step("observation", long_result, 1, success=True))
         assert long_result not in out
 
     def test_no_box_characters(self):
         out = _capture(
             lambda: render_step(
                 "observation",
-                "STATUS: success\nRESULT:\ndata",
+                "data",
                 3,
                 tool_name="shell",
+                success=True,
             )
         )
         assert "✓" in out
@@ -99,24 +87,24 @@ class TestObservationCompact:
         diff = format_diff("hello\n", "hello world\n", "f.txt")
         obs = f"File saved: f.txt (12 bytes)\n\n{diff}"
         out = _capture(
-            lambda: render_step("observation", obs, 1, tool_name="write_file")
+            lambda: render_step(
+                "observation", obs, 1, tool_name="write_file", success=True
+            )
         )
-        # Summary still appears.
         assert "write_file" in out
-        # Diff hunk markers must appear in the rendered output.
         assert "@@" in out
-        # Some change line ('+hello world' or similar) must be present.
         assert "hello world" in out
 
     def test_no_diff_when_observation_lacks_one(self):
         """Observations without a unified diff (most tools) render the
-        same single-line summary as before — no regression."""
+        single-line summary only — no spurious diff markers."""
         out = _capture(
             lambda: render_step(
                 "observation",
-                "STATUS: success\nRESULT:\nok",
+                "ok",
                 1,
                 tool_name="read_file",
+                success=True,
             )
         )
         assert "✓" in out

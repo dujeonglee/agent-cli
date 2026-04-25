@@ -57,11 +57,11 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (1275) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
+├── loop.py                  (1283) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
 ├── render/                         플러그인 가능 렌더링 시스템
-│   ├── __init__.py          (210)  렌더러 디스패치 + load_renderer_by_name + render crash 방어
-│   ├── base.py              (174)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드)
-│   └── minimal.py           (474)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, write_file/edit_file unified-diff 렌더링, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
+│   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
+│   ├── base.py              (181)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드, observation success 인자)
+│   └── minimal.py           (473)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리

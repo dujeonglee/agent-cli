@@ -461,7 +461,13 @@ class AgentLoop:
                 parent_hooks_config=self.hooks_config,
             )
             obs = skill_tool_result.output or skill_tool_result.error
-            render_step("observation", obs, self.turn, tool_name="run_skill")
+            render_step(
+                "observation",
+                obs,
+                self.turn,
+                tool_name="run_skill",
+                success=skill_tool_result.success,
+            )
             obs_msg = f"Observation: {obs}"
             _append_observation(
                 self.messages,
@@ -485,6 +491,7 @@ class AgentLoop:
                     obs,
                     self.turn,
                     tool_name="ready_for_review",
+                    success=True,
                 )
             obs_msg = f"Observation: {obs}"
             _append_observation(self.messages, self.ctx, llm_text, obs_msg)
@@ -551,6 +558,7 @@ class AgentLoop:
                 observation,
                 self.turn,
                 tool_name=tool_name,
+                success=tool_result.success,
             )
 
             # Repeated call detection

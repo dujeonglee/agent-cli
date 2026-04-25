@@ -106,9 +106,16 @@ class Renderer(ABC):
 
     @abstractmethod
     def observation(
-        self, content: str, turn: int, tool_name: str | None = None
+        self,
+        content: str,
+        turn: int,
+        tool_name: str | None = None,
+        success: bool = True,
     ) -> None:
-        """Tool result (observation)."""
+        """Tool result (observation).
+
+        `success` is the authoritative outcome from `ToolResult.success`
+        and drives the ✓/✗ icon and `success`/`error` label."""
 
     @abstractmethod
     def final(self, content: str, turn: int) -> None:

@@ -62,6 +62,7 @@ def render_step(
     turn: int,
     tool_name: str | None = None,
     tool_input: str | None = None,
+    success: bool = True,
 ) -> None:
     try:
         if step_type == "thought":
@@ -69,7 +70,7 @@ def render_step(
         elif step_type == "action":
             _renderer.action(tool_name or "", tool_input or "", turn)
         elif step_type == "observation":
-            _renderer.observation(content, turn, tool_name)
+            _renderer.observation(content, turn, tool_name, success=success)
         elif step_type == "final":
             _renderer.final(content, turn)
         elif step_type == "error":

@@ -194,19 +194,18 @@ class MinimalRenderer(Renderer):
         self._p(f"  ⚡ {tool_name} → {display}", highlight=False, markup=False)
 
     def observation(
-        self, content: str, turn: int, tool_name: str | None = None
+        self,
+        content: str,
+        turn: int,
+        tool_name: str | None = None,
+        success: bool = True,
     ) -> None:
-        first_line = content.split("\n", 1)[0].strip()
-        if first_line.startswith("STATUS:"):
-            status = first_line.split(":", 1)[1].strip().lower()
-        else:
-            status = "done"
-
-        icon = "✓" if status == "success" else "✗" if status == "error" else "●"
+        status = "success" if success else "error"
+        icon = "✓" if success else "✗"
         tool_label = f" {tool_name}" if tool_name else ""
 
         detail = ""
-        if status == "error":
+        if not success:
             for line in content.split("\n"):
                 if line.startswith("ERROR:"):
                     detail = f"  {line}"
