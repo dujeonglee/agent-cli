@@ -125,6 +125,185 @@ class TestShellTool:
         assert result.output == "(no output)"
 
 
+class TestShellDangerousCommandConfirmation:
+    """`rm` / `rmdir` / `mv` trigger an interactive confirmation prompt
+    by default. Three decisions are accepted: y (run once), n (deny —
+    surfaces back to the LLM as an error so it can pick a different
+    path), and a (allow this keyword for the rest of the process). The
+    AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 escape hatch exists for batch
+    runs where there is no human to answer."""
+
+    def setup_method(self):
+        # The session-wide allowlist is module-level; clear between
+        # tests so one test's `a` answer doesn't bleed into the next.
+        from agent_cli.tools import shell as shell_mod
+
+        shell_mod._session_allowlist.clear()
+
+    def _force_tty(self, monkeypatch):
+        """Tests run under pytest which is not a TTY. The confirmation
+        path bails early when there is no TTY (safe default), so for
+        tests of the prompt flow itself we have to convince the module
+        that a TTY is attached."""
+        from agent_cli.tools import shell as shell_mod
+
+        monkeypatch.setattr(shell_mod, "_is_tty", lambda: True)
+
+    def test_disabled_via_env_var_runs_without_prompt(self, monkeypatch):
+        """AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 — bypass entirely."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "0")
+        # No `input` patched → if confirm fired, the test would hang.
+        result = tool_shell({"command": "rm /nonexistent/path/xyz"})
+        # Command itself fails (file doesn't exist) but it RAN — no
+        # prompt was triggered.
+        assert "exit code:" in (result.output or "") or result.success
+
+    def test_dangerous_no_tty_refused(self, monkeypatch):
+        """Confirmation enabled + no TTY = refuse. We do NOT silently
+        drop the check; the LLM is told why so it doesn't keep retrying."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        # Default test environment: not a TTY.
+        result = tool_shell({"command": "rm -rf /tmp/build"})
+        assert not result.success
+        assert "no TTY" in (result.error or "")
+        assert "rm" in (result.error or "")
+
+    def test_dangerous_user_says_yes_once(self, monkeypatch):
+        """y → run this command, but next dangerous command prompts again."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="y"):
+            result = tool_shell({"command": "rm /nonexistent/xyz"})
+        # `rm` ran (and failed naturally because the path doesn't exist).
+        assert "exit code:" in (result.output or "") or result.success
+
+        # Second `rm` should prompt AGAIN — y did not add to allowlist.
+        from agent_cli.tools import shell as shell_mod
+
+        assert "rm" not in shell_mod._session_allowlist
+
+    def test_dangerous_user_says_no_returns_denial(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="n"):
+            result = tool_shell({"command": "rm important.txt"})
+        assert not result.success
+        assert "User denied" in (result.error or "")
+        assert "rm" in (result.error or "")
+
+    def test_dangerous_user_says_always_adds_to_session_allowlist(self, monkeypatch):
+        """`a` greenlights the matched keyword for the rest of the
+        process. The next command containing the same keyword runs
+        without re-prompting."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+        from agent_cli.tools import shell as shell_mod
+
+        with patch("builtins.input", return_value="a"):
+            tool_shell({"command": "rm /tmp/foo"})
+        assert "rm" in shell_mod._session_allowlist
+
+        # Second `rm` runs straight through — `input` is patched to
+        # raise so we'd notice if the prompt fired.
+        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
+            result = tool_shell({"command": "rm /tmp/bar"})
+        # No exception means no prompt happened. Command itself may
+        # still fail because the path doesn't exist.
+        assert "exit code:" in (result.output or "") or result.success
+
+    def test_eof_during_prompt_treated_as_deny(self, monkeypatch):
+        """Ctrl+D / EOF on the confirmation prompt is "n" — never run
+        a dangerous command on input failure."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+
+        with patch("builtins.input", side_effect=EOFError):
+            result = tool_shell({"command": "rm something"})
+        assert not result.success
+        assert "User denied" in (result.error or "")
+
+    def test_safe_command_never_prompts(self, monkeypatch):
+        """Commands without `rm` / `rmdir` / `mv` keywords go through
+        unchanged. `input` is rigged to raise so any prompt attempt
+        aborts the test loudly."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+
+        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
+            result = tool_shell({"command": "echo safe"})
+        assert result.success
+        assert "safe" in (result.output or "")
+
+    def test_keyword_in_string_literal_does_not_prompt(self, monkeypatch):
+        """Shlex tokenization collapses quoted strings into one token,
+        so `echo "rm files"` does NOT match — the literal isn't a
+        command invocation. This is a known gap for `bash -c "rm x"`
+        and similar shell-wrapper patterns; revisit if observed."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+
+        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
+            result = tool_shell({"command": 'echo "rm files"'})
+        assert result.success
+
+    def test_keyword_as_substring_does_not_match(self, monkeypatch):
+        """`format` contains "mv" as a substring — but not as a whole
+        token. Word-boundary regex must not flag it."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+
+        with patch("builtins.input", side_effect=AssertionError("should not prompt")):
+            # `format` and `firmware` are non-dangerous tokens that
+            # incidentally contain the letters of dangerous keywords.
+            result = tool_shell({"command": "echo firmware-format"})
+        assert result.success
+
+    def test_pipeline_with_xargs_rm_caught(self, monkeypatch):
+        """`find . -name '*.tmp' | xargs rm` — rm is buried in a
+        pipeline but is still a standalone token. Must catch it."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="n"):
+            result = tool_shell({"command": "find . -name '*.tmp' | xargs rm"})
+        assert not result.success
+        assert "User denied" in (result.error or "")
+
+    def test_detect_dangerous_keywords(self):
+        """Direct unit tests of the matcher without invoking subprocess."""
+        from agent_cli.tools.shell import _detect_dangerous
+
+        assert _detect_dangerous("rm foo") == "rm"
+        assert _detect_dangerous("rm -rf /tmp/x") == "rm"
+        assert _detect_dangerous("mv a b") == "mv"
+        assert _detect_dangerous("rmdir empty/") == "rmdir"
+        assert _detect_dangerous("xargs rm") == "rm"
+        assert _detect_dangerous("git rm tracked.txt") == "rm"
+        # Negatives
+        assert _detect_dangerous("echo hello") is None
+        assert _detect_dangerous("ls -la") is None
+        assert _detect_dangerous("rm-helper.sh") is None  # not a command
+        assert _detect_dangerous("format-firmware") is None
+
+
 class TestEditFile:
     def test_replace_single_line(self, tmp_path):
         f = tmp_path / "test.py"

@@ -684,6 +684,8 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 대용량 출력은 자동으로 `<session>/shell/`에 artifact로 저장되고 head/tail 미리보기로 치환됩니다 (`find /`, `grep -r` 같은 명령이 컨텍스트를 통째로 잡아먹는 것 방지). 임계치는 `AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES`/`_BYTES` env로 조정.
 
+**위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 `y` (이번만) / `n` (거부) / `a` (이 세션 동안 같은 키워드 자동 허용) 묻습니다. 기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. TTY 없는 환경(CI/배치)에서는 자동으로 거부 — 무인 환경에서 위험 명령이 silent 실행되는 일 없음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
+
 ### write_file — 파일 생성
 
 새 파일을 생성하거나 기존 파일을 덮어씁니다. 기존 파일 수정은 `edit_file` 권장.
