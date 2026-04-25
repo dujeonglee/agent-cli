@@ -141,7 +141,7 @@ class Renderer(ABC):
         """Debug context window dump."""
 
     @abstractmethod
-    def spinner_start(self, message: str = "thinking...") -> None:
+    def spinner_start(self, message: str = "") -> None:
         """Start a spinner animation (e.g. during LLM call)."""
 
     @abstractmethod

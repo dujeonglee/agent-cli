@@ -23,13 +23,36 @@ _MUTED = "grey46"
 # only mildly conservative (a column or two of unused tail) elsewhere.
 _WIDE_EAW = ("W", "F", "A")
 
-# Talking-face progress animation: 4 frames cycling on each chunk, mouth
-# opens (._.) → (.o.) → (.O.) → (.o.) → ... ASCII-only so it renders
-# identically on every terminal — no CJK / emoji / VS16 width drift.
-# Fixed 5-char width: even with the token counter and depth prefix the
-# whole line stays well under any terminal we'd reasonably support, so
-# overflow / wrap can't happen.
-_TALK_FRAMES = ("(._.)", "(.o.)", "(.O.)", "(.o.)")
+# Streaming animation: a face that "speaks" the response — silent dots,
+# then a partial word, then the whole word, then closed-mouth with the
+# completed word as a delivery beat. Cycles per chunk but throttled to
+# `_FRAME_INTERVAL` so fast streams don't blur it. `•` (U+2022) is East
+# Asian Ambiguous; we treat it as 2 cols throughout so width calc agrees
+# with how CJK-locale terminals render it.
+_TALK_FRAMES = (
+    "(•_•) < ...",
+    "(•o•) < hel",
+    "(•O•) < hello",
+    "(•_•) < hello!",
+)
+
+# Thinking animation: face + accumulating thought (dot → o → O) → "?"
+# realization → "!" eureka. Loops back to a fresh dot. Used by
+# `spinner_start` via Rich Live at 10 fps; the frames are self-describing
+# so the old "thinking..." text prefix becomes redundant.
+_THINK_FRAMES = (
+    "(•_•) .",
+    "(•_•) . o",
+    "(•_•) . o O",
+    "(•_•) . o O ( ? )",
+    "(•_•) . o O ( ! )",
+)
+
+# Cap streaming frame advancement at ~7 fps so multi-character frames
+# (the talking face grows letters across frames) stay readable even
+# when chunks arrive faster than the eye can track. Counter still
+# updates on every chunk — only the visual frame is throttled.
+_FRAME_INTERVAL = 0.15
 
 # `chars / 4` matches `agent_cli.context.token_estimator.estimate_tokens`,
 # so the streaming counter speaks the same units as the budget plumbing.
@@ -262,22 +285,31 @@ class MinimalRenderer(Renderer):
             self._p(f"  [{_MUTED}][{i}] {role}: {preview}[/]")
         self._p(f"  [{_MUTED}]── end dump ──[/]\n")
 
-    def spinner_start(self, message: str = "thinking...") -> None:
+    def spinner_start(self, message: str = "") -> None:
         if self.is_capturing:
             return  # No spinner in capture mode
         if self._live is not None:
             return  # Already spinning
         try:
             prefix = self._prefix
-            # Spinner animates AFTER the message (Rich's built-in Spinner
-            # puts it at the front, so we use get_renderable instead).
-            frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+            # `_THINK_FRAMES` are self-describing (face + thought bubble
+            # progression), so a `message` is optional — only prepended
+            # when callers want to add context (e.g. "loading model").
+            # Throttle to 1 frame per `_FRAME_INTERVAL` for readability;
+            # Rich's refresh rate (10 fps) drives the redraw cadence.
             idx = [0]
+            last_advance = [0.0]
 
             def get_renderable():
-                frame = frames[idx[0] % len(frames)]
-                idx[0] += 1
-                return Text(f"{prefix}  {message} {frame}", style=_MUTED)
+                import time
+
+                now = time.monotonic()
+                if now - last_advance[0] >= _FRAME_INTERVAL:
+                    idx[0] += 1
+                    last_advance[0] = now
+                frame = _THINK_FRAMES[idx[0] % len(_THINK_FRAMES)]
+                msg = f"{message} " if message else ""
+                return Text(f"{prefix}  {msg}{frame}", style=_MUTED)
 
             self._live = Live(
                 get_renderable(),
@@ -337,6 +369,8 @@ class MinimalRenderer(Renderer):
         f.write("\r\x1b[K")
 
     def stream_chunk(self, text: str) -> None:
+        import time
+
         if self.is_capturing:
             # Skip streaming in capture mode (parallel delegates).
             # The talking-face progress indicator is for live TTY only.
@@ -344,23 +378,31 @@ class MinimalRenderer(Renderer):
         if not hasattr(self, "_stream_buf"):
             self._stream_buf = ""
             self._stream_chunks = 0
+            self._last_frame_time = 0.0
         self._stream_buf += text
-        self._stream_chunks += 1
+        # Frame advancement is time-throttled so multi-char talking
+        # frames stay readable. The counter (below) still updates on
+        # every chunk, so the user still sees activity even between
+        # frame ticks.
+        now = time.monotonic()
+        if now - self._last_frame_time >= _FRAME_INTERVAL:
+            self._stream_chunks += 1
+            self._last_frame_time = now
         if self.con.file:
             self._erase_reflowed_marquee()
             prefix = f"{self._prefix}  " if self._depth > 0 else "  "
-            # Talking-face animation: 4-frame mouth cycle, ASCII only,
-            # fixed 5-char width — no CJK / emoji width drift, no chance
-            # of overflowing even on tiny terminals.
             frame = _TALK_FRAMES[self._stream_chunks % len(_TALK_FRAMES)]
-            # Token estimate matches `context/token_estimator.estimate_tokens`
-            # (chars / 4) so the count here is consistent with the
-            # token-budget plumbing the rest of the system uses.
             tokens = len(self._stream_buf) // _CHARS_PER_TOKEN
             line = f"{prefix}{frame} ~{tokens} tokens"
+            # Narrow-terminal safety net: if frame+counter wouldn't fit,
+            # drop the counter; if even the face wouldn't fit, truncate.
+            # Keeps the indicator from ever wrapping onto a new line.
+            avail = self.con.width - 1
+            if _display_width(line) > avail:
+                line = f"{prefix}{frame}"
+                if _display_width(line) > avail:
+                    line = _truncate_to_width(line, avail)
             self.con.file.write(f"\r{line}")
-            # Pad to terminal width so a previous longer paint (e.g.
-            # 4-digit token count → 3-digit) doesn't leave residue.
             pad = max(0, self.con.width - _display_width(line) - 1)
             self.con.file.write(" " * pad)
             self.con.file.flush()

@@ -334,9 +334,9 @@ class AgentLoop:
             render_stream_chunk(text)
 
         if self.skill_name:
-            render_spinner_start(f"skill:{self.skill_name} thinking...")
+            render_spinner_start(f"skill:{self.skill_name}")
         else:
-            render_spinner_start("thinking...")
+            render_spinner_start()
         try:
             response = self.provider.call(
                 messages=self.messages,

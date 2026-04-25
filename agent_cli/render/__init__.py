@@ -116,7 +116,7 @@ def render_context_dump(messages: list[dict], turn: int) -> None:
     _renderer.context_dump(messages, turn)
 
 
-def render_spinner_start(message: str = "thinking...") -> None:
+def render_spinner_start(message: str = "") -> None:
     _renderer.spinner_start(message)
 
 
