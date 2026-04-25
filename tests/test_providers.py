@@ -446,3 +446,144 @@ class TestCreateProvider:
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
             create_provider("gemini", "http://x", "")
+
+
+class TestThinkingFieldCapture:
+    """Each provider must surface its native reasoning channel through
+    LLMResponse.thinking. Empty string when the response carries none —
+    this is the graceful fallback path for non-reasoning models."""
+
+    @patch("agent_cli.providers.ollama.requests.post")
+    def test_ollama_captures_thinking_field(self, mock_post, caps_structured):
+        # Qwen3 family on Ollama emits message.thinking alongside content
+        mock_post.return_value = _mock_response(
+            {
+                "message": {
+                    "content": '{"action":"complete"}',
+                    "thinking": "I need to wrap this in JSON.",
+                },
+                "done": True,
+                "done_reason": "stop",
+            }
+        )
+        provider = OllamaProvider("http://localhost:11434")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="qwen3:32b",
+            capabilities=caps_structured,
+        )
+        assert result.thinking == "I need to wrap this in JSON."
+        assert result.content == '{"action":"complete"}'
+
+    @patch("agent_cli.providers.ollama.requests.post")
+    def test_ollama_no_thinking_field_returns_empty(self, mock_post, caps_structured):
+        mock_post.return_value = _mock_response(
+            {
+                "message": {"content": '{"action":"complete"}'},
+                "done": True,
+            }
+        )
+        provider = OllamaProvider("http://localhost:11434")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="qwen3:32b",
+            capabilities=caps_structured,
+        )
+        assert result.thinking == ""
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_captures_thinking_block(self, mock_post, caps_structured):
+        # Anthropic extended thinking returns a dedicated content block
+        mock_post.return_value = _mock_response(
+            {
+                "content": [
+                    {"type": "thinking", "thinking": "Let me reason..."},
+                    {"type": "text", "text": '{"action":"complete"}'},
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "stop_reason": "end_turn",
+            }
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-opus-4-1",
+            capabilities=caps_structured,
+        )
+        assert result.thinking == "Let me reason..."
+        assert result.content == '{"action":"complete"}'
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_anthropic_no_thinking_block_returns_empty(
+        self, mock_post, caps_structured
+    ):
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": '{"action":"complete"}'}],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "stop_reason": "end_turn",
+            }
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-opus-4-1",
+            capabilities=caps_structured,
+        )
+        assert result.thinking == ""
+
+    @patch("agent_cli.providers.openai_compat.requests.post")
+    def test_openai_compat_captures_reasoning_content(self, mock_post, caps_structured):
+        # vLLM convention: reasoning_content sibling to content
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"action":"complete"}',
+                            "reasoning_content": "Reasoning here.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        )
+        provider = OpenAICompatProvider("http://localhost:8000/v1", "")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="qwen3-served-via-vllm",
+            capabilities=caps_structured,
+        )
+        assert result.thinking == "Reasoning here."
+        assert result.content == '{"action":"complete"}'
+
+    @patch("agent_cli.providers.openai_compat.requests.post")
+    def test_openai_compat_no_reasoning_content_returns_empty(
+        self, mock_post, caps_structured
+    ):
+        # Plain OpenAI Chat Completions does not expose reasoning here
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"action":"complete"}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+        )
+        provider = OpenAICompatProvider("https://api.openai.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="gpt-4o",
+            capabilities=caps_structured,
+        )
+        assert result.thinking == ""

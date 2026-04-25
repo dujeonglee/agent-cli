@@ -25,6 +25,10 @@ class LLMResponse:
     tool_calls: list[dict] | None = None
     usage: TokenUsage | None = None
     stop_reason: str | None = None
+    # Reasoning content surfaced via a separate API field (e.g. Ollama's
+    # `message.thinking` for Qwen3 family). Empty string when the provider
+    # doesn't expose it or the model didn't produce any.
+    thinking: str = ""
 
 
 @runtime_checkable

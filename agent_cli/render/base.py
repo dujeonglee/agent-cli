@@ -129,6 +129,14 @@ class Renderer(ABC):
     def raw(self, text: str, turn: int, verbose: bool) -> None:
         """Raw LLM response (verbose mode)."""
 
+    def thinking(self, text: str, turn: int) -> None:
+        """Reasoning content from a separate API field (verbose mode).
+
+        Default no-op so existing plugin renderers keep working without
+        forced overrides. Override to surface provider-side reasoning
+        (e.g. Ollama's `message.thinking` for Qwen3 family).
+        """
+
     @abstractmethod
     def status(self, state: str, message: str, turn: int = 0) -> None:
         """Status update (running/done/error)."""

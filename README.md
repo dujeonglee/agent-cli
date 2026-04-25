@@ -188,7 +188,7 @@ agent-cli run "task description" [options]
 | `-n, --max-turns` | 최대 턴 (0=무제한) | `0` |
 | `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
-| `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
+| `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 
 `run` 실행 후 세션이 자동 저장됩니다. `chat --resume <id>`로 이어서 작업할 수 있습니다:
@@ -218,7 +218,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `-n, --max-turns` | 턴당 최대 턴 (0=무제한) | `0` |
 | `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
-| `-v, --verbose` | 원시 LLM 응답 + 컨텍스트 덤프 표시 | |
+| `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--resume <id>` | 이전 세션 이어서 작업 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 

@@ -46,7 +46,7 @@ agent_cli/
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (217)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
-├── constants.py             (39)   공유 상수 (타임아웃, 임계값, observation/retry 메시지 템플릿, 시스템 user-message prefix)
+├── constants.py             (153)  공유 상수 + 실패 회복 retry 빌더 (`format_no_json_retry` / `format_no_action_retry`, content head + thinking tail echo)
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
 │   ├── __init__.py          (24)   shell hook API re-export (하위 호환)
@@ -57,20 +57,20 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (1283) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering)
+├── loop.py                  (1305) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
-│   ├── base.py              (181)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드, observation success 인자)
-│   └── minimal.py           (512)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, `FrameClock` 공유 (delegate 병렬 패널이 동일 cadence로 reuse), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
+│   ├── base.py              (189)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드 + thinking, observation success 인자)
+│   └── minimal.py           (524)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, `FrameClock` 공유 (delegate 병렬 패널이 동일 cadence로 reuse), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width, verbose에서 provider thinking 블록 표시). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
-│   ├── base.py              (41)   LLMProvider 프로토콜, LLMResponse, TokenUsage
+│   ├── base.py              (45)   LLMProvider 프로토콜, LLMResponse(+thinking), TokenUsage
 │   ├── compat.py            (419)  ModelCapabilities + 프로브 감지 (thinking + format) + 진행 콜백 + 자동 저장
 │   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
-│   ├── anthropic.py         (171)  Anthropic Messages API (tool_use + thinking + streaming + TTFT)
-│   ├── openai_compat.py     (179)  OpenAI 호환 API (function calling + reasoning + streaming + TTFT)
-│   └── ollama.py            (167)  Ollama API (basic JSON mode + thinking + streaming + TTFT)
+│   ├── anthropic.py         (187)  Anthropic Messages API (tool_use + thinking blocks + streaming + TTFT)
+│   ├── openai_compat.py     (194)  OpenAI 호환 API (function calling + reasoning_content + streaming + TTFT)
+│   └── ollama.py            (176)  Ollama API (basic JSON mode + message.thinking + streaming + TTFT)
 │
 ├── parsing/                        응답 파싱
 │   ├── __init__.py          (3)    re-export: parse_react, ReActResult
@@ -226,10 +226,20 @@ class LLMResponse:
     tool_calls: list[dict] | None = None  # 네이티브 tool calling 결과
     usage: TokenUsage | None = None
     stop_reason: str | None = None
+    thinking: str = ""                    # provider-side reasoning 채널
 
 # tool_calls 항목 형식:
 # {"id": "tu_1", "name": "read_file", "input": {"path": "a.py"}}
 ```
+
+`thinking`은 모델이 별도 reasoning 채널로 노출한 텍스트를 운반합니다. 채널 매핑:
+- **Ollama**: `message.thinking` 필드 (Qwen3 / Qwen3.5 / Qwen3.6 family)
+- **Anthropic**: `content[].type == "thinking"` 블록 + 스트리밍 `thinking_delta`
+- **OpenAI 호환**: `choice.message.reasoning_content` (vLLM 컨벤션)
+- 위 채널이 없으면 `""` (plain OpenAI Chat Completions 등 — graceful)
+- `<think>...</think>` 태그가 content 안에 있는 경우는 별도 — `parse_react`가 `ReActResult.thinking`으로 분리 추출
+
+`loop.py`의 retry 분기는 두 채널을 OR로 결합해 retry 메시지에 echo: `response.thinking or parsed.thinking or ""`.
 
 ### 4.2 모델 능력치 (`providers/compat.py`)
 
@@ -499,6 +509,36 @@ MCP 제공 툴처럼 `action` 이름이 레지스트리에 없어도 같은 룰 
 **우선순위 규칙.** `action_input`이 이미 있고 truthy면 Layer 1, 2 모두 skip — 모델이 명시적으로 nested를 선택했다고 보고 형제 키는 무시. `action_input`이 `None` 또는 `{}`면 레이어 로직 발동.
 
 이 정규화는 strict JSON Schema 도입 없이 작동하며, flat form을 정식 canonical로 승격하는 미래 변경(`plan/schema-flatten.md` 참조)의 파서 기반이 됩니다.
+
+#### Failure Grounding Retry (`constants.py` + `loop.py`)
+
+3단계 파싱이 모두 실패하거나(JSON 깨짐 — `parse_stage=0`) JSON은 파싱됐는데 `action`이 없으면 (`parse_stage>0` & `action=None`), `loop.py`가 user role 메시지를 한 개 주입하고 같은 turn을 재시도합니다 (`turn -= 1`로 카운트 제외). retry 메시지는 `format_no_json_retry()` / `format_no_action_retry()` 빌더가 생성:
+
+```
+Your response was not valid JSON.
+
+Your prior output:               ← head 400자 (구조 마커 보존)
+---
+{LLM이 방금 토출한 content}
+---
+
+Your prior reasoning:            ← tail 400자 (self-correction 비트 보존)
+---
+{response.thinking 또는 parsed.thinking}
+---
+
+Honor that. Output ONLY a JSON object: {...}.
+```
+
+**채널 우선순위 — `loop.py`에서 OR 결합:**
+- `prior_content = llm_text` (failed content를 head-truncate)
+- `prior_thinking = response.thinking or parsed.thinking or ""` (provider field-based가 우선, 없으면 `<think>` 태그 추출본)
+
+둘 다 비면 정적 fallback (`RETRY_HINT_NO_JSON` / `RETRY_HINT_NO_ACTION`) — graceful path: plain OpenAI Chat Completions 같은 thinking 미노출 환경.
+
+**근거 (failure grounding):** 추상적 *"your response was invalid"*는 모델이 무엇을 위반했는지 모르게 함 — 같은 출력을 반복할 가능성 높음. retry에 자기 출력을 인용해 보여주면 모델이 자기 드리프트(YAML-style 키, 함수-호출 신택스, bare prose, empty content 등)를 직접 보고 self-diagnose 가능. content는 head-truncate (구조 마커는 보통 시작 부분), thinking은 tail-truncate (self-correction은 보통 끝 부분).
+
+**Prefix 호환성:** retry 메시지 시작은 항상 정적 템플릿과 같은 문장 (`"Your response was not valid JSON."` / `"Your JSON was parsed but has no action."`)으로 시작하므로 `SYSTEM_USER_PREFIXES` 매칭이 그대로 유지됨 → resume 시 자연어 변환에서 noise로 표시되지 않음.
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 

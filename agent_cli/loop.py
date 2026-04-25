@@ -12,8 +12,8 @@ from agent_cli.constants import (
     DELEGATE_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OBS_SUCCESS,
-    RETRY_HINT_NO_ACTION,
-    RETRY_HINT_NO_JSON,
+    format_no_action_retry,
+    format_no_json_retry,
 )
 from agent_cli.tools.result import ToolResult
 
@@ -28,6 +28,7 @@ from agent_cli.render import (
     render_header,
     render_turn_sep,
     render_raw,
+    render_thinking,
     render_spinner_start,
     render_spinner_stop,
     render_status,
@@ -306,8 +307,10 @@ class AgentLoop:
         self._fire_hook("PostLLMCall", llm_response=llm_text)
 
         render_raw(llm_text, self.turn, self.verbose)
+        if self.verbose and response.thinking:
+            render_thinking(response.thinking, self.turn)
 
-        result = self._handle_text_path(llm_text)
+        result = self._handle_text_path(llm_text, response.thinking)
 
         # OnTurnEnd hook
         self._fire_hook("OnTurnEnd")
@@ -370,8 +373,16 @@ class AgentLoop:
             else:
                 render_stream_end()
 
-    def _handle_text_path(self, llm_text: str):
-        """Handle text parsing response (Ollama, fallback)."""
+    def _handle_text_path(self, llm_text: str, thinking_field: str = ""):
+        """Handle text parsing response (Ollama, fallback).
+
+        ``thinking_field`` carries reasoning content surfaced via a
+        provider-side field (Ollama ``message.thinking``, Anthropic
+        thinking blocks, vLLM ``reasoning_content``). Tag-based
+        thinking inside ``llm_text`` is extracted by parse_react into
+        ``parsed.thinking``. The retry builders prefer the field-based
+        source and fall back to the parsed/tag-based one.
+        """
         parsed = parse_react(llm_text)
 
         # 6. Thought
@@ -586,7 +597,12 @@ class AgentLoop:
             )
             return self._CONTINUE
 
-        # 12. Missing action or parse failure -- retry with appropriate hint
+        # 12. Missing action or parse failure -- retry with appropriate hint.
+        # Echo both the model's failed output AND its prior reasoning
+        # back as failure grounding. Content shows structural drift
+        # (YAML-style keys, function-call syntax, bare prose); thinking
+        # shows self-correction beats when the model produced any.
+        prior_thinking = thinking_field or (parsed.thinking or "")
         if parsed.parse_stage > 0:
             # JSON parsed OK but no action -- LLM forgot to include action
             _debug_log(
@@ -597,7 +613,10 @@ class AgentLoop:
                 "Response has no action. Retrying...",
                 self.turn,
             )
-            retry_msg = RETRY_HINT_NO_ACTION
+            retry_msg = format_no_action_retry(
+                prior_content=llm_text,
+                prior_thinking=prior_thinking,
+            )
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
@@ -606,7 +625,10 @@ class AgentLoop:
                 "Invalid JSON response. Retrying...",
                 self.turn,
             )
-            retry_msg = RETRY_HINT_NO_JSON
+            retry_msg = format_no_json_retry(
+                prior_content=llm_text,
+                prior_thinking=prior_thinking,
+            )
         _append_observation(self.messages, self.ctx, llm_text, retry_msg)
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE

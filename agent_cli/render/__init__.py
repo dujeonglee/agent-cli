@@ -95,6 +95,10 @@ def render_raw(text: str, turn: int, verbose: bool) -> None:
     _renderer.raw(text, turn, verbose)
 
 
+def render_thinking(text: str, turn: int) -> None:
+    _renderer.thinking(text, turn)
+
+
 def render_turn_sep(turn: int) -> None:
     _renderer.turn_sep(turn)
 

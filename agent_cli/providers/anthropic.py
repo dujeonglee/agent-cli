@@ -77,6 +77,7 @@ class AnthropicProvider:
         import time
 
         content = ""
+        thinking = ""
         stop_reason = None
         input_tokens = 0
         output_tokens = 0
@@ -103,13 +104,19 @@ class AnthropicProvider:
 
                 elif event_type == "content_block_delta":
                     delta = data.get("delta", {})
-                    if delta.get("type") == "text_delta":
+                    delta_type = delta.get("type")
+                    if delta_type == "text_delta":
                         chunk = delta.get("text", "")
                         if chunk:
                             if not t_first:
                                 t_first = time.perf_counter_ns()
                             content += chunk
                             on_chunk(chunk)
+                    elif delta_type == "thinking_delta":
+                        # Extended-thinking deltas: accumulate but do
+                        # not stream to on_chunk — thinking is internal
+                        # reasoning, not user-facing output.
+                        thinking += delta.get("thinking", "")
 
                 elif event_type == "message_delta":
                     stop_reason = data.get("delta", {}).get("stop_reason")
@@ -135,16 +142,24 @@ class AnthropicProvider:
             tool_calls=None,
             usage=usage,
             stop_reason=stop_reason,
+            thinking=thinking,
         )
 
     def _parse_response(self, data: dict) -> LLMResponse:
         """Parse non-streaming response."""
         content = ""
+        thinking = ""
         tool_calls = None
         for block in data.get("content", []):
-            if block.get("type") == "text":
+            btype = block.get("type")
+            if btype == "text":
                 content = block["text"]
-            elif block.get("type") == "tool_use":
+            elif btype == "thinking":
+                # Extended-thinking block: capture for diagnostics and
+                # for self-quoting on retry. Anthropic places reasoning
+                # in a dedicated content block, not inside text.
+                thinking = block.get("thinking", "")
+            elif btype == "tool_use":
                 if tool_calls is None:
                     tool_calls = []
                 tool_calls.append(
@@ -168,4 +183,5 @@ class AnthropicProvider:
             tool_calls=tool_calls,
             usage=usage,
             stop_reason=data.get("stop_reason"),
+            thinking=thinking,
         )

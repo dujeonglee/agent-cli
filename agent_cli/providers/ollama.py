@@ -96,6 +96,7 @@ class OllamaProvider:
         import time
 
         content = ""
+        thinking = ""
         final_data = {}
         t0 = time.perf_counter_ns()
         t_first = 0
@@ -111,7 +112,11 @@ class OllamaProvider:
             # and looping on "Invalid JSON" retries.
             if "error" in data:
                 raise RuntimeError(f"Ollama streaming error: {data['error']}")
-            chunk = data.get("message", {}).get("content", "")
+            msg = data.get("message", {})
+            chunk = msg.get("content", "")
+            thinking_chunk = msg.get("thinking", "")
+            if thinking_chunk:
+                thinking += thinking_chunk
             if chunk:
                 if not t_first:
                     t_first = time.perf_counter_ns()
@@ -138,6 +143,7 @@ class OllamaProvider:
             tool_calls=None,
             usage=usage,
             stop_reason=final_data.get("done_reason"),
+            thinking=thinking,
         )
 
     def _parse_response(self, data: dict) -> LLMResponse:
@@ -148,7 +154,9 @@ class OllamaProvider:
         # the loop can render the failure instead of seeing empty content.
         if "error" in data:
             raise RuntimeError(f"Ollama error: {data['error']}")
-        content = data.get("message", {}).get("content", "")
+        msg = data.get("message", {})
+        content = msg.get("content", "")
+        thinking = msg.get("thinking", "")
 
         usage = None
         if "eval_count" in data or "prompt_eval_count" in data:
@@ -164,4 +172,5 @@ class OllamaProvider:
             tool_calls=None,
             usage=usage,
             stop_reason=data.get("done_reason"),
+            thinking=thinking,
         )

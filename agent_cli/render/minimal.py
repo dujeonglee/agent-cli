@@ -293,6 +293,17 @@ class MinimalRenderer(Renderer):
             self._p(f"  [{_MUTED}]{line}[/]")
         self._p(f"  [{_MUTED}]── end raw ──[/]\n")
 
+    def thinking(self, text: str, turn: int) -> None:
+        # Reasoning content from a provider-side field (Ollama
+        # `message.thinking` for Qwen3 family). Caller decides whether
+        # to invoke (gated on verbose at the call site).
+        if not text:
+            return
+        self._p(f"\n  [{_MUTED}]── thinking turn {turn} ──[/]")
+        for line in text.split("\n"):
+            self._p(f"  [{_MUTED}]{line}[/]")
+        self._p(f"  [{_MUTED}]── end thinking ──[/]\n")
+
     def status(self, state: str, message: str, turn: int = 0) -> None:
         it = f"  turn {turn}" if turn else ""
         self._p(f"  ● {message}{it}", highlight=False)

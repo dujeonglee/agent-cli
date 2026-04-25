@@ -82,6 +82,7 @@ class OpenAICompatProvider:
         import time
 
         content = ""
+        thinking = ""
         usage = None
         stop_reason = None
         t0 = time.perf_counter_ns()
@@ -112,6 +113,14 @@ class OpenAICompatProvider:
                 continue
 
             delta = choices[0].get("delta", {})
+            # `reasoning_content` is the vLLM convention for exposing
+            # the model's reasoning channel through OpenAI-compatible
+            # endpoints (qwen3 / DeepSeek-R1 served via vLLM, etc.).
+            # OpenAI's hosted reasoning models do not expose it via
+            # Chat Completions, so this stays empty there — graceful.
+            thinking_chunk = delta.get("reasoning_content", "")
+            if thinking_chunk:
+                thinking += thinking_chunk
             chunk = delta.get("content", "")
             if chunk:
                 if not t_first:
@@ -138,16 +147,21 @@ class OpenAICompatProvider:
             tool_calls=None,
             usage=usage,
             stop_reason=stop_reason,
+            thinking=thinking,
         )
 
     def _parse_response(self, data: dict) -> LLMResponse:
         """Parse non-streaming response."""
         choice = data["choices"][0]
-        content = choice["message"].get("content") or ""
+        message = choice["message"]
+        content = message.get("content") or ""
+        # vLLM convention for reasoning models served via OpenAI-compat.
+        # Empty string when the server doesn't expose it.
+        thinking = message.get("reasoning_content") or ""
 
         # Parse tool calls if present
         tool_calls = None
-        raw_tool_calls = choice["message"].get("tool_calls")
+        raw_tool_calls = message.get("tool_calls")
         if raw_tool_calls:
             tool_calls = []
             for tc in raw_tool_calls:
@@ -176,4 +190,5 @@ class OpenAICompatProvider:
             tool_calls=tool_calls,
             usage=usage,
             stop_reason=choice.get("finish_reason"),
+            thinking=thinking,
         )
