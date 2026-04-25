@@ -92,6 +92,37 @@ class TestWriteFile:
         assert not result.success
         assert result.error
 
+    def test_diff_appended_when_overwriting(self, tmp_path):
+        """Overwriting an existing file → output includes a unified
+        diff with `+` / `-` lines so the user (and the LLM) can see
+        what actually changed."""
+        target = tmp_path / "code.py"
+        target.write_text("a\nb\nc\n")
+        result = tool_write_file({"path": str(target), "content": "a\nB\nc\n"})
+        assert result.success
+        # Rich-marked diff lines.
+        assert "[red]-b[/red]" in result.output
+        assert "[green]+B[/green]" in result.output
+
+    def test_no_diff_when_content_unchanged(self, tmp_path):
+        """Writing identical content → no diff section, just the save
+        confirmation. Avoids cluttering the observation with a
+        "no changes" placeholder."""
+        target = tmp_path / "same.txt"
+        target.write_text("hello\n")
+        result = tool_write_file({"path": str(target), "content": "hello\n"})
+        assert result.success
+        assert "@@" not in result.output  # no diff hunk header
+
+    def test_diff_for_new_file_shows_all_added(self, tmp_path):
+        """Creating a new file → diff renders every line as `+` since
+        the prior content is empty."""
+        target = tmp_path / "new.txt"
+        result = tool_write_file({"path": str(target), "content": "first\nsecond\n"})
+        assert result.success
+        assert "[green]+first[/green]" in result.output
+        assert "[green]+second[/green]" in result.output
+
 
 class TestShellTool:
     def test_basic_command(self):
@@ -304,6 +335,120 @@ class TestShellDangerousCommandConfirmation:
         assert _detect_dangerous("format-firmware") is None
 
 
+class TestShellConfirmationComments:
+    """y/n/a accepts an optional trailing comment that surfaces to the
+    LLM. For `n`, the comment becomes the denial reason so the model
+    knows why and can pick a different path. For `y`/`a`, the comment
+    is appended after the command output as an instruction the model
+    should fold into its next move."""
+
+    def setup_method(self):
+        from agent_cli.tools import shell as shell_mod
+
+        shell_mod._session_allowlist.clear()
+
+    def _force_tty(self, monkeypatch):
+        from agent_cli.tools import shell as shell_mod
+
+        monkeypatch.setattr(shell_mod, "_is_tty", lambda: True)
+
+    def test_ask_returns_decision_and_empty_comment(self):
+        from agent_cli.tools.shell import _ask_confirmation
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="y"):
+            assert _ask_confirmation("rm x", "rm") == ("y", "")
+        with patch("builtins.input", return_value="n"):
+            assert _ask_confirmation("rm x", "rm") == ("n", "")
+        with patch("builtins.input", return_value="a"):
+            assert _ask_confirmation("rm x", "rm") == ("a", "")
+
+    def test_ask_parses_decision_and_comment(self):
+        from agent_cli.tools.shell import _ask_confirmation
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="y and also try foo"):
+            assert _ask_confirmation("rm x", "rm") == ("y", "and also try foo")
+        with patch("builtins.input", return_value="n the path is wrong"):
+            assert _ask_confirmation("rm x", "rm") == ("n", "the path is wrong")
+        with patch("builtins.input", return_value="a only in /tmp"):
+            assert _ask_confirmation("rm x", "rm") == ("a", "only in /tmp")
+
+    def test_ask_unrecognized_first_token_treated_as_deny_with_full_comment(self):
+        """If user types something other than y/n/a (e.g. they wrote a
+        sentence directly), treat as deny but preserve the entire input
+        as the comment so their reasoning still reaches the LLM."""
+        from agent_cli.tools.shell import _ask_confirmation
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="actually let me check first"):
+            assert _ask_confirmation("rm x", "rm") == (
+                "n",
+                "actually let me check first",
+            )
+
+    def test_ask_empty_input_is_deny_no_comment(self):
+        from agent_cli.tools.shell import _ask_confirmation
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value=""):
+            assert _ask_confirmation("rm x", "rm") == ("n", "")
+
+    def test_deny_comment_appears_in_error_message(self, monkeypatch):
+        """`n` + comment → error string includes the user's reason so
+        the LLM observation explains why the command was rejected."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="n wrong directory, try /tmp"):
+            result = tool_shell({"command": "rm /etc/passwd"})
+        assert not result.success
+        assert "User denied" in (result.error or "")
+        assert "wrong directory, try /tmp" in (result.error or "")
+
+    def test_approve_comment_appears_after_output(self, monkeypatch):
+        """`y` + comment → command runs and the comment is appended
+        after stdout so the LLM sees both the result and the user's
+        follow-up instruction."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+        from unittest.mock import patch
+
+        # Use a `mv` invocation that's safe — operate inside tmp.
+        # Actually simpler: rm a non-existent path (fails harmlessly,
+        # but ran).
+        with patch("builtins.input", return_value="y also clean /tmp/y"):
+            result = tool_shell({"command": "rm /nonexistent/path"})
+        # Output should contain the user's note line.
+        assert "User note when approving: also clean /tmp/y" in (result.output or "")
+
+    def test_always_comment_appears_after_output(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="a but limit scope to build/"):
+            result = tool_shell({"command": "rm /nonexistent/x"})
+        from agent_cli.tools import shell as shell_mod
+
+        assert "rm" in shell_mod._session_allowlist
+        assert "User note when approving: but limit scope to build/" in (
+            result.output or ""
+        )
+
+    def test_no_comment_no_note_appended(self, monkeypatch):
+        """Bare `y` keeps the output clean — no `[User note...]`
+        suffix when the user didn't add anything."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+        from unittest.mock import patch
+
+        with patch("builtins.input", return_value="y"):
+            result = tool_shell({"command": "rm /nonexistent/path"})
+        assert "User note" not in (result.output or "")
+
+
 class TestEditFile:
     def test_replace_single_line(self, tmp_path):
         f = tmp_path / "test.py"
@@ -319,6 +464,9 @@ class TestEditFile:
         assert result.success
         assert "Edit complete" in result.output
         assert "replaced" in f.read_text()
+        # Diff is appended to the success message: line2 removed, replaced added.
+        assert "[red]-line2[/red]" in result.output
+        assert "[green]+replaced[/green]" in result.output
 
     def test_append_operation(self, tmp_path):
         f = tmp_path / "test.py"

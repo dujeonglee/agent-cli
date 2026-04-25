@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from agent_cli.tools._diff import format_diff
 from agent_cli.tools.read_file import _parse_ref, _verify_ref, compute_line_hash
 from agent_cli.tools.result import ToolResult
 
@@ -118,6 +119,7 @@ def tool_edit_file(args: dict) -> ToolResult:
     except Exception as e:
         return ToolResult(False, error=f"edit_file: cannot read '{path}': {e}")
 
+    original_text = text
     file_lines = text.split("\n")
     fuzzy_warnings: list[str] = []
 
@@ -266,4 +268,7 @@ def tool_edit_file(args: dict) -> ToolResult:
     msg = f"Edit complete: {path} ({len(file_lines)} lines)"
     if fuzzy_warnings:
         msg += "\n" + "\n".join(fuzzy_warnings)
+    diff = format_diff(original_text, result_text, path)
+    if diff:
+        msg += "\n\n" + diff
     return ToolResult(True, output=msg)

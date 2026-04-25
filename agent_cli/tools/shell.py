@@ -53,25 +53,47 @@ def _detect_dangerous(cmd: str) -> str | None:
     return None
 
 
-def _ask_confirmation(cmd: str, keyword: str) -> str:
-    """Prompt user for y / n / a. Returns the lowered single-char
-    decision. Treats EOF/Ctrl+C as "n" (deny) — the safe default when
-    the user can't actually answer."""
+def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
+    """Prompt user for y / n / a, optionally followed by a comment.
+
+    Returns ``(decision, comment)``. ``decision`` is one of
+    ``"y"`` / ``"n"`` / ``"a"``. ``comment`` is whatever the user
+    typed after the decision token (may be empty).
+
+    Format: ``y do this next``, ``n wrong path``, ``a only in /tmp``.
+    Pure ``y`` / ``yes`` / ``n`` / ``a`` works as before with empty
+    comment. EOF/Ctrl+C → ``("n", "")`` (safe default — never run a
+    dangerous command on input failure). If the first token isn't
+    y/n/a we treat it as ``n`` and keep the full input as the comment
+    so the user's reasoning still surfaces to the LLM.
+    """
     prompt = (
         f"\n⚠ Dangerous command detected:\n"
         f"  $ {cmd}\n"
-        f"Allow? (y=once, n=deny, a=always allow `{keyword}` this session) [y/n/a]: "
+        f"Allow? (y=once, n=deny, a=always allow `{keyword}` this session)\n"
+        f"  [y/n/a, optional comment after]: "
     )
     try:
-        answer = input(prompt).strip().lower()
+        raw = input(prompt).strip()
     except (EOFError, KeyboardInterrupt):
         print("", file=sys.stderr)
-        return "n"
-    if answer in ("y", "yes"):
-        return "y"
-    if answer in ("a", "always"):
-        return "a"
-    return "n"
+        return ("n", "")
+    if not raw:
+        return ("n", "")
+
+    parts = raw.split(maxsplit=1)
+    first = parts[0].lower()
+    comment = parts[1].strip() if len(parts) > 1 else ""
+
+    if first in ("y", "yes"):
+        return ("y", comment)
+    if first in ("a", "always"):
+        return ("a", comment)
+    if first in ("n", "no"):
+        return ("n", comment)
+    # Unrecognized first token — treat as deny but preserve the full
+    # input as the comment so the user's intent isn't dropped.
+    return ("n", raw)
 
 
 def _is_tty() -> bool:
@@ -92,6 +114,7 @@ def tool_shell(args: dict) -> ToolResult:
             False, error="Empty command. Provide a shell command to execute."
         )
 
+    user_comment = ""
     if _confirmation_enabled():
         keyword = _detect_dangerous(cmd)
         if keyword and keyword not in _session_allowlist:
@@ -105,12 +128,12 @@ def tool_shell(args: dict) -> ToolResult:
                         "non-interactive runs."
                     ),
                 )
-            decision = _ask_confirmation(cmd, keyword)
+            decision, user_comment = _ask_confirmation(cmd, keyword)
             if decision == "n":
-                return ToolResult(
-                    False,
-                    error=f"User denied command containing `{keyword}`: {cmd}",
-                )
+                err = f"User denied command containing `{keyword}`: {cmd}"
+                if user_comment:
+                    err += f". User said: {user_comment}"
+                return ToolResult(False, error=err)
             if decision == "a":
                 _session_allowlist.add(keyword)
 
@@ -132,6 +155,11 @@ def tool_shell(args: dict) -> ToolResult:
             parts.append(f"[stderr]\n{err}")
         if result.returncode != 0:
             parts.append(f"[exit code: {result.returncode}]")
+        # When the user approved with a comment, surface it after the
+        # command output so the LLM sees the additional instruction
+        # alongside the result.
+        if user_comment:
+            parts.append(f"[User note when approving: {user_comment}]")
         return ToolResult(True, output="\n".join(parts) if parts else "(no output)")
     except subprocess.TimeoutExpired:
         return ToolResult(False, error=f"Command timed out ({timeout}s)")

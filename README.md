@@ -645,6 +645,8 @@ stat 모드 (메타데이터 + 앞 20줄):
 
 해시 불일치 시 퍼지 매칭으로 자동 보정합니다 (공백/따옴표/대시 정규화).
 
+`edit_file` / `write_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). 사용자도 시각적으로 확인 가능하고, LLM 도 자가 검증에 활용 가능.
+
 ### complete — 작업 완료
 
 LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 필드에 최종 답변을 담습니다.
@@ -684,7 +686,23 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 대용량 출력은 자동으로 `<session>/shell/`에 artifact로 저장되고 head/tail 미리보기로 치환됩니다 (`find /`, `grep -r` 같은 명령이 컨텍스트를 통째로 잡아먹는 것 방지). 임계치는 `AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES`/`_BYTES` env로 조정.
 
-**위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 `y` (이번만) / `n` (거부) / `a` (이 세션 동안 같은 키워드 자동 허용) 묻습니다. 기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. TTY 없는 환경(CI/배치)에서는 자동으로 거부 — 무인 환경에서 위험 명령이 silent 실행되는 일 없음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
+**위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 묻습니다:
+
+```
+⚠ Dangerous command detected:
+  $ rm -rf /tmp/build
+Allow? (y=once, n=deny, a=always allow `rm` this session)
+  [y/n/a, optional comment after]:
+```
+
+응답 첫 토큰이 결정 (`y` 이번만 / `n` 거부 / `a` 이 세션 동안 같은 키워드 자동 허용), 뒤에 **선택적 코멘트** 추가 가능:
+
+- `y and also cleanup /tmp/cache next` — 명령 실행 + 코멘트가 출력 끝에 `[User note when approving: ...]` 로 붙어서 LLM 이 다음 액션에 반영
+- `n the path is wrong, try /tmp/build instead` — 거부 + 이유가 에러 메시지에 들어가서 LLM 이 다른 경로 탐색
+- `a only inside /tmp` — 세션 allowlist 추가 + 코멘트 전달
+- 빈 응답 / 인식 안 되는 첫 토큰 → 거부 (전체 입력은 코멘트로 보존)
+
+기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. TTY 없는 환경(CI/배치)에서는 자동으로 거부 — 무인 환경에서 위험 명령이 silent 실행되는 일 없음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
 
 ### write_file — 파일 생성
 

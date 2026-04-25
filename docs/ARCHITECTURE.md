@@ -81,10 +81,11 @@ agent_cli/
 │   ├── __init__.py          (68)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
 │   ├── registry.py          (472)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
+│   ├── _diff.py             (79)   write_file/edit_file 공용 unified-diff 포매터 (Rich markup, 100줄 cap)
 │   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
-│   ├── write_file.py        (21)   파일 생성 → ToolResult
-│   ├── edit_file.py         (269)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링) → ToolResult
-│   ├── shell.py             (139)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) 사용자 확인 (y/n/a, env로 비활성 가능) → ToolResult
+│   ├── write_file.py        (37)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
+│   ├── edit_file.py         (274)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff) → ToolResult
+│   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult
 │   ├── shell_artifact.py    (249)  Shell stdout 대용량 가드: 한도 초과 시 `<session>/shell/`에 저장하고 head/tail 미리보기로 치환, LRU 회전
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
 │   ├── delegate.py          (697)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널, subdir, agent_stack, stop_event)
