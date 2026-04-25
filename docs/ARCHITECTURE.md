@@ -81,7 +81,7 @@ agent_cli/
 │   ├── __init__.py          (68)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
 │   ├── registry.py          (481)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
-│   ├── _diff.py             (79)   write_file/edit_file 공용 unified-diff 포매터 (Rich markup, 100줄 cap)
+│   ├── _diff.py             (113)  write_file/edit_file 공용 unified-diff 포매터 (Rich markup, OLD/NEW line-number gutter, 100줄 cap)
 │   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
 │   ├── write_file.py        (37)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
 │   ├── edit_file.py         (274)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff) → ToolResult

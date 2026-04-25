@@ -79,3 +79,43 @@ class TestFormatDiff:
         for line in out.splitlines():
             # No purely-empty styled markers (e.g. `[red]-[/red]`).
             assert line.strip()
+
+    def test_line_numbers_track_through_hunk(self):
+        """Each diff line gets prefixed with the OLD/NEW line numbers so
+        the user can locate the change in the file. For a single-line
+        replacement at line 3 of a 5-line file the prefixes should be:
+        line 1 (context), line 2 (context), line 3- (removed), line 3+
+        (added), line 4 (context), line 5 (context)."""
+        old = "a\nb\nc\nd\ne\n"
+        new = "a\nb\nC\nd\ne\n"
+        out = format_diff(old, new, "f.txt")
+        # Context lines show both columns: `   1    1`, `   2    2`.
+        assert "   1    1" in out
+        assert "   2    2" in out
+        # Removed line has only the OLD column populated (line 3 in old).
+        assert "   3     " in out
+        # Added line has only the NEW column populated (line 3 in new).
+        assert "        3" in out
+
+    def test_line_numbers_for_create(self):
+        """When creating a new file, all lines are `+` so only the NEW
+        column is populated and counts up from 1."""
+        out = format_diff("", "first\nsecond\nthird\n", "new.txt")
+        # NEW column should show 1, 2, 3; OLD column blank.
+        assert "        1" in out
+        assert "        2" in out
+        assert "        3" in out
+
+    def test_line_numbers_use_hunk_header_offset(self):
+        """The numbering must start from the hunk header (`@@ -A +B @@`),
+        not from line 1, so a change deep in a large file shows the
+        actual file line numbers."""
+        old = "\n".join(f"x{i}" for i in range(1, 51)) + "\n"
+        # Replace line 30 ("x30") with "X30"
+        new = old.replace("x30\n", "X30\n")
+        out = format_diff(old, new, "big.txt")
+        # The hunk should reference line 30 area in both columns.
+        assert "30" in out
+        # The prefix gutter should contain "30" lined up before the
+        # `-` and `+` markers, not "1" or "2".
+        assert "   1    1" not in out
