@@ -69,6 +69,14 @@ class MinimalRenderer(Renderer):
         super().__init__()
         self.con = console
         self._live: Live | None = None
+        # Marquee resize-recovery state: terminal width and total cols
+        # written by the last `stream_chunk`. When the terminal is
+        # resized smaller mid-stream, the previous paint reflows onto
+        # multiple lines that `\r` alone can't reach. Tracking the prior
+        # paint lets us erase exactly those reflowed lines on the next
+        # chunk. Reset to 0 in `stream_end`.
+        self._last_term_w: int = 0
+        self._last_painted_w: int = 0
 
     @property
     def _prefix(self) -> str:
@@ -291,6 +299,31 @@ class MinimalRenderer(Renderer):
         dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
         self._p(f"└─ {status} {label}{dur}", highlight=False)
 
+    def _erase_reflowed_marquee(self) -> None:
+        """If the terminal shrank since the last paint, the previous
+        paint's content has been retroactively wrapped across multiple
+        lines and a bare `\\r` only reaches the bottom one. Compute how
+        many lines that paint now occupies at the new width and erase
+        them all (current line + N-1 lines above) so the next paint
+        starts on a clean line where the original paint began.
+
+        Safe to call when no resize happened — falls through.
+        """
+        if not (self._last_term_w and self._last_painted_w):
+            return
+        new_w = self.con.width
+        if new_w <= 0 or new_w == self._last_term_w:
+            return
+        # Ceil division: how many `new_w`-wide rows the prior paint now
+        # occupies after the terminal's reflow.
+        wrap_count = max(1, (self._last_painted_w + new_w - 1) // new_w)
+        if wrap_count <= 1:
+            return  # widened (or no change) — `\r` + pad still cleans up
+        f = self.con.file
+        for _ in range(wrap_count - 1):
+            f.write("\r\x1b[K\x1b[1A")
+        f.write("\r\x1b[K")
+
     def stream_chunk(self, text: str) -> None:
         if self.is_capturing:
             # Skip streaming in capture mode (parallel delegates).
@@ -300,6 +333,7 @@ class MinimalRenderer(Renderer):
             self._stream_buf = ""
         self._stream_buf += text
         if self.con.file:
+            self._erase_reflowed_marquee()
             prefix = f"{self._prefix}  ◌ " if self._depth > 0 else "  ◌ "
             max_width = self.con.width - _display_width(prefix) - 1
             # Show the tail of accumulated text (marquee effect)
@@ -308,15 +342,22 @@ class MinimalRenderer(Renderer):
             pad = max_width - _display_width(visible)
             self.con.file.write(f"\r{prefix}{visible}{' ' * pad}")
             self.con.file.flush()
+            # Track this paint so a subsequent shrink can erase it.
+            self._last_term_w = self.con.width
+            self._last_painted_w = _display_width(prefix) + max_width
 
     def stream_end(self) -> None:
         self._stream_buf = ""
         if self.is_capturing:
             return
         if self.con.file:
-            # Clear the streaming line
+            # Resize may have left reflowed remnants — clean those up
+            # before the single-line clear below.
+            self._erase_reflowed_marquee()
             self.con.file.write(f"\r{' ' * self.con.width}\r")
             self.con.file.flush()
+            self._last_term_w = 0
+            self._last_painted_w = 0
 
     def dispatch_progress(
         self,

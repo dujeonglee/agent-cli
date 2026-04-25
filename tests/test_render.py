@@ -354,6 +354,124 @@ class TestTruncateToWidth:
         assert _display_width(result) <= 30
 
 
+class TestStreamMarqueeResize:
+    """When the terminal shrinks mid-stream, the previously painted
+    line gets retroactively wrapped onto several lines. A bare `\\r`
+    only reaches the bottom of those lines, so without cleanup the
+    upper rows linger as visible residue. The renderer tracks the
+    prior paint width and emits ANSI line-erase sequences before the
+    next paint to clear all reflowed rows.
+
+    Tests assert on the specific ANSI escape codes
+    (`\\x1b[K` = erase line, `\\x1b[1A` = cursor up) since that's the
+    contract with the terminal."""
+
+    def _renderer_with_width(self, width):
+        from rich.console import Console
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=width)
+        return MinimalRenderer(console), buf, console
+
+    def _set_width(self, console, new_width):
+        # Rich's Console.width property reads from `_width` (the value
+        # passed at construction). Mutate it to simulate a resize.
+        console._width = new_width
+
+    def test_no_resize_no_extra_escapes(self):
+        """When width is stable across chunks, the second paint must
+        not emit cursor-up sequences — just the regular `\\r` overwrite."""
+        renderer, buf, console = self._renderer_with_width(80)
+        renderer.stream_chunk("first")
+        before = buf.getvalue()
+        renderer.stream_chunk(" second")
+        delta = buf.getvalue()[len(before) :]
+        assert "\x1b[1A" not in delta  # no cursor-up
+        # `\x1b[K` may appear from other Rich machinery, but our erase
+        # sequence specifically pairs it with cursor-up — the absence
+        # of `\x1b[1A` is the meaningful assertion.
+
+    def test_shrink_emits_cleanup_sequence(self):
+        """After shrinking from 80 to 40, the previous 79-col paint
+        now wraps to ceil(79/40)=2 lines. Cleanup must move up once
+        and erase, then erase the (originally bottom) current line —
+        exactly one `\\x1b[1A` and at least two `\\x1b[K` per paint."""
+        renderer, buf, console = self._renderer_with_width(80)
+        renderer.stream_chunk("first chunk")
+        before = buf.getvalue()
+
+        self._set_width(console, 40)
+        renderer.stream_chunk(" second")
+        delta = buf.getvalue()[len(before) :]
+
+        # 2 reflowed lines → 1 cursor-up + 2 line-erases (one per row).
+        assert delta.count("\x1b[1A") == 1
+        assert delta.count("\x1b[K") == 2
+
+    def test_aggressive_shrink_more_cleanup(self):
+        """80 → 20 wraps the 79-col prior paint to ceil(79/20)=4 lines.
+        Cleanup must walk up 3 rows, erasing each, then erase the
+        starting row → 3 cursor-ups, 4 line-erases."""
+        renderer, buf, console = self._renderer_with_width(80)
+        renderer.stream_chunk("first")
+        before = buf.getvalue()
+
+        self._set_width(console, 20)
+        renderer.stream_chunk(" more")
+        delta = buf.getvalue()[len(before) :]
+
+        assert delta.count("\x1b[1A") == 3
+        assert delta.count("\x1b[K") == 4
+
+    def test_widening_no_cleanup(self):
+        """Enlarging the terminal doesn't reflow — the previous narrow
+        paint still occupies one line. No cursor-up should fire."""
+        renderer, buf, console = self._renderer_with_width(40)
+        renderer.stream_chunk("hi")
+        before = buf.getvalue()
+
+        self._set_width(console, 100)
+        renderer.stream_chunk(" there")
+        delta = buf.getvalue()[len(before) :]
+
+        assert "\x1b[1A" not in delta
+
+    def test_stream_end_resets_state(self):
+        """After stream_end, the resize-recovery state is cleared so
+        the next stream's first chunk doesn't try to erase lines from
+        the previous (now-finished) marquee."""
+        renderer, _, console = self._renderer_with_width(80)
+        renderer.stream_chunk("hello")
+        assert renderer._last_term_w == 80
+        renderer.stream_end()
+        assert renderer._last_term_w == 0
+        assert renderer._last_painted_w == 0
+
+        # New stream, immediate shrink — must NOT emit cleanup since
+        # state was reset (no prior paint to clean up).
+        buf2 = StringIO()
+        from rich.console import Console
+
+        renderer.con = Console(file=buf2, force_terminal=True, width=40)
+        renderer.stream_chunk("fresh")
+        out = buf2.getvalue()
+        assert "\x1b[1A" not in out
+
+    def test_capture_mode_skips_paint_and_state(self):
+        """In capture mode (parallel delegates), stream_chunk returns
+        early. The resize state must not be touched, so a later
+        non-capture chunk doesn't compare against ghost state."""
+        renderer, buf, console = self._renderer_with_width(80)
+        renderer.start_capture()
+        try:
+            renderer.stream_chunk("captured")
+        finally:
+            renderer.stop_capture()
+        assert renderer._last_term_w == 0
+        assert renderer._last_painted_w == 0
+
+
 class TestGroupDelegatingFunctions:
     """Test render_group_start / render_group_end wrappers."""
 
