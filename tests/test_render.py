@@ -260,6 +260,100 @@ class TestGroupRendering:
         _capture_direct(run)
 
 
+class TestDisplayWidth:
+    """Marquee paint depends on `_display_width` matching what the
+    terminal actually draws. Underestimating CJK widths causes the
+    paint to overflow the terminal, wrap, and stack on new lines
+    instead of overwriting in place. Pin the behavior on the chars
+    LLMs emit constantly in Korean output."""
+
+    def test_ascii_unchanged(self):
+        from agent_cli.render.minimal import _display_width
+
+        assert _display_width("Hello, world!") == 13
+
+    def test_korean_hangul_double_width(self):
+        from agent_cli.render.minimal import _display_width
+
+        assert _display_width("안녕하세요") == 10
+
+    def test_ambiguous_chars_count_as_wide(self):
+        """`…` `—` `─` `※` `→` are East Asian Ambiguous — macOS Terminal
+        and iTerm2 in Korean locale render these as 2 columns. We must
+        count them as 2 to match what the terminal draws."""
+        from agent_cli.render.minimal import _display_width
+
+        assert _display_width("…") == 2
+        assert _display_width("—") == 2
+        assert _display_width("─") == 2
+        assert _display_width("※") == 2
+        assert _display_width("→") == 2
+
+    def test_marquee_overflow_repro(self):
+        """Repro of the symptom: '─── 진행 중 ───' was previously counted
+        as 15 cols but rendered as 21 in CJK terminals — a 6-col
+        underestimate that overflowed any reasonable marquee width."""
+        from agent_cli.render.minimal import _display_width
+
+        assert _display_width("─── 진행 중 ───") == 21
+
+    def test_emoji_wide(self):
+        from agent_cli.render.minimal import _display_width
+
+        # Single-codepoint emoji is W (Wide) → 2 cols.
+        assert _display_width("🤖") == 2
+
+    def test_empty_string(self):
+        from agent_cli.render.minimal import _display_width
+
+        assert _display_width("") == 0
+
+
+class TestTruncateToWidth:
+    """Marquee tail-truncation must agree with `_display_width` so that
+    the painted line never exceeds the terminal. The "…" prefix is
+    itself Ambiguous (2 cols)."""
+
+    def test_no_truncation_when_fits(self):
+        from agent_cli.render.minimal import _truncate_to_width
+
+        assert _truncate_to_width("hello", 10) == "hello"
+
+    def test_truncates_long_ascii(self):
+        from agent_cli.render.minimal import (
+            _display_width,
+            _truncate_to_width,
+        )
+
+        result = _truncate_to_width("0123456789abcdef", 10)
+        assert result.startswith("…")
+        assert _display_width(result) <= 10
+
+    def test_truncates_korean_within_budget(self):
+        from agent_cli.render.minimal import (
+            _display_width,
+            _truncate_to_width,
+        )
+
+        # 한글 9자 = 18 cols. Budget 10 → must shorten.
+        text = "안녕하세요반가워요"
+        result = _truncate_to_width(text, 10)
+        assert result.startswith("…")
+        assert _display_width(result) <= 10
+
+    def test_ambiguous_heavy_string_within_budget(self):
+        """The original bug's input — must fit even when packed with
+        Ambiguous chars that previously fooled the width calc."""
+        from agent_cli.render.minimal import (
+            _display_width,
+            _truncate_to_width,
+        )
+
+        text = "분석 중입니다… 결과: ─── 진행 중 ─── 30% → 60%"
+        result = _truncate_to_width(text, 30)
+        assert _display_width(result) <= 30
+
+
 class TestGroupDelegatingFunctions:
     """Test render_group_start / render_group_end wrappers."""
 

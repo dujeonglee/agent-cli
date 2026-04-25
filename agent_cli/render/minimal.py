@@ -14,6 +14,16 @@ from agent_cli.render.base import Renderer
 _MUTED = "grey46"
 
 
+# East Asian "Ambiguous" (A) chars — `…` `—` `─` `※` `→` `《》` etc. — are
+# rendered as 2 columns in CJK-locale terminals (macOS Terminal.app and
+# iTerm2 with Korean/Japanese/Chinese locale). Counting them as 1 caused
+# the marquee to underestimate paint width, overflow the terminal, and
+# wrap onto new lines instead of overwriting in place. We assume
+# ambiguous = wide so the calculation is correct in CJK terminals and
+# only mildly conservative (a column or two of unused tail) elsewhere.
+_WIDE_EAW = ("W", "F", "A")
+
+
 def _display_width(text: str) -> int:
     """Calculate display width accounting for CJK double-width characters."""
     import unicodedata
@@ -21,7 +31,7 @@ def _display_width(text: str) -> int:
     w = 0
     for ch in text:
         eaw = unicodedata.east_asian_width(ch)
-        w += 2 if eaw in ("W", "F") else 1
+        w += 2 if eaw in _WIDE_EAW else 1
     return w
 
 
@@ -32,12 +42,16 @@ def _truncate_to_width(text: str, max_width: int) -> str:
     total = _display_width(text)
     if total <= max_width:
         return text
-    # Drop characters from the front until it fits (with … prefix)
-    target = max_width - 1  # reserve 1 for …
+    # Reserve `…`'s actual rendered width (Ambiguous → 2 cols on CJK
+    # terminals). Reserving only 1 used to put the truncated string 1
+    # col over budget once we started counting Ambiguous as wide.
+    target = max_width - _display_width("…")
+    if target < 0:
+        target = 0
     w = 0
     for i in range(len(text) - 1, -1, -1):
         eaw = unicodedata.east_asian_width(text[i])
-        cw = 2 if eaw in ("W", "F") else 1
+        cw = 2 if eaw in _WIDE_EAW else 1
         if w + cw > target:
             return "…" + text[i + 1 :]
         w += cw
