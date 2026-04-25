@@ -742,6 +742,58 @@ class TestFrameWidthAlignment:
         # The old Braille frame literal must be gone.
         assert "⣾" not in src
 
+    def test_parallel_delegate_uses_frameclock(self):
+        """The throttle/advance logic must live in `FrameClock` (the
+        shared single-source-of-truth in render.minimal), not be
+        copy-pasted into delegate.py. Regression of this duplication
+        risks the two spinners drifting in cadence again."""
+        import inspect
+
+        from agent_cli.tools import delegate
+
+        src = inspect.getsource(delegate)
+        assert "FrameClock" in src
+        # The hand-rolled throttle pattern must NOT reappear in code.
+        # (Comments mentioning `_FRAME_INTERVAL` are fine; the give-away
+        # is `last_advance`, which only the open-coded form needs.)
+        assert "last_advance" not in src
+
+
+class TestFrameClock:
+    """`FrameClock` advances frames at most once per `_FRAME_INTERVAL`
+    regardless of how often `current()` is polled. Exercising this in
+    isolation guarantees both `spinner_start` and the parallel-delegate
+    Live panel get the same cadence."""
+
+    def test_frozen_clock_holds_frame(self, monkeypatch):
+        import time as _time
+
+        from agent_cli.render.minimal import FrameClock, _THINK_FRAMES
+
+        monkeypatch.setattr(_time, "monotonic", lambda: 0.0)
+        clock = FrameClock(_THINK_FRAMES)
+        first = clock.current()
+        for _ in range(50):
+            assert clock.current() == first
+
+    def test_advances_after_interval(self, monkeypatch):
+        import time as _time
+
+        from agent_cli.render.minimal import (
+            FrameClock,
+            _FRAME_INTERVAL,
+            _THINK_FRAMES,
+        )
+
+        now = [0.0]
+        monkeypatch.setattr(_time, "monotonic", lambda: now[0])
+        clock = FrameClock(_THINK_FRAMES)
+        seen = set()
+        for _ in range(len(_THINK_FRAMES) + 1):
+            seen.add(clock.current())
+            now[0] += _FRAME_INTERVAL + 0.01
+        assert set(_THINK_FRAMES).issubset(seen)
+
 
 class TestGroupDelegatingFunctions:
     """Test render_group_start / render_group_end wrappers."""

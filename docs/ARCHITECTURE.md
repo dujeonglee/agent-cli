@@ -61,7 +61,7 @@ agent_cli/
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
 │   ├── base.py              (181)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드, observation success 인자)
-│   └── minimal.py           (494)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner (delegate 병렬 패널과 공유), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
+│   └── minimal.py           (512)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, `FrameClock` 공유 (delegate 병렬 패널이 동일 cadence로 reuse), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
@@ -88,7 +88,7 @@ agent_cli/
 │   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult
 │   ├── shell_artifact.py    (249)  Shell stdout 대용량 가드: 한도 초과 시 `<session>/shell/`에 저장하고 head/tail 미리보기로 치환, LRU 회전
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
-│   ├── delegate.py          (708)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널 with _THINK_FRAMES, subdir, agent_stack, stop_event)
+│   ├── delegate.py          (700)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
 │   ├── context.py           (106)  read_context 도구 (세션 목록 + 키워드 검색)
 │
 ├── context/                        컨텍스트 관리

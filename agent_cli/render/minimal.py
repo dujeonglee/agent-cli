@@ -91,6 +91,32 @@ _TALK_FRAMES = _pad_to_width(_TALK_FRAMES_RAW)
 _THINK_FRAMES = _pad_to_width(_THINK_FRAMES_RAW)
 
 
+class FrameClock:
+    """Time-throttled cyclic frame advancer.
+
+    Single source of truth for the animation cadence: both
+    `spinner_start()` (single-task thinking spinner) and the
+    parallel-delegate Live panel call this so they advance frames at
+    exactly the same rate. `current()` is meant to be called from a
+    repaint callback — it returns the frame to draw *now*, advancing
+    only if `_FRAME_INTERVAL` has elapsed since the last advance.
+    """
+
+    def __init__(self, frames: tuple[str, ...]):
+        self._frames = frames
+        self._idx = 0
+        self._last = 0.0
+
+    def current(self) -> str:
+        import time
+
+        now = time.monotonic()
+        if now - self._last >= _FRAME_INTERVAL:
+            self._idx += 1
+            self._last = now
+        return self._frames[self._idx % len(self._frames)]
+
+
 def _truncate_to_width(text: str, max_width: int) -> str:
     """Truncate text from the left to fit within max_width display columns."""
     import unicodedata
@@ -329,21 +355,13 @@ class MinimalRenderer(Renderer):
             # `_THINK_FRAMES` are self-describing (face + thought bubble
             # progression), so a `message` is optional — only prepended
             # when callers want to add context (e.g. "loading model").
-            # Throttle to 1 frame per `_FRAME_INTERVAL` for readability;
-            # Rich's refresh rate (10 fps) drives the redraw cadence.
-            idx = [0]
-            last_advance = [0.0]
+            # `FrameClock` enforces the shared `_FRAME_INTERVAL` cadence
+            # used here AND by the parallel-delegate Live panel.
+            clock = FrameClock(_THINK_FRAMES)
 
             def get_renderable():
-                import time
-
-                now = time.monotonic()
-                if now - last_advance[0] >= _FRAME_INTERVAL:
-                    idx[0] += 1
-                    last_advance[0] = now
-                frame = _THINK_FRAMES[idx[0] % len(_THINK_FRAMES)]
                 msg = f"{message} " if message else ""
-                return Text(f"{prefix}  {msg}{frame}", style=_MUTED)
+                return Text(f"{prefix}  {msg}{clock.current()}", style=_MUTED)
 
             self._live = Live(
                 get_renderable(),
