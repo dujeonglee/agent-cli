@@ -40,6 +40,7 @@ JSON envelope drift, tool name 환각, action_input 스키마 위반, 무한 루
 | A3 | `action` 필드 누락 | parser 성공, but `action is None` |
 | A4 | 알 수 없는 tool name | parser 성공, but `action not in tool_registry` |
 | A5 | `action_input` 스키마 불일치 | tool dispatch에서 거부 |
+| A6 | Nested envelope (이중 래핑된 complete) | `complete` action_input.result 가 다시 `{"result": "..."}` JSON 객체로 파싱됨 (qwen3.5/3.6 계열에서 관찰) |
 
 ### Layer B — 행동 실패 (다중 턴 관찰 필요)
 
@@ -124,6 +125,7 @@ Output: Intervention (텍스트 주입 | 파라미터 조정 | 상태 리셋)
 | A3 | echo_prior_output + probe_schema | + constrain_format | |
 | A4 | probe_tool_name | + constrain_action | |
 | A5 | echo_diff + probe_schema | + constrain_format | |
+| A6 | (관찰만 — v1 라벨링 전용) | | |
 | B1 | probe_progress | + 파라미터 조정 (temp↓) | restate_task |
 | B2 | echo_last_action | + probe_progress | |
 | C1 | compact_history | | |
@@ -247,7 +249,8 @@ v1에선 **유혹돼도 안 들임**:
 | **2** | ✅ 완료 | Observability 추가. `Intervention` 타입 도입, `TurnRecord` JSONL 세션별 기록. CLI `--record-turns/--no-record-turns`. | 낮음 (additive) | 회복률 통계 jq로 dump 가능 |
 | **3** | ✅ 완료 | B1 (`ActionLoopDetector` + `probe_progress` + `restate_task`) 추가. 임계값 2, 옵션 (c) 채택 (level 1=probe, level 2=restate, level 3+=hard-fail; temp↓ 컬럼 제외). | 중간 (새 detector) | 인위적 loop 시나리오에서 ≤5턴 내 회복 ✓ |
 | **4a** | ✅ 완료 | A4·A5 detection을 recovery 레이어로 이동 (`detect_unknown_tool`, `detect_schema_mismatch`). pre-dispatch에서 라벨링. `_execute_single_tool` 내부 중복 검증 제거 + `_dispatch_tool_with_hooks`로 리네임. 별도 primitive는 데이터 보고 4b에서 결정 — 알면서 남긴 부채는 `REMAINING_DEBT.md` 기록. | 낮음 (additive + rename) | A4/A5 TurnRecord에 라벨 기록 ✓ |
-| **4b** | 데이터 누적 후 | TurnRecord 통계로 회복률 측정 → 필요하면 `probe_tool_name` / `echo_diff` 등 primitive 추가 + playbook 매핑. | 낮음 (data-driven) | 측정값 기반 결정 |
+| **4a-1** | ✅ 완료 | A6 (Nested envelope) 추가 — `detect_nested_envelope` 라벨링 전용. 자동 unwrap 안 함 (anti-patchwork: 측정 후 결정). qwen3.5/3.6 계열에서 관찰된 `complete.action_input.result == '{"result": ...}'` 이중 래핑 패턴. | 낮음 (additive, observe-only) | A6 TurnRecord에 라벨 기록 ✓ |
+| **4b** | 데이터 누적 후 | TurnRecord 통계로 회복률 측정 → 필요하면 `probe_tool_name` / `echo_diff` / A6 unwrap 등 primitive 추가 + playbook 매핑. | 낮음 (data-driven) | 측정값 기반 결정 |
 
 각 step은 독립 커밋. CLAUDE.md 규칙 준수: 유닛 테스트 + ruff + README.md/ARCHITECTURE.md 업데이트
 + regression 0 후 단일 커밋·푸쉬.

@@ -49,9 +49,9 @@ agent_cli/
 ├── constants.py             (~95)  공유 상수 + 실패 회복 retry thin-wrapper (`format_no_json_retry` / `format_no_action_retry` — `recovery/primitives.py` 합성)
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export
-│   ├── detectors.py         (~140) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, validate_tool_input wrap)
+│   ├── detectors.py         (~180) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, validate_tool_input wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용)
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
-│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 5종 (NO_JSON / NO_ACTION / UNKNOWN_TOOL / SCHEMA_MISMATCH / ACTION_LOOP)
+│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 6종 (NO_JSON / NO_ACTION / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
 │   └── primitives.py        (~120) 순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`, `probe_progress`, `restate_task`) — provider/모델/채널 이름 모름
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
@@ -608,6 +608,15 @@ A5: outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
 **`_dispatch_tool_with_hooks` 내부 검증 제거됨:** Step 4a 전엔 `_execute_single_tool` 안에서도 `validate_tool_input` 호출 + `tool_name in tools_list` 체크가 있었음. 이젠 recovery 레이어가 단일 진실 원천 — 중복 제거. 단, `tools/__init__.py:execute_tool`의 boundary 방어는 유지 (공개 API + 테스트가 직접 의존).
 
 **남은 부채:** 이 작업 중 *알면서 남긴* 부채는 `docs/robust-harness/REMAINING_DEBT.md`에 명시 기록.
+
+#### A6 — Nested Envelope Detection (관찰 전용)
+
+`complete` action의 결과 페이로드가 다시 `{"result": "..."}` JSON 객체로 래핑되어 들어오는 경우 — qwen3.5/3.6 계열에서 산발적으로 관찰됨. 사용자에게 `✅ {"result": "..."}` 같은 문자열이 그대로 표시되는 UX 회귀로 이어짐.
+
+- **감지** — `detect_nested_envelope(result_value)` → `str` 인지 확인 → `lstrip().startswith('{"result"')` → `json.loads` 성공 → 결과 dict의 top-level `result` 키 존재. 한 단계라도 실패하면 false (오탐 방지).
+- **위치** — `loop.py`의 `complete` 분기, `answer` 결정 *직후*. 라벨링만 하고 출력은 그대로 둠.
+- **라벨** — `outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE` (TurnRecord에 기록).
+- **자동 unwrap 안 함 (의도적)** — 빈도·재현 모델 분포 측정 후 4b에서 결정. v1에서 unwrap을 하면 (a) 모델이 의도적으로 그렇게 답한 경우 데이터를 잃고 (b) anti-patchwork 원칙(측정 후 결정) 위반.
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 

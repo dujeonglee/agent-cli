@@ -147,3 +147,35 @@ def detect_schema_mismatch(
     if valid:
         return (False, None, normalized)
     return (True, err, normalized)
+
+
+def detect_nested_envelope(result_value: Any) -> bool:
+    """Stateless A6 detector: does the complete result wrap another envelope?
+
+    Some models (notably qwen3.5/3.6 family) double-wrap the complete
+    action's payload — they emit
+    ``{"action":"complete","action_input":{"result":"<JSON of {result:...}>"}}``
+    instead of the intended single-level envelope. The user-facing
+    answer ends up prefixed with a literal ``{"result": "..."}`` artifact.
+
+    Returns True when ``result_value`` is a string that successfully
+    parses as a JSON object containing a top-level ``result`` key.
+    Strings that merely *start* with ``{"result"`` but fail to parse
+    are not flagged — false positives on legitimate text that happens
+    to look like JSON would corrupt observability data more than
+    missed cases.
+
+    v1: detection only; the caller does NOT auto-unwrap. TurnRecord
+    captures occurrences so Step 4b can decide remediation based on
+    measured frequency.
+    """
+    if not isinstance(result_value, str):
+        return False
+    stripped = result_value.lstrip()
+    if not stripped.startswith('{"result"'):
+        return False
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return isinstance(parsed, dict) and "result" in parsed

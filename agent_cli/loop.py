@@ -26,11 +26,13 @@ from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
+    detect_nested_envelope,
     detect_schema_mismatch,
     detect_unknown_tool,
 )
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
+    FAILURE_NESTED_ENVELOPE,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
     FAILURE_SCHEMA_MISMATCH,
@@ -461,16 +463,25 @@ class AgentLoop:
                     else "(Completed without result — model may lack capability for this task)"
                 )
             elif isinstance(parsed.action_input, str):
+                raw = parsed.action_input
                 answer = (
                     parsed.action_input
                     or "(Completed without result — model may lack capability for this task)"
                 )
             else:
+                raw = None
                 answer = (
                     str(parsed.action_input)
                     if parsed.action_input
                     else "(Completed without result — model may lack capability for this task)"
                 )
+
+            # A6 (Nested envelope) — observe-only, no auto-unwrap. The
+            # answer is preserved as-is so user-visible behaviour does
+            # not change; remediation policy is deferred to Step 4b
+            # once TurnRecord measures occurrence frequency.
+            if detect_nested_envelope(raw):
+                outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE
 
             if self.ctx:
                 self.ctx.add(

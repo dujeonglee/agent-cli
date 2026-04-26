@@ -13,6 +13,7 @@ import pytest
 
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
+    detect_nested_envelope,
     detect_schema_mismatch,
     detect_unknown_tool,
 )
@@ -230,3 +231,50 @@ class TestDetectSchemaMismatch:
         result = detect_schema_mismatch("read_file", {"path": "x"})
         assert isinstance(result, tuple)
         assert len(result) == 3
+
+
+class TestDetectNestedEnvelope:
+    """Stateless A6 detector — flags double-wrapped complete payloads.
+
+    The detector observes only — it does not auto-unwrap. Tests verify
+    the structural rule (string starting with ``{"result"`` that parses
+    as a JSON object containing a top-level ``result`` key) without
+    asserting on remediation behavior.
+    """
+
+    def test_non_string_returns_false(self):
+        assert detect_nested_envelope(None) is False
+        assert detect_nested_envelope(42) is False
+        assert detect_nested_envelope({"result": "x"}) is False
+        assert detect_nested_envelope(["result"]) is False
+
+    def test_plain_text_returns_false(self):
+        assert detect_nested_envelope("hello world") is False
+        assert detect_nested_envelope("") is False
+
+    def test_string_not_starting_with_result_key_returns_false(self):
+        # A JSON object that doesn't start with the result key is not
+        # the double-wrap pattern we're targeting.
+        assert detect_nested_envelope('{"answer": "x"}') is False
+        assert detect_nested_envelope('{"data": {"result": "x"}}') is False
+
+    def test_malformed_json_returns_false(self):
+        # Strings that look like the envelope but fail to parse must
+        # not be flagged — false positives would corrupt observability.
+        assert detect_nested_envelope('{"result": ') is False
+        assert detect_nested_envelope('{"result": "unterminated') is False
+
+    def test_valid_nested_envelope_returns_true(self):
+        assert detect_nested_envelope('{"result": "the actual answer"}') is True
+
+    def test_envelope_with_leading_whitespace_returns_true(self):
+        assert detect_nested_envelope('  \n{"result": "x"}') is True
+
+    def test_envelope_with_extra_keys_still_flags(self):
+        # If the parsed object has a top-level result key, it's the
+        # nested-envelope pattern — extra siblings don't disqualify.
+        assert detect_nested_envelope('{"result": "x", "trace": "y"}') is True
+
+    def test_non_object_json_returns_false(self):
+        # A JSON array or scalar cannot be the nested envelope.
+        assert detect_nested_envelope('["result"]') is False

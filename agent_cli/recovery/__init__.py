@@ -9,12 +9,14 @@ abstraction lives in the Provider Layer.
 
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
+    detect_nested_envelope,
     detect_schema_mismatch,
     detect_unknown_tool,
 )
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
+    FAILURE_NESTED_ENVELOPE,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
     FAILURE_SCHEMA_MISMATCH,
@@ -42,9 +44,11 @@ __all__ = [
     "ActionLoopDetector",
     "detect_unknown_tool",
     "detect_schema_mismatch",
+    "detect_nested_envelope",
     "FAILURE_NO_JSON",
     "FAILURE_NO_ACTION",
     "FAILURE_UNKNOWN_TOOL",
     "FAILURE_SCHEMA_MISMATCH",
+    "FAILURE_NESTED_ENVELOPE",
     "FAILURE_ACTION_LOOP",
 ]

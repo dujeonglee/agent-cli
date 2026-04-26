@@ -442,6 +442,51 @@ class TestRunLoopObservability:
         # No turns.jsonl should be created anywhere under tmp_path
         assert list(tmp_path.glob("**/turns.jsonl")) == []
 
+    def test_nested_envelope_records_signal_observe_only(self, caps, tmp_path):
+        """A6: model double-wraps the complete payload — detector flags
+        the failure but does NOT auto-unwrap. The user-visible answer
+        is still the raw (nested) string. We're observing trends before
+        deciding remediation (DESIGN.md §4 measure-before-build)."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        # Model emits {"action":"complete","action_input":{"result":"<JSON>"}}
+        # where the inner result is itself a JSON envelope.
+        nested = json.dumps({"result": "the actual story"})
+        provider = _make_provider(_complete(nested))
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert len(rows) == 1
+        assert rows[0]["failure_signal"] == "NESTED_ENVELOPE"
+        # Observe-only: no recovery primitives applied for A6 in v1
+        assert rows[0]["primitives_applied"] == []
+        # Output preserved as-is — caller still sees the wrapped string
+        assert result.output == nested
+
+    def test_well_formed_complete_does_not_flag_nested_envelope(self, caps, tmp_path):
+        """Plain text result must NOT trigger the A6 detector."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("just a plain answer"))
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] is None
+
 
 def _shell_call(cmd: str) -> str:
     """Build a shell tool call as a JSON envelope."""

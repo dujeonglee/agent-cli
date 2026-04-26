@@ -32,6 +32,9 @@ FAILURE_NO_JSON = "NO_JSON"  # A1: parser stage 0 (no JSON at all)
 FAILURE_NO_ACTION = "NO_ACTION"  # A3: JSON parsed but action field missing
 FAILURE_UNKNOWN_TOOL = "UNKNOWN_TOOL"  # A4: action references a tool not in registry
 FAILURE_SCHEMA_MISMATCH = "SCHEMA_MISMATCH"  # A5: action_input violates tool schema
+FAILURE_NESTED_ENVELOPE = (
+    "NESTED_ENVELOPE"  # A6: complete result wraps another envelope
+)
 FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
 
 
