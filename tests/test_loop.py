@@ -294,6 +294,155 @@ class TestRunLoopParseFailure:
         assert result.output == "recovered"
 
 
+class TestRunLoopObservability:
+    """End-to-end checks that TurnRecord JSONL is written correctly.
+
+    These tests use a real ContextManager pointed at tmp_path so the
+    recorder has a session_dir to write to. Records are read back via
+    the JSONL file rather than mocking the recorder — the file *is* the
+    contract analysis tools depend on.
+    """
+
+    def _read_turns(self, session_dir):
+        path = session_dir / "turns.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+    def test_success_turn_records_no_failure(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("answer"))
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            ctx=ctx,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert len(rows) == 1
+        assert rows[0]["model"] == "test-model"
+        assert rows[0]["failure_signal"] is None
+        assert rows[0]["primitives_applied"] == []
+        # parse_stage > 0 means parser succeeded somewhere
+        assert rows[0]["parse_stage"] >= 1
+
+    def test_no_json_failure_records_signal_and_primitives(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content="not json at all"),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+
+        rows = self._read_turns(tmp_path)
+        # First row: failure with primitives composed
+        assert rows[0]["failure_signal"] == "NO_JSON"
+        assert rows[0]["parse_stage"] == 0
+        assert rows[0]["primitives_applied"] == [
+            "echo_prior_output",
+            "constrain_format_json",
+        ]
+        # Second row: recovery (success, no primitives)
+        assert rows[1]["failure_signal"] is None
+        assert rows[1]["primitives_applied"] == []
+
+    def test_no_action_failure_records_signal(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        # JSON parses but lacks action field
+        no_action_json = json.dumps({"thought": "hmm", "args": {}})
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=no_action_json),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] == "NO_ACTION"
+        # parse_stage is >0 because JSON itself parsed
+        assert rows[0]["parse_stage"] >= 1
+        assert rows[0]["primitives_applied"] == [
+            "echo_prior_output",
+            "constrain_action_required",
+        ]
+
+    def test_seq_increments_across_turns(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content="garbage 1"),
+            LLMResponse(content="garbage 2"),
+            LLMResponse(content=_complete("ok")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert len(rows) >= 3
+        assert [r["seq"] for r in rows[:3]] == [0, 1, 2]
+
+    def test_opt_out_writes_no_file(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("answer"))
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            record_turns=False,
+        )
+        assert not (tmp_path / "turns.jsonl").exists()
+
+    def test_no_session_writes_no_file(self, caps, tmp_path):
+        # ctx=None → headless / subagent path. Recorder must remain
+        # disabled even when the flag is on (no place to write).
+        provider = _make_provider(_complete("answer"))
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=None,
+            record_turns=True,
+        )
+        # No turns.jsonl should be created anywhere under tmp_path
+        assert list(tmp_path.glob("**/turns.jsonl")) == []
+
+
 class TestRunLoopMaxIter:
     def test_returns_none_on_max_turns(self, caps):
         provider = _make_provider(

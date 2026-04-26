@@ -616,6 +616,11 @@ def run(
         "--style",
         help="Renderer style: minimal (default) or custom renderer name",
     ),
+    record_turns: bool = typer.Option(
+        True,
+        "--record-turns/--no-record-turns",
+        help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
+    ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     _apply_style(style)
@@ -744,6 +749,7 @@ def run(
             session=session,
             mcp_manager=mcp_manager,
             hooks_config=_disk_hooks,
+            record_turns=record_turns,
         )
         answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
@@ -906,6 +912,11 @@ def chat(
         None,
         "--style",
         help="Renderer style: minimal (default) or custom renderer name",
+    ),
+    record_turns: bool = typer.Option(
+        True,
+        "--record-turns/--no-record-turns",
+        help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
 ):
     """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
@@ -1176,6 +1187,7 @@ def chat(
             graceful_interrupt=True,
             mcp_manager=mcp_manager,
             hooks_config=_disk_hooks,
+            record_turns=record_turns,
         )
         result = loop_result.output if loop_result.success else None
 

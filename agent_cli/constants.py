@@ -1,5 +1,6 @@
 """Shared constants for agent-cli."""
 
+from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import (
     constrain_action_required,
     constrain_format_json,
@@ -45,21 +46,24 @@ SYSTEM_USER_PREFIXES: tuple[str, ...] = (
 )
 
 
-def format_no_json_retry(*, prior_content: str = "") -> str:
-    """Build the retry hint shown when an LLM response failed to parse as JSON.
+def format_no_json_retry(*, prior_content: str = "") -> Intervention:
+    """Build the Intervention for an LLM response that failed to parse as JSON.
 
     Composes recovery primitives: echoes the model's prior output (failure
     grounding) and reminds the model of the required JSON envelope
     (constrain). Falls back to the static ``RETRY_HINT_NO_JSON`` when no
-    prior content is available — preserves the existing retry path.
+    echoable content is available.
+
+    Returns an :class:`Intervention` carrying both the user-role message
+    to inject and the names of primitives composed (for observability).
 
     Keyword-only to avoid silent positional misuse.
     """
     echo = echo_prior_output(prior_content)
     if not echo:
-        return RETRY_HINT_NO_JSON
+        return Intervention(message=RETRY_HINT_NO_JSON, primitives=[])
 
-    return "\n".join(
+    msg = "\n".join(
         [
             "Your response was not valid JSON.",
             "",
@@ -67,22 +71,30 @@ def format_no_json_retry(*, prior_content: str = "") -> str:
             "Honor that. " + constrain_format_json(),
         ]
     )
+    return Intervention(
+        message=msg,
+        primitives=["echo_prior_output", "constrain_format_json"],
+    )
 
 
-def format_no_action_retry(*, prior_content: str = "") -> str:
-    """Build the retry hint shown when JSON parsed but no action was provided.
+def format_no_action_retry(*, prior_content: str = "") -> Intervention:
+    """Build the Intervention when JSON parsed but no action was provided.
 
     Same failure-grounding rationale as ``format_no_json_retry``.
     """
     echo = echo_prior_output(prior_content)
     if not echo:
-        return RETRY_HINT_NO_ACTION
+        return Intervention(message=RETRY_HINT_NO_ACTION, primitives=[])
 
-    return "\n".join(
+    msg = "\n".join(
         [
             "Your JSON was parsed but has no action.",
             "",
             echo,
             "Honor that. " + constrain_action_required(),
         ]
+    )
+    return Intervention(
+        message=msg,
+        primitives=["echo_prior_output", "constrain_action_required"],
     )

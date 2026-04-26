@@ -190,6 +190,7 @@ agent-cli run "task description" [options]
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
+| `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
 
 `run` 실행 후 세션이 자동 저장됩니다. `chat --resume <id>`로 이어서 작업할 수 있습니다:
 
@@ -221,6 +222,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--resume <id>` | 이전 세션 이어서 작업 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
+| `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
 
 대화 중 명령어:
 

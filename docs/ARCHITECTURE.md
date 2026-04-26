@@ -49,6 +49,8 @@ agent_cli/
 ├── constants.py             (~95)  공유 상수 + 실패 회복 retry thin-wrapper (`format_no_json_retry` / `format_no_action_retry` — `recovery/primitives.py` 합성)
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive 재export
+│   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
+│   ├── observability.py     (~110) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied)
 │   └── primitives.py        (~70)  순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`) — provider/모델/채널 이름 모름
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
@@ -539,6 +541,26 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 **Primitive 계약 (누더기 방지):** primitive는 provider/모델/채널 이름을 절대 참조하지 않음. 새 실패 모드는 *primitive 합성과 매핑 한 줄*로 처리 — `if "ollama"`, `response.thinking` 같은 분기를 primitive 시그니처에 두면 invariant 위반.
 
 **Prefix 호환성:** retry 메시지 시작은 항상 정적 템플릿과 같은 문장 (`"Your response was not valid JSON."` / `"Your JSON was parsed but has no action."`)으로 시작하므로 `SYSTEM_USER_PREFIXES` 매칭이 그대로 유지됨 → resume 시 자연어 변환에서 noise로 표시되지 않음.
+
+#### Per-Turn Observability (`recovery/observability.py`)
+
+`format_no_*_retry`는 단순 문자열이 아니라 `Intervention` (message + primitives 이름) 을 반환합니다. `_handle_text_path`는 try/finally로 매 턴 한 번씩 `TurnRecorder.record()`를 호출 — 성공/실패/예외 모든 경로에서 정확히 한 줄이 기록됩니다.
+
+**스키마 (`TurnRecord`, `{session_dir}/turns.jsonl` 한 줄당 한 row):**
+- `seq` — 세션 내 모노토닉 (0, 1, 2, ...)
+- `model` — 어떤 모델이 응답했는지 (분석 시 그룹 키)
+- `timestamp` — ISO 8601 UTC
+- `parse_stage` — 0(실패), 1(json.loads), 2(json_repair), 3(regex)
+- `failure_signal` — `"NO_JSON"` / `"NO_ACTION"` / `null`
+- `primitives_applied` — 합성된 primitive 이름 list (실패 retry 시에만 채워짐)
+
+**프라이버시 계약:** 사용자 prompt나 LLM 응답 본문은 절대 기록되지 않음 — 구조 메타만. 회복률은 *저장하지 않고* 분석 시 walk-forward로 계산 (실패 row 다음 row의 failure_signal을 봐서 회복 여부 판단). retrospective 쓰기 회피.
+
+**활성화 조건:**
+- `ctx is not None` (headless·subagent에선 비활성)
+- `record_turns=True` (CLI: `--record-turns/--no-record-turns`, 기본 켜짐)
+
+**활용:** Step 3·4의 playbook 튜닝 데이터 누적이 주 목적. 분석은 별도 스크립트 (`jq`로도 충분). 자세한 설계는 `docs/robust-harness/DESIGN.md` §3.3.
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 

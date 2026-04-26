@@ -23,6 +23,11 @@ from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.recovery.observability import (
+    FAILURE_NO_ACTION,
+    FAILURE_NO_JSON,
+    TurnRecorder,
+)
 from agent_cli.render import (
     render_context_dump,
     render_header,
@@ -77,6 +82,7 @@ class AgentLoop:
         agent_name: str = "",
         mcp_manager=None,
         hook_runner=None,
+        record_turns: bool = True,
     ):
         self.query = query
         self.provider = provider
@@ -139,6 +145,13 @@ class AgentLoop:
         # Sentinels: distinct from None (failure) and str (answer)
         self._CONTINUE = object()  # keep looping
         self._RETRY = object()  # overflow retry
+
+        # Observability — per-turn record. Disabled when no session
+        # (headless / subagent) or when user opted out.
+        self.recorder = TurnRecorder(
+            session_dir=(self.ctx.session_dir if self.ctx else None),
+            enabled=record_turns,
+        )
 
     def _fire_hook(self, event: str, **kwargs):
         """Fire a hook event if runner is available. Returns HookContext or None."""
@@ -379,8 +392,41 @@ class AgentLoop:
         Recovery primitives consume only the emitted text (``llm_text``)
         — the thinking channel is intentionally excluded from the
         recovery path (see ``docs/robust-harness/DESIGN.md`` §2.2).
+
+        TurnRecord is emitted exactly once per call, regardless of which
+        terminal branch is taken (success/retry/exception). The retry
+        branch mutates ``primitives_applied`` before returning, then
+        the trailing block writes the record.
         """
         parsed = parse_react(llm_text)
+
+        # Classify outcome early; primitives_applied is filled later
+        # if the retry branch composes an Intervention.
+        if parsed.parse_stage == 0:
+            failure_signal = FAILURE_NO_JSON
+        elif not parsed.action:
+            failure_signal = FAILURE_NO_ACTION
+        else:
+            failure_signal = None
+        primitives_applied: list[str] = []
+
+        try:
+            return self._dispatch_text_path(llm_text, parsed, primitives_applied)
+        finally:
+            self.recorder.record(
+                model=self.model,
+                parse_stage=parsed.parse_stage,
+                failure_signal=failure_signal,
+                primitives_applied=primitives_applied,
+            )
+
+    def _dispatch_text_path(self, llm_text: str, parsed, primitives_applied: list[str]):
+        """Body of the text-parsing path. Returns a ToolResult or a sentinel.
+
+        ``primitives_applied`` is a mutable list owned by the caller —
+        the retry branch slice-assigns into it so the caller's
+        ``finally`` block can observe which primitives were composed.
+        """
 
         # 6. Thought
         if parsed.thought:
@@ -609,7 +655,7 @@ class AgentLoop:
                 "Response has no action. Retrying...",
                 self.turn,
             )
-            retry_msg = format_no_action_retry(prior_content=llm_text)
+            intervention = format_no_action_retry(prior_content=llm_text)
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
@@ -618,8 +664,12 @@ class AgentLoop:
                 "Invalid JSON response. Retrying...",
                 self.turn,
             )
-            retry_msg = format_no_json_retry(prior_content=llm_text)
-        _append_observation(self.messages, self.ctx, llm_text, retry_msg)
+            intervention = format_no_json_retry(prior_content=llm_text)
+        _append_observation(self.messages, self.ctx, llm_text, intervention.message)
+        # Surface composed primitive names to the enclosing _handle_text_path
+        # so the trailing finally-block records them. Slice-assign mutates
+        # the caller's list rather than rebinding our local.
+        primitives_applied[:] = intervention.primitives
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE
 
@@ -660,6 +710,7 @@ def run_loop(
     agent_name: str = "",
     mcp_manager=None,
     hook_runner=None,
+    record_turns: bool = True,
 ):
     """Run the ReAct agent loop. Returns ToolResult."""
     return AgentLoop(
@@ -689,6 +740,7 @@ def run_loop(
         agent_name=agent_name,
         mcp_manager=mcp_manager,
         hook_runner=hook_runner,
+        record_turns=record_turns,
     ).run()
 
 

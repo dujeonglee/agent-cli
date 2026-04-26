@@ -241,12 +241,12 @@ v1에선 **유혹돼도 안 들임**:
 
 각 단계마다 엄격한 테스트 + 문서 동시 업데이트.
 
-| Step | 작업 | 위험 | 성공 기준 |
-|---|---|---|---|
-| **1** | 기존 코드를 새 어휘로 재표현 (동작 변경 0). `format_no_*_retry`를 primitive 합성으로 분해, in-band/out-of-band 분리 명시화. | 낮음 (refactor) | 기존 테스트 전부 통과, 새 primitive 단위 테스트 추가 |
-| **2** | Observability 추가. `TurnRecord` JSONL 기록. | 낮음 (additive) | 회복률 통계 dump 가능 |
-| **3** | B1 (loop detector + `probe_progress`) 신규 추가. | 중간 (새 detector) | 인위적 loop 시나리오에서 ≤5턴 내 회복 |
-| **4** | 통계 보고 playbook 튜닝 / A4·A5 매핑 채우기. | 낮음 (data-driven) | 측정값 기반 결정 |
+| Step | 상태 | 작업 | 위험 | 성공 기준 |
+|---|---|---|---|---|
+| **1** | ✅ 완료 | 기존 코드를 새 어휘로 재표현 (동작 변경 0). `format_no_*_retry`를 primitive 합성으로 분해. | 낮음 (refactor) | 기존 테스트 전부 통과, 새 primitive 단위 테스트 추가 |
+| **2** | ✅ 완료 | Observability 추가. `Intervention` 타입 도입, `TurnRecord` JSONL 세션별 기록. CLI `--record-turns/--no-record-turns`. | 낮음 (additive) | 회복률 통계 jq로 dump 가능 |
+| **3** | 진행 예정 | B1 (loop detector + `probe_progress`) 신규 추가. | 중간 (새 detector) | 인위적 loop 시나리오에서 ≤5턴 내 회복 |
+| **4** | 진행 예정 | 통계 보고 playbook 튜닝 / A4·A5 매핑 채우기. | 낮음 (data-driven) | 측정값 기반 결정 |
 
 각 step은 독립 커밋. CLAUDE.md 규칙 준수: 유닛 테스트 + ruff + README.md/ARCHITECTURE.md 업데이트
 + regression 0 후 단일 커밋·푸쉬.
