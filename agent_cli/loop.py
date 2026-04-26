@@ -35,6 +35,7 @@ from agent_cli.recovery.observability import (
     FAILURE_NESTED_ENVELOPE,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
+    FAILURE_NO_OUTPUT,
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
     TurnRecorder,
@@ -422,7 +423,15 @@ class AgentLoop:
         # dict to reflect a B1 (action loop) detection that is only
         # known after we see the chosen action.
         if parsed.parse_stage == 0:
-            initial_signal = FAILURE_NO_JSON
+            # Split A1 into two sub-modes — empty/whitespace-only output
+            # vs non-empty content that drifted from JSON. The recovery
+            # path is identical (RETRY_HINT_NO_JSON fallback in both),
+            # but the labels separate two operationally different
+            # failure shapes for analysis (DESIGN.md §1, A1a vs A1b).
+            if not (llm_text or "").strip():
+                initial_signal = FAILURE_NO_OUTPUT
+            else:
+                initial_signal = FAILURE_NO_JSON
         elif not parsed.action:
             initial_signal = FAILURE_NO_ACTION
         else:

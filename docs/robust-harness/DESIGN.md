@@ -35,7 +35,8 @@ JSON envelope drift, tool name 환각, action_input 스키마 위반, 무한 루
 
 | ID | 이름 | 감지 방법 |
 |---|---|---|
-| A1 | JSON 부재 (prose만) | parser stage 1+2+3 모두 실패 |
+| A1a | JSON 부재 (prose만) | parser stage 1+2+3 모두 실패 + 응답에 *내용은 있음* (NO_JSON 라벨) |
+| A1b | 응답 비어있음 | parser stage 0 + 응답이 `strip()` 시 빈 문자열 (NO_OUTPUT 라벨) |
 | A2 | JSON 손상 (truncation, bad quote 등) | stage 2 (json_repair) 성공 — **이미 in-band 회복됨, out-of-band 처리 불필요** |
 | A3 | `action` 필드 누락 | parser 성공, but `action is None` |
 | A4 | 알 수 없는 tool name | parser 성공, but `action not in tool_registry` |
@@ -121,7 +122,8 @@ Output: Intervention (텍스트 주입 | 파라미터 조정 | 상태 리셋)
 
 | Failure | Try 1 | Try 2 (재실패) | Try 3 |
 |---|---|---|---|
-| A1 | echo_prior_output | + constrain_format | restate_task |
+| A1a | echo_prior_output | + constrain_format | restate_task |
+| A1b | (관찰만 — echo 대상 없음, 정적 RETRY_HINT_NO_JSON 만 적용) | | |
 | A3 | echo_prior_output + probe_schema | + constrain_format | |
 | A4 | probe_tool_name | + constrain_action | |
 | A5 | echo_diff + probe_schema | + constrain_format | |
@@ -250,6 +252,7 @@ v1에선 **유혹돼도 안 들임**:
 | **3** | ✅ 완료 | B1 (`ActionLoopDetector` + `probe_progress` + `restate_task`) 추가. 임계값 2, 옵션 (c) 채택 (level 1=probe, level 2=restate, level 3+=hard-fail; temp↓ 컬럼 제외). | 중간 (새 detector) | 인위적 loop 시나리오에서 ≤5턴 내 회복 ✓ |
 | **4a** | ✅ 완료 | A4·A5 detection을 recovery 레이어로 이동 (`detect_unknown_tool`, `detect_schema_mismatch`). pre-dispatch에서 라벨링. `_execute_single_tool` 내부 중복 검증 제거 + `_dispatch_tool_with_hooks`로 리네임. 별도 primitive는 데이터 보고 4b에서 결정 — 알면서 남긴 부채는 `REMAINING_DEBT.md` 기록. | 낮음 (additive + rename) | A4/A5 TurnRecord에 라벨 기록 ✓ |
 | **4a-1** | ✅ 완료 | A6 (Nested envelope) 추가 — `detect_nested_envelope` 라벨링 전용. 자동 unwrap 안 함 (anti-patchwork: 측정 후 결정). qwen3.5/3.6 계열에서 관찰된 `complete.action_input.result == '{"result": ...}'` 이중 래핑 패턴. | 낮음 (additive, observe-only) | A6 TurnRecord에 라벨 기록 ✓ |
+| **4a-2** | ✅ 완료 | A1을 A1a (NO_JSON, 형식 드리프트) / A1b (NO_OUTPUT, 빈 응답) 두 라벨로 분리. 회복 경로는 동일 (정적 fallback) — 관찰성만 분리해 후속 처방 결정의 데이터 입력으로. 실 세션에서 NO_JSON 15건 중 12건이 빈 응답이었음 — 한 라벨로 묶이면 보이지 않던 패턴. | 낮음 (additive, label-only) | A1a/A1b 분리 라벨 TurnRecord에 기록 ✓ |
 | **4b** | 데이터 누적 후 | TurnRecord 통계로 회복률 측정 → 필요하면 `probe_tool_name` / `echo_diff` / A6 unwrap 등 primitive 추가 + playbook 매핑. | 낮음 (data-driven) | 측정값 기반 결정 |
 
 각 step은 독립 커밋. CLAUDE.md 규칙 준수: 유닛 테스트 + ruff + README.md/ARCHITECTURE.md 업데이트

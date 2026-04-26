@@ -28,7 +28,10 @@ from typing import Optional
 # Failure signal labels — kept as bare strings for forward compatibility.
 # New signal types are mapping-table additions, not new code branches
 # (DESIGN.md §4 anti-patchwork invariants).
-FAILURE_NO_JSON = "NO_JSON"  # A1: parser stage 0 (no JSON at all)
+FAILURE_NO_JSON = "NO_JSON"  # A1a: parse stage 0 with non-empty content (format drift)
+FAILURE_NO_OUTPUT = (
+    "NO_OUTPUT"  # A1b: parse stage 0 but content is empty/whitespace-only
+)
 FAILURE_NO_ACTION = "NO_ACTION"  # A3: JSON parsed but action field missing
 FAILURE_UNKNOWN_TOOL = "UNKNOWN_TOOL"  # A4: action references a tool not in registry
 FAILURE_SCHEMA_MISMATCH = "SCHEMA_MISMATCH"  # A5: action_input violates tool schema

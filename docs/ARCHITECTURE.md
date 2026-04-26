@@ -51,7 +51,7 @@ agent_cli/
 │   ├── __init__.py                 primitive·detector·observability 재export
 │   ├── detectors.py         (~180) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap — 호출 시점 lazy import로 `tools` 패키지 사이클 회피), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용)
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
-│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 6종 (NO_JSON / NO_ACTION / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
+│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 7종 (NO_JSON / NO_OUTPUT / NO_ACTION / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
 │   └── primitives.py        (~120) 순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`, `probe_progress`, `restate_task`) — provider/모델/채널 이름 모름
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
@@ -537,6 +537,8 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 
 `prior_content`가 비면 정적 fallback (`RETRY_HINT_NO_JSON` / `RETRY_HINT_NO_ACTION`) — graceful path.
 
+**A1a (NO_JSON) vs A1b (NO_OUTPUT) 라벨 분리.** parse stage 0 실패는 두 가지 운영 모드가 섞여 있음 — (a) 모델이 *내용은 있는데* JSON 형식에서 드리프트 (YAML 키, prose, code fence 등), (b) 모델이 *아무것도* 안 뱉음 (whitespace-only). `loop.py`의 `_handle_text_path`가 `llm_text.strip()` 검사로 둘을 분리해 `failure_signal` 을 `FAILURE_NO_JSON` 또는 `FAILURE_NO_OUTPUT` 으로 기록. 회복 경로는 동일(둘 다 `format_no_json_retry`) — A1b는 echo 대상이 없어 자연스럽게 정적 fallback path로 떨어지고 `primitives_applied=[]` 가 됨. 라벨 분리의 목적은 *관찰성*이며, 두 모드가 회복률 분포에서 어떻게 갈리는지 데이터를 모은 뒤 별도 primitive 도입 여부를 결정 (DESIGN.md §1, A1a/A1b).
+
 **근거 (failure grounding):** 추상적 *"your response was invalid"*는 모델이 무엇을 위반했는지 모르게 함 — 같은 출력을 반복할 가능성 높음. retry에 자기 출력을 인용해 보여주면 모델이 자기 드리프트(YAML-style 키, 함수-호출 신택스, bare prose 등)를 직접 보고 self-diagnose 가능. 구조 마커가 보통 출력 시작 부분이라 head-truncate.
 
 **Primitive 계약 (누더기 방지):** primitive는 provider/모델/채널 이름을 절대 참조하지 않음. 새 실패 모드는 *primitive 합성과 매핑 한 줄*로 처리 — `if "ollama"`, `response.thinking` 같은 분기를 primitive 시그니처에 두면 invariant 위반.
@@ -552,7 +554,7 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 - `model` — 어떤 모델이 응답했는지 (분석 시 그룹 키)
 - `timestamp` — ISO 8601 UTC
 - `parse_stage` — 0(실패), 1(json.loads), 2(json_repair), 3(regex)
-- `failure_signal` — `"NO_JSON"` / `"NO_ACTION"` / `null`
+- `failure_signal` — `"NO_JSON"` / `"NO_OUTPUT"` / `"NO_ACTION"` / `"UNKNOWN_TOOL"` / `"SCHEMA_MISMATCH"` / `"NESTED_ENVELOPE"` / `"ACTION_LOOP"` / `null`
 - `primitives_applied` — 합성된 primitive 이름 list (실패 retry 시에만 채워짐)
 
 **프라이버시 계약:** 사용자 prompt나 LLM 응답 본문은 절대 기록되지 않음 — 구조 메타만. 회복률은 *저장하지 않고* 분석 시 walk-forward로 계산 (실패 row 다음 row의 failure_signal을 봐서 회복 여부 판단). retrospective 쓰기 회피.

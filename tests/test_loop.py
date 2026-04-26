@@ -360,6 +360,86 @@ class TestRunLoopObservability:
         assert rows[1]["failure_signal"] is None
         assert rows[1]["primitives_applied"] == []
 
+    def test_empty_response_records_no_output_signal(self, caps, tmp_path):
+        """A1b: model emits empty/whitespace-only content. The label must
+        be NO_OUTPUT (not NO_JSON), and primitives stay empty because
+        echo_prior_output has nothing to quote."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=""),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] == "NO_OUTPUT"
+        assert rows[0]["parse_stage"] == 0
+        # Empty content → fallback path → no primitives composed.
+        assert rows[0]["primitives_applied"] == []
+        assert rows[1]["failure_signal"] is None
+
+    def test_whitespace_only_response_records_no_output_signal(self, caps, tmp_path):
+        """Whitespace-only content (newlines, tabs, spaces) must also be
+        classified as NO_OUTPUT — operationally identical to empty."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content="   \n\t\n  "),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] == "NO_OUTPUT"
+
+    def test_non_empty_non_json_still_labeled_no_json(self, caps, tmp_path):
+        """Boundary: NO_JSON label is reserved for *non-empty* content
+        that failed to parse — the format-drift case where echo grounding
+        is meaningful."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content="thought: drifted into YAML"),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] == "NO_JSON"
+        # Non-empty content → echo path → primitives populated
+        assert rows[0]["primitives_applied"] == [
+            "echo_prior_output",
+            "constrain_format_json",
+        ]
+
     def test_no_action_failure_records_signal(self, caps, tmp_path):
         from agent_cli.context.manager import ContextManager
 
