@@ -246,7 +246,8 @@ v1에선 **유혹돼도 안 들임**:
 | **1** | ✅ 완료 | 기존 코드를 새 어휘로 재표현 (동작 변경 0). `format_no_*_retry`를 primitive 합성으로 분해. | 낮음 (refactor) | 기존 테스트 전부 통과, 새 primitive 단위 테스트 추가 |
 | **2** | ✅ 완료 | Observability 추가. `Intervention` 타입 도입, `TurnRecord` JSONL 세션별 기록. CLI `--record-turns/--no-record-turns`. | 낮음 (additive) | 회복률 통계 jq로 dump 가능 |
 | **3** | ✅ 완료 | B1 (`ActionLoopDetector` + `probe_progress` + `restate_task`) 추가. 임계값 2, 옵션 (c) 채택 (level 1=probe, level 2=restate, level 3+=hard-fail; temp↓ 컬럼 제외). | 중간 (새 detector) | 인위적 loop 시나리오에서 ≤5턴 내 회복 ✓ |
-| **4** | 진행 예정 | 통계 보고 playbook 튜닝 / A4·A5 매핑 채우기. | 낮음 (data-driven) | 측정값 기반 결정 |
+| **4a** | ✅ 완료 | A4·A5 detection을 recovery 레이어로 이동 (`detect_unknown_tool`, `detect_schema_mismatch`). pre-dispatch에서 라벨링. `_execute_single_tool` 내부 중복 검증 제거 + `_dispatch_tool_with_hooks`로 리네임. 별도 primitive는 데이터 보고 4b에서 결정 — 알면서 남긴 부채는 `REMAINING_DEBT.md` 기록. | 낮음 (additive + rename) | A4/A5 TurnRecord에 라벨 기록 ✓ |
+| **4b** | 데이터 누적 후 | TurnRecord 통계로 회복률 측정 → 필요하면 `probe_tool_name` / `echo_diff` 등 primitive 추가 + playbook 매핑. | 낮음 (data-driven) | 측정값 기반 결정 |
 
 각 step은 독립 커밋. CLAUDE.md 규칙 준수: 유닛 테스트 + ruff + README.md/ARCHITECTURE.md 업데이트
 + regression 0 후 단일 커밋·푸쉬.

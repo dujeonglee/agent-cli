@@ -228,39 +228,43 @@ class TestEmptyStringStripping:
         assert action_input["line_start"] == 10
 
 
-class TestStringInputE2E:
-    """End-to-end: string action_input flows through validation to tool execution."""
+class TestStringInputAutoConversion:
+    """String→dict auto-conversion now lives in the recovery layer's
+    schema detector (which wraps ``validate_tool_input``). The downstream
+    dispatch path (``_dispatch_tool_with_hooks``) assumes already-validated
+    dict input, so the conversion contract is exercised here at the
+    detector boundary, then executed through the public ``execute_tool``
+    primitive to confirm end-to-end behaviour is preserved.
+    """
 
     def test_read_file_string_input(self, tmp_path):
-        """read_file with string input should work after auto-conversion."""
-        from unittest.mock import MagicMock
-
-        from agent_cli.loop import _execute_single_tool
+        """read_file with string input is normalized to {'path': '...'}."""
+        from agent_cli.recovery.detectors import detect_schema_mismatch
+        from agent_cli.tools import execute_tool
 
         test_file = tmp_path / "hello.txt"
         test_file.write_text("hello world")
 
-        result = _execute_single_tool(
-            "read_file",
-            str(test_file),  # string, not dict
-            ["read_file"],
-            MagicMock(),
+        mismatched, err, normalized = detect_schema_mismatch(
+            "read_file", str(test_file)
         )
+        assert not mismatched, err
+        assert normalized == {"path": str(test_file)}
+
+        result = execute_tool("read_file", normalized)
         assert result.success
         assert "hello world" in result.output
 
     def test_shell_string_input(self):
-        """shell with string input should work after auto-conversion."""
-        from unittest.mock import MagicMock
+        """shell with string input is normalized to {'command': '...'}."""
+        from agent_cli.recovery.detectors import detect_schema_mismatch
+        from agent_cli.tools import execute_tool
 
-        from agent_cli.loop import _execute_single_tool
+        mismatched, err, normalized = detect_schema_mismatch("shell", "echo hello")
+        assert not mismatched, err
+        assert normalized == {"command": "echo hello"}
 
-        result = _execute_single_tool(
-            "shell",
-            "echo hello",  # string, not dict
-            ["shell"],
-            MagicMock(),
-        )
+        result = execute_tool("shell", normalized)
         assert result.success
         assert "hello" in result.output
 

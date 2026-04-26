@@ -1,18 +1,21 @@
-"""Tests for ActionLoopDetector — the B1 (action loop) failure detector.
+"""Tests for the recovery-layer detectors.
 
-The detector is stateful across turns. Tests cover:
-- Threshold semantics (default 2: fires on 2nd consecutive same call)
-- Escalation level monotonicity (1, 2, 3, ... per consecutive fire)
-- Counter reset on different action / different args
-- Counter reset on prev_was_error=True (legitimate retry)
-- Args canonicalization (dict key order, non-JSON values)
+Stateful detector (``ActionLoopDetector``) — class with state across
+turns. Stateless detectors (``detect_unknown_tool``,
+``detect_schema_mismatch``) — pure functions checking a single
+attempt without remembering anything. The split is documented in
+``recovery/detectors.py`` module docstring.
 
 See docs/robust-harness/DESIGN.md §1, §3.1.
 """
 
 import pytest
 
-from agent_cli.recovery.detectors import ActionLoopDetector
+from agent_cli.recovery.detectors import (
+    ActionLoopDetector,
+    detect_schema_mismatch,
+    detect_unknown_tool,
+)
 
 
 class TestThreshold:
@@ -154,3 +157,76 @@ class TestArgsCanonicalization:
         d = ActionLoopDetector()
         d.observe("t", {"x": {"a": 1, "b": 2}})
         assert d.observe("t", {"x": {"b": 2, "a": 1}}) == 1
+
+
+class TestDetectUnknownTool:
+    """Stateless A4 detector — pure ``in`` membership check."""
+
+    def test_known_tool_returns_false(self):
+        assert detect_unknown_tool("read_file", ["read_file", "shell"]) is False
+
+    def test_unknown_tool_returns_true(self):
+        assert detect_unknown_tool("bogus_tool", ["read_file", "shell"]) is True
+
+    def test_empty_tools_list_anything_unknown(self):
+        assert detect_unknown_tool("read_file", []) is True
+
+    def test_empty_action_returns_false(self):
+        # No action emitted at all is not an "unknown tool" — it's
+        # captured by FAILURE_NO_ACTION (A3) at the parser layer.
+        assert detect_unknown_tool("", ["read_file"]) is False
+
+    def test_case_sensitive(self):
+        assert detect_unknown_tool("Read_File", ["read_file"]) is True
+        assert detect_unknown_tool("read_file", ["read_file"]) is False
+
+    def test_does_not_mutate_tools_list(self):
+        tools = ["read_file", "shell"]
+        snapshot = list(tools)
+        detect_unknown_tool("bogus", tools)
+        assert tools == snapshot
+
+
+class TestDetectSchemaMismatch:
+    """Stateless A5 detector — wraps ``validate_tool_input``.
+
+    Tests focus on the *contract* exposed by the recovery layer:
+    returned tuple shape, normalized output use, and that it surfaces
+    the same errors the underlying validator produces. We do not
+    exhaustively test the underlying schema rules (those have their
+    own tests in this file's TestValidateToolInput).
+    """
+
+    def test_valid_input_returns_no_mismatch(self):
+        mismatched, err, normalized = detect_schema_mismatch(
+            "read_file", {"path": "x.py"}
+        )
+        assert mismatched is False
+        assert err is None
+        assert normalized == {"path": "x.py"}
+
+    def test_missing_required_field(self):
+        mismatched, err, _ = detect_schema_mismatch("read_file", {})
+        assert mismatched is True
+        assert err is not None
+        assert "path" in err  # error mentions the missing field
+
+    def test_string_input_auto_promoted_to_dict(self):
+        # validate_tool_input promotes strings to {required[0]: value}
+        mismatched, err, normalized = detect_schema_mismatch("read_file", "/tmp/x.py")
+        assert mismatched is False
+        assert normalized == {"path": "/tmp/x.py"}
+
+    def test_unknown_tool_treated_as_mismatch(self):
+        # validate_tool_input also rejects unknown tools, so the schema
+        # detector flags them too. The loop runs detect_unknown_tool first
+        # to give A4 priority over A5 — this test only confirms the
+        # detector does not silently accept unknown tools.
+        mismatched, err, _ = detect_schema_mismatch("bogus", {})
+        assert mismatched is True
+        assert err is not None
+
+    def test_returned_tuple_shape(self):
+        result = detect_schema_mismatch("read_file", {"path": "x"})
+        assert isinstance(result, tuple)
+        assert len(result) == 3

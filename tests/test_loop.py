@@ -623,6 +623,149 @@ class TestRunLoopActionLoop:
         assert b1_rows[1]["primitives_applied"] == ["restate_task"]
 
 
+class TestRunLoopUnknownTool:
+    """A4 — model emits an action that is not in the registry.
+
+    Pre-dispatch detection in the recovery layer labels the failure and
+    feeds the same observation the leaf-level dispatch would have
+    produced. The tool is not actually invoked.
+    """
+
+    def _read_turns(self, session_dir):
+        path = session_dir / "turns.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+    def test_unknown_tool_labeled_in_turnrecord(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        bogus_call = json.dumps(
+            {
+                "thought": "trying",
+                "action": "bogus_tool",
+                "action_input": {"x": 1},
+            }
+        )
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=bogus_call),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        assert result.success
+        rows = self._read_turns(tmp_path)
+        a4_rows = [r for r in rows if r["failure_signal"] == "UNKNOWN_TOOL"]
+        assert len(a4_rows) == 1
+        assert a4_rows[0]["primitives_applied"] == []  # no primitive yet (Step 4b)
+
+    def test_unknown_tool_observation_lists_available(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        bogus_call = json.dumps({"thought": "t", "action": "bogus", "action_input": {}})
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=bogus_call),
+            LLMResponse(content=_complete("ok")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        # The observation injected before the recovery call should
+        # describe the failure with the available-tools list.
+        second_call_messages = provider.call.call_args_list[1].kwargs["messages"]
+        observation = second_call_messages[-1]["content"]
+        assert "Unknown tool" in observation
+        assert "bogus" in observation
+        assert "Available:" in observation
+
+
+class TestRunLoopSchemaMismatch:
+    """A5 — model emits a known action with input violating the schema.
+
+    The detector still normalizes inputs (string→dict) when valid; the
+    integration test exercises the *failure* path where normalization
+    cannot save the input.
+    """
+
+    def _read_turns(self, session_dir):
+        path = session_dir / "turns.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+    def test_missing_required_field_labeled(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        # read_file requires `path`, but model sends `file`
+        bad_call = json.dumps(
+            {
+                "thought": "trying",
+                "action": "read_file",
+                "action_input": {"file": "x.py"},
+            }
+        )
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=bad_call),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        result = run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        assert result.success
+        rows = self._read_turns(tmp_path)
+        a5_rows = [r for r in rows if r["failure_signal"] == "SCHEMA_MISMATCH"]
+        assert len(a5_rows) == 1
+        assert a5_rows[0]["primitives_applied"] == []
+
+    def test_schema_observation_includes_schema_hint(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        bad_call = json.dumps(
+            {"thought": "t", "action": "read_file", "action_input": {}}
+        )
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=bad_call),
+            LLMResponse(content=_complete("ok")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+        second_call_messages = provider.call.call_args_list[1].kwargs["messages"]
+        observation = second_call_messages[-1]["content"]
+        # Error mentions which field is missing and the schema
+        assert "path" in observation
+        assert "Missing required field" in observation
+
+
 class TestRunLoopMaxIter:
     def test_returns_none_on_max_turns(self, caps):
         provider = _make_provider(

@@ -48,10 +48,10 @@ agent_cli/
 ├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
 ├── constants.py             (~95)  공유 상수 + 실패 회복 retry thin-wrapper (`format_no_json_retry` / `format_no_action_retry` — `recovery/primitives.py` 합성)
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
-│   ├── __init__.py                 primitive 재export
-│   ├── detectors.py         (~105) 상태 보존 감지기 (`ActionLoopDetector`) — turn 간 (action, args) 시그니처 추적, escalation level 발행
+│   ├── __init__.py                 primitive·detector·observability 재export
+│   ├── detectors.py         (~140) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, validate_tool_input wrap)
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
-│   ├── observability.py     (~110) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied)
+│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 5종 (NO_JSON / NO_ACTION / UNKNOWN_TOOL / SCHEMA_MISMATCH / ACTION_LOOP)
 │   └── primitives.py        (~120) 순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`, `probe_progress`, `restate_task`) — provider/모델/채널 이름 모름
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
@@ -583,6 +583,31 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 **Temperature-down 컬럼 의도적 누락:** DESIGN.md §2.3에 명시된 escalation 컬럼 중 "+temp↓"은 v1에서 제외. provider별 temperature 처리가 다양해 primitive 계약(provider-agnostic) 위반 위험. Step 4에서 데이터 보고 재검토.
 
 **감지 시점:** dispatch *전*. tool은 실행되지 않고, 모델은 다음 turn에 새 prompt(`probe_progress` 또는 `restate_task`)와 함께 같은 결정을 다시 내림. 중복 비용 0.
+
+#### A4 / A5 — Pre-dispatch Detection (`recovery/detectors.py`)
+
+LLM이 emit한 action·input이 도구 레지스트리·스키마와 안 맞을 때:
+
+- **A4 (Unknown tool)** — `detect_unknown_tool(action, tools_list)` → `action not in tools_list`
+- **A5 (Schema mismatch)** — `detect_schema_mismatch(action, action_input)` → `validate_tool_input` wrap, `(mismatched, error_message, normalized_input)` 반환
+
+**감지 위치:** `_dispatch_text_path` 안, B1 detector → render_action 직후, `_dispatch_tool_with_hooks` 호출 직전. 모든 *pre-dispatch* 검사가 한 자리에 모임 (DESIGN.md §3.1 detection layer).
+
+**처리:** 라벨링 + observation 주입 + dispatch 우회.
+```
+A4: outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
+    Observation: "Unknown tool 'X'. Available: ..."
+A5: outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
+    Observation: "Missing required field(s) for 'X': ... Expected: {...} Fix action_input and retry."
+```
+
+**v1은 라벨링만 — 별도 primitive 없음.** 이유: 현재 메시지(레지스트리·스키마 정보 포함)가 이미 grounding 역할 수행 중. 별도 primitive(`probe_tool_name`, `echo_diff` 등)가 *측정 효과*를 내는지는 TurnRecord 통계 보고 결정 (Step 4b).
+
+**B1 detector와의 순서:** B1이 먼저 (A4·A5 무관 *반복 자체*가 더 큰 신호). 같은 unknown tool을 2번 emit하면 B1이 잡아 `probe_progress`를 줌 — A4 메시지가 무한 반복되지 않음.
+
+**`_dispatch_tool_with_hooks` 내부 검증 제거됨:** Step 4a 전엔 `_execute_single_tool` 안에서도 `validate_tool_input` 호출 + `tool_name in tools_list` 체크가 있었음. 이젠 recovery 레이어가 단일 진실 원천 — 중복 제거. 단, `tools/__init__.py:execute_tool`의 boundary 방어는 유지 (공개 API + 테스트가 직접 의존).
+
+**남은 부채:** 이 작업 중 *알면서 남긴* 부채는 `docs/robust-harness/REMAINING_DEBT.md`에 명시 기록.
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 

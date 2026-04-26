@@ -24,11 +24,17 @@ from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
-from agent_cli.recovery.detectors import ActionLoopDetector
+from agent_cli.recovery.detectors import (
+    ActionLoopDetector,
+    detect_schema_mismatch,
+    detect_unknown_tool,
+)
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
+    FAILURE_SCHEMA_MISMATCH,
+    FAILURE_UNKNOWN_TOOL,
     TurnRecorder,
 )
 from agent_cli.render import (
@@ -48,7 +54,7 @@ from agent_cli.render import (
     render_group_start,
     render_group_end,
 )
-from agent_cli.tools import TOOLS, execute_tool, validate_tool_input
+from agent_cli.tools import TOOLS, execute_tool
 from agent_cli.tools.delegate import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
@@ -646,8 +652,54 @@ class AgentLoop:
                 else str(tool_input),
             )
 
+            # A4 (Unknown tool) — pre-dispatch detection. Skips _dispatch_tool_with_hooks
+            # entirely so the recovery layer is the single source of truth for
+            # this failure mode (DESIGN.md §4 invariant: same primitive shape
+            # across reused failures). The error message is the same one the
+            # leaf-level dispatch would have produced — primitive extraction
+            # for "did you mean" suggestions is deferred to Step 4b once
+            # observability data shows whether it improves recovery.
+            if detect_unknown_tool(tool_name, self.tools_list):
+                outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
+                avail = ", ".join(self.tools_list)
+                err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
+                render_step(
+                    "observation",
+                    err_msg,
+                    self.turn,
+                    tool_name=tool_name,
+                    success=False,
+                )
+                _append_observation(
+                    self.messages, self.ctx, llm_text, f"Observation: {err_msg}"
+                )
+                return self._CONTINUE
+
+            # A5 (Schema mismatch) — pre-dispatch detection. Same rationale
+            # as A4: single source of truth in the recovery layer. The
+            # detector also normalizes the input (string→dict promotion)
+            # when valid; we use the normalized value if present.
+            mismatched, schema_err, normalized = detect_schema_mismatch(
+                tool_name, tool_input
+            )
+            if mismatched:
+                outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
+                err_msg = f"{schema_err} Fix action_input and retry."
+                render_step(
+                    "observation",
+                    err_msg,
+                    self.turn,
+                    tool_name=tool_name,
+                    success=False,
+                )
+                _append_observation(
+                    self.messages, self.ctx, llm_text, f"Observation: {err_msg}"
+                )
+                return self._CONTINUE
+            tool_input = normalized  # use post-normalization input for dispatch
+
             # Execute tool (shared logic -- tracks tools_called + history)
-            tool_result = _execute_single_tool(
+            tool_result = _dispatch_tool_with_hooks(
                 tool_name,
                 tool_input,
                 self.tools_list,
@@ -1072,7 +1124,7 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
     return "\n".join(parts)
 
 
-def _execute_single_tool(
+def _dispatch_tool_with_hooks(
     tool_name: str,
     tool_input,
     tools_list: list[str],
@@ -1099,14 +1151,29 @@ def _execute_single_tool(
     mcp_manager=None,
     session_dir=None,
 ):
-    """Execute a single tool: hooks, execution, tracking. Returns ToolResult.
+    """Run PreToolUse hooks, dispatch the tool, then post-process the result.
 
-    session_dir, when provided, enables two observation-size guards:
-    shell output larger than AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES/_BYTES
-    is written to ``session_dir/shell/<name>.log`` and replaced with a
-    head+tail preview pointing at the artifact; a successful read_file
-    of any path inside that same artifact dir bumps the file's mtime so
-    the LRU eviction keeps actively-referenced logs around.
+    Preconditions (enforced by the caller's recovery layer in
+    ``_dispatch_text_path``):
+        - ``tool_name`` is a valid name in ``tools_list`` (A4 already
+          checked).
+        - ``tool_input`` matches the tool's schema (A5 already checked).
+
+    Responsibilities here:
+        - Fire PreToolUse hooks (Python runner + shell hooks).
+        - Dispatch (delegate special-case or ``execute_tool``).
+        - Apply observation-size guards: shell output larger than
+          AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES/_BYTES is written to
+          ``session_dir/shell/<name>.log`` and replaced with a head+tail
+          preview pointing at the artifact; a successful read_file of
+          any path inside that same artifact dir bumps the file's mtime
+          so LRU eviction keeps actively-referenced logs around.
+        - Track ``tools_called`` and ``recent_tool_history``.
+
+    The function name (formerly ``_execute_single_tool``) is honest
+    about being orchestration around ``execute_tool``, not a competing
+    dispatch primitive. See ``docs/robust-harness/REMAINING_DEBT.md``
+    for the rationale and outstanding refactor opportunities.
     """
 
     _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
@@ -1201,17 +1268,13 @@ def _execute_single_tool(
                 turn=turn,
                 mcp_manager=mcp_manager,
             )
-    elif tool_name in tools_list:
-        valid, err, tool_input = validate_tool_input(tool_name, tool_input)
-        if not valid:
-            result = ToolResult(False, error=f"{err} Fix action_input and retry.")
-        else:
-            result = execute_tool(tool_name, tool_input)
     else:
-        avail = ", ".join(tools_list)
-        result = ToolResult(
-            False, error=f"Unknown tool '{tool_name}'. Available: {avail}"
-        )
+        # Recovery layer (A4/A5 detectors in _dispatch_text_path) has
+        # already validated tool_name + action_input by the time we
+        # reach here. ``execute_tool``'s own ``Unknown tool`` check
+        # remains as a public-API boundary for direct callers (tests,
+        # future external users).
+        result = execute_tool(tool_name, tool_input)
 
     # Observation-size guards (loop-level post-process) ─────────────
     # Both are best-effort: on any failure we leave `result` untouched

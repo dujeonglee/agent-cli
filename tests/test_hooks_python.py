@@ -516,9 +516,9 @@ class TestLoopHookIntegration:
         loop._apply_system_sections(hook_ctx)
         assert loop.system == "base prompt"
 
-    def test_execute_single_tool_pre_hook_block(self, tmp_path):
+    def test_dispatch_tool_with_hooks_pre_hook_block(self, tmp_path):
         """PreToolUse hook can block tool execution."""
-        from agent_cli.loop import _execute_single_tool
+        from agent_cli.loop import _dispatch_tool_with_hooks
 
         d = tmp_path / "hooks"
         _write_hook(
@@ -530,7 +530,7 @@ class TestLoopHookIntegration:
         )
         runner = HookRunner(hook_dirs=[d])
 
-        result = _execute_single_tool(
+        result = _dispatch_tool_with_hooks(
             "shell",
             {"command": "rm -rf /"},
             ["shell"],
@@ -540,11 +540,11 @@ class TestLoopHookIntegration:
         assert not result.success
         assert "not allowed" in result.error
 
-    def test_execute_single_tool_pre_hook_modify(self, tmp_path):
+    def test_dispatch_tool_with_hooks_pre_hook_modify(self, tmp_path):
         """PreToolUse hook can modify tool input."""
         from unittest.mock import patch
 
-        from agent_cli.loop import _execute_single_tool
+        from agent_cli.loop import _dispatch_tool_with_hooks
 
         d = tmp_path / "hooks"
         _write_hook(
@@ -558,25 +558,21 @@ class TestLoopHookIntegration:
 
         with patch("agent_cli.loop.execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="ok")
-            with patch(
-                "agent_cli.loop.validate_tool_input",
-                return_value=(True, "", {"command": "ls"}),
-            ):
-                _execute_single_tool(
-                    "shell",
-                    {"command": "rm -rf /"},
-                    ["shell"],
-                    MagicMock(),
-                    hook_runner=runner,
-                )
+            _dispatch_tool_with_hooks(
+                "shell",
+                {"command": "rm -rf /"},
+                ["shell"],
+                MagicMock(),
+                hook_runner=runner,
+            )
             # The modified input should have been used
             mock_exec.assert_called_once_with("shell", {"command": "ls"})
 
-    def test_execute_single_tool_post_hook_fires(self, tmp_path):
+    def test_dispatch_tool_with_hooks_post_hook_fires(self, tmp_path):
         """PostToolUse hook fires after tool execution."""
         from unittest.mock import patch
 
-        from agent_cli.loop import _execute_single_tool
+        from agent_cli.loop import _dispatch_tool_with_hooks
 
         d = tmp_path / "hooks"
         # Write hook that captures the tool_result
@@ -594,16 +590,12 @@ class TestLoopHookIntegration:
 
         with patch("agent_cli.loop.execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="file contents")
-            with patch(
-                "agent_cli.loop.validate_tool_input",
-                return_value=(True, "", {"command": "ls"}),
-            ):
-                result = _execute_single_tool(
-                    "read_file",
-                    {"path": "test.py"},
-                    ["read_file"],
-                    MagicMock(),
-                    hook_runner=runner,
-                )
+            result = _dispatch_tool_with_hooks(
+                "read_file",
+                {"path": "test.py"},
+                ["read_file"],
+                MagicMock(),
+                hook_runner=runner,
+            )
         assert result.success
         assert result.output == "file contents"

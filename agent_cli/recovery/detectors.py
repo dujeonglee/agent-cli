@@ -1,16 +1,26 @@
-"""Behavioral failure detectors for the recovery layer.
+"""Failure detectors for the recovery layer.
 
-Detectors are *stateful across turns* (unlike parser-stage detection,
-which is per-response). Owned by the AgentLoop instance — one detector
-per session.
+Two flavors:
+- **Stateful** detectors are classes owned by the AgentLoop instance,
+  carrying state across turns (e.g. ``ActionLoopDetector``).
+- **Stateless** detectors are pure functions called per-decision; they
+  inspect a single response/dispatch attempt without remembering
+  anything (e.g. ``detect_unknown_tool``, ``detect_schema_mismatch``).
 
-See ``docs/robust-harness/DESIGN.md`` §1 (Layer B failures) and §3.1.
+The split mirrors what each failure category actually needs — adding
+ceremony (a class) for a stateless one-line check would be cargo-cult
+symmetry without value. New stateful failures get classes; new
+stateless ones get functions.
+
+See ``docs/robust-harness/DESIGN.md`` §1 (Layer A & B failures) and §3.1.
 """
 
 from __future__ import annotations
 
 import json
 from typing import Any
+
+from agent_cli.tools.registry import validate_tool_input
 
 
 class ActionLoopDetector:
@@ -103,3 +113,37 @@ class ActionLoopDetector:
         except (TypeError, ValueError):
             args_str = repr(args)
         return f"{action}({args_str})"
+
+
+def detect_unknown_tool(action: str, tools_list: list[str]) -> bool:
+    """Stateless A4 detector: is ``action`` outside the active tool registry?
+
+    Returns ``True`` when the action references a tool not in
+    ``tools_list``. The recovery layer uses this to label the failure
+    and skip dispatch — the model sees the resulting observation
+    (currently the same "Unknown tool 'X'. Available: [...]" message
+    produced by the leaf-level dispatch).
+    """
+    return bool(action) and action not in tools_list
+
+
+def detect_schema_mismatch(
+    action: str, action_input: Any
+) -> tuple[bool, str | None, Any]:
+    """Stateless A5 detector: does ``action_input`` match the tool schema?
+
+    Returns ``(mismatched, error_message, normalized_input)``:
+    - ``mismatched``: True when the input violates the schema.
+    - ``error_message``: human-readable description (None on success).
+    - ``normalized_input``: the (possibly auto-converted) input value
+      when valid — string-to-dict promotion happens inside
+      ``validate_tool_input``. Caller should use this normalized value
+      for downstream dispatch.
+
+    Wraps ``tools.registry.validate_tool_input`` so the recovery layer
+    has its own vocabulary entry without owning the schema knowledge.
+    """
+    valid, err, normalized = validate_tool_input(action, action_input)
+    if valid:
+        return (False, None, normalized)
+    return (True, err, normalized)

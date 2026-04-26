@@ -298,7 +298,7 @@ class TestTouchIfArtifact:
 
 
 class TestLoopPostProcess:
-    """The loop's _execute_single_tool must wrap oversized shell output
+    """The loop's _dispatch_tool_with_hooks must wrap oversized shell output
     into an artifact-backed preview, and must bump mtime on a read_file
     that targets a session shell artifact.
     """
@@ -314,7 +314,7 @@ class TestLoopPostProcess:
         monkeypatch.setenv("AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES", "50")
         monkeypatch.setenv("AGENT_CLI_SHELL_OUTPUT_LIMIT_BYTES", "0")
 
-        from agent_cli.loop import _execute_single_tool
+        from agent_cli.loop import _dispatch_tool_with_hooks
 
         big = "\n".join(f"line {i}" for i in range(200))
 
@@ -326,7 +326,7 @@ class TestLoopPostProcess:
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output=big),
         ):
-            result = _execute_single_tool(
+            result = _dispatch_tool_with_hooks(
                 tool_name="shell",
                 tool_input={"command": "grep -rn TODO ."},
                 tools_list=["shell"],
@@ -353,14 +353,14 @@ class TestLoopPostProcess:
 
     def test_small_shell_output_not_touched(self, tmp_path):
         """A small output must pass through unmodified — guard silent."""
-        from agent_cli.loop import _execute_single_tool
+        from agent_cli.loop import _dispatch_tool_with_hooks
         from agent_cli.tools.result import ToolResult
 
         with patch(
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output="small output\n2 lines"),
         ):
-            result = _execute_single_tool(
+            result = _dispatch_tool_with_hooks(
                 tool_name="shell",
                 tool_input={"command": "echo hi"},
                 tools_list=["shell"],
@@ -388,7 +388,7 @@ class TestLoopPostProcess:
         full output flows through — information > optimisation."""
         monkeypatch.setenv("AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES", "10")
 
-        from agent_cli.loop import _execute_single_tool
+        from agent_cli.loop import _dispatch_tool_with_hooks
         from agent_cli.tools.result import ToolResult
 
         big = "\n".join(f"line {i}" for i in range(100))
@@ -396,7 +396,7 @@ class TestLoopPostProcess:
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output=big),
         ):
-            result = _execute_single_tool(
+            result = _dispatch_tool_with_hooks(
                 tool_name="shell",
                 tool_input={"command": "x"},
                 tools_list=["shell"],
@@ -419,7 +419,7 @@ class TestLoopPostProcess:
         """After a successful read_file on a path inside session/shell/,
         the loop post-process must bump the file's mtime so the next
         LRU pass treats it as recently-used."""
-        from agent_cli.loop import _execute_single_tool
+        from agent_cli.loop import _dispatch_tool_with_hooks
         from agent_cli.tools.result import ToolResult
 
         (tmp_path / "shell").mkdir()
@@ -435,7 +435,7 @@ class TestLoopPostProcess:
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output="(some file contents)"),
         ):
-            _execute_single_tool(
+            _dispatch_tool_with_hooks(
                 tool_name="read_file",
                 tool_input={"path": str(artifact)},
                 tools_list=["read_file"],

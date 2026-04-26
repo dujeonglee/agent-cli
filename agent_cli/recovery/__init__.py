@@ -7,12 +7,18 @@ reference provider names, model names, or channel names — that
 abstraction lives in the Provider Layer.
 """
 
-from agent_cli.recovery.detectors import ActionLoopDetector
+from agent_cli.recovery.detectors import (
+    ActionLoopDetector,
+    detect_schema_mismatch,
+    detect_unknown_tool,
+)
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
+    FAILURE_SCHEMA_MISMATCH,
+    FAILURE_UNKNOWN_TOOL,
     TurnRecord,
     TurnRecorder,
 )
@@ -34,7 +40,11 @@ __all__ = [
     "TurnRecord",
     "TurnRecorder",
     "ActionLoopDetector",
+    "detect_unknown_tool",
+    "detect_schema_mismatch",
     "FAILURE_NO_JSON",
     "FAILURE_NO_ACTION",
+    "FAILURE_UNKNOWN_TOOL",
+    "FAILURE_SCHEMA_MISMATCH",
     "FAILURE_ACTION_LOOP",
 ]
