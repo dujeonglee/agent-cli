@@ -443,6 +443,186 @@ class TestRunLoopObservability:
         assert list(tmp_path.glob("**/turns.jsonl")) == []
 
 
+def _shell_call(cmd: str) -> str:
+    """Build a shell tool call as a JSON envelope."""
+    return json.dumps(
+        {
+            "thought": "running",
+            "action": "shell",
+            "action_input": {"command": cmd},
+        }
+    )
+
+
+class TestRunLoopActionLoop:
+    """B1 (action loop) detection + recovery — manufactured loop scenarios.
+
+    Threshold is 2: the SECOND consecutive identical (action, args) call
+    fires probe_progress; the third fires restate_task; the fourth
+    hard-fails. A different action interleaved resets the counter.
+    """
+
+    def _read_turns(self, session_dir):
+        path = session_dir / "turns.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+
+    def test_two_repeats_fires_probe_progress(self, caps, tmp_path):
+        """First repeat (call #2 with same args) → probe_progress nudge,
+        no dispatch. Recovery: model emits complete on next turn."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls /tmp")),  # turn 1: dispatch
+            LLMResponse(content=_shell_call("ls /tmp")),  # turn 2: B1 fires
+            LLMResponse(content=_complete("done")),  # turn 3: recovery
+        ]
+        result = run_loop(
+            query="List files",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        assert result.success
+        # Turn 2 retry message should contain probe_progress phrasing
+        third_call_messages = provider.call.call_args_list[2].kwargs["messages"]
+        retry_msg = third_call_messages[-1]["content"]
+        assert "You have called" in retry_msg
+        assert "shell" in retry_msg
+        assert "Re-read the previous responses" in retry_msg
+        # Must NOT include task anchor (that's restate_task's job)
+        assert "You were asked to:" not in retry_msg
+
+    def test_three_repeats_fires_restate_task(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls")),  # 1: dispatch
+            LLMResponse(content=_shell_call("ls")),  # 2: probe_progress
+            LLMResponse(content=_shell_call("ls")),  # 3: restate_task
+            LLMResponse(content=_complete("done")),  # 4: recovery
+        ]
+        result = run_loop(
+            query="The original user task here",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        assert result.success
+        # Turn 3 (4th LLM call) should see restate_task message
+        fourth_call_messages = provider.call.call_args_list[3].kwargs["messages"]
+        retry_msg = fourth_call_messages[-1]["content"]
+        assert "You were asked to:" in retry_msg
+        assert "The original user task here" in retry_msg
+        assert "previous nudge did not work" in retry_msg.lower()
+
+    def test_four_repeats_hard_fails(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls")) for _ in range(5)
+        ]
+        result = run_loop(
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        assert not result.success
+        assert "loop" in result.error.lower()
+        # Error message should cite which primitives were tried
+        assert "probe_progress" in result.error
+        assert "restate_task" in result.error
+
+    def test_different_action_resets_counter(self, caps, tmp_path):
+        """B1 only fires on *consecutive* identical calls. A different
+        action between repeats clears the counter."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls")),  # 1
+            LLMResponse(content=_shell_call("pwd")),  # 2 (different)
+            LLMResponse(content=_shell_call("ls")),  # 3 (same as 1, but reset)
+            LLMResponse(content=_complete("done")),  # 4
+        ]
+        result = run_loop(
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        assert result.success
+        # Verify no B1 record was emitted (no failure_signal=ACTION_LOOP)
+        rows = self._read_turns(tmp_path)
+        assert all(r["failure_signal"] != "ACTION_LOOP" for r in rows)
+
+    def test_probe_progress_recorded_in_turnrecord(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls")),
+            LLMResponse(content=_shell_call("ls")),  # B1 fires
+            LLMResponse(content=_complete("done")),
+        ]
+        run_loop(
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        rows = self._read_turns(tmp_path)
+        # Find the B1 row
+        b1_rows = [r for r in rows if r["failure_signal"] == "ACTION_LOOP"]
+        assert len(b1_rows) == 1
+        assert b1_rows[0]["primitives_applied"] == ["probe_progress"]
+
+    def test_restate_task_recorded_in_turnrecord(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_shell_call("ls")),
+            LLMResponse(content=_shell_call("ls")),  # probe_progress
+            LLMResponse(content=_shell_call("ls")),  # restate_task
+            LLMResponse(content=_complete("done")),
+        ]
+        run_loop(
+            query="t",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=10,
+        )
+        rows = self._read_turns(tmp_path)
+        b1_rows = [r for r in rows if r["failure_signal"] == "ACTION_LOOP"]
+        assert len(b1_rows) == 2
+        assert b1_rows[0]["primitives_applied"] == ["probe_progress"]
+        assert b1_rows[1]["primitives_applied"] == ["restate_task"]
+
+
 class TestRunLoopMaxIter:
     def test_returns_none_on_max_turns(self, caps):
         provider = _make_provider(

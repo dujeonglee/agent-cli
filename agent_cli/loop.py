@@ -12,6 +12,7 @@ from agent_cli.constants import (
     DELEGATE_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OBS_SUCCESS,
+    format_action_loop_intervention,
     format_no_action_retry,
     format_no_json_retry,
 )
@@ -23,7 +24,9 @@ from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.recovery.detectors import ActionLoopDetector
 from agent_cli.recovery.observability import (
+    FAILURE_ACTION_LOOP,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
     TurnRecorder,
@@ -152,6 +155,12 @@ class AgentLoop:
             session_dir=(self.ctx.session_dir if self.ctx else None),
             enabled=record_turns,
         )
+
+        # B1 (action loop) detector. Threshold=2 fires on the second
+        # consecutive identical (action, args). Escalation count
+        # selects the playbook column (1=probe_progress,
+        # 2=restate_task, 3+=hard fail).
+        self.loop_detector = ActionLoopDetector(threshold=2)
 
     def _fire_hook(self, event: str, **kwargs):
         """Fire a hook event if runner is available. Returns HookContext or None."""
@@ -394,38 +403,41 @@ class AgentLoop:
         recovery path (see ``docs/robust-harness/DESIGN.md`` §2.2).
 
         TurnRecord is emitted exactly once per call, regardless of which
-        terminal branch is taken (success/retry/exception). The retry
-        branch mutates ``primitives_applied`` before returning, then
-        the trailing block writes the record.
+        terminal branch is taken (success/retry/exception). Branches
+        that fire an Intervention mutate ``outcome`` (failure_signal +
+        primitives) before returning, and the trailing finally writes
+        the record.
         """
         parsed = parse_react(llm_text)
 
-        # Classify outcome early; primitives_applied is filled later
-        # if the retry branch composes an Intervention.
+        # Classify outcome early; the dispatch body may mutate this
+        # dict to reflect a B1 (action loop) detection that is only
+        # known after we see the chosen action.
         if parsed.parse_stage == 0:
-            failure_signal = FAILURE_NO_JSON
+            initial_signal = FAILURE_NO_JSON
         elif not parsed.action:
-            failure_signal = FAILURE_NO_ACTION
+            initial_signal = FAILURE_NO_ACTION
         else:
-            failure_signal = None
-        primitives_applied: list[str] = []
+            initial_signal = None
+        outcome: dict = {"failure_signal": initial_signal, "primitives": []}
 
         try:
-            return self._dispatch_text_path(llm_text, parsed, primitives_applied)
+            return self._dispatch_text_path(llm_text, parsed, outcome)
         finally:
             self.recorder.record(
                 model=self.model,
                 parse_stage=parsed.parse_stage,
-                failure_signal=failure_signal,
-                primitives_applied=primitives_applied,
+                failure_signal=outcome["failure_signal"],
+                primitives_applied=outcome["primitives"],
             )
 
-    def _dispatch_text_path(self, llm_text: str, parsed, primitives_applied: list[str]):
+    def _dispatch_text_path(self, llm_text: str, parsed, outcome: dict):
         """Body of the text-parsing path. Returns a ToolResult or a sentinel.
 
-        ``primitives_applied`` is a mutable list owned by the caller —
-        the retry branch slice-assigns into it so the caller's
-        ``finally`` block can observe which primitives were composed.
+        ``outcome`` is a mutable dict owned by the caller. Branches
+        that fire an Intervention update ``outcome["failure_signal"]``
+        and/or ``outcome["primitives"]`` before returning so the
+        caller's ``finally`` block records what happened.
         """
 
         # 6. Thought
@@ -562,6 +574,68 @@ class AgentLoop:
             if parsed.truncated and tool_name == "edit_file":
                 tool_input, truncation_warning = _sanitize_truncated_edit(tool_input)
 
+            # B1 (action loop) detection — observe BEFORE dispatch so a
+            # repeated call doesn't pay the cost of the redundant tool
+            # run. Counter resets after a tool error so legitimate
+            # retries don't false-positive.
+            prev_was_error = bool(
+                self.recent_tool_history
+                and self.recent_tool_history[-1].get("tool") == tool_name
+                and self.recent_tool_history[-1].get("success") is False
+            )
+            loop_level = self.loop_detector.observe(
+                tool_name, tool_input, prev_was_error=prev_was_error
+            )
+            if loop_level >= 1:
+                outcome["failure_signal"] = FAILURE_ACTION_LOOP
+                args_repr = (
+                    json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
+                    if isinstance(tool_input, dict)
+                    else str(tool_input)
+                )
+                intervention = format_action_loop_intervention(
+                    level=loop_level,
+                    action=tool_name,
+                    args_repr=args_repr,
+                    repeat_count=self.loop_detector.consecutive_count,
+                    task=self.query,
+                )
+                if intervention is None:
+                    # Level ≥3: recovery exhausted — hard fail with a
+                    # message that cites which primitives were already
+                    # tried so the user knows we did not give up early.
+                    _debug_log(
+                        f"Loop hard-fail: {tool_name} input={args_repr[:100]} "
+                        f"level={loop_level} skill_name={self.skill_name}"
+                    )
+                    render_status(
+                        "error",
+                        f"Action loop unresolved: {tool_name} repeated; "
+                        "tried probe_progress and restate_task without "
+                        "recovery. Stopping.",
+                    )
+                    return ToolResult(
+                        False,
+                        error=(
+                            "Action loop unresolved: probe_progress and "
+                            "restate_task did not break the repetition."
+                        ),
+                    )
+                # Level 1 or 2: inject Intervention, skip dispatch,
+                # let the next turn try again with the new context.
+                render_status(
+                    "error",
+                    f"Action loop detected ({tool_name}, level {loop_level}). "
+                    "Nudging model.",
+                    self.turn,
+                )
+                _append_observation(
+                    self.messages, self.ctx, llm_text, intervention.message
+                )
+                outcome["primitives"] = list(intervention.primitives)
+                self.turn -= 1  # Don't count loop nudges as user-facing turns
+                return self._CONTINUE
+
             render_step(
                 "action",
                 "",
@@ -615,20 +689,6 @@ class AgentLoop:
                 success=tool_result.success,
             )
 
-            # Repeated call detection
-            if _detect_repeated_calls(self.recent_tool_history):
-                last = self.recent_tool_history[-1]
-                _debug_log(
-                    f"Repeated call: {last['tool']} input={last['input'][:100]} skill_name={self.skill_name}"
-                )
-                render_status(
-                    "error",
-                    f"Repeated call detected: {last['tool']} called "
-                    f"{_REPEAT_THRESHOLD} times with same input. Stopping.",
-                )
-
-                return ToolResult(False, error="Repeated tool call detected")
-
             # Inject observation with structured artifact
             obs_msg = f"Observation: {observation}"
             _append_observation(
@@ -667,9 +727,8 @@ class AgentLoop:
             intervention = format_no_json_retry(prior_content=llm_text)
         _append_observation(self.messages, self.ctx, llm_text, intervention.message)
         # Surface composed primitive names to the enclosing _handle_text_path
-        # so the trailing finally-block records them. Slice-assign mutates
-        # the caller's list rather than rebinding our local.
-        primitives_applied[:] = intervention.primitives
+        # so the trailing finally-block records them.
+        outcome["primitives"] = list(intervention.primitives)
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE
 
@@ -1221,16 +1280,12 @@ def _execute_single_tool(
                 "input": _normalize_input(tool_input),
                 "result": obs[:200],
                 "turn": turn,
+                "success": result.success,
             }
         )
 
     return result
 
-
-# Repeated call detection: if the same tool is called with identical input
-# N times consecutively, assume the LLM is stuck and force exit.
-# 3 chosen as minimum to distinguish genuine retries from loops.
-_REPEAT_THRESHOLD = 3
 
 # Regex: simple echo with no pipes, redirects, subshells, or chaining
 _ECHO_FINAL_RE = re.compile(
@@ -1294,15 +1349,6 @@ def _normalize_input(tool_input) -> str:
     if isinstance(tool_input, dict):
         return json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
     return str(tool_input)
-
-
-def _detect_repeated_calls(history: list[dict]) -> bool:
-    """Return True if last N calls are identical (same tool + same input)."""
-    if len(history) < _REPEAT_THRESHOLD:
-        return False
-    recent = history[-_REPEAT_THRESHOLD:]
-    first = (recent[0]["tool"], recent[0]["input"])
-    return all((h["tool"], h["input"]) == first for h in recent)
 
 
 def _append_observation(

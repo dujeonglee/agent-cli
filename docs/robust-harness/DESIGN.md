@@ -245,7 +245,7 @@ v1에선 **유혹돼도 안 들임**:
 |---|---|---|---|---|
 | **1** | ✅ 완료 | 기존 코드를 새 어휘로 재표현 (동작 변경 0). `format_no_*_retry`를 primitive 합성으로 분해. | 낮음 (refactor) | 기존 테스트 전부 통과, 새 primitive 단위 테스트 추가 |
 | **2** | ✅ 완료 | Observability 추가. `Intervention` 타입 도입, `TurnRecord` JSONL 세션별 기록. CLI `--record-turns/--no-record-turns`. | 낮음 (additive) | 회복률 통계 jq로 dump 가능 |
-| **3** | 진행 예정 | B1 (loop detector + `probe_progress`) 신규 추가. | 중간 (새 detector) | 인위적 loop 시나리오에서 ≤5턴 내 회복 |
+| **3** | ✅ 완료 | B1 (`ActionLoopDetector` + `probe_progress` + `restate_task`) 추가. 임계값 2, 옵션 (c) 채택 (level 1=probe, level 2=restate, level 3+=hard-fail; temp↓ 컬럼 제외). | 중간 (새 detector) | 인위적 loop 시나리오에서 ≤5턴 내 회복 ✓ |
 | **4** | 진행 예정 | 통계 보고 playbook 튜닝 / A4·A5 매핑 채우기. | 낮음 (data-driven) | 측정값 기반 결정 |
 
 각 step은 독립 커밋. CLAUDE.md 규칙 준수: 유닛 테스트 + ruff + README.md/ARCHITECTURE.md 업데이트

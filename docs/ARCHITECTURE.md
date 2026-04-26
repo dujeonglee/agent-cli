@@ -49,9 +49,10 @@ agent_cli/
 ├── constants.py             (~95)  공유 상수 + 실패 회복 retry thin-wrapper (`format_no_json_retry` / `format_no_action_retry` — `recovery/primitives.py` 합성)
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive 재export
+│   ├── detectors.py         (~105) 상태 보존 감지기 (`ActionLoopDetector`) — turn 간 (action, args) 시그니처 추적, escalation level 발행
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
 │   ├── observability.py     (~110) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied)
-│   └── primitives.py        (~70)  순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`) — provider/모델/채널 이름 모름
+│   └── primitives.py        (~120) 순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`, `probe_progress`, `restate_task`) — provider/모델/채널 이름 모름
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
 │   ├── __init__.py          (24)   shell hook API re-export (하위 호환)
@@ -561,6 +562,27 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 - `record_turns=True` (CLI: `--record-turns/--no-record-turns`, 기본 켜짐)
 
 **활용:** Step 3·4의 playbook 튜닝 데이터 누적이 주 목적. 분석은 별도 스크립트 (`jq`로도 충분). 자세한 설계는 `docs/robust-harness/DESIGN.md` §3.3.
+
+#### B1 — Action Loop 감지 + 회복 (`recovery/detectors.py` + B1 playbook)
+
+같은 `(action, args)` 호출이 연속 2회 이상이면 모델이 막힌 상태로 보고 단계적 개입을 발동합니다. 기존 hard-fail (`_detect_repeated_calls`)을 대체.
+
+**Detector (`ActionLoopDetector`):** turn 간 stateful — `_last_signature`, `_consecutive_count`, `_fire_count` 보유. `observe(action, args, prev_was_error=False)`가 호출될 때마다 escalation level 반환:
+- 0 — 임계값 미만 또는 error retry로 카운터 리셋
+- 1 — 첫 발동 (probe_progress)
+- 2 — 두 번째 발동 (restate_task)
+- 3+ — 회복 소진, hard-fail
+
+`prev_was_error=True`면 카운터 리셋 — 정당한 재시도 false-positive 방지. 다른 action이 끼면 카운터 리셋. Args canonicalization은 `json.dumps(sort_keys=True)` (dict 키 순서 무시).
+
+**Playbook (`format_action_loop_intervention`):**
+- Level 1: `probe_progress` — 가벼운 nudge ("이미 가진 응답을 다시 봐, complete 또는 다른 action 선택")
+- Level 2: `restate_task` — 원본 task 재고정 + 진단 질문 ("task가 이 호출을 왜 필요로 하나? 못 얻고 있는 정보가 뭔가?")
+- Level 3+: `None` 반환 — caller가 hard-fail (어떤 primitive를 시도했는지 에러 메시지에 포함)
+
+**Temperature-down 컬럼 의도적 누락:** DESIGN.md §2.3에 명시된 escalation 컬럼 중 "+temp↓"은 v1에서 제외. provider별 temperature 처리가 다양해 primitive 계약(provider-agnostic) 위반 위험. Step 4에서 데이터 보고 재검토.
+
+**감지 시점:** dispatch *전*. tool은 실행되지 않고, 모델은 다음 turn에 새 prompt(`probe_progress` 또는 `restate_task`)와 함께 같은 결정을 다시 내림. 중복 비용 0.
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 

@@ -5,6 +5,8 @@ from agent_cli.recovery.primitives import (
     constrain_action_required,
     constrain_format_json,
     echo_prior_output,
+    probe_progress,
+    restate_task,
 )
 
 # ── Timeout values (seconds) ──────────────────
@@ -43,6 +45,10 @@ SYSTEM_USER_PREFIXES: tuple[str, ...] = (
     "Your response was not valid JSON.",
     "Your JSON was parsed but has no action.",
     "⚡ User interrupted.",
+    # B1 (action loop) interventions — both messages start with one of
+    # these phrases (probe_progress / restate_task respectively).
+    "You have called",
+    "You were asked to:",
 )
 
 
@@ -98,3 +104,44 @@ def format_no_action_retry(*, prior_content: str = "") -> Intervention:
         message=msg,
         primitives=["echo_prior_output", "constrain_action_required"],
     )
+
+
+def format_action_loop_intervention(
+    *,
+    level: int,
+    action: str,
+    args_repr: str,
+    repeat_count: int,
+    task: str,
+) -> Intervention | None:
+    """Compose the B1 (action loop) Intervention for a given escalation level.
+
+    Skips the temperature-down level from DESIGN.md §2.3 — temperature
+    handling diverges across providers, which would leak runtime
+    detail into the recovery layer. Step 4 may revisit if data shows
+    benefit.
+
+    Returns:
+        Intervention for level 1 or 2; ``None`` for level ≥3 (caller
+        should hard-fail with an informative error).
+    """
+    if level == 1:
+        return Intervention(
+            message=probe_progress(
+                action=action,
+                args_repr=args_repr,
+                repeat_count=repeat_count,
+            ),
+            primitives=["probe_progress"],
+        )
+    if level == 2:
+        return Intervention(
+            message=restate_task(
+                task=task,
+                action=action,
+                args_repr=args_repr,
+                repeat_count=repeat_count,
+            ),
+            primitives=["restate_task"],
+        )
+    return None

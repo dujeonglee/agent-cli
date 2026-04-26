@@ -17,6 +17,7 @@ from agent_cli.constants import (
     RETRY_HINT_NO_ACTION,
     RETRY_HINT_NO_JSON,
     SYSTEM_USER_PREFIXES,
+    format_action_loop_intervention,
     format_no_action_retry,
     format_no_json_retry,
 )
@@ -117,3 +118,65 @@ class TestFormatNoActionRetry:
 
         with pytest.raises(TypeError):
             format_no_action_retry("positional")  # type: ignore[misc]
+
+
+class TestFormatActionLoopIntervention:
+    """B1 (action loop) Intervention composer.
+
+    Level 1 → probe_progress; level 2 → restate_task; level ≥3 → None
+    (caller hard-fails). Temperature-down level intentionally omitted —
+    see DESIGN.md §2.3 and constants.format_action_loop_intervention
+    docstring.
+    """
+
+    def _kwargs(self, **overrides):
+        base = dict(
+            level=1,
+            action="read_file",
+            args_repr='{"path": "x.py"}',
+            repeat_count=2,
+            task="Refactor the parser",
+        )
+        base.update(overrides)
+        return base
+
+    def test_returns_intervention(self):
+        intv = format_action_loop_intervention(**self._kwargs())
+        assert isinstance(intv, Intervention)
+
+    def test_level_one_uses_probe_progress(self):
+        intv = format_action_loop_intervention(**self._kwargs(level=1))
+        assert intv.primitives == ["probe_progress"]
+        # probe_progress message: NO task anchor
+        assert "You were asked to:" not in intv.message
+        # Has the loop fact + complete option
+        assert "read_file" in intv.message
+        assert "complete" in intv.message
+
+    def test_level_two_uses_restate_task(self):
+        intv = format_action_loop_intervention(**self._kwargs(level=2))
+        assert intv.primitives == ["restate_task"]
+        # restate_task: task anchor present
+        assert "You were asked to:" in intv.message
+        assert "Refactor the parser" in intv.message
+        # Diagnostic questions present
+        assert "Why does" in intv.message
+        assert "NOT getting" in intv.message
+
+    def test_level_three_returns_none(self):
+        # Caller is responsible for hard-failing
+        assert format_action_loop_intervention(**self._kwargs(level=3)) is None
+
+    def test_level_four_returns_none(self):
+        assert format_action_loop_intervention(**self._kwargs(level=4)) is None
+
+    def test_level_zero_returns_none(self):
+        # Level 0 means no fire — caller should never invoke the builder
+        # at level 0, but defensively the builder returns None
+        assert format_action_loop_intervention(**self._kwargs(level=0)) is None
+
+    def test_keyword_only_signature(self):
+        import pytest
+
+        with pytest.raises(TypeError):
+            format_action_loop_intervention(1, "read_file", "{}", 2, "task")  # type: ignore[misc]

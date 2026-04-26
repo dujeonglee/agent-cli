@@ -26,9 +26,10 @@ from typing import Optional
 
 
 # Failure signal labels — kept as bare strings for forward compatibility
-# with future signal types (Step 3 adds B1; Step 4 adds A4/A5/etc.).
+# with future signal types (Step 4 adds A4/A5/etc.).
 FAILURE_NO_JSON = "NO_JSON"
 FAILURE_NO_ACTION = "NO_ACTION"
+FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
 
 
 @dataclass(frozen=True)
