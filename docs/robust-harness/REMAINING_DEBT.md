@@ -74,7 +74,33 @@
 
 ---
 
-## 4. Step 4b는 데이터 누적 후 (정상 deferral)
+## 4. `constants.py`가 `recovery`를 의존 → import cycle 잠재 (low)
+
+`constants.py` 상단에서 `from agent_cli.recovery.intervention import Intervention`
++ `recovery.primitives` 를 import 함. 이는 `format_no_json_retry`/`format_no_action_retry`/
+`format_action_loop_intervention`이 historical하게 constants에 자리잡은 결과 — 이 함수들은
+*상수가 아니라* primitive 합성 factory임.
+
+문제: 다른 모듈(특히 `tools/`)이 `constants` 를 import하면 cycle이 생길 수 있음. Step 4a
+에서 `detectors.py`가 `tools.registry`를 import한 순간 실제 cycle이 발생했고, CLI 직접 실행
+경로에서만 터졌음(테스트는 진입 순서가 달라 통과). lazy import으로 임시 우회.
+
+**왜 부채인가**: 레이어 역전 — `constants`(저층)가 `recovery`(고층)를 의존. 반대 방향이
+정상. lazy import은 *cycle을 우회*할 뿐, 레이어 위반 자체는 그대로.
+
+**왜 지금 안 청산하는가**: 청산은 `format_no_json_retry` 등 factory 함수를 `constants.py`
+밖으로 옮겨야 함(예: `recovery/builders.py`). 옮기면 `constants` import 위치를 모든
+caller에서 갱신해야 함 — 무시 못 할 변경량. A6 작업과 별 commit으로 분리.
+
+**언제 청산할 수 있나**: hooks/loop 리팩토링 등 constants 호출자를 어차피 손대는 시점.
+혹은 새 cycle이 또 한 번 발생할 때(이번처럼 reactive 청산도 정상).
+
+**완화책 (이미 적용)**: `tests/test_import_cycles.py`가 cold-start subprocess import를 검증해
+회귀 자체는 막힘.
+
+---
+
+## 5. Step 4b는 데이터 누적 후 (정상 deferral)
 
 A4·A5에 별도 primitive(`probe_tool_name`, `echo_diff` 등)를 추가할지는 *측정값 기반*
 결정. 현재 라벨만 깔아 둔 상태로 며칠/몇 주 사용 → TurnRecord로 회복률 측정 →
