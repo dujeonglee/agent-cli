@@ -257,8 +257,13 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Environment" in prompt
         assert "Working directory:" in prompt
-        assert "Date:" in prompt
         assert "Platform:" in prompt
+
+    def test_environment_section_omits_date(self):
+        # Date is intentionally excluded — see _build_environment_section
+        # docstring for rationale (KV prefix cache stability).
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        assert "Date:" not in prompt
 
     def test_directives_loaded_when_present(self, tmp_path, monkeypatch):
         directive_dir = tmp_path / ".agent-cli"
@@ -391,14 +396,12 @@ class TestEnvironmentSection:
     def test_contains_required_fields(self):
         section = _build_environment_section()
         assert "Working directory:" in section
-        assert "Date:" in section
         assert "Platform:" in section
 
-    def test_date_format(self):
+    def test_excludes_date(self):
+        # Date removed for KV prefix-cache stability across midnight.
         section = _build_environment_section()
-        import re
-
-        assert re.search(r"\d{4}-\d{2}-\d{2}", section)
+        assert "Date:" not in section
 
 
 class TestLoadDirectives:

@@ -1167,7 +1167,8 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     ├─ Directives (DIRECTIVE.md가 존재할 때만)
     │   └─ .agent-cli/DIRECTIVE.md (프로젝트) + ~/.agent-cli/DIRECTIVE.md (유저 전역)
     │
-    ├─ Environment (항상 포함 — CWD, 날짜, 플랫폼)
+    ├─ Environment (항상 포함 — CWD, 플랫폼)
+    │   └─ 날짜는 의도적으로 제외 — KV prefix cache 안정성 (자정 rollover 방지)
     │
     └─ Context Recovery Guide (session_dir가 있을 때만)
         └─ "이전 대화 내용이 필요하면 read_file({session_dir}/history.jsonl)"

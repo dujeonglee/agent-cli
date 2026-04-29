@@ -9,7 +9,6 @@ Layout (optimized for LLM attention):
 from __future__ import annotations
 
 import platform
-from datetime import datetime
 from pathlib import Path
 
 from agent_cli.providers.compat import ModelCapabilities
@@ -211,10 +210,14 @@ def _build_tools_section(active_tools: list[str]) -> str:
 
 
 def _build_environment_section() -> str:
-    """Build environment context section with CWD, date, platform."""
+    """Build environment context section with CWD and platform.
+
+    Date is intentionally omitted: it has no programmatic consumer and
+    its daily rollover invalidates provider-side prefix caches across
+    midnight. Tasks that genuinely need today's date can call shell `date`.
+    """
     lines = ["## Environment"]
     lines.append(f"- Working directory: {Path.cwd()}")
-    lines.append(f"- Date: {datetime.now().strftime('%Y-%m-%d')}")
     lines.append(f"- Platform: {platform.system().lower()} ({platform.release()})")
     return "\n".join(lines)
 
