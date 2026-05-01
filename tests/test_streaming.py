@@ -329,6 +329,38 @@ class TestAnthropicStreaming:
 
         assert result.content == "hello"
 
+    def test_streaming_parses_cache_usage(self):
+        """Cache fields in message_start.usage flow through to TokenUsage."""
+        from agent_cli.providers.anthropic import AnthropicProvider
+
+        lines = [
+            b"event: message_start",
+            b'data: {"type":"message_start","message":{"usage":'
+            b'{"input_tokens":3,"cache_creation_input_tokens":120,'
+            b'"cache_read_input_tokens":80}}}',
+            b"event: content_block_delta",
+            b'data: {"type":"content_block_delta",'
+            b'"delta":{"type":"text_delta","text":"ok"}}',
+            b"event: message_delta",
+            b'data: {"type":"message_delta",'
+            b'"delta":{"stop_reason":"end_turn"},'
+            b'"usage":{"output_tokens":1}}',
+        ]
+        resp = _make_response(lines)
+        with patch("agent_cli.providers.anthropic.requests.post", return_value=resp):
+            provider = AnthropicProvider("https://api.anthropic.com/v1", "key")
+            result = provider.call(
+                messages=[{"role": "user", "content": "hi"}],
+                system="sys",
+                model="m",
+                capabilities=_CAPS,
+                on_chunk=lambda c: None,
+            )
+
+        assert result.usage.cache_creation_input_tokens == 120
+        assert result.usage.cache_read_input_tokens == 80
+        assert result.usage.input_tokens == 3
+
 
 # ── Loop Streaming Wiring ───────────────────────────
 

@@ -71,10 +71,10 @@ agent_cli/
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
-│   ├── base.py              (45)   LLMProvider 프로토콜, LLMResponse(+thinking), TokenUsage
+│   ├── base.py              (50)   LLMProvider 프로토콜, LLMResponse(+thinking), TokenUsage(+cache_creation/cache_read tokens)
 │   ├── compat.py            (419)  ModelCapabilities + 프로브 감지 (thinking + format) + 진행 콜백 + 자동 저장
 │   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
-│   ├── anthropic.py         (187)  Anthropic Messages API (tool_use + thinking blocks + streaming + TTFT)
+│   ├── anthropic.py         (216)  Anthropic Messages API (tool_use + thinking blocks + streaming + TTFT + prompt cache via cache_control)
 │   ├── openai_compat.py     (194)  OpenAI 호환 API (function calling + reasoning_content + streaming + TTFT)
 │   └── ollama.py            (176)  Ollama API (basic JSON mode + message.thinking + streaming + TTFT)
 │

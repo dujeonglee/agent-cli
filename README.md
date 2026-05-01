@@ -523,6 +523,10 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 agent-cli run "task" -p anthropic
 ```
 
+System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용된다.
+한 세션에서 두 번째 콜부터 시스템 프롬프트가 캐시 히트하여 입력 비용을 90% 절감한다.
+캐시 hit/write 토큰은 turn summary에 표시된다.
+
 ### vLLM / LM Studio / mlx-lm (OpenAI 호환)
 
 ```bash

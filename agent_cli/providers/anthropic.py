@@ -35,10 +35,22 @@ class AnthropicProvider:
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
         }
+        # System is sent as a single content block with ``cache_control``
+        # to enable Anthropic prompt caching. The whole system prompt is
+        # the cache key — it must be byte-stable across calls for cache
+        # hits (see system_prompt.py: Date excluded for this reason).
+        # Non-Claude endpoints that don't recognize cache_control should
+        # ignore the field; behavior on strict proxies is unverified.
         body: dict = {
             "model": model,
             "max_tokens": capabilities.max_output_tokens,
-            "system": system,
+            "system": [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             "messages": messages,
         }
 
@@ -81,6 +93,8 @@ class AnthropicProvider:
         stop_reason = None
         input_tokens = 0
         output_tokens = 0
+        cache_creation_input_tokens = 0
+        cache_read_input_tokens = 0
         t0 = time.perf_counter_ns()
         t_first = 0
 
@@ -101,6 +115,10 @@ class AnthropicProvider:
                 if event_type == "message_start":
                     usage = data.get("message", {}).get("usage", {})
                     input_tokens = usage.get("input_tokens", 0)
+                    cache_creation_input_tokens = usage.get(
+                        "cache_creation_input_tokens", 0
+                    )
+                    cache_read_input_tokens = usage.get("cache_read_input_tokens", 0)
 
                 elif event_type == "content_block_delta":
                     delta = data.get("delta", {})
@@ -128,13 +146,20 @@ class AnthropicProvider:
         decode_ns = (t_end - t_first) if t_first else 0
 
         usage = None
-        if input_tokens or output_tokens:
+        if (
+            input_tokens
+            or output_tokens
+            or cache_creation_input_tokens
+            or cache_read_input_tokens
+        ):
             usage = TokenUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 prompt_eval_ns=ttft_ns,
                 eval_ns=decode_ns,
                 ttft_ns=ttft_ns,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
             )
 
         return LLMResponse(
@@ -176,6 +201,10 @@ class AnthropicProvider:
             usage = TokenUsage(
                 input_tokens=usage_data.get("input_tokens", 0),
                 output_tokens=usage_data.get("output_tokens", 0),
+                cache_creation_input_tokens=usage_data.get(
+                    "cache_creation_input_tokens", 0
+                ),
+                cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
             )
 
         return LLMResponse(

@@ -17,6 +17,11 @@ class TokenUsage:
     prompt_eval_ns: int = 0  # prefill / time-to-first-token
     eval_ns: int = 0  # decode / first-to-last token
     ttft_ns: int = 0  # client-measured TTFT (all providers, streaming only)
+    # Anthropic prompt cache. Non-zero only when cache_control is set on
+    # request blocks. ``input_tokens`` excludes both cache fields, so the
+    # billable input total is input_tokens + cache_creation + cache_read.
+    cache_creation_input_tokens: int = 0  # tokens written to cache (25% premium)
+    cache_read_input_tokens: int = 0  # tokens served from cache (10% cost)
 
 
 @dataclass

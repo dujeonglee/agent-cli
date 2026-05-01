@@ -897,6 +897,12 @@ def _render_token_stats(usage, turn: int, verbose: bool = False) -> None:
             parts.append(f"out: {usage.output_tokens} tok ({speed:.0f} tok/s)")
         else:
             parts.append(f"out: {usage.output_tokens} tok")
+    # Anthropic prompt cache visibility — only render when non-zero so
+    # other providers' summary lines stay unchanged.
+    if usage.cache_read_input_tokens:
+        parts.append(f"cache hit: {usage.cache_read_input_tokens} tok")
+    if usage.cache_creation_input_tokens:
+        parts.append(f"cache write: {usage.cache_creation_input_tokens} tok")
     if not parts:
         return
     msg = " | ".join(parts)

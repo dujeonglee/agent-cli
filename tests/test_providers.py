@@ -72,6 +72,79 @@ class TestAnthropicProvider:
         assert "x-api-key" in call_kwargs.kwargs["headers"]
         assert call_kwargs.kwargs["json"]["max_tokens"] == 4096
 
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_system_sent_with_cache_control(self, mock_post, caps_structured):
+        """System prompt is wrapped in a content block with cache_control."""
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": "{}"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "stop_reason": "end_turn",
+            }
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="my system",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_structured,
+        )
+        body = mock_post.call_args.kwargs["json"]
+        assert body["system"] == [
+            {
+                "type": "text",
+                "text": "my system",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_cache_usage_fields_parsed(self, mock_post, caps_structured):
+        """Both cache_creation and cache_read tokens flow through to TokenUsage."""
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": "{}"}],
+                "usage": {
+                    "input_tokens": 5,
+                    "output_tokens": 2,
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 50,
+                },
+                "stop_reason": "end_turn",
+            }
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_structured,
+        )
+        assert result.usage.cache_creation_input_tokens == 100
+        assert result.usage.cache_read_input_tokens == 50
+        # input_tokens stays separate — billable total is the sum
+        assert result.usage.input_tokens == 5
+
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_cache_usage_fields_default_zero(self, mock_post, caps_structured):
+        """When server omits cache fields, TokenUsage defaults to 0."""
+        mock_post.return_value = _mock_response(
+            {
+                "content": [{"type": "text", "text": "{}"}],
+                "usage": {"input_tokens": 5, "output_tokens": 2},
+                "stop_reason": "end_turn",
+            }
+        )
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_structured,
+        )
+        assert result.usage.cache_creation_input_tokens == 0
+        assert result.usage.cache_read_input_tokens == 0
+
 
 class TestOpenAICompatProvider:
     @patch("agent_cli.providers.openai_compat.requests.post")
