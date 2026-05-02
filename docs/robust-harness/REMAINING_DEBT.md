@@ -6,10 +6,9 @@
 
 ---
 
-## 1. `_dispatch_tool_with_hooks`는 SRP 위반 (medium)
+## 1. `_dispatch_tool_with_hooks`는 SRP 위반 — **청산됨 (2026-05-03)**
 
-이제는 `AgentLoop._dispatch_tool_with_hooks` 메서드(이전 이름 `_execute_single_tool`,
-그 후 free function `_dispatch_tool_with_hooks`)가 여전히 ~6가지 일을 한 곳에서 함:
+`AgentLoop._dispatch_tool_with_hooks`는 한때 6가지 책임을 한 메서드 본문에 가졌음:
 
 1. PreToolUse hooks (Python runner + shell)
 2. delegate 특수 분기 dispatch
@@ -18,24 +17,18 @@
 5. read_file 아티팩트 mtime 갱신
 6. `recent_tool_history` 추적 (B1 action-loop 감지용)
 
-**왜 부채인가**: 단일 책임 원칙 위반. 점진적 진화의 흔적 — hooks가 추가될 때, observability
-가드가 추가될 때마다 한 함수에 쌓임.
+**진행 이력**:
+- 2026-04-XX: free function `_dispatch_tool_with_hooks` 첫 도입 (이전 이름
+  `_execute_single_tool`)
+- 2026-05-02: free function → `AgentLoop` 메서드 전환 (24개 파라미터 중 22개가
+  `self.X`였음). delegate_* 접두사 정리, 시그니처 `(self, tool_name, tool_input)`로
+  축약.
+- 2026-05-03: 6 책임을 1:1 매핑으로 7개 helper로 분해 (책임 4를 `_save_shell_artifact_if_oversized`
+  + `_touch_artifact_on_read` 두 개로 정직하게 쪼갬). orchestrator 본문은 5단계
+  recipe.
 
-**최근 진행**: 2026-05-02 — free function에서 `AgentLoop` 메서드로 전환 (24개
-파라미터 중 22개가 `self.X`였음). delegate_* 접두사가 사라지고 시그니처가
-`(self, tool_name, tool_input)`으로 축약됨. SRP 자체는 여전히 미해결 — 메서드 본문은
-같은 6가지 책임을 가짐.
-
-**왜 지금 본문 쪼개기 안 하는가**: 청산하려면 메서드를 `_pre_hooks` / `_dispatch` /
-`_post_process` 3개 helper로 쪼개야 함. 작업 자체는 깔끔하지만 method 변환과 분리
-PR로 가는 게 회귀 추적 용이.
-
-**언제 청산할 수 있나**:
-- 다른 핵심 일이 없을 때 (rate-limited 청소 PR)
-- 또는 hooks/observability에 새 기능 추가가 필요해서 손대야 할 때 (자연스러운 타이밍)
-
-**위험도**: 코드는 정확히 동작 중. 단지 미래 변경이 코스트 있음(6개 책임이 하나
-메서드에 박혀 있어 변경 영향 분석 약간 어려움).
+**현재 상태**: 청산. 각 helper는 단일 책임 + 자체 전제조건 검사 (early return).
+Orchestrator는 ~10줄 glue. 미래 변경 시 영향 범위가 한 helper 내로 국한됨.
 
 ---
 
