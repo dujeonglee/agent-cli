@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 
 from agent_cli.tools.write_file import tool_write_file
 from agent_cli.tools.shell import tool_shell
@@ -1135,6 +1136,27 @@ class TestReadFileSearch:
 
 
 class TestReadContextTool:
+    """Cover read_context's list/search modes, scope filter, sessions
+    selector, preview formatting, and truncation behavior."""
+
+    # ── Helpers ────────────────────────────────────────────────
+
+    def _make_session(self, base: Path, session_id: str, lines: list[str]) -> Path:
+        sdir = base / session_id
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "history.jsonl").write_text("\n".join(lines) + "\n")
+        return sdir
+
+    def _patch_base(self, monkeypatch, tmp_path: Path) -> Path:
+        import agent_cli.tools.context as ctx_mod
+
+        base = tmp_path / "sessions"
+        base.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", base)
+        return base
+
+    # ── Mode dispatch ──────────────────────────────────────────
+
     def test_list_no_sessions(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
 
@@ -1145,7 +1167,7 @@ class TestReadContextTool:
         assert result.success
         assert "No previous sessions" in result.output
 
-    def test_unknown_mode(self, tmp_path, monkeypatch):
+    def test_unknown_mode(self):
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context({"mode": "invalid"})
@@ -1159,68 +1181,652 @@ class TestReadContextTool:
         assert not result.success
         assert "keyword" in result.error.lower()
 
-    def test_search_no_sessions(self, tmp_path, monkeypatch):
-        import agent_cli.tools.context as ctx_mod
+    def test_default_mode_is_list(self, tmp_path, monkeypatch):
+        import agent_cli.context.session as session_mod
 
-        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "empty")
+        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
         from agent_cli.tools.context import tool_read_context
 
-        result = tool_read_context({"mode": "search", "keyword": "test"})
+        result = tool_read_context({})  # no mode → default list
         assert result.success
-        assert "No sessions found" in result.output
+        assert "No previous sessions" in result.output
 
-    def test_search_finds_match(self, tmp_path, monkeypatch):
-        import agent_cli.tools.context as ctx_mod
+    # ── Default sessions=current behavior ─────────────────────
 
-        # Create fake session with history
-        session_dir = tmp_path / "sessions" / "12345"
-        session_dir.mkdir(parents=True)
-        history = session_dir / "history.jsonl"
-        history.write_text(
-            '{"role":"user","content":"hello world"}\n'
-            '{"role":"assistant","thought":"greeting","action":"complete","action_input":{"result":"hi"}}\n'
+    def test_search_default_uses_only_current_session(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base, "current", ['{"role":"user","content":"target keyword"}']
+        )
+        # Other session also contains the keyword — must NOT be returned
+        self._make_session(
+            base, "other", ['{"role":"user","content":"target keyword too"}']
         )
 
-        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "sessions")
         from agent_cli.tools.context import tool_read_context
 
-        result = tool_read_context({"mode": "search", "keyword": "hello"})
+        result = tool_read_context(
+            {"mode": "search", "keyword": "target"}, session_dir=cur
+        )
         assert result.success
-        assert "hello world" in result.output
-        assert "12345" in result.output
+        assert "current/" in result.output
+        assert "other/" not in result.output
 
-    def test_search_no_match(self, tmp_path, monkeypatch):
-        import agent_cli.tools.context as ctx_mod
-
-        session_dir = tmp_path / "sessions" / "12345"
-        session_dir.mkdir(parents=True)
-        history = session_dir / "history.jsonl"
-        history.write_text('{"role":"user","content":"hello"}\n')
-
-        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "sessions")
+    def test_search_no_session_dir_returns_hint(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
         from agent_cli.tools.context import tool_read_context
 
-        result = tool_read_context({"mode": "search", "keyword": "nonexistent"})
+        # No session_dir + no sessions arg → cannot resolve default
+        result = tool_read_context({"mode": "search", "keyword": "x"})
         assert result.success
-        assert "No matches found" in result.output
+        assert "current session" in result.output.lower()
+        assert "all" in result.output.lower()
 
-    def test_search_includes_subdirs(self, tmp_path, monkeypatch):
-        """Search finds matches in delegate/skill subdirectories."""
-        import agent_cli.tools.context as ctx_mod
+    def test_search_sessions_all_searches_every_session(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
+        self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
 
-        session_dir = tmp_path / "sessions" / "12345"
-        delegate_dir = session_dir / "delegate_explorer_abc_123"
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "sessions": "all"}
+        )
+        assert result.success
+        assert "s1/" in result.output and "s2/" in result.output
+
+    def test_search_sessions_specific_id(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
+        self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "sessions": "s1"}
+        )
+        assert result.success
+        assert "s1/" in result.output
+        assert "s2/" not in result.output
+
+    def test_search_sessions_array_multiple_ids(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
+        self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
+        self._make_session(base, "s3", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "sessions": ["s1", "s3"]}
+        )
+        assert result.success
+        assert "s1/" in result.output and "s3/" in result.output
+        assert "s2/" not in result.output
+
+    def test_search_sessions_unknown_id_errors(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "sessions": "nope"}
+        )
+        assert not result.success
+        assert "not found" in result.error.lower()
+
+    def test_search_sessions_all_combined_with_id_errors(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "x", "sessions": ["all", "s1"]}
+        )
+        assert not result.success
+        assert "all" in result.error.lower()
+
+    # ── Scope normalization ────────────────────────────────────
+
+    def test_scope_default_searches_all_four(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"alpha first"}',  # query
+                '{"role":"assistant","thought":"alpha second","action":"x","action_input":{}}',  # reasoning
+                '{"role":"assistant","thought":"_","action":"alpha_third","action_input":{}}',  # tool
+                '{"role":"user","content":"Observation: alpha fourth"}',  # observation
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha"}, session_dir=cur
+        )
+        assert result.success
+        # All four match types should appear
+        for s in ("query", "reasoning", "tool", "observation"):
+            assert f"matched: {s}" in result.output or f", {s}" in result.output
+
+    def test_scope_string_auto_promoted_to_list(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"alpha","action":"x","action_input":{}}',
+                '{"role":"user","content":"alpha"}',
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "scope": "reasoning"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "matched: reasoning" in result.output
+        # query scope should NOT have matched
+        assert "matched: query" not in result.output
+
+    def test_scope_invalid_value_errors(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "x", "scope": "bogus"},
+            session_dir=cur,
+        )
+        assert not result.success
+        assert "invalid scope" in result.error.lower()
+
+    def test_scope_partially_invalid_still_errors(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        # Mix of valid and invalid → must error (don't silently drop)
+        result = tool_read_context(
+            {"mode": "search", "keyword": "x", "scope": ["reasoning", "junk"]},
+            session_dir=cur,
+        )
+        assert not result.success
+        assert "invalid scope" in result.error.lower()
+
+    # ── Per-scope matching ────────────────────────────────────
+
+    def test_scope_reasoning_matches_thought_only(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                # action contains 'auth' but scope=reasoning → no match
+                '{"role":"assistant","thought":"unrelated","action":"auth_check","action_input":{}}',
+                # thought contains 'auth' → match
+                '{"role":"assistant","thought":"check the auth flow","action":"x","action_input":{}}',
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "reasoning"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "check the auth flow" in result.output
+        assert "auth_check" not in result.output
+
+    def test_scope_tool_matches_action_or_input(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                # action name match
+                '{"role":"assistant","thought":"_","action":"auth_handler","action_input":{}}',
+                # action_input value match
+                '{"role":"assistant","thought":"_","action":"read_file","action_input":{"path":"auth.py"}}',
+                # neither — must NOT match
+                '{"role":"assistant","thought":"auth here","action":"x","action_input":{"path":"unrelated.py"}}',
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "tool"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "auth_handler" in result.output
+        assert "auth.py" in result.output
+        # The third record should not appear (auth is in thought, not tool)
+        assert "unrelated.py" not in result.output
+
+    def test_scope_observation_only_obs_prefixed(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"plain user query about auth"}',  # query
+                '{"role":"user","content":"Observation: auth check passed"}',  # obs
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "observation"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "auth check passed" in result.output
+        assert "plain user query" not in result.output
+
+    def test_scope_query_excludes_observations(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"plain user query about auth"}',  # query
+                '{"role":"user","content":"Observation: auth check passed"}',  # obs
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "query"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "plain user query" in result.output
+        assert "auth check passed" not in result.output
+
+    def test_multi_scope_aggregates_one_block_per_turn(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        # Single turn with keyword in BOTH thought and action
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"checking auth flow",'
+                '"action":"auth_lookup","action_input":{}}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {
+                "mode": "search",
+                "keyword": "auth",
+                "scope": ["reasoning", "tool"],
+            },
+            session_dir=cur,
+        )
+        assert result.success
+        # Single result block, but matched lists both scopes
+        assert result.output.count("matched: reasoning, tool") == 1
+        # Both per-scope previews appear
+        assert "reasoning:" in result.output
+        assert "tool:" in result.output
+
+    # ── No false positives (A4 fix) ───────────────────────────
+
+    def test_no_false_positive_on_json_keys(self, tmp_path, monkeypatch):
+        """Old impl matched raw JSON text — keyword 'action' would hit
+        every record because the field name 'action' is literally there.
+        New impl matches field VALUES only."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                # No field actually contains 'action' as a value
+                '{"role":"assistant","thought":"hello","action":"complete","action_input":{"result":"done"}}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "action", "scope": "reasoning"},
+            session_dir=cur,
+        )
+        assert result.success
+        # 'action' is NOT in the thought → must report no matches
+        assert "No matches" in result.output
+
+    def test_no_match_on_role_field(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            ['{"role":"assistant","thought":"hi","action":"x","action_input":{}}'],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        # 'assistant' appears as a JSON value (role) — but no scope is
+        # 'role'; structured matcher only looks at thought/action/etc.
+        result = tool_read_context(
+            {"mode": "search", "keyword": "assistant"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "No matches" in result.output
+
+    # ── Preview correctness (A3 fix) ──────────────────────────
+
+    def test_preview_shows_matched_field_for_tool(self, tmp_path, monkeypatch):
+        """Old impl always showed thought as preview; new impl shows the
+        matched scope's content."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"unrelated thinking",'
+                '"action":"read_file","action_input":{"path":"auth.py"}}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "tool"},
+            session_dir=cur,
+        )
+        assert result.success
+        # Tool preview should contain the action call form
+        assert "read_file" in result.output
+        assert "auth.py" in result.output
+        # Thought should NOT appear since scope was tool only
+        assert "unrelated thinking" not in result.output
+
+    def test_preview_observation_picks_matching_line(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"Observation: line one\\nline two has auth\\nline three"}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "observation"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "line two has auth" in result.output
+        # Other lines should not appear in preview
+        assert "line three" not in result.output
+
+    # ── Whitespace collapse ───────────────────────────────────
+
+    def test_preview_collapses_newlines_and_whitespace(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"line one\\n\\n  line two\\t\\twith auth",'
+                '"action":"x","action_input":{}}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "reasoning"},
+            session_dir=cur,
+        )
+        assert result.success
+        # All whitespace collapsed to single space; no \n / multiple spaces
+        assert "line one line two with auth" in result.output
+        # Confirm raw escape characters didn't leak into the preview line
+        preview_lines = [
+            ln
+            for ln in result.output.split("\n")
+            if ln.strip().startswith("reasoning:")
+        ]
+        assert preview_lines, "expected a reasoning preview line"
+        assert "  " not in preview_lines[0].split("reasoning:", 1)[1].strip()
+
+    # ── 200 char cap ──────────────────────────────────────────
+
+    def test_preview_cap_truncates_long_text(self, tmp_path, monkeypatch):
+        long_thought = "auth " + ("x" * 500)  # > 200 chars
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"'
+                + long_thought
+                + '","action":"x","action_input":{}}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "reasoning"},
+            session_dir=cur,
+        )
+        assert result.success
+        # Preview line is "   reasoning: <preview>"
+        for line in result.output.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("reasoning:"):
+                preview = stripped[len("reasoning:") :].strip()
+                assert preview.endswith("...")
+                # Cap is 200 (incl. trailing ...)
+                assert len(preview) == 200
+                break
+        else:
+            raise AssertionError("expected a reasoning preview line")
+
+    def test_preview_under_cap_unchanged(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"short auth check",'
+                '"action":"x","action_input":{}}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth", "scope": "reasoning"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "short auth check" in result.output
+        assert "..." not in result.output
+
+    # ── Truncation timing (A2 fix) ───────────────────────────
+
+    def test_truncation_caps_at_50_across_sessions(self, tmp_path, monkeypatch):
+        """Old impl checked truncation only between sessions; a single
+        large session could overshoot. New impl breaks at append time."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        # First session with 100 matches — should be cut at 50
+        big_lines = [
+            '{"role":"user","content":"alpha line ' + str(i) + '"}' for i in range(100)
+        ]
+        self._make_session(base, "big", big_lines)
+        # Second session also has matches but should be skipped after cap
+        self._make_session(base, "later", ['{"role":"user","content":"alpha later"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "sessions": "all"}
+        )
+        assert result.success
+        # Header reports 50 matches and capped marker
+        assert "50 matches" in result.output
+        assert "capped at 50" in result.output
+        # Later session should NOT have been searched (early break)
+        assert "later/" not in result.output
+
+    # ── Result format ────────────────────────────────────────
+
+    def test_format_header_includes_keyword_and_scope(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "scope": ["query", "tool"]},
+            session_dir=cur,
+        )
+        assert result.success
+        first_line = result.output.split("\n", 1)[0]
+        assert "Search results for 'alpha'" in first_line
+        assert "scope: query, tool" in first_line
+
+    def test_format_uses_ascii_separator(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha"},
+            session_dir=cur,
+        )
+        assert result.success
+        # ASCII '--' as separator, not a unicode box character
+        assert "-- s/" in result.output
+        assert "─" not in result.output
+
+    def test_format_no_matches_message(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "nothere", "scope": "reasoning"},
+            session_dir=cur,
+        )
+        assert result.success
+        # Exact format: "No matches for 'X' (scope: ...)."
+        assert result.output == "No matches for 'nothere' (scope: reasoning)."
+
+    # ── Edge cases ───────────────────────────────────────────
+
+    def test_corrupt_jsonl_line_skipped(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"alpha valid"}',
+                "{ this is not valid json containing alpha",
+                '{"role":"user","content":"alpha second"}',
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha"},
+            session_dir=cur,
+        )
+        assert result.success
+        # Both valid lines matched; corrupt line silently skipped
+        assert "alpha valid" in result.output
+        assert "alpha second" in result.output
+
+    def test_search_includes_subdir_history(self, tmp_path, monkeypatch):
+        """rglob picks up delegate sub-history.jsonl too."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = base / "12345"
+        delegate_dir = cur / "delegate_explorer_abc_123"
         delegate_dir.mkdir(parents=True)
         (delegate_dir / "history.jsonl").write_text(
-            '{"role":"assistant","thought":"found auth bug","action":"complete","action_input":{"result":"done"}}\n'
+            '{"role":"assistant","thought":"found auth bug",'
+            '"action":"complete","action_input":{"result":"done"}}\n'
         )
 
-        monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", tmp_path / "sessions")
         from agent_cli.tools.context import tool_read_context
 
-        result = tool_read_context({"mode": "search", "keyword": "auth bug"})
+        result = tool_read_context(
+            {"mode": "search", "keyword": "auth bug", "scope": "reasoning"},
+            session_dir=cur,
+        )
         assert result.success
         assert "delegate_explorer" in result.output
+
+    def test_missing_action_input_does_not_crash(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                # No action_input field at all
+                '{"role":"assistant","thought":"no input here","action":"alpha_call"}'
+            ],
+        )
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha", "scope": "tool"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "alpha_call" in result.output
+
+    # ── Plumbing: execute_tool passes session_dir ────────────
+
+    def test_execute_tool_forwards_session_dir(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "current", ['{"role":"user","content":"alpha"}'])
+        # Other session has the same keyword — proves session_dir filter works
+        self._make_session(base, "other", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools import execute_tool
+
+        result = execute_tool(
+            "read_context",
+            {"mode": "search", "keyword": "alpha"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "current/" in result.output
+        assert "other/" not in result.output
+
+    def test_execute_tool_other_tools_unaffected(self, tmp_path):
+        """Adding session_dir kwarg must not break other tools."""
+        from agent_cli.tools import execute_tool
+
+        # shell ignores session_dir entirely
+        result = execute_tool("shell", {"command": "echo ok"}, session_dir=tmp_path)
+        assert result.success
+        assert "ok" in result.output
 
 
 class TestRunSkillTool:

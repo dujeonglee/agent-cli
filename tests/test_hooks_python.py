@@ -565,8 +565,11 @@ class TestLoopHookIntegration:
                 MagicMock(),
                 hook_runner=runner,
             )
-            # The modified input should have been used
-            mock_exec.assert_called_once_with("shell", {"command": "ls"})
+            # The modified input should have been used; session_dir
+            # defaults to None when the dispatcher has no session context.
+            mock_exec.assert_called_once_with(
+                "shell", {"command": "ls"}, session_dir=None
+            )
 
     def test_dispatch_tool_with_hooks_post_hook_fires(self, tmp_path):
         """PostToolUse hook fires after tool execution."""

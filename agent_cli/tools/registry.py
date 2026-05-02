@@ -127,7 +127,8 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
     "read_context": ToolSchema(
         name="read_context",
         description="Read context from previous sessions. "
-        "mode='list': session list. mode='search': grep keyword across all sessions.",
+        "mode='list': session list. mode='search': structured keyword search "
+        "across all sessions; pass 'scope' to restrict matched fields.",
         parameters={
             "type": "object",
             "properties": {
@@ -138,6 +139,35 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
                 "keyword": {
                     "type": "string",
                     "description": "Search keyword (required for mode=search)",
+                },
+                "scope": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "reasoning",
+                            "tool",
+                            "observation",
+                            "query",
+                        ],
+                    },
+                    "description": (
+                        "Optional field filter for mode=search. "
+                        "reasoning=assistant.thought, tool=action+input, "
+                        "observation=tool results, query=user input. "
+                        "Default: all four. Single string accepted (auto-promoted)."
+                    ),
+                },
+                "sessions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional session selector for mode=search. "
+                        "Default: current session only. "
+                        "Pass 'all' (single value) to search every session, "
+                        "or specific session_id(s) to scope. "
+                        "Single string accepted (auto-promoted)."
+                    ),
                 },
             },
             "required": ["mode"],
@@ -476,6 +506,8 @@ def _try_coerce(value: Any, expected_type: str) -> Any | None:
             return None
     if expected_type == "array" and isinstance(value, dict):
         return [value]  # single dict → [dict]
+    if expected_type == "array" and isinstance(value, str):
+        return [value]  # single str → [str]  (lenient for "scope": "x" patterns)
     if expected_type == "string" and isinstance(value, (int, float)):
         return str(value)
     return None

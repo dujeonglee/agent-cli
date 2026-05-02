@@ -283,7 +283,7 @@ agent-cli chat -p ollama -m qwen3:32b --resume <session_id>
 |------|------|--------|
 | `-w, --workspace` | 워크스페이스 경로 필터 | 현재 디렉토리 |
 
-LLM은 `read_context` 도구로 이전 세션의 세부 이력을 조회할 수 있습니다.
+LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 조회할 수 있습니다 (구조화 키워드 검색, 필드별 필터 지원).
 
 ## 스킬 (Prompt Skills)
 
@@ -596,7 +596,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
-| `read_context` | 이전 세션 이력 조회 (목록/키워드 검색) |
+| `read_context` | 세션 이력 조회 (현재 세션 기본, scope/sessions 필터) |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
@@ -663,15 +663,27 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 ### read_context — 세션 이력 조회
 
-이전 세션의 이력을 조회합니다. LLM이 과거 작업 맥락이 필요할 때 자발적으로 사용합니다.
+이전 또는 현재 세션의 이력을 조회합니다. LLM이 FIFO context window 밖의 정보가 필요할 때 자발적으로 사용합니다.
 
 ```json
 // 세션 목록 (id, 마지막 활동 시간, 마지막 쿼리)
 {"action": "read_context", "action_input": {"mode": "list"}}
 
-// 키워드로 전체 세션 검색 (delegate/skill subdir 포함)
+// 키워드 검색 — 기본은 현재 세션 (delegate/skill subdir 포함)
 {"action": "read_context", "action_input": {"mode": "search", "keyword": "인증"}}
+
+// 다른 세션까지 확장 — sessions="all" 또는 특정 session_id 지정
+{"action": "read_context", "action_input": {"mode": "search", "keyword": "인증", "sessions": "all"}}
+{"action": "read_context", "action_input": {"mode": "search", "keyword": "인증", "sessions": ["1777199924", "1777199950"]}}
+
+// 필드 필터 (scope) — reasoning / tool / observation / query 중 선택
+{"action": "read_context", "action_input": {"mode": "search", "keyword": "auth", "scope": "tool"}}
+{"action": "read_context", "action_input": {"mode": "search", "keyword": "auth", "scope": ["reasoning", "tool"]}}
 ```
+
+**scope 의미**: `reasoning` = assistant.thought, `tool` = action + action_input,
+`observation` = "Observation:" 시작하는 user content, `query` = 그 외 user 입력.
+미지정 시 4개 전부. 결과는 턴 단위로 묶이고 preview는 200자 cap, 한 검색당 최대 50건.
 
 ### ask — 사용자에게 질문 (chat 모드 전용)
 

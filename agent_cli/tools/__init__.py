@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from agent_cli.tools.result import ToolResult
@@ -57,12 +58,23 @@ __all__ = [
 ]
 
 
-def execute_tool(tool_name: str, action_input: dict) -> ToolResult:
-    """Execute a tool by name and return a ToolResult."""
+def execute_tool(
+    tool_name: str,
+    action_input: dict,
+    *,
+    session_dir: Path | None = None,
+) -> ToolResult:
+    """Execute a tool by name and return a ToolResult.
+
+    ``session_dir`` is forwarded to tools that need session context
+    (currently only ``read_context``); other tools ignore it.
+    """
     tool_fn = TOOLS.get(tool_name)
     if tool_fn is None:
         return ToolResult(
             False,
             error=f"Unknown tool: '{tool_name}'. Available: {', '.join(TOOLS)}",
         )
+    if tool_name == "read_context":
+        return tool_fn(action_input, session_dir=session_dir)
     return tool_fn(action_input)

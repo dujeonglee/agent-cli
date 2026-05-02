@@ -1296,7 +1296,7 @@ def _dispatch_tool_with_hooks(
         # reach here. ``execute_tool``'s own ``Unknown tool`` check
         # remains as a public-API boundary for direct callers (tests,
         # future external users).
-        result = execute_tool(tool_name, tool_input)
+        result = execute_tool(tool_name, tool_input, session_dir=session_dir)
 
     # Observation-size guards (loop-level post-process) ─────────────
     # Both are best-effort: on any failure we leave `result` untouched
