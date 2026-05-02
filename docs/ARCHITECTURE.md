@@ -84,7 +84,7 @@ agent_cli/
 │   ├── json_repair.py       (183)  깨진 JSON 복구 (6단계 파이프라인)
 │
 ├── tools/                          도구 시스템
-│   ├── __init__.py          (68)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + execute_tool() → ToolResult
+│   ├── __init__.py          (81)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + _execute_tool() (internal primitive)
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
 │   ├── registry.py          (481)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
 │   ├── _diff.py             (113)  write_file/edit_file 공용 unified-diff 포매터 (Rich markup, OLD/NEW line-number gutter, 100줄 cap)
@@ -607,7 +607,7 @@ A5: outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
 
 **B1 detector와의 순서:** B1이 먼저 (A4·A5 무관 *반복 자체*가 더 큰 신호). 같은 unknown tool을 2번 emit하면 B1이 잡아 `probe_progress`를 줌 — A4 메시지가 무한 반복되지 않음.
 
-**`_dispatch_tool_with_hooks` 내부 검증 제거됨:** Step 4a 전엔 `_execute_single_tool` 안에서도 `validate_tool_input` 호출 + `tool_name in tools_list` 체크가 있었음. 이젠 recovery 레이어가 단일 진실 원천 — 중복 제거. 단, `tools/__init__.py:execute_tool`의 boundary 방어는 유지 (공개 API + 테스트가 직접 의존).
+**`_dispatch_tool_with_hooks` 내부 검증 제거됨:** Step 4a 전엔 `_execute_single_tool` 안에서도 `validate_tool_input` 호출 + `tool_name in tools_list` 체크가 있었음. 이젠 recovery 레이어가 단일 진실 원천 — 중복 제거. 2026-05-03: `tools/__init__.py:execute_tool`의 boundary 방어도 제거 + `_execute_tool`로 internal rename (REMAINING_DEBT.md #2/#3 청산).
 
 **남은 부채:** 이 작업 중 *알면서 남긴* 부채는 `docs/robust-harness/REMAINING_DEBT.md`에 명시 기록.
 
@@ -867,7 +867,7 @@ escape hatch를 배울 필요 없음.
 
 ```
 AgentLoop._dispatch_tool_with_hooks:
-  1. execute_tool("shell", ...) → ToolResult(output=stdout)
+  1. _execute_tool("shell", ...) → ToolResult(output=stdout)
   2. session_dir 있음 + exceeds_limit(output) → 후처리 진입
        a. save_artifact(session_dir, cmd, output) → session_dir/shell/<ts>-<hash>.log
        b. build_preview(cmd, output, path, succeeded=...) → head+tail+경로+대안

@@ -26,7 +26,7 @@ TOOLS: dict[str, Any] = {
     "shell": tool_shell,
     "read_context": tool_read_context,
     "delegate": lambda args: ToolResult(True, output="(delegate: intercepted by loop)"),
-    # Virtual tools — intercepted by the loop before execute_tool
+    # Virtual tools — intercepted by the loop before _execute_tool
     "complete": lambda args: ToolResult(
         True,
         output=args.get(
@@ -54,27 +54,28 @@ __all__ = [
     "ToolResult",
     "validate_tool_input",
     "get_tool_descriptions",
-    "execute_tool",
 ]
 
 
-def execute_tool(
+def _execute_tool(
     tool_name: str,
     action_input: dict,
     *,
     session_dir: Path | None = None,
 ) -> ToolResult:
-    """Execute a tool by name and return a ToolResult.
+    """Internal dispatch primitive — call a tool from the registry.
+
+    Caller contract: ``tool_name`` MUST exist in ``TOOLS``. The loop's
+    recovery layer (``detect_unknown_tool`` in ``_dispatch_text_path``)
+    is the single source of truth for that validation; bad names never
+    reach this function from the live loop. Direct callers (tests, future
+    integrations) are responsible for the same guarantee — a ``KeyError``
+    on a missing name is the intended failure mode.
 
     ``session_dir`` is forwarded to tools that need session context
     (currently only ``read_context``); other tools ignore it.
     """
-    tool_fn = TOOLS.get(tool_name)
-    if tool_fn is None:
-        return ToolResult(
-            False,
-            error=f"Unknown tool: '{tool_name}'. Available: {', '.join(TOOLS)}",
-        )
+    tool_fn = TOOLS[tool_name]
     if tool_name == "read_context":
         return tool_fn(action_input, session_dir=session_dir)
     return tool_fn(action_input)

@@ -57,7 +57,7 @@ from agent_cli.render import (
     render_group_start,
     render_group_end,
 )
-from agent_cli.tools import TOOLS, execute_tool
+from agent_cli.tools import TOOLS, _execute_tool
 from agent_cli.tools.delegate import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
@@ -883,7 +883,7 @@ class AgentLoop:
         """OnDelegateStart hook → tool_delegate(...) → OnDelegateEnd hook.
 
         The kwargs threaded into ``tool_delegate`` are too provider/
-        identity-specific to fit the generic ``execute_tool`` path,
+        identity-specific to fit the generic ``_execute_tool`` path,
         which is why delegate is intercepted here.
         """
         if self.hook_runner:
@@ -939,15 +939,15 @@ class AgentLoop:
 
     # ── 3. Regular tool dispatch ───────────────────────────────────
     def _invoke_regular(self, tool_name: str, tool_input) -> ToolResult:
-        """Dispatch a non-delegate tool via ``execute_tool``.
+        """Dispatch a non-delegate tool via the registry.
 
         Recovery layer (A4/A5 detectors in ``_dispatch_text_path``) has
-        already validated tool_name + action_input. ``execute_tool``'s
-        own ``Unknown tool`` check remains as a public-API boundary for
-        direct callers.
+        already validated tool_name + action_input. The leaf primitive
+        ``_execute_tool`` trusts that contract and would raise KeyError
+        on a missing name.
         """
         session_dir = self.ctx.session_dir if self.ctx else None
-        return execute_tool(tool_name, tool_input, session_dir=session_dir)
+        return _execute_tool(tool_name, tool_input, session_dir=session_dir)
 
     # ── 4. Shell oversized output → artifact + preview ─────────────
     def _save_shell_artifact_if_oversized(

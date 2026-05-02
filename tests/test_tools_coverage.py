@@ -19,7 +19,7 @@ from agent_cli.tools.delegate import (
     _format_parallel_results,
     DelegateResult,
 )
-from agent_cli.tools import TOOLS, VIRTUAL_TOOLS, execute_tool
+from agent_cli.tools import TOOLS, VIRTUAL_TOOLS, _execute_tool as execute_tool
 
 
 class TestToolResult:
@@ -56,12 +56,6 @@ class TestToolResult:
             __import__("agent_cli.tools.result", fromlist=["ToolResult"]).ToolResult,
         )
         assert result.success
-
-    def test_execute_tool_unknown_returns_error(self):
-        """Unknown tool → ToolResult(False) instead of RuntimeError."""
-        result = execute_tool("nonexistent_tool", {})
-        assert result.success is False
-        assert "Unknown tool" in result.error
 
 
 class TestWriteFile:
@@ -811,11 +805,6 @@ class TestToolsRegistry:
 
 
 class TestExecuteTool:
-    def test_unknown_tool(self):
-        result = execute_tool("nonexistent_tool", {})
-        assert not result.success
-        assert "Unknown tool" in result.error
-
     def test_execute_virtual_complete(self):
         result = execute_tool("complete", {"result": "all done"})
         assert result.success
@@ -825,13 +814,6 @@ class TestExecuteTool:
         result = execute_tool("ask", {"question": "which file?"})
         assert result.success
         assert result.output == "which file?"
-
-    def test_error_message_includes_virtual_tools(self):
-        result = execute_tool("bogus", {})
-        assert not result.success
-        assert "complete" in result.error
-        assert "ask" in result.error
-        assert "read_file" in result.error
 
 
 class TestReadFilePartial:
@@ -1808,7 +1790,7 @@ class TestReadContextTool:
         # Other session has the same keyword — proves session_dir filter works
         self._make_session(base, "other", ['{"role":"user","content":"alpha"}'])
 
-        from agent_cli.tools import execute_tool
+        from agent_cli.tools import _execute_tool as execute_tool
 
         result = execute_tool(
             "read_context",
@@ -1821,7 +1803,7 @@ class TestReadContextTool:
 
     def test_execute_tool_other_tools_unaffected(self, tmp_path):
         """Adding session_dir kwarg must not break other tools."""
-        from agent_cli.tools import execute_tool
+        from agent_cli.tools import _execute_tool as execute_tool
 
         # shell ignores session_dir entirely
         result = execute_tool("shell", {"command": "echo ok"}, session_dir=tmp_path)

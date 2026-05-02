@@ -548,7 +548,7 @@ class TestLoopHookIntegration:
         runner = HookRunner(hook_dirs=[d])
         loop = self._make_loop(tmp_path, hook_runner=runner)
 
-        with patch("agent_cli.loop.execute_tool") as mock_exec:
+        with patch("agent_cli.loop._execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="ok")
             loop._dispatch_tool_with_hooks("shell", {"command": "rm -rf /"})
             # The modified input should have been used; session_dir
@@ -576,7 +576,7 @@ class TestLoopHookIntegration:
         runner = HookRunner(hook_dirs=[d])
         loop = self._make_loop(tmp_path, hook_runner=runner)
 
-        with patch("agent_cli.loop.execute_tool") as mock_exec:
+        with patch("agent_cli.loop._execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="file contents")
             result = loop._dispatch_tool_with_hooks("read_file", {"path": "test.py"})
         assert result.success

@@ -343,7 +343,7 @@ class TestLoopPostProcess:
         # Patch the underlying shell tool so we don't actually spawn a
         # subprocess; we only care about the loop's wrapping behaviour.
         with patch(
-            "agent_cli.loop.execute_tool",
+            "agent_cli.loop._execute_tool",
             return_value=ToolResult(True, output=big),
         ):
             result = loop._dispatch_tool_with_hooks(
@@ -365,7 +365,7 @@ class TestLoopPostProcess:
 
         loop = self._make_loop(session_dir=tmp_path)
         with patch(
-            "agent_cli.loop.execute_tool",
+            "agent_cli.loop._execute_tool",
             return_value=ToolResult(True, output="small output\n2 lines"),
         ):
             result = loop._dispatch_tool_with_hooks("shell", {"command": "echo hi"})
@@ -387,7 +387,7 @@ class TestLoopPostProcess:
         big = "\n".join(f"line {i}" for i in range(100))
         loop = self._make_loop(session_dir=None)
         with patch(
-            "agent_cli.loop.execute_tool",
+            "agent_cli.loop._execute_tool",
             return_value=ToolResult(True, output=big),
         ):
             result = loop._dispatch_tool_with_hooks("shell", {"command": "x"})
@@ -412,7 +412,7 @@ class TestLoopPostProcess:
 
         loop = self._make_loop(session_dir=tmp_path)
         with patch(
-            "agent_cli.loop.execute_tool",
+            "agent_cli.loop._execute_tool",
             return_value=ToolResult(True, output="(some file contents)"),
         ):
             loop._dispatch_tool_with_hooks("read_file", {"path": str(artifact)})

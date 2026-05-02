@@ -233,14 +233,14 @@ class TestStringInputAutoConversion:
     schema detector (which wraps ``validate_tool_input``). The downstream
     dispatch path (``_dispatch_tool_with_hooks``) assumes already-validated
     dict input, so the conversion contract is exercised here at the
-    detector boundary, then executed through the public ``execute_tool``
+    detector boundary, then executed through the internal ``_execute_tool``
     primitive to confirm end-to-end behaviour is preserved.
     """
 
     def test_read_file_string_input(self, tmp_path):
         """read_file with string input is normalized to {'path': '...'}."""
         from agent_cli.recovery.detectors import detect_schema_mismatch
-        from agent_cli.tools import execute_tool
+        from agent_cli.tools import _execute_tool as execute_tool
 
         test_file = tmp_path / "hello.txt"
         test_file.write_text("hello world")
@@ -258,7 +258,7 @@ class TestStringInputAutoConversion:
     def test_shell_string_input(self):
         """shell with string input is normalized to {'command': '...'}."""
         from agent_cli.recovery.detectors import detect_schema_mismatch
-        from agent_cli.tools import execute_tool
+        from agent_cli.tools import _execute_tool as execute_tool
 
         mismatched, err, normalized = detect_schema_mismatch("shell", "echo hello")
         assert not mismatched, err
