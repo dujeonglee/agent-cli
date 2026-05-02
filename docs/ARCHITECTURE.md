@@ -46,10 +46,11 @@ agent_cli/
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (217)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
-├── constants.py             (~95)  공유 상수 + 실패 회복 retry thin-wrapper (`format_no_json_retry` / `format_no_action_retry` — `recovery/primitives.py` 합성)
+├── constants.py             (~45)  공유 상수 (timeout, observation 템플릿, retry hint 정적 메시지, system-injected user prefix). 외부 모듈 의존 없음 — 저층 레이어
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export
-│   ├── detectors.py         (~180) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap — 호출 시점 lazy import로 `tools` 패키지 사이클 회피), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용)
+│   ├── builders.py          (~115) Intervention 합성 factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A1c), `format_action_loop_intervention` (B1). primitives 조합으로 Intervention 생성, 빈 prior_content 시 정적 RETRY_HINT_* fallback
+│   ├── detectors.py         (~180) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용)
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
 │   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 7종 (NO_JSON / NO_OUTPUT / NO_ACTION / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
 │   └── primitives.py        (~120) 순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`, `probe_progress`, `restate_task`) — provider/모델/채널 이름 모름

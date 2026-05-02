@@ -12,6 +12,8 @@ from agent_cli.constants import (
     DELEGATE_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OBS_SUCCESS,
+)
+from agent_cli.recovery.builders import (
     format_action_loop_intervention,
     format_no_action_retry,
     format_no_json_retry,

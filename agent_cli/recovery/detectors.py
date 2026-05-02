@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent_cli.tools.registry import validate_tool_input
+
 
 class ActionLoopDetector:
     """Detect consecutive identical (action, args) emissions (failure B1).
@@ -140,16 +142,7 @@ def detect_schema_mismatch(
 
     Wraps ``tools.registry.validate_tool_input`` so the recovery layer
     has its own vocabulary entry without owning the schema knowledge.
-
-    The ``validate_tool_input`` import is deferred to call-time to break
-    a module-level import cycle: ``constants.py`` imports from
-    ``recovery``, and ``tools/__init__.py`` transitively imports
-    ``constants`` (via the ``read_context`` tool's session helpers).
-    Eager import would deadlock when ``constants`` is the first module
-    loaded — i.e. via ``agent_cli.main`` on CLI startup.
     """
-    from agent_cli.tools.registry import validate_tool_input
-
     valid, err, normalized = validate_tool_input(action, action_input)
     if valid:
         return (False, None, normalized)
