@@ -679,11 +679,22 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 // 필드 필터 (scope) — reasoning / tool / observation / query 중 선택
 {"action": "read_context", "action_input": {"mode": "search", "keyword": "auth", "scope": "tool"}}
 {"action": "read_context", "action_input": {"mode": "search", "keyword": "auth", "scope": ["reasoning", "tool"]}}
+
+// 매치된 턴의 전체 내용 회상 (search 결과의 loc 문자열을 그대로 전달)
+{"action": "read_context", "action_input": {"mode": "fetch", "loc": "1777199924/history.jsonl:42"}}
+
+// 인접 턴까지 함께 (range는 ±N 턴, 최대 5)
+{"action": "read_context", "action_input": {"mode": "fetch", "loc": "1777199924/history.jsonl:42", "range": 2}}
+
+// 복수 loc 한 번에 (최대 10개)
+{"action": "read_context", "action_input": {"mode": "fetch", "loc": ["1777199924/history.jsonl:42", "1777199950/history.jsonl:13"]}}
 ```
 
 **scope 의미**: `reasoning` = assistant.thought, `tool` = action + action_input,
 `observation` = "Observation:" 시작하는 user content, `query` = 그 외 user 입력.
-미지정 시 4개 전부. 결과는 턴 단위로 묶이고 preview는 200자 cap, 한 검색당 최대 50건.
+미지정 시 4개 전부. search 결과는 턴 단위로 묶이고 preview는 200자 cap, 한 검색당 최대 50건.
+
+**fetch는 search와 정반대로 cap 없음** — 모델이 의도적으로 부른 회상이라 multi-line/대용량 observation도 그대로 반환. 다중 loc는 all-or-nothing (하나라도 잘못되면 전체 실패).
 
 ### ask — 사용자에게 질문 (chat 모드 전용)
 

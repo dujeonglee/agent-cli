@@ -1828,6 +1828,387 @@ class TestReadContextTool:
         assert result.success
         assert "ok" in result.output
 
+    # ── Search → fetch hint footer ────────────────────────────
+
+    def test_search_results_include_fetch_hint(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"alpha hit"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "alpha"}, session_dir=cur
+        )
+        assert result.success
+        assert "mode='fetch'" in result.output
+
+    def test_search_no_match_omits_fetch_hint(self, tmp_path, monkeypatch):
+        """Hint is only useful when there's something to fetch."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "search", "keyword": "nothere"}, session_dir=cur
+        )
+        assert result.success
+        assert "mode='fetch'" not in result.output
+
+    # ── mode=fetch: argument validation ───────────────────────
+
+    def test_fetch_missing_loc(self):
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch"})
+        assert not result.success
+        assert "loc is required" in result.error.lower()
+
+    def test_fetch_empty_loc_list(self):
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": []})
+        assert not result.success
+        assert "non-empty" in result.error.lower()
+
+    def test_fetch_loc_too_many(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        too_many = [f"s{i}/history.jsonl:1" for i in range(11)]
+        result = tool_read_context({"mode": "fetch", "loc": too_many})
+        assert not result.success
+        assert "max 10" in result.error.lower()
+
+    def test_fetch_loc_string_auto_promoted(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s", ['{"role":"user","content":"alpha"}'])
+
+        from agent_cli.tools.context import tool_read_context
+
+        # Single string accepted
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
+        assert result.success
+        assert "alpha" in result.output
+
+    def test_fetch_loc_bad_format_no_colon(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl"})
+        assert not result.success
+        assert "line_num" in result.error.lower()
+
+    def test_fetch_loc_bad_format_non_int_line(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:abc"})
+        assert not result.success
+        assert "integer" in result.error.lower()
+
+    def test_fetch_loc_bad_format_zero_line(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:0"})
+        assert not result.success
+        assert "line_num must be >= 1" in result.error.lower() or (
+            "line_num" in result.error.lower() and ">=" in result.error.lower()
+        )
+
+    def test_fetch_loc_bad_format_no_slash(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "history.jsonl:5"})
+        assert not result.success
+        assert "session_id" in result.error.lower()
+
+    def test_fetch_range_negative(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": -1}
+        )
+        assert not result.success
+        assert "range must be" in result.error.lower()
+
+    def test_fetch_range_above_cap(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": 6}
+        )
+        assert not result.success
+        assert "range must be" in result.error.lower()
+
+    def test_fetch_range_non_integer(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": "two"}
+        )
+        assert not result.success
+        assert "range must be" in result.error.lower()
+
+    # ── mode=fetch: file/range errors ─────────────────────────
+
+    def test_fetch_session_not_found(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "nope/history.jsonl:1"})
+        assert not result.success
+        assert "file not found" in result.error.lower()
+
+    def test_fetch_line_out_of_range(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s", ['{"role":"user","content":"only one line"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:99"})
+        assert not result.success
+        assert "out of range" in result.error.lower()
+
+    def test_fetch_all_or_nothing_partial_failure(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "good", ['{"role":"user","content":"valid"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        # First loc is valid, second is bogus → entire fetch fails
+        result = tool_read_context(
+            {
+                "mode": "fetch",
+                "loc": ["good/history.jsonl:1", "bogus/history.jsonl:1"],
+            }
+        )
+        assert not result.success
+        # Output of valid loc should NOT have leaked into error
+        assert "valid" not in (result.error or "")
+
+    # ── mode=fetch: happy path ────────────────────────────────
+
+    def test_fetch_single_target_only(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"first"}',
+                '{"role":"assistant","thought":"reasoning","action":"x","action_input":{"k":"v"}}',
+                '{"role":"user","content":"third"}',
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:2"})
+        assert result.success
+        # Target turn fields rendered
+        assert "thought: reasoning" in result.output
+        assert "action: x" in result.output
+        # action_input compact JSON
+        assert '{"k": "v"}' in result.output or '{"k":"v"}' in result.output
+        # Other turns NOT included (range default = 0)
+        assert "first" not in result.output
+        assert "third" not in result.output
+        # Target marker
+        assert "<- target" in result.output
+
+    def test_fetch_with_range(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"line one"}',
+                '{"role":"assistant","thought":"_","action":"x","action_input":{}}',
+                '{"role":"user","content":"line three (target)"}',
+                '{"role":"assistant","thought":"_","action":"y","action_input":{}}',
+                '{"role":"user","content":"line five"}',
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "fetch", "loc": "s/history.jsonl:3", "range": 1}
+        )
+        assert result.success
+        # Range +/-1 includes lines 2, 3, 4
+        assert "line three (target)" in result.output
+        assert "<- target" in result.output  # only on the target turn
+        # Header should reflect range
+        assert "(range +/-1)" in result.output
+        # Adjacent turns appear (lines 2 and 4)
+        assert "action: x" in result.output  # line 2 turn
+        assert "action: y" in result.output  # line 4 turn
+        # Out-of-range turns not shown
+        assert "line one" not in result.output
+        assert "line five" not in result.output
+
+    def test_fetch_range_clipped_at_file_boundary(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"first"}',
+                '{"role":"user","content":"second"}',
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        # Target = line 1, range = 5 → wants -4..6 but clips to 1..2
+        result = tool_read_context(
+            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": 5}
+        )
+        assert result.success
+        assert "first" in result.output
+        assert "second" in result.output
+
+    def test_fetch_multiple_locs(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha at s1"}'])
+        self._make_session(base, "s2", ['{"role":"user","content":"beta at s2"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {
+                "mode": "fetch",
+                "loc": ["s1/history.jsonl:1", "s2/history.jsonl:1"],
+            }
+        )
+        assert result.success
+        # Top header counts groups
+        assert "Fetched 2 locations" in result.output
+        # Both locs rendered with their group headers
+        assert "=== s1/history.jsonl:1" in result.output
+        assert "=== s2/history.jsonl:1" in result.output
+        # Both contents present
+        assert "alpha at s1" in result.output
+        assert "beta at s2" in result.output
+
+    def test_fetch_multiline_content_block_style(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        # Observation with embedded newlines (preserved via \n escape)
+        self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"Observation: line one\\nline two\\nline three"}'
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
+        assert result.success
+        # Block-style: label on its own line, then indented content lines.
+        # First line carries the "Observation:" prefix; subsequent lines do not.
+        assert "observation:\n" in result.output
+        assert "     Observation: line one" in result.output
+        assert "     line two" in result.output
+        assert "     line three" in result.output
+        # Newlines preserved (not collapsed)
+        assert "line one line two" not in result.output
+
+    def test_fetch_observation_label_for_obs_prefixed_content(
+        self, tmp_path, monkeypatch
+    ):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(
+            base,
+            "obs",
+            ['{"role":"user","content":"Observation: tool result body"}'],
+        )
+        self._make_session(
+            base,
+            "qry",
+            ['{"role":"user","content":"plain user query"}'],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        # Observation-prefixed content → labelled 'observation'
+        r1 = tool_read_context({"mode": "fetch", "loc": "obs/history.jsonl:1"})
+        assert r1.success
+        assert "observation: Observation: tool result body" in r1.output
+
+        # Non-obs user content → labelled 'content'
+        r2 = tool_read_context({"mode": "fetch", "loc": "qry/history.jsonl:1"})
+        assert r2.success
+        assert "content: plain user query" in r2.output
+
+    def test_fetch_corrupt_json_line_renders_raw(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        sdir = base / "s"
+        sdir.mkdir(parents=True)
+        # Write a malformed line directly (bypasses _make_session JSON shape)
+        (sdir / "history.jsonl").write_text("not valid json at all\n")
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
+        assert result.success
+        assert "corrupt JSON" in result.output
+        assert "not valid json" in result.output
+
+    def test_fetch_artifact_field_rendered(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"user","content":"Observation: head","artifact":"shell/cmd_x.log"}'
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
+        assert result.success
+        assert "[artifact: shell/cmd_x.log]" in result.output
+
+    def test_fetch_includes_subdir_history(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        sdir = base / "s"
+        delegate_dir = sdir / "delegate_x"
+        delegate_dir.mkdir(parents=True)
+        (delegate_dir / "history.jsonl").write_text(
+            '{"role":"user","content":"sub-session content"}\n'
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"mode": "fetch", "loc": "s/delegate_x/history.jsonl:1"}
+        )
+        assert result.success
+        assert "sub-session content" in result.output
+
+    def test_fetch_no_size_cap_on_observation(self, tmp_path, monkeypatch):
+        """Unlike search preview (200 char cap), fetch returns full content."""
+        base = self._patch_base(monkeypatch, tmp_path)
+        # 500-char observation
+        big = "X" * 500
+        self._make_session(
+            base,
+            "s",
+            ['{"role":"user","content":"Observation: ' + big + '"}'],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
+        assert result.success
+        assert big in result.output
+        assert "..." not in result.output  # no truncation
+
+    def test_fetch_unknown_mode_helpful_error(self):
+        """Unknown mode error mentions fetch as available."""
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "wat"})
+        assert not result.success
+        assert "fetch" in result.error.lower()
+
 
 class TestRunSkillTool:
     def test_run_skill_in_tools(self):

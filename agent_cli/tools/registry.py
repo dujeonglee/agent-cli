@@ -126,15 +126,17 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
     ),
     "read_context": ToolSchema(
         name="read_context",
-        description="Read context from previous sessions. "
+        description="Read context from sessions. "
         "mode='list': session list. mode='search': structured keyword search "
-        "across all sessions; pass 'scope' to restrict matched fields.",
+        "(default current session; pass 'scope'/'sessions' to restrict). "
+        "mode='fetch': retrieve full turn(s) at given loc (use search results' "
+        "loc string verbatim; add 'range' to include adjacent turns).",
         parameters={
             "type": "object",
             "properties": {
                 "mode": {
                     "type": "string",
-                    "description": "list or search",
+                    "description": "list, search, or fetch",
                 },
                 "keyword": {
                     "type": "string",
@@ -167,6 +169,22 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
                         "Pass 'all' (single value) to search every session, "
                         "or specific session_id(s) to scope. "
                         "Single string accepted (auto-promoted)."
+                    ),
+                },
+                "loc": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Required for mode=fetch. Location(s) returned by "
+                        "search: '{session_id}/{rel_path}:{line_num}'. "
+                        "Single string accepted (auto-promoted). Max 10 entries."
+                    ),
+                },
+                "range": {
+                    "type": "integer",
+                    "description": (
+                        "Optional for mode=fetch. Include +/-N adjacent turns "
+                        "around each loc. Default 0 (target only). Max 5."
                     ),
                 },
             },

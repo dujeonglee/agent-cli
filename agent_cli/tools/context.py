@@ -46,10 +46,11 @@ _MAX_MATCHES = 50
 
 
 def tool_read_context(args: dict, *, session_dir: Path | None = None) -> ToolResult:
-    """Dispatch to mode=list or mode=search.
+    """Dispatch to mode=list, mode=search, or mode=fetch.
 
     ``session_dir`` is the current session's directory; used to resolve
     the default ``sessions`` filter for search (current-session-only).
+    Fetch is loc-driven and does not depend on session_dir.
     """
     mode = args.get("mode", "list")
     if mode == "list":
@@ -61,7 +62,14 @@ def tool_read_context(args: dict, *, session_dir: Path | None = None) -> ToolRes
             sessions=args.get("sessions"),
             session_dir=session_dir,
         )
-    return ToolResult(False, error=f"unknown mode '{mode}'. Use 'list' or 'search'.")
+    if mode == "fetch":
+        return _mode_fetch(
+            loc=args.get("loc"),
+            range_=args.get("range"),
+        )
+    return ToolResult(
+        False, error=f"unknown mode '{mode}'. Use 'list', 'search', or 'fetch'."
+    )
 
 
 # ── mode=list ─────────────────────────────────────────────────────
@@ -345,4 +353,222 @@ def _format_search_result(
             lines.append(f"   {s}: {preview}")
         blocks.append("\n".join(lines))
 
-    return ToolResult(True, output=header + "\n\n".join(blocks))
+    footer = (
+        "\n\nUse mode='fetch' with loc='<above>' to read the full turn "
+        "(add range=N to include adjacent turns)."
+    )
+    return ToolResult(True, output=header + "\n\n".join(blocks) + footer)
+
+
+# ── mode=fetch ────────────────────────────────────────────────────
+
+# Caps protect against runaway requests; both are enforced at
+# normalization time so an error fires before any disk I/O.
+_FETCH_MAX_LOCS = 10
+_FETCH_MAX_RANGE = 5
+
+
+def _mode_fetch(loc: Any, range_: Any) -> ToolResult:
+    """Retrieve full turn content at one or more locations.
+
+    Semantics: all-or-nothing. Any malformed loc, missing file, or
+    out-of-range line aborts the entire request — partial results would
+    confuse the caller about what succeeded.
+    """
+    try:
+        locs = _normalize_loc(loc)
+    except ValueError as e:
+        return ToolResult(False, error=str(e))
+
+    try:
+        rng = _normalize_range(range_)
+    except ValueError as e:
+        return ToolResult(False, error=str(e))
+
+    groups: list[dict] = []
+    for loc_str in locs:
+        try:
+            session_id, rel_path, line_num = _parse_loc(loc_str)
+        except ValueError as e:
+            return ToolResult(False, error=str(e))
+
+        history_path = _SESSIONS_BASE / session_id / rel_path
+        if not history_path.is_file():
+            return ToolResult(
+                False, error=f"file not found for loc '{loc_str}': {history_path}"
+            )
+
+        try:
+            with open(history_path, encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError as e:
+            return ToolResult(False, error=f"failed to read {history_path}: {e}")
+
+        if line_num < 1 or line_num > len(lines):
+            return ToolResult(
+                False,
+                error=(
+                    f"line_num {line_num} out of range for '{loc_str}' "
+                    f"(file has {len(lines)} lines)"
+                ),
+            )
+
+        idx = line_num - 1
+        start = max(0, idx - rng)
+        end = min(len(lines), idx + rng + 1)
+
+        turns = []
+        for i in range(start, end):
+            raw_line = lines[i].strip()
+            if not raw_line:
+                continue
+            try:
+                msg = json.loads(raw_line)
+            except json.JSONDecodeError:
+                msg = {"_raw": raw_line}
+            turns.append(
+                {
+                    "loc": f"{session_id}/{rel_path}:{i + 1}",
+                    "is_target": (i == idx),
+                    "msg": msg,
+                }
+            )
+
+        groups.append({"loc": loc_str, "range": rng, "turns": turns})
+
+    return _format_fetch_result(groups)
+
+
+def _normalize_loc(loc: Any) -> list[str]:
+    """Coerce ``loc`` into a non-empty list of strings, capped at
+    ``_FETCH_MAX_LOCS``."""
+    if loc is None:
+        raise ValueError("loc is required for mode='fetch'")
+    if isinstance(loc, str):
+        loc = [loc]
+    if not isinstance(loc, list):
+        raise ValueError(
+            f"loc must be a string or array of strings, got {type(loc).__name__}"
+        )
+    if not loc:
+        raise ValueError("loc list must be non-empty")
+    if len(loc) > _FETCH_MAX_LOCS:
+        raise ValueError(f"max {_FETCH_MAX_LOCS} locations per fetch, got {len(loc)}")
+    for x in loc:
+        if not isinstance(x, str):
+            raise ValueError(f"loc entries must be strings, got {type(x).__name__}")
+    return list(loc)
+
+
+def _normalize_range(range_: Any) -> int:
+    """Validate ``range`` arg. None → 0. Outside [0, max] → error."""
+    if range_ is None:
+        return 0
+    if isinstance(range_, bool) or not isinstance(range_, int):
+        raise ValueError(
+            f"range must be an integer 0-{_FETCH_MAX_RANGE}, "
+            f"got {type(range_).__name__}"
+        )
+    if range_ < 0 or range_ > _FETCH_MAX_RANGE:
+        raise ValueError(f"range must be in 0-{_FETCH_MAX_RANGE}, got {range_}")
+    return range_
+
+
+def _parse_loc(loc: str) -> tuple[str, str, int]:
+    """Parse '{session_id}/{rel_path}:{line_num}'.
+
+    Uses rpartition on ``:`` so paths containing colons (rare on POSIX
+    but possible on Windows-mounted shares) parse correctly when the
+    line_num suffix is well-formed.
+    """
+    if ":" not in loc:
+        raise ValueError(f"loc must end with ':<line_num>', got {loc!r}")
+    main, _, line_part = loc.rpartition(":")
+    try:
+        line_num = int(line_part)
+    except ValueError as e:
+        raise ValueError(
+            f"line_num in loc must be an integer, got {line_part!r}"
+        ) from e
+    if line_num < 1:
+        raise ValueError(f"line_num must be >= 1, got {line_num} in {loc!r}")
+    if "/" not in main:
+        raise ValueError(
+            f"loc must be '{{session_id}}/{{path}}:{{line_num}}', got {loc!r}"
+        )
+    session_id, _, rel_path = main.partition("/")
+    if not session_id or not rel_path:
+        raise ValueError(f"loc requires non-empty session_id and rel_path, got {loc!r}")
+    return session_id, rel_path, line_num
+
+
+def _format_fetch_result(groups: list[dict]) -> ToolResult:
+    """Render fetch groups. Multi-line field values use YAML block style."""
+    parts: list[str] = []
+    if len(groups) > 1:
+        parts.append(f"Fetched {len(groups)} locations:")
+
+    for g in groups:
+        head = f"=== {g['loc']}"
+        if g["range"] > 0:
+            head += f" (range +/-{g['range']})"
+        head += " ==="
+        block = [head]
+
+        for turn in g["turns"]:
+            target = "    <- target" if turn["is_target"] else ""
+            msg = turn["msg"]
+            role = msg.get("role", "?")
+            block.append(f"\n-- {turn['loc']} [{role}]{target}")
+
+            if "_raw" in msg:
+                block.append(f"   (corrupt JSON line)\n   raw: {msg['_raw']}")
+                continue
+
+            # Order: thought, action, action_input, content, artifact.
+            # Matches the natural reading order of a ReAct turn.
+            if "thought" in msg and msg["thought"] is not None:
+                block.append(_render_field("thought", msg["thought"]))
+            if "action" in msg and msg["action"] is not None:
+                block.append(_render_field("action", msg["action"]))
+            if "action_input" in msg and msg["action_input"] is not None:
+                ai = msg["action_input"]
+                try:
+                    ai_str = json.dumps(ai, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    ai_str = str(ai)
+                block.append(_render_field("action_input", ai_str))
+            if "content" in msg and msg["content"] is not None:
+                content = msg["content"]
+                label = (
+                    "observation"
+                    if isinstance(content, str)
+                    and content.startswith(_OBSERVATION_PREFIX)
+                    else "content"
+                )
+                block.append(_render_field(label, content))
+            if "artifact" in msg and msg["artifact"]:
+                block.append(f"   [artifact: {msg['artifact']}]")
+
+        parts.append("\n".join(block))
+
+    return ToolResult(True, output="\n\n".join(parts))
+
+
+def _render_field(label: str, value: Any) -> str:
+    """Render a turn field; multi-line values use YAML block style.
+
+    Block style:
+        label:
+          line one
+          line two
+    Inline style for single-line values:
+        label: value
+    """
+    s = str(value)
+    if "\n" in s:
+        out = [f"   {label}:"]
+        for ln in s.split("\n"):
+            out.append(f"     {ln}")
+        return "\n".join(out)
+    return f"   {label}: {s}"

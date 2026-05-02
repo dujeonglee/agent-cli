@@ -95,7 +95,7 @@ agent_cli/
 │   ├── shell_artifact.py    (249)  Shell stdout 대용량 가드: 한도 초과 시 `<session>/shell/`에 저장하고 head/tail 미리보기로 치환, LRU 회전
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
 │   ├── delegate.py          (700)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
-│   ├── context.py           (348)  read_context 도구 (세션 목록 + 구조화 키워드 검색: scope/sessions 필터)
+│   ├── context.py           (574)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
@@ -696,7 +696,7 @@ LLM 호출 시:
 | `edit_file` | hashline 기반 파일 편집 | `path`, `edits[]` | 편집 확인 메시지 |
 | `shell` | 셸 명령 실행 | `command` | stdout + stderr + exit code |
 | `delegate` | in-process 서브에이전트 위임 | `tasks[]` (각 항목: task, context?, tools?, agent?) | 구조화된 결과 (output + activity log + duration) + delegate subdir 경로, 복수 시 병렬 |
-| `read_context` | 세션 이력 조회 | `mode`, `keyword`, `scope?`, `sessions?` | list (전체 세션) / search — search 기본은 현재 세션, `sessions="all"` 또는 ID로 확장. `scope`로 필드 필터 (reasoning/tool/observation/query). 결과는 턴 단위 블록, preview 200자 cap, 50개 truncation. |
+| `read_context` | 세션 이력 조회 | `mode`, `keyword`, `scope?`, `sessions?`, `loc?`, `range?` | **list**: 전체 세션 목록. **search**: 기본 현재 세션, `sessions="all"` 또는 ID로 확장; `scope`로 필드 필터 (reasoning/tool/observation/query); 결과 턴 블록 + preview 200자 cap + 50건 truncation + fetch hint footer. **fetch**: `loc='{session}/{path}:{line}'` (search 결과 그대로) 로 전체 턴 회상; `loc` 단일/배열 (max 10), `range` 0-5 (앞뒤 N턴). multi-line 보존, action_input compact JSON, all-or-nothing 시멘틱. |
 | `fetch` | 웹 페이지 fetch → 마크다운 변환 | `url` | 재귀 링크 추출, 에러 힌트 |
 
 **가상 도구** (`VIRTUAL_TOOLS`) — loop.py에서 인터셉트, 도구 설명에서 제외:
