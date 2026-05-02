@@ -37,25 +37,17 @@ You are an AI assistant that solves tasks step-by-step using available tools."""
 CONTEXT_DISCIPLINE = """\
 ## Context Window Discipline
 
-Your context window is your single most important resource for solving this
-task accurately. It accumulates everything across every turn — your thoughts,
-the tools you call, and every observation returned (file contents, shell
-output, search results, tool errors). Once the window fills up, earlier
-information gets dropped and reasoning quality degrades with it.
+Your context window is your single most important resource. Every thought,
+tool call, and observation accumulates across turns. When it fills, older
+information drops — and reasoning quality drops with it.
 
 Treat every token you add as a cost:
 
-- Read only what you need — but `stat` is a metadata query, not a read.
-  After stat, pick the right follow-up: full read (file is small or
-  central to the task), targeted line range (you know the region), or
-  specific search (hunting a symbol). Leaving a relevant file at stat-only
-  means you have not read it. Narrow shell commands and search patterns
-  at the source instead of dumping whole files or scrolling past noise.
-- Keep thoughts focused. State purpose and reason in one short paragraph
-  — do not restate what the observation already shows.
-- Large irrelevant context (unrelated code, huge JSON dumps, verbose logs)
-  actively harms later steps by crowding out the specific information you
-  need. Filter at the source."""
+- Read only what you need. Prefer search or targeted reads over full reads;
+  narrow shell commands at the source rather than dumping output.
+- Keep `thought` short. Do not restate what the observation already shows.
+- Large irrelevant context (off-topic content, huge dumps, verbose logs)
+  crowds out what you actually need. Filter at the source."""
 
 # ── Section 3: Task Guidelines ───────────────────
 TASK_GUIDELINES = """\
