@@ -107,7 +107,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   └── system_prompt.py     (452)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 10개 — 단일 액션 강제 + 효율성 가이드 + ask vs complete 구분 가이드). Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정)
+│   └── system_prompt.py     (446)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 6개 — 단일 액션 강제 + 효율성 가이드 + ask vs complete 구분 가이드). Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export

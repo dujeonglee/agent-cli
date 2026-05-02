@@ -249,9 +249,13 @@ class TestBuildSystemPrompt:
         complete_pos = prompt.index('"complete"')
         assert rfr_pos < complete_pos
 
-    def test_rule_8_review_before_complete(self):
+    def test_workflow_review_before_complete(self):
+        """The prompt's workflow example shows ready_for_review preceding
+        complete. The redundant explicit rule was folded into the example
+        itself ("first verify with ready_for_review, then call complete")."""
         prompt = build_system_prompt(_make_caps(), ["shell"])
-        assert "always call ready_for_review first" in prompt
+        assert "first verify with `ready_for_review`" in prompt
+        assert "then call `complete`" in prompt
 
     def test_environment_section_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
@@ -288,7 +292,19 @@ class TestBuildSystemPrompt:
     def test_task_guidelines_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Task Guidelines" in prompt
-        assert "Read relevant code" in prompt
+        # "Read before edit" applies to ALL file kinds, not only code —
+        # config / docs / lockfiles all qualify.
+        assert "Read a file before changing it" in prompt
+        assert "code, config, docs" in prompt
+
+    def test_no_recursive_invocation_in_guidelines(self):
+        """Recursive-self-invocation guard moved from Response Format
+        (where it was an outlier — a behavior rule, not a format rule)
+        into Task Guidelines alongside the other safety guidance."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        assert "recursiv" in guidelines.lower()
+        assert "agent-cli" in guidelines
 
     def test_context_discipline_present(self):
         """Primacy section teaching the LLM that the context window is a
@@ -301,7 +317,9 @@ class TestBuildSystemPrompt:
     def test_format_rules_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Response Format" in prompt
-        assert "only valid JSON" in prompt
+        # Header must enforce "JSON object only" — the wording was tightened
+        # from "only valid JSON" but the contract is unchanged.
+        assert "single JSON object only" in prompt
 
     def test_section_order_primacy_before_tools(self):
         """Context Discipline → Task Guidelines → Response Format, all in
