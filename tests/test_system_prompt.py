@@ -331,6 +331,28 @@ class TestBuildSystemPrompt:
         tools_pos = prompt.index("## Available Tools")
         assert ctx_pos < guidelines_pos < format_pos < tools_pos
 
+    def test_partial_read_recommends_substantial_range(self):
+        """Models tend to over-narrow partial reads (line_start=100,
+        line_end=150 to peek at one function), then come back two more
+        turns later for surrounding context. The Partial-mode guidance
+        names a target size and an explicit anti-pattern so the model
+        reads enough on the first pass."""
+        prompt = build_system_prompt(_make_caps(), ["read_file"])
+        # Names a substantial target size for partial reads (5xx lines).
+        assert "500 lines" in prompt or "~500" in prompt
+        # Explicit anti-pattern callout — peeking at one function in a
+        # 30-50 line slice usually wastes turns.
+        assert "30-50 lines" in prompt or "more turns" in prompt
+
+    def test_read_file_header_warns_both_sides(self):
+        """The mode-selection header must warn against BOTH over-reading
+        (full reads burn budget) AND under-reading (small reads cost
+        turns). Earlier wording — 'Pick the smallest mode' — only warned
+        one side and reinforced the over-narrow tendency."""
+        prompt = build_system_prompt(_make_caps(), ["read_file"])
+        assert "burn context budget" in prompt
+        assert "costs turns" in prompt or "more turns" in prompt
+
     def test_no_redundant_read_file_preview_rule(self):
         """The stat=true reminder moved into Context Discipline, so the
         old Task Guidelines bullet that duplicated it must be gone. Also

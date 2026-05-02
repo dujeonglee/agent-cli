@@ -138,8 +138,8 @@ _DELEGATE_INLINE = """\
 
 _READ_FILE_INLINE = """\
 
-  Pick the smallest mode that answers the question — full reads burn
-  context budget:
+  Pick the right mode for the question — full reads burn context budget,
+  but reading too little costs turns:
 
   1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
      count + size + the first 20 lines so you can pick a real read mode.
@@ -148,8 +148,11 @@ _READ_FILE_INLINE = """\
      with surrounding context. Prefer this when the user names a
      specific function, class, or symbol — even if the file looks small.
        {"path": "app.py", "search": "login", "context": 5}
-  3. Partial — you know the exact region.
-       {"path": "app.py", "line_start": 100, "line_end": 200}
+  3. Partial — you know the exact region. Aim for ~500 lines at a time
+     so you capture surrounding context. Reading 30-50 lines just to
+     peek at one function usually costs more turns when you have to
+     come back for context.
+       {"path": "app.py", "line_start": 100, "line_end": 600}
   4. Full — the file is known-small or central to the task.
        {"path": "app.py"}
 
