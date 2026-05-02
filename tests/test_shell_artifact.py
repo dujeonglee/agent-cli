@@ -303,42 +303,51 @@ class TestLoopPostProcess:
     that targets a session shell artifact.
     """
 
-    def _make_context(self, session_dir):
-        """Minimal ctx stand-in exposing session_dir."""
-        ctx = MagicMock()
-        ctx.session_dir = session_dir
-        return ctx
+    def _make_loop(self, *, session_dir):
+        """Build a minimal AgentLoop. ``session_dir=None`` exercises the
+        no-ctx branch; otherwise we attach a ctx whose session_dir is set."""
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=4096,
+            max_output_tokens=2048,
+            supports_structured_output=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        ctx = None
+        if session_dir is not None:
+            ctx = MagicMock()
+            ctx.session_dir = session_dir
+        return AgentLoop(
+            query="t",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            active_tools=["shell", "read_file"],
+            ctx=ctx,
+        )
 
     def test_large_shell_output_replaced_with_preview(self, tmp_path, monkeypatch):
         """Trigger the guard at ~50 lines to keep the test fast."""
         monkeypatch.setenv("AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES", "50")
         monkeypatch.setenv("AGENT_CLI_SHELL_OUTPUT_LIMIT_BYTES", "0")
 
-        from agent_cli.loop import _dispatch_tool_with_hooks
+        from agent_cli.tools.result import ToolResult
 
         big = "\n".join(f"line {i}" for i in range(200))
+        loop = self._make_loop(session_dir=tmp_path)
 
         # Patch the underlying shell tool so we don't actually spawn a
         # subprocess; we only care about the loop's wrapping behaviour.
-        from agent_cli.tools.result import ToolResult
-
         with patch(
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output=big),
         ):
-            result = _dispatch_tool_with_hooks(
-                tool_name="shell",
-                tool_input={"command": "grep -rn TODO ."},
-                tools_list=["shell"],
-                capabilities=None,
-                provider_name="",
-                model="",
-                base_url="",
-                api_key="",
-                delegate_timeout=30,
-                recent_tool_history=[],
-                turn=1,
-                session_dir=tmp_path,
+            result = loop._dispatch_tool_with_hooks(
+                "shell", {"command": "grep -rn TODO ."}
             )
 
         assert result.success
@@ -352,27 +361,14 @@ class TestLoopPostProcess:
 
     def test_small_shell_output_not_touched(self, tmp_path):
         """A small output must pass through unmodified — guard silent."""
-        from agent_cli.loop import _dispatch_tool_with_hooks
         from agent_cli.tools.result import ToolResult
 
+        loop = self._make_loop(session_dir=tmp_path)
         with patch(
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output="small output\n2 lines"),
         ):
-            result = _dispatch_tool_with_hooks(
-                tool_name="shell",
-                tool_input={"command": "echo hi"},
-                tools_list=["shell"],
-                capabilities=None,
-                provider_name="",
-                model="",
-                base_url="",
-                api_key="",
-                delegate_timeout=30,
-                recent_tool_history=[],
-                turn=1,
-                session_dir=tmp_path,
-            )
+            result = loop._dispatch_tool_with_hooks("shell", {"command": "echo hi"})
 
         assert result.output == "small output\n2 lines"
         # No artifact written.
@@ -381,33 +377,20 @@ class TestLoopPostProcess:
         )
 
     def test_no_session_dir_disables_guard(self, tmp_path, monkeypatch):
-        """With session_dir=None (headless / no ctx) we can't write
-        artifacts anywhere, so the guard stays out of the way and the
-        full output flows through — information > optimisation."""
+        """With ctx=None (headless) we can't write artifacts anywhere,
+        so the guard stays out of the way and the full output flows
+        through — information > optimisation."""
         monkeypatch.setenv("AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES", "10")
 
-        from agent_cli.loop import _dispatch_tool_with_hooks
         from agent_cli.tools.result import ToolResult
 
         big = "\n".join(f"line {i}" for i in range(100))
+        loop = self._make_loop(session_dir=None)
         with patch(
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output=big),
         ):
-            result = _dispatch_tool_with_hooks(
-                tool_name="shell",
-                tool_input={"command": "x"},
-                tools_list=["shell"],
-                capabilities=None,
-                provider_name="",
-                model="",
-                base_url="",
-                api_key="",
-                delegate_timeout=30,
-                recent_tool_history=[],
-                turn=1,
-                session_dir=None,
-            )
+            result = loop._dispatch_tool_with_hooks("shell", {"command": "x"})
 
         assert result.output == big
         assert "[shell-output-saved]" not in result.output
@@ -416,7 +399,6 @@ class TestLoopPostProcess:
         """After a successful read_file on a path inside session/shell/,
         the loop post-process must bump the file's mtime so the next
         LRU pass treats it as recently-used."""
-        from agent_cli.loop import _dispatch_tool_with_hooks
         from agent_cli.tools.result import ToolResult
 
         (tmp_path / "shell").mkdir()
@@ -428,24 +410,12 @@ class TestLoopPostProcess:
         _os.utime(artifact, (past, past))
         old_mtime = artifact.stat().st_mtime
 
+        loop = self._make_loop(session_dir=tmp_path)
         with patch(
             "agent_cli.loop.execute_tool",
             return_value=ToolResult(True, output="(some file contents)"),
         ):
-            _dispatch_tool_with_hooks(
-                tool_name="read_file",
-                tool_input={"path": str(artifact)},
-                tools_list=["read_file"],
-                capabilities=None,
-                provider_name="",
-                model="",
-                base_url="",
-                api_key="",
-                delegate_timeout=30,
-                recent_tool_history=[],
-                turn=1,
-                session_dir=tmp_path,
-            )
+            loop._dispatch_tool_with_hooks("read_file", {"path": str(artifact)})
 
         new_mtime = artifact.stat().st_mtime
         assert new_mtime > old_mtime, (

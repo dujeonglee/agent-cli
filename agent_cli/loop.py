@@ -716,33 +716,9 @@ class AgentLoop:
                 return self._CONTINUE
             tool_input = normalized  # use post-normalization input for dispatch
 
-            # Execute tool (shared logic -- tracks recent_tool_history)
-            tool_result = _dispatch_tool_with_hooks(
-                tool_name,
-                tool_input,
-                self.tools_list,
-                self.capabilities,
-                self.provider_name,
-                self.model,
-                self.base_url,
-                self.api_key,
-                self.delegate_timeout,
-                self.recent_tool_history,
-                self.turn,
-                hooks_config=self.hooks_config,
-                delegate_ctx=self.ctx,
-                delegate_provider=self.provider,
-                delegate_depth=self.depth,
-                delegate_max_depth=self.max_depth,
-                delegate_max_turns=self.max_turns,
-                delegate_session=self.session,
-                delegate_skill_stack=self.skill_stack,
-                delegate_agent_stack=self.agent_stack,
-                stop_event=self.stop_event,
-                hook_runner=self.hook_runner,
-                mcp_manager=self.mcp_manager,
-                session_dir=(self.ctx.session_dir if self.ctx else None),
-            )
+            # Execute tool (method tracks self.recent_tool_history,
+            # uses self.* for provider/ctx/hooks/etc.)
+            tool_result = self._dispatch_tool_with_hooks(tool_name, tool_input)
 
             observation = (
                 tool_result.output if tool_result.success else tool_result.error
@@ -800,6 +776,207 @@ class AgentLoop:
         outcome["primitives"] = list(intervention.primitives)
         self.turn -= 1  # Don't count format retries
         return self._CONTINUE
+
+    def _dispatch_tool_with_hooks(self, tool_name: str, tool_input):
+        """Run PreToolUse hooks, dispatch the tool, then post-process.
+
+        Preconditions (enforced by ``_dispatch_text_path``):
+            - ``tool_name`` is a valid name in ``self.tools_list`` (A4
+              already checked).
+            - ``tool_input`` matches the tool's schema (A5 already checked).
+
+        Responsibilities:
+            - Fire PreToolUse hooks (Python runner + shell hooks).
+            - Dispatch (delegate special-case or ``execute_tool``).
+            - Apply observation-size guards: oversized shell stdout is
+              spilled to ``session_dir/shell/<name>.log`` with a head+tail
+              preview substituted; a ``read_file`` of any path inside that
+              same artifact dir bumps the file's mtime so LRU treats
+              actively-referenced logs as recent.
+            - Append to ``self.recent_tool_history`` (B1 detector input).
+        """
+        session_dir = self.ctx.session_dir if self.ctx else None
+
+        _debug_log(
+            f"TOOL turn={self.turn} action={tool_name} input={str(tool_input)[:200]}"
+        )
+
+        input_dict = (
+            tool_input if isinstance(tool_input, dict) else {"raw": str(tool_input)}
+        )
+
+        # PreToolUse — Python hooks (via runner) then shell hooks (backward compat)
+        if self.hook_runner:
+            pre_ctx = self.hook_runner.fire(
+                "PreToolUse",
+                tool_name=tool_name,
+                tool_input=input_dict,
+                turn=self.turn,
+                mcp_manager=self.mcp_manager,
+            )
+            if pre_ctx.is_blocked:
+                return ToolResult(
+                    False,
+                    error=f"Blocked by PreToolUse hook: {pre_ctx.block_reason or 'hook denied'}",
+                )
+            if pre_ctx.modified_input is not None:
+                tool_input = pre_ctx.modified_input
+                input_dict = tool_input
+        if self.hooks_config:
+            from agent_cli.hooks import run_hooks
+
+            pre_result = run_hooks(
+                "PreToolUse", tool_name, input_dict, hooks_config=self.hooks_config
+            )
+            if not pre_result.allowed:
+                return ToolResult(
+                    False,
+                    error=f"Blocked by PreToolUse hook: {pre_result.stderr or 'hook denied'}",
+                )
+            if pre_result.updated_input is not None:
+                tool_input = pre_result.updated_input
+
+        # Delegate tool (intercepted here due to complex kwargs)
+        is_delegate = tool_name == "delegate"
+
+        if is_delegate:
+            # OnDelegateStart hook
+            if self.hook_runner:
+                self.hook_runner.fire(
+                    "OnDelegateStart",
+                    tool_name=tool_name,
+                    tool_input=input_dict,
+                    turn=self.turn,
+                    mcp_manager=self.mcp_manager,
+                )
+
+            raw = (
+                tool_input
+                if isinstance(tool_input, dict)
+                else {"task": str(tool_input)}
+            )
+            if "tasks" not in raw and "task" in raw:
+                raw = {
+                    "tasks": [
+                        {
+                            "task": raw["task"],
+                            "context": raw.get("context", "none"),
+                            **({"tools": raw["tools"]} if raw.get("tools") else {}),
+                        }
+                    ]
+                }
+            result = tool_delegate(
+                args=raw,
+                parent_ctx=self.ctx,
+                provider=self.provider,
+                model=self.model,
+                capabilities=self.capabilities,
+                provider_name=self.provider_name,
+                base_url=self.base_url,
+                api_key=self.api_key,
+                depth=self.depth,
+                max_depth=self.max_depth,
+                max_turns=self.max_turns,
+                timeout=self.delegate_timeout,
+                session=self.session,
+                skill_stack=self.skill_stack,
+                agent_stack=self.agent_stack,
+                stop_event=self.stop_event,
+                hooks_config=self.hooks_config,
+            )
+
+            # OnDelegateEnd hook
+            if self.hook_runner:
+                self.hook_runner.fire(
+                    "OnDelegateEnd",
+                    tool_name=tool_name,
+                    tool_input=input_dict,
+                    delegate_result=result,
+                    turn=self.turn,
+                    mcp_manager=self.mcp_manager,
+                )
+        else:
+            # Recovery layer (A4/A5 detectors in _dispatch_text_path) has
+            # already validated tool_name + action_input by the time we
+            # reach here. ``execute_tool``'s own ``Unknown tool`` check
+            # remains as a public-API boundary for direct callers.
+            result = execute_tool(tool_name, tool_input, session_dir=session_dir)
+
+        # Observation-size guards (loop-level post-process) ─────────────
+        # Both are best-effort: on any failure we leave ``result`` untouched
+        # and continue with whatever the tool produced.
+        if session_dir is not None and result.success:
+            # Shell: oversized stdout → artifact + head/tail preview.
+            if tool_name == "shell":
+                from agent_cli.tools.shell_artifact import (
+                    build_preview,
+                    exceeds_limit,
+                    save_artifact,
+                )
+
+                if exceeds_limit(result.output):
+                    cmd = (
+                        input_dict.get("command", "")
+                        if isinstance(input_dict, dict)
+                        else ""
+                    )
+                    artifact_path = save_artifact(session_dir, cmd, result.output)
+                    if artifact_path is not None:
+                        preview = build_preview(
+                            cmd,
+                            result.output,
+                            artifact_path,
+                            # Failure tail-bias: stderr + nonzero-exit lines
+                            # cluster near the end.
+                            succeeded=("[exit code:" not in result.output),
+                        )
+                        result = ToolResult(True, output=preview)
+            # read_file: if target was a shell artifact in THIS session's
+            # shell dir, bump mtime so LRU treats active reads as recent.
+            elif tool_name == "read_file":
+                from agent_cli.tools.shell_artifact import touch_if_artifact
+
+                path = (
+                    input_dict.get("path", "") if isinstance(input_dict, dict) else ""
+                )
+                touch_if_artifact(path, session_dir)
+
+        # PostToolUse — Python hooks (via runner) then shell hooks (backward compat)
+        if self.hook_runner:
+            self.hook_runner.fire(
+                "PostToolUse",
+                tool_name=tool_name,
+                tool_input=input_dict,
+                tool_result=result,
+                turn=self.turn,
+                mcp_manager=self.mcp_manager,
+            )
+        if self.hooks_config:
+            from agent_cli.hooks import run_hooks
+
+            _obs = result.output if result.success else result.error
+            _evt = "PostToolUse" if result.success else "PostToolUseFailure"
+            run_hooks(
+                _evt,
+                tool_name,
+                input_dict,
+                hooks_config=self.hooks_config,
+                tool_result=_obs,
+            )
+
+        # Track tool usage (B1 action-loop detector reads recent_tool_history)
+        obs = result.output if result.success else result.error
+        self.recent_tool_history.append(
+            {
+                "tool": tool_name,
+                "input": _normalize_input(tool_input),
+                "result": obs[:200],
+                "turn": self.turn,
+                "success": result.success,
+            }
+        )
+
+        return result
 
     def _on_max_turns(self):
         """Handle max turns reached."""
@@ -1145,229 +1322,6 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
         ]
     )
     return "\n".join(parts)
-
-
-def _dispatch_tool_with_hooks(
-    tool_name: str,
-    tool_input,
-    tools_list: list[str],
-    capabilities: ModelCapabilities,
-    provider_name: str = "",
-    model: str = "",
-    base_url: str = "",
-    api_key: str = "",
-    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
-    recent_tool_history: list[dict] | None = None,
-    turn: int = 0,
-    hooks_config: dict | None = None,
-    delegate_ctx=None,
-    delegate_provider=None,
-    delegate_depth: int = 0,
-    delegate_max_depth: int = 2,
-    delegate_max_turns: int = 0,
-    delegate_session=None,
-    delegate_skill_stack: list[str] | None = None,
-    delegate_agent_stack: list[str] | None = None,
-    stop_event=None,
-    hook_runner=None,
-    mcp_manager=None,
-    session_dir=None,
-):
-    """Run PreToolUse hooks, dispatch the tool, then post-process the result.
-
-    Preconditions (enforced by the caller's recovery layer in
-    ``_dispatch_text_path``):
-        - ``tool_name`` is a valid name in ``tools_list`` (A4 already
-          checked).
-        - ``tool_input`` matches the tool's schema (A5 already checked).
-
-    Responsibilities here:
-        - Fire PreToolUse hooks (Python runner + shell hooks).
-        - Dispatch (delegate special-case or ``execute_tool``).
-        - Apply observation-size guards: shell output larger than
-          AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES/_BYTES is written to
-          ``session_dir/shell/<name>.log`` and replaced with a head+tail
-          preview pointing at the artifact; a successful read_file of
-          any path inside that same artifact dir bumps the file's mtime
-          so LRU eviction keeps actively-referenced logs around.
-        - Track ``recent_tool_history`` (used by B1 action-loop detection).
-
-    The function name (formerly ``_execute_single_tool``) is honest
-    about being orchestration around ``execute_tool``, not a competing
-    dispatch primitive. See ``docs/robust-harness/REMAINING_DEBT.md``
-    for the rationale and outstanding refactor opportunities.
-    """
-
-    _debug_log(f"TOOL turn={turn} action={tool_name} input={str(tool_input)[:200]}")
-
-    input_dict = (
-        tool_input if isinstance(tool_input, dict) else {"raw": str(tool_input)}
-    )
-
-    # PreToolUse — Python hooks (via runner) then shell hooks (backward compat)
-    if hook_runner:
-        pre_ctx = hook_runner.fire(
-            "PreToolUse",
-            tool_name=tool_name,
-            tool_input=input_dict,
-            turn=turn,
-            mcp_manager=mcp_manager,
-        )
-        if pre_ctx.is_blocked:
-            return ToolResult(
-                False,
-                error=f"Blocked by PreToolUse hook: {pre_ctx.block_reason or 'hook denied'}",
-            )
-        if pre_ctx.modified_input is not None:
-            tool_input = pre_ctx.modified_input
-            input_dict = tool_input
-    if hooks_config:
-        from agent_cli.hooks import run_hooks
-
-        pre_result = run_hooks(
-            "PreToolUse", tool_name, input_dict, hooks_config=hooks_config
-        )
-        if not pre_result.allowed:
-            return ToolResult(
-                False,
-                error=f"Blocked by PreToolUse hook: {pre_result.stderr or 'hook denied'}",
-            )
-        if pre_result.updated_input is not None:
-            tool_input = pre_result.updated_input
-
-    # Delegate tool (intercepted here due to complex kwargs)
-    is_delegate = tool_name == "delegate"
-
-    if is_delegate:
-        # OnDelegateStart hook
-        if hook_runner:
-            hook_runner.fire(
-                "OnDelegateStart",
-                tool_name=tool_name,
-                tool_input=input_dict,
-                turn=turn,
-                mcp_manager=mcp_manager,
-            )
-
-        raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
-        if "tasks" not in raw and "task" in raw:
-            raw = {
-                "tasks": [
-                    {
-                        "task": raw["task"],
-                        "context": raw.get("context", "none"),
-                        **({"tools": raw["tools"]} if raw.get("tools") else {}),
-                    }
-                ]
-            }
-        result = tool_delegate(
-            args=raw,
-            parent_ctx=delegate_ctx,
-            provider=delegate_provider,
-            model=model,
-            capabilities=capabilities,
-            provider_name=provider_name,
-            base_url=base_url,
-            api_key=api_key,
-            depth=delegate_depth,
-            max_depth=delegate_max_depth,
-            max_turns=delegate_max_turns,
-            timeout=delegate_timeout,
-            session=delegate_session,
-            skill_stack=delegate_skill_stack,
-            agent_stack=delegate_agent_stack,
-            stop_event=stop_event,
-            hooks_config=hooks_config,
-        )
-
-        # OnDelegateEnd hook
-        if hook_runner:
-            hook_runner.fire(
-                "OnDelegateEnd",
-                tool_name=tool_name,
-                tool_input=input_dict,
-                delegate_result=result,
-                turn=turn,
-                mcp_manager=mcp_manager,
-            )
-    else:
-        # Recovery layer (A4/A5 detectors in _dispatch_text_path) has
-        # already validated tool_name + action_input by the time we
-        # reach here. ``execute_tool``'s own ``Unknown tool`` check
-        # remains as a public-API boundary for direct callers (tests,
-        # future external users).
-        result = execute_tool(tool_name, tool_input, session_dir=session_dir)
-
-    # Observation-size guards (loop-level post-process) ─────────────
-    # Both are best-effort: on any failure we leave `result` untouched
-    # and continue with whatever the tool produced.
-    if session_dir is not None and result.success:
-        # Shell: oversized stdout → artifact + head/tail preview.
-        if tool_name == "shell":
-            from agent_cli.tools.shell_artifact import (
-                build_preview,
-                exceeds_limit,
-                save_artifact,
-            )
-
-            if exceeds_limit(result.output):
-                cmd = (
-                    input_dict.get("command", "")
-                    if isinstance(input_dict, dict)
-                    else ""
-                )
-                artifact_path = save_artifact(session_dir, cmd, result.output)
-                if artifact_path is not None:
-                    preview = build_preview(
-                        cmd,
-                        result.output,
-                        artifact_path,
-                        # Failure tail-bias: stderr + nonzero-exit lines
-                        # cluster near the end.
-                        succeeded=("[exit code:" not in result.output),
-                    )
-                    result = ToolResult(True, output=preview)
-        # read_file: if target was a shell artifact in THIS session's
-        # shell dir, bump mtime so the LRU treats active reads as recent.
-        elif tool_name == "read_file":
-            from agent_cli.tools.shell_artifact import touch_if_artifact
-
-            path = input_dict.get("path", "") if isinstance(input_dict, dict) else ""
-            touch_if_artifact(path, session_dir)
-
-    # PostToolUse — Python hooks (via runner) then shell hooks (backward compat)
-    if hook_runner:
-        hook_runner.fire(
-            "PostToolUse",
-            tool_name=tool_name,
-            tool_input=input_dict,
-            tool_result=result,
-            turn=turn,
-            mcp_manager=mcp_manager,
-        )
-    if hooks_config:
-        from agent_cli.hooks import run_hooks
-
-        _obs = result.output if result.success else result.error
-        _evt = "PostToolUse" if result.success else "PostToolUseFailure"
-        run_hooks(
-            _evt, tool_name, input_dict, hooks_config=hooks_config, tool_result=_obs
-        )
-
-    # Track tool usage (B1 action-loop detector reads from recent_tool_history)
-    obs = result.output if result.success else result.error
-    if recent_tool_history is not None:
-        recent_tool_history.append(
-            {
-                "tool": tool_name,
-                "input": _normalize_input(tool_input),
-                "result": obs[:200],
-                "turn": turn,
-                "success": result.success,
-            }
-        )
-
-    return result
 
 
 # Regex: simple echo with no pipes, redirects, subshells, or chaining

@@ -8,7 +8,8 @@
 
 ## 1. `_dispatch_tool_with_hooks`는 SRP 위반 (medium)
 
-함수(이전 이름 `_execute_single_tool`)가 ~6가지 일을 한 곳에서 함:
+이제는 `AgentLoop._dispatch_tool_with_hooks` 메서드(이전 이름 `_execute_single_tool`,
+그 후 free function `_dispatch_tool_with_hooks`)가 여전히 ~6가지 일을 한 곳에서 함:
 
 1. PreToolUse hooks (Python runner + shell)
 2. delegate 특수 분기 dispatch
@@ -18,20 +19,23 @@
 6. `recent_tool_history` 추적 (B1 action-loop 감지용)
 
 **왜 부채인가**: 단일 책임 원칙 위반. 점진적 진화의 흔적 — hooks가 추가될 때, observability
-가드가 추가될 때마다 한 함수에 쌓임. 이름은 정직해졌지만(`_dispatch_tool_with_hooks`)
-크기는 그대로.
+가드가 추가될 때마다 한 함수에 쌓임.
 
-**왜 지금 안 청산하는가**: 청산하려면 함수를 `pre_hooks`/`dispatch`/`post_processing`
-3단계로 쪼개야 함. 작업 자체는 깔끔하지만 *Step 4a의 본 목적*(A4/A5 라벨링)과 별개.
-같은 커밋에 섞으면 둘 다 흐려짐.
+**최근 진행**: 2026-05-02 — free function에서 `AgentLoop` 메서드로 전환 (24개
+파라미터 중 22개가 `self.X`였음). delegate_* 접두사가 사라지고 시그니처가
+`(self, tool_name, tool_input)`으로 축약됨. SRP 자체는 여전히 미해결 — 메서드 본문은
+같은 6가지 책임을 가짐.
+
+**왜 지금 본문 쪼개기 안 하는가**: 청산하려면 메서드를 `_pre_hooks` / `_dispatch` /
+`_post_process` 3개 helper로 쪼개야 함. 작업 자체는 깔끔하지만 method 변환과 분리
+PR로 가는 게 회귀 추적 용이.
 
 **언제 청산할 수 있나**:
-- Step 4b 이후, 테이블 위에 다른 핵심 일이 없을 때
-- 또는 hooks/observability에 새 기능 추가가 필요해서 손대야 할 때 (자연스러운 청산
-  타이밍)
+- 다른 핵심 일이 없을 때 (rate-limited 청소 PR)
+- 또는 hooks/observability에 새 기능 추가가 필요해서 손대야 할 때 (자연스러운 타이밍)
 
-**위험도**: 코드는 정확히 동작 중. 단지 미래 변경이 코스트 높음(8개 책임 하나에 박혀
-있어 변경 영향 분석 어려움).
+**위험도**: 코드는 정확히 동작 중. 단지 미래 변경이 코스트 있음(6개 책임이 하나
+메서드에 박혀 있어 변경 영향 분석 약간 어려움).
 
 ---
 

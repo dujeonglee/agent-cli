@@ -866,7 +866,7 @@ escape hatch를 배울 필요 없음.
 **동작 흐름** (loop-level 후처리 — tool_shell 시그니처 불변):
 
 ```
-_execute_single_tool:
+AgentLoop._dispatch_tool_with_hooks:
   1. execute_tool("shell", ...) → ToolResult(output=stdout)
   2. session_dir 있음 + exceeds_limit(output) → 후처리 진입
        a. save_artifact(session_dir, cmd, output) → session_dir/shell/<ts>-<hash>.log
@@ -1483,7 +1483,7 @@ AgentLoop.run()
   │   ├─ PreLLMCall → system_sections 적용
   │   ├─ _call_llm()
   │   ├─ PostLLMCall
-  │   ├─ _execute_single_tool()
+  │   ├─ self._dispatch_tool_with_hooks()
   │   │   ├─ PreToolUse (Python) → PreToolUse (Shell)
   │   │   ├─ OnDelegateStart / OnSkillStart
   │   │   ├─ 도구 실행
