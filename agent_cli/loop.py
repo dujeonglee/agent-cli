@@ -146,7 +146,6 @@ class AgentLoop:
 
         # Loop state
         self.turn = 0
-        self.tools_called: list[str] = []
         self.overflow_retried = False
         self._interrupted = False
         self._prev_sigint_handler = None
@@ -568,7 +567,6 @@ class AgentLoop:
                 obs_msg,
                 artifact=skill_tool_result.artifact,
             )
-            self.tools_called.append("run_skill")
             return self._CONTINUE
 
         # 10c. ready_for_review -- return original query for self-check (text path)
@@ -718,7 +716,7 @@ class AgentLoop:
                 return self._CONTINUE
             tool_input = normalized  # use post-normalization input for dispatch
 
-            # Execute tool (shared logic -- tracks tools_called + history)
+            # Execute tool (shared logic -- tracks recent_tool_history)
             tool_result = _dispatch_tool_with_hooks(
                 tool_name,
                 tool_input,
@@ -729,7 +727,6 @@ class AgentLoop:
                 self.base_url,
                 self.api_key,
                 self.delegate_timeout,
-                self.tools_called,
                 self.recent_tool_history,
                 self.turn,
                 hooks_config=self.hooks_config,
@@ -1160,7 +1157,6 @@ def _dispatch_tool_with_hooks(
     base_url: str = "",
     api_key: str = "",
     delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
-    tools_called: list[str] | None = None,
     recent_tool_history: list[dict] | None = None,
     turn: int = 0,
     hooks_config: dict | None = None,
@@ -1194,7 +1190,7 @@ def _dispatch_tool_with_hooks(
           preview pointing at the artifact; a successful read_file of
           any path inside that same artifact dir bumps the file's mtime
           so LRU eviction keeps actively-referenced logs around.
-        - Track ``tools_called`` and ``recent_tool_history``.
+        - Track ``recent_tool_history`` (used by B1 action-loop detection).
 
     The function name (formerly ``_execute_single_tool``) is honest
     about being orchestration around ``execute_tool``, not a competing
@@ -1358,10 +1354,8 @@ def _dispatch_tool_with_hooks(
             _evt, tool_name, input_dict, hooks_config=hooks_config, tool_result=_obs
         )
 
-    # Track tool usage
+    # Track tool usage (B1 action-loop detector reads from recent_tool_history)
     obs = result.output if result.success else result.error
-    if tools_called is not None:
-        tools_called.append(tool_name)
     if recent_tool_history is not None:
         recent_tool_history.append(
             {

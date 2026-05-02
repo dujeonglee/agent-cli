@@ -15,7 +15,7 @@
 3. `execute_tool` 호출 (일반 도구)
 4. observation 크기 가드 (shell 큰 출력 → artifact)
 5. read_file 아티팩트 mtime 갱신
-6. `tools_called` / `recent_tool_history` 추적
+6. `recent_tool_history` 추적 (B1 action-loop 감지용)
 
 **왜 부채인가**: 단일 책임 원칙 위반. 점진적 진화의 흔적 — hooks가 추가될 때, observability
 가드가 추가될 때마다 한 함수에 쌓임. 이름은 정직해졌지만(`_dispatch_tool_with_hooks`)
