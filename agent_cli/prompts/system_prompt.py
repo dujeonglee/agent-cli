@@ -53,13 +53,12 @@ Treat every token you add as a cost:
 TASK_GUIDELINES = """\
 ## Task Guidelines
 - Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.
-- Keep changes tightly scoped to the request. Do not add unrelated cleanup or refactoring.
-- Do not create new files unless required to complete the task.
+- Keep changes tightly scoped to the request. Do not bundle unrelated cleanup or refactoring.
+- Do not create new files unless the task requires it.
 - If an approach fails, diagnose the cause before switching tactics.
-- Do not introduce new security vulnerabilities in your changes.
+- Do not introduce new security vulnerabilities.
 - Do not invoke agent-cli recursively via shell — that re-enters this same loop.
-- Report outcomes honestly — if verification failed or was not run, say so explicitly.
-- Before starting complex work, check Available Skills and Agents below — they often handle the task better than manual tool sequences."""
+- Report outcomes honestly — if verification failed or was not run, say so explicitly."""
 
 # ── Section 4: Format Rules ──────────────────────
 FORMAT_RULES = """\
