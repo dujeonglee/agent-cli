@@ -554,12 +554,53 @@ class TestThoughtGuidelines:
         assert "reason" in prompt.lower()
 
 
-class TestDirectiveBeforeEnvironment:
-    def test_directive_section_order(self, caps):
-        """DIRECTIVE should come before Environment in recency zone."""
+class TestRecencySectionOrder:
+    """Recency layout (passive → active, persistent → immediate):
+
+    Environment → Context Recovery → Directives → Execution Context.
+
+    Execution Context comes last because it's the only Recency section
+    that mutates within a session (skill/agent boundaries) — keeping it
+    last leaves the preceding three as a stable KV-cache-friendly prefix.
+    """
+
+    def test_environment_before_recovery(self, caps):
         prompt = build_system_prompt(caps, ["read_file"], session_dir="/tmp/test")
-        # Environment section should exist
         env_pos = prompt.find("## Environment")
         recovery_pos = prompt.find("## Context Recovery")
-        if env_pos >= 0 and recovery_pos >= 0:
-            assert env_pos < recovery_pos
+        assert env_pos >= 0 and recovery_pos >= 0
+        assert env_pos < recovery_pos
+
+    def test_recovery_before_execution_context(self, caps, tmp_path, monkeypatch):
+        directive_dir = tmp_path / ".agent-cli"
+        directive_dir.mkdir()
+        (directive_dir / "DIRECTIVE.md").write_text("Always be brief.")
+        monkeypatch.chdir(tmp_path)
+
+        prompt = build_system_prompt(
+            caps,
+            ["read_file"],
+            skill_stack=["my-skill"],
+            session_dir="/tmp/test",
+        )
+        recovery_pos = prompt.find("## Context Recovery")
+        directives_pos = prompt.find("## Directives")
+        exec_pos = prompt.find("## Execution Context")
+        assert recovery_pos >= 0 and directives_pos >= 0 and exec_pos >= 0
+        assert recovery_pos < directives_pos < exec_pos
+
+    def test_execution_context_is_last_when_present(self, caps):
+        """When Execution Context is included, no Recency section follows it."""
+        prompt = build_system_prompt(
+            caps,
+            ["read_file"],
+            skill_stack=["my-skill"],
+            session_dir="/tmp/test",
+        )
+        exec_pos = prompt.find("## Execution Context")
+        assert exec_pos >= 0
+        # Nothing else should come after it.
+        for section in ("## Environment", "## Context Recovery", "## Directives"):
+            pos = prompt.find(section)
+            if pos >= 0:
+                assert pos < exec_pos

@@ -3,7 +3,16 @@
 Layout (optimized for LLM attention):
   Primacy  — Role, Context Discipline, Task Guidelines, Format Rules
   Middle   — Available Tools (guides inlined), MCP Tools, Skills, Agents
-  Recency  — Execution Context, Directives, Environment, Context Recovery
+  Recency  — Environment, Context Recovery, Directives, Execution Context
+
+Recency ordering rationale (passive → active, persistent → immediate):
+  Environment        — passive reference (where you are)
+  Context Recovery   — passive fallback (how to recover dropped context)
+  Directives         — user-authored persistent rules (override defaults)
+  Execution Context  — current call-stack constraint (most immediate)
+Execution Context is also the only section that mutates within a session
+(skill/agent boundaries) — putting it last keeps the preceding three as
+a stable prefix for KV cache reuse across turns.
 """
 
 from __future__ import annotations
@@ -317,22 +326,24 @@ def build_system_prompt(
         if agent_desc:
             sections.append(agent_desc)
 
-    # ── Recency: current context + user rules ──
-
-    # Execution context: tell LLM where it is in the call stack
-    exec_ctx = _build_execution_context(skill_stack, agent_stack)
-    if exec_ctx:
-        sections.append(exec_ctx)
-
-    directives = _load_directives()
-    if directives:
-        sections.append(directives)
-
+    # ── Recency: passive reference → active rules → immediate constraint ──
     sections.append(_build_environment_section())
 
     # Context Recovery Guide (replaces session_id + git context)
     if session_dir:
         sections.append(_build_context_recovery(session_dir))
+
+    directives = _load_directives()
+    if directives:
+        sections.append(directives)
+
+    # Execution context: tell LLM where it is in the call stack.
+    # Last because it's the only Recency section that mutates within a
+    # session — keeping it last leaves the preceding three as a stable
+    # KV-cache-friendly prefix.
+    exec_ctx = _build_execution_context(skill_stack, agent_stack)
+    if exec_ctx:
+        sections.append(exec_ctx)
 
     return "\n\n".join(sections)
 

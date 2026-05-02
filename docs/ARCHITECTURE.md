@@ -107,7 +107,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   └── system_prompt.py     (438)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 10개 — 단일 액션 강제 + 효율성 가이드 + ask vs complete 구분 가이드)
+│   └── system_prompt.py     (452)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 10개 — 단일 액션 강제 + 효율성 가이드 + ask vs complete 구분 가이드). Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정)
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
@@ -1159,20 +1159,22 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
     ├─ Available Agents (depth < max_depth + agent_stack 재귀 방지)
     │   └─ .agent-cli/agents/ + ~/.agent-cli/agents/ + builtin/ 스캔
     │
-    │  ── Recency: 현재 맥락 + 사용자 규칙 (강한 attention) ──
-    │
-    ├─ Execution Context (skill_stack/agent_stack이 있을 때만)
-    │   ├─ "Call stack: main → agent:reviewer → skill:plan"
-    │   └─ "Do not delegate to or invoke: reviewer, plan (already in call stack)"
-    │
-    ├─ Directives (DIRECTIVE.md가 존재할 때만)
-    │   └─ .agent-cli/DIRECTIVE.md (프로젝트) + ~/.agent-cli/DIRECTIVE.md (유저 전역)
+    │  ── Recency: passive reference → active rules → immediate constraint ──
     │
     ├─ Environment (항상 포함 — CWD, 플랫폼)
     │   └─ 날짜는 의도적으로 제외 — KV prefix cache 안정성 (자정 rollover 방지)
     │
-    └─ Context Recovery Guide (session_dir가 있을 때만)
-        └─ "이전 대화 내용이 필요하면 read_file({session_dir}/history.jsonl)"
+    ├─ Context Recovery Guide (session_dir가 있을 때만)
+    │   └─ "이전 대화 내용이 필요하면 read_file({session_dir}/history.jsonl)"
+    │
+    ├─ Directives (DIRECTIVE.md가 존재할 때만)
+    │   └─ .agent-cli/DIRECTIVE.md (프로젝트) + ~/.agent-cli/DIRECTIVE.md (유저 전역)
+    │
+    └─ Execution Context (skill_stack/agent_stack이 있을 때만 — Recency 마지막)
+        ├─ "Call stack: main → agent:reviewer → skill:plan"
+        ├─ "Do not delegate to or invoke: reviewer, plan (already in call stack)"
+        └─ 세션 내 변동 가능한 유일한 Recency 섹션 → 끝에 두어 앞 3개를 안정적
+           KV prefix로 보존
     
     Role 선택 (Primacy 영역):
     - main: 기본 ROLE_PROMPT
