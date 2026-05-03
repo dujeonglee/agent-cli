@@ -331,6 +331,28 @@ class TestBuildSystemPrompt:
         tools_pos = prompt.index("## Available Tools")
         assert ctx_pos < guidelines_pos < format_pos < tools_pos
 
+    def test_read_symbols_inline_guide_present(self):
+        """When read_symbols is in active_tools, the inline guide should
+        appear in the prompt — covering both modes, the language list,
+        and the naming convention so the model can use the tool without
+        a separate doc lookup."""
+        prompt = build_system_prompt(_make_caps(), ["read_symbols"])
+        assert "- read_symbols:" in prompt
+        # Both modes documented.
+        assert "mode='list'" in prompt
+        assert "mode='fetch'" in prompt
+        # Naming convention covers code (.) and C++ (::) and markdown headings.
+        assert "Class.method" in prompt or "Foo.bar" in prompt
+        assert "::" in prompt  # ns::Foo::bar
+        assert "## Setup" in prompt
+
+    def test_read_symbols_lists_supported_languages(self):
+        """The inline guide must name the supported extensions so the
+        model knows when to fall back to read_file."""
+        prompt = build_system_prompt(_make_caps(), ["read_symbols"])
+        for ext in (".py", ".ts", ".cpp", ".md"):
+            assert ext in prompt
+
     def test_partial_read_recommends_substantial_range(self):
         """Models tend to over-narrow partial reads (line_start=100,
         line_end=150 to peek at one function), then come back two more

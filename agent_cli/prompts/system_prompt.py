@@ -161,6 +161,34 @@ _READ_FILE_INLINE = """\
   you have only seen the first 20 lines. A bare full read on a large
   file (~300+ lines) will be refused with instructions; follow them."""
 
+_READ_SYMBOLS_INLINE = """\
+
+  Structure-aware file reader. Two modes:
+
+  1. mode='list' — outline of the file (functions, classes, methods,
+     structs/enums/typedefs, #defines, markdown headings). Each line is
+     ``name (kind) :start-end``. Use this in place of read_file:stat
+     when the file is a supported language.
+       {"path": "auth.py", "mode": "list"}
+       {"path": "src/foo.cpp", "mode": "list"}
+       {"path": "README.md", "mode": "list"}
+  2. mode='fetch' — body of one named symbol from the outline. The
+     ``name`` must match the outline verbatim. When the same name has
+     both a declaration and a definition (e.g. .h prototype + .cpp
+     body), the definition is returned.
+       {"path": "auth.py", "mode": "fetch", "name": "User.login"}
+       {"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}
+       {"path": "README.md", "mode": "fetch", "name": "## Setup"}
+
+  Naming follows each language's convention:
+  - Python / JavaScript / TypeScript: ``Class.method``
+  - C / C++: ``namespace::Class::method``
+  - Markdown: heading marker + text (``## Setup``)
+
+  Supported extensions: .py, .js/.jsx/.mjs/.cjs, .ts/.tsx, .c/.cc/.cpp/
+  .cxx/.h/.hh/.hpp/.hxx, .md/.markdown. C and C++ both use the C++
+  parser. For other formats, use read_file."""
+
 _ASK_INLINE = """\
 
   `ask` vs `complete` — pick by intent, not tone:
@@ -194,6 +222,7 @@ _TOOL_INLINE_GUIDES: dict[str, str] = {
     "edit_file": _HASHLINE_INLINE,
     "delegate": _DELEGATE_INLINE,
     "ask": _ASK_INLINE,
+    "read_symbols": _READ_SYMBOLS_INLINE,
 }
 
 

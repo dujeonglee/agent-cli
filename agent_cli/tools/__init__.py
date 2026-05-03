@@ -11,6 +11,7 @@ from agent_cli.tools.write_file import tool_write_file
 from agent_cli.tools.edit_file import tool_edit_file
 from agent_cli.tools.shell import tool_shell
 from agent_cli.tools.context import tool_read_context
+from agent_cli.tools.symbols import tool_read_symbols
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     validate_tool_input,
@@ -25,6 +26,7 @@ TOOLS: dict[str, Any] = {
     "edit_file": tool_edit_file,
     "shell": tool_shell,
     "read_context": tool_read_context,
+    "read_symbols": tool_read_symbols,
     "delegate": lambda args: ToolResult(True, output="(delegate: intercepted by loop)"),
     # Virtual tools — intercepted by the loop before _execute_tool
     "complete": lambda args: ToolResult(

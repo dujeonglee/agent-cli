@@ -597,6 +597,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
 | `read_context` | 세션 이력 조회 (현재 세션 기본, scope/sessions 필터) |
+| `read_symbols` | tree-sitter 기반 구조 인지 reader. `mode='list'`로 파일 outline(함수·클래스·헤딩 등), `mode='fetch'`로 단일 심볼 body. Python/JS/TS/C/C++/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
@@ -695,6 +696,28 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 미지정 시 4개 전부. search 결과는 턴 단위로 묶이고 preview는 200자 cap, 한 검색당 최대 50건.
 
 **fetch는 search와 정반대로 cap 없음** — 모델이 의도적으로 부른 회상이라 multi-line/대용량 observation도 그대로 반환. 다중 loc는 all-or-nothing (하나라도 잘못되면 전체 실패).
+
+### read_symbols — 구조 인지 파일 reader
+
+tree-sitter로 파일을 파싱해 함수·클래스·메서드·헤딩 등의 구조 단위로 읽습니다. `read_file`이 텍스트(line range)에 답한다면 `read_symbols`는 의미 단위(symbol)에 답합니다.
+
+```json
+// outline (read_file:stat의 구조 인지 대안)
+{"action": "read_symbols", "action_input": {"path": "agent_cli/loop.py", "mode": "list"}}
+
+// 한 심볼의 body
+{"action": "read_symbols", "action_input": {"path": "agent_cli/loop.py", "mode": "fetch", "name": "AgentLoop._call_llm"}}
+{"action": "read_symbols", "action_input": {"path": "src/server.cpp", "mode": "fetch", "name": "ns::Server::handle"}}
+{"action": "read_symbols", "action_input": {"path": "README.md", "mode": "fetch", "name": "## Setup"}}
+```
+
+**mode='list' 출력 형식:** `<name> (<kind>)[ (decl)] :<start>-<end>`. 함수/클래스/메서드/struct/enum/typedef/`#define`/Markdown 헤딩.
+
+**Nested 표기는 언어 관습:** Python·JS·TS는 `Class.method`, C/C++는 `ns::Class::method`, Markdown은 헤딩 마커 + 텍스트(`## Setup`).
+
+**선언 vs 정의:** 같은 이름이 헤더의 prototype과 .cpp의 정의에 모두 있으면 fetch는 *정의*를 반환합니다. 선언만 있으면 그 선언을 `[declaration]` 표시와 함께 반환.
+
+**지원 확장자:** `.py` · `.js`/`.jsx`/`.mjs`/`.cjs` · `.ts`/`.tsx` · `.c`/`.cc`/`.cpp`/`.cxx`/`.h`/`.hh`/`.hpp`/`.hxx` · `.md`/`.markdown`. C와 C++ 모두 C++ grammar로 파싱 (심볼 추출 수준에서 충분히 정확하고 파서 둘 유지하지 않아도 됨). 그 외 형식은 `read_file` 사용.
 
 ### ask — 사용자에게 질문 (chat 모드 전용)
 
