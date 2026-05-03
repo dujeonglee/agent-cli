@@ -11,6 +11,7 @@ from agent_cli.recovery.detectors import (
     ActionLoopDetector,
     detect_nested_envelope,
     detect_schema_mismatch,
+    detect_thought_missing,
     detect_unknown_tool,
 )
 from agent_cli.recovery.intervention import Intervention
@@ -20,6 +21,7 @@ from agent_cli.recovery.observability import (
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
     FAILURE_NO_OUTPUT,
+    FAILURE_NO_THOUGHT,
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
     TurnRecord,
@@ -46,9 +48,11 @@ __all__ = [
     "detect_unknown_tool",
     "detect_schema_mismatch",
     "detect_nested_envelope",
+    "detect_thought_missing",
     "FAILURE_NO_JSON",
     "FAILURE_NO_OUTPUT",
     "FAILURE_NO_ACTION",
+    "FAILURE_NO_THOUGHT",
     "FAILURE_UNKNOWN_TOOL",
     "FAILURE_SCHEMA_MISMATCH",
     "FAILURE_NESTED_ENVELOPE",

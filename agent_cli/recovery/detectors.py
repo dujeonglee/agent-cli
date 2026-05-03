@@ -115,6 +115,31 @@ class ActionLoopDetector:
         return f"{action}({args_str})"
 
 
+def detect_thought_missing(thought: Any, action: Any) -> bool:
+    """Stateless A7 detector: did the model emit an action without a thought?
+
+    Returns ``True`` when ``action`` is present (any truthy value) but
+    ``thought`` is missing (``None``) or empty/whitespace-only. The
+    recovery layer uses this to short-circuit dispatch and ask the model
+    to restate the JSON with a populated thought field.
+
+    The check exists because reasoning omitted from ``thought`` is
+    invisible to ``read_context`` (which keys on the field, not on raw
+    content) and — more importantly — the raw response carrying that
+    omission is mirrored back to the model on the next turn, where it
+    becomes a transcript-internal precedent that crowds out the system
+    prompt's Format Rule 1. Catching it once and asking the model to
+    fix it cuts the mimicry-strengthening loop.
+    """
+    if not action:
+        return False  # NO_ACTION (A3) is a different label
+    if thought is None:
+        return True
+    if isinstance(thought, str) and not thought.strip():
+        return True
+    return False
+
+
 def detect_unknown_tool(action: str, tools_list: list[str]) -> bool:
     """Stateless A4 detector: is ``action`` outside the active tool registry?
 

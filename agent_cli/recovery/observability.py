@@ -33,6 +33,7 @@ FAILURE_NO_OUTPUT = (
     "NO_OUTPUT"  # A1b: parse stage 0 but content is empty/whitespace-only
 )
 FAILURE_NO_ACTION = "NO_ACTION"  # A3: JSON parsed but action field missing
+FAILURE_NO_THOUGHT = "NO_THOUGHT"  # A7: JSON parsed with action but thought is missing/empty (mimicry-loop trigger)
 FAILURE_UNKNOWN_TOOL = "UNKNOWN_TOOL"  # A4: action references a tool not in registry
 FAILURE_SCHEMA_MISMATCH = "SCHEMA_MISMATCH"  # A5: action_input violates tool schema
 FAILURE_NESTED_ENVELOPE = (

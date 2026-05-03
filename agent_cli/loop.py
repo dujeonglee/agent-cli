@@ -17,6 +17,7 @@ from agent_cli.recovery.builders import (
     format_action_loop_intervention,
     format_no_action_retry,
     format_no_json_retry,
+    format_no_thought_retry,
 )
 from agent_cli.tools.result import ToolResult
 
@@ -30,6 +31,7 @@ from agent_cli.recovery.detectors import (
     ActionLoopDetector,
     detect_nested_envelope,
     detect_schema_mismatch,
+    detect_thought_missing,
     detect_unknown_tool,
 )
 from agent_cli.recovery.observability import (
@@ -38,6 +40,7 @@ from agent_cli.recovery.observability import (
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
     FAILURE_NO_OUTPUT,
+    FAILURE_NO_THOUGHT,
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
     TurnRecorder,
@@ -457,6 +460,27 @@ class AgentLoop:
         and/or ``outcome["primitives"]`` before returning so the
         caller's ``finally`` block records what happened.
         """
+
+        # A7 NO_THOUGHT — action present but thought missing. Retry
+        # before dispatch so the omission does not enter the transcript
+        # as a precedent for future turns (mimicry-strengthening loop:
+        # the raw response is mirrored back on the next turn and
+        # crowds out the system prompt's Format Rule 1).
+        if detect_thought_missing(parsed.thought, parsed.action):
+            _debug_log(
+                f"NO_THOUGHT: action={parsed.action!r}, thought={parsed.thought!r}"
+            )
+            render_status(
+                "error",
+                "Response missing thought. Retrying...",
+                self.turn,
+            )
+            intervention = format_no_thought_retry(prior_content=llm_text)
+            _append_observation(self.messages, self.ctx, llm_text, intervention.message)
+            outcome["failure_signal"] = FAILURE_NO_THOUGHT
+            outcome["primitives"] = list(intervention.primitives)
+            self.turn -= 1
+            return self._CONTINUE
 
         # 6. Thought
         if parsed.thought:

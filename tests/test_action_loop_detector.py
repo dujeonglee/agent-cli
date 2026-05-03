@@ -15,6 +15,7 @@ from agent_cli.recovery.detectors import (
     ActionLoopDetector,
     detect_nested_envelope,
     detect_schema_mismatch,
+    detect_thought_missing,
     detect_unknown_tool,
 )
 
@@ -278,3 +279,41 @@ class TestDetectNestedEnvelope:
     def test_non_object_json_returns_false(self):
         # A JSON array or scalar cannot be the nested envelope.
         assert detect_nested_envelope('["result"]') is False
+
+
+class TestDetectThoughtMissing:
+    """A2 NO_THOUGHT detector — fires only when an action is present
+    but the thought field is missing/empty. NO_ACTION (A3) is a
+    different label and must not be conflated.
+    """
+
+    def test_no_action_returns_false(self):
+        # No action means we are in NO_ACTION territory (A3), not A2.
+        assert detect_thought_missing("some thought", None) is False
+        assert detect_thought_missing("", "") is False
+        assert detect_thought_missing(None, None) is False
+
+    def test_action_present_thought_none_returns_true(self):
+        assert detect_thought_missing(None, "read_file") is True
+
+    def test_action_present_empty_thought_returns_true(self):
+        assert detect_thought_missing("", "read_file") is True
+
+    def test_action_present_whitespace_thought_returns_true(self):
+        assert detect_thought_missing("   \n\t", "read_file") is True
+
+    def test_action_present_valid_thought_returns_false(self):
+        assert detect_thought_missing("I want to read the file", "read_file") is False
+
+    def test_complete_action_with_no_thought_still_fires(self):
+        # The mimicry-strengthening loop targets all actions including
+        # 'complete' — a thoughtless complete still pollutes the
+        # transcript as a precedent for future turns.
+        assert detect_thought_missing(None, "complete") is True
+
+    def test_non_string_thought_returns_false(self):
+        # If the parser produced a non-string thought (e.g. a dict that
+        # was incorrectly placed there), don't flag — only None / empty
+        # / whitespace strings count as "missing".
+        assert detect_thought_missing({"nested": "x"}, "read_file") is False
+        assert detect_thought_missing(["a", "b"], "read_file") is False

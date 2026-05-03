@@ -49,10 +49,10 @@ agent_cli/
 ├── constants.py             (~45)  공유 상수 (timeout, observation 템플릿, retry hint 정적 메시지, system-injected user prefix). 외부 모듈 의존 없음 — 저층 레이어
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export
-│   ├── builders.py          (~115) Intervention 합성 factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A1c), `format_action_loop_intervention` (B1). primitives 조합으로 Intervention 생성, 빈 prior_content 시 정적 RETRY_HINT_* fallback
-│   ├── detectors.py         (~180) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용)
+│   ├── builders.py          (~155) Intervention 합성 factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A3), `format_no_thought_retry` (A7, mimicry-loop 차단; constraint inlined — 단일 caller에선 primitive 승격이 anti-patchwork invariant 위반), `format_action_loop_intervention` (B1). primitives 조합으로 Intervention 생성, 빈 prior_content 시 정적 RETRY_HINT_* fallback
+│   ├── detectors.py         (~210) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용), `detect_thought_missing` (A7, action 있고 thought 없음 — mimicry-strengthening loop trigger)
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
-│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 7종 (NO_JSON / NO_OUTPUT / NO_ACTION / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
+│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 8종 (NO_JSON / NO_OUTPUT / NO_ACTION / NO_THOUGHT / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
 │   └── primitives.py        (~120) 순수 회복 primitive (`echo_prior_output`, `constrain_format_json`, `constrain_action_required`, `probe_progress`, `restate_task`) — provider/모델/채널 이름 모름
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
@@ -64,7 +64,7 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (1305) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
+├── loop.py                  (1540) AgentLoop 클래스 + ReAct 루프 (text parsing, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
 │   ├── base.py              (189)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드 + thinking, observation success 인자)
@@ -545,7 +545,9 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 
 **Primitive 계약 (누더기 방지):** primitive는 provider/모델/채널 이름을 절대 참조하지 않음. 새 실패 모드는 *primitive 합성과 매핑 한 줄*로 처리 — `if "ollama"`, `response.thinking` 같은 분기를 primitive 시그니처에 두면 invariant 위반.
 
-**Prefix 호환성:** retry 메시지 시작은 항상 정적 템플릿과 같은 문장 (`"Your response was not valid JSON."` / `"Your JSON was parsed but has no action."`)으로 시작하므로 `SYSTEM_USER_PREFIXES` 매칭이 그대로 유지됨 → resume 시 자연어 변환에서 noise로 표시되지 않음.
+**Prefix 호환성:** retry 메시지 시작은 항상 정적 템플릿과 같은 문장 (`"Your response was not valid JSON."` / `"Your JSON was parsed but has no action."` / `"Your JSON was missing the 'thought' field."`)으로 시작하므로 `SYSTEM_USER_PREFIXES` 매칭이 그대로 유지됨 → resume 시 자연어 변환에서 noise로 표시되지 않음.
+
+**A7 (NO_THOUGHT) — mimicry-strengthening loop 차단.** parser 가 성공해 `action`은 있지만 `thought`가 비어 있으면(또는 `None`/whitespace-only) `_dispatch_text_path` 가 dispatch 직전에 차단하고 `format_no_thought_retry`로 retry. drift-shaped 응답 1건이 transcript에 들어가면 in-context learning 으로 이어지는 turn 들이 같은 구조를 mimicry해 thought-drop 이 연쇄로 번지는 패턴(qwen3.6)을 끊는 것이 목적. 정적 fallback 메시지 + echo path 모두 "Your JSON was missing the 'thought' field." 로 시작 — `SYSTEM_USER_PREFIXES` 에 동일 prefix 등록. constraint 메시지("must include 'thought' stating purpose / reason")는 builder 내부에 inline — primitive로 승격하면 v1 단일-caller 상황에서 anti-patchwork invariant ("primitive reused by ≥2 failures") 위반이라 두 번째 caller 등장 시점까지 보류.
 
 #### Per-Turn Observability (`recovery/observability.py`)
 
@@ -556,7 +558,7 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 - `model` — 어떤 모델이 응답했는지 (분석 시 그룹 키)
 - `timestamp` — ISO 8601 UTC
 - `parse_stage` — 0(실패), 1(json.loads), 2(json_repair), 3(regex)
-- `failure_signal` — `"NO_JSON"` / `"NO_OUTPUT"` / `"NO_ACTION"` / `"UNKNOWN_TOOL"` / `"SCHEMA_MISMATCH"` / `"NESTED_ENVELOPE"` / `"ACTION_LOOP"` / `null`
+- `failure_signal` — `"NO_JSON"` / `"NO_OUTPUT"` / `"NO_ACTION"` / `"NO_THOUGHT"` / `"UNKNOWN_TOOL"` / `"SCHEMA_MISMATCH"` / `"NESTED_ENVELOPE"` / `"ACTION_LOOP"` / `null`
 - `primitives_applied` — 합성된 primitive 이름 list (실패 retry 시에만 채워짐)
 
 **프라이버시 계약:** 사용자 prompt나 LLM 응답 본문은 절대 기록되지 않음 — 구조 메타만. 회복률은 *저장하지 않고* 분석 시 walk-forward로 계산 (실패 row 다음 row의 failure_signal을 봐서 회복 여부 판단). retrospective 쓰기 회피.

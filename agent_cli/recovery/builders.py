@@ -74,6 +74,44 @@ def format_no_action_retry(*, prior_content: str = "") -> Intervention:
     )
 
 
+def format_no_thought_retry(*, prior_content: str = "") -> Intervention:
+    """Build the Intervention for a JSON envelope that has an action but
+    no thought.
+
+    Same failure-grounding rationale as ``format_no_action_retry`` —
+    echo the model's prior output so it sees its own omission, then
+    restate the constraint. The constraint is inlined here rather than
+    promoted to a primitive: ``constrain_thought_required`` would have
+    exactly one caller in v1, which violates the "primitive reused by
+    ≥2 failures" anti-patchwork invariant in DESIGN.md §4. Promote it
+    only when a second caller appears.
+    """
+    constraint = (
+        "Your JSON must include a 'thought' field stating purpose "
+        "(what you want to achieve) and reason (why this specific action). "
+        "Do not omit it."
+    )
+    echo = echo_prior_output(prior_content)
+    if not echo:
+        return Intervention(
+            message="Your JSON was missing the 'thought' field. " + constraint,
+            primitives=[],
+        )
+
+    msg = "\n".join(
+        [
+            "Your JSON was missing the 'thought' field.",
+            "",
+            echo,
+            "Honor that. " + constraint,
+        ]
+    )
+    return Intervention(
+        message=msg,
+        primitives=["echo_prior_output"],
+    )
+
+
 def format_action_loop_intervention(
     *,
     level: int,

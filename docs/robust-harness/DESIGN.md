@@ -42,6 +42,7 @@ JSON envelope drift, tool name 환각, action_input 스키마 위반, 무한 루
 | A4 | 알 수 없는 tool name | parser 성공, but `action not in tool_registry` |
 | A5 | `action_input` 스키마 불일치 | tool dispatch에서 거부 |
 | A6 | Nested envelope (이중 래핑된 complete) | `complete` action_input.result 가 다시 `{"result": "..."}` JSON 객체로 파싱됨 (qwen3.5/3.6 계열에서 관찰) |
+| A7 | `thought` 필드 누락 (with action) | parser 성공, `action` 있음, but `thought is None / empty / whitespace` (NO_THOUGHT 라벨). Mimicry-strengthening loop trigger — drift-shaped 응답이 transcript에 들어가면 후속 turn들이 따라서 thought를 생략한다 (qwen3.6에서 prose+JSON 응답 1건이 5턴 연속 thought-drop을 유발). Dispatch 직전에 차단해 transcript 오염을 막는다. |
 
 ### Layer B — 행동 실패 (다중 턴 관찰 필요)
 
@@ -127,6 +128,7 @@ Output: Intervention (텍스트 주입 | 파라미터 조정 | 상태 리셋)
 | A3 | echo_prior_output + probe_schema | + constrain_format | |
 | A4 | probe_tool_name | + constrain_action | |
 | A5 | echo_diff + probe_schema | + constrain_format | |
+| A7 | echo_prior_output + inlined "include thought" constraint | (관찰 후 결정) | |
 | A6 | (관찰만 — v1 라벨링 전용) | | |
 | B1 | probe_progress | + 파라미터 조정 (temp↓) | restate_task |
 | B2 | echo_last_action | + probe_progress | |
