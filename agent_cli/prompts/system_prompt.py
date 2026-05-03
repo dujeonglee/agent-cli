@@ -161,7 +161,18 @@ _READ_FILE_INLINE = """\
   you have only seen the first 20 lines. A bare full read on a large
   file (~300+ lines) will be refused with instructions; follow them."""
 
-_READ_SYMBOLS_INLINE = """\
+
+def _build_read_symbols_inline() -> str:
+    """Build the read_symbols inline guide.
+
+    Pulls the supported extension list from
+    :func:`agent_cli.tools.symbols.get_supported_extensions` so adding a
+    grammar to ``_EXT_TO_LANG`` automatically updates the prompt.
+    """
+    from agent_cli.tools.symbols import get_supported_extensions
+
+    exts = ", ".join(get_supported_extensions())
+    return f"""\
 
   Structure-aware file reader. Two modes:
 
@@ -169,25 +180,29 @@ _READ_SYMBOLS_INLINE = """\
      structs/enums/typedefs, #defines, markdown headings). Each line is
      ``name (kind) :start-end``. Use this in place of read_file:stat
      when the file is a supported language.
-       {"path": "auth.py", "mode": "list"}
-       {"path": "src/foo.cpp", "mode": "list"}
-       {"path": "README.md", "mode": "list"}
+       {{"path": "auth.py", "mode": "list"}}
+       {{"path": "src/foo.cpp", "mode": "list"}}
+       {{"path": "README.md", "mode": "list"}}
   2. mode='fetch' — body of one named symbol from the outline. The
-     ``name`` must match the outline verbatim. When the same name has
-     both a declaration and a definition (e.g. .h prototype + .cpp
+     ``name`` must match the outline verbatim. The body is returned in
+     hashline format (LINE#HASH:content), so you can pipe it straight
+     into edit_file without a separate read_file. When the same name
+     has both a declaration and a definition (e.g. .h prototype + .cpp
      body), the definition is returned.
-       {"path": "auth.py", "mode": "fetch", "name": "User.login"}
-       {"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}
-       {"path": "README.md", "mode": "fetch", "name": "## Setup"}
+       {{"path": "auth.py", "mode": "fetch", "name": "User.login"}}
+       {{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}}
+       {{"path": "README.md", "mode": "fetch", "name": "## Setup"}}
 
   Naming follows each language's convention:
   - Python / JavaScript / TypeScript: ``Class.method``
   - C / C++: ``namespace::Class::method``
   - Markdown: heading marker + text (``## Setup``)
 
-  Supported extensions: .py, .js/.jsx/.mjs/.cjs, .ts/.tsx, .c/.cc/.cpp/
-  .cxx/.h/.hh/.hpp/.hxx, .md/.markdown. C and C++ both use the C++
-  parser. For other formats, use read_file."""
+  Supported extensions: {exts}. C and C++ both use the C++ parser.
+  For other formats, use read_file."""
+
+
+_READ_SYMBOLS_INLINE = _build_read_symbols_inline()
 
 _ASK_INLINE = """\
 

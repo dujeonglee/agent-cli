@@ -87,8 +87,19 @@ def _full_read_limit() -> int:
         return _DEFAULT_FULL_READ_LIMIT
 
 
-def _format_lines(all_lines: list[str], start_idx: int, end_idx: int) -> str:
-    """Format lines[start_idx:end_idx] with hashline tags (start_idx is 0-based)."""
+def format_hashlines_range(all_lines: list[str], start_idx: int, end_idx: int) -> str:
+    """Format ``all_lines[start_idx:end_idx]`` with hashline tags.
+
+    Companion to the full-text :func:`format_hashlines`; takes a pre-split
+    line list and a 0-based half-open range so callers that already have
+    line counts (partial reads, search context windows, structural fetches)
+    do not pay the cost of re-splitting the file.
+
+    Public API: also imported by :mod:`agent_cli.tools.symbols` so that
+    ``read_symbols`` fetch output uses the same hashline format —
+    callers can pipe a fetched body straight into ``edit_file`` without
+    re-reading the file. Keep the signature stable.
+    """
     out = []
     for i, line in enumerate(all_lines[start_idx:end_idx], start_idx + 1):
         tag = compute_line_hash(i, line)
@@ -112,7 +123,7 @@ def _stat(path: str, text: str, all_lines: list[str]) -> ToolResult:
     )
 
     head_end = min(_STAT_HEAD_LINES, total)
-    head = _format_lines(all_lines, 0, head_end)
+    head = format_hashlines_range(all_lines, 0, head_end)
 
     hint = (
         f"\n\n[File has {total} total lines. stat returned metadata + the "
@@ -152,7 +163,7 @@ def _refuse_large_full_read(
     )
 
     head_end = min(_STAT_HEAD_LINES, total)
-    head = _format_lines(all_lines, 0, head_end)
+    head = format_hashlines_range(all_lines, 0, head_end)
 
     hint = (
         f"\n\n[refused: full read of {total}-line file exceeds limit "
@@ -196,7 +207,7 @@ def _search(path: str, all_lines: list[str], pattern: str, context: int) -> Tool
     parts = [f"[search] {path}: {len(matches)} matches for {pattern!r}"]
     for lo, hi in ranges:
         parts.append(f"\n─── lines {lo + 1}-{hi} ───")
-        parts.append(_format_lines(all_lines, lo, hi))
+        parts.append(format_hashlines_range(all_lines, lo, hi))
     return ToolResult(True, output="\n".join(parts))
 
 
@@ -247,7 +258,9 @@ def tool_read_file(args: dict) -> ToolResult:
         if line_start > 0:
             start = max(0, line_start - 1)
             end = min(total, line_end) if line_end > 0 else total
-            return ToolResult(True, output=_format_lines(all_lines, start, end))
+            return ToolResult(
+                True, output=format_hashlines_range(all_lines, start, end)
+            )
 
         # Bare full read. Guard against silently dumping huge files
         # into the context window — refuse large files. The refusal

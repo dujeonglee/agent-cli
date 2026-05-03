@@ -347,11 +347,24 @@ class TestBuildSystemPrompt:
         assert "## Setup" in prompt
 
     def test_read_symbols_lists_supported_languages(self):
-        """The inline guide must name the supported extensions so the
-        model knows when to fall back to read_file."""
+        """Every extension in _EXT_TO_LANG must appear in the inline
+        guide. This is a single-source-of-truth regression guard: the
+        guide is built from get_supported_extensions(), so adding a
+        grammar to _EXT_TO_LANG should automatically propagate. If
+        anyone reverts to a hardcoded list, this test catches it."""
+        from agent_cli.tools.symbols import get_supported_extensions
+
         prompt = build_system_prompt(_make_caps(), ["read_symbols"])
-        for ext in (".py", ".ts", ".cpp", ".md"):
-            assert ext in prompt
+        for ext in get_supported_extensions():
+            assert ext in prompt, f"{ext} missing from read_symbols inline guide"
+
+    def test_read_symbols_guide_advertises_hashline_output(self):
+        """The fetch mode returns hashline-formatted bodies so the model
+        can pipe straight into edit_file. The guide must surface that
+        invariant — otherwise the model may waste a turn re-reading."""
+        prompt = build_system_prompt(_make_caps(), ["read_symbols"])
+        assert "hashline" in prompt.lower()
+        assert "edit_file" in prompt
 
     def test_partial_read_recommends_substantial_range(self):
         """Models tend to over-narrow partial reads (line_start=100,

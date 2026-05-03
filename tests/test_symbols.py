@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.tools.symbols import tool_read_symbols
+import re
+
+from agent_cli.tools.symbols import (
+    _EXT_TO_LANG,
+    get_supported_extensions,
+    tool_read_symbols,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -428,6 +434,103 @@ def also_good():
         names = _names(r.output)
         # At least one of the well-formed functions should still appear.
         assert "good" in names or "also_good" in names
+
+
+_HASHLINE_RE = re.compile(r"^\d+#[A-Z]{2}:")
+
+
+# ── Hashline output (fetch) ───────────────────────────────────────────
+class TestFetchHashlineFormat:
+    """fetch returns hashline-formatted bodies (LINE#HASH:content) so the
+    model can pipe results straight into edit_file without a separate
+    read_file call. The header line ('# Foo.bar (method) :start-end')
+    is plain text — only the body lines carry hashlines."""
+
+    def _body_lines(self, output: str) -> list[str]:
+        # Drop the header (first line starts with '# ').
+        lines = output.splitlines()
+        assert lines, "fetch output should not be empty"
+        assert lines[0].startswith("# "), f"first line is the header: {lines[0]!r}"
+        return lines[1:]
+
+    def test_python_fetch_method_is_hashlined(self, tmp_path):
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        out = tool_read_symbols(
+            {"path": str(p), "mode": "fetch", "name": "Foo.bar"}
+        ).output
+        body = self._body_lines(out)
+        assert body, "method body should not be empty"
+        for line in body:
+            assert _HASHLINE_RE.match(line), f"not hashlined: {line!r}"
+
+    def test_cpp_fetch_macro_is_hashlined(self, tmp_path):
+        p = _write(tmp_path, "a.cpp", CPP_SAMPLE)
+        out = tool_read_symbols(
+            {"path": str(p), "mode": "fetch", "name": "SQUARE"}
+        ).output
+        body = self._body_lines(out)
+        assert body
+        for line in body:
+            assert _HASHLINE_RE.match(line), f"not hashlined: {line!r}"
+
+    def test_markdown_fetch_section_is_hashlined(self, tmp_path):
+        p = _write(tmp_path, "doc.md", MD_SAMPLE)
+        out = tool_read_symbols(
+            {"path": str(p), "mode": "fetch", "name": "## Setup"}
+        ).output
+        body = self._body_lines(out)
+        assert body
+        for line in body:
+            assert _HASHLINE_RE.match(line), f"not hashlined: {line!r}"
+
+    def test_hashline_numbers_match_source_line_numbers(self, tmp_path):
+        """Hashline prefix line numbers must match the symbol's actual
+        line range — otherwise edit_file would target the wrong region."""
+        src = "\n".join(
+            ["# line 1", "# line 2", "def hello():", "    return 1", "# line 5"]
+        )
+        p = _write(tmp_path, "a.py", src + "\n")
+        out = tool_read_symbols(
+            {"path": str(p), "mode": "fetch", "name": "hello"}
+        ).output
+        # Header tells us the range; body line numbers must match.
+        header = out.splitlines()[0]
+        # e.g. "# hello (function) :3-4"
+        m = re.search(r":(\d+)-(\d+)", header)
+        assert m, f"no range in header: {header!r}"
+        start = int(m.group(1))
+        body = self._body_lines(out)
+        for offset, line in enumerate(body):
+            expected = start + offset
+            assert line.startswith(f"{expected}#"), (
+                f"line {offset} should start with {expected}#, got {line!r}"
+            )
+
+
+# ── Single source of truth: extension list ───────────────────────────
+class TestSupportedExtensions:
+    """The error message and the system prompt's inline guide both
+    derive their extension list from get_supported_extensions(). Adding
+    a grammar to _EXT_TO_LANG should automatically propagate to both
+    surfaces — these tests pin that contract."""
+
+    def test_returns_sorted_unique_list(self):
+        exts = get_supported_extensions()
+        assert exts == sorted(exts)
+        assert len(exts) == len(set(exts))
+
+    def test_covers_every_ext_in_table(self):
+        exts = set(get_supported_extensions())
+        assert exts == set(_EXT_TO_LANG.keys())
+
+    def test_unsupported_error_lists_supported_exts(self, tmp_path):
+        """The error message shown when the model passes an unknown
+        extension should enumerate the supported extensions verbatim
+        from get_supported_extensions()."""
+        p = _write(tmp_path, "data.bin", "x")
+        err = tool_read_symbols({"path": str(p)}).error
+        for ext in get_supported_extensions():
+            assert ext in err, f"{ext} missing from error: {err!r}"
 
 
 if __name__ == "__main__":

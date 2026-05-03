@@ -47,6 +47,28 @@ def _detect_language(path: Path) -> str | None:
     return _EXT_TO_LANG.get(path.suffix.lower())
 
 
+def get_supported_extensions() -> list[str]:
+    """Return supported file extensions, sorted, for documentation use.
+
+    Single source of truth for both error messages (when a caller passes
+    an unsupported extension) and the system prompt's read_symbols inline
+    guide. Adding a new entry to ``_EXT_TO_LANG`` automatically propagates
+    to both surfaces — no separate lists to keep in sync.
+    """
+    return sorted(_EXT_TO_LANG.keys())
+
+
+def _unsupported_ext_msg(ext: str) -> str:
+    """Build the unsupported-extension error message from the live
+    extension table so it never drifts from ``_EXT_TO_LANG``."""
+    exts = ", ".join(get_supported_extensions())
+    return (
+        f"unsupported file extension: {ext}. "
+        f"Supported: {exts}. "
+        "Use read_file for other formats."
+    )
+
+
 # ── Symbol dataclass ──────────────────────────────────────────────
 @dataclass
 class Symbol:
@@ -603,14 +625,6 @@ def _extract(path: Path, language: str) -> list[Symbol] | None:
 
 
 # ── Public tool ───────────────────────────────────────────────────
-_UNSUPPORTED_EXT_MSG = (
-    "unsupported file extension: {ext}. "
-    "Supported: .py, .js/.jsx/.mjs/.cjs, .ts/.tsx, "
-    ".c/.cc/.cpp/.cxx/.h/.hh/.hpp/.hxx, .md/.markdown. "
-    "Use read_file for other formats."
-)
-
-
 def _resolve_path_and_language(path_str: str) -> tuple[Path, str] | ToolResult:
     """Validate path + detect language. Returns (path, language) or a
     ToolResult error to propagate."""
@@ -619,7 +633,7 @@ def _resolve_path_and_language(path_str: str) -> tuple[Path, str] | ToolResult:
         return ToolResult(False, error=f"file not found: {path}")
     language = _detect_language(path)
     if language is None:
-        return ToolResult(False, error=_UNSUPPORTED_EXT_MSG.format(ext=path.suffix))
+        return ToolResult(False, error=_unsupported_ext_msg(path.suffix))
     return (path, language)
 
 
@@ -642,6 +656,11 @@ def _do_list(path: Path, language: str) -> ToolResult:
 
 
 def _do_fetch(path: Path, language: str, name: str) -> ToolResult:
+    # Imported here to avoid a top-level cycle: read_file imports nothing
+    # from symbols, but keeping the boundary explicit makes the dependency
+    # direction obvious.
+    from agent_cli.tools.read_file import format_hashlines_range
+
     symbols = _extract(path, language)
     if symbols is None:
         return ToolResult(False, error=f"could not parse {path}")
@@ -666,13 +685,16 @@ def _do_fetch(path: Path, language: str, name: str) -> ToolResult:
     except OSError as e:
         return ToolResult(False, error=f"read error: {e}")
 
-    body_lines = all_lines[chosen.start_line - 1 : chosen.end_line]
+    # Body is rendered in hashline format (LINE#HASH:content) so the model
+    # can pipe the result straight into edit_file without a separate
+    # read_file call.
+    body = format_hashlines_range(all_lines, chosen.start_line - 1, chosen.end_line)
     header = (
         f"# {chosen.name} ({chosen.kind})"
         f" :{chosen.start_line}-{chosen.end_line}"
         + ("" if chosen.is_definition else " [declaration]")
     )
-    return ToolResult(True, output=header + "\n" + "\n".join(body_lines))
+    return ToolResult(True, output=header + "\n" + body)
 
 
 def tool_read_symbols(action_input: dict) -> ToolResult:
