@@ -388,6 +388,38 @@ class TestBuildSystemPrompt:
         assert "burn context budget" in prompt
         assert "costs turns" in prompt or "more turns" in prompt
 
+    def test_read_file_steers_to_read_symbols_when_active(self):
+        """When both tools are active, the read_file Flow paragraph must
+        steer supported-language files at read_symbols mode='list' as
+        the entry point — that's how we counteract read_file:stat
+        being the cheaper-feeling default and getting read_symbols out
+        of its low-baseline trap."""
+        from agent_cli.tools.symbols import get_supported_extensions
+
+        prompt = build_system_prompt(_make_caps(), ["read_file", "read_symbols"])
+        # The Flow line names read_symbols as the entry point.
+        assert "read_symbols mode='list' first" in prompt
+        # Every supported extension must appear in the Flow paragraph
+        # itself (the read_symbols guide already lists them — this
+        # checks the read_file→read_symbols steering also stays in sync).
+        flow_start = prompt.index(
+            "Flow: for an unknown file, if its extension is supported by"
+        )
+        flow_end = prompt.index("instructions; follow them.", flow_start)
+        flow_text = prompt[flow_start:flow_end]
+        for ext in get_supported_extensions():
+            assert ext in flow_text, f"{ext} missing from read_file Flow steering"
+
+    def test_read_file_omits_steering_when_read_symbols_inactive(self):
+        """If read_symbols is not in active_tools (e.g., subagent with a
+        restricted tool list), the read_file guide must NOT mention it
+        — pointing the model at a tool it cannot call wastes a retry on
+        UNKNOWN_TOOL."""
+        prompt = build_system_prompt(_make_caps(), ["read_file"])
+        assert "read_symbols" not in prompt
+        # Original Flow wording survives.
+        assert "Flow: for an unknown file, stat first" in prompt
+
     def test_no_redundant_read_file_preview_rule(self):
         """The stat=true reminder moved into Context Discipline, so the
         old Task Guidelines bullet that duplicated it must be gone. Also

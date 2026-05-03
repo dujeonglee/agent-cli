@@ -1050,14 +1050,18 @@ class TestReadFileFullReadGuard:
         assert "line_start" in props
 
     def test_inline_guide_does_not_mention_full(self):
-        """Same invariant at the prompt layer — `_READ_FILE_INLINE` must
-        not teach full=true. Learning about the whole-file path happens
-        through the refusal message, not the baseline guide."""
-        from agent_cli.prompts.system_prompt import _READ_FILE_INLINE
+        """Same invariant at the prompt layer — the read_file inline
+        guide must not teach full=true. Learning about the whole-file
+        path happens through the refusal message, not the baseline
+        guide. Checked in both variants (with/without read_symbols
+        steering) since the builder branches on active tools."""
+        from agent_cli.prompts.system_prompt import _build_read_file_inline
 
-        assert "full=true" not in _READ_FILE_INLINE
-        assert "full=True" not in _READ_FILE_INLINE
-        assert '"full"' not in _READ_FILE_INLINE
+        for active in (["read_file"], ["read_file", "read_symbols"]):
+            guide = _build_read_file_inline(active)
+            assert "full=true" not in guide
+            assert "full=True" not in guide
+            assert '"full"' not in guide
 
 
 class TestReadFileSearch:

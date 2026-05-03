@@ -136,7 +136,23 @@ _DELEGATE_INLINE = """\
   - Parallel (independent): {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
   - Read-only: {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}\""""
 
-_READ_FILE_INLINE = """\
+
+def _build_read_file_inline(active_tools: list[str]) -> str:
+    """Build the read_file inline guide.
+
+    When ``read_symbols`` is active, the Flow paragraph routes
+    supported-language files to ``read_symbols`` mode='list' as the
+    entry point — its symbol outline beats stat's 20-line head. The
+    extension list is pulled from
+    :func:`agent_cli.tools.symbols.get_supported_extensions` so a new
+    grammar in ``_EXT_TO_LANG`` updates the prompt automatically
+    (single source of truth).
+
+    When ``read_symbols`` is not active (e.g., subagent with restricted
+    tools), the steering is omitted to avoid pointing the model at a
+    tool it cannot call.
+    """
+    base_modes = """\
 
   Pick the right mode for the question — full reads burn context budget,
   but reading too little costs turns:
@@ -155,11 +171,27 @@ _READ_FILE_INLINE = """\
        {"path": "app.py", "line_start": 100, "line_end": 600}
   4. Full — the file is known-small or central to the task.
        {"path": "app.py"}
+"""
+    if "read_symbols" in active_tools:
+        from agent_cli.tools.symbols import get_supported_extensions
 
+        exts = ", ".join(get_supported_extensions())
+        flow = f"""
+  Flow: for an unknown file, if its extension is supported by
+  read_symbols ({exts}), call read_symbols mode='list' first — its
+  symbol outline (functions, classes, headings) is a stronger entry
+  point than stat's 20-line head. Otherwise stat first to get its
+  size, then pick one of modes 2–4. stat alone is never enough — if
+  you stop after stat, you have only seen the first 20 lines. A bare
+  full read on a large file (~300+ lines) will be refused with
+  instructions; follow them."""
+    else:
+        flow = """
   Flow: for an unknown file, stat first to get its size, then pick one
   of modes 2–4. stat alone is never enough — if you stop after stat,
   you have only seen the first 20 lines. A bare full read on a large
   file (~300+ lines) will be refused with instructions; follow them."""
+    return base_modes + flow
 
 
 def _build_read_symbols_inline() -> str:
@@ -231,14 +263,21 @@ _ASK_INLINE = """\
   conversation would still flow, it's not a real question — use
   `complete`."""
 
-# Map tool names to their inline guides
-_TOOL_INLINE_GUIDES: dict[str, str] = {
-    "read_file": _READ_FILE_INLINE,
-    "edit_file": _HASHLINE_INLINE,
-    "delegate": _DELEGATE_INLINE,
-    "ask": _ASK_INLINE,
-    "read_symbols": _READ_SYMBOLS_INLINE,
-}
+
+def _build_tool_inline_guides(active_tools: list[str]) -> dict[str, str]:
+    """Build the tool→inline-guide map for the given active tools.
+
+    ``read_file``'s guide depends on whether ``read_symbols`` is also
+    active (steering line gets added in that case), so the map cannot
+    be a static module-level dict — it's rebuilt per call.
+    """
+    return {
+        "read_file": _build_read_file_inline(active_tools),
+        "edit_file": _HASHLINE_INLINE,
+        "delegate": _DELEGATE_INLINE,
+        "ask": _ASK_INLINE,
+        "read_symbols": _READ_SYMBOLS_INLINE,
+    }
 
 
 def _build_tools_section(active_tools: list[str]) -> str:
@@ -246,7 +285,9 @@ def _build_tools_section(active_tools: list[str]) -> str:
 
     Static tools come first (stable for KV cache), conditional tools last.
     """
-    tool_block = get_tool_descriptions(active_tools, inline_guides=_TOOL_INLINE_GUIDES)
+    tool_block = get_tool_descriptions(
+        active_tools, inline_guides=_build_tool_inline_guides(active_tools)
+    )
     return f"## Available Tools\n{tool_block}"
 
 
