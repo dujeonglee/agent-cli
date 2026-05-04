@@ -604,9 +604,35 @@ def _parse(path: Path, language: str) -> tuple[object, bytes] | None:
     except OSError:
         return None
     try:
-        from tree_sitter_language_pack import get_parser
+        from tree_sitter import Language, Parser
 
-        parser = get_parser(language)
+        if language == "python":
+            import tree_sitter_python as _m
+
+            cap = _m.language()
+        elif language == "javascript":
+            import tree_sitter_javascript as _m
+
+            cap = _m.language()
+        elif language == "typescript":
+            import tree_sitter_typescript as _m
+
+            cap = _m.language_typescript()
+        elif language == "tsx":
+            import tree_sitter_typescript as _m
+
+            cap = _m.language_tsx()
+        elif language == "cpp":
+            import tree_sitter_cpp as _m
+
+            cap = _m.language()
+        elif language == "markdown":
+            import tree_sitter_markdown as _m
+
+            cap = _m.language()
+        else:
+            return None
+        parser = Parser(Language(cap))
         tree = parser.parse(source)
         return tree.root_node, source
     except Exception:
