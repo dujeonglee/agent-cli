@@ -682,7 +682,10 @@ class TestRecencySectionOrder:
         directive_dir = tmp_path / ".agent-cli"
         directive_dir.mkdir()
         (directive_dir / "DIRECTIVE.md").write_text("Always be brief.")
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [directive_dir],
+        )
 
         prompt = build_system_prompt(
             caps,
