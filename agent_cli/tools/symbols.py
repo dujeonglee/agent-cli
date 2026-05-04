@@ -13,6 +13,7 @@ back to ``read_file``.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -663,14 +664,31 @@ def _resolve_path_and_language(path_str: str) -> tuple[Path, str] | ToolResult:
     return (path, language)
 
 
-def _do_list(path: Path, language: str) -> ToolResult:
+def _do_list(path: Path, language: str, search: str | None = None) -> ToolResult:
     symbols = _extract(path, language)
     if symbols is None:
         return ToolResult(False, error=f"could not parse {path}")
     if not symbols:
         return ToolResult(True, output="(no symbols found)")
 
+    total = len(symbols)
+    if search:
+        try:
+            regex = re.compile(search)
+        except re.error as e:
+            return ToolResult(False, error=f"Invalid search pattern '{search}': {e}")
+        symbols = [s for s in symbols if regex.search(s.name)]
+        if not symbols:
+            return ToolResult(
+                True,
+                output=(
+                    f"[search] {path}: no matches for {search!r} (in {total} symbols)"
+                ),
+            )
+
     lines = []
+    if search:
+        lines.append(f"[search] {path}: {len(symbols)} matches for {search!r}")
     for s in symbols:
         if s.start_line == s.end_line:
             range_str = f":{s.start_line}"
@@ -730,7 +748,11 @@ def tool_read_symbols(action_input: dict) -> ToolResult:
         - ``mode='list'`` (default) — outline of the file: every function,
           class, method, struct/enum/typedef, ``#define``, or markdown
           heading, with its line range. Use as a structure-aware
-          alternative to ``read_file`` with ``stat=true``.
+          alternative to ``read_file`` with ``stat=true``. With optional
+          ``search='<regex>'`` the outline is filtered to symbols whose
+          name matches the regex (re.search semantics, same as
+          read_file's search) — useful when only one or two symbols are
+          needed from a large file.
         - ``mode='fetch'`` — body of a single named symbol. Pair the
           ``name`` argument with a name shown by ``mode='list'``. When a
           name matches both a declaration (e.g. a ``.h`` prototype) and a
@@ -753,7 +775,8 @@ def tool_read_symbols(action_input: dict) -> ToolResult:
 
     mode = action_input.get("mode", "list")
     if mode == "list":
-        return _do_list(path, language)
+        search = action_input.get("search") or None
+        return _do_list(path, language, search=search)
     if mode == "fetch":
         name = action_input.get("name")
         if not name:

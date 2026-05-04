@@ -215,6 +215,11 @@ def _build_read_symbols_inline() -> str:
        {{"path": "auth.py", "mode": "list"}}
        {{"path": "src/foo.cpp", "mode": "list"}}
        {{"path": "README.md", "mode": "list"}}
+     With optional ``search='<regex>'`` the outline is filtered to
+     symbols whose name matches the regex (re.search semantics) — prefer
+     this over piping list output through shell grep.
+       {{"path": "auth.py", "mode": "list", "search": "login"}}
+       {{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}}
   2. mode='fetch' — body of one named symbol from the outline. The
      ``name`` must match the outline verbatim. The body is returned in
      hashline format (LINE#HASH:content), so you can pipe it straight

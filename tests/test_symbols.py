@@ -385,6 +385,102 @@ class TestMarkdown:
         assert "Run it." not in r.output
 
 
+# ── List search filter ────────────────────────────────────────────────
+class TestListSearch:
+    """``mode='list'`` accepts an optional ``search='<regex>'`` filter that
+    narrows the outline to symbols whose name matches the regex
+    (re.search semantics — same as read_file:search). Useful when the
+    file has many symbols and only a handful are relevant."""
+
+    def test_search_filters_to_matching_symbols(self, tmp_path):
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        r = tool_read_symbols({"path": str(p), "mode": "list", "search": "Foo"})
+        assert r.success
+        names = _names(r.output)
+        # Header line is "[search] ..." which has no " (" in it; _names
+        # would still include it, so filter explicitly.
+        names = [n for n in names if not n.startswith("[search]")]
+        assert "Foo" in names
+        assert "Foo.bar" in names
+        assert "Foo.baz" in names
+        # Symbols not matching the pattern are filtered out.
+        assert "hello" not in names
+        assert "decorated" not in names
+
+    def test_search_header_reports_match_count(self, tmp_path):
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        r = tool_read_symbols({"path": str(p), "mode": "list", "search": "Foo"})
+        assert r.success
+        first = r.output.splitlines()[0]
+        assert first.startswith("[search]")
+        assert "matches for 'Foo'" in first
+
+    def test_search_no_matches_returns_friendly_message(self, tmp_path):
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        r = tool_read_symbols(
+            {"path": str(p), "mode": "list", "search": "totally_absent"}
+        )
+        assert r.success
+        assert "no matches for 'totally_absent'" in r.output
+        # Total symbol count is reported so the caller sees scale.
+        assert "symbols" in r.output
+
+    def test_search_supports_regex(self, tmp_path):
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        # Anchor + alternation: only top-level identifiers starting with h or d.
+        r = tool_read_symbols(
+            {"path": str(p), "mode": "list", "search": r"^(hello|decorated)$"}
+        )
+        assert r.success
+        names = [n for n in _names(r.output) if not n.startswith("[search]")]
+        assert set(names) == {"hello", "decorated"}
+
+    def test_search_invalid_regex_errors(self, tmp_path):
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        r = tool_read_symbols({"path": str(p), "mode": "list", "search": "[unclosed"})
+        assert not r.success
+        assert "Invalid search pattern" in r.error
+
+    def test_search_omitted_returns_full_outline(self, tmp_path):
+        """Regression: list without search keeps current behavior — every
+        symbol present, no header line."""
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        r = tool_read_symbols({"path": str(p), "mode": "list"})
+        assert r.success
+        first = r.output.splitlines()[0]
+        assert not first.startswith("[search]")
+        names = _names(r.output)
+        assert "hello" in names
+        assert "Foo" in names
+        assert "decorated" in names
+
+    def test_search_empty_string_treated_as_omitted(self, tmp_path):
+        """An empty search string should not filter anything (matches the
+        falsy-coercion in tool_read_symbols)."""
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        r = tool_read_symbols({"path": str(p), "mode": "list", "search": ""})
+        assert r.success
+        first = r.output.splitlines()[0]
+        assert not first.startswith("[search]")
+        names = _names(r.output)
+        assert "hello" in names
+
+    def test_search_ignored_in_fetch_mode(self, tmp_path):
+        """fetch mode is name-based; a stray search arg should be ignored,
+        not error out."""
+        p = _write(tmp_path, "a.py", PYTHON_SAMPLE)
+        r = tool_read_symbols(
+            {
+                "path": str(p),
+                "mode": "fetch",
+                "name": "Foo.bar",
+                "search": "ignored",
+            }
+        )
+        assert r.success
+        assert "Foo.bar" in r.output
+
+
 # ── Cross-cutting: fetch errors ───────────────────────────────────────
 class TestFetchErrors:
     def test_unknown_name_lists_similar(self, tmp_path):

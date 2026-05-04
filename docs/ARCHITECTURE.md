@@ -97,7 +97,7 @@ agent_cli/
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
 │   ├── delegate.py          (700)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
 │   ├── context.py           (574)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
-│   ├── symbols.py           (~762) read_symbols 도구 — tree-sitter 기반 구조 인지 reader (mode='list' outline / mode='fetch' 단일 심볼 body, hashline 포맷 출력 → fetch→edit_file 직결). 언어: Python·JS/TS·C/C++·Markdown (.c/.h 포함 모두 C++ grammar). 정의 우선(declaration vs definition), nested 표기는 언어별 관습 (`Foo.bar` / `ns::Foo::bar` / `## Setup`). `get_supported_extensions()`가 prompt inline guide + error 메시지 single source. 의존성: per-language tree-sitter 패키지(tree-sitter-python/javascript/typescript/cpp/markdown) 직접 사용 — tree-sitter-language-pack ≥1.x가 Linux wheel에서 Python 모듈을 누락한 채 발행되어 회피
+│   ├── symbols.py           (~785) read_symbols 도구 — tree-sitter 기반 구조 인지 reader (mode='list' outline + 선택적 `search='<regex>'` name 필터(re.search) / mode='fetch' 단일 심볼 body, hashline 포맷 출력 → fetch→edit_file 직결). 언어: Python·JS/TS·C/C++·Markdown (.c/.h 포함 모두 C++ grammar). 정의 우선(declaration vs definition), nested 표기는 언어별 관습 (`Foo.bar` / `ns::Foo::bar` / `## Setup`). `get_supported_extensions()`가 prompt inline guide + error 메시지 single source. 의존성: per-language tree-sitter 패키지(tree-sitter-python/javascript/typescript/cpp/markdown) 직접 사용 — tree-sitter-language-pack ≥1.x가 Linux wheel에서 Python 모듈을 누락한 채 발행되어 회피
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
