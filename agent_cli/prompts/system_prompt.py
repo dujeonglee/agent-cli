@@ -53,8 +53,10 @@ Treat every token you add as a cost:
 TASK_GUIDELINES = """\
 ## Task Guidelines
 - Read a file before changing it — code, config, docs, anything. Do not edit what you have not read.
-- Keep changes tightly scoped to the request. Do not bundle unrelated cleanup or refactoring.
+- Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper. Don't design for hypothetical future requirements. Three similar lines is better than a premature abstraction.
+- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
 - Do not create new files unless the task requires it.
+- Remove imports/variables/functions that YOUR change made unused. Don't delete pre-existing dead code without asking.
 - If an approach fails, diagnose the cause before switching tactics.
 - Do not introduce new security vulnerabilities.
 - Do not invoke agent-cli recursively via shell — that re-enters this same loop.

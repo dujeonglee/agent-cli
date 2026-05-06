@@ -336,6 +336,68 @@ class TestBuildSystemPrompt:
         assert "Read a file before changing it" in prompt
         assert "code, config, docs" in prompt
 
+    def test_task_guidelines_block_feature_creep(self):
+        """Task Guidelines must explicitly forbid feature creep, premature
+        abstraction, and speculative flexibility — the LLM equivalents
+        of "while I'm here..." cleanups that bloat diffs and create
+        review friction. Tested at intent level: at least one of the
+        anti-pattern phrasings must appear."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        flat = re.sub(r"\s+", " ", guidelines).lower()
+        # Names "beyond what the task requires" or equivalent scope cap.
+        assert "beyond what the task requires" in flat or "scope" in flat
+        # Names "premature abstraction" / "single-use abstraction" /
+        # "helper" anti-pattern.
+        assert (
+            "premature abstraction" in flat
+            or "doesn't need a helper" in flat
+            or "single-use" in flat
+        )
+        # Names "hypothetical" future requirements / configurability.
+        assert "hypothetical" in flat or "speculative" in flat
+
+    def test_task_guidelines_block_impossible_error_handling(self):
+        """Models reflexively add try/except, fallbacks, and input
+        validation for scenarios that an internal caller cannot produce
+        — that's noise that obscures real error paths. The guidelines
+        must name the boundary rule (validate at system boundaries
+        only) so the model has a clear place to draw the line."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        flat = re.sub(r"\s+", " ", guidelines).lower()
+        # Anti-pattern is named.
+        assert (
+            "scenarios that can't happen" in flat
+            or "impossible" in flat
+            or "can't happen" in flat
+        )
+        # System-boundary rule is given as the affirmative guidance, not
+        # just a "don't" — otherwise the model has nowhere to put the
+        # legitimate validation.
+        assert "system boundaries" in flat or "boundaries" in flat
+
+    def test_task_guidelines_orphan_rule_distinguishes_ownership(self):
+        """The orphan rule has two halves and both must be present:
+        (a) clean up imports/variables/functions YOUR change made
+        unused, (b) do NOT delete pre-existing dead code unsolicited.
+        Without (b), the model auto-deletes whatever looks unused and
+        bloats the diff."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["shell"])
+        guidelines = prompt.split("## Task Guidelines")[1].split("##")[0]
+        flat = re.sub(r"\s+", " ", guidelines).lower()
+        # (a) clean own orphans — names what gets removed.
+        assert "imports" in flat
+        assert "your change" in flat or "your changes" in flat
+        # (b) leave pre-existing dead code alone unless asked.
+        assert "pre-existing" in flat or "without asking" in flat
+
     def test_no_recursive_invocation_in_guidelines(self):
         """Recursive-self-invocation guard moved from Response Format
         (where it was an outlier — a behavior rule, not a format rule)
