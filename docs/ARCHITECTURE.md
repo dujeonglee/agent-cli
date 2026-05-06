@@ -108,7 +108,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   └── system_prompt.py     (525)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 6개 — 단일 액션 강제 + 효율성 가이드 + ask vs complete 구분 가이드). Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `read_symbols` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `read_symbols mode='list'`로 우회 — 확장자 목록은 `get_supported_extensions()` 단일 출처에서 가져와 grammar 추가가 자동 전파)
+│   └── system_prompt.py     (540)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide, FORMAT_RULES 6개 — 단일 액션 강제 + 효율성 가이드 + ask vs complete 구분 가이드). Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `read_symbols` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `read_symbols mode='list'`로 우회 — 확장자 목록은 `get_supported_extensions()` 단일 출처에서 가져와 grammar 추가가 자동 전파). read_symbols 가이드는 definitions/structural symbols만 인덱싱한다는 scope를 명시하고 call site/usage 검색은 `read_file search`로 안내. edit_file `_HASHLINE_INLINE`는 (1) 편집 직전에 CURRENT turn에서 read 하도록 요구(read_symbols fetch도 fresh read로 카운트) (2) hash mismatch를 failure가 아닌 guardrail로 reframe해 모델이 panic 없이 re-read/retry 하도록 톤 조정.
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export

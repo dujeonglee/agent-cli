@@ -168,6 +168,45 @@ class TestBuildSystemPrompt:
             or "could be a statement" in flat
         )
 
+    def test_hashline_guide_demands_current_turn_read(self):
+        """Pre-call routine: "Always read the file first" was too lax —
+        models reused hashes from earlier turns and got hash mismatches
+        on edit. The guide must require the read to happen in the
+        CURRENT turn, and must call out that read_symbols fetch counts
+        as a fresh read (its output is hashline-formatted), so the model
+        doesn't waste a turn doing a redundant read_file after fetch."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["edit_file", "read_symbols"])
+        flat = re.sub(r"\s+", " ", prompt)
+        # Current-turn / immediacy is asserted (case-insensitive: the
+        # source uses CURRENT in caps for emphasis).
+        assert "current turn" in flat.lower()
+        # The drift mechanism is named — hashes from earlier turns are
+        # not reusable because something else may have touched the file.
+        assert "drift" in flat.lower()
+        # read_symbols fetch is acknowledged as a fresh read so the model
+        # doesn't double-read.
+        assert "read_symbols fetch" in flat or "fetch counts" in flat.lower()
+
+    def test_hashline_guide_reframes_mismatch_as_guardrail(self):
+        """Post-error tone: a hash mismatch must read as a guardrail,
+        not a failure. Models that take mismatch as "I made a mistake"
+        spiral into apology / excessive caution; framing it as a system
+        guardrail keeps the recovery action mechanical (re-read,
+        retry)."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["edit_file"])
+        flat = re.sub(r"\s+", " ", prompt)
+        # The reframe word "guardrail" appears.
+        assert "guardrail" in flat.lower()
+        # The negation "not a failure" (or close paraphrase) appears so
+        # the model doesn't take it as their own error.
+        assert "not a failure" in flat.lower()
+        # Recovery action is still spelled out.
+        assert "re-read" in flat.lower() or "re-fetch" in flat.lower()
+
     def test_hashline_guide_has_multi_edit_notes(self):
         """Multi-edit notes in _HASHLINE_INLINE prevent the three
         recurring drift patterns observed in S25FE-kernel session
@@ -357,6 +396,36 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(_make_caps(), ["read_symbols"])
         for ext in get_supported_extensions():
             assert ext in prompt, f"{ext} missing from read_symbols inline guide"
+
+    def test_read_symbols_guide_separates_definition_from_usage(self):
+        """read_symbols indexes definitions / structural symbols only —
+        it does not surface call sites or text occurrences. The guide
+        must split that boundary so the model doesn't try to use
+        read_symbols for "where is X called" / "find string Y" tasks
+        (which return empty or misleading hits) and instead reaches for
+        read_file search."""
+        import re
+
+        prompt = build_system_prompt(_make_caps(), ["read_file", "read_symbols"])
+        flat = re.sub(r"\s+", " ", prompt).lower()
+        # Definitions vs usages boundary is named.
+        assert "definitions" in flat
+        assert "call site" in flat or "where a name is invoked" in flat
+        # Redirect for the usage case is read_file search.
+        assert "read_file search" in flat
+
+    def test_read_file_flow_drops_comparative_tone(self):
+        """Earlier wording leaned on a comparison ("stronger entry point
+        than stat's 20-line head") to justify routing supported files at
+        read_symbols. Imperative wording is more turn-efficient: just
+        say what to call. Regression guard against re-introducing the
+        comparative phrasing."""
+        prompt = build_system_prompt(_make_caps(), ["read_file", "read_symbols"])
+        # Old comparative phrasing must not return.
+        assert "stronger entry point" not in prompt
+        # The imperative form remains (covered by the existing steering
+        # test, but pinned here too for clarity).
+        assert "read_symbols mode='list' first" in prompt
 
     def test_read_symbols_guide_advertises_hashline_output(self):
         """The fetch mode returns hashline-formatted bodies so the model

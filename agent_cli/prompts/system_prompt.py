@@ -101,8 +101,13 @@ _HASHLINE_INLINE = """\
   - insert before:        {"op": "prepend", "pos": "1#VR", "lines": ["# header"]}
   - append to EOF:        {"op": "append", "lines": ["# end of file"]}
   Constraints:
-  - Always read the file first to get current hashline tags.
-  - If a hash mismatch error occurs, re-read the file and retry with fresh tags.
+  - Read the target lines in the CURRENT turn before edit_file. Hashes
+    from earlier turns drift if anything else touched the file — do not
+    reuse them. (read_symbols fetch counts as a fresh read; its output
+    is already hashline-formatted and pipes straight into edit_file.)
+  - A hash mismatch is not a failure — it is a guardrail signaling the
+    file moved between your read and your edit. Re-read the region (or
+    re-fetch the symbol) and retry with the fresh tags.
   - Use write_file only for creating new files, not for editing existing ones.
 
   Multi-edit notes:
@@ -178,13 +183,11 @@ def _build_read_file_inline(active_tools: list[str]) -> str:
         exts = ", ".join(get_supported_extensions())
         flow = f"""
   Flow: for an unknown file, if its extension is supported by
-  read_symbols ({exts}), call read_symbols mode='list' first — its
-  symbol outline (functions, classes, headings) is a stronger entry
-  point than stat's 20-line head. Otherwise stat first to get its
-  size, then pick one of modes 2–4. stat alone is never enough — if
-  you stop after stat, you have only seen the first 20 lines. A bare
-  full read on a large file (~300+ lines) will be refused with
-  instructions; follow them."""
+  read_symbols ({exts}), call read_symbols mode='list' first.
+  Otherwise stat first to get its size, then pick one of modes 2–4.
+  stat alone is never enough — if you stop after stat, you have only
+  seen the first 20 lines. A bare full read on a large file (~300+
+  lines) will be refused with instructions; follow them."""
     else:
         flow = """
   Flow: for an unknown file, stat first to get its size, then pick one
@@ -217,9 +220,11 @@ def _build_read_symbols_inline() -> str:
        {{"path": "README.md", "mode": "list"}}
      With optional ``search='<regex>'`` the outline is filtered to
      symbols whose name matches the regex (re.search semantics) — prefer
-     this over piping list output through shell grep.
+     this over piping list output through shell grep. Patterns scale
+     from substrings to anchored prefixes to grouped families:
        {{"path": "auth.py", "mode": "list", "search": "login"}}
        {{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}}
+       {{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}}
   2. mode='fetch' — body of one named symbol from the outline. The
      ``name`` must match the outline verbatim. The body is returned in
      hashline format (LINE#HASH:content), so you can pipe it straight
@@ -236,7 +241,12 @@ def _build_read_symbols_inline() -> str:
   - Markdown: heading marker + text (``## Setup``)
 
   Supported extensions: {exts}. C and C++ both use the C++ parser.
-  For other formats, use read_file."""
+  For other formats, use read_file.
+
+  Scope: indexes definitions and structural symbols only. For *call
+  sites* (where a name is invoked) or any text occurrence (comments,
+  strings, identifiers in use) use read_file search — read_symbols will
+  not surface those."""
 
 
 _READ_SYMBOLS_INLINE = _build_read_symbols_inline()
