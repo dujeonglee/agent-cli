@@ -369,6 +369,7 @@ def build_system_prompt(
     parent_role: str = "",
     session_dir: str = "",
     mcp_manager=None,
+    wire_format=None,
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools.
 
@@ -381,7 +382,20 @@ def build_system_prompt(
       - main: default ROLE_PROMPT
       - delegate: agent_role replaces ROLE_PROMPT
       - skill: parent_role (inherited from caller)
+
+    ``wire_format`` (a ``WireFormat`` plugin) supplies the response-format
+    section. Omitting it falls back to the registered ``"react"`` plugin
+    so existing callers keep their pre-plugin behavior — that backward-
+    compat default also lets unit tests construct a prompt without
+    threading the registry through.
     """
+    if wire_format is None:
+        # Lazy import keeps a cycle from forming if a wire_format plugin
+        # ever needs to import system_prompt for any reason.
+        from agent_cli import wire_formats
+
+        wire_format = wire_formats.get("react")
+
     sections: list[str] = []
 
     # ── Primacy: identity + principles ──
@@ -394,7 +408,7 @@ def build_system_prompt(
         sections.append(ROLE_PROMPT)
     sections.append(CONTEXT_DISCIPLINE)
     sections.append(TASK_GUIDELINES)
-    sections.append(FORMAT_RULES)
+    sections.append(wire_format.format_rules())
 
     # ── Middle: reference material ──
     sections.append(_build_tools_section(active_tools))
