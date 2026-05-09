@@ -74,3 +74,19 @@ def list_names() -> list[str]:
 
 
 __all__ = ["ParsedAction", "WireFormat", "register", "get", "list_names"]
+
+
+# ── Builtin plugin registration ──────────────────────────────
+# Plugins shipped with agent-cli register at package-import time so
+# ``get("react")`` works out of the box. The import is at the bottom
+# (not the top) so the ``register`` symbol it depends on is already
+# defined when ``react.py`` is loaded — the alternative (top-level
+# import + explicit register call) would fail because ``react`` would
+# not yet see ``register`` in this module's namespace.
+def _register_builtin_plugins() -> None:
+    from agent_cli.wire_formats.react import ReActFormat
+
+    register(ReActFormat())
+
+
+_register_builtin_plugins()
