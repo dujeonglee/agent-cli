@@ -13,18 +13,23 @@ Falls back to the static template when ``prior_content`` is empty (the
 returned Intervention has the static message and no primitives).
 """
 
-from agent_cli.constants import (
-    RETRY_HINT_NO_ACTION,
-    RETRY_HINT_NO_JSON,
-    SYSTEM_USER_PREFIXES,
-)
 from agent_cli.recovery.builders import (
     format_action_loop_intervention,
     format_no_action_retry,
     format_no_json_retry,
-    format_no_thought_retry,
 )
 from agent_cli.recovery.intervention import Intervention
+from agent_cli.wire_formats import all_system_user_prefixes
+from agent_cli.wire_formats.react import ReActFormat
+
+# Static fallbacks live on the ReAct plugin now (Step 7 cleanup).
+# Tests that compared the builder's empty-input fallback against the
+# legacy ``RETRY_HINT_NO_*`` constants now compare against the plugin
+# accessors — same string, single source of truth.
+_REACT = ReActFormat()
+RETRY_HINT_NO_JSON = _REACT.static_retry_hint_no_json()
+RETRY_HINT_NO_ACTION = _REACT.static_retry_hint_no_action()
+SYSTEM_USER_PREFIXES = all_system_user_prefixes()
 
 
 class TestFormatNoJsonRetry:
@@ -126,34 +131,37 @@ class TestFormatNoActionRetry:
 class TestFormatNoThoughtRetry:
     """A2 NO_THOUGHT — action present but the 'thought' field omitted.
 
-    The retry's purpose is to break the mimicry-strengthening loop where
-    one drift-shaped response (prose+JSON, or pure JSON without thought)
-    enters the transcript and trains subsequent turns to also drop the
-    field. The builder echoes the prior output (so the model sees its
-    own omission) and restates the constraint inline.
+    Step 7 of the wire_format extraction moved this from
+    ``recovery/builders.format_no_thought_retry`` to
+    ``ReActFormat.format_no_thought_retry`` (instance method) because
+    NO_THOUGHT only applies to plugins where ``thought_required=True``.
+    The builder behavior is unchanged; the call shape is now
+    ``plugin.format_no_thought_retry(prior_content=…)``.
     """
 
+    def _retry(self, **kwargs):
+        return _REACT.format_no_thought_retry(**kwargs)
+
     def test_returns_intervention(self):
-        result = format_no_thought_retry()
-        assert isinstance(result, Intervention)
+        assert isinstance(self._retry(), Intervention)
 
     def test_empty_falls_back_to_static_message(self):
-        intv = format_no_thought_retry()
+        intv = self._retry()
         assert "thought" in intv.message
         assert intv.primitives == []
 
     def test_explicit_empty_string_falls_back(self):
-        intv = format_no_thought_retry(prior_content="")
+        intv = self._retry(prior_content="")
         assert intv.primitives == []
         assert "thought" in intv.message
 
     def test_whitespace_only_falls_back(self):
-        intv = format_no_thought_retry(prior_content="   \n\t")
+        intv = self._retry(prior_content="   \n\t")
         assert intv.primitives == []
 
     def test_content_is_echoed(self):
         content = '{"action": "read_file", "action_input": {"path": "x.py"}}'
-        intv = format_no_thought_retry(prior_content=content)
+        intv = self._retry(prior_content=content)
         assert content in intv.message
         assert "Your prior output:" in intv.message
         assert intv.message.startswith("Your JSON was missing the 'thought' field.")
@@ -165,18 +173,18 @@ class TestFormatNoThoughtRetry:
     def test_content_path_records_composed_primitives(self):
         # Constraint is inlined (not promoted to a primitive — anti-patchwork
         # invariant: only one caller in v1). Only echo is a primitive.
-        intv = format_no_thought_retry(prior_content="something")
+        intv = self._retry(prior_content="something")
         assert intv.primitives == ["echo_prior_output"]
 
     def test_prefix_matches_system_user_prefixes(self):
-        intv = format_no_thought_retry(prior_content="some text")
+        intv = self._retry(prior_content="some text")
         assert any(intv.message.startswith(p) for p in SYSTEM_USER_PREFIXES)
 
     def test_keyword_only_no_positional(self):
         import pytest
 
         with pytest.raises(TypeError):
-            format_no_thought_retry("positional")  # type: ignore[misc]
+            _REACT.format_no_thought_retry("positional")  # type: ignore[misc]
 
 
 class TestFormatActionLoopIntervention:

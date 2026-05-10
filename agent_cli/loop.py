@@ -17,7 +17,6 @@ from agent_cli.recovery.builders import (
     format_action_loop_intervention,
     format_no_action_retry,
     format_no_json_retry,
-    format_no_thought_retry,
 )
 from agent_cli.tools.result import ToolResult
 
@@ -492,7 +491,12 @@ class AgentLoop:
                 "Response missing thought. Retrying...",
                 self.turn,
             )
-            intervention = format_no_thought_retry(prior_content=llm_text)
+            # ReAct-only: format_no_thought_retry lives on the plugin,
+            # not in recovery/builders, because it has no meaning when
+            # ``thought_required`` is False (envelope plugins).
+            intervention = self.wire_format.format_no_thought_retry(
+                prior_content=llm_text
+            )
             _append_observation(self.messages, self.ctx, llm_text, intervention.message)
             outcome["failure_signal"] = FAILURE_NO_THOUGHT
             outcome["primitives"] = list(intervention.primitives)

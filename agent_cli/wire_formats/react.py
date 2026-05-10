@@ -18,6 +18,8 @@ module only.
 from __future__ import annotations
 
 from agent_cli.parsing.react_parser import parse_react
+from agent_cli.recovery.intervention import Intervention
+from agent_cli.recovery.primitives import echo_prior_output
 from agent_cli.wire_formats.base import ParsedAction
 
 
@@ -92,15 +94,29 @@ _STATIC_RETRY_HINT_NO_ACTION = (
 
 
 # Recovery framings emitted by THIS plugin. Format-agnostic prefixes
-# (``"You have called"``, ``"You were asked to:"``, etc. for B1
-# action-loop interventions, plus the interrupt notice) stay in
-# ``constants.SYSTEM_USER_PREFIXES`` and are unioned with this list at
-# consume time. Includes the NO_THOUGHT framing because thought is a
-# required field in this format.
+# (``"You have called"``, ``"You were asked to:"``, plus the interrupt
+# notice) live in ``wire_formats._FORMAT_AGNOSTIC_USER_PREFIXES`` and
+# are unioned with this list at consume time via
+# ``wire_formats.all_system_user_prefixes()``. Includes the NO_THOUGHT
+# framing because thought is a required field in this format.
 _SYSTEM_USER_PREFIXES = (
     "Your response was not valid JSON.",
     "Your JSON was parsed but has no action.",
     "Your JSON was missing the 'thought' field.",
+)
+
+
+# ── NO_THOUGHT recovery (ReAct-only) ──────────────────────────
+# ``thought`` is a required field in the ReAct schema, so emitting
+# an action without it triggers a retry. The constraint and framing
+# live here because no other plugin shares them — envelope plugins
+# carry thought as preceding free text, where its absence is valid.
+_NO_THOUGHT_FRAMING = "Your JSON was missing the 'thought' field."
+
+_NO_THOUGHT_CONSTRAINT = (
+    "Your JSON must include a 'thought' field stating purpose "
+    "(what you want to achieve) and reason (why this specific action). "
+    "Do not omit it."
 )
 
 
@@ -184,6 +200,45 @@ class ReActFormat:
 
     def system_user_prefixes(self) -> tuple[str, ...]:
         return _SYSTEM_USER_PREFIXES
+
+    # ─── ReAct-only recovery (NO_THOUGHT) ──────────────────────
+    # Not part of the WireFormat Protocol — only plugins with
+    # ``thought_required=True`` emit this intervention, and the loop
+    # gates the call on that flag. Envelope plugins set
+    # ``thought_required=False`` and never reach this method. Adding it
+    # to the Protocol would force every plugin to implement a no-op,
+    # so duck typing wins here.
+
+    def format_no_thought_retry(self, *, prior_content: str = "") -> Intervention:
+        """Build the Intervention when an action was emitted without
+        the required ``thought`` field.
+
+        Same failure-grounding shape as the format_no_*_retry builders
+        in ``recovery/builders``: echo the prior output so the model
+        sees its own omission, then restate the constraint. Inlined
+        rather than promoted to a primitive — adding a primitive for a
+        single caller violates the "primitive reused by ≥2 failures"
+        anti-patchwork invariant in DESIGN.md §4.
+        """
+        echo = echo_prior_output(prior_content)
+        if not echo:
+            return Intervention(
+                message=f"{_NO_THOUGHT_FRAMING} {_NO_THOUGHT_CONSTRAINT}",
+                primitives=[],
+            )
+
+        msg = "\n".join(
+            [
+                _NO_THOUGHT_FRAMING,
+                "",
+                echo,
+                "Honor that. " + _NO_THOUGHT_CONSTRAINT,
+            ]
+        )
+        return Intervention(
+            message=msg,
+            primitives=["echo_prior_output"],
+        )
 
     # ─── Provider / lifecycle ──────────────────────────────────
 
