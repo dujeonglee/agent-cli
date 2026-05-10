@@ -56,7 +56,7 @@ MODELS = [
     "mistral-medium-3.5:128b-q4_K_M",
 ]
 
-PLUGINS = ["react", "envelope"]
+PLUGINS = ["react"]
 
 N_RUNS = 5
 MAX_TURNS = 10

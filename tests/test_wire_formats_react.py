@@ -130,9 +130,8 @@ class TestParseReturnsParsedAction:
 class TestRenderFullExample:
     """The single rendering hook the Format Rules builder calls. ReAct
     emits the bare JSON dict — full schema fields, with ``thought``
-    substituting a short placeholder when ``None`` so the slot is
-    always visible (matches envelope's ``reasoning here`` handling so
-    both plugins teach the same contract).
+    substituting a short placeholder when ``None`` so the reasoning
+    slot stays visible in skill / agent invocation examples.
     """
 
     def test_full_emission_with_thought(self):
@@ -149,9 +148,9 @@ class TestRenderFullExample:
 
     def test_thought_none_substitutes_placeholder(self):
         """``thought=None`` is the skill / agent invocation example
-        case. ReAct now substitutes ``"reasoning here"`` so the
-        thought slot stays visible — matches envelope so the model
-        sees the same "slot is required" contract from both plugins.
+        case. ReAct substitutes ``"reasoning here"`` so the thought
+        slot stays visible — teaches the model the slot is required
+        even in invocation-only examples.
         """
         out = ReActFormat().render_full_example(
             thought=None,

@@ -123,11 +123,9 @@ __all__ = [
 # import + explicit register call) would fail because ``react`` would
 # not yet see ``register`` in this module's namespace.
 def _register_builtin_plugins() -> None:
-    from agent_cli.wire_formats.envelope import EnvelopeFormat
     from agent_cli.wire_formats.react import ReActFormat
 
     register(ReActFormat())
-    register(EnvelopeFormat())
 
 
 _register_builtin_plugins()
