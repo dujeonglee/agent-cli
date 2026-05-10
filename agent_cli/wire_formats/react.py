@@ -256,16 +256,18 @@ class ReActFormat:
         return {}
 
     # ─── History / context-window policy ──────────────────────
-    # ``serialize_assistant_for_history`` is the sole owner of the
-    # ReAct → history.jsonl conversion since H2. ``normalize_assistant_
-    # for_messages`` and ``render_assistant_from_history`` still have
-    # body duplication with ``loop._append_observation`` raw passthrough
-    # and ``manager._to_natural_language`` (assistant branch) — H3 / H4
-    # will switch those call sites and H5 will remove the duplicates.
+    # ``normalize_assistant_for_messages`` (H3) and
+    # ``serialize_assistant_for_history`` (H2) are the sole owners of
+    # their respective conversions. ``render_assistant_from_history``
+    # still has body duplication with ``manager._to_natural_language``
+    # (assistant branch); H4 will switch that call site and H5 will
+    # remove the duplicate.
 
     def normalize_assistant_for_messages(self, raw: str) -> str:
-        # ReAct: raw IS the on-the-wire shape. Identity preserves the
-        # legacy passthrough in ``loop._append_observation``.
+        # ReAct: raw IS the on-the-wire shape, so identity preserves
+        # self-reinforcement (the model's prior teaches the format
+        # we want it to keep emitting). Envelope plugins re-render
+        # to repair drift at the boundary.
         return raw
 
     def serialize_assistant_for_history(self, raw_text: str) -> dict:

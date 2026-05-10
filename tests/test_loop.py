@@ -2018,6 +2018,9 @@ class TestAppendObservationHelpers:
             def serialize_assistant_for_history(self, raw_text):
                 return {"role": "assistant", "marker": "from_plugin", "raw": raw_text}
 
+            def normalize_assistant_for_messages(self, raw):
+                return raw
+
         messages: list[dict] = []
         _append_observation(messages, _FakeCtx(), _FakePlugin(), "LLM_TEXT", "OBS")
         # captured[0] is assistant record from plugin; captured[1] is observation.
@@ -2027,6 +2030,32 @@ class TestAppendObservationHelpers:
             "raw": "LLM_TEXT",
         }
         assert captured[1] == {"role": "user", "content": "OBS"}
+
+    def test_append_observation_routes_messages_through_wire_format(self):
+        """The in-memory messages buffer's assistant content goes through
+        wire_format.normalize_assistant_for_messages.
+
+        Pinning this contract catches any future regression that bypasses
+        the plugin — the legacy code wrote ``llm_text`` raw, which is
+        equivalent to identity for ReAct but breaks envelope formats that
+        rely on re-rendering the prior to suppress drift.
+        """
+        from agent_cli.loop import _append_observation
+
+        class _FakePlugin:
+            def serialize_assistant_for_history(self, raw_text):
+                return {"role": "assistant", "content": raw_text}
+
+            def normalize_assistant_for_messages(self, raw):
+                return f"<rewrapped>{raw}</rewrapped>"
+
+        messages: list[dict] = []
+        _append_observation(messages, None, _FakePlugin(), "LLM_TEXT", "OBS")
+        assert messages[0] == {
+            "role": "assistant",
+            "content": "<rewrapped>LLM_TEXT</rewrapped>",
+        }
+        assert messages[1] == {"role": "user", "content": "OBS"}
 
 
 class TestSkillStack:

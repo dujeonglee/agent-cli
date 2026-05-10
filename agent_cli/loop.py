@@ -1568,14 +1568,22 @@ def _append_observation(
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
 
-    For the in-memory messages list (sent to LLM), raw JSON is kept as-is
-    since it's the format the LLM produced and expects to see.
+    For the in-memory messages list (sent to LLM), the wire_format plugin
+    decides what the assistant turn looks like as next-turn prior. ReAct
+    returns ``llm_text`` unchanged — raw IS the wire shape. Envelope
+    formats may re-render so the model's own prior teaches the envelope
+    instead of reinforcing whatever drift happened mid-turn.
 
     For history.jsonl (via ctx.add), the wire_format plugin shapes the
     assistant record (e.g. ReAct splits ``thought / action / action_input``
     into top-level fields) so the on-disk history retains structured form.
     """
-    messages.append({"role": "assistant", "content": llm_text})
+    messages.append(
+        {
+            "role": "assistant",
+            "content": wire_format.normalize_assistant_for_messages(llm_text),
+        }
+    )
     messages.append({"role": "user", "content": obs_msg})
     if ctx:
         ctx.add(wire_format.serialize_assistant_for_history(llm_text))
