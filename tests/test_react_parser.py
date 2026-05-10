@@ -1,6 +1,11 @@
-"""Tests for agent_cli.parsing.react_parser."""
+"""Tests for the ReAct format's 3-stage parser.
 
-from agent_cli.parsing.react_parser import parse_react
+Lives at ``agent_cli/wire_formats/react.py:parse_react`` since the
+plugin owns its own parser (the previous ``agent_cli/parsing/``
+package was folded in to make the plugin folder-deletable as a unit).
+"""
+
+from agent_cli.wire_formats.react import parse_react
 
 
 class TestStage1DirectParse:

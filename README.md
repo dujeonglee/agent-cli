@@ -1027,7 +1027,7 @@ agent_cli/
 ├── render/              플러그인 렌더링 시스템 (minimal — 커스텀 추가 가능)
 ├── input_history.py     readline 히스토리 영속화
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI, Ollama)
-├── parsing/             3단계 JSON 파서 + Thinking 블록 분리
+├── wire_formats/        wire format 플러그인 (ReAct 외 추가 가능; 파서·복구·history 표현 self-contained)
 ├── tools/               도구 (read/write/edit/shell/delegate/context)
 ├── context/             컨텍스트 관리 (FIFO + history.jsonl + 세션 메타)
 ├── prompts/             조건부 시스템 프롬프트

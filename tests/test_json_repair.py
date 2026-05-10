@@ -1,6 +1,11 @@
-"""Tests for agent_cli.parsing.json_repair."""
+"""Tests for the ReAct plugin's stage-2 JSON repair helper.
 
-from agent_cli.parsing.json_repair import repair_json
+Lives at ``agent_cli/wire_formats/react.py:repair_json`` since it is
+part of ReActFormat's 3-stage fallback. Other plugins may import it
+explicitly, but the default expectation is that each format owns its
+own recovery strategy."""
+
+from agent_cli.wire_formats.react import repair_json
 
 
 class TestRepairJsonPassthrough:

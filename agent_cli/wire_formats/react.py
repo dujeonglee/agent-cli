@@ -18,12 +18,249 @@ module only.
 from __future__ import annotations
 
 import json
+import re
 
-from agent_cli.parsing.react_parser import parse_react
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
 from agent_cli.tools.action_summary import summarize_action_args
 from agent_cli.wire_formats.base import ParsedAction
+
+
+# ── ReAct parser ─────────────────────────────────────────────
+# 3-stage fallback parser plus its stage-2 JSON repair helper. Lives
+# entirely in this module (no ``parsing/`` package, no shared
+# ``json_repair`` module) so the whole ReAct format — parser,
+# repair, format rules, recovery wording, history rendering — is
+# folder-deletable as a single boundary. If a future plugin needs the
+# same JSON repair algorithm we re-evaluate sharing at that point;
+# pre-emptive extraction would impose ReAct's repair policy on
+# wire formats that may want a different recovery strategy.
+
+# Known thinking/reasoning block tag names (case-insensitive)
+_THINKING_TAGS = ["think", "thinking", "reasoning", "reflection"]
+
+# Build regex that matches any of the known thinking tags
+_THINKING_PATTERN = re.compile(
+    r"<(" + "|".join(_THINKING_TAGS) + r")>(.*?)</\1>",
+    re.S | re.I,
+)
+
+
+def _sanitize_surrogates(text: str) -> str:
+    """Remove unpaired Unicode surrogates that break JSON parsing."""
+    return re.sub(r"[\ud800-\udfff]", "", text)
+
+
+def _strip_thinking_blocks(text: str) -> tuple[str, str | None]:
+    """Strip thinking/reasoning blocks from LLM output.
+
+    Handles: <think>...</think>, <thinking>...</thinking>,
+             <reasoning>...</reasoning>, <reflection>...</reflection>
+
+    Returns: (text_without_blocks, extracted_thinking_content or None)
+    """
+    thinking_parts: list[str] = []
+
+    def _collect(match):
+        content = match.group(2).strip()
+        if content:
+            thinking_parts.append(content)
+        return ""
+
+    cleaned = _THINKING_PATTERN.sub(_collect, text).strip()
+
+    if thinking_parts:
+        return cleaned, "\n\n".join(thinking_parts)
+    return text, None
+
+
+def parse_react(text: str) -> ParsedAction:
+    """Parse an LLM response into a :class:`ParsedAction` using 3-stage fallback.
+
+    Stage 0: strip ``<think>...</think>`` and similar thinking blocks.
+    Stage 1: ``json.loads`` after markdown-fence strip — fast path.
+    Stage 2: :func:`repair_json` — close unterminated strings, brackets,
+             fix quotes/unquoted keys/trailing commas, extract embedded block.
+    Stage 3: regex field extraction — last-resort recovery.
+
+    Returns a :class:`ParsedAction` with ``parse_stage`` set to the
+    successful stage (``0`` if all three failed).
+    """
+    text = _sanitize_surrogates(text)
+    text, thinking = _strip_thinking_blocks(text)
+    result = ParsedAction(raw=text, thinking=thinking)
+
+    # Stage 1: Direct JSON parse
+    data = _try_json_parse(text)
+    if data is not None:
+        _populate_from_dict(result, data)
+        result.parse_stage = 1
+        return result
+
+    # Stage 2: JSON repair
+    data, was_truncated = repair_json(text)
+    if data is not None:
+        _populate_from_dict(result, data)
+        result.parse_stage = 2
+        result.truncated = was_truncated
+        return result
+
+    # Stage 3: Regex extraction
+    extracted = _regex_extract(text)
+    if extracted:
+        _populate_from_dict(result, extracted)
+        result.parse_stage = 3
+        return result
+
+    return result
+
+
+def _try_json_parse(text: str) -> dict | None:
+    """Stage 1: Try direct JSON parse."""
+    stripped = strip_markdown_fences(text)
+
+    try:
+        data = json.loads(stripped)
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Try extracting first { ... } block using balanced brace extraction
+    extracted = _extract_json_block(stripped)
+    if extracted != stripped:
+        try:
+            data = json.loads(extracted)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return None
+
+
+def _regex_extract(text: str) -> dict | None:
+    """Stage 3: Extract fields via regex patterns."""
+    result: dict = {}
+
+    m = re.search(r'"thought"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.S)
+    if m:
+        result["thought"] = m.group(1).replace('\\"', '"').replace("\\n", "\n")
+
+    m = re.search(r'"action"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.S)
+    if m:
+        result["action"] = m.group(1).replace('\\"', '"')
+
+    m = re.search(r'"action_input"\s*:\s*(\{[^}]*\})', text, re.S)
+    if m:
+        try:
+            result["action_input"] = json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError):
+            result["action_input"] = m.group(1)
+
+    return result if result else None
+
+
+# Keys that are part of the ReAct protocol or are reserved for internal
+# use. They must NEVER be hoisted into action_input even when siblings
+# of `action`. Seeding this blacklist defensively:
+#   - thought / action / action_input : the ReAct protocol trio
+#   - observation: system prompt forbids it in model output; if emitted
+#     it's a drift, not a tool arg
+#   - reasoning / reflection: thinking-tag variants (already stripped by
+#     _strip_thinking_blocks when they appear as tags, but models
+#     occasionally emit them as top-level keys too)
+#   - role / _meta: added by our own storage / session layer; a confused
+#     model could echo them back
+_REACT_RESERVED: frozenset[str] = frozenset(
+    {
+        "thought",
+        "action",
+        "action_input",
+        "observation",
+        "reasoning",
+        "reflection",
+        "role",
+        "_meta",
+    }
+)
+
+
+# Virtual-tool payload hoisting map.
+#
+# Some models (observed with qwen3 family) emit responses like:
+#   {"thought": "...", "action": "complete", "result": "final answer"}
+# where the payload key is at the top level instead of nested inside
+# action_input. This is valid JSON and the action name is correct, so
+# nothing downstream catches it — the complete handler just sees
+# action_input=None and reports "Completed without result".
+#
+# Entry shape: action_name -> (target_key_in_action_input, top_level_fallback_keys)
+# The first matching top-level key's value is placed under target_key.
+# For virtual tools we deliberately do NOT fall through to the real-tool
+# bundling rule: if none of the known alias keys are present, leave
+# action_input as None so the downstream handler can render its "no
+# payload" path rather than dispatching with an arbitrary sibling.
+_VIRTUAL_TOOL_PAYLOAD_HOIST: dict[str, tuple[str, tuple[str, ...]]] = {
+    "complete": ("result", ("result", "answer", "response", "final", "output")),
+    "ready_for_review": ("summary", ("summary",)),
+    # For ask, _extract_questions in loop.py already treats "questions" and
+    # "question" interchangeably, so placing the hoisted value under
+    # "questions" is safe regardless of which top-level key the model used.
+    "ask": ("questions", ("questions", "question")),
+}
+
+
+def _normalize_action_input(result: ParsedAction, data: dict) -> None:
+    """Normalize sibling-emitted tool arguments back into action_input.
+
+    Two layers:
+
+    1. **Virtual tools** (complete / ready_for_review / ask). The payload
+       key can drift under several aliases (complete's `result` ↔
+       `answer` ↔ `response`); map the first matching alias back to the
+       canonical key. If no alias matches, leave action_input=None so
+       the downstream handler shows its "no payload" message.
+
+    2. **Real tools and unknown actions**. Bundle every non-reserved
+       top-level key into action_input. This catches the pcie_scsc-style
+       drift where a model emits:
+           {"thought":"...","action":"shell","command":"ls"}
+       with `command` as a sibling of `action` rather than nested inside
+       action_input. Reserved keys (_REACT_RESERVED) are filtered out so
+       protocol fields or meta keys can't poison tool input.
+
+    Precedence rule: if action_input is already present and truthy, use
+    it verbatim and ignore any siblings. Empty dicts and None both
+    trigger the layer logic.
+    """
+    if not result.action or result.action_input:
+        return
+
+    # Layer 1: virtual tool alias mapping.
+    spec = _VIRTUAL_TOOL_PAYLOAD_HOIST.get(result.action)
+    if spec is not None:
+        target_key, candidates = spec
+        for key in candidates:
+            if key in data:
+                result.action_input = {target_key: data[key]}
+                return
+        # Known virtual tool with no alias match — leave action_input
+        # None rather than bundling stray siblings as payload.
+        return
+
+    # Layer 2: real tool / unknown action sibling bundling.
+    extras = {k: v for k, v in data.items() if k not in _REACT_RESERVED}
+    if extras:
+        result.action_input = extras
+
+
+def _populate_from_dict(result: ParsedAction, data: dict) -> None:
+    """Fill a ParsedAction from a parsed dict."""
+    result.thought = data.get("thought")
+    result.action = data.get("action")
+    result.action_input = data.get("action_input")
+    _normalize_action_input(result, data)
 
 
 # ── Prompt section ───────────────────────────────────────────
@@ -164,22 +401,7 @@ class ReActFormat:
     # ─── Parsing ───────────────────────────────────────────────
 
     def parse(self, llm_text: str) -> ParsedAction:
-        # Adapter: keep ``parse_react``'s ReActResult internal to this
-        # module and expose only the ``ParsedAction`` boundary type.
-        # The two dataclasses share field names by design; the copy is
-        # field-by-field rather than attribute alias so future drift
-        # (e.g. ReActResult gaining an internal-only field) doesn't
-        # leak across the boundary.
-        r = parse_react(llm_text)
-        return ParsedAction(
-            thought=r.thought,
-            action=r.action,
-            action_input=r.action_input,
-            raw=r.raw,
-            parse_stage=r.parse_stage,
-            thinking=r.thinking,
-            truncated=r.truncated,
-        )
+        return parse_react(llm_text)
 
     # ─── Recovery ──────────────────────────────────────────────
 
@@ -319,3 +541,193 @@ class ReActFormat:
 
         content = record.get("content", thought)
         return {"role": "assistant", "content": content}
+
+
+# ── Stage 2 helper: repair malformed JSON ────────────────────
+# Used by ``parse_react`` stage 2. Kept module-public (no underscore
+# prefix) because ``test_json_repair`` exercises it directly — that
+# test is part of the ReAct plugin's coverage. Other plugins import
+# this only if they explicitly opt in to ReAct's repair policy; new
+# plugins are encouraged to define their own recovery rather than
+# share by default.
+#
+# Handles common issues seen in small-model output:
+#   1. Unclosed strings
+#   2. Missing closing brackets
+#   3. Trailing commas
+#   4. Single quotes instead of double quotes
+#   5. Unquoted keys
+#   6. JSON embedded in surrounding text (markdown fences, prose)
+
+
+def repair_json(text: str) -> tuple[dict | None, bool]:
+    """Attempt to repair malformed JSON text into a valid dict.
+
+    Returns (parsed_dict, was_truncated).
+    was_truncated is True if brackets/strings had to be closed.
+    """
+    cleaned = _extract_json_block(text)
+    cleaned = _fix_quotes(cleaned)
+    cleaned = _fix_unquoted_keys(cleaned)
+    cleaned = _fix_trailing_commas(cleaned)
+    cleaned, str_closed = _fix_unclosed_strings(cleaned)
+    cleaned, brackets_closed = _fix_missing_brackets(cleaned)
+    was_truncated = str_closed or brackets_closed
+
+    try:
+        result = json.loads(cleaned)
+        if isinstance(result, dict):
+            return result, was_truncated
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    return None, False
+
+
+def strip_markdown_fences(text: str) -> str:
+    """Remove `````json ... ````` wrapping."""
+    stripped = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.I)
+    stripped = re.sub(r"\s*```\s*$", "", stripped)
+    return stripped
+
+
+def _extract_json_block(text: str) -> str:
+    """Find the outermost { ... } block in the text."""
+    text = strip_markdown_fences(text)
+
+    start = text.find("{")
+    if start == -1:
+        return text
+
+    depth = 0
+    in_string = False
+    escape_next = False
+    last_close = -1
+
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            if in_string:
+                escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            last_close = i
+            if depth == 0:
+                return text[start : i + 1]
+
+    if last_close > start:
+        return text[start : last_close + 1]
+    return text[start:]
+
+
+def _fix_quotes(text: str) -> str:
+    """Replace single-quoted strings with double-quoted strings."""
+    result = []
+    in_double = False
+    in_single = False
+    escape_next = False
+
+    for ch in text:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+            continue
+        if ch == "\\":
+            result.append(ch)
+            escape_next = True
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            result.append(ch)
+        elif ch == "'" and not in_double:
+            in_single = not in_single
+            result.append('"')
+        else:
+            result.append(ch)
+
+    return "".join(result)
+
+
+def _fix_unquoted_keys(text: str) -> str:
+    """Add double quotes around unquoted JSON keys."""
+    return re.sub(
+        r"([{,]\s*)([a-zA-Z_]\w*)(\s*:)",
+        r'\1"\2"\3',
+        text,
+    )
+
+
+def _fix_trailing_commas(text: str) -> str:
+    """Remove trailing commas before } or ]."""
+    return re.sub(r",\s*([}\]])", r"\1", text)
+
+
+def _fix_unclosed_strings(text: str) -> tuple[str, bool]:
+    """Close unclosed string literals at end of text.
+
+    Returns (fixed_text, was_closed).
+    """
+    in_string = False
+    escape_next = False
+
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+
+    if in_string:
+        return text + '"', True
+
+    return text, False
+
+
+def _fix_missing_brackets(text: str) -> tuple[str, bool]:
+    """Add missing closing brackets/braces.
+
+    Returns (fixed_text, was_closed).
+    """
+    stack: list[str] = []
+    in_string = False
+    escape_next = False
+
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            if in_string:
+                escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in ("}", "]"):
+            if stack and stack[-1] == ch:
+                stack.pop()
+
+    if stack:
+        return text + "".join(reversed(stack)), True
+
+    return text, False

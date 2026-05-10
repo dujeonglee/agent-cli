@@ -10,8 +10,8 @@ from __future__ import annotations
 import pytest
 
 from agent_cli.loop import run_loop
-from agent_cli.parsing.react_parser import parse_react
 from agent_cli.providers.compat import get_capabilities
+from agent_cli.wire_formats.react import parse_react
 from tests.conftest import OLLAMA_BASE_URL
 
 
