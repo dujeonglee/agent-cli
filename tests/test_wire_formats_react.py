@@ -11,7 +11,7 @@ behavior. Tests here verify three things:
 2. **Boundary correctness**: ``parse()`` returns ``ParsedAction`` with
    the same fields the underlying ``parse_react`` produced — the
    adapter doesn't lose information.
-3. **Lifecycle defaults**: ``prefill``, ``normalize_assistant_text``,
+3. **Lifecycle defaults**: ``prefill``, ``normalize_assistant_for_messages``,
    and ``provider_call_kwargs`` return ReAct's no-op defaults so
    provider behavior stays identical to the pre-plugin path.
 
@@ -196,17 +196,144 @@ class TestLifecycleDefaults:
         # message; provider call shape is identical to pre-plugin.
         assert ReActFormat().prefill() == ""
 
-    def test_normalize_assistant_text_is_identity(self):
+    def test_normalize_assistant_for_messages_is_identity(self):
         raw = '{"action": "read_file"}'
-        assert ReActFormat().normalize_assistant_text(raw) == raw
+        assert ReActFormat().normalize_assistant_for_messages(raw) == raw
         # Non-JSON garbage also passes through (loop eventually echoes
         # it via the recovery path; the normalizer must not eat it).
-        assert ReActFormat().normalize_assistant_text("garbage") == "garbage"
+        assert ReActFormat().normalize_assistant_for_messages("garbage") == "garbage"
 
     def test_provider_call_kwargs_is_empty_dict(self):
         # No JSON-mode disable, no other quirks. Capability-driven
         # format=json stays active when the model claims support.
         assert ReActFormat().provider_call_kwargs() == {}
+
+
+class TestSerializeAssistantForHistory:
+    """The dict shape that lands in history.jsonl for a ReAct emission.
+
+    Mirrors the legacy ``loop._parse_assistant_for_history`` so the
+    transition (Step H2) is byte-equivalent on disk."""
+
+    def test_parses_react_json_into_role_keyed_dict(self):
+        text = (
+            '{"thought": "reading", "action": "read_file", '
+            '"action_input": {"path": "x.py"}}'
+        )
+        out = ReActFormat().serialize_assistant_for_history(text)
+        assert out == {
+            "role": "assistant",
+            "thought": "reading",
+            "action": "read_file",
+            "action_input": {"path": "x.py"},
+        }
+
+    def test_partial_react_with_only_action(self):
+        # Drift case: action without thought. Still parsed, role added.
+        text = '{"action": "read_file", "action_input": {"path": "x"}}'
+        out = ReActFormat().serialize_assistant_for_history(text)
+        assert out["role"] == "assistant"
+        assert out["action"] == "read_file"
+
+    def test_partial_react_with_only_thought(self):
+        # The "or" branch — thought without action also serialized.
+        text = '{"thought": "no action this turn"}'
+        out = ReActFormat().serialize_assistant_for_history(text)
+        assert out["role"] == "assistant"
+        assert out["thought"] == "no action this turn"
+
+    def test_unparseable_text_falls_back_to_content(self):
+        # Garbage emission must still survive in the log for postmortem,
+        # not raise. ``content`` carries the original text verbatim.
+        out = ReActFormat().serialize_assistant_for_history("this is not JSON at all")
+        assert out == {
+            "role": "assistant",
+            "content": "this is not JSON at all",
+        }
+
+    def test_json_array_falls_back_to_content(self):
+        # Valid JSON but not a dict — fall back so the schema invariant
+        # (role + thought/action keys) holds.
+        out = ReActFormat().serialize_assistant_for_history('["a", "b"]')
+        assert out["role"] == "assistant"
+        assert out["content"] == '["a", "b"]'
+
+    def test_json_dict_without_react_keys_falls_back(self):
+        # Dict but neither thought nor action — not a ReAct emission.
+        # Fall back instead of pretending the keys are there.
+        out = ReActFormat().serialize_assistant_for_history('{"random": "data"}')
+        assert out["role"] == "assistant"
+        assert out["content"] == '{"random": "data"}'
+
+
+class TestRenderAssistantFromHistory:
+    """history.jsonl record → message dict for chat completion.
+
+    Mirrors the assistant branch of ``manager._to_natural_language``
+    so overflow recovery / session resume still produces the same
+    natural-language summaries."""
+
+    def test_action_yields_action_call_summary(self):
+        record = {
+            "role": "assistant",
+            "thought": "reading first",
+            "action": "read_file",
+            "action_input": {"path": "src/foo.py"},
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        assert msg["role"] == "assistant"
+        # Two lines: thought line + action(args) line.
+        assert "thought: reading first" in msg["content"]
+        assert "action: read_file(src/foo.py)" in msg["content"]
+
+    def test_complete_with_thought_yields_thought_plus_result(self):
+        record = {
+            "role": "assistant",
+            "thought": "task done",
+            "action": "complete",
+            "action_input": {"result": "Found 3 files."},
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        assert msg["content"] == "thought: task done\n\nFound 3 files."
+
+    def test_complete_without_thought_yields_bare_result(self):
+        record = {
+            "role": "assistant",
+            "action": "complete",
+            "action_input": {"result": "Answer."},
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        assert msg["content"] == "Answer."
+
+    def test_complete_with_string_action_input(self):
+        # Defensive: some legacy emissions store the result directly as
+        # the action_input string (not wrapped in a dict).
+        record = {
+            "role": "assistant",
+            "action": "complete",
+            "action_input": "Direct string result",
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        assert "Direct string result" in msg["content"]
+
+    def test_action_without_thought_omits_thought_line(self):
+        record = {
+            "role": "assistant",
+            "action": "shell",
+            "action_input": {"command": "ls"},
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        # No "thought:" line when the field is empty.
+        assert "thought:" not in msg["content"]
+        assert "action: shell" in msg["content"]
+
+    def test_no_action_falls_back_to_content_or_thought(self):
+        # Defensive shape — record had only thought/content, no action.
+        # Still produces a valid message (model gets to see the thought
+        # text rather than an empty content).
+        record = {"role": "assistant", "content": "free-form note"}
+        msg = ReActFormat().render_assistant_from_history(record)
+        assert msg["content"] == "free-form note"
 
 
 class TestSystemUserPrefixes:

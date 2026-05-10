@@ -228,7 +228,26 @@ class WireFormat(Protocol):
         """
         ...
 
-    def normalize_assistant_text(self, raw: str) -> str:
+    # ─── History / context-window policy ───────────────────────
+    # Three knobs control how an assistant turn is shaped while it
+    # travels through the conversation pipeline. Different wire
+    # formats benefit from different policies — see
+    # ``docs/ARCHITECTURE.md`` §5 for the trade-offs (raw self-
+    # reinforcement vs. natural-language compactness vs. drift
+    # filtering).
+    #
+    # Pipeline call order:
+    #   1. Model emits raw_text.
+    #   2. ``normalize_assistant_for_messages(raw_text)`` runs first —
+    #      result is appended to the in-memory ``messages`` buffer the
+    #      LLM sees as next-turn prior.
+    #   3. ``serialize_assistant_for_history(raw_text)`` runs in
+    #      parallel — result is persisted to history.jsonl.
+    #   4. On overflow recovery / session resume, history records
+    #      pass through ``render_assistant_from_history(record)`` to
+    #      become messages again.
+
+    def normalize_assistant_for_messages(self, raw: str) -> str:
         """Rewrite a model emission for the in-memory ``messages`` buffer.
 
         The buffer is fed back to the LLM as next-turn prior. When the
@@ -244,6 +263,40 @@ class WireFormat(Protocol):
         Pure function — does not touch ``history.jsonl``. The lossless
         principle is preserved by recording raw text on disk; this
         method affects only the in-memory next-turn prior.
+        """
+        ...
+
+    def serialize_assistant_for_history(self, raw_text: str) -> dict:
+        """Convert a raw model emission into the dict stored in
+        ``history.jsonl``.
+
+        The returned dict carries ``role="assistant"`` plus whatever
+        plugin-specific fields the plugin will later expect to read in
+        :meth:`render_assistant_from_history`. ReAct splits into
+        ``thought``, ``action``, ``action_input``. Envelope plugins may
+        keep an envelope summary or store the raw text as ``content``.
+
+        Must not raise on malformed input — return a fallback shape
+        like ``{"role": "assistant", "content": raw_text}`` so corrupt
+        emissions still survive in the log for postmortem.
+        """
+        ...
+
+    def render_assistant_from_history(self, record: dict) -> dict:
+        """Convert one history.jsonl assistant record into a message
+        dict for the LLM.
+
+        Used when restoring messages from disk — overflow recovery,
+        session resume, fork. The returned dict has the
+        ``{"role": "assistant", "content": …}`` shape consumed by
+        chat completion APIs.
+
+        Each plugin chooses how to render: ReAct produces a natural-
+        language summary (``"thought: …\\naction: read_file({path})"``)
+        which is compact and easy for the model to reason about, but
+        loses self-reinforcement on the wire format. Envelope plugins
+        may keep the original envelope text so self-reinforcement
+        survives an overflow boundary.
         """
         ...
 

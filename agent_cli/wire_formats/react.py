@@ -17,6 +17,8 @@ module only.
 
 from __future__ import annotations
 
+import json
+
 from agent_cli.parsing.react_parser import parse_react
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
@@ -248,11 +250,75 @@ class ReActFormat:
         # the first generated token.
         return ""
 
-    def normalize_assistant_text(self, raw: str) -> str:
-        # ReAct: raw IS the on-the-wire shape. Identity.
-        return raw
-
     def provider_call_kwargs(self) -> dict:
         # ReAct is fully JSON-shaped; keep capability-driven
         # ``format=json`` mode active by passing no overrides.
         return {}
+
+    # ─── History / context-window policy ──────────────────────
+    # Mirror the legacy ``loop._parse_assistant_for_history`` and
+    # ``manager._to_natural_language`` (assistant branch) bodies.
+    # Steps H2–H5 migrate the call sites and remove the legacy free
+    # functions. Until then the bodies live in two places — same
+    # transition pattern as Steps 2 → 7.
+
+    def normalize_assistant_for_messages(self, raw: str) -> str:
+        # ReAct: raw IS the on-the-wire shape. Identity preserves the
+        # legacy passthrough in ``loop._append_observation``.
+        return raw
+
+    def serialize_assistant_for_history(self, raw_text: str) -> dict:
+        # Mirror ``loop._parse_assistant_for_history``. JSON parse the
+        # ReAct emission and surface ``thought / action / action_input``
+        # as top-level fields. Falls back to bare ``content`` when the
+        # text isn't parseable so corrupt emissions still survive in
+        # the log for postmortem.
+        try:
+            data = json.loads(raw_text)
+            if isinstance(data, dict) and ("thought" in data or "action" in data):
+                data["role"] = "assistant"
+                return data
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return {"role": "assistant", "content": raw_text}
+
+    def render_assistant_from_history(self, record: dict) -> dict:
+        # Mirror the assistant branch of ``manager._to_natural_language``.
+        # Returns a chat-completion-shaped ``{"role": "assistant",
+        # "content": …}`` dict; the content is a natural-language
+        # summary so the post-overflow / post-resume model still
+        # understands what happened, at the cost of losing wire-format
+        # self-reinforcement at the boundary.
+        #
+        # ``_summarize_action_args`` is imported lazily from manager.py
+        # to avoid a cycle at module import time. It's a pure utility
+        # over the standard tool action_input shape, so a future move
+        # into a shared utility module wouldn't change behavior.
+        from agent_cli.context.manager import _summarize_action_args
+
+        thought = record.get("thought", "")
+        action = record.get("action", "")
+        action_input = record.get("action_input", {})
+
+        if action == "complete":
+            result = ""
+            if isinstance(action_input, dict):
+                result = action_input.get("result", "")
+            elif isinstance(action_input, str):
+                result = action_input
+            if thought:
+                content = f"thought: {thought}\n\n{result}"
+            else:
+                content = result
+            return {"role": "assistant", "content": content.strip()}
+
+        if action:
+            args_summary = _summarize_action_args(action, action_input)
+            parts = []
+            if thought:
+                parts.append(f"thought: {thought}")
+            parts.append(f"action: {action}({args_summary})")
+            return {"role": "assistant", "content": "\n".join(parts)}
+
+        content = record.get("content", thought)
+        return {"role": "assistant", "content": content}

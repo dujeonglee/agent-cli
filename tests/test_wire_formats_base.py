@@ -104,11 +104,17 @@ class _MockFormat:
     def prefill(self) -> str:
         return ""
 
-    def normalize_assistant_text(self, raw: str) -> str:
+    def normalize_assistant_for_messages(self, raw: str) -> str:
         return raw
 
     def provider_call_kwargs(self) -> dict:
         return {}
+
+    def serialize_assistant_for_history(self, raw_text: str) -> dict:
+        return {"role": "assistant", "content": raw_text}
+
+    def render_assistant_from_history(self, record: dict) -> dict:
+        return {"role": "assistant", "content": record.get("content", "")}
 
 
 class TestProtocolConformance:
@@ -219,11 +225,17 @@ class TestRegistry:
             def prefill(self) -> str:
                 return ""
 
-            def normalize_assistant_text(self, raw: str) -> str:
+            def normalize_assistant_for_messages(self, raw: str) -> str:
                 return raw
 
             def provider_call_kwargs(self) -> dict:
                 return {}
+
+            def serialize_assistant_for_history(self, raw_text: str) -> dict:
+                return {"role": "assistant", "content": raw_text}
+
+            def render_assistant_from_history(self, record: dict) -> dict:
+                return {"role": "assistant", "content": record.get("content", "")}
 
         a = _MockFormat()  # name "_mock_for_tests"
         b = _MockB()  # name "bbb"
