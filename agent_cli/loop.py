@@ -385,6 +385,12 @@ class AgentLoop:
             render_spinner_start(f"skill:{self.skill_name}")
         else:
             render_spinner_start()
+        # Plugin-defined provider hints (e.g. envelope formats need
+        # ``skip_json_format=True`` so Ollama doesn't force ``{`` as the
+        # first token, which would conflict with the ``<tool_use>``
+        # envelope opening). ReAct returns ``{}`` so the call path is
+        # byte-equivalent for the default plugin.
+        extra_call_kwargs = self.wire_format.provider_call_kwargs()
         try:
             response = self.provider.call(
                 messages=self.messages,
@@ -392,6 +398,7 @@ class AgentLoop:
                 model=self.model,
                 capabilities=self.capabilities,
                 on_chunk=on_chunk,
+                **extra_call_kwargs,
             )
             return response
         except Exception as e:

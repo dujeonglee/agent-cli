@@ -2058,6 +2058,53 @@ class TestAppendObservationHelpers:
         assert messages[1] == {"role": "user", "content": "OBS"}
 
 
+class TestProviderCallKwargs:
+    """Plugin-defined ``provider_call_kwargs`` reach ``provider.call``.
+
+    The Protocol method exists so envelope-style plugins can flip
+    ``skip_json_format=True`` to keep Ollama from forcing ``{`` as the
+    first token. Pinning the wiring here catches the previous leak
+    (Protocol method defined but never unpacked into the provider
+    call) so we don't reintroduce it.
+    """
+
+    def test_react_default_passes_no_extra_kwargs(self, caps):
+        """ReAct returns ``{}`` so no plugin kwargs reach the provider."""
+        provider = _make_provider(_complete("done"))
+        run_loop(
+            query="test",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+        )
+        call_kwargs = provider.call.call_args_list[0].kwargs
+        # Wire-format-specific keys must not have been injected.
+        assert "skip_json_format" not in call_kwargs
+
+    def test_plugin_kwargs_unpacked_into_provider_call(self, caps, monkeypatch):
+        """Overriding the plugin's provider_call_kwargs makes the kwarg
+        appear in ``provider.call``'s actual invocation."""
+        from agent_cli.wire_formats import get as get_wire_format
+
+        plugin = get_wire_format("react")
+        monkeypatch.setattr(
+            plugin,
+            "provider_call_kwargs",
+            lambda: {"skip_json_format": True},
+        )
+
+        provider = _make_provider(_complete("done"))
+        run_loop(
+            query="test",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            wire_format=plugin,
+        )
+        call_kwargs = provider.call.call_args_list[0].kwargs
+        assert call_kwargs.get("skip_json_format") is True
+
+
 class TestSkillStack:
     """Skill stack prevents recursive calls (A→B ok, A→B→A blocked)."""
 
