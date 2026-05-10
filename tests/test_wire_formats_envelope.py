@@ -1,25 +1,120 @@
 """Unit tests for the envelope wire-format plugin.
 
-Pins three areas:
+Pins four areas:
 
-1. **Parser** — envelope shape, action-attribute extraction,
+1. **Registration** — registry round-trip and ``all_system_user_prefixes``
+   inclusion. Caller-visible surface that proves ``--response-format
+   envelope`` resolves on the CLI.
+2. **Parser** — envelope shape, action-attribute extraction,
    thought / action_input separation, fail-fast on malformed JSON.
-2. **Wrappers** — wrap_action_input_example / wrap_full_call_example
+3. **Wrappers** — wrap_action_input_example / wrap_full_call_example
    produce the envelope shape (not a bare action_input dict like ReAct).
-3. **Plugin surface** — Protocol satisfaction, recovery framings,
+4. **Plugin surface** — Protocol satisfaction, recovery framings,
    provider hints, history-pipeline round-trip.
-
-The plugin is not registered in the global registry by E1 (E2 wires
-that up); these tests instantiate ``EnvelopeFormat()`` directly.
 """
 
 from __future__ import annotations
 
 import json
 
+from agent_cli import wire_formats
 from agent_cli.wire_formats.base import ParsedAction
 from agent_cli.wire_formats.base import WireFormat as WireFormatProtocol
 from agent_cli.wire_formats.envelope import EnvelopeFormat, parse_envelope
+
+
+# ─── Registration ──────────────────────────────────────────
+
+
+class TestRegistration:
+    """Builtin registration at package import time — same shape as
+    ReAct's. Without these passing, ``--response-format envelope``
+    would fail with ``KeyError`` in the CLI."""
+
+    def test_envelope_resolves_via_get(self):
+        plugin = wire_formats.get("envelope")
+        assert isinstance(plugin, EnvelopeFormat)
+
+    def test_envelope_listed_in_list_names(self):
+        names = wire_formats.list_names()
+        # ReAct is registered alongside; envelope must coexist.
+        assert "envelope" in names
+        assert "react" in names
+
+    def test_envelope_prefixes_unioned_into_system_user_prefixes(self):
+        """``recent_exchanges`` filters system-injected user messages
+        using this aggregated tuple. Adding a plugin must extend it
+        without touching session.py — verifies the wire-up."""
+        prefixes = wire_formats.all_system_user_prefixes()
+        # Format-agnostic prefix still present.
+        assert "⚡ User interrupted." in prefixes
+        # ReAct's framings.
+        assert "Your response was not valid JSON." in prefixes
+        # Envelope's framings.
+        assert "Your response did not match the <tool_use> envelope format." in prefixes
+        assert "Your <tool_use> envelope was missing the reasoning text." in prefixes
+
+
+# ─── Smoke: end-to-end with build_system_prompt ────────────
+
+
+class TestSystemPromptIntegration:
+    """build_system_prompt(wire_format=envelope) must produce a prompt
+    that carries the envelope shape — its format rules, and tool / skill
+    examples wrapped in ``<tool_use>`` rather than ReAct's bare JSON
+    dict. This is the smoke test that the plugin actually flows through
+    the prompt builder; without it ``--response-format envelope`` could
+    silently fall back to ReAct strings."""
+
+    def test_envelope_format_rules_appear_in_prompt(self):
+        from agent_cli.prompts.system_prompt import build_system_prompt
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        prompt = build_system_prompt(
+            capabilities=caps,
+            active_tools=["read_file", "shell"],
+            wire_format=wire_formats.get("envelope"),
+        )
+        # Format rules section header (envelope shares the heading
+        # "## Response Format" with ReAct, but only envelope's body
+        # mentions <tool_use>).
+        assert "<tool_use" in prompt
+        assert "## Response Format" in prompt
+        # The bare ReAct envelope schema must NOT have leaked in —
+        # otherwise the model sees two contradictory formats.
+        assert '"thought": "your reasoning"' not in prompt
+
+    def test_inline_tool_guide_wraps_examples_in_envelope(self):
+        """Each tool's inline guide example is rendered through
+        ``wire_format.wrap_action_input_example`` — envelope plugin
+        emits ``<tool_use ...>...</tool_use>`` envelopes. Pin one tool
+        (read_file) so we know the routing path is alive."""
+        from agent_cli.prompts.system_prompt import build_system_prompt
+        from agent_cli.providers.compat import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=8192,
+            max_output_tokens=2048,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        prompt = build_system_prompt(
+            capabilities=caps,
+            active_tools=["read_file"],
+            wire_format=wire_formats.get("envelope"),
+        )
+        # Envelope-shaped read_file example: action is in the XML attr.
+        assert 'action="read_file"' in prompt
 
 
 # ─── Parser ────────────────────────────────────────────────

@@ -48,9 +48,10 @@ agent_cli/
 ├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
 ├── constants.py             (~25)  공유 상수 (timeout, observation 템플릿, INTERRUPT_NOTICE). 외부 모듈 의존 없음 — 저층 레이어. wire-format-specific 상수 (FORMAT_RULES, RETRY_HINT_*, SYSTEM_USER_PREFIXES) 는 ``wire_formats/`` 의 plugin이 소유
 ├── wire_formats/                   Wire format 플러그인 시스템 — 모델 응답 형식 추상화
-│   ├── __init__.py          (131)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin "react" plugin 자동 등록.
+│   ├── __init__.py          (132)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react, envelope) 자동 등록.
 │   ├── base.py              (315)  `WireFormat` Protocol + `ParsedAction` dataclass. Plugin 인터페이스 (16개 분기점): format_rules / wrap_action_input_example / wrap_full_call_example / parse / constraint_reminder_call / constraint_reminder_action_required / failure_framing_parse_fail / failure_framing_no_action / static_retry_hint_no_json / static_retry_hint_no_action / system_user_prefixes / prefill / normalize_assistant_for_messages (turn-internal messages 버퍼 형태) / serialize_assistant_for_history (history.jsonl 저장 형태) / render_assistant_from_history (overflow recovery / session resume 시 messages 형태로 복원) / provider_call_kwargs (+ `name` / `thought_required` 속성). plugin 추가 시 main code 0 변경.
-│   └── react.py             (733)  ReActFormat — 기본 plugin. ReAct-shape 문자열 + recovery wording + history pipeline 3 메서드 + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. parse_react는 ParsedAction을 직접 반환 (별도 dataclass 없음). `render_assistant_from_history`는 `tools/action_summary.summarize_action_args`를 직접 사용해 자연어 요약 생성. 폴더 째 삭제 가능 boundary — 외부에서 ReAct에 의존하는 코드 0건.
+│   ├── react.py             (733)  ReActFormat — 기본 plugin. ReAct-shape 문자열 + recovery wording + history pipeline 3 메서드 + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. parse_react는 ParsedAction을 직접 반환 (별도 dataclass 없음). `render_assistant_from_history`는 `tools/action_summary.summarize_action_args`를 직접 사용해 자연어 요약 생성. 폴더 째 삭제 가능 boundary — 외부에서 ReAct에 의존하는 코드 0건.
+│   └── envelope.py          (463)  EnvelopeFormat — XML envelope 위에 자연어 reasoning + JSON action_input. wire shape: `<tool_use id="r1" action="<tool>">free reasoning\n{...}</tool_use>`. action 이름이 XML attribute라 inner JSON 깨져도 robust. parse_envelope는 마지막 balanced `{...}` block을 action_input으로 추출, 그 앞 텍스트를 thought로. prefill `<tool_use id="r1" action="`로 wire shape 강제. provider_call_kwargs로 Ollama format=json 비활성화 (envelope 시작이 `<`이라 `{` 강제와 충돌). 4-state parse_stage (0=no envelope, 1=full, 2=action 있고 JSON 깨짐, 3=action 없음). 모든 helper (surrogate sanitize, thinking strip, brace counting) self-contained — react.py와 코드 일부 복제, plugin folder-deletable 우선.
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export
 │   ├── builders.py          (~138) Intervention 합성 factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A3), `format_action_loop_intervention` (B1). 모두 wire_format 인자를 받아 plugin의 framing/reminder/static fallback을 사용. ReAct-only 인 NO_THOUGHT recovery는 `ReActFormat.format_no_thought_retry` 메서드로 이주 (plugin = boundary)
@@ -198,7 +199,10 @@ providers/*.py      → providers/base, providers/compat, providers/http
 wire_formats/base   → (외부만: dataclasses, typing)
 wire_formats/react  → recovery/intervention, recovery/primitives,
                       tools/action_summary, wire_formats/base
-wire_formats/__init.→ wire_formats/base, wire_formats/react (builtin 등록)
+wire_formats/envelope→ recovery/intervention, recovery/primitives,
+                      tools/action_summary, wire_formats/base
+wire_formats/__init.→ wire_formats/base, wire_formats/react,
+                      wire_formats/envelope (builtin 등록)
 tools/action_summary→ (외부만: 없음 — 순수 string formatter)
 tools/result.py     → (외부만: dataclasses, 순수 데이터 타입)
 tools/read_file.py  → tools/result, (외부만: re, zlib, pathlib)
