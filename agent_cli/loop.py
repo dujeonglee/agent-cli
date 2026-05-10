@@ -23,7 +23,6 @@ from agent_cli.tools.result import ToolResult
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.overflow import is_context_overflow
-from agent_cli.parsing.react_parser import parse_react
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
@@ -100,7 +99,19 @@ class AgentLoop:
         mcp_manager=None,
         hook_runner=None,
         record_turns: bool = True,
+        wire_format=None,
     ):
+        # Wire format plugin — ReAct by default. Centralizes the
+        # parser, recovery wording, prompt section, and lifecycle hooks
+        # so adding a new format means dropping a file in
+        # ``agent_cli/wire_formats/`` and re-running with
+        # ``--response-format <name>``.
+        if wire_format is None:
+            from agent_cli import wire_formats
+
+            wire_format = wire_formats.get("react")
+        self.wire_format = wire_format
+
         self.query = query
         self.provider = provider
         self.capabilities = capabilities
@@ -293,6 +304,7 @@ class AgentLoop:
             agent_role=self.agent_role,
             session_dir=session_dir,
             mcp_manager=self.mcp_manager,
+            wire_format=self.wire_format,
         )
 
         render_header(
@@ -421,7 +433,7 @@ class AgentLoop:
         primitives) before returning, and the trailing finally writes
         the record.
         """
-        parsed = parse_react(llm_text)
+        parsed = self.wire_format.parse(llm_text)
 
         # Classify outcome early; the dispatch body may mutate this
         # dict to reflect a B1 (action loop) detection that is only
@@ -466,7 +478,12 @@ class AgentLoop:
         # as a precedent for future turns (mimicry-strengthening loop:
         # the raw response is mirrored back on the next turn and
         # crowds out the system prompt's Format Rule 1).
-        if detect_thought_missing(parsed.thought, parsed.action):
+        if self.wire_format.thought_required and detect_thought_missing(
+            parsed.thought, parsed.action
+        ):
+            # ``thought_required`` is False on plugins where the thought
+            # is preceding free text rather than a schema field — for
+            # those, missing thought is not a drift signal.
             _debug_log(
                 f"NO_THOUGHT: action={parsed.action!r}, thought={parsed.thought!r}"
             )
@@ -786,7 +803,9 @@ class AgentLoop:
                 "Response has no action. Retrying...",
                 self.turn,
             )
-            intervention = format_no_action_retry(prior_content=llm_text)
+            intervention = format_no_action_retry(
+                prior_content=llm_text, wire_format=self.wire_format
+            )
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
@@ -795,7 +814,9 @@ class AgentLoop:
                 "Invalid JSON response. Retrying...",
                 self.turn,
             )
-            intervention = format_no_json_retry(prior_content=llm_text)
+            intervention = format_no_json_retry(
+                prior_content=llm_text, wire_format=self.wire_format
+            )
         _append_observation(self.messages, self.ctx, llm_text, intervention.message)
         # Surface composed primitive names to the enclosing _handle_text_path
         # so the trailing finally-block records them.
