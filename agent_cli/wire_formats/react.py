@@ -22,6 +22,7 @@ import json
 from agent_cli.parsing.react_parser import parse_react
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
+from agent_cli.tools.action_summary import summarize_action_args
 from agent_cli.wire_formats.base import ParsedAction
 
 
@@ -292,13 +293,6 @@ class ReActFormat:
         # summary so the post-overflow / post-resume model still
         # understands what happened, at the cost of losing wire-format
         # self-reinforcement at the boundary.
-        #
-        # ``_summarize_action_args`` is imported lazily from manager.py
-        # to avoid a cycle at module import time. It's a pure utility
-        # over the standard tool action_input shape, so a future move
-        # into a shared utility module wouldn't change behavior.
-        from agent_cli.context.manager import _summarize_action_args
-
         thought = record.get("thought", "")
         action = record.get("action", "")
         action_input = record.get("action_input", {})
@@ -316,7 +310,7 @@ class ReActFormat:
             return {"role": "assistant", "content": content.strip()}
 
         if action:
-            args_summary = _summarize_action_args(action, action_input)
+            args_summary = summarize_action_args(action, action_input)
             parts = []
             if thought:
                 parts.append(f"thought: {thought}")

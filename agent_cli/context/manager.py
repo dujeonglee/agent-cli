@@ -11,6 +11,10 @@ import json
 from pathlib import Path
 
 from agent_cli.context.token_estimator import estimate_tokens
+from agent_cli.tools.action_summary import (
+    summarize_action_args,
+    summarize_tool_args,
+)
 
 
 # ── Default token budget ─────────────────────────────────
@@ -218,7 +222,7 @@ def _to_natural_language(msg: dict) -> dict:
         return {"role": "assistant", "content": content.strip()}
 
     if action:
-        args_summary = _summarize_action_args(action, action_input)
+        args_summary = summarize_action_args(action, action_input)
         parts = []
         if thought:
             parts.append(f"thought: {thought}")
@@ -237,7 +241,7 @@ def _convert_observation(msg: dict) -> dict:
     args = msg.get("args", {})
 
     if isinstance(args, dict) and args:
-        arg_summary = _summarize_tool_args(tool, args)
+        arg_summary = summarize_tool_args(tool, args)
         header = f"[{tool}] {arg_summary}"
     else:
         header = f"[{tool}]"
@@ -249,50 +253,3 @@ def _convert_observation(msg: dict) -> dict:
         parts.append(f"→ {artifact}")
 
     return {"role": "user", "content": "\n".join(parts)}
-
-
-def _summarize_action_args(action: str, action_input) -> str:
-    """Summarize action_input for the → action(...) display."""
-    if not isinstance(action_input, dict):
-        return str(action_input)[:80] if action_input else ""
-
-    if action in ("read_file", "write_file", "edit_file"):
-        return action_input.get("path", "")
-    if action == "shell":
-        cmd = action_input.get("command", "")
-        return cmd[:60] if cmd else ""
-    if action == "delegate":
-        tasks = action_input.get("tasks", [])
-        if tasks and isinstance(tasks, list):
-            first = tasks[0] if isinstance(tasks[0], dict) else {}
-            agent = first.get("agent", "")
-            task = first.get("task", "")[:40]
-            if len(tasks) > 1:
-                return f'{agent}, "{task}" +{len(tasks) - 1} more'
-            return f'{agent}, "{task}"'
-        return ""
-    if action == "run_skill":
-        name = action_input.get("name", "")
-        arguments = action_input.get("arguments", "")
-        return f"{name}({arguments})" if arguments else name
-
-    for v in action_input.values():
-        if isinstance(v, str) and v:
-            return v[:60]
-    return ""
-
-
-def _summarize_tool_args(tool: str, args: dict) -> str:
-    """Summarize tool args for the [{tool}] header."""
-    if tool in ("read_file", "write_file", "edit_file"):
-        return args.get("path", "")
-    if tool == "shell":
-        return args.get("command", "")[:60]
-    if tool == "delegate":
-        return args.get("agent", "")
-    if tool == "run_skill":
-        return args.get("name", "")
-    for v in args.values():
-        if isinstance(v, str) and v:
-            return v[:60]
-    return ""
