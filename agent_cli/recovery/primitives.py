@@ -42,23 +42,12 @@ def echo_prior_output(content: str = "") -> str:
     return "\n".join(["Your prior output:", "---", content_quote, "---", ""])
 
 
-def constrain_format_json() -> str:
-    """Remind the model that the next response must be a bare JSON object."""
-    return (
-        "Output ONLY a JSON object: "
-        '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
-        "No markdown fences, no extra text."
-    )
-
-
-def constrain_action_required() -> str:
-    """Remind the model that an action field is mandatory."""
-    return (
-        "You MUST include an action. Either use a tool: "
-        '{"thought": "...", "action": "tool_name", "action_input": {...}} '
-        "or complete the task: "
-        '{"thought": "...", "action": "complete", "action_input": {"result": "..."}}'
-    )
+# ``constrain_format_json`` / ``constrain_action_required`` lived here
+# as ReAct-shape JSON reminders. They moved onto the wire-format plugin
+# in Step 7: ``ReActFormat.constraint_reminder_call()`` /
+# ``constraint_reminder_action_required()``. recovery/primitives.py
+# now holds only format-agnostic primitives — ``echo_prior_output`` for
+# failure grounding and the B1 (action loop) nudges.
 
 
 def _loop_observed(action: str, args_repr: str, repeat_count: int) -> str:

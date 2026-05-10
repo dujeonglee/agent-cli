@@ -28,8 +28,6 @@ from agent_cli.recovery.observability import (
     TurnRecorder,
 )
 from agent_cli.recovery.primitives import (
-    constrain_action_required,
-    constrain_format_json,
     echo_prior_output,
     probe_progress,
     restate_task,
@@ -37,8 +35,6 @@ from agent_cli.recovery.primitives import (
 
 __all__ = [
     "echo_prior_output",
-    "constrain_format_json",
-    "constrain_action_required",
     "probe_progress",
     "restate_task",
     "Intervention",

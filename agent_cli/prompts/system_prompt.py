@@ -63,29 +63,8 @@ TASK_GUIDELINES = """\
 - Report outcomes honestly — if verification failed or was not run, say so explicitly."""
 
 # ── Section 4: Format Rules ──────────────────────
-FORMAT_RULES = """\
-## Response Format
-You MUST output a single JSON object only — no markdown fences, no surrounding
-text, no `observation` field (it is injected by the system):
-
-{"thought": "your reasoning", "action": "tool_name", "action_input": {...}}
-
-When the task is done, first verify with `ready_for_review`, then call `complete`:
-{"thought": "summary of what I did", "action": "ready_for_review", "action_input": {"summary": "..."}}
-{"thought": "confirmed all requirements met", "action": "complete", "action_input": {"result": "..."}}
-
-Rules:
-1. `thought` MUST state purpose (what you want to achieve) and reason (why this action).
-2. `action_input` MUST match the tool's input schema.
-3. If an observation shows an error, fix parameters and retry.
-4. Exactly ONE action per turn. Do not use an `actions` array or list in `action` —
-   multiple tools = multiple turns; each turn's observation informs the next.
-5. Make that one action count — pick the most efficient path:
-   - Use batch input fields (`edit_file.edits`, `delegate.tasks`) instead of repeating the same tool across turns.
-   - Combine shell operations into a single call (pipelines, multi-file surveys, batch listings) — one shell call often replaces many `read_file` turns.
-   - Pick the narrowest read mode that answers the question (search > targeted line range > full file).
-   - Do not "peek" with one tool only to redo the work with another.
-6. Respond in the user's language."""
+# Lives on the wire-format plugin: ``ReActFormat.format_rules()``.
+# build_system_prompt() pulls it through ``wire_format.format_rules()``.
 
 # ── Inline guides for tools ──────────────────────
 _HASHLINE_INLINE = """\

@@ -250,22 +250,26 @@ class TestRecentExchanges:
     def test_system_user_messages_filtered(self, tmp_path):
         """Loop-emitted role=user messages (retry hints, interrupt
         notice) must NOT pair with completes — they aren't real user
-        input. Source-of-truth list lives in
-        `agent_cli.constants.SYSTEM_USER_PREFIXES`; if loop.py adds a
-        new system-injected prefix, that constant must be updated too."""
-        from agent_cli.constants import (
-            INTERRUPT_NOTICE,
-            RETRY_HINT_NO_ACTION,
-            RETRY_HINT_NO_JSON,
-        )
+        input. The unified prefix list lives at
+        ``agent_cli.wire_formats.all_system_user_prefixes()``; new
+        system-injected prefixes from a wire-format plugin extend that
+        list automatically."""
+        from agent_cli.constants import INTERRUPT_NOTICE
+        from agent_cli.wire_formats.react import ReActFormat
+
+        # Use the plugin's static fallback messages directly so the
+        # test exercises the actual production retry-hint strings.
+        react = ReActFormat()
+        retry_no_json = react.static_retry_hint_no_json()
+        retry_no_action = react.static_retry_hint_no_action()
 
         path = tmp_path / "history.jsonl"
         self._write(
             path,
             [
-                {"role": "user", "content": RETRY_HINT_NO_JSON},
+                {"role": "user", "content": retry_no_json},
                 {"role": "user", "content": "Real question"},
-                {"role": "user", "content": RETRY_HINT_NO_ACTION},
+                {"role": "user", "content": retry_no_action},
                 {
                     "role": "assistant",
                     "action": "complete",

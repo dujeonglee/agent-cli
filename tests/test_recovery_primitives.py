@@ -9,8 +9,6 @@ See docs/robust-harness/DESIGN.md §2.2.
 
 from agent_cli.recovery.primitives import (
     ECHO_HEAD,
-    constrain_action_required,
-    constrain_format_json,
     echo_prior_output,
     probe_progress,
     restate_task,
@@ -76,33 +74,11 @@ class TestEchoPriorOutput:
             assert word not in lowered, f"primitive leaked '{word}'"
 
 
-class TestConstrainFormatJson:
-    def test_returns_nonempty_string(self):
-        out = constrain_format_json()
-        assert isinstance(out, str)
-        assert len(out) > 0
-
-    def test_mentions_required_envelope_fields(self):
-        out = constrain_format_json()
-        assert "thought" in out
-        assert "action" in out
-        assert "action_input" in out
-
-    def test_forbids_markdown_fences(self):
-        out = constrain_format_json()
-        assert "markdown" in out.lower() or "fences" in out.lower()
-
-
-class TestConstrainActionRequired:
-    def test_returns_nonempty_string(self):
-        out = constrain_action_required()
-        assert isinstance(out, str)
-        assert len(out) > 0
-
-    def test_presents_both_action_paths(self):
-        out = constrain_action_required()
-        assert '"action": "tool_name"' in out
-        assert '"action": "complete"' in out
+# ``TestConstrainFormatJson`` and ``TestConstrainActionRequired`` lived
+# here as long as ``constrain_format_json`` / ``constrain_action_required``
+# were primitives. They moved onto the wire-format plugin in Step 7;
+# their replacements live in ``test_wire_formats_react.py``
+# (``TestRecoveryReminders``).
 
 
 class TestProbeProgress:

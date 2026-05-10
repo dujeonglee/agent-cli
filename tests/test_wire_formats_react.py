@@ -44,58 +44,44 @@ class TestRegistration:
         assert plugin.thought_required is True
 
 
-# ─── Self-containment vs. legacy locations ──────────
+# ─── Recovery reminder content ──────────────────────
 
 
-class TestStringsMatchLegacyLocations:
-    """During Steps 2 → 5 the same strings live in two places. Once
-    the migration removes the legacy copies, these tests can be
-    deleted — they are the safety net for the transition window."""
+class TestRecoveryReminders:
+    """Behavior tests that previously lived in
+    ``test_recovery_primitives.TestConstrainFormatJson`` and
+    ``TestConstrainActionRequired``. The strings now live on the
+    plugin (Step 7 cleanup); the assertions follow them."""
 
-    def test_format_rules_matches_legacy(self):
-        from agent_cli.prompts.system_prompt import FORMAT_RULES
+    def test_constraint_reminder_call_mentions_required_fields(self):
+        out = ReActFormat().constraint_reminder_call()
+        assert "thought" in out
+        assert "action" in out
+        assert "action_input" in out
 
-        assert ReActFormat().format_rules() == FORMAT_RULES
+    def test_constraint_reminder_call_forbids_markdown_fences(self):
+        out = ReActFormat().constraint_reminder_call()
+        assert "markdown" in out.lower() or "fences" in out.lower()
 
-    def test_constraint_reminder_call_matches_legacy(self):
-        from agent_cli.recovery.primitives import constrain_format_json
+    def test_constraint_reminder_action_required_presents_both_paths(self):
+        out = ReActFormat().constraint_reminder_action_required()
+        assert '"action": "tool_name"' in out
+        assert '"action": "complete"' in out
 
-        assert ReActFormat().constraint_reminder_call() == constrain_format_json()
-
-    def test_constraint_reminder_action_required_matches_legacy(self):
-        from agent_cli.recovery.primitives import constrain_action_required
-
+    def test_failure_framing_parse_fail_is_react_legacy_wording(self):
+        # The framing string was previously hardcoded inside
+        # ``recovery/builders.format_no_json_retry`` — this asserts the
+        # plugin's value is the same wording so behavior didn't drift.
         assert (
-            ReActFormat().constraint_reminder_action_required()
-            == constrain_action_required()
+            ReActFormat().failure_framing_parse_fail()
+            == "Your response was not valid JSON."
         )
 
-    def test_static_retry_hint_no_json_matches_legacy(self):
-        from agent_cli.constants import RETRY_HINT_NO_JSON
-
-        assert ReActFormat().static_retry_hint_no_json() == RETRY_HINT_NO_JSON
-
-    def test_static_retry_hint_no_action_matches_legacy(self):
-        from agent_cli.constants import RETRY_HINT_NO_ACTION
-
-        assert ReActFormat().static_retry_hint_no_action() == RETRY_HINT_NO_ACTION
-
-    def test_failure_framing_parse_fail_matches_legacy(self):
-        # The framing string is hardcoded inside ``format_no_json_retry``;
-        # this guards against accidental drift between the two copies.
-        from agent_cli.recovery.builders import format_no_json_retry
-
-        intervention = format_no_json_retry(prior_content="some prior")
-        # First line of the message is the framing.
-        first_line = intervention.message.split("\n", 1)[0]
-        assert ReActFormat().failure_framing_parse_fail() == first_line
-
-    def test_failure_framing_no_action_matches_legacy(self):
-        from agent_cli.recovery.builders import format_no_action_retry
-
-        intervention = format_no_action_retry(prior_content="some prior")
-        first_line = intervention.message.split("\n", 1)[0]
-        assert ReActFormat().failure_framing_no_action() == first_line
+    def test_failure_framing_no_action_is_react_legacy_wording(self):
+        assert (
+            ReActFormat().failure_framing_no_action()
+            == "Your JSON was parsed but has no action."
+        )
 
 
 # ─── Parser adaptation ──────────────────────────────
