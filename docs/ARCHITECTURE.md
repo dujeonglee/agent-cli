@@ -42,15 +42,15 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 agent_cli/
 ├── __init__.py              (3)    패키지 버전 (__version__ = "2.0.0-dev")
 ├── __main__.py              (5)    python -m agent_cli 진입점
-├── main.py                  (1243) CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style, --response-format, resume preview
+├── main.py                  (1247) CLI 명령어: run, chat, setup, sessions, @agent 디스패치, --style, --response-format, resume preview
 ├── resource_loader.py       (144)  ResourceLoader — 파일 검색/우선순위 (스킬/에이전트/지시사항)
 ├── config.py                (217)  config.json 3레이어 로딩 + models.json 레지스트리
 ├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
 ├── constants.py             (~25)  공유 상수 (timeout, observation 템플릿, INTERRUPT_NOTICE). 외부 모듈 의존 없음 — 저층 레이어. wire-format-specific 상수 (FORMAT_RULES, RETRY_HINT_*, SYSTEM_USER_PREFIXES) 는 ``wire_formats/`` 의 plugin이 소유
 ├── wire_formats/                   Wire format 플러그인 시스템 — 모델 응답 형식 추상화
-│   ├── __init__.py          (~131) Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin "react" plugin 자동 등록.
-│   ├── base.py              (~262) `WireFormat` Protocol + `ParsedAction` dataclass. Plugin 인터페이스: format_rules / wrap_action_input_example / wrap_full_call_example / parse / constraint_reminder_call / constraint_reminder_action_required / failure_framing_parse_fail / failure_framing_no_action / static_retry_hint_no_json / static_retry_hint_no_action / system_user_prefixes / prefill / normalize_assistant_text / provider_call_kwargs (+ `name` / `thought_required` 속성). 13개 분기점 격리 — plugin 추가 시 main code 0 변경.
-│   └── react.py             (~258) ReActFormat — 기본 plugin. 모든 ReAct-shape 문자열 (FORMAT_RULES, constraint reminders, failure framings, static retry hints, system_user_prefixes) + `format_no_thought_retry` 메서드 (Protocol 외, thought_required=True 인 plugin 한정) self-contained. `parse()` 는 `parse_react`를 위임 호출 후 ParsedAction으로 변환. 폴더 째 삭제 가능 boundary.
+│   ├── __init__.py          (131)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin "react" plugin 자동 등록.
+│   ├── base.py              (315)  `WireFormat` Protocol + `ParsedAction` dataclass. Plugin 인터페이스 (16개 분기점): format_rules / wrap_action_input_example / wrap_full_call_example / parse / constraint_reminder_call / constraint_reminder_action_required / failure_framing_parse_fail / failure_framing_no_action / static_retry_hint_no_json / static_retry_hint_no_action / system_user_prefixes / prefill / normalize_assistant_for_messages (turn-internal messages 버퍼 형태) / serialize_assistant_for_history (history.jsonl 저장 형태) / render_assistant_from_history (overflow recovery / session resume 시 messages 형태로 복원) / provider_call_kwargs (+ `name` / `thought_required` 속성). plugin 추가 시 main code 0 변경.
+│   └── react.py             (321)  ReActFormat — 기본 plugin. 모든 ReAct-shape 문자열 (FORMAT_RULES, constraint reminders, failure framings, static retry hints, system_user_prefixes) + `format_no_thought_retry` 메서드 (Protocol 외, thought_required=True 인 plugin 한정) + history pipeline 3 메서드 self-contained. `parse()` 는 `parse_react`를 위임 호출 후 ParsedAction으로 변환. `render_assistant_from_history`는 `tools/action_summary.summarize_action_args`를 직접 사용해 자연어 요약 생성. 폴더 째 삭제 가능 boundary.
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export
 │   ├── builders.py          (~138) Intervention 합성 factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A3), `format_action_loop_intervention` (B1). 모두 wire_format 인자를 받아 plugin의 framing/reminder/static fallback을 사용. ReAct-only 인 NO_THOUGHT recovery는 `ReActFormat.format_no_thought_retry` 메서드로 이주 (plugin = boundary)
@@ -68,7 +68,7 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (1574) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
+├── loop.py                  (1590) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
 ├── render/                         플러그인 가능 렌더링 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
 │   ├── base.py              (189)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드 + thinking, observation success 인자)
@@ -91,6 +91,7 @@ agent_cli/
 ├── tools/                          도구 시스템
 │   ├── __init__.py          (81)   TOOLS dict (실제+가상) + VIRTUAL_TOOLS + _execute_tool() (internal primitive)
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
+│   ├── action_summary.py    (78)   tool 이름 분기 자연어 요약 헬퍼: `summarize_action_args` (assistant emission 측 — `{"action":"<tool>","action_input":{...}}`) + `summarize_tool_args` (observation record 측 — `{"tool":"<tool>","args":{...}}`). manager._to_natural_language(observation), wire_formats/react.render_assistant_from_history 양쪽이 직접 import. layer 의존: 양쪽 caller가 downward로만 의존, 순수 string formatter (외부 의존 없음)
 │   ├── registry.py          (481)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
 │   ├── _diff.py             (113)  write_file/edit_file 공용 unified-diff 포매터 (Rich markup, OLD/NEW line-number gutter, 100줄 cap)
 │   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
@@ -107,12 +108,12 @@ agent_cli/
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (298)  ContextManager (토큰 budget FIFO + history.jsonl + 자연어 변환)
+│   ├── manager.py           (245)  ContextManager (토큰 budget FIFO + history.jsonl + 자연어 변환). 인스턴스마다 wire_format plugin attach (`__init__(wire_format=...)`, default fallback="react"). `get_messages()`는 user/tool branch만 자체 처리하고 assistant branch는 `wire_format.render_assistant_from_history`에 위임 — 한 세션 = 한 wire_format으로 격리
 │   └── session.py           (~190) 세션 메타데이터 (session.jsonl) + resume용 user↔assistant 페어 추출 (recent_exchanges). System-injected user 메시지 필터는 `wire_formats.all_system_user_prefixes()` (format-agnostic 프리픽스 + 등록된 모든 plugin의 framing prefix) 단일 진입점 사용 — 새 wire format plugin 추가가 자동 반영
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   └── system_prompt.py     (672)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide). `build_system_prompt(wire_format=…)` — Response Format 섹션은 `wire_format.format_rules()`, 도구 inline 가이드 / 스킬·에이전트 호출 예시는 `wire_format.wrap_action_input_example()` (가이드용 — 도구 이름이 헤더에서 명시적이므로 action_input dict만) 또는 `wrap_full_call_example()` (스킬·에이전트 docs용 — `{action, action_input}` 통째로) 호출로 렌더링. plugin이 ReAct이면 identity, envelope plugin이면 envelope shape으로 wrap → 모든 호출 예시가 wire format과 일관. Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools, wire_format)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `read_symbols` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `read_symbols mode='list'`로 우회 — 확장자 목록은 `get_supported_extensions()` 단일 출처에서 가져와 grammar 추가가 자동 전파). read_symbols 가이드는 definitions/structural symbols만 인덱싱한다는 scope를 명시하고 call site/usage 검색은 `read_file search`로 안내. edit_file `_HASHLINE_INLINE`는 (1) 편집 직전에 CURRENT turn에서 read 하도록 요구(read_symbols fetch도 fresh read로 카운트) (2) hash mismatch를 failure가 아닌 guardrail로 reframe해 모델이 panic 없이 re-read/retry 하도록 톤 조정.
+│   └── system_prompt.py     (665)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide). `build_system_prompt(wire_format=…)` — Response Format 섹션은 `wire_format.format_rules()`, 도구 inline 가이드 / 스킬·에이전트 호출 예시는 `wire_format.wrap_action_input_example()` (가이드용 — 도구 이름이 헤더에서 명시적이므로 action_input dict만) 또는 `wrap_full_call_example()` (스킬·에이전트 docs용 — `{action, action_input}` 통째로) 호출로 렌더링. plugin이 ReAct이면 identity, envelope plugin이면 envelope shape으로 wrap → 모든 호출 예시가 wire format과 일관. Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools, wire_format)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `read_symbols` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `read_symbols mode='list'`로 우회 — 확장자 목록은 `get_supported_extensions()` 단일 출처에서 가져와 grammar 추가가 자동 전파). read_symbols 가이드는 definitions/structural symbols만 인덱싱한다는 scope를 명시하고 call site/usage 검색은 `read_file search`로 안내. edit_file `_HASHLINE_INLINE`는 (1) 편집 직전에 CURRENT turn에서 read 하도록 요구(read_symbols fetch도 fresh read로 카운트) (2) hash mismatch를 failure가 아닌 guardrail로 reframe해 모델이 panic 없이 re-read/retry 하도록 톤 조정.
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
@@ -201,8 +202,9 @@ parsing/json_repair → (외부만: json, re)
 parsing/react_parser→ parsing/json_repair
 wire_formats/base   → (외부만: dataclasses, typing)
 wire_formats/react  → parsing/react_parser, recovery/intervention, recovery/primitives,
-                      wire_formats/base
+                      tools/action_summary, wire_formats/base
 wire_formats/__init.→ wire_formats/base, wire_formats/react (builtin 등록)
+tools/action_summary→ (외부만: 없음 — 순수 string formatter)
 tools/result.py     → (외부만: dataclasses, 순수 데이터 타입)
 tools/read_file.py  → tools/result, (외부만: re, zlib, pathlib)
 tools/edit_file.py  → tools/read_file, tools/result
@@ -213,13 +215,16 @@ tools/delegate.py   → tools/result, context/manager, resource_loader, loop (la
 tools/registry.py   → (외부만: json, dataclasses)
 context/token_est.  → (외부만: 없음)
 context/overflow.py → context/token_estimator, providers/compat
-context/manager.py  → (외부만: json, collections, pathlib)
-prompts/system_pr.  → providers/compat, tools/registry, wire_formats (lazy default)
-context/session.py  → wire_formats (lazy — recent_exchanges가 all_system_user_prefixes 호출)
+context/manager.py  → context/token_estimator, tools/action_summary, wire_formats
+prompts/system_pr.  → providers/compat, tools/registry, wire_formats
+context/session.py  → wire_formats (recent_exchanges가 all_system_user_prefixes 호출)
+recovery/builders.→ recovery/intervention, recovery/primitives, wire_formats
+                      (recovery/__init__.py 는 builders 를 re-export 안 함 — 패키지
+                       자체는 format-agnostic, builders 직접 import 만이 wire_formats 끌어옴)
 loop.py             → constants, context/manager, context/overflow,
                       prompts/system_prompt, providers/base, providers/compat,
                       render, tools, tools/delegate, tools/registry,
-                      verbose, wire_formats (registry default fallback)
+                      verbose, wire_formats
 skills/loader.py    → skills/models, resource_loader
 resource_loader.py  → yaml (optional)
 skills/executor.py  → loop, skills/models, providers/base, providers/compat
@@ -329,7 +334,7 @@ class ToolSchema:
 
 #### 컨텍스트 윈도우 레이아웃
 
-`ctx.get_messages()` 반환: history.jsonl의 마지막 N개를 자연어 변환
+`ctx.get_messages()` 반환: history.jsonl의 마지막 N개를 자연어 변환 (assistant turn은 ctx의 wire_format plugin이 변환 — §5.4 참조)
 
 ```
 [system]   Role (main/delegate/skill별 상이)
@@ -674,6 +679,20 @@ LLM 호출 시:
 저장: {"role":"assistant","thought":"auth.py를 읽겠다","action":"read_file","action_input":{"path":"src/auth.py"}}
 표현: auth.py를 읽어 구조를 파악해야 한다. → read_file(src/auth.py)
 ```
+
+#### Assistant 표현은 wire_format plugin이 결정
+
+assistant turn 한 번이 거치는 3개 분기점은 모두 plugin이 소유 — 새 wire format을 추가하면 history 저장·복원이 자동으로 그 형식을 따른다.
+
+| 시점 | Plugin 메서드 | 입력 → 출력 | 호출 사이트 |
+|---|---|---|---|
+| turn 진행 중, 다음 turn prior 누적 | `normalize_assistant_for_messages(raw)` | LLM raw text → in-memory messages 버퍼에 들어갈 문자열 | `loop._append_observation` |
+| 같은 turn, history.jsonl 영속화 | `serialize_assistant_for_history(raw)` | LLM raw text → 디스크에 쓰일 dict | `loop._append_observation` (`ctx.add` 직전) |
+| overflow recovery / session resume | `render_assistant_from_history(record)` | history.jsonl record → chat completion 메시지 dict | `manager._to_natural_language` (assistant branch) |
+
+ReActFormat은 (a) `normalize_assistant_for_messages` = identity (raw 그대로 — 모델 자가 학습 보존), (b) `serialize_assistant_for_history` = JSON 파싱 후 `thought / action / action_input` top-level 분리, (c) `render_assistant_from_history` = `"thought: …\naction: <tool>(<args>)"` 자연어 요약. envelope plugin은 다른 정책을 택할 수 있음 (예: render에서 envelope 그대로 두어 자가 학습 강화).
+
+`manager._to_natural_language`는 user / tool branch만 직접 처리하고 assistant branch는 plugin에 위임 — `context/`는 format-agnostic, plugin이 format-aware. 의존 방향: `context → wire_formats` (downward, lazy import 없음).
 
 #### 세션 파일 구조
 
@@ -1355,7 +1374,9 @@ ReAct 외 새 응답 형식(예: `<tool_use>` envelope, OpenAI 스타일 tool ca
        def static_retry_hint_no_action(self) -> str: ...
        def system_user_prefixes(self) -> tuple[str, ...]: ...
        def prefill(self) -> str: ...               # ""면 비활성
-       def normalize_assistant_text(self, raw) -> str: ...  # identity면 raw 반환
+       def normalize_assistant_for_messages(self, raw) -> str: ...     # turn-internal messages 버퍼 모양
+       def serialize_assistant_for_history(self, raw) -> dict: ...     # history.jsonl 저장 dict
+       def render_assistant_from_history(self, record) -> dict: ...    # resume / overflow 복원 시 messages 모양
        def provider_call_kwargs(self) -> dict: ...
    ```
 
