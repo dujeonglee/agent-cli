@@ -391,15 +391,37 @@ class AgentLoop:
         # envelope opening). ReAct returns ``{}`` so the call path is
         # byte-equivalent for the default plugin.
         extra_call_kwargs = self.wire_format.provider_call_kwargs()
+
+        # Plugin-defined prefill: a string the provider sees as the start
+        # of an assistant turn. Forces the model to continue from there,
+        # producing the wire format from the very first generated token.
+        # ReAct returns "" (no prefill — its prior already produces ReAct
+        # shape). Envelope plugins return e.g. ``<tool_use id="r1" action="``
+        # so the model emits the tool name next. Empty string => behaviour
+        # is identical to the pre-plugin path.
+        prefill = self.wire_format.prefill()
+        call_messages = self.messages
+        if prefill:
+            call_messages = [
+                *self.messages,
+                {"role": "assistant", "content": prefill},
+            ]
         try:
             response = self.provider.call(
-                messages=self.messages,
+                messages=call_messages,
                 system=self.system,
                 model=self.model,
                 capabilities=self.capabilities,
                 on_chunk=on_chunk,
                 **extra_call_kwargs,
             )
+            # Stitch the prefill back onto the response so downstream
+            # parsers see a complete emission. Use dataclasses.replace
+            # to keep usage / thinking / stop_reason intact.
+            if prefill:
+                from dataclasses import replace as _replace
+
+                response = _replace(response, content=prefill + response.content)
             return response
         except Exception as e:
             if is_context_overflow(str(e)):
