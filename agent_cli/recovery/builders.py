@@ -9,40 +9,58 @@ placed them in ``constants.py`` and produced an inverted-layer cycle
 
 from __future__ import annotations
 
-from agent_cli.constants import RETRY_HINT_NO_ACTION, RETRY_HINT_NO_JSON
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import (
-    constrain_action_required,
-    constrain_format_json,
     echo_prior_output,
     probe_progress,
     restate_task,
 )
 
 
-def format_no_json_retry(*, prior_content: str = "") -> Intervention:
-    """Build the Intervention for an LLM response that failed to parse as JSON.
+def _resolve_wire_format(wire_format):
+    """Backward-compat fallback to the registered ``"react"`` plugin.
+
+    Lazy import sidesteps a top-level dependency from the recovery
+    layer onto the wire_formats package — recovery primitives are
+    format-agnostic, so the dependency stays opt-in (only the format-
+    aware builders below trigger it).
+    """
+    if wire_format is not None:
+        return wire_format
+    from agent_cli import wire_formats
+
+    return wire_formats.get("react")
+
+
+def format_no_json_retry(*, prior_content: str = "", wire_format=None) -> Intervention:
+    """Build the Intervention for an LLM response that failed to parse.
 
     Composes recovery primitives: echoes the model's prior output (failure
-    grounding) and reminds the model of the required JSON envelope
-    (constrain). Falls back to the static ``RETRY_HINT_NO_JSON`` when no
+    grounding) and reminds the model of the required envelope
+    (constrain). Falls back to the plugin's static "no JSON" hint when no
     echoable content is available.
+
+    ``wire_format`` selects which envelope wording to use. Omitting it
+    falls back to the registered ``"react"`` plugin so existing callers
+    (the loop's pre-Step-6 call sites, every test in
+    ``test_retry_builders``) keep their original behavior bit-for-bit.
 
     Returns an :class:`Intervention` carrying both the user-role message
     to inject and the names of primitives composed (for observability).
 
     Keyword-only to avoid silent positional misuse.
     """
+    wf = _resolve_wire_format(wire_format)
     echo = echo_prior_output(prior_content)
     if not echo:
-        return Intervention(message=RETRY_HINT_NO_JSON, primitives=[])
+        return Intervention(message=wf.static_retry_hint_no_json(), primitives=[])
 
     msg = "\n".join(
         [
-            "Your response was not valid JSON.",
+            wf.failure_framing_parse_fail(),
             "",
             echo,
-            "Honor that. " + constrain_format_json(),
+            "Honor that. " + wf.constraint_reminder_call(),
         ]
     )
     return Intervention(
@@ -51,21 +69,26 @@ def format_no_json_retry(*, prior_content: str = "") -> Intervention:
     )
 
 
-def format_no_action_retry(*, prior_content: str = "") -> Intervention:
-    """Build the Intervention when JSON parsed but no action was provided.
+def format_no_action_retry(
+    *, prior_content: str = "", wire_format=None
+) -> Intervention:
+    """Build the Intervention when parsing succeeded but no action was provided.
 
     Same failure-grounding rationale as ``format_no_json_retry``.
+    ``wire_format`` defaults to the registered ``"react"`` plugin —
+    see that builder's docstring for the rationale.
     """
+    wf = _resolve_wire_format(wire_format)
     echo = echo_prior_output(prior_content)
     if not echo:
-        return Intervention(message=RETRY_HINT_NO_ACTION, primitives=[])
+        return Intervention(message=wf.static_retry_hint_no_action(), primitives=[])
 
     msg = "\n".join(
         [
-            "Your JSON was parsed but has no action.",
+            wf.failure_framing_no_action(),
             "",
             echo,
-            "Honor that. " + constrain_action_required(),
+            "Honor that. " + wf.constraint_reminder_action_required(),
         ]
     )
     return Intervention(
