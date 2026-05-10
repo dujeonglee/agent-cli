@@ -1149,8 +1149,18 @@ def run_loop(
     mcp_manager=None,
     hook_runner=None,
     record_turns: bool = True,
+    wire_format=None,
 ):
-    """Run the ReAct agent loop. Returns ToolResult."""
+    """Run the agent loop with the given wire-format plugin. Returns ToolResult.
+
+    ``wire_format`` accepts a registered plugin name (str) or a
+    ``WireFormat`` instance directly. ``None`` falls back to the
+    "react" plugin so existing callers don't need to change.
+    """
+    if isinstance(wire_format, str):
+        from agent_cli import wire_formats as _wf_pkg
+
+        wire_format = _wf_pkg.get(wire_format)
     return AgentLoop(
         query=query,
         provider=provider,
@@ -1179,6 +1189,7 @@ def run_loop(
         mcp_manager=mcp_manager,
         hook_runner=hook_runner,
         record_turns=record_turns,
+        wire_format=wire_format,
     ).run()
 
 

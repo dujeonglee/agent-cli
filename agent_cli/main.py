@@ -621,6 +621,11 @@ def run(
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
+    response_format: str = typer.Option(
+        "react",
+        "--response-format",
+        help="Wire format plugin name (default: react). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+    ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     _apply_style(style)
@@ -731,6 +736,15 @@ def run(
     from agent_cli.hooks import load_hooks as _load_hooks
 
     _disk_hooks = _load_hooks() or None
+    # Resolve the wire-format plugin name from --response-format up front
+    # so any unknown name fails before the model is even contacted.
+    from agent_cli import wire_formats as _wire_formats
+
+    try:
+        wire_format_plugin = _wire_formats.get(response_format)
+    except KeyError as exc:
+        console.print(f"[{C['error']}]{exc}[/]")
+        raise typer.Exit(2) from exc
     try:
         loop_result = run_loop(
             query=query,
@@ -750,6 +764,7 @@ def run(
             mcp_manager=mcp_manager,
             hooks_config=_disk_hooks,
             record_turns=record_turns,
+            wire_format=wire_format_plugin,
         )
         answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
@@ -918,6 +933,11 @@ def chat(
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
+    response_format: str = typer.Option(
+        "react",
+        "--response-format",
+        help="Wire format plugin name (default: react). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+    ),
 ):
     """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
     _apply_style(style)
@@ -931,6 +951,16 @@ def chat(
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
         _setup_provider(provider, model, base_url, api_key)
     )
+
+    # Resolve --response-format up front so an unknown name fails before
+    # the user enters anything; same shape as the ``run`` command.
+    from agent_cli import wire_formats as _wire_formats
+
+    try:
+        wire_format_plugin = _wire_formats.get(response_format)
+    except KeyError as exc:
+        console.print(f"[{C['error']}]{exc}[/]")
+        raise typer.Exit(2) from exc
 
     # MCP servers
     mcp_manager, mcp_tools = _setup_mcp()
@@ -1188,6 +1218,7 @@ def chat(
             mcp_manager=mcp_manager,
             hooks_config=_disk_hooks,
             record_turns=record_turns,
+            wire_format=wire_format_plugin,
         )
         result = loop_result.output if loop_result.success else None
 
