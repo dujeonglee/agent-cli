@@ -15,6 +15,7 @@ from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers import create_provider, get_capabilities
 from agent_cli.render import C, console
+from agent_cli.wire_formats import get as _get_wire_format
 
 app = typer.Typer(
     name="agent-cli",
@@ -661,10 +662,8 @@ def run(
     # Resolve the wire-format plugin name from --response-format up front
     # so any unknown name fails before the session is even created, and so
     # the ContextManager below is born with the right plugin attached.
-    from agent_cli import wire_formats as _wire_formats
-
     try:
-        wire_format_plugin = _wire_formats.get(response_format)
+        wire_format_plugin = _get_wire_format(response_format)
     except KeyError as exc:
         console.print(f"[{C['error']}]{exc}[/]")
         raise typer.Exit(2) from exc
@@ -959,10 +958,8 @@ def chat(
 
     # Resolve --response-format up front so an unknown name fails before
     # the user enters anything; same shape as the ``run`` command.
-    from agent_cli import wire_formats as _wire_formats
-
     try:
-        wire_format_plugin = _wire_formats.get(response_format)
+        wire_format_plugin = _get_wire_format(response_format)
     except KeyError as exc:
         console.print(f"[{C['error']}]{exc}[/]")
         raise typer.Exit(2) from exc

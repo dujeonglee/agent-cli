@@ -18,6 +18,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_cli.wire_formats import all_system_user_prefixes
+
 _SESSIONS_BASE = Path(".agent-cli")
 
 
@@ -144,8 +146,6 @@ def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
     completes, the previous pair is closed with "(no completion)" so
     interrupted runs still surface.
     """
-    from agent_cli.wire_formats import all_system_user_prefixes
-
     system_prefixes = all_system_user_prefixes()
 
     if not history_path.is_file():

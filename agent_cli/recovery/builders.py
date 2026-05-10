@@ -15,21 +15,21 @@ from agent_cli.recovery.primitives import (
     probe_progress,
     restate_task,
 )
+from agent_cli.wire_formats import get as _get_wire_format
 
 
 def _resolve_wire_format(wire_format):
     """Backward-compat fallback to the registered ``"react"`` plugin.
 
-    Lazy import sidesteps a top-level dependency from the recovery
-    layer onto the wire_formats package — recovery primitives are
-    format-agnostic, so the dependency stays opt-in (only the format-
-    aware builders below trigger it).
+    The recovery package's format-agnostic boundary is preserved by
+    ``recovery/__init__.py`` not re-exporting this module: only callers
+    who explicitly import ``recovery.builders`` pull in the wire_formats
+    dependency. The format-aware nature of ``builders`` is therefore
+    self-evident at the import site, no lazy indirection required.
     """
     if wire_format is not None:
         return wire_format
-    from agent_cli import wire_formats
-
-    return wire_formats.get("react")
+    return _get_wire_format("react")
 
 
 def format_no_json_retry(*, prior_content: str = "", wire_format=None) -> Intervention:

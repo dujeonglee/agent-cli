@@ -12,6 +12,7 @@ from pathlib import Path
 
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.tools.action_summary import summarize_tool_args
+from agent_cli.wire_formats import get as _get_wire_format
 
 
 # ── Default token budget ─────────────────────────────────
@@ -55,9 +56,7 @@ class ContextManager:
         # for the headless / test paths that don't yet thread the choice
         # through; mirrors the pattern in ``AgentLoop.__init__``.
         if wire_format is None:
-            from agent_cli import wire_formats
-
-            wire_format = wire_formats.get("react")
+            wire_format = _get_wire_format("react")
         self.wire_format = wire_format
 
         self.session_dir = Path(session_dir)

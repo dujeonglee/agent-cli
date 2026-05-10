@@ -22,6 +22,7 @@ from pathlib import Path
 
 from agent_cli.providers.compat import ModelCapabilities
 from agent_cli.tools.registry import get_tool_descriptions
+from agent_cli.wire_formats import get as _get_wire_format
 
 # ── DIRECTIVE.md search paths ────────────────────
 _DIRECTIVE_PATHS = [
@@ -469,11 +470,7 @@ def build_system_prompt(
     threading the registry through.
     """
     if wire_format is None:
-        # Lazy import keeps a cycle from forming if a wire_format plugin
-        # ever needs to import system_prompt for any reason.
-        from agent_cli import wire_formats
-
-        wire_format = wire_formats.get("react")
+        wire_format = _get_wire_format("react")
 
     sections: list[str] = []
 
@@ -586,9 +583,7 @@ def build_agent_descriptions(wire_format=None) -> str:
     so test callers don't have to thread the registry through.
     """
     if wire_format is None:
-        from agent_cli import wire_formats
-
-        wire_format = wire_formats.get("react")
+        wire_format = _get_wire_format("react")
 
     try:
         from agent_cli.tools.delegate import _agent_loader
@@ -630,9 +625,7 @@ def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> st
     (same backward-compat default as ``build_agent_descriptions``).
     """
     if wire_format is None:
-        from agent_cli import wire_formats
-
-        wire_format = wire_formats.get("react")
+        wire_format = _get_wire_format("react")
 
     if skills is None:
         try:

@@ -64,6 +64,7 @@ from agent_cli.tools import TOOLS, _execute_tool
 from agent_cli.tools.delegate import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
+from agent_cli.wire_formats import get as _get_wire_format
 
 
 class AgentLoop:
@@ -106,9 +107,7 @@ class AgentLoop:
         # ``agent_cli/wire_formats/`` and re-running with
         # ``--response-format <name>``.
         if wire_format is None:
-            from agent_cli import wire_formats
-
-            wire_format = wire_formats.get("react")
+            wire_format = _get_wire_format("react")
         self.wire_format = wire_format
 
         self.query = query
@@ -1184,9 +1183,7 @@ def run_loop(
     "react" plugin so existing callers don't need to change.
     """
     if isinstance(wire_format, str):
-        from agent_cli import wire_formats as _wf_pkg
-
-        wire_format = _wf_pkg.get(wire_format)
+        wire_format = _get_wire_format(wire_format)
     return AgentLoop(
         query=query,
         provider=provider,
