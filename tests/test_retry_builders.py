@@ -1,8 +1,9 @@
 """Tests for the failure-grounding retry message builders.
 
-These functions live in ``agent_cli.recovery.builders``. They produce
-the :class:`Intervention` injected into the conversation when an LLM
-response failed to parse / lacked an action.
+These functions live in ``agent_cli.recovery.common_recovery`` (B1
+action loop) and ``agent_cli.recovery.wf_recovery`` (A-class wf-aware
+builders). They produce the :class:`Intervention` injected into the
+conversation when an LLM response failed to parse / lacked an action.
 
 v1 design: content-only echo (see docs/robust-harness/DESIGN.md §2.2).
 The thinking channel is intentionally excluded from recovery — Step 2
@@ -13,8 +14,8 @@ Falls back to the static template when ``prior_content`` is empty (the
 returned Intervention has the static message and no primitives).
 """
 
-from agent_cli.recovery.builders import (
-    format_action_loop_intervention,
+from agent_cli.recovery.common_recovery import format_action_loop_intervention
+from agent_cli.recovery.wf_recovery import (
     format_no_action_retry,
     format_no_json_retry,
 )
@@ -192,7 +193,7 @@ class TestFormatActionLoopIntervention:
 
     Level 1 → probe_progress; level 2 → restate_task; level ≥3 → None
     (caller hard-fails). Temperature-down level intentionally omitted —
-    see DESIGN.md §2.3 and recovery.builders.format_action_loop_intervention
+    see DESIGN.md §2.3 and recovery.common_recovery.format_action_loop_intervention
     docstring.
     """
 

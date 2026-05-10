@@ -297,6 +297,13 @@ class EnvelopeFormat:
     def format_rules_field_specific(self) -> str:
         return _FORMAT_RULES_FIELD_SPECIFIC
 
+    def render_action_input(self, action_input: str) -> str:
+        # Envelope nests action_input as a JSON dict verbatim — identity,
+        # same as ReAct. The wire shape (envelope wrap) is taught in the
+        # Format Rules section, not by repeating it at every inline
+        # example.
+        return action_input
+
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         # Envelope shape: <tool_use id="r1" action="...">reasoning\n\nJSON</tool_use>.
         # When ``thought`` is None (skill / agent invocation example)

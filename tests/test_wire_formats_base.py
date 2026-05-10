@@ -86,6 +86,9 @@ class _MockFormat:
             f'"action_input": {action_input}}}'
         )
 
+    def render_action_input(self, action_input: str) -> str:
+        return action_input
+
     def parse(self, llm_text: str) -> ParsedAction:
         return ParsedAction(raw=llm_text)
 
@@ -209,6 +212,9 @@ class TestRegistry:
 
             def render_full_example(self, *, thought, action, action_input) -> str:
                 return ""
+
+            def render_action_input(self, action_input: str) -> str:
+                return action_input
 
             def parse(self, t) -> ParsedAction:
                 return ParsedAction()

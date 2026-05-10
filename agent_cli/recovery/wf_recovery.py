@@ -1,20 +1,26 @@
-"""Intervention builders — compose recovery primitives into Interventions.
+"""Wire-format-dependent intervention builders.
 
-These factories live in the recovery layer (not ``constants``) to keep
-the dependency direction one-way: ``recovery`` depends on primitives it
-owns; lower layers do not depend back on ``recovery``. Earlier history
-placed them in ``constants.py`` and produced an inverted-layer cycle
-(see docs/robust-harness/REMAINING_DEBT.md history for context).
+These factories compose recovery primitives with wording sourced from
+the active wire-format plugin (``failure_framing_*``,
+``constraint_reminder_*``, ``static_retry_hint_*``). When a new plugin
+is added, this module is the audit point: every wf-aware composer
+lives here and pulls strings off the plugin's :class:`WireFormat`
+Protocol, so the per-plugin text stays inside the plugin file and the
+composition stays here.
+
+WF-agnostic builders live in ``recovery.common_recovery``. The split
+along the wf-dependence axis lets a new plugin land without touching
+``common_recovery``, while changes to recovery wording for one plugin
+ripple through this file alone.
+
+The dependency direction stays one-way: ``recovery`` depends on
+primitives it owns; lower layers do not depend back on ``recovery``.
 """
 
 from __future__ import annotations
 
 from agent_cli.recovery.intervention import Intervention
-from agent_cli.recovery.primitives import (
-    echo_prior_output,
-    probe_progress,
-    restate_task,
-)
+from agent_cli.recovery.primitives import echo_prior_output
 from agent_cli.wire_formats import get as _get_wire_format
 
 
@@ -23,9 +29,10 @@ def _resolve_wire_format(wire_format):
 
     The recovery package's format-agnostic boundary is preserved by
     ``recovery/__init__.py`` not re-exporting this module: only callers
-    who explicitly import ``recovery.builders`` pull in the wire_formats
-    dependency. The format-aware nature of ``builders`` is therefore
-    self-evident at the import site, no lazy indirection required.
+    who explicitly import ``recovery.wf_recovery`` pull in the
+    wire_formats dependency. The format-aware nature of this module is
+    therefore self-evident at the import site, no lazy indirection
+    required.
     """
     if wire_format is not None:
         return wire_format
@@ -95,44 +102,3 @@ def format_no_action_retry(
         message=msg,
         primitives=["echo_prior_output", "constrain_action_required"],
     )
-
-
-def format_action_loop_intervention(
-    *,
-    level: int,
-    action: str,
-    args_repr: str,
-    repeat_count: int,
-    task: str,
-) -> Intervention | None:
-    """Compose the B1 (action loop) Intervention for a given escalation level.
-
-    Skips the temperature-down level from DESIGN.md §2.3 — temperature
-    handling diverges across providers, which would leak runtime
-    detail into the recovery layer. Step 4 may revisit if data shows
-    benefit.
-
-    Returns:
-        Intervention for level 1 or 2; ``None`` for level ≥3 (caller
-        should hard-fail with an informative error).
-    """
-    if level == 1:
-        return Intervention(
-            message=probe_progress(
-                action=action,
-                args_repr=args_repr,
-                repeat_count=repeat_count,
-            ),
-            primitives=["probe_progress"],
-        )
-    if level == 2:
-        return Intervention(
-            message=restate_task(
-                task=task,
-                action=action,
-                args_repr=args_repr,
-                repeat_count=repeat_count,
-            ),
-            primitives=["restate_task"],
-        )
-    return None

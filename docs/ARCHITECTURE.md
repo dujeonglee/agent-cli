@@ -49,12 +49,13 @@ agent_cli/
 ├── constants.py             (~25)  공유 상수 (timeout, observation 템플릿, INTERRUPT_NOTICE). 외부 모듈 의존 없음 — 저층 레이어. wire-format-specific 상수 (FORMAT_RULES, RETRY_HINT_*, SYSTEM_USER_PREFIXES) 는 ``wire_formats/`` 의 plugin이 소유
 ├── wire_formats/                   Wire format 플러그인 시스템 — 모델 응답 형식 추상화
 │   ├── __init__.py          (132)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react, envelope) 자동 등록.
-│   ├── base.py              (315)  `WireFormat` Protocol + `ParsedAction` dataclass. Plugin 인터페이스 (16개 분기점): format_rules / wrap_action_input_example / wrap_full_call_example / parse / constraint_reminder_call / constraint_reminder_action_required / failure_framing_parse_fail / failure_framing_no_action / static_retry_hint_no_json / static_retry_hint_no_action / system_user_prefixes / prefill / normalize_assistant_for_messages (turn-internal messages 버퍼 형태) / serialize_assistant_for_history (history.jsonl 저장 형태) / render_assistant_from_history (overflow recovery / session resume 시 messages 형태로 복원) / provider_call_kwargs (+ `name` / `thought_required` 속성). plugin 추가 시 main code 0 변경.
+│   ├── base.py              (340)  `WireFormat` Protocol + `ParsedAction` dataclass. Plugin 인터페이스 (분기점): format_rules / format_rules_anchor / render_full_example / render_action_input (인라인 가이드의 action_input shape swap point — JSON dict이 아닌 wf 미래 호환) / format_rules_field_specific / parse / constraint_reminder_call / constraint_reminder_action_required / failure_framing_parse_fail / failure_framing_no_action / static_retry_hint_no_json / static_retry_hint_no_action / system_user_prefixes / prefill / normalize_assistant_for_messages (turn-internal messages 버퍼 형태) / serialize_assistant_for_history (history.jsonl 저장 형태) / render_assistant_from_history (overflow recovery / session resume 시 messages 형태로 복원) / provider_call_kwargs (+ `name` / `thought_required` 속성). plugin 추가 시 main code 0 변경.
 │   ├── react.py             (733)  ReActFormat — 기본 plugin. ReAct-shape 문자열 + recovery wording + history pipeline 3 메서드 + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. parse_react는 ParsedAction을 직접 반환 (별도 dataclass 없음). `render_assistant_from_history`는 `tools/action_summary.summarize_action_args`를 직접 사용해 자연어 요약 생성. 폴더 째 삭제 가능 boundary — 외부에서 ReAct에 의존하는 코드 0건.
 │   └── envelope.py          (463)  EnvelopeFormat — XML envelope 위에 자연어 reasoning + JSON action_input. wire shape: `<tool_use id="r1" action="<tool>">free reasoning\n{...}</tool_use>`. action 이름이 XML attribute라 inner JSON 깨져도 robust. parse_envelope는 마지막 balanced `{...}` block을 action_input으로 추출, 그 앞 텍스트를 thought로. prefill `<tool_use id="r1" action="`로 wire shape 강제. provider_call_kwargs로 Ollama format=json 비활성화 (envelope 시작이 `<`이라 `{` 강제와 충돌). 4-state parse_stage (0=no envelope, 1=full, 2=action 있고 JSON 깨짐, 3=action 없음). 모든 helper (surrogate sanitize, thinking strip, brace counting) self-contained — react.py와 코드 일부 복제, plugin folder-deletable 우선.
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
-│   ├── __init__.py                 primitive·detector·observability 재export
-│   ├── builders.py          (~138) Intervention 합성 factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A3), `format_action_loop_intervention` (B1). 모두 wire_format 인자를 받아 plugin의 framing/reminder/static fallback을 사용. ReAct-only 인 NO_THOUGHT recovery는 `ReActFormat.format_no_thought_retry` 메서드로 이주 (plugin = boundary)
+│   ├── __init__.py                 primitive·detector·observability 재export (common_recovery / wf_recovery는 호출처가 import — 패키지 자체 format-agnostic 보존)
+│   ├── common_recovery.py   (~65)  WF-agnostic Intervention factory — `format_action_loop_intervention` (B1). 모든 plugin이 같은 텍스트를 봄. 새 wire-format plugin 추가 시 0 변경
+│   ├── wf_recovery.py       (~110) WF-aware Intervention factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A3). plugin의 framing/reminder/static fallback 사용. WF 의존이 한 파일에 모여 audit 용이. ReAct-only NO_THOUGHT recovery는 `ReActFormat.format_no_thought_retry` 메서드 (plugin = boundary)
 │   ├── detectors.py         (~210) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용), `detect_thought_missing` (A7, action 있고 thought 없음 — mimicry-strengthening loop trigger; loop이 `wire_format.thought_required` 가드 후 호출)
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
 │   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 8종 (NO_JSON / NO_OUTPUT / NO_ACTION / NO_THOUGHT / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
@@ -217,9 +218,11 @@ context/overflow.py → context/token_estimator, providers/compat
 context/manager.py  → context/token_estimator, tools/action_summary, wire_formats
 prompts/system_pr.  → providers/compat, tools/registry, wire_formats
 context/session.py  → wire_formats (recent_exchanges가 all_system_user_prefixes 호출)
-recovery/builders.→ recovery/intervention, recovery/primitives, wire_formats
-                      (recovery/__init__.py 는 builders 를 re-export 안 함 — 패키지
-                       자체는 format-agnostic, builders 직접 import 만이 wire_formats 끌어옴)
+recovery/common_recovery → recovery/intervention, recovery/primitives
+                      (WF 의존 없음 — 모든 plugin이 같은 텍스트를 봄)
+recovery/wf_recovery   → recovery/intervention, recovery/primitives, wire_formats
+                      (recovery/__init__.py 는 wf_recovery 를 re-export 안 함 —
+                       패키지 자체는 format-agnostic, 직접 import 만이 wire_formats 끌어옴)
 loop.py             → constants, context/manager, context/overflow,
                       prompts/system_prompt, providers/base, providers/compat,
                       render, tools, tools/delegate, tools/registry,

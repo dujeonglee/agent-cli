@@ -13,8 +13,8 @@ from agent_cli.constants import (
     INTERRUPT_NOTICE,
     OBS_SUCCESS,
 )
-from agent_cli.recovery.builders import (
-    format_action_loop_intervention,
+from agent_cli.recovery.common_recovery import format_action_loop_intervention
+from agent_cli.recovery.wf_recovery import (
     format_no_action_retry,
     format_no_json_retry,
 )

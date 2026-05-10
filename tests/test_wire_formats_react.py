@@ -129,9 +129,10 @@ class TestParseReturnsParsedAction:
 
 class TestRenderFullExample:
     """The single rendering hook the Format Rules builder calls. ReAct
-    emits the bare JSON dict — full schema fields when ``thought`` is
-    given, ``thought`` key omitted entirely when it isn't (the legacy
-    ``build_skill_descriptions`` / ``build_agent_descriptions`` shape).
+    emits the bare JSON dict — full schema fields, with ``thought``
+    substituting a short placeholder when ``None`` so the slot is
+    always visible (matches envelope's ``reasoning here`` handling so
+    both plugins teach the same contract).
     """
 
     def test_full_emission_with_thought(self):
@@ -146,19 +147,22 @@ class TestRenderFullExample:
             '"action_input": {...}}'
         )
 
-    def test_invocation_only_when_thought_is_none(self):
+    def test_thought_none_substitutes_placeholder(self):
         """``thought=None`` is the skill / agent invocation example
-        case. ReAct simply omits the field — this matches the legacy
-        invocation literal that lived in ``build_skill_descriptions``."""
+        case. ReAct now substitutes ``"reasoning here"`` so the
+        thought slot stays visible — matches envelope so the model
+        sees the same "slot is required" contract from both plugins.
+        """
         out = ReActFormat().render_full_example(
             thought=None,
             action="run_skill",
             action_input='{"name": "x", "arguments": "y"}',
         )
         assert out == (
-            '{"action": "run_skill", "action_input": {"name": "x", "arguments": "y"}}'
+            '{"thought": "reasoning here", '
+            '"action": "run_skill", '
+            '"action_input": {"name": "x", "arguments": "y"}}'
         )
-        assert '"thought"' not in out
 
     def test_action_input_string_passed_verbatim(self):
         """The plugin receives a JSON string, not a dict, so the caller
@@ -169,6 +173,22 @@ class TestRenderFullExample:
             action_input='{"a": 1, "b": 2}',
         )
         assert '"action_input": {"a": 1, "b": 2}' in out
+
+
+class TestRenderActionInput:
+    """Inline-guide hook. ReAct nests action_input as JSON, so this is
+    identity — the abstraction exists for future plugins whose
+    action_input is not a JSON dict (e.g. XML attribute encoding)."""
+
+    def test_identity_returns_input_verbatim(self):
+        out = ReActFormat().render_action_input('{"path": "app.py"}')
+        assert out == '{"path": "app.py"}'
+
+    def test_identity_preserves_whitespace_and_keys(self):
+        out = ReActFormat().render_action_input(
+            '{"a": 1, "b": [2, 3], "nested": {"k": "v"}}'
+        )
+        assert out == '{"a": 1, "b": [2, 3], "nested": {"k": "v"}}'
 
 
 class TestFormatRulesAnchor:

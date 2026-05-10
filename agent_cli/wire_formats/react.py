@@ -277,7 +277,7 @@ _FORMAT_RULES_ANCHOR = (
 )
 
 _FORMAT_RULES_FIELD_SPECIFIC = (
-    "1. `thought` MUST state purpose (what you want to achieve) and reason (why this action).\n"
+    "1. `thought` MUST state purpose (what you want to achieve) and reason (why this action). Do not leave it empty.\n"
     "2. `action_input` MUST match the tool's input schema."
 )
 
@@ -380,18 +380,27 @@ class ReActFormat:
     def format_rules_field_specific(self) -> str:
         return _FORMAT_RULES_FIELD_SPECIFIC
 
+    def render_action_input(self, action_input: str) -> str:
+        # ReAct nests action_input as a JSON dict verbatim — identity.
+        # The inline-guide builder feeds in already-JSON strings; no
+        # transformation needed. A future plugin where action_input is
+        # not a JSON dict overrides this hook.
+        return action_input
+
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
-        # ReAct shape: a single JSON object. With ``thought`` the
-        # full schema fields appear; without it (skill/agent
-        # invocation examples) the field is simply omitted — that
-        # matches the legacy minimal-invocation literal that lived
-        # in ``build_skill_descriptions`` / ``build_agent_descriptions``.
-        parts = []
-        if thought is not None:
-            parts.append(f'"thought": "{thought}"')
-        parts.append(f'"action": "{action}"')
-        parts.append(f'"action_input": {action_input}')
-        return "{" + ", ".join(parts) + "}"
+        # ReAct shape: a single JSON object. ``thought=None`` (skill /
+        # agent invocation example) substitutes a short placeholder so
+        # the field stays visible — matches envelope's "reasoning here"
+        # handling so both plugins teach the same contract: the
+        # reasoning slot is always present.
+        reasoning = thought if thought is not None else "reasoning here"
+        return (
+            "{"
+            f'"thought": "{reasoning}", '
+            f'"action": "{action}", '
+            f'"action_input": {action_input}'
+            "}"
+        )
 
     # ─── Parsing ───────────────────────────────────────────────
 

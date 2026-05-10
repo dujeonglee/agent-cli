@@ -140,6 +140,30 @@ class WireFormat(Protocol):
         """
         ...
 
+    def render_action_input(self, action_input: str) -> str:
+        """Render an action_input string in this format's inner shape.
+
+        Inline tool guides show only the action_input portion of an
+        invocation — the surrounding wire shape is taught by the
+        Format Rules section, not repeated per example. Both ReAct and
+        envelope nest action_input as a JSON dict, so they implement
+        this as identity (return the input verbatim). A future plugin
+        whose action_input is not a JSON dict (e.g. XML attribute
+        encoding) parses the JSON and re-renders into its own form
+        here, keeping the inline guides correct without changing the
+        builder.
+
+        Args:
+            action_input: action_input as a JSON string (the dict
+                shape). Plugins that nest it as JSON return it
+                verbatim; plugins that transform it parse and re-emit.
+
+        Returns:
+            The rendered action_input fragment, no surrounding
+            whitespace, no trailing newline.
+        """
+        ...
+
     def format_rules_field_specific(self) -> str:
         """Lines for Rules 1 and 2 of the section.
 
@@ -172,8 +196,8 @@ class WireFormat(Protocol):
     def constraint_reminder_call(self) -> str:
         """One-sentence reminder of the required tool call shape.
 
-        Embedded by ``recovery.builders.format_no_json_retry`` as the
-        "Honor that. <reminder>." tail of the intervention message.
+        Embedded by ``recovery.wf_recovery.format_no_json_retry`` as
+        the "Honor that. <reminder>." tail of the intervention message.
         Should describe the envelope and the inner JSON fields the
         parser expects.
         """
@@ -184,7 +208,7 @@ class WireFormat(Protocol):
 
         Should present BOTH paths the model can take:
         invoke a tool *or* call ``complete``. Embedded by
-        ``recovery.builders.format_no_action_retry``.
+        ``recovery.wf_recovery.format_no_action_retry``.
         """
         ...
 

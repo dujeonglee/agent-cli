@@ -107,11 +107,18 @@ _HASHLINE_INLINE = """\
 def _build_delegate_inline(wire_format) -> str:
     """Build the delegate inline guide.
 
-    Each ``Examples:`` line shows a complete delegate call. The plugin
-    decides whether each example is shown as a bare action_input dict
-    (ReAct identity) or wrapped in an envelope (future plugins).
-    Distinct ``idval`` values per example so envelope plugins that
-    require unique ids stay valid.
+    Each ``Examples:`` line shows only the action_input dict for the
+    call — the surrounding wire shape (ReAct's outer JSON or envelope's
+    ``<tool_use>`` wrap) is taught once in the Format Rules section,
+    not repeated per example. Early probes showed that inlining the
+    wire envelope at every example anchored small models toward
+    placeholder reasoning emissions.
+
+    The action_input fragment is rendered through
+    ``wire_format.render_action_input`` so a future plugin whose
+    action_input shape isn't a JSON dict can transform here without
+    touching this builder. ReAct and envelope both implement that
+    hook as identity (action_input is JSON in both formats today).
     """
     examples = [
         ("Single", '{"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}'),
@@ -141,7 +148,8 @@ def _build_delegate_inline(wire_format) -> str:
     # header, and inlining the wire-shape envelope per example
     # anchored small models toward placeholder reasoning emissions.
     rendered = "\n".join(
-        f"  - {label}: {args}" for _, (label, args) in enumerate(examples, start=1)
+        f"  - {label}: {wire_format.render_action_input(args)}"
+        for _, (label, args) in enumerate(examples, start=1)
     )
     return f"""\
 
@@ -174,18 +182,26 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     tools), the steering is omitted to avoid pointing the model at a
     tool it cannot call.
 
-    Each mode's example shows only the action_input dict — the
-    surrounding tool name is already stated in the guide header, and
-    repeating the wire-shape envelope at every example anchored small
-    models toward placeholder reasoning emissions in the first probe.
-    Wire-shape learning is carried by the Format Rules section
-    (``wire_format.format_rules()``) and skill / agent invocation
-    examples (``render_full_example``).
+    Each mode's example shows only the action_input dict — wire-shape
+    learning is carried by the Format Rules section
+    (``wire_format.format_rules()``) and the Skills / Agents
+    invocation examples (``render_full_example``). Repeating the
+    wire-shape envelope at every example anchored small models toward
+    placeholder reasoning emissions in the first probe.
+
+    The action_input fragment passes through
+    ``wire_format.render_action_input`` so plugins whose action_input
+    shape is not a JSON dict can transform here without changing the
+    builder. Both current plugins return identity.
     """
-    ex_stat = '{"path": "app.py", "stat": true}'
-    ex_search = '{"path": "app.py", "search": "login", "context": 5}'
-    ex_partial = '{"path": "app.py", "line_start": 100, "line_end": 600}'
-    ex_full = '{"path": "app.py"}'
+    ex_stat = wire_format.render_action_input('{"path": "app.py", "stat": true}')
+    ex_search = wire_format.render_action_input(
+        '{"path": "app.py", "search": "login", "context": 5}'
+    )
+    ex_partial = wire_format.render_action_input(
+        '{"path": "app.py", "line_start": 100, "line_end": 600}'
+    )
+    ex_full = wire_format.render_action_input('{"path": "app.py"}')
     base_modes = f"""\
 
   Pick the right mode for the question — full reads burn context budget,
@@ -237,19 +253,29 @@ def _build_read_symbols_inline(wire_format) -> str:
     envelope is taught by the Format Rules section, not by repeating
     a wrapper at every inline example. See ``_build_read_file_inline``
     docstring for the rationale (small-model placeholder anchoring).
+
+    The action_input fragment passes through
+    ``wire_format.render_action_input`` so a future plugin can swap
+    the inner shape without changing this builder. Both current
+    plugins return identity.
     """
     from agent_cli.tools.symbols import get_supported_extensions
 
     exts = ", ".join(get_supported_extensions())
-    list_py = '{"path": "auth.py", "mode": "list"}'
-    list_cpp = '{"path": "src/foo.cpp", "mode": "list"}'
-    list_md = '{"path": "README.md", "mode": "list"}'
-    list_search1 = '{"path": "auth.py", "mode": "list", "search": "login"}'
-    list_search2 = '{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}'
-    list_search3 = '{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}'
-    fetch_py = '{"path": "auth.py", "mode": "fetch", "name": "User.login"}'
-    fetch_cpp = '{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}'
-    fetch_md = '{"path": "README.md", "mode": "fetch", "name": "## Setup"}'
+    rai = wire_format.render_action_input
+    list_py = rai('{"path": "auth.py", "mode": "list"}')
+    list_cpp = rai('{"path": "src/foo.cpp", "mode": "list"}')
+    list_md = rai('{"path": "README.md", "mode": "list"}')
+    list_search1 = rai('{"path": "auth.py", "mode": "list", "search": "login"}')
+    list_search2 = rai(
+        '{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}'
+    )
+    list_search3 = rai(
+        '{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}'
+    )
+    fetch_py = rai('{"path": "auth.py", "mode": "fetch", "name": "User.login"}')
+    fetch_cpp = rai('{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}')
+    fetch_md = rai('{"path": "README.md", "mode": "fetch", "name": "## Setup"}')
     return f"""\
 
   Structure-aware file reader. Two modes:
