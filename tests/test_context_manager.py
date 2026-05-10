@@ -20,6 +20,20 @@ def ctx(session_dir):
     return ContextManager(session_dir, max_context_tokens=10000)
 
 
+@pytest.fixture
+def wf():
+    """ReAct wire-format plugin used by ``_to_natural_language`` tests.
+
+    The function takes the plugin as a parameter so the assistant
+    branch can delegate to ``render_assistant_from_history``. Tests
+    against the plugin's behavior live in ``test_wire_formats_react``;
+    here we only need a real plugin that produces the same string
+    shapes the legacy free function used to."""
+    from agent_cli.wire_formats import get as get_wire_format
+
+    return get_wire_format("react")
+
+
 # ── FIFO Behavior ─────────────────────────────────────
 
 
@@ -165,38 +179,38 @@ class TestSessionResume:
 
 
 class TestNaturalLanguageConversion:
-    def test_user_input(self):
+    def test_user_input(self, wf):
         msg = {"role": "user", "content": "인증 시스템을 리팩토링 해줘"}
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert result["role"] == "user"
         assert result["content"] == "인증 시스템을 리팩토링 해줘"
 
-    def test_assistant_tool_call(self):
+    def test_assistant_tool_call(self, wf):
         msg = {
             "role": "assistant",
             "thought": "auth.py를 읽어 구조를 파악해야 한다",
             "action": "read_file",
             "action_input": {"path": "src/auth.py"},
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert result["role"] == "assistant"
         assert "auth.py를 읽어 구조를 파악해야 한다" in result["content"]
         assert "action: read_file(src/auth.py)" in result["content"]
 
-    def test_assistant_complete(self):
+    def test_assistant_complete(self, wf):
         msg = {
             "role": "assistant",
             "thought": "모든 작업이 완료되었다",
             "action": "complete",
             "action_input": {"result": "JWT 리팩토링 완료"},
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert result["role"] == "assistant"
         assert "모든 작업이 완료되었다" in result["content"]
         assert "JWT 리팩토링 완료" in result["content"]
         assert "→ complete" not in result["content"]
 
-    def test_assistant_delegate(self):
+    def test_assistant_delegate(self, wf):
         msg = {
             "role": "assistant",
             "thought": "explorer에게 의존성 분석을 위임하겠다",
@@ -205,42 +219,42 @@ class TestNaturalLanguageConversion:
                 "tasks": [{"task": "auth.py 의존성 조사", "agent": "explorer"}]
             },
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert "action: delegate(explorer" in result["content"]
 
-    def test_assistant_shell(self):
+    def test_assistant_shell(self, wf):
         msg = {
             "role": "assistant",
             "thought": "테스트를 실행하겠다",
             "action": "shell",
             "action_input": {"command": "pytest tests/ -v"},
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert "action: shell(pytest tests/ -v)" in result["content"]
 
-    def test_assistant_run_skill(self):
+    def test_assistant_run_skill(self, wf):
         msg = {
             "role": "assistant",
             "thought": "코드를 요약하겠다",
             "action": "run_skill",
             "action_input": {"name": "summarize", "arguments": "src/"},
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert "action: run_skill(summarize(src/))" in result["content"]
 
-    def test_observation_read_file(self):
+    def test_observation_read_file(self, wf):
         msg = {
             "role": "user",
             "tool": "read_file",
             "args": {"path": "src/auth.py"},
             "content": "import hashlib\nclass AuthManager:\n    pass",
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert result["role"] == "user"
         assert "[read_file] src/auth.py" in result["content"]
         assert "import hashlib" in result["content"]
 
-    def test_observation_with_artifact(self):
+    def test_observation_with_artifact(self, wf):
         msg = {
             "role": "user",
             "tool": "delegate",
@@ -248,36 +262,36 @@ class TestNaturalLanguageConversion:
             "content": "auth.py는 3곳에서 import됨",
             "artifact": "delegate_explorer_b7c1_20260405T143045567/",
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert "[delegate]" in result["content"]
         assert "auth.py는 3곳에서 import됨" in result["content"]
         assert "→ delegate_explorer_b7c1_20260405T143045567/" in result["content"]
 
-    def test_observation_shell(self):
+    def test_observation_shell(self, wf):
         msg = {
             "role": "user",
             "tool": "shell",
             "args": {"command": "pytest tests/ -v"},
             "content": "12 passed, 1 failed",
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert "[shell]" in result["content"]
         assert "12 passed, 1 failed" in result["content"]
 
-    def test_assistant_no_thought(self):
+    def test_assistant_no_thought(self, wf):
         """Assistant message with action but no thought."""
         msg = {
             "role": "assistant",
             "action": "read_file",
             "action_input": {"path": "test.py"},
         }
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert "action: read_file(test.py)" in result["content"]
 
-    def test_assistant_plain_content(self):
+    def test_assistant_plain_content(self, wf):
         """Fallback: assistant message with only content field."""
         msg = {"role": "assistant", "content": "plain response"}
-        result = _to_natural_language(msg)
+        result = _to_natural_language(msg, wf)
         assert result["content"] == "plain response"
 
 

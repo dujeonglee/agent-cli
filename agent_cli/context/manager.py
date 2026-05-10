@@ -11,10 +11,7 @@ import json
 from pathlib import Path
 
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.tools.action_summary import (
-    summarize_action_args,
-    summarize_tool_args,
-)
+from agent_cli.tools.action_summary import summarize_tool_args
 
 
 # ── Default token budget ─────────────────────────────────
@@ -92,7 +89,7 @@ class ContextManager:
 
     def get_messages(self) -> list[dict]:
         """Return cached messages converted to natural language for LLM."""
-        return [_to_natural_language(msg) for msg in self._cache]
+        return [_to_natural_language(msg, self.wire_format) for msg in self._cache]
 
     def get_raw_messages(self) -> list[dict]:
         """Return cached messages as raw JSON dicts (no conversion)."""
@@ -199,8 +196,8 @@ def _estimate_message_tokens(msg: dict) -> int:
 # ── Natural language conversion ───────────────────────
 
 
-def _to_natural_language(msg: dict) -> dict:
-    """Convert a JSON history record to a natural language message for LLM.
+def _to_natural_language(msg: dict, wire_format) -> dict:
+    """Convert a JSON history record to a natural-language message for the LLM.
 
     Input formats (from history.jsonl):
         User input:     {"role":"user", "content":"..."}
@@ -210,6 +207,11 @@ def _to_natural_language(msg: dict) -> dict:
 
     Output format (for chat completion):
         {"role": "user"|"assistant", "content": "...natural language..."}
+
+    Assistant records are handed off to ``wire_format.render_assistant_
+    from_history`` so each plugin owns the on-disk → message conversion
+    for its own format. The user / tool branches live here because they
+    are format-agnostic.
     """
     role = msg.get("role", "user")
 
@@ -219,32 +221,7 @@ def _to_natural_language(msg: dict) -> dict:
             return _convert_observation(msg)
         return {"role": "user", "content": msg.get("content", "")}
 
-    thought = msg.get("thought", "")
-    action = msg.get("action", "")
-    action_input = msg.get("action_input", {})
-
-    if action == "complete":
-        result = ""
-        if isinstance(action_input, dict):
-            result = action_input.get("result", "")
-        elif isinstance(action_input, str):
-            result = action_input
-        if thought:
-            content = f"thought: {thought}\n\n{result}"
-        else:
-            content = result
-        return {"role": "assistant", "content": content.strip()}
-
-    if action:
-        args_summary = summarize_action_args(action, action_input)
-        parts = []
-        if thought:
-            parts.append(f"thought: {thought}")
-        parts.append(f"action: {action}({args_summary})")
-        return {"role": "assistant", "content": "\n".join(parts)}
-
-    content = msg.get("content", thought)
-    return {"role": "assistant", "content": content}
+    return wire_format.render_assistant_from_history(msg)
 
 
 def _convert_observation(msg: dict) -> dict:

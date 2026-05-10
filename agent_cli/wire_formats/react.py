@@ -257,12 +257,12 @@ class ReActFormat:
         return {}
 
     # ─── History / context-window policy ──────────────────────
-    # ``normalize_assistant_for_messages`` (H3) and
-    # ``serialize_assistant_for_history`` (H2) are the sole owners of
-    # their respective conversions. ``render_assistant_from_history``
-    # still has body duplication with ``manager._to_natural_language``
-    # (assistant branch); H4 will switch that call site and H5 will
-    # remove the duplicate.
+    # All three history-pipeline knobs are now plugin-owned:
+    # ``normalize_assistant_for_messages`` (H3),
+    # ``serialize_assistant_for_history`` (H2), and
+    # ``render_assistant_from_history`` (H4). ``manager._to_natural_
+    # language`` keeps only the user / tool branches; the assistant
+    # branch is delegated here.
 
     def normalize_assistant_for_messages(self, raw: str) -> str:
         # ReAct: raw IS the on-the-wire shape, so identity preserves
