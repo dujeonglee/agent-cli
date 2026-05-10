@@ -73,7 +73,46 @@ def list_names() -> list[str]:
     return sorted(_registry)
 
 
-__all__ = ["ParsedAction", "WireFormat", "register", "get", "list_names"]
+# ── Format-agnostic system-injected user-message prefixes ─────
+# Used by ``all_system_user_prefixes`` below. These three are emitted
+# by code paths that don't belong to any single wire format:
+#   - ``"⚡ User interrupted."`` — Ctrl-C handler in the loop.
+#   - ``"You have called"`` — B1 (action loop) probe_progress primitive.
+#   - ``"You were asked to:"`` — B1 restate_task primitive.
+# Format-specific framings (parse-fail / no-action / no-thought
+# retry messages) live in each plugin's ``system_user_prefixes()`` and
+# are unioned at consume time.
+_FORMAT_AGNOSTIC_USER_PREFIXES: tuple[str, ...] = (
+    "⚡ User interrupted.",
+    "You have called",
+    "You were asked to:",
+)
+
+
+def all_system_user_prefixes() -> tuple[str, ...]:
+    """Return every prefix that marks a user-role message as system-injected.
+
+    The single entry point for code that needs to filter system notices
+    out of conversation history (resume preview, telemetry, anything
+    that reads ``history.jsonl``). Returned tuple = format-agnostic
+    prefixes + every registered plugin's ``system_user_prefixes()``.
+
+    Order is not significant — callers use ``any(startswith(p) for p in …)``.
+    """
+    plugin_prefixes: tuple[str, ...] = ()
+    for name in sorted(_registry):
+        plugin_prefixes += _registry[name].system_user_prefixes()
+    return _FORMAT_AGNOSTIC_USER_PREFIXES + plugin_prefixes
+
+
+__all__ = [
+    "ParsedAction",
+    "WireFormat",
+    "register",
+    "get",
+    "list_names",
+    "all_system_user_prefixes",
+]
 
 
 # ── Builtin plugin registration ──────────────────────────────

@@ -240,3 +240,56 @@ class TestRegistry:
 
         assert PA is ParsedAction
         assert WF is WireFormat
+
+
+class TestAllSystemUserPrefixes:
+    """``all_system_user_prefixes`` is the single entry point for any code
+    that needs to filter system-injected user messages (resume preview,
+    telemetry). It must combine format-agnostic prefixes with every
+    registered plugin's prefixes — adding a new plugin must extend the
+    returned list automatically."""
+
+    def test_includes_format_agnostic_prefixes(self):
+        from agent_cli.wire_formats import all_system_user_prefixes
+
+        prefixes = all_system_user_prefixes()
+        # B1 (action loop) and interrupt — emitted by code paths
+        # outside any single wire format.
+        assert "⚡ User interrupted." in prefixes
+        assert "You have called" in prefixes
+        assert "You were asked to:" in prefixes
+
+    def test_includes_registered_plugin_prefixes(self):
+        # ReAct is registered at import time; its three framings must
+        # show up in the union without any extra wiring.
+        from agent_cli.wire_formats import all_system_user_prefixes
+
+        prefixes = all_system_user_prefixes()
+        assert "Your response was not valid JSON." in prefixes
+        assert "Your JSON was parsed but has no action." in prefixes
+        assert "Your JSON was missing the 'thought' field." in prefixes
+
+    def test_isolated_registry_yields_only_format_agnostic(self, isolated_registry):
+        # With a fresh empty registry no plugins contribute prefixes —
+        # only the format-agnostic baseline remains. This confirms the
+        # function actually pulls from the registry rather than caching.
+        from agent_cli.wire_formats import all_system_user_prefixes
+
+        prefixes = all_system_user_prefixes()
+        assert "⚡ User interrupted." in prefixes
+        assert "Your response was not valid JSON." not in prefixes
+
+    def test_new_registration_extends_result(self, isolated_registry):
+        # Registering a new plugin must extend ``all_system_user_prefixes``
+        # without touching session.py or any other consumer — that is
+        # the whole point of routing through this function.
+        from agent_cli.wire_formats import all_system_user_prefixes, register
+
+        before = all_system_user_prefixes()
+        plugin = _MockFormat()  # name "_mock_for_tests"
+        # Override system_user_prefixes so the test assertion is unique.
+        plugin.system_user_prefixes = lambda: ("UNIQUE_MOCK_FRAMING_42",)
+        register(plugin)
+        after = all_system_user_prefixes()
+        assert "UNIQUE_MOCK_FRAMING_42" not in before
+        assert "UNIQUE_MOCK_FRAMING_42" in after

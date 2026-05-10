@@ -131,15 +131,22 @@ def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
     A "user query" is a role=user message that is neither a tool
     observation (content starting with "Observation:" or carrying a
     `tool` field) nor a loop-emitted system notice (retry hints,
-    interrupt notices — see `SYSTEM_USER_PREFIXES`). Those all share
-    the role=user shape but are not real user input.
+    interrupt notices). Those all share the role=user shape but are
+    not real user input.
+
+    The set of "system notice" prefixes comes from
+    :func:`agent_cli.wire_formats.all_system_user_prefixes` so any
+    registered wire-format plugin's framing strings are picked up
+    automatically — no edit here when a new plugin is added.
 
     The paired final is the next role=assistant `complete` action's
     result. If a new user query arrives before the previous one
     completes, the previous pair is closed with "(no completion)" so
     interrupted runs still surface.
     """
-    from agent_cli.constants import SYSTEM_USER_PREFIXES
+    from agent_cli.wire_formats import all_system_user_prefixes
+
+    system_prefixes = all_system_user_prefixes()
 
     if not history_path.is_file():
         return []
@@ -162,7 +169,7 @@ def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
                 content = msg.get("content", "")
                 if content.startswith("Observation:") or msg.get("tool"):
                     continue
-                if any(content.startswith(p) for p in SYSTEM_USER_PREFIXES):
+                if any(content.startswith(p) for p in system_prefixes):
                     continue
                 if pending is not None:
                     pairs.append((pending, "(no completion)"))
