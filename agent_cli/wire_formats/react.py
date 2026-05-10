@@ -264,32 +264,22 @@ def _populate_from_dict(result: ParsedAction, data: dict) -> None:
 
 
 # ── Prompt section ───────────────────────────────────────────
-# Mirrors ``prompts/system_prompt.FORMAT_RULES`` verbatim. Will become
-# the single source of truth in Step 4 when ``build_system_prompt``
-# switches to ``wire_format.format_rules()``.
-_FORMAT_RULES = """\
-## Response Format
-You MUST output a single JSON object only — no markdown fences, no surrounding
-text, no `observation` field (it is injected by the system):
+# The Format Rules section is now composed by the shared builder
+# ``_format_rules_builder.build_format_rules`` so that two plugins
+# rendering "the same logical content" produce byte-equivalent shared
+# text and only differ in the wire-shape-specific fragments returned
+# by ``format_rules_anchor`` / ``render_full_example`` /
+# ``format_rules_field_specific`` below.
 
-{"thought": "your reasoning", "action": "tool_name", "action_input": {...}}
+_FORMAT_RULES_ANCHOR = (
+    "You MUST output a single JSON object only — no markdown fences, no surrounding\n"
+    "text, no `observation` field (it is injected by the system):"
+)
 
-When the task is done, first verify with `ready_for_review`, then call `complete`:
-{"thought": "summary of what I did", "action": "ready_for_review", "action_input": {"summary": "..."}}
-{"thought": "confirmed all requirements met", "action": "complete", "action_input": {"result": "..."}}
-
-Rules:
-1. `thought` MUST state purpose (what you want to achieve) and reason (why this action).
-2. `action_input` MUST match the tool's input schema.
-3. If an observation shows an error, fix parameters and retry.
-4. Exactly ONE action per turn. Do not use an `actions` array or list in `action` —
-   multiple tools = multiple turns; each turn's observation informs the next.
-5. Make that one action count — pick the most efficient path:
-   - Use batch input fields (`edit_file.edits`, `delegate.tasks`) instead of repeating the same tool across turns.
-   - Combine shell operations into a single call (pipelines, multi-file surveys, batch listings) — one shell call often replaces many `read_file` turns.
-   - Pick the narrowest read mode that answers the question (search > targeted line range > full file).
-   - Do not "peek" with one tool only to redo the work with another.
-6. Respond in the user's language."""
+_FORMAT_RULES_FIELD_SPECIFIC = (
+    "1. `thought` MUST state purpose (what you want to achieve) and reason (why this action).\n"
+    "2. `action_input` MUST match the tool's input schema."
+)
 
 
 # ── Recovery fragments ────────────────────────────────────────
@@ -380,23 +370,28 @@ class ReActFormat:
     # ─── Prompt ────────────────────────────────────────────────
 
     def format_rules(self) -> str:
-        return _FORMAT_RULES
+        from agent_cli.wire_formats._format_rules_builder import build_format_rules
 
-    def wrap_action_input_example(self, action: str, args_json: str, idval: str) -> str:
-        # Inline tool guide example — show ONLY the action_input dict.
-        # ReAct's surrounding ``{"thought","action","action_input"}``
-        # envelope is described in ``format_rules``; the model's prior
-        # already wraps. Identity preserves legacy guide output.
-        return args_json
+        return build_format_rules(self)
 
-    def wrap_full_call_example(self, action: str, args_json: str, idval: str) -> str:
-        # Skill/agent invocation example — must show action + action_input
-        # so the reader knows which tool to call. Returns the legacy
-        # bare-ReAct literal (``{"action":...,"action_input":...}``)
-        # without ``thought`` because skill/agent doc examples have
-        # historically omitted thought (it's the user's reasoning,
-        # not part of the invocation template).
-        return f'{{"action": "{action}", "action_input": {args_json}}}'
+    def format_rules_anchor(self) -> str:
+        return _FORMAT_RULES_ANCHOR
+
+    def format_rules_field_specific(self) -> str:
+        return _FORMAT_RULES_FIELD_SPECIFIC
+
+    def render_full_example(self, *, thought, action: str, action_input: str) -> str:
+        # ReAct shape: a single JSON object. With ``thought`` the
+        # full schema fields appear; without it (skill/agent
+        # invocation examples) the field is simply omitted — that
+        # matches the legacy minimal-invocation literal that lived
+        # in ``build_skill_descriptions`` / ``build_agent_descriptions``.
+        parts = []
+        if thought is not None:
+            parts.append(f'"thought": "{thought}"')
+        parts.append(f'"action": "{action}"')
+        parts.append(f'"action_input": {action_input}')
+        return "{" + ", ".join(parts) + "}"
 
     # ─── Parsing ───────────────────────────────────────────────
 

@@ -127,61 +127,72 @@ class TestParseReturnsParsedAction:
 # ─── Wrap example methods (two flavors) ─────────────
 
 
-class TestWrapActionInputExample:
-    """Inline tool guide flavor — show ONLY the action_input dict."""
+class TestRenderFullExample:
+    """The single rendering hook the Format Rules builder calls. ReAct
+    emits the bare JSON dict — full schema fields when ``thought`` is
+    given, ``thought`` key omitted entirely when it isn't (the legacy
+    ``build_skill_descriptions`` / ``build_agent_descriptions`` shape).
+    """
 
-    def test_identity_for_react(self):
-        # ReAct doesn't envelope-wrap; the surrounding shape lives in
-        # FORMAT_RULES and the inline guides show only the action_input
-        # dict. Plugin returns the dict unchanged.
-        out = ReActFormat().wrap_action_input_example(
-            action="read_file",
-            args_json='{"path": "x.py"}',
-            idval="r1",
+    def test_full_emission_with_thought(self):
+        out = ReActFormat().render_full_example(
+            thought="your reasoning",
+            action="tool_name",
+            action_input="{...}",
         )
-        assert out == '{"path": "x.py"}'
-
-    def test_idval_unused_for_react(self):
-        # The id is meaningful only for envelope formats; ReAct must
-        # not embed it anywhere — the underlying parser would be
-        # confused by an extraneous field.
-        out = ReActFormat().wrap_action_input_example("foo", "{}", "anything")
-        assert "anything" not in out
-
-    def test_action_name_not_embedded_for_react(self):
-        # Inline guide flavor must NOT add the action name — it's
-        # already obvious from the guide's header. Adding it would
-        # double-state and could confuse the model about whether the
-        # guide is showing the full call or the inner shape.
-        out = ReActFormat().wrap_action_input_example(
-            "read_file", '{"path": "x"}', "r1"
+        assert out == (
+            '{"thought": "your reasoning", '
+            '"action": "tool_name", '
+            '"action_input": {...}}'
         )
-        assert '"action"' not in out
 
-
-class TestWrapFullCallExample:
-    """Skill/agent invocation flavor — must show action + action_input."""
-
-    def test_react_returns_bare_react_invocation(self):
-        # Matches the legacy literal in ``build_skill_descriptions`` /
-        # ``build_agent_descriptions``: a single JSON object with
-        # ``action`` and ``action_input`` keys. No ``thought`` key —
-        # those doc examples have historically omitted it.
-        out = ReActFormat().wrap_full_call_example(
+    def test_invocation_only_when_thought_is_none(self):
+        """``thought=None`` is the skill / agent invocation example
+        case. ReAct simply omits the field — this matches the legacy
+        invocation literal that lived in ``build_skill_descriptions``."""
+        out = ReActFormat().render_full_example(
+            thought=None,
             action="run_skill",
-            args_json='{"name": "x", "arguments": "y"}',
-            idval="sk1",
+            action_input='{"name": "x", "arguments": "y"}',
         )
         assert out == (
             '{"action": "run_skill", "action_input": {"name": "x", "arguments": "y"}}'
         )
-
-    def test_react_full_call_no_thought_key(self):
-        # ``thought`` is the user's reasoning, not part of the
-        # invocation template. Docs show the ``{action, action_input}``
-        # pair only.
-        out = ReActFormat().wrap_full_call_example("delegate", '{"tasks": []}', "ag1")
         assert '"thought"' not in out
+
+    def test_action_input_string_passed_verbatim(self):
+        """The plugin receives a JSON string, not a dict, so the caller
+        controls whitespace / key order. Plugin must splice it as-is."""
+        out = ReActFormat().render_full_example(
+            thought="hi",
+            action="x",
+            action_input='{"a": 1, "b": 2}',
+        )
+        assert '"action_input": {"a": 1, "b": 2}' in out
+
+
+class TestFormatRulesAnchor:
+    """The first sentence of the section after the heading."""
+
+    def test_react_anchor_demands_single_json_object(self):
+        anchor = ReActFormat().format_rules_anchor()
+        assert "JSON object" in anchor
+        assert "MUST" in anchor
+
+
+class TestFormatRulesFieldSpecific:
+    """Rules 1 and 2 — the field-name-specific obligations."""
+
+    def test_rule_1_thought_must_state_purpose(self):
+        rules = ReActFormat().format_rules_field_specific()
+        assert rules.startswith("1.")
+        assert "thought" in rules
+        assert "MUST" in rules
+
+    def test_rule_2_action_input_must_match_schema(self):
+        rules = ReActFormat().format_rules_field_specific()
+        assert "\n2." in rules
+        assert "action_input" in rules
 
 
 # ─── Lifecycle defaults ─────────────────────────────

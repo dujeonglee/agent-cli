@@ -83,50 +83,75 @@ class WireFormat(Protocol):
     valid, not a drift signal."""
 
     # ─── Prompt ────────────────────────────────────────────────
+    # The ``## Response Format`` section is composed by
+    # ``wire_formats._format_rules_builder.build_format_rules``: it
+    # carries the shared text (completion intro, rules 3-6) and calls
+    # the three plugin methods below for the wire-shape-dependent parts.
+    # Plugins themselves implement ``format_rules()`` simply by
+    # returning ``build_format_rules(self)``.
 
     def format_rules(self) -> str:
         """Return the ``## Response Format`` section body for this plugin.
 
-        The returned string is appended verbatim to the system prompt;
-        plugins may include their own examples, constraints, and section
-        header.
+        Plugins typically delegate to
+        ``_format_rules_builder.build_format_rules(self)``; the
+        builder sources the shared text and calls the rendering hooks
+        below. Returning a hand-written string instead is permitted
+        for plugins whose section diverges so much that templating
+        would obscure rather than clarify.
         """
         ...
 
-    def wrap_action_input_example(self, action: str, args_json: str, idval: str) -> str:
-        """Render an example that shows ONLY the ``action_input`` shape.
+    def format_rules_anchor(self) -> str:
+        """One-sentence anchor that opens the section after the heading.
 
-        Used by **inline tool guides** (``read_file``, ``read_symbols``,
-        ``delegate``) where the surrounding tool name is already obvious
-        from the guide's header — the example only needs to demonstrate
-        what the dict inside ``action_input`` looks like.
-
-        For ReAct this is identity: ``args_json`` is returned verbatim
-        because the surrounding ``{"thought","action","action_input"}``
-        envelope is described once in ``format_rules`` and the model's
-        prior already wraps. For envelope formats this returns the full
-        wire shape (e.g. ``<tool_use id="r1">{"action":...,"action_input":...}</tool_use>``)
-        so each guide example matches what the model is expected to emit.
-
-        Sister method: :meth:`wrap_full_call_example` for invocation
-        examples that need the action name visible (skill/agent docs).
+        Tells the model what wire shape it must emit. ReAct says
+        "You MUST output a single JSON object only — …"; envelope
+        formats say "Output your response inside a single <tool_use>
+        envelope. …". Newlines are allowed for multi-line anchors.
         """
         ...
 
-    def wrap_full_call_example(self, action: str, args_json: str, idval: str) -> str:
-        """Render an example that shows the FULL invocation shape.
+    def render_full_example(self, *, thought, action: str, action_input: str) -> str:
+        """Render one full example of the wire shape.
 
-        Used by **skill/agent invocation examples** where the reader
-        does not yet know which tool to call — the example must spell
-        out both ``action`` and ``action_input``.
+        The builder calls this three times with shared logical inputs
+        — schema example, ``ready_for_review`` example, ``complete``
+        example — so the *content* is identical across plugins and
+        only the on-the-wire form differs. Measurement of model
+        compliance can therefore compare two plugins fairly.
 
-        For ReAct this returns the bare ``{"action":...,"action_input":...}``
-        invocation as a single JSON object (matching the legacy literal
-        in ``build_skill_descriptions`` / ``build_agent_descriptions``).
-        For envelope formats this returns the full wire shape.
+        Args:
+            thought: Reasoning text. ``None`` means "invocation only";
+                each plugin chooses how to handle the absent slot —
+                ReAct simply omits the field, envelope formats may
+                substitute a short placeholder so the slot is visible.
+            action: Action name (e.g. ``"read_file"``,
+                ``"ready_for_review"``).
+            action_input: action_input as a JSON string. Plugins
+                splice it into their wire shape verbatim — receiving
+                a string rather than a dict avoids each plugin having
+                to make formatting decisions about whitespace / key
+                order.
 
-        Sister method: :meth:`wrap_action_input_example` for guide
-        examples where the action name is implicit.
+        Returns:
+            The rendered example, no surrounding whitespace, no
+            trailing newline.
+        """
+        ...
+
+    def format_rules_field_specific(self) -> str:
+        """Lines for Rules 1 and 2 of the section.
+
+        Rules 1 and 2 obligate the model to populate the reasoning /
+        thought slot and the action input slot, but the field names
+        differ by wire shape (``thought`` / ``reasoning text``,
+        ``action_input`` / ``JSON dict``). Rules 3-6 are shared text
+        and live in the builder.
+
+        The returned string contains both rules joined by newlines
+        and starts with ``"1. …\\n2. …"``; it is spliced between
+        ``"Rules:"`` and the shared tail.
         """
         ...
 

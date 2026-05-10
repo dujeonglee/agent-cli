@@ -136,9 +136,12 @@ def _build_delegate_inline(wire_format) -> str:
             '{"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}',
         ),
     ]
+    # Inline tool-guide examples show only the action_input dict —
+    # the surrounding tool name (delegate) is already in the guide
+    # header, and inlining the wire-shape envelope per example
+    # anchored small models toward placeholder reasoning emissions.
     rendered = "\n".join(
-        f"  - {label}: {wire_format.wrap_action_input_example('delegate', args, f'd{i}')}"
-        for i, (label, args) in enumerate(examples, start=1)
+        f"  - {label}: {args}" for _, (label, args) in enumerate(examples, start=1)
     )
     return f"""\
 
@@ -171,25 +174,18 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     tools), the steering is omitted to avoid pointing the model at a
     tool it cannot call.
 
-    Each mode's call example is rendered through
-    ``wire_format.wrap_action_input_example`` so envelope plugins (future) can
-    show the full wire-shape; ReAct's identity wrap keeps the bare
-    action_input dict the plugin's prior already wraps.
+    Each mode's example shows only the action_input dict — the
+    surrounding tool name is already stated in the guide header, and
+    repeating the wire-shape envelope at every example anchored small
+    models toward placeholder reasoning emissions in the first probe.
+    Wire-shape learning is carried by the Format Rules section
+    (``wire_format.format_rules()``) and skill / agent invocation
+    examples (``render_full_example``).
     """
-    ex_stat = wire_format.wrap_action_input_example(
-        "read_file", '{"path": "app.py", "stat": true}', "r1"
-    )
-    ex_search = wire_format.wrap_action_input_example(
-        "read_file", '{"path": "app.py", "search": "login", "context": 5}', "r2"
-    )
-    ex_partial = wire_format.wrap_action_input_example(
-        "read_file",
-        '{"path": "app.py", "line_start": 100, "line_end": 600}',
-        "r3",
-    )
-    ex_full = wire_format.wrap_action_input_example(
-        "read_file", '{"path": "app.py"}', "r4"
-    )
+    ex_stat = '{"path": "app.py", "stat": true}'
+    ex_search = '{"path": "app.py", "search": "login", "context": 5}'
+    ex_partial = '{"path": "app.py", "line_start": 100, "line_end": 600}'
+    ex_full = '{"path": "app.py"}'
     base_modes = f"""\
 
   Pick the right mode for the question — full reads burn context budget,
@@ -237,52 +233,23 @@ def _build_read_symbols_inline(wire_format) -> str:
     :func:`agent_cli.tools.symbols.get_supported_extensions` so adding a
     grammar to ``_EXT_TO_LANG`` automatically updates the prompt.
 
-    Each call example is rendered through ``wire_format.wrap_action_input_example``
-    so envelope plugins (future) can show the full wire-shape; ReAct's
-    identity wrap keeps the bare action_input dict.
+    Examples show only the action_input dict — the wire-shape
+    envelope is taught by the Format Rules section, not by repeating
+    a wrapper at every inline example. See ``_build_read_file_inline``
+    docstring for the rationale (small-model placeholder anchoring).
     """
     from agent_cli.tools.symbols import get_supported_extensions
 
     exts = ", ".join(get_supported_extensions())
-    list_py = wire_format.wrap_action_input_example(
-        "read_symbols", '{"path": "auth.py", "mode": "list"}', "rs1"
-    )
-    list_cpp = wire_format.wrap_action_input_example(
-        "read_symbols", '{"path": "src/foo.cpp", "mode": "list"}', "rs2"
-    )
-    list_md = wire_format.wrap_action_input_example(
-        "read_symbols", '{"path": "README.md", "mode": "list"}', "rs3"
-    )
-    list_search1 = wire_format.wrap_action_input_example(
-        "read_symbols",
-        '{"path": "auth.py", "mode": "list", "search": "login"}',
-        "rs4",
-    )
-    list_search2 = wire_format.wrap_action_input_example(
-        "read_symbols",
-        '{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}',
-        "rs5",
-    )
-    list_search3 = wire_format.wrap_action_input_example(
-        "read_symbols",
-        '{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}',
-        "rs6",
-    )
-    fetch_py = wire_format.wrap_action_input_example(
-        "read_symbols",
-        '{"path": "auth.py", "mode": "fetch", "name": "User.login"}',
-        "rs7",
-    )
-    fetch_cpp = wire_format.wrap_action_input_example(
-        "read_symbols",
-        '{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}',
-        "rs8",
-    )
-    fetch_md = wire_format.wrap_action_input_example(
-        "read_symbols",
-        '{"path": "README.md", "mode": "fetch", "name": "## Setup"}',
-        "rs9",
-    )
+    list_py = '{"path": "auth.py", "mode": "list"}'
+    list_cpp = '{"path": "src/foo.cpp", "mode": "list"}'
+    list_md = '{"path": "README.md", "mode": "list"}'
+    list_search1 = '{"path": "auth.py", "mode": "list", "search": "login"}'
+    list_search2 = '{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}'
+    list_search3 = '{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}'
+    fetch_py = '{"path": "auth.py", "mode": "fetch", "name": "User.login"}'
+    fetch_cpp = '{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}'
+    fetch_md = '{"path": "README.md", "mode": "fetch", "name": "## Setup"}'
     return f"""\
 
   Structure-aware file reader. Two modes:
@@ -357,10 +324,8 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
     """Build the tool→inline-guide map for the given active tools.
 
     ``read_file``'s guide depends on whether ``read_symbols`` is also
-    active (steering line gets added in that case), and call examples
-    in every guide are rendered through ``wire_format.wrap_action_input_example``,
-    so the map cannot be a static module-level dict — it's rebuilt per
-    call.
+    active (steering line gets added in that case), so the map cannot
+    be a static module-level dict — it's rebuilt per call.
 
     ``edit_file`` and ``ask`` guides have no top-level call examples —
     edit_file's dict literals are inner ``edits[i]`` items (not full
@@ -569,15 +534,13 @@ def _build_context_recovery(session_dir: str) -> str:
 def build_agent_descriptions(wire_format=None) -> str:
     """Build agent descriptions for system prompt injection.
 
-    Uses the delegate module's agent loader to discover available agents.
-    Uses ``wrap_full_call_example`` so the example shows
-    ``{"action": "delegate", "action_input": {...}}`` — matching the
-    sibling ``build_skill_descriptions`` form. The legacy literal in
-    this function omitted the ``action`` key (showed only the inner
-    ``{"tasks": ...}`` dict), which was inconsistent with the skill
-    section and slightly less informative for the model. The plugin
-    extraction takes the opportunity to unify the two doc sections on
-    the more explicit ``full_call`` shape.
+    Uses the delegate module's agent loader to discover available
+    agents. The invocation example for ``delegate`` is rendered
+    through ``wire_format.render_full_example(thought=None, ...)`` —
+    same call shape as the sibling ``build_skill_descriptions``
+    section, ``thought=None`` because skill / agent docs historically
+    show only the invocation envelope (the user's thought is the
+    user's, not part of the doc template).
 
     ``wire_format=None`` falls back to the registered ``"react"`` plugin
     so test callers don't have to thread the registry through.
@@ -598,10 +561,10 @@ def build_agent_descriptions(wire_format=None) -> str:
     if not agents:
         return ""
 
-    example = wire_format.wrap_full_call_example(
-        "delegate",
-        '{"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
-        "ag1",
+    example = wire_format.render_full_example(
+        thought=None,
+        action="delegate",
+        action_input='{"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
     )
     lines = [
         "## Available Agents",
@@ -638,13 +601,13 @@ def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> st
     if not skills:
         return ""
 
-    # ``wrap_full_call_example`` (not ``wrap_action_input_example``) —
-    # skill docs need the action name visible. See the rationale in
-    # ``build_agent_descriptions``'s docstring.
-    example = wire_format.wrap_full_call_example(
-        "run_skill",
-        '{"name": "skill-name", "arguments": "..."}',
-        "sk1",
+    # render_full_example with thought=None — skill docs need the
+    # action name visible (matches the sibling ``build_agent_descriptions``
+    # form). See its docstring for the thought=None rationale.
+    example = wire_format.render_full_example(
+        thought=None,
+        action="run_skill",
+        action_input='{"name": "skill-name", "arguments": "..."}',
     )
     lines = [
         "## Available Skills",

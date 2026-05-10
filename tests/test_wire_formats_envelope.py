@@ -7,8 +7,10 @@ Pins four areas:
    envelope`` resolves on the CLI.
 2. **Parser** — envelope shape, action-attribute extraction,
    thought / action_input separation, fail-fast on malformed JSON.
-3. **Wrappers** — wrap_action_input_example / wrap_full_call_example
-   produce the envelope shape (not a bare action_input dict like ReAct).
+3. **Format-rules render hooks** — ``render_full_example``,
+   ``format_rules_anchor``, ``format_rules_field_specific``: the three
+   per-plugin slots the shared builder calls, plus end-to-end
+   ``format_rules()`` integration.
 4. **Plugin surface** — Protocol satisfaction, recovery framings,
    provider hints, history-pipeline round-trip.
 """
@@ -92,11 +94,13 @@ class TestSystemPromptIntegration:
         # otherwise the model sees two contradictory formats.
         assert '"thought": "your reasoning"' not in prompt
 
-    def test_inline_tool_guide_wraps_examples_in_envelope(self):
-        """Each tool's inline guide example is rendered through
-        ``wire_format.wrap_action_input_example`` — envelope plugin
-        emits ``<tool_use ...>...</tool_use>`` envelopes. Pin one tool
-        (read_file) so we know the routing path is alive."""
+    def test_inline_tool_guide_examples_show_only_action_input(self):
+        """Inline tool guide examples are NOT wrapped in an envelope —
+        the caller passes the action_input dict through directly. The
+        first probe showed that wrapping each inline example in a
+        ``<tool_use>...</tool_use>`` block with a ``(your reasoning)``
+        placeholder anchored the model toward empty-reasoning emissions;
+        this test pins the fix so the regression doesn't reappear."""
         from agent_cli.prompts.system_prompt import build_system_prompt
         from agent_cli.providers.compat import ModelCapabilities
 
@@ -113,8 +117,14 @@ class TestSystemPromptIntegration:
             active_tools=["read_file"],
             wire_format=wire_formats.get("envelope"),
         )
-        # Envelope-shaped read_file example: action is in the XML attr.
-        assert 'action="read_file"' in prompt
+        # The read_file inline guide example shows the action_input dict
+        # bare: ``{"path": "app.py", "stat": true}`` etc. Confirm we see
+        # at least one such bare form (no envelope wrapping the example
+        # body itself).
+        assert '{"path": "app.py"' in prompt
+        # And confirm the bug regression: the placeholder reasoning
+        # rendering is gone from the prompt entirely.
+        assert "(your reasoning)" not in prompt
 
 
 # ─── Parser ────────────────────────────────────────────────
@@ -287,29 +297,112 @@ class TestParseEnvelopeEdgeCases:
 # ─── Wrappers ──────────────────────────────────────────────
 
 
-class TestExampleWrappers:
-    """wrap_action_input_example / wrap_full_call_example produce
-    the full envelope so guides reinforce the wire shape on every
-    rendering."""
+class TestRenderFullExample:
+    """The single rendering hook the Format Rules builder calls. Same
+    logical input as ReActFormat sees; the wire shape is what differs."""
 
-    def test_wrap_action_input_emits_envelope(self):
-        out = EnvelopeFormat().wrap_action_input_example(
-            action="read_file",
-            args_json='{"path": "x.py"}',
-            idval="r1",
+    def test_full_emission_with_thought(self):
+        """``thought`` populated → reasoning text on its own line(s),
+        blank line, then the JSON action_input dict."""
+        out = EnvelopeFormat().render_full_example(
+            thought="your reasoning",
+            action="tool_name",
+            action_input="{...}",
         )
-        assert out.startswith('<tool_use id="r1" action="read_file">')
-        assert out.endswith("</tool_use>")
-        assert '{"path": "x.py"}' in out
+        assert out == (
+            '<tool_use id="r1" action="tool_name">\n'
+            "your reasoning\n"
+            "\n"
+            "{...}\n"
+            "</tool_use>"
+        )
 
-    def test_wrap_full_call_alias_to_action_input(self):
-        """For envelope plugins both example types render the same
-        shape — the action name is already an XML attribute, so there
-        is no inline-vs-skill distinction to preserve."""
-        plugin = EnvelopeFormat()
-        a = plugin.wrap_action_input_example("delegate", '{"x":1}', "d1")
-        b = plugin.wrap_full_call_example("delegate", '{"x":1}', "d1")
-        assert a == b
+    def test_invocation_with_thought_none_uses_placeholder(self):
+        """``thought=None`` is the skill / agent invocation case.
+        Envelope still keeps the reasoning slot visible (collapsing
+        it would teach the model the slot is optional) so it
+        substitutes a short placeholder."""
+        out = EnvelopeFormat().render_full_example(
+            thought=None,
+            action="delegate",
+            action_input='{"tasks": []}',
+        )
+        assert out.startswith('<tool_use id="r1" action="delegate">')
+        assert "reasoning here" in out
+        assert '{"tasks": []}' in out
+        assert out.endswith("</tool_use>")
+
+    def test_action_input_string_spliced_verbatim(self):
+        """The caller controls JSON formatting; the plugin must not
+        re-quote, re-order, or reformat the action_input string."""
+        out = EnvelopeFormat().render_full_example(
+            thought="hi",
+            action="x",
+            action_input='{"a": 1, "b": 2}',
+        )
+        assert '{"a": 1, "b": 2}' in out
+
+
+class TestFormatRulesAnchor:
+    """First sentence of the Response Format section."""
+
+    def test_envelope_anchor_describes_envelope_shape(self):
+        anchor = EnvelopeFormat().format_rules_anchor()
+        assert "<tool_use>" in anchor
+
+
+class TestFormatRulesFieldSpecific:
+    """Rules 1 and 2 — envelope refers to ``reasoning text`` /
+    ``JSON dict`` rather than ReAct's ``thought`` / ``action_input``
+    field names."""
+
+    def test_rule_1_obligates_reasoning_text(self):
+        rules = EnvelopeFormat().format_rules_field_specific()
+        assert rules.startswith("1.")
+        assert "reasoning" in rules.lower()
+
+    def test_rule_2_obligates_json_dict(self):
+        rules = EnvelopeFormat().format_rules_field_specific()
+        assert "\n2." in rules
+        assert "JSON dict" in rules
+
+
+class TestFormatRulesBuilderIntegration:
+    """End-to-end: ``format_rules()`` round-trips through the shared
+    builder and produces a string containing both the envelope-specific
+    fragments (anchor, examples) and the shared text (rules 3-6)."""
+
+    def test_format_rules_contains_anchor_and_examples(self):
+        rules = EnvelopeFormat().format_rules()
+        # Anchor.
+        assert "<tool_use>" in rules
+        # All three example call sites rendered as envelopes.
+        assert rules.count("<tool_use") >= 4  # anchor mention + 3 examples
+        # Shared rules tail.
+        assert "Respond in the user's language." in rules
+
+    def test_format_rules_shares_completion_intro_with_react(self):
+        """The completion intro string is verbatim shared via the
+        builder — proves the equivalence guarantee."""
+        from agent_cli.wire_formats.react import ReActFormat
+
+        env_rules = EnvelopeFormat().format_rules()
+        react_rules = ReActFormat().format_rules()
+        intro = "When the task is done, first verify with `ready_for_review`"
+        assert intro in env_rules
+        assert intro in react_rules
+
+    def test_format_rules_shares_rules_tail_with_react(self):
+        """Rules 3-6 are identical bytes between formats — that's the
+        whole point of the builder. Drift here means the equivalence
+        guarantee is broken."""
+        from agent_cli.wire_formats._format_rules_builder import SHARED_RULES_TAIL
+        from agent_cli.wire_formats.react import ReActFormat
+
+        env_rules = EnvelopeFormat().format_rules()
+        react_rules = ReActFormat().format_rules()
+        assert SHARED_RULES_TAIL in env_rules
+        assert SHARED_RULES_TAIL in react_rules
 
 
 # ─── Plugin surface ────────────────────────────────────────

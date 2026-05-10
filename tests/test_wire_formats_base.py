@@ -71,11 +71,20 @@ class _MockFormat:
     def format_rules(self) -> str:
         return "## Mock Rules"
 
-    def wrap_action_input_example(self, action: str, args_json: str, idval: str) -> str:
-        return args_json
+    def format_rules_anchor(self) -> str:
+        return "Mock anchor."
 
-    def wrap_full_call_example(self, action: str, args_json: str, idval: str) -> str:
-        return f'{{"action": "{action}", "action_input": {args_json}}}'
+    def format_rules_field_specific(self) -> str:
+        return "1. Mock rule 1.\n2. Mock rule 2."
+
+    def render_full_example(self, *, thought, action, action_input) -> str:
+        if thought is None:
+            return f'{{"action": "{action}", "action_input": {action_input}}}'
+        return (
+            f'{{"thought": "{thought}", '
+            f'"action": "{action}", '
+            f'"action_input": {action_input}}}'
+        )
 
     def parse(self, llm_text: str) -> ParsedAction:
         return ParsedAction(raw=llm_text)
@@ -192,10 +201,13 @@ class TestRegistry:
             def format_rules(self) -> str:
                 return ""
 
-            def wrap_action_input_example(self, a, b, c) -> str:
+            def format_rules_anchor(self) -> str:
                 return ""
 
-            def wrap_full_call_example(self, a, b, c) -> str:
+            def format_rules_field_specific(self) -> str:
+                return ""
+
+            def render_full_example(self, *, thought, action, action_input) -> str:
                 return ""
 
             def parse(self, t) -> ParsedAction:

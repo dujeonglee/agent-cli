@@ -41,43 +41,24 @@ from agent_cli.wire_formats.base import ParsedAction
 
 
 # ── Prompt section ───────────────────────────────────────────
-_FORMAT_RULES = """\
-## Response Format
-Output your response inside a single <tool_use> envelope. The envelope
-contains free-text reasoning followed by a JSON dict for the action_input:
+# Format Rules section is composed by the shared builder
+# ``_format_rules_builder.build_format_rules``: it carries the
+# completion intro and rules 3-6 verbatim and calls the three
+# render hooks below for the wire-shape parts. Two plugins rendering
+# the same logical content therefore share byte-equivalent text in
+# the common parts, which is what makes side-by-side measurement of
+# model behaviour fair.
 
-<tool_use id="r1" action="<tool_name>">
-<your reasoning — what you'll do and why>
+_FORMAT_RULES_ANCHOR = (
+    "Output your response inside a single <tool_use> envelope. The envelope\n"
+    "contains free-text reasoning followed by a JSON dict for the action_input:"
+)
 
-{"<arg>": "<value>", ...}
-</tool_use>
-
-When the task is done, first verify with `ready_for_review`, then call `complete`:
-
-<tool_use id="r1" action="ready_for_review">
-all requirements met based on the test run
-
-{"summary": "..."}
-</tool_use>
-
-<tool_use id="r1" action="complete">
-final summary of what was achieved
-
-{"result": "..."}
-</tool_use>
-
-Rules:
-1. The reasoning text MUST state purpose (what you want to achieve)
-   and reason (why this specific action). Do not leave it empty.
-2. The JSON dict MUST match the tool's input schema.
-3. If an observation shows an error, fix parameters and retry.
-4. Exactly ONE <tool_use> envelope per turn. Do not nest envelopes.
-5. Make that one action count — pick the most efficient path:
-   - Use batch input fields (`edit_file.edits`, `delegate.tasks`) instead of repeating the same tool across turns.
-   - Combine shell operations into a single call (pipelines, multi-file surveys, batch listings) — one shell call often replaces many `read_file` turns.
-   - Pick the narrowest read mode that answers the question (search > targeted line range > full file).
-   - Do not "peek" with one tool only to redo the work with another.
-6. Respond in the user's language."""
+_FORMAT_RULES_FIELD_SPECIFIC = (
+    "1. The reasoning text MUST state purpose (what you want to achieve)\n"
+    "   and reason (why this specific action). Do not leave it empty.\n"
+    "2. The JSON dict MUST match the tool's input schema."
+)
 
 
 # ── Recovery fragments ────────────────────────────────────────
@@ -306,28 +287,32 @@ class EnvelopeFormat:
     # ─── Prompt ────────────────────────────────────────────────
 
     def format_rules(self) -> str:
-        return _FORMAT_RULES
+        from agent_cli.wire_formats._format_rules_builder import build_format_rules
 
-    def wrap_action_input_example(self, action: str, args_json: str, idval: str) -> str:
-        # Inline tool guide / skill / agent example. Always render the
-        # full envelope so the model sees the wire shape it must emit.
-        # ReAct can return ``args_json`` verbatim because its envelope
-        # is described once in format_rules — for envelope plugins the
-        # envelope IS the differentiator and must show up in every
-        # example.
+        return build_format_rules(self)
+
+    def format_rules_anchor(self) -> str:
+        return _FORMAT_RULES_ANCHOR
+
+    def format_rules_field_specific(self) -> str:
+        return _FORMAT_RULES_FIELD_SPECIFIC
+
+    def render_full_example(self, *, thought, action: str, action_input: str) -> str:
+        # Envelope shape: <tool_use id="r1" action="...">reasoning\n\nJSON</tool_use>.
+        # When ``thought`` is None (skill / agent invocation example)
+        # we still emit a visible reasoning slot — the envelope's
+        # whole point is that the slot is always there — but use a
+        # short hint string rather than letting the slot collapse.
+        # The id is fixed at "r1" since the example is one envelope;
+        # multi-action ids are a future concern.
+        reasoning = thought if thought is not None else "reasoning here"
         return (
-            f'<tool_use id="{idval}" action="{action}">\n'
-            f"(your reasoning)\n\n"
-            f"{args_json}\n"
-            f"</tool_use>"
+            f'<tool_use id="r1" action="{action}">\n'
+            f"{reasoning}\n"
+            "\n"
+            f"{action_input}\n"
+            "</tool_use>"
         )
-
-    def wrap_full_call_example(self, action: str, args_json: str, idval: str) -> str:
-        # Skill / agent invocation example. For envelope plugins this is
-        # identical to ``wrap_action_input_example`` — the action name
-        # is already explicit (XML attribute) so a single rendering
-        # serves both cases.
-        return self.wrap_action_input_example(action, args_json, idval)
 
     # ─── Parsing ───────────────────────────────────────────────
 
