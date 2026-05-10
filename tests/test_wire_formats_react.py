@@ -138,15 +138,17 @@ class TestParseReturnsParsedAction:
         assert "scratch reasoning" in out.thinking
 
 
-# ─── Wrap call example: ReAct identity ──────────────
+# ─── Wrap example methods (two flavors) ─────────────
 
 
-class TestWrapCallExample:
-    def test_identity(self):
+class TestWrapActionInputExample:
+    """Inline tool guide flavor — show ONLY the action_input dict."""
+
+    def test_identity_for_react(self):
         # ReAct doesn't envelope-wrap; the surrounding shape lives in
         # FORMAT_RULES and the inline guides show only the action_input
         # dict. Plugin returns the dict unchanged.
-        out = ReActFormat().wrap_call_example(
+        out = ReActFormat().wrap_action_input_example(
             action="read_file",
             args_json='{"path": "x.py"}',
             idval="r1",
@@ -157,8 +159,43 @@ class TestWrapCallExample:
         # The id is meaningful only for envelope formats; ReAct must
         # not embed it anywhere — the underlying parser would be
         # confused by an extraneous field.
-        out = ReActFormat().wrap_call_example("foo", "{}", "anything")
+        out = ReActFormat().wrap_action_input_example("foo", "{}", "anything")
         assert "anything" not in out
+
+    def test_action_name_not_embedded_for_react(self):
+        # Inline guide flavor must NOT add the action name — it's
+        # already obvious from the guide's header. Adding it would
+        # double-state and could confuse the model about whether the
+        # guide is showing the full call or the inner shape.
+        out = ReActFormat().wrap_action_input_example(
+            "read_file", '{"path": "x"}', "r1"
+        )
+        assert '"action"' not in out
+
+
+class TestWrapFullCallExample:
+    """Skill/agent invocation flavor — must show action + action_input."""
+
+    def test_react_returns_bare_react_invocation(self):
+        # Matches the legacy literal in ``build_skill_descriptions`` /
+        # ``build_agent_descriptions``: a single JSON object with
+        # ``action`` and ``action_input`` keys. No ``thought`` key —
+        # those doc examples have historically omitted it.
+        out = ReActFormat().wrap_full_call_example(
+            action="run_skill",
+            args_json='{"name": "x", "arguments": "y"}',
+            idval="sk1",
+        )
+        assert out == (
+            '{"action": "run_skill", "action_input": {"name": "x", "arguments": "y"}}'
+        )
+
+    def test_react_full_call_no_thought_key(self):
+        # ``thought`` is the user's reasoning, not part of the
+        # invocation template. Docs show the ``{action, action_input}``
+        # pair only.
+        out = ReActFormat().wrap_full_call_example("delegate", '{"tasks": []}', "ag1")
+        assert '"thought"' not in out
 
 
 # ─── Lifecycle defaults ─────────────────────────────

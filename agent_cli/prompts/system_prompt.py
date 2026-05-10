@@ -123,28 +123,60 @@ _HASHLINE_INLINE = """\
     edit_file calls with read_file between them. Observation sync is
     how you "see" the intermediate state."""
 
-_DELEGATE_INLINE = """\
+
+def _build_delegate_inline(wire_format) -> str:
+    """Build the delegate inline guide.
+
+    Each ``Examples:`` line shows a complete delegate call. The plugin
+    decides whether each example is shown as a bare action_input dict
+    (ReAct identity) or wrapped in an envelope (future plugins).
+    Distinct ``idval`` values per example so envelope plugins that
+    require unique ids stay valid.
+    """
+    examples = [
+        ("Single", '{"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}'),
+        (
+            "With context",
+            '{"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}',
+        ),
+        (
+            "With agent",
+            '{"tasks": [{"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}]}',
+        ),
+        (
+            "Agent + context",
+            '{"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]}',
+        ),
+        (
+            "Parallel (independent)",
+            '{"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}',
+        ),
+        (
+            "Read-only",
+            '{"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}',
+        ),
+    ]
+    rendered = "\n".join(
+        f"  - {label}: {wire_format.wrap_action_input_example('delegate', args, f'd{i}')}"
+        for i, (label, args) in enumerate(examples, start=1)
+    )
+    return f"""\
 
   Always use the "tasks" array format. Single item = sync, multiple = parallel.
   Context modes per task:
   - "none" (default): subagent starts with no context. Task must be self-contained.
   - "fork": subagent receives a copy of the current conversation history.
   - "tools": optionally restrict which tools the subagent can use.
-  - "agent": optionally specify a predefined agent from .agent-cli/agents/{name}.md.
+  - "agent": optionally specify a predefined agent from .agent-cli/agents/{{name}}.md.
     The agent file defines the subagent's role/principles and can set allowed-tools/model.
   Constraints:
   - Multiple tasks run in PARALLEL. If task B depends on task A's result,
     call delegate twice: first A, then use A's result to call B.
   Examples:
-  - Single: {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}
-  - With context: {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}
-  - With agent: {"tasks": [{"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}]}
-  - Agent + context: {"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]}
-  - Parallel (independent): {"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
-  - Read-only: {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}\""""
+{rendered}\""""
 
 
-def _build_read_file_inline(active_tools: list[str]) -> str:
+def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     """Build the read_file inline guide.
 
     When ``read_symbols`` is active, the Flow paragraph routes
@@ -158,26 +190,45 @@ def _build_read_file_inline(active_tools: list[str]) -> str:
     When ``read_symbols`` is not active (e.g., subagent with restricted
     tools), the steering is omitted to avoid pointing the model at a
     tool it cannot call.
+
+    Each mode's call example is rendered through
+    ``wire_format.wrap_action_input_example`` so envelope plugins (future) can
+    show the full wire-shape; ReAct's identity wrap keeps the bare
+    action_input dict the plugin's prior already wraps.
     """
-    base_modes = """\
+    ex_stat = wire_format.wrap_action_input_example(
+        "read_file", '{"path": "app.py", "stat": true}', "r1"
+    )
+    ex_search = wire_format.wrap_action_input_example(
+        "read_file", '{"path": "app.py", "search": "login", "context": 5}', "r2"
+    )
+    ex_partial = wire_format.wrap_action_input_example(
+        "read_file",
+        '{"path": "app.py", "line_start": 100, "line_end": 600}',
+        "r3",
+    )
+    ex_full = wire_format.wrap_action_input_example(
+        "read_file", '{"path": "app.py"}', "r4"
+    )
+    base_modes = f"""\
 
   Pick the right mode for the question — full reads burn context budget,
   but reading too little costs turns:
 
   1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
      count + size + the first 20 lines so you can pick a real read mode.
-       {"path": "app.py", "stat": true}
+       {ex_stat}
   2. search — grep-style targeted lookup. Returns only matching regions
      with surrounding context. Prefer this when the user names a
      specific function, class, or symbol — even if the file looks small.
-       {"path": "app.py", "search": "login", "context": 5}
+       {ex_search}
   3. Partial — you know the exact region. Aim for ~500 lines at a time
      so you capture surrounding context. Reading 30-50 lines just to
      peek at one function usually costs more turns when you have to
      come back for context.
-       {"path": "app.py", "line_start": 100, "line_end": 600}
+       {ex_partial}
   4. Full — the file is known-small or central to the task.
-       {"path": "app.py"}
+       {ex_full}
 """
     if "read_symbols" in active_tools:
         from agent_cli.tools.symbols import get_supported_extensions
@@ -199,16 +250,59 @@ def _build_read_file_inline(active_tools: list[str]) -> str:
     return base_modes + flow
 
 
-def _build_read_symbols_inline() -> str:
+def _build_read_symbols_inline(wire_format) -> str:
     """Build the read_symbols inline guide.
 
     Pulls the supported extension list from
     :func:`agent_cli.tools.symbols.get_supported_extensions` so adding a
     grammar to ``_EXT_TO_LANG`` automatically updates the prompt.
+
+    Each call example is rendered through ``wire_format.wrap_action_input_example``
+    so envelope plugins (future) can show the full wire-shape; ReAct's
+    identity wrap keeps the bare action_input dict.
     """
     from agent_cli.tools.symbols import get_supported_extensions
 
     exts = ", ".join(get_supported_extensions())
+    list_py = wire_format.wrap_action_input_example(
+        "read_symbols", '{"path": "auth.py", "mode": "list"}', "rs1"
+    )
+    list_cpp = wire_format.wrap_action_input_example(
+        "read_symbols", '{"path": "src/foo.cpp", "mode": "list"}', "rs2"
+    )
+    list_md = wire_format.wrap_action_input_example(
+        "read_symbols", '{"path": "README.md", "mode": "list"}', "rs3"
+    )
+    list_search1 = wire_format.wrap_action_input_example(
+        "read_symbols",
+        '{"path": "auth.py", "mode": "list", "search": "login"}',
+        "rs4",
+    )
+    list_search2 = wire_format.wrap_action_input_example(
+        "read_symbols",
+        '{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}',
+        "rs5",
+    )
+    list_search3 = wire_format.wrap_action_input_example(
+        "read_symbols",
+        '{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}',
+        "rs6",
+    )
+    fetch_py = wire_format.wrap_action_input_example(
+        "read_symbols",
+        '{"path": "auth.py", "mode": "fetch", "name": "User.login"}',
+        "rs7",
+    )
+    fetch_cpp = wire_format.wrap_action_input_example(
+        "read_symbols",
+        '{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}',
+        "rs8",
+    )
+    fetch_md = wire_format.wrap_action_input_example(
+        "read_symbols",
+        '{"path": "README.md", "mode": "fetch", "name": "## Setup"}',
+        "rs9",
+    )
     return f"""\
 
   Structure-aware file reader. Two modes:
@@ -217,25 +311,25 @@ def _build_read_symbols_inline() -> str:
      structs/enums/typedefs, #defines, markdown headings). Each line is
      ``name (kind) :start-end``. Use this in place of read_file:stat
      when the file is a supported language.
-       {{"path": "auth.py", "mode": "list"}}
-       {{"path": "src/foo.cpp", "mode": "list"}}
-       {{"path": "README.md", "mode": "list"}}
+       {list_py}
+       {list_cpp}
+       {list_md}
      With optional ``search='<regex>'`` the outline is filtered to
      symbols whose name matches the regex (re.search semantics) — prefer
      this over piping list output through shell grep. Patterns scale
      from substrings to anchored prefixes to grouped families:
-       {{"path": "auth.py", "mode": "list", "search": "login"}}
-       {{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}}
-       {{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}}
+       {list_search1}
+       {list_search2}
+       {list_search3}
   2. mode='fetch' — body of one named symbol from the outline. The
      ``name`` must match the outline verbatim. The body is returned in
      hashline format (LINE#HASH:content), so you can pipe it straight
      into edit_file without a separate read_file. When the same name
      has both a declaration and a definition (e.g. .h prototype + .cpp
      body), the definition is returned.
-       {{"path": "auth.py", "mode": "fetch", "name": "User.login"}}
-       {{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}}
-       {{"path": "README.md", "mode": "fetch", "name": "## Setup"}}
+       {fetch_py}
+       {fetch_cpp}
+       {fetch_md}
 
   Naming follows each language's convention:
   - Python / JavaScript / TypeScript: ``Class.method``
@@ -250,8 +344,6 @@ def _build_read_symbols_inline() -> str:
   strings, identifiers in use) use read_file search — read_symbols will
   not surface those."""
 
-
-_READ_SYMBOLS_INLINE = _build_read_symbols_inline()
 
 _ASK_INLINE = """\
 
@@ -281,29 +373,37 @@ _ASK_INLINE = """\
   `complete`."""
 
 
-def _build_tool_inline_guides(active_tools: list[str]) -> dict[str, str]:
+def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
     ``read_file``'s guide depends on whether ``read_symbols`` is also
-    active (steering line gets added in that case), so the map cannot
-    be a static module-level dict — it's rebuilt per call.
+    active (steering line gets added in that case), and call examples
+    in every guide are rendered through ``wire_format.wrap_action_input_example``,
+    so the map cannot be a static module-level dict — it's rebuilt per
+    call.
+
+    ``edit_file`` and ``ask`` guides have no top-level call examples —
+    edit_file's dict literals are inner ``edits[i]`` items (not full
+    calls) and ask carries no examples — so those guides remain
+    plugin-agnostic constants.
     """
     return {
-        "read_file": _build_read_file_inline(active_tools),
+        "read_file": _build_read_file_inline(active_tools, wire_format),
         "edit_file": _HASHLINE_INLINE,
-        "delegate": _DELEGATE_INLINE,
+        "delegate": _build_delegate_inline(wire_format),
         "ask": _ASK_INLINE,
-        "read_symbols": _READ_SYMBOLS_INLINE,
+        "read_symbols": _build_read_symbols_inline(wire_format),
     }
 
 
-def _build_tools_section(active_tools: list[str]) -> str:
+def _build_tools_section(active_tools: list[str], wire_format) -> str:
     """Build Available Tools section with inline guides.
 
     Static tools come first (stable for KV cache), conditional tools last.
     """
     tool_block = get_tool_descriptions(
-        active_tools, inline_guides=_build_tool_inline_guides(active_tools)
+        active_tools,
+        inline_guides=_build_tool_inline_guides(active_tools, wire_format),
     )
     return f"## Available Tools\n{tool_block}"
 
@@ -411,7 +511,7 @@ def build_system_prompt(
     sections.append(wire_format.format_rules())
 
     # ── Middle: reference material ──
-    sections.append(_build_tools_section(active_tools))
+    sections.append(_build_tools_section(active_tools, wire_format))
 
     # MCP tools (if manager provided)
     if mcp_manager:
@@ -421,12 +521,12 @@ def build_system_prompt(
         if mcp_desc:
             sections.append(f"## MCP Tools\n{mcp_desc}")
 
-    skill_desc = build_skill_descriptions()
+    skill_desc = build_skill_descriptions(wire_format=wire_format)
     if skill_desc:
         sections.append(skill_desc)
 
     if "delegate" in active_tools:
-        agent_desc = build_agent_descriptions()
+        agent_desc = build_agent_descriptions(wire_format=wire_format)
         if agent_desc:
             sections.append(agent_desc)
 
@@ -490,11 +590,27 @@ def _build_context_recovery(session_dir: str) -> str:
     )
 
 
-def build_agent_descriptions() -> str:
+def build_agent_descriptions(wire_format=None) -> str:
     """Build agent descriptions for system prompt injection.
 
     Uses the delegate module's agent loader to discover available agents.
+    Uses ``wrap_full_call_example`` so the example shows
+    ``{"action": "delegate", "action_input": {...}}`` — matching the
+    sibling ``build_skill_descriptions`` form. The legacy literal in
+    this function omitted the ``action`` key (showed only the inner
+    ``{"tasks": ...}`` dict), which was inconsistent with the skill
+    section and slightly less informative for the model. The plugin
+    extraction takes the opportunity to unify the two doc sections on
+    the more explicit ``full_call`` shape.
+
+    ``wire_format=None`` falls back to the registered ``"react"`` plugin
+    so test callers don't have to thread the registry through.
     """
+    if wire_format is None:
+        from agent_cli import wire_formats
+
+        wire_format = wire_formats.get("react")
+
     try:
         from agent_cli.tools.delegate import _agent_loader
     except ImportError:
@@ -508,10 +624,15 @@ def build_agent_descriptions() -> str:
     if not agents:
         return ""
 
+    example = wire_format.wrap_full_call_example(
+        "delegate",
+        '{"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
+        "ag1",
+    )
     lines = [
         "## Available Agents",
         "Consider delegating parallelizable or independent subtasks to agents.",
-        '  {"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
+        f"  {example}",
     ]
     for name, desc in agents:
         suffix = f" — {desc}" if desc else ""
@@ -520,12 +641,20 @@ def build_agent_descriptions() -> str:
     return "\n".join(lines)
 
 
-def build_skill_descriptions(skills: dict | None = None) -> str:
+def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> str:
     """Build skill descriptions for system prompt injection.
 
     Excludes skills with disable_model_invocation=True.
     If skills is None, loads from disk.
+
+    ``wire_format=None`` falls back to the registered ``"react"`` plugin
+    (same backward-compat default as ``build_agent_descriptions``).
     """
+    if wire_format is None:
+        from agent_cli import wire_formats
+
+        wire_format = wire_formats.get("react")
+
     if skills is None:
         try:
             from agent_cli.skills import load_skills
@@ -537,11 +666,19 @@ def build_skill_descriptions(skills: dict | None = None) -> str:
     if not skills:
         return ""
 
+    # ``wrap_full_call_example`` (not ``wrap_action_input_example``) —
+    # skill docs need the action name visible. See the rationale in
+    # ``build_agent_descriptions``'s docstring.
+    example = wire_format.wrap_full_call_example(
+        "run_skill",
+        '{"name": "skill-name", "arguments": "..."}',
+        "sk1",
+    )
     lines = [
         "## Available Skills",
         "Consider using skills for multi-step or specialized workflows.",
         "Use the run_skill tool to invoke:",
-        '  {"action": "run_skill", "action_input": {"name": "skill-name", "arguments": "..."}}',
+        f"  {example}",
     ]
     for skill in skills.values():
         if skill.disable_model_invocation:

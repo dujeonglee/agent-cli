@@ -26,8 +26,8 @@ import pytest
 
 from agent_cli.prompts.system_prompt import (
     _build_context_recovery,
+    _build_delegate_inline,
     _build_environment_section,
-    _DELEGATE_INLINE,
     _load_directives,
     build_system_prompt,
 )
@@ -707,16 +707,28 @@ class TestLoadDirectives:
 
 
 class TestDelegateInlineAgent:
-    """AG-27 ~ AG-28: _DELEGATE_INLINE agent field tests."""
+    """AG-27 ~ AG-28: delegate inline guide agent-field tests.
+
+    Step 4 of the wire_format extraction turned the constant
+    ``_DELEGATE_INLINE`` into a builder ``_build_delegate_inline(wire_format)``;
+    the assertions below check the rendered guide rather than the
+    pre-render literal. Behavior is unchanged for the ``"react"``
+    plugin.
+    """
+
+    def _delegate_guide(self) -> str:
+        from agent_cli import wire_formats
+
+        return _build_delegate_inline(wire_formats.get("react"))
 
     def test_delegate_inline_mentions_agent(self):
-        """AG-27: _DELEGATE_INLINE contains agent field description."""
-        assert '"agent"' in _DELEGATE_INLINE
-        assert ".agent-cli/agents/" in _DELEGATE_INLINE
+        guide = self._delegate_guide()
+        assert '"agent"' in guide
+        assert ".agent-cli/agents/" in guide
 
     def test_delegate_inline_agent_example(self):
-        """AG-28: _DELEGATE_INLINE contains agent usage example."""
-        assert '"agent": "security-reviewer"' in _DELEGATE_INLINE
+        guide = self._delegate_guide()
+        assert '"agent": "security-reviewer"' in guide
 
 
 # ── Role + Recovery axis (formerly test_system_prompt_v2.py) ────────

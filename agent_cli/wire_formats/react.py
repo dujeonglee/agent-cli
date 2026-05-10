@@ -126,13 +126,21 @@ class ReActFormat:
     def format_rules(self) -> str:
         return _FORMAT_RULES
 
-    def wrap_call_example(self, action: str, args_json: str, idval: str) -> str:
-        # ReAct's surrounding ``{"thought","action","action_input"}`` envelope
-        # is described in ``format_rules``; inline tool guides only
-        # demonstrate the ``action_input`` dict. Identity here so the
-        # legacy bare-dict examples continue to work — the model's prior
-        # already wraps them in the ReAct envelope.
+    def wrap_action_input_example(self, action: str, args_json: str, idval: str) -> str:
+        # Inline tool guide example — show ONLY the action_input dict.
+        # ReAct's surrounding ``{"thought","action","action_input"}``
+        # envelope is described in ``format_rules``; the model's prior
+        # already wraps. Identity preserves legacy guide output.
         return args_json
+
+    def wrap_full_call_example(self, action: str, args_json: str, idval: str) -> str:
+        # Skill/agent invocation example — must show action + action_input
+        # so the reader knows which tool to call. Returns the legacy
+        # bare-ReAct literal (``{"action":...,"action_input":...}``)
+        # without ``thought`` because skill/agent doc examples have
+        # historically omitted thought (it's the user's reasoning,
+        # not part of the invocation template).
+        return f'{{"action": "{action}", "action_input": {args_json}}}'
 
     # ─── Parsing ───────────────────────────────────────────────
 

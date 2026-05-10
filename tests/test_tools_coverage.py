@@ -1055,10 +1055,12 @@ class TestReadFileFullReadGuard:
         path happens through the refusal message, not the baseline
         guide. Checked in both variants (with/without read_symbols
         steering) since the builder branches on active tools."""
+        from agent_cli import wire_formats
         from agent_cli.prompts.system_prompt import _build_read_file_inline
 
+        wire_format = wire_formats.get("react")
         for active in (["read_file"], ["read_file", "read_symbols"]):
-            guide = _build_read_file_inline(active)
+            guide = _build_read_file_inline(active, wire_format)
             assert "full=true" not in guide
             assert "full=True" not in guide
             assert '"full"' not in guide

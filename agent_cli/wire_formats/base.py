@@ -93,22 +93,40 @@ class WireFormat(Protocol):
         """
         ...
 
-    def wrap_call_example(self, action: str, args_json: str, idval: str) -> str:
-        """Return the wire-format representation of one tool call example.
+    def wrap_action_input_example(self, action: str, args_json: str, idval: str) -> str:
+        """Render an example that shows ONLY the ``action_input`` shape.
 
-        ``action`` is the tool name (``"read_file"``), ``args_json`` is the
-        JSON literal for ``action_input`` (``'{"path": "x.py"}'``),
-        ``idval`` is a short example id (``"r1"``) — only envelope formats
-        use it.
+        Used by **inline tool guides** (``read_file``, ``read_symbols``,
+        ``delegate``) where the surrounding tool name is already obvious
+        from the guide's header — the example only needs to demonstrate
+        what the dict inside ``action_input`` looks like.
 
-        For ReAct this is the identity (``args_json`` already shows what
-        the model emits inside the surrounding JSON envelope described in
-        ``format_rules``). For envelope formats it returns the full
-        wrapped form (e.g. ``<tool_use id="r1">{...}</tool_use>``).
+        For ReAct this is identity: ``args_json`` is returned verbatim
+        because the surrounding ``{"thought","action","action_input"}``
+        envelope is described once in ``format_rules`` and the model's
+        prior already wraps. For envelope formats this returns the full
+        wire shape (e.g. ``<tool_use id="r1">{"action":...,"action_input":...}</tool_use>``)
+        so each guide example matches what the model is expected to emit.
 
-        Inline tool guides call this so each example matches what the
-        model is expected to emit, even though the example list is
-        defined in a single shared place.
+        Sister method: :meth:`wrap_full_call_example` for invocation
+        examples that need the action name visible (skill/agent docs).
+        """
+        ...
+
+    def wrap_full_call_example(self, action: str, args_json: str, idval: str) -> str:
+        """Render an example that shows the FULL invocation shape.
+
+        Used by **skill/agent invocation examples** where the reader
+        does not yet know which tool to call — the example must spell
+        out both ``action`` and ``action_input``.
+
+        For ReAct this returns the bare ``{"action":...,"action_input":...}``
+        invocation as a single JSON object (matching the legacy literal
+        in ``build_skill_descriptions`` / ``build_agent_descriptions``).
+        For envelope formats this returns the full wire shape.
+
+        Sister method: :meth:`wrap_action_input_example` for guide
+        examples where the action name is implicit.
         """
         ...
 
