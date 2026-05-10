@@ -212,8 +212,11 @@ class TestLifecycleDefaults:
 class TestSerializeAssistantForHistory:
     """The dict shape that lands in history.jsonl for a ReAct emission.
 
-    Mirrors the legacy ``loop._parse_assistant_for_history`` so the
-    transition (Step H2) is byte-equivalent on disk."""
+    Owned by ReActFormat since Step H2 — ``loop._append_observation``
+    routes its assistant record through this method. The on-disk
+    contract is verified end-to-end in ``test_loop`` integration tests;
+    this class covers the structural branches (parse OK, partial dict,
+    fallback) in isolation."""
 
     def test_parses_react_json_into_role_keyed_dict(self):
         text = (

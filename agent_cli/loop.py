@@ -497,7 +497,13 @@ class AgentLoop:
             intervention = self.wire_format.format_no_thought_retry(
                 prior_content=llm_text
             )
-            _append_observation(self.messages, self.ctx, llm_text, intervention.message)
+            _append_observation(
+                self.messages,
+                self.ctx,
+                self.wire_format,
+                llm_text,
+                intervention.message,
+            )
             outcome["failure_signal"] = FAILURE_NO_THOUGHT
             outcome["primitives"] = list(intervention.primitives)
             self.turn -= 1
@@ -573,7 +579,9 @@ class AgentLoop:
             if questions:
                 user_response = _handle_ask(questions)
                 obs_msg = f"Observation: User responded:\n{user_response}"
-                _append_observation(self.messages, self.ctx, llm_text, obs_msg)
+                _append_observation(
+                    self.messages, self.ctx, self.wire_format, llm_text, obs_msg
+                )
                 return self._CONTINUE
 
         # 10b. run_skill -- intercept at loop level (text parsing path)
@@ -610,6 +618,7 @@ class AgentLoop:
             _append_observation(
                 self.messages,
                 self.ctx,
+                self.wire_format,
                 llm_text,
                 obs_msg,
                 artifact=skill_tool_result.artifact,
@@ -631,7 +640,9 @@ class AgentLoop:
                     success=True,
                 )
             obs_msg = f"Observation: {obs}"
-            _append_observation(self.messages, self.ctx, llm_text, obs_msg)
+            _append_observation(
+                self.messages, self.ctx, self.wire_format, llm_text, obs_msg
+            )
             return self._CONTINUE
 
         # 11. Tool execution (text parsing path)
@@ -701,7 +712,11 @@ class AgentLoop:
                     self.turn,
                 )
                 _append_observation(
-                    self.messages, self.ctx, llm_text, intervention.message
+                    self.messages,
+                    self.ctx,
+                    self.wire_format,
+                    llm_text,
+                    intervention.message,
                 )
                 outcome["primitives"] = list(intervention.primitives)
                 self.turn -= 1  # Don't count loop nudges as user-facing turns
@@ -736,7 +751,11 @@ class AgentLoop:
                     success=False,
                 )
                 _append_observation(
-                    self.messages, self.ctx, llm_text, f"Observation: {err_msg}"
+                    self.messages,
+                    self.ctx,
+                    self.wire_format,
+                    llm_text,
+                    f"Observation: {err_msg}",
                 )
                 return self._CONTINUE
 
@@ -758,7 +777,11 @@ class AgentLoop:
                     success=False,
                 )
                 _append_observation(
-                    self.messages, self.ctx, llm_text, f"Observation: {err_msg}"
+                    self.messages,
+                    self.ctx,
+                    self.wire_format,
+                    llm_text,
+                    f"Observation: {err_msg}",
                 )
                 return self._CONTINUE
             tool_input = normalized  # use post-normalization input for dispatch
@@ -786,6 +809,7 @@ class AgentLoop:
             _append_observation(
                 self.messages,
                 self.ctx,
+                self.wire_format,
                 llm_text,
                 obs_msg,
                 artifact=tool_result.artifact,
@@ -821,7 +845,9 @@ class AgentLoop:
             intervention = format_no_json_retry(
                 prior_content=llm_text, wire_format=self.wire_format
             )
-        _append_observation(self.messages, self.ctx, llm_text, intervention.message)
+        _append_observation(
+            self.messages, self.ctx, self.wire_format, llm_text, intervention.message
+        )
         # Surface composed primitive names to the enclosing _handle_text_path
         # so the trailing finally-block records them.
         outcome["primitives"] = list(intervention.primitives)
@@ -1535,6 +1561,7 @@ def _normalize_input(tool_input) -> str:
 def _append_observation(
     messages: list[dict],
     ctx,
+    wire_format,
     llm_text: str,
     obs_msg: str,
     artifact: str = "",
@@ -1544,31 +1571,15 @@ def _append_observation(
     For the in-memory messages list (sent to LLM), raw JSON is kept as-is
     since it's the format the LLM produced and expects to see.
 
-    For history.jsonl (via ctx.add), assistant messages are parsed into
-    structured dicts so _to_natural_language can convert them properly.
+    For history.jsonl (via ctx.add), the wire_format plugin shapes the
+    assistant record (e.g. ReAct splits ``thought / action / action_input``
+    into top-level fields) so the on-disk history retains structured form.
     """
     messages.append({"role": "assistant", "content": llm_text})
     messages.append({"role": "user", "content": obs_msg})
     if ctx:
-        ctx.add(_parse_assistant_for_history(llm_text))
+        ctx.add(wire_format.serialize_assistant_for_history(llm_text))
         obs_entry = {"role": "user", "content": obs_msg}
         if artifact:
             obs_entry["artifact"] = artifact
         ctx.add(obs_entry)
-
-
-def _parse_assistant_for_history(llm_text: str) -> dict:
-    """Parse raw LLM JSON text into a structured dict for history.jsonl.
-
-    Converts: '{"thought":"...", "action":"...", "action_input":{...}}'
-    Into:     {"role":"assistant", "thought":"...", "action":"...", "action_input":{...}}
-    """
-    try:
-        data = json.loads(llm_text)
-        if isinstance(data, dict) and ("thought" in data or "action" in data):
-            data["role"] = "assistant"
-            return data
-    except (json.JSONDecodeError, TypeError):
-        pass
-    # Fallback: plain content
-    return {"role": "assistant", "content": llm_text}

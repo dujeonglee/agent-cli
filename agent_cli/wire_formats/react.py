@@ -256,11 +256,12 @@ class ReActFormat:
         return {}
 
     # ─── History / context-window policy ──────────────────────
-    # Mirror the legacy ``loop._parse_assistant_for_history`` and
-    # ``manager._to_natural_language`` (assistant branch) bodies.
-    # Steps H2–H5 migrate the call sites and remove the legacy free
-    # functions. Until then the bodies live in two places — same
-    # transition pattern as Steps 2 → 7.
+    # ``serialize_assistant_for_history`` is the sole owner of the
+    # ReAct → history.jsonl conversion since H2. ``normalize_assistant_
+    # for_messages`` and ``render_assistant_from_history`` still have
+    # body duplication with ``loop._append_observation`` raw passthrough
+    # and ``manager._to_natural_language`` (assistant branch) — H3 / H4
+    # will switch those call sites and H5 will remove the duplicates.
 
     def normalize_assistant_for_messages(self, raw: str) -> str:
         # ReAct: raw IS the on-the-wire shape. Identity preserves the
@@ -268,11 +269,11 @@ class ReActFormat:
         return raw
 
     def serialize_assistant_for_history(self, raw_text: str) -> dict:
-        # Mirror ``loop._parse_assistant_for_history``. JSON parse the
-        # ReAct emission and surface ``thought / action / action_input``
-        # as top-level fields. Falls back to bare ``content`` when the
-        # text isn't parseable so corrupt emissions still survive in
-        # the log for postmortem.
+        # JSON-parse the ReAct emission and surface
+        # ``thought / action / action_input`` as top-level fields so
+        # ``manager._to_natural_language`` can dispatch on them. Falls
+        # back to bare ``content`` when the text isn't parseable so
+        # corrupt emissions still survive in the log for postmortem.
         try:
             data = json.loads(raw_text)
             if isinstance(data, dict) and ("thought" in data or "action" in data):

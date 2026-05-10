@@ -1992,10 +1992,41 @@ class TestAppendObservationHelpers:
     def test_append_observation_no_ctx(self):
         """Works without ctx (no crash)."""
         from agent_cli.loop import _append_observation
+        from agent_cli.wire_formats import get as get_wire_format
 
         messages = []
-        _append_observation(messages, None, "llm", "obs")
+        _append_observation(messages, None, get_wire_format("react"), "llm", "obs")
         assert len(messages) == 2
+
+    def test_append_observation_routes_history_through_wire_format(self):
+        """ctx receives the dict produced by wire_format.serialize_assistant_for_history.
+
+        The contract is: assistant record in history.jsonl is shaped by the
+        plugin, not by loop.py. Verifying this via fake ctx + fake plugin
+        catches any future regression that re-introduces a json.loads() call
+        directly in loop.
+        """
+        from agent_cli.loop import _append_observation
+
+        captured: list[dict] = []
+
+        class _FakeCtx:
+            def add(self, entry):
+                captured.append(entry)
+
+        class _FakePlugin:
+            def serialize_assistant_for_history(self, raw_text):
+                return {"role": "assistant", "marker": "from_plugin", "raw": raw_text}
+
+        messages: list[dict] = []
+        _append_observation(messages, _FakeCtx(), _FakePlugin(), "LLM_TEXT", "OBS")
+        # captured[0] is assistant record from plugin; captured[1] is observation.
+        assert captured[0] == {
+            "role": "assistant",
+            "marker": "from_plugin",
+            "raw": "LLM_TEXT",
+        }
+        assert captured[1] == {"role": "user", "content": "OBS"}
 
 
 class TestSkillStack:
