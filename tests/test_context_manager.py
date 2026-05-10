@@ -387,3 +387,48 @@ class TestGetMessagesIntegration:
         )
         msgs = ctx.get_messages()
         assert "delegate_coder_f1a9_20260405T143230456/" in msgs[0]["content"]
+
+
+# ── wire_format attachment ────────────────────────────
+
+
+class TestWireFormatAttachment:
+    """ContextManager owns a wire_format plugin per instance.
+
+    H4 attaches a plugin to each ctx so ``get_messages()`` can route the
+    history → message conversion through the plugin without the
+    surrounding code having to thread the plugin through every call.
+    Default fallback covers headless / test paths that don't pass one
+    explicitly.
+    """
+
+    def test_default_falls_back_to_react(self, session_dir):
+        from agent_cli.wire_formats.react import ReActFormat
+
+        ctx = ContextManager(session_dir, max_context_tokens=1000)
+        assert isinstance(ctx.wire_format, ReActFormat)
+
+    def test_explicit_wire_format_is_kept(self, session_dir):
+        from agent_cli.wire_formats import get as get_wire_format
+
+        plugin = get_wire_format("react")
+        ctx = ContextManager(session_dir, max_context_tokens=1000, wire_format=plugin)
+        # Identity, not just equality — the same instance the caller
+        # passed in must survive on the ctx.
+        assert ctx.wire_format is plugin
+
+    def test_custom_plugin_instance_attached_unchanged(self, session_dir):
+        """A non-registered plugin (e.g. a test stand-in) is accepted.
+
+        Pinning the contract that ContextManager doesn't validate the
+        plugin against the registry — it just trusts what's passed and
+        falls back only when ``None`` is given. Lets tests pass fakes
+        without touching the global registry.
+        """
+
+        class _StubFormat:
+            name = "_stub"
+
+        stub = _StubFormat()
+        ctx = ContextManager(session_dir, max_context_tokens=1000, wire_format=stub)
+        assert ctx.wire_format is stub

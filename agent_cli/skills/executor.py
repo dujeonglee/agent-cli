@@ -163,6 +163,7 @@ def execute_skill(
         skill_ctx = ContextManager(
             session_dir=skill_session_dir,
             max_context_tokens=ctx.max_context_tokens,
+            wire_format=ctx.wire_format,
         )
 
     effective_hooks_config = merge_hooks_configs(parent_hooks_config, skill.hooks)

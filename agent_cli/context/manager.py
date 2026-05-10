@@ -48,7 +48,21 @@ class ContextManager:
         max_context_tokens: int = 0,
         *,
         resume: bool = False,
+        wire_format=None,
     ):
+        # Wire-format plugin attached to this ctx — drives the on-disk
+        # → in-memory rendering of assistant turns when ``get_messages``
+        # is called (overflow recovery, session resume). One ctx instance
+        # owns one plugin instance so a single session can never mix
+        # formats. Default falls back to the registered "react" plugin
+        # for the headless / test paths that don't yet thread the choice
+        # through; mirrors the pattern in ``AgentLoop.__init__``.
+        if wire_format is None:
+            from agent_cli import wire_formats
+
+            wire_format = wire_formats.get("react")
+        self.wire_format = wire_format
+
         self.session_dir = Path(session_dir)
         self.max_context_tokens = (
             max_context_tokens if max_context_tokens > 0 else DEFAULT_TOKEN_BUDGET

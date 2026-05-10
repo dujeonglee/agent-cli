@@ -658,6 +658,17 @@ def run(
             capabilities.context_window, capabilities.max_output_tokens
         )
 
+    # Resolve the wire-format plugin name from --response-format up front
+    # so any unknown name fails before the session is even created, and so
+    # the ContextManager below is born with the right plugin attached.
+    from agent_cli import wire_formats as _wire_formats
+
+    try:
+        wire_format_plugin = _wire_formats.get(response_format)
+    except KeyError as exc:
+        console.print(f"[{C['error']}]{exc}[/]")
+        raise typer.Exit(2) from exc
+
     session = None
     ctx = None
     _tmpdir = None  # prevent GC of TemporaryDirectory
@@ -668,7 +679,9 @@ def run(
 
         _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
         ctx = ContextManager(
-            session_dir=_Path(_tmpdir.name), max_context_tokens=max_context_tokens
+            session_dir=_Path(_tmpdir.name),
+            max_context_tokens=max_context_tokens,
+            wire_format=wire_format_plugin,
         )
     else:
         from agent_cli.context.session import create_session, save_meta
@@ -679,6 +692,7 @@ def run(
         ctx = ContextManager(
             session_dir=Path(".agent-cli") / "sessions" / session.session_id,
             max_context_tokens=max_context_tokens,
+            wire_format=wire_format_plugin,
         )
 
     # Skill dispatch: /skill-name args
@@ -736,15 +750,6 @@ def run(
     from agent_cli.hooks import load_hooks as _load_hooks
 
     _disk_hooks = _load_hooks() or None
-    # Resolve the wire-format plugin name from --response-format up front
-    # so any unknown name fails before the model is even contacted.
-    from agent_cli import wire_formats as _wire_formats
-
-    try:
-        wire_format_plugin = _wire_formats.get(response_format)
-    except KeyError as exc:
-        console.print(f"[{C['error']}]{exc}[/]")
-        raise typer.Exit(2) from exc
     try:
         loop_result = run_loop(
             query=query,
@@ -992,6 +997,7 @@ def chat(
         session_dir=Path(".agent-cli") / "sessions" / session.session_id,
         max_context_tokens=max_context_tokens,
         resume=bool(resume),
+        wire_format=wire_format_plugin,
     )
 
     if resume:
@@ -1049,6 +1055,7 @@ def chat(
             ctx = ContextManager(
                 session_dir=Path(".agent-cli") / "sessions" / session.session_id,
                 max_context_tokens=max_context_tokens,
+                wire_format=wire_format_plugin,
             )
             console.print(f"[{C['accent']}]Context cleared.[/]")
             continue

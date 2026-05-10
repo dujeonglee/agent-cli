@@ -367,6 +367,11 @@ def _run_single(
     delegate_dir = parent_session_dir / delegate_dir_name
 
     # Create context based on mode
+    # Inherit parent's wire_format so delegate ctx renders history with
+    # the same plugin the parent uses. Falls back to ContextManager's
+    # own default (react) when there's no parent.
+    inherited_wire_format = parent_ctx.wire_format if parent_ctx else None
+
     if context_mode == "fork":
         if parent_ctx is None:
             return ToolResult(
@@ -376,12 +381,19 @@ def _run_single(
         parent_ctx.fork_history_to(delegate_dir)
         budget = parent_ctx.max_context_tokens
         ctx = ContextManager(
-            session_dir=delegate_dir, max_context_tokens=budget, resume=True
+            session_dir=delegate_dir,
+            max_context_tokens=budget,
+            resume=True,
+            wire_format=inherited_wire_format,
         )
     else:
         # none: fresh context (inherit parent budget if available)
         budget = parent_ctx.max_context_tokens if parent_ctx else 0
-        ctx = ContextManager(session_dir=delegate_dir, max_context_tokens=budget)
+        ctx = ContextManager(
+            session_dir=delegate_dir,
+            max_context_tokens=budget,
+            wire_format=inherited_wire_format,
+        )
 
     t0 = time.monotonic()
 
