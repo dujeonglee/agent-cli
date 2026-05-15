@@ -48,9 +48,10 @@ agent_cli/
 ├── setup.py                 (281)  SetupWizard (Rich TUI, 첫 실행 설정 마법사 — 기존 config 노출 + 프로브 진행 표시)
 ├── constants.py             (~25)  공유 상수 (timeout, observation 템플릿, INTERRUPT_NOTICE). 외부 모듈 의존 없음 — 저층 레이어. wire-format-specific 상수 (FORMAT_RULES, RETRY_HINT_*, SYSTEM_USER_PREFIXES) 는 ``wire_formats/`` 의 plugin이 소유
 ├── wire_formats/                   Wire format 플러그인 시스템 — 모델 응답 형식 추상화
-│   ├── __init__.py          (130)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react) 자동 등록.
+│   ├── __init__.py          (132)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react, prefix_md) 자동 등록.
 │   ├── base.py              (410)  `WireFormat` ABC + `ParsedAction` dataclass. Plugin 베이스 클래스 — abstract method (format-specific 부분만, plugin이 반드시 구현)와 concrete default (lifecycle / 식별 hook, 보통 그대로 상속) 분리. Abstract: render_full_example / format_rules_anchor / format_rules_field_specific / parse / 6개 recovery wording / system_user_prefixes. Default: format_rules = `build_format_rules(self)`, render_action_input = identity, normalize_assistant_for_messages = identity, provider_call_kwargs = `{}`, prefill = `""`, serialize_assistant_for_history = `self.parse()` + 구조화 필드 추출, render_assistant_from_history = `self.render_full_example()` 호출로 wire shape 재방출. 모듈 docstring에 assistant turn lifecycle (A → B/C, B → D) 표 포함. plugin 추가 = WireFormat 상속한 새 파일 1개, main code 0 변경.
-│   └── react.py             (730)  ReActFormat — 유일 builtin plugin. ReAct-shape 문자열 + recovery wording + history pipeline 3 메서드 + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. parse_react는 ParsedAction을 직접 반환 (별도 dataclass 없음). `render_assistant_from_history`는 history record의 `thought / action / action_input` 필드를 `json.dumps`로 재직렬화 — overflow recovery / session resume 후에도 모델이 자기 emit한 것과 같은 wire shape를 보게 함 (self-reinforcement 보존). 폴더 째 삭제 가능 boundary — 외부에서 ReAct에 의존하는 코드 0건. (이전 EnvelopeFormat은 2026-05-10 측정 후 폐기 — Phase 1 bakeoff에서 mistral 0% / qwen thought 9.5%로 wire-shape 결정성 약점 확인)
+│   ├── react.py             (655)  ReActFormat — 기본 plugin. ReAct-shape 문자열 (JSON `{thought, action, action_input}`) + recovery wording + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. WireFormat ABC 상속해 lifecycle default 사용 — format-specific 메서드만 정의. (이전 EnvelopeFormat은 2026-05-10 측정 후 폐기 — Phase 1 bakeoff에서 mistral 0% / qwen thought 9.5%로 wire-shape 결정성 약점 확인)
+│   └── prefix_md.py         (~400) PrefixMdFormat — 마크다운 H2 헤딩 wire format (`## Thought / ## Action / ## Input`). small-LLM이 XML envelope보다 자연스럽게 emit하도록 설계. parser: strict `^## X$` line-anchored 매칭, last-wins on `## Action`+`## Input` (sub-header drift 방어), action body는 단일 토큰 (`^[\w.-]+$`) 검증. 4-state parse_stage (0=no Action, 1=full, 2=Action 있고 Input 깨짐, 3=Action body invalid). provider_call_kwargs override (`skip_json_format=True`) — Ollama format=json 모드가 `{` 강제하는데 markdown은 `## `로 시작이라 충돌. 나머지 lifecycle은 ABC default 사용.
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export (common_recovery / wf_recovery는 호출처가 import — 패키지 자체 format-agnostic 보존)
 │   ├── common_recovery.py   (~65)  WF-agnostic Intervention factory — `format_action_loop_intervention` (B1). 모든 plugin이 같은 텍스트를 봄. 새 wire-format plugin 추가 시 0 변경
@@ -199,7 +200,10 @@ providers/*.py      → providers/base, providers/compat, providers/http
 wire_formats/base   → (외부만: dataclasses, typing)
 wire_formats/react  → recovery/intervention, recovery/primitives,
                       tools/action_summary, wire_formats/base
-wire_formats/__init.→ wire_formats/base, wire_formats/react (builtin 등록)
+wire_formats/prefix_md → recovery/intervention, recovery/primitives,
+                      wire_formats/base
+wire_formats/__init.→ wire_formats/base, wire_formats/react, wire_formats/prefix_md
+                      (builtin 등록)
 tools/action_summary→ (외부만: 없음 — 순수 string formatter)
 tools/result.py     → (외부만: dataclasses, 순수 데이터 타입)
 tools/read_file.py  → tools/result, (외부만: re, zlib, pathlib)

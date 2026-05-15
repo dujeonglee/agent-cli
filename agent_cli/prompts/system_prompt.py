@@ -592,10 +592,13 @@ def build_agent_descriptions(wire_format=None) -> str:
         action="delegate",
         action_input='{"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
     )
+    # Indent every line so multi-line wire shapes (e.g. markdown
+    # section headers) keep their structure inside the bulleted list.
+    indented = "\n".join(f"  {line}" for line in example.splitlines())
     lines = [
         "## Available Agents",
         "Consider delegating parallelizable or independent subtasks to agents.",
-        f"  {example}",
+        indented,
     ]
     for name, desc in agents:
         suffix = f" — {desc}" if desc else ""
@@ -635,11 +638,12 @@ def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> st
         action="run_skill",
         action_input='{"name": "skill-name", "arguments": "..."}',
     )
+    indented = "\n".join(f"  {line}" for line in example.splitlines())
     lines = [
         "## Available Skills",
         "Consider using skills for multi-step or specialized workflows.",
         "Use the run_skill tool to invoke:",
-        f"  {example}",
+        indented,
     ]
     for skill in skills.values():
         if skill.disable_model_invocation:
