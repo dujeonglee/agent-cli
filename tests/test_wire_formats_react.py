@@ -20,6 +20,8 @@ Auto-registration is verified through ``agent_cli.wire_formats.get("react")``.
 
 from __future__ import annotations
 
+import json
+
 from agent_cli import wire_formats
 from agent_cli.wire_formats.base import WireFormat as WireFormatProtocol
 from agent_cli.wire_formats.react import ReActFormat
@@ -302,11 +304,12 @@ class TestSerializeAssistantForHistory:
 class TestRenderAssistantFromHistory:
     """history.jsonl record → message dict for chat completion.
 
-    Mirrors the assistant branch of ``manager._to_natural_language``
-    so overflow recovery / session resume still produces the same
-    natural-language summaries."""
+    Round-trip back to the ReAct wire shape (a JSON object) so the
+    model sees the same shape it originally emitted regardless of
+    whether the turn came from the live buffer or from history.
+    Self-reinforcement of the wire format survives overflow recovery."""
 
-    def test_action_yields_action_call_summary(self):
+    def test_action_yields_json_wire_shape(self):
         record = {
             "role": "assistant",
             "thought": "reading first",
@@ -315,11 +318,31 @@ class TestRenderAssistantFromHistory:
         }
         msg = ReActFormat().render_assistant_from_history(record)
         assert msg["role"] == "assistant"
-        # Two lines: thought line + action(args) line.
-        assert "thought: reading first" in msg["content"]
-        assert "action: read_file(src/foo.py)" in msg["content"]
+        # Content is a JSON object — re-emit of the original wire shape.
+        parsed = json.loads(msg["content"])
+        assert parsed == {
+            "thought": "reading first",
+            "action": "read_file",
+            "action_input": {"path": "src/foo.py"},
+        }
 
-    def test_complete_with_thought_yields_thought_plus_result(self):
+    def test_key_order_thought_action_input(self):
+        # Canonical key order in the re-emit so the wire shape model
+        # sees is stable across recoveries.
+        record = {
+            "role": "assistant",
+            "action": "read_file",
+            "thought": "reading",
+            "action_input": {"path": "x.py"},
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        # Order in the serialized string: thought, action, action_input.
+        content = msg["content"]
+        assert content.index('"thought"') < content.index('"action"')
+        assert content.index('"action"') < content.index('"action_input"')
+
+    def test_complete_emits_same_json_shape(self):
+        # No special-case for complete — same JSON wire shape.
         record = {
             "role": "assistant",
             "thought": "task done",
@@ -327,43 +350,44 @@ class TestRenderAssistantFromHistory:
             "action_input": {"result": "Found 3 files."},
         }
         msg = ReActFormat().render_assistant_from_history(record)
-        assert msg["content"] == "thought: task done\n\nFound 3 files."
+        parsed = json.loads(msg["content"])
+        assert parsed["action"] == "complete"
+        assert parsed["action_input"] == {"result": "Found 3 files."}
+        assert parsed["thought"] == "task done"
 
-    def test_complete_without_thought_yields_bare_result(self):
-        record = {
-            "role": "assistant",
-            "action": "complete",
-            "action_input": {"result": "Answer."},
-        }
-        msg = ReActFormat().render_assistant_from_history(record)
-        assert msg["content"] == "Answer."
-
-    def test_complete_with_string_action_input(self):
-        # Defensive: some legacy emissions store the result directly as
-        # the action_input string (not wrapped in a dict).
-        record = {
-            "role": "assistant",
-            "action": "complete",
-            "action_input": "Direct string result",
-        }
-        msg = ReActFormat().render_assistant_from_history(record)
-        assert "Direct string result" in msg["content"]
-
-    def test_action_without_thought_omits_thought_line(self):
+    def test_omits_missing_keys(self):
+        # Defensive shape: action without thought. The re-emit omits
+        # absent fields rather than inserting empty defaults so
+        # downstream code can distinguish "no thought" from "thought=''".
         record = {
             "role": "assistant",
             "action": "shell",
             "action_input": {"command": "ls"},
         }
         msg = ReActFormat().render_assistant_from_history(record)
-        # No "thought:" line when the field is empty.
-        assert "thought:" not in msg["content"]
-        assert "action: shell" in msg["content"]
+        parsed = json.loads(msg["content"])
+        assert "thought" not in parsed
+        assert parsed["action"] == "shell"
+        assert parsed["action_input"] == {"command": "ls"}
 
-    def test_no_action_falls_back_to_content_or_thought(self):
-        # Defensive shape — record had only thought/content, no action.
-        # Still produces a valid message (model gets to see the thought
-        # text rather than an empty content).
+    def test_non_ascii_preserved_verbatim(self):
+        # ``ensure_ascii=False`` keeps Unicode literal — avoids the
+        # \uXXXX escape that would inflate the model's input tokens
+        # for any non-Latin reasoning text.
+        record = {
+            "role": "assistant",
+            "thought": "한글 reasoning",
+            "action": "read_file",
+            "action_input": {"path": "x.py"},
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        assert "한글 reasoning" in msg["content"]
+        assert "\\u" not in msg["content"]
+
+    def test_no_structured_fields_falls_back_to_content(self):
+        # Defensive: a record that ``serialize_assistant_for_history``
+        # could not parse and stored as bare ``content``. The fallback
+        # echoes that content rather than producing an empty message.
         record = {"role": "assistant", "content": "free-form note"}
         msg = ReActFormat().render_assistant_from_history(record)
         assert msg["content"] == "free-form note"

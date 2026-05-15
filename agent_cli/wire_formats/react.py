@@ -22,7 +22,6 @@ import re
 
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
-from agent_cli.tools.action_summary import summarize_action_args
 from agent_cli.wire_formats.base import ParsedAction
 
 
@@ -513,38 +512,36 @@ class ReActFormat:
         return {"role": "assistant", "content": raw_text}
 
     def render_assistant_from_history(self, record: dict) -> dict:
-        # Mirror the assistant branch of ``manager._to_natural_language``.
-        # Returns a chat-completion-shaped ``{"role": "assistant",
-        # "content": …}`` dict; the content is a natural-language
-        # summary so the post-overflow / post-resume model still
-        # understands what happened, at the cost of losing wire-format
-        # self-reinforcement at the boundary.
-        thought = record.get("thought", "")
-        action = record.get("action", "")
-        action_input = record.get("action_input", {})
+        # Round-trip the structured history record back to the ReAct
+        # wire shape: the JSON object the model originally emitted.
+        # ``serialize_assistant_for_history`` parsed that JSON into
+        # ``thought / action / action_input`` top-level fields; here we
+        # re-emit those fields as a single JSON string so the model's
+        # next turn sees the same wire shape regardless of whether the
+        # turn came from the live buffer or from history.jsonl. Self-
+        # reinforcement of the wire format survives the overflow
+        # recovery / session resume boundary.
+        #
+        # Differences from the original emission are limited to JSON
+        # normalization (key order = thought→action→action_input,
+        # default ``json.dumps`` spacing). Semantic content is
+        # preserved verbatim.
+        if "thought" not in record and "action" not in record:
+            # Fallback: a record that ``serialize_assistant_for_history``
+            # could not parse and stored as bare ``content``.
+            return {"role": "assistant", "content": record.get("content", "")}
 
-        if action == "complete":
-            result = ""
-            if isinstance(action_input, dict):
-                result = action_input.get("result", "")
-            elif isinstance(action_input, str):
-                result = action_input
-            if thought:
-                content = f"thought: {thought}\n\n{result}"
-            else:
-                content = result
-            return {"role": "assistant", "content": content.strip()}
-
-        if action:
-            args_summary = summarize_action_args(action, action_input)
-            parts = []
-            if thought:
-                parts.append(f"thought: {thought}")
-            parts.append(f"action: {action}({args_summary})")
-            return {"role": "assistant", "content": "\n".join(parts)}
-
-        content = record.get("content", thought)
-        return {"role": "assistant", "content": content}
+        payload: dict = {}
+        if "thought" in record:
+            payload["thought"] = record["thought"]
+        if "action" in record:
+            payload["action"] = record["action"]
+        if "action_input" in record:
+            payload["action_input"] = record["action_input"]
+        return {
+            "role": "assistant",
+            "content": json.dumps(payload, ensure_ascii=False),
+        }
 
 
 # ── Stage 2 helper: repair malformed JSON ────────────────────
