@@ -1,12 +1,14 @@
 """Unit tests for the wire-format plugin base layer.
 
-Covers ``agent_cli/wire_formats/base.py`` (data + Protocol) and the
-registry in ``agent_cli/wire_formats/__init__.py``. Concrete plugins
-(``ReActFormat`` etc.) are tested in their own files.
+Covers ``agent_cli/wire_formats/base.py`` (``ParsedAction`` + the
+``WireFormat`` ABC and its concrete defaults) and the registry in
+``agent_cli/wire_formats/__init__.py``. Concrete plugins (``ReActFormat``
+etc.) are tested in their own files.
 
-The Protocol itself isn't directly testable — instead we use a small
-mock implementation to verify the registry's behavior and that a
-typical plugin shape satisfies the Protocol's runtime check.
+A small mock subclass implements every abstract method but inherits the
+defaults (history pipeline round-trip, identity hooks, shared format-
+rules builder). The mock verifies registry behavior and exercises the
+default implementations so changes to the base land here too.
 """
 
 from __future__ import annotations
@@ -62,14 +64,15 @@ class TestParsedAction:
 # ─── Mock plugin used by registry tests ─────────────
 
 
-class _MockFormat:
-    """Minimal WireFormat implementation for registry/Protocol tests."""
+class _MockFormat(WireFormatProtocol):
+    """Minimal WireFormat implementation for registry / ABC tests.
+
+    Implements every abstract method; inherits the concrete defaults
+    (history pipeline, identity hooks, shared format-rules builder)
+    from :class:`WireFormat` so the mock stays minimal."""
 
     name = "_mock_for_tests"
     thought_required = False
-
-    def format_rules(self) -> str:
-        return "## Mock Rules"
 
     def format_rules_anchor(self) -> str:
         return "Mock anchor."
@@ -85,9 +88,6 @@ class _MockFormat:
             f'"action": "{action}", '
             f'"action_input": {action_input}}}'
         )
-
-    def render_action_input(self, action_input: str) -> str:
-        return action_input
 
     def parse(self, llm_text: str) -> ParsedAction:
         return ParsedAction(raw=llm_text)
@@ -113,40 +113,37 @@ class _MockFormat:
     def system_user_prefixes(self) -> tuple[str, ...]:
         return ("Mock parse fail.", "Mock no action.")
 
-    def prefill(self) -> str:
-        return ""
 
-    def normalize_assistant_for_messages(self, raw: str) -> str:
-        return raw
+class TestABCConformance:
+    """A typical plugin shape should be a valid WireFormat subclass.
 
-    def provider_call_kwargs(self) -> dict:
-        return {}
-
-    def serialize_assistant_for_history(self, raw_text: str) -> dict:
-        return {"role": "assistant", "content": raw_text}
-
-    def render_assistant_from_history(self, record: dict) -> dict:
-        return {"role": "assistant", "content": record.get("content", "")}
-
-
-class TestProtocolConformance:
-    """A typical plugin shape should satisfy the Protocol at runtime.
-
-    ``runtime_checkable`` only validates attribute *presence*, not type
-    signatures — the test still catches the most common mistake
-    (missing method) which is the realistic risk for Protocol-based
-    plugin systems.
+    The base is an ABC, so missing ``@abstractmethod`` implementations
+    fail at instantiation rather than at the isinstance check — that
+    catches the most common plugin-author mistake (forgetting a
+    method) at the earliest possible moment.
     """
 
-    def test_mock_satisfies_protocol(self):
+    def test_mock_inherits_from_base(self):
         plugin = _MockFormat()
         assert isinstance(plugin, WireFormatProtocol)
 
-    def test_missing_method_fails_check(self):
-        class Incomplete:
+    def test_missing_abstractmethod_fails_instantiation(self):
+        class Incomplete(WireFormatProtocol):
             name = "incomplete"
+            thought_required = True
+            # missing every abstract method
 
-        assert not isinstance(Incomplete(), WireFormatProtocol)
+        with pytest.raises(TypeError) as exc_info:
+            Incomplete()
+        # Python's ABC mechanism mentions the abstract method name(s) in
+        # the error so plugin authors see what's missing.
+        assert "abstract" in str(exc_info.value).lower()
+
+    def test_unrelated_class_is_not_an_instance(self):
+        class Unrelated:
+            name = "unrelated"
+
+        assert not isinstance(Unrelated(), WireFormatProtocol)
 
 
 # ─── Registry ──────────────────────────────────────
@@ -194,15 +191,9 @@ class TestRegistry:
         assert "_mock_for_tests" in str(exc_info.value)
 
     def test_list_names_sorted(self, isolated_registry):
-        class _MockB:
+        class _MockB(WireFormatProtocol):
             name = "bbb"
             thought_required = False
-            # Minimal Protocol satisfaction — only ``name`` is read by
-            # list_names, but isinstance check would fail without the
-            # rest. We register without going through the Protocol check.
-
-            def format_rules(self) -> str:
-                return ""
 
             def format_rules_anchor(self) -> str:
                 return ""
@@ -212,9 +203,6 @@ class TestRegistry:
 
             def render_full_example(self, *, thought, action, action_input) -> str:
                 return ""
-
-            def render_action_input(self, action_input: str) -> str:
-                return action_input
 
             def parse(self, t) -> ParsedAction:
                 return ParsedAction()
@@ -239,21 +227,6 @@ class TestRegistry:
 
             def system_user_prefixes(self) -> tuple[str, ...]:
                 return ()
-
-            def prefill(self) -> str:
-                return ""
-
-            def normalize_assistant_for_messages(self, raw: str) -> str:
-                return raw
-
-            def provider_call_kwargs(self) -> dict:
-                return {}
-
-            def serialize_assistant_for_history(self, raw_text: str) -> dict:
-                return {"role": "assistant", "content": raw_text}
-
-            def render_assistant_from_history(self, record: dict) -> dict:
-                return {"role": "assistant", "content": record.get("content", "")}
 
         a = _MockFormat()  # name "_mock_for_tests"
         b = _MockB()  # name "bbb"

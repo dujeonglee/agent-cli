@@ -270,12 +270,20 @@ class TestSerializeAssistantForHistory:
         assert out["role"] == "assistant"
         assert out["action"] == "read_file"
 
-    def test_partial_react_with_only_thought(self):
-        # The "or" branch — thought without action also serialized.
+    def test_partial_react_with_only_thought_falls_back_to_content(self):
+        # The base default's serialize routes through ``self.parse()``
+        # and uses ``parsed.action`` as the structured-vs-fallback gate.
+        # Thought-only emissions (no action) are a drift case — stored
+        # as bare content so the raw text survives in history.jsonl
+        # for postmortem. The model on overflow-recovery will see the
+        # raw text and the next-turn recovery layer can re-prompt for
+        # an action.
         text = '{"thought": "no action this turn"}'
         out = ReActFormat().serialize_assistant_for_history(text)
-        assert out["role"] == "assistant"
-        assert out["thought"] == "no action this turn"
+        assert out == {
+            "role": "assistant",
+            "content": '{"thought": "no action this turn"}',
+        }
 
     def test_unparseable_text_falls_back_to_content(self):
         # Garbage emission must still survive in the log for postmortem,
@@ -355,10 +363,11 @@ class TestRenderAssistantFromHistory:
         assert parsed["action_input"] == {"result": "Found 3 files."}
         assert parsed["thought"] == "task done"
 
-    def test_omits_missing_keys(self):
-        # Defensive shape: action without thought. The re-emit omits
-        # absent fields rather than inserting empty defaults so
-        # downstream code can distinguish "no thought" from "thought=''".
+    def test_missing_thought_renders_as_empty_string(self):
+        # Defensive shape: action without thought field. The re-emit
+        # uses an empty string rather than omitting the key so the
+        # wire shape stays uniform across recoveries. The 3-field JSON
+        # object shape is constant; only the values vary.
         record = {
             "role": "assistant",
             "action": "shell",
@@ -366,9 +375,11 @@ class TestRenderAssistantFromHistory:
         }
         msg = ReActFormat().render_assistant_from_history(record)
         parsed = json.loads(msg["content"])
-        assert "thought" not in parsed
-        assert parsed["action"] == "shell"
-        assert parsed["action_input"] == {"command": "ls"}
+        assert parsed == {
+            "thought": "",
+            "action": "shell",
+            "action_input": {"command": "ls"},
+        }
 
     def test_non_ascii_preserved_verbatim(self):
         # ``ensure_ascii=False`` keeps Unicode literal — avoids the

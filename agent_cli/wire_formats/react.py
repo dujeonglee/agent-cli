@@ -6,13 +6,13 @@ adaptation, and lifecycle hooks. Removing this file would remove ReAct
 support entirely (with no edits anywhere else needed) — the boundary
 the plugin system promises.
 
-During the multi-step refactor (Steps 2 → 5) the same strings still
-live in ``prompts/system_prompt.FORMAT_RULES``, ``constants.py``, and
-``recovery/primitives.py`` because callers haven't been migrated yet.
-That duplication is intentional and short-lived: each later step
-removes one of those legacy locations as its caller switches to
-``wire_format.<method>()``. The final state has every string in this
-module only.
+Inherits from :class:`agent_cli.wire_formats.base.WireFormat` ABC. The
+history pipeline defaults (``serialize_assistant_for_history`` /
+``render_assistant_from_history``), identity hooks
+(``normalize_assistant_for_messages``, ``render_action_input``), and
+provider/lifecycle hooks (``prefill``, ``provider_call_kwargs``,
+``format_rules``) all come from the base — ReAct only specifies what
+makes its wire shape unique.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import re
 
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
-from agent_cli.wire_formats.base import ParsedAction
+from agent_cli.wire_formats.base import ParsedAction, WireFormat
 
 
 # ── ReAct parser ─────────────────────────────────────────────
@@ -349,7 +349,7 @@ _NO_THOUGHT_CONSTRAINT = (
 )
 
 
-class ReActFormat:
+class ReActFormat(WireFormat):
     """Reference plugin — preserves pre-plugin behavior.
 
     Inner shape: ``{"thought": ..., "action": ..., "action_input": ...}``.
@@ -358,9 +358,17 @@ class ReActFormat:
     text. Provider quirks: none (JSON mode stays active when
     capabilities support it).
 
-    The class deliberately has no constructor parameters: registration
-    is a single ``register(ReActFormat())`` call at module import time
-    (see ``agent_cli/wire_formats/__init__.py``).
+    Inherits the history pipeline defaults from ``WireFormat``:
+    ``serialize_assistant_for_history`` runs ``parse_react`` and stores
+    structured fields; ``render_assistant_from_history`` re-emits those
+    fields through ``render_full_example`` (JSON wire shape). Identity
+    defaults for ``normalize_assistant_for_messages``, ``prefill``,
+    ``provider_call_kwargs``, and ``render_action_input`` also apply —
+    ReAct doesn't need overrides for any of them.
+
+    The class has no constructor parameters: registration is a single
+    ``register(ReActFormat())`` call at module import time (see
+    ``agent_cli/wire_formats/__init__.py``).
     """
 
     name = "react"
@@ -368,30 +376,17 @@ class ReActFormat:
 
     # ─── Prompt ────────────────────────────────────────────────
 
-    def format_rules(self) -> str:
-        from agent_cli.wire_formats._format_rules_builder import build_format_rules
-
-        return build_format_rules(self)
-
     def format_rules_anchor(self) -> str:
         return _FORMAT_RULES_ANCHOR
 
     def format_rules_field_specific(self) -> str:
         return _FORMAT_RULES_FIELD_SPECIFIC
 
-    def render_action_input(self, action_input: str) -> str:
-        # ReAct nests action_input as a JSON dict verbatim — identity.
-        # The inline-guide builder feeds in already-JSON strings; no
-        # transformation needed. A future plugin where action_input is
-        # not a JSON dict overrides this hook.
-        return action_input
-
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         # ReAct shape: a single JSON object. ``thought=None`` (skill /
         # agent invocation example) substitutes a short placeholder so
-        # the field stays visible — matches envelope's "reasoning here"
-        # handling so both plugins teach the same contract: the
-        # reasoning slot is always present.
+        # the reasoning slot stays visible — teaches the model the slot
+        # is required even in invocation-only examples.
         reasoning = thought if thought is not None else "reasoning here"
         return (
             "{"
@@ -430,11 +425,12 @@ class ReActFormat:
         return _SYSTEM_USER_PREFIXES
 
     # ─── ReAct-only recovery (NO_THOUGHT) ──────────────────────
-    # Not part of the WireFormat Protocol — only plugins with
+    # Not part of the WireFormat base interface — only plugins with
     # ``thought_required=True`` emit this intervention, and the loop
-    # gates the call on that flag. Envelope plugins set
-    # ``thought_required=False`` and never reach this method. Adding it
-    # to the Protocol would force every plugin to implement a no-op,
+    # gates the call on that flag. Plugins where thought is preceding
+    # free text (not a structured schema field) set
+    # ``thought_required=False`` and never reach this method. Adding
+    # it to the base would force every plugin to implement a no-op,
     # so duck typing wins here.
 
     def format_no_thought_retry(self, *, prior_content: str = "") -> Intervention:
@@ -442,7 +438,7 @@ class ReActFormat:
         the required ``thought`` field.
 
         Same failure-grounding shape as the format_no_*_retry builders
-        in ``recovery/builders``: echo the prior output so the model
+        in ``recovery.wf_recovery``: echo the prior output so the model
         sees its own omission, then restate the constraint. Inlined
         rather than promoted to a primitive — adding a primitive for a
         single caller violates the "primitive reused by ≥2 failures"
@@ -467,81 +463,6 @@ class ReActFormat:
             message=msg,
             primitives=["echo_prior_output"],
         )
-
-    # ─── Provider / lifecycle ──────────────────────────────────
-
-    def prefill(self) -> str:
-        # No prefill — ReAct's prior produces ReAct shape on its own.
-        # Envelope plugins override this to force their wire shape from
-        # the first generated token.
-        return ""
-
-    def provider_call_kwargs(self) -> dict:
-        # ReAct is fully JSON-shaped; keep capability-driven
-        # ``format=json`` mode active by passing no overrides.
-        return {}
-
-    # ─── History / context-window policy ──────────────────────
-    # All three history-pipeline knobs are now plugin-owned:
-    # ``normalize_assistant_for_messages`` (H3),
-    # ``serialize_assistant_for_history`` (H2), and
-    # ``render_assistant_from_history`` (H4). ``manager._to_natural_
-    # language`` keeps only the user / tool branches; the assistant
-    # branch is delegated here.
-
-    def normalize_assistant_for_messages(self, raw: str) -> str:
-        # ReAct: raw IS the on-the-wire shape, so identity preserves
-        # self-reinforcement (the model's prior teaches the format
-        # we want it to keep emitting). Envelope plugins re-render
-        # to repair drift at the boundary.
-        return raw
-
-    def serialize_assistant_for_history(self, raw_text: str) -> dict:
-        # JSON-parse the ReAct emission and surface
-        # ``thought / action / action_input`` as top-level fields so
-        # ``manager._to_natural_language`` can dispatch on them. Falls
-        # back to bare ``content`` when the text isn't parseable so
-        # corrupt emissions still survive in the log for postmortem.
-        try:
-            data = json.loads(raw_text)
-            if isinstance(data, dict) and ("thought" in data or "action" in data):
-                data["role"] = "assistant"
-                return data
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return {"role": "assistant", "content": raw_text}
-
-    def render_assistant_from_history(self, record: dict) -> dict:
-        # Round-trip the structured history record back to the ReAct
-        # wire shape: the JSON object the model originally emitted.
-        # ``serialize_assistant_for_history`` parsed that JSON into
-        # ``thought / action / action_input`` top-level fields; here we
-        # re-emit those fields as a single JSON string so the model's
-        # next turn sees the same wire shape regardless of whether the
-        # turn came from the live buffer or from history.jsonl. Self-
-        # reinforcement of the wire format survives the overflow
-        # recovery / session resume boundary.
-        #
-        # Differences from the original emission are limited to JSON
-        # normalization (key order = thought→action→action_input,
-        # default ``json.dumps`` spacing). Semantic content is
-        # preserved verbatim.
-        if "thought" not in record and "action" not in record:
-            # Fallback: a record that ``serialize_assistant_for_history``
-            # could not parse and stored as bare ``content``.
-            return {"role": "assistant", "content": record.get("content", "")}
-
-        payload: dict = {}
-        if "thought" in record:
-            payload["thought"] = record["thought"]
-        if "action" in record:
-            payload["action"] = record["action"]
-        if "action_input" in record:
-            payload["action_input"] = record["action_input"]
-        return {
-            "role": "assistant",
-            "content": json.dumps(payload, ensure_ascii=False),
-        }
 
 
 # ── Stage 2 helper: repair malformed JSON ────────────────────

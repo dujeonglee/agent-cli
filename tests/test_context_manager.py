@@ -293,8 +293,10 @@ class TestNaturalLanguageConversion:
         assert "12 passed, 1 failed" in result["content"]
 
     def test_assistant_no_thought(self, wf):
-        """Assistant message with action but no thought — thought key
-        omitted from the re-emit, not inserted as empty string."""
+        """Assistant record with action but no thought field — the
+        re-emit substitutes an empty string for thought so the wire
+        shape stays uniform across recoveries (3-field JSON object
+        with empty defaults vs full content)."""
         msg = {
             "role": "assistant",
             "action": "read_file",
@@ -302,9 +304,11 @@ class TestNaturalLanguageConversion:
         }
         result = _to_natural_language(msg, wf)
         parsed = json.loads(result["content"])
-        assert "thought" not in parsed
-        assert parsed["action"] == "read_file"
-        assert parsed["action_input"] == {"path": "test.py"}
+        assert parsed == {
+            "thought": "",
+            "action": "read_file",
+            "action_input": {"path": "test.py"},
+        }
 
     def test_assistant_plain_content(self, wf):
         """Fallback: assistant message with only content field."""

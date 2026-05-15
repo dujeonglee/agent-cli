@@ -1,19 +1,62 @@
-"""Wire format plugin protocol and shared types.
+"""Wire format plugin base class and shared types.
 
-A "wire format" is the on-the-wire shape of a single LLM response — what the
-model is asked to emit, what the parser reads, and what the recovery layer
-shows the model when something goes wrong. The bundle is hot-swappable so
-new format experiments live in their own module and can be added or removed
-without touching the loop, prompts, or recovery primitives.
+A "wire format" is the on-the-wire shape of a single LLM response — what
+the model is asked to emit, what the parser reads, and what the recovery
+layer shows the model when something goes wrong. The bundle is hot-
+swappable so new format experiments live in their own module and can be
+added or removed without touching the loop, prompts, or recovery
+primitives.
 
-See ``agent_cli/wire_formats/react.py`` for the reference implementation
-that mirrors the pre-plugin behavior bit-for-bit.
+Lifecycle per assistant turn — four data forms with different consumers::
+
+    (A) Emit        consumer: model (produces)
+       │            shape:    plugin wire shape, raw string
+       │
+       ├── normalize_assistant_for_messages(raw) ─────────────┐
+       │                                                       ▼
+       │                                                  (C) Feed live
+       │                                                  consumer: LLM (next turn)
+       │                                                  shape:    plugin wire shape
+       │
+       └── serialize_assistant_for_history(raw)
+                                  ▼
+                            (B) Store
+                            consumer: history.jsonl reader / analysis
+                            shape:    structured dict {thought, action, action_input}
+                                  │
+                                  └── render_assistant_from_history(record)
+                                                              ▼
+                                                        (D) Feed 복원
+                                                        consumer: LLM after overflow / resume
+                                                        shape:    plugin wire shape (≈ A)
+
+Each transition is owned by the plugin via a method on this base class.
+Default implementations are provided for the common cases:
+
+  - ``serialize_assistant_for_history`` — parse + structured-field extraction.
+  - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``.
+  - ``normalize_assistant_for_messages`` — identity.
+  - ``format_rules`` — delegate to the shared builder.
+  - ``render_action_input`` — identity.
+  - ``provider_call_kwargs`` — empty dict.
+  - ``prefill`` — empty string.
+
+So a typical plugin only implements the wire-shape-specific abstract
+methods: ``parse``, ``render_full_example``, ``format_rules_anchor``,
+``format_rules_field_specific``, and the recovery wording strings. The
+serialize / render defaults compose those into the lifecycle automatically
+— ``serialize`` calls ``self.parse()`` and extracts structured fields;
+``render`` calls ``self.render_full_example()`` to re-emit the wire shape
+from the stored record.
+
+See ``agent_cli/wire_formats/react.py`` for the reference implementation.
 """
 
 from __future__ import annotations
 
+import json
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
 
 
 @dataclass
@@ -22,8 +65,8 @@ class ParsedAction:
 
     Carries everything the loop needs to dispatch one action, plus a small
     set of generally-useful metadata fields. Format-specific debug info
-    (envelope reject reasons, extra-field leakage, etc.) belongs inside
-    the plugin — this dataclass is the *boundary* between plugin and loop.
+    belongs inside the plugin — this dataclass is the *boundary* between
+    plugin and loop.
 
     Field semantics:
       - ``thought / action / action_input``: the action to execute. ``None``
@@ -51,81 +94,59 @@ class ParsedAction:
     truncated: bool = False
 
 
-@runtime_checkable
-class WireFormat(Protocol):
-    """Plugin contract for one wire format.
+class WireFormat(ABC):
+    """Plugin base class for one wire format.
 
-    Plugins live in ``agent_cli/wire_formats/<name>.py`` and register
-    themselves via :func:`agent_cli.wire_formats.register` at import time.
-    The loop / prompt / recovery layers only see this Protocol — they
-    never branch on the plugin's name.
+    Plugins inherit from this class and override the abstract methods
+    that define their wire shape. Concrete defaults handle the common
+    cases (history pipeline round-trip, identity hooks, shared builder)
+    so a typical plugin only specifies what makes its wire shape unique:
+    the parser, the rendering of one example, the rules section bits,
+    and the recovery wording.
+
+    See the module docstring for the assistant-turn lifecycle that
+    these methods orchestrate.
 
     Method groups:
       - **Prompt**: what the model is told to emit.
       - **Parsing**: how the emitted text becomes a ``ParsedAction``.
       - **Recovery**: what the model is told when parsing failed.
-
-    Each method returns a string fragment or a ``ParsedAction``. Composing
-    those fragments into the actual prompt section / intervention message
-    is the caller's job — keeping plugins thin avoids re-implementing the
-    surrounding recovery logic per plugin.
+      - **Provider / lifecycle**: prefill, provider kwargs, the (A)→(C)
+        normalization, and the (A)↔(B)↔(D) history round-trip.
     """
 
     name: str
     """Short identifier used by the CLI ``--response-format`` option and
     the registry. Convention: lowercase, ``[a-z0-9_-]``."""
 
-    thought_required: bool
+    thought_required: bool = True
     """Whether the wire format treats ``thought`` as a mandatory schema
     field. ReAct sets True (the recovery layer fires NO_THOUGHT when an
-    action is emitted without a thought field). Envelope-style formats
-    where the thought is preceding free text set False — its absence is
-    valid, not a drift signal."""
+    action is emitted without a thought field). Wire formats where the
+    thought is preceding free text outside a structured field set False —
+    its absence is valid, not a drift signal."""
 
-    # ─── Prompt ────────────────────────────────────────────────
-    # The ``## Response Format`` section is composed by
-    # ``wire_formats._format_rules_builder.build_format_rules``: it
-    # carries the shared text (completion intro, rules 3-6) and calls
-    # the three plugin methods below for the wire-shape-dependent parts.
-    # Plugins themselves implement ``format_rules()`` simply by
-    # returning ``build_format_rules(self)``.
+    # ─── Prompt (abstract) ──────────────────────────────────────
 
-    def format_rules(self) -> str:
-        """Return the ``## Response Format`` section body for this plugin.
-
-        Plugins typically delegate to
-        ``_format_rules_builder.build_format_rules(self)``; the
-        builder sources the shared text and calls the rendering hooks
-        below. Returning a hand-written string instead is permitted
-        for plugins whose section diverges so much that templating
-        would obscure rather than clarify.
-        """
-        ...
-
-    def format_rules_anchor(self) -> str:
-        """One-sentence anchor that opens the section after the heading.
-
-        Tells the model what wire shape it must emit. ReAct says
-        "You MUST output a single JSON object only — …"; envelope
-        formats say "Output your response inside a single <tool_use>
-        envelope. …". Newlines are allowed for multi-line anchors.
-        """
-        ...
-
+    @abstractmethod
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         """Render one full example of the wire shape.
 
-        The builder calls this three times with shared logical inputs
-        — schema example, ``ready_for_review`` example, ``complete``
-        example — so the *content* is identical across plugins and
-        only the on-the-wire form differs. Measurement of model
-        compliance can therefore compare two plugins fairly.
+        The Format Rules builder calls this three times with shared
+        logical inputs — schema example, ``ready_for_review`` example,
+        ``complete`` example — so the *content* is identical across
+        plugins and only the on-the-wire form differs. Measurement of
+        model compliance can therefore compare two plugins fairly.
+
+        Also used by ``render_assistant_from_history`` (default) to
+        round-trip a stored record back into the wire shape on overflow
+        recovery / session resume.
 
         Args:
             thought: Reasoning text. ``None`` means "invocation only";
                 each plugin chooses how to handle the absent slot —
-                ReAct simply omits the field, envelope formats may
-                substitute a short placeholder so the slot is visible.
+                typically substituting a short placeholder so the slot
+                stays visible.
             action: Action name (e.g. ``"read_file"``,
                 ``"ready_for_review"``).
             action_input: action_input as a JSON string. Plugins
@@ -138,49 +159,33 @@ class WireFormat(Protocol):
             The rendered example, no surrounding whitespace, no
             trailing newline.
         """
-        ...
 
-    def render_action_input(self, action_input: str) -> str:
-        """Render an action_input string in this format's inner shape.
+    @abstractmethod
+    def format_rules_anchor(self) -> str:
+        """One-sentence anchor that opens the section after the heading.
 
-        Inline tool guides show only the action_input portion of an
-        invocation — the surrounding wire shape is taught by the
-        Format Rules section, not repeated per example. Both ReAct and
-        envelope nest action_input as a JSON dict, so they implement
-        this as identity (return the input verbatim). A future plugin
-        whose action_input is not a JSON dict (e.g. XML attribute
-        encoding) parses the JSON and re-renders into its own form
-        here, keeping the inline guides correct without changing the
-        builder.
-
-        Args:
-            action_input: action_input as a JSON string (the dict
-                shape). Plugins that nest it as JSON return it
-                verbatim; plugins that transform it parse and re-emit.
-
-        Returns:
-            The rendered action_input fragment, no surrounding
-            whitespace, no trailing newline.
+        Tells the model what wire shape it must emit. ReAct says
+        "You MUST output a single JSON object only — …". Newlines are
+        allowed for multi-line anchors.
         """
-        ...
 
+    @abstractmethod
     def format_rules_field_specific(self) -> str:
         """Lines for Rules 1 and 2 of the section.
 
         Rules 1 and 2 obligate the model to populate the reasoning /
         thought slot and the action input slot, but the field names
-        differ by wire shape (``thought`` / ``reasoning text``,
-        ``action_input`` / ``JSON dict``). Rules 3-6 are shared text
-        and live in the builder.
+        differ by wire shape. Rules 3-6 are shared text and live in the
+        builder.
 
-        The returned string contains both rules joined by newlines
-        and starts with ``"1. …\\n2. …"``; it is spliced between
+        The returned string contains both rules joined by newlines and
+        starts with ``"1. …\\n2. …"``; it is spliced between
         ``"Rules:"`` and the shared tail.
         """
-        ...
 
-    # ─── Parsing ───────────────────────────────────────────────
+    # ─── Parsing (abstract) ─────────────────────────────────────
 
+    @abstractmethod
     def parse(self, llm_text: str) -> ParsedAction:
         """Parse one model emission into a ``ParsedAction``.
 
@@ -189,10 +194,10 @@ class WireFormat(Protocol):
         every emission to round-trip through this method, including
         garbage that needs an intervention.
         """
-        ...
 
-    # ─── Recovery (string fragments) ───────────────────────────
+    # ─── Recovery wording (abstract) ────────────────────────────
 
+    @abstractmethod
     def constraint_reminder_call(self) -> str:
         """One-sentence reminder of the required tool call shape.
 
@@ -201,8 +206,8 @@ class WireFormat(Protocol):
         Should describe the envelope and the inner JSON fields the
         parser expects.
         """
-        ...
 
+    @abstractmethod
     def constraint_reminder_action_required(self) -> str:
         """Reminder used when parsing succeeded but ``action`` was missing.
 
@@ -210,24 +215,24 @@ class WireFormat(Protocol):
         invoke a tool *or* call ``complete``. Embedded by
         ``recovery.wf_recovery.format_no_action_retry``.
         """
-        ...
 
+    @abstractmethod
     def failure_framing_parse_fail(self) -> str:
         """Opening line of the intervention when parsing failed entirely.
 
         e.g. ``"Your response was not valid JSON."`` for ReAct. Embedded
         as the first line of ``format_no_json_retry``'s message.
         """
-        ...
 
+    @abstractmethod
     def failure_framing_no_action(self) -> str:
         """Opening line of the intervention when parsing succeeded but
         ``action`` was missing.
 
         e.g. ``"Your JSON was parsed but has no action."`` for ReAct.
         """
-        ...
 
+    @abstractmethod
     def static_retry_hint_no_json(self) -> str:
         """Fallback message when the prior emission was empty / whitespace.
 
@@ -235,13 +240,13 @@ class WireFormat(Protocol):
         to echo back. Should be self-contained — framing + reminder
         rolled into one short paragraph.
         """
-        ...
 
+    @abstractmethod
     def static_retry_hint_no_action(self) -> str:
         """Fallback message when the prior emission was empty / whitespace
         and parsing produced no action."""
-        ...
 
+    @abstractmethod
     def system_user_prefixes(self) -> tuple[str, ...]:
         """Return the list of recovery framing prefixes this plugin emits.
 
@@ -253,112 +258,153 @@ class WireFormat(Protocol):
         Each entry is the *opening prefix* of a message produced by this
         plugin's recovery (``failure_framing_*``, ``static_retry_hint_*``).
         Format-agnostic prefixes (``"You have called"``, etc. for B1
-        action-loop interventions) are kept in
-        ``constants.SYSTEM_USER_PREFIXES`` and unioned with this list at
-        consume time.
+        action-loop interventions) live in
+        ``wire_formats._FORMAT_AGNOSTIC_USER_PREFIXES`` and are unioned
+        with this list at consume time.
         """
-        ...
 
-    # ─── Provider / lifecycle ──────────────────────────────────
+    # ─── Prompt (default) ───────────────────────────────────────
 
-    def prefill(self) -> str:
-        """Return assistant-turn prefill string, or empty for no prefill.
+    def format_rules(self) -> str:
+        """Compose the ``## Response Format`` section via shared builder.
 
-        When non-empty, the loop appends ``{"role":"assistant","content":<prefill>}``
-        as the last message before the LLM call. The provider treats this
-        as "continue from here," forcing the model into the wire format
-        from the first generated token. The loop prepends the prefill to
-        the response so downstream parsers see a complete emission.
-
-        ReAct returns ``""`` (no prefill needed — the model's prior
-        already produces ReAct shape). Envelope formats return e.g.
-        ``'<tool_use id="r1">{'`` so the model emits ``"action": ...``
-        next.
+        Default delegates to
+        ``_format_rules_builder.build_format_rules(self)`` which sources
+        the shared text (completion intro, rules 3-6) and calls
+        ``format_rules_anchor`` / ``render_full_example`` /
+        ``format_rules_field_specific`` for the wire-shape-dependent
+        parts. Plugins whose section diverges so much that templating
+        would obscure rather than clarify may override.
         """
-        ...
+        from agent_cli.wire_formats._format_rules_builder import build_format_rules
 
-    # ─── History / context-window policy ───────────────────────
-    # Three knobs control how an assistant turn is shaped while it
-    # travels through the conversation pipeline. Different wire
-    # formats benefit from different policies — see
-    # ``docs/ARCHITECTURE.md`` §5 for the trade-offs (raw self-
-    # reinforcement vs. natural-language compactness vs. drift
-    # filtering).
-    #
-    # Pipeline call order:
-    #   1. Model emits raw_text.
-    #   2. ``normalize_assistant_for_messages(raw_text)`` runs first —
-    #      result is appended to the in-memory ``messages`` buffer the
-    #      LLM sees as next-turn prior.
-    #   3. ``serialize_assistant_for_history(raw_text)`` runs in
-    #      parallel — result is persisted to history.jsonl.
-    #   4. On overflow recovery / session resume, history records
-    #      pass through ``render_assistant_from_history(record)`` to
-    #      become messages again.
+        return build_format_rules(self)
+
+    def render_action_input(self, action_input: str) -> str:
+        """Render an action_input string in this format's inner shape.
+
+        Default identity — both ReAct-style and tag-wrapped formats
+        nest action_input as a JSON dict, so they return the string
+        verbatim. A future plugin whose action_input is not a JSON
+        dict (e.g. XML attribute encoding) overrides this hook.
+        """
+        return action_input
+
+    # ─── Provider / lifecycle (default) ─────────────────────────
 
     def normalize_assistant_for_messages(self, raw: str) -> str:
         """Rewrite a model emission for the in-memory ``messages`` buffer.
 
-        The buffer is fed back to the LLM as next-turn prior. When the
-        model drifts to a different shape mid-conversation (e.g. emits
-        ReAct in tool_use mode), leaving the raw text in the buffer
-        teaches the model "I emitted that last time" and reinforces the
-        very prior we wanted to override.
-
-        ReAct returns ``raw`` unchanged (raw IS the ReAct shape).
-        Envelope formats parse ``raw`` and re-render in their envelope
-        shape so the model's own prior teaches the envelope.
+        Default identity — raw IS the wire shape and leaving it in the
+        buffer reinforces the model's prior (the model's own prior teaches
+        the format we want it to keep emitting). Plugins where ``raw``
+        may drift from the canonical wire shape mid-conversation override
+        to re-render.
 
         Pure function — does not touch ``history.jsonl``. The lossless
         principle is preserved by recording raw text on disk; this
         method affects only the in-memory next-turn prior.
         """
-        ...
-
-    def serialize_assistant_for_history(self, raw_text: str) -> dict:
-        """Convert a raw model emission into the dict stored in
-        ``history.jsonl``.
-
-        The returned dict carries ``role="assistant"`` plus whatever
-        plugin-specific fields the plugin will later expect to read in
-        :meth:`render_assistant_from_history`. ReAct splits into
-        ``thought``, ``action``, ``action_input``. Envelope plugins may
-        keep an envelope summary or store the raw text as ``content``.
-
-        Must not raise on malformed input — return a fallback shape
-        like ``{"role": "assistant", "content": raw_text}`` so corrupt
-        emissions still survive in the log for postmortem.
-        """
-        ...
-
-    def render_assistant_from_history(self, record: dict) -> dict:
-        """Convert one history.jsonl assistant record into a message
-        dict for the LLM.
-
-        Used when restoring messages from disk — overflow recovery,
-        session resume, fork. The returned dict has the
-        ``{"role": "assistant", "content": …}`` shape consumed by
-        chat completion APIs.
-
-        Each plugin chooses how to render: ReAct produces a natural-
-        language summary (``"thought: …\\naction: read_file({path})"``)
-        which is compact and easy for the model to reason about, but
-        loses self-reinforcement on the wire format. Envelope plugins
-        may keep the original envelope text so self-reinforcement
-        survives an overflow boundary.
-        """
-        ...
+        return raw
 
     def provider_call_kwargs(self) -> dict:
         """Extra kwargs to pass to ``provider.call()`` for this plugin.
 
-        Currently used to disable Ollama's ``format=json`` mode for
-        envelope formats (the envelope tag is a non-JSON prefix that
-        ``format=json`` rejects). ReAct returns ``{}`` to keep
-        capability-driven JSON mode active.
+        Default empty dict — JSON-shaped formats keep capability-driven
+        ``format=json`` mode active. Non-JSON formats (e.g. tag-wrapped)
+        override with hints like ``{"skip_json_format": True}``.
 
         Keeping these as opaque dict kwargs lets plugins hook into
         provider features without the provider layer learning per-plugin
         details — providers ignore unknown kwargs by contract.
         """
-        ...
+        return {}
+
+    def prefill(self) -> str:
+        """Return assistant-turn prefill string, or empty for no prefill.
+
+        Default no prefill — the model's prior produces the wire shape
+        on its own. Non-canonical formats override to force the wire
+        shape from the first generated token.
+
+        When non-empty, the loop appends
+        ``{"role":"assistant","content":<prefill>}`` as the last message
+        before the LLM call. The provider treats this as "continue from
+        here," forcing the wire format from the first generated token.
+        The loop prepends the prefill to the response so downstream
+        parsers see a complete emission.
+        """
+        return ""
+
+    # ─── History / context-window (default) ─────────────────────
+    # Default implementations of the (A → B) and (B → D) transitions
+    # compose ``self.parse()`` and ``self.render_full_example()``. They
+    # form the round-trip: ``serialize`` and ``render`` are inverses up
+    # to JSON normalization (key order = thought→action→action_input,
+    # default ``json.dumps`` spacing). Plugins override only when their
+    # wire shape needs non-round-trip behavior.
+
+    def serialize_assistant_for_history(self, raw_text: str) -> dict:
+        """Convert a raw emission into the dict stored in history.jsonl.
+
+        Default: ``self.parse(raw_text)`` + structured-field extraction.
+        Returned dict carries ``role="assistant"`` plus
+        ``thought / action / action_input`` as top-level fields when
+        parse succeeded with an action, falling back to bare ``content``
+        when parse produced no action so corrupt emissions still survive
+        in the log for postmortem.
+
+        Routing parse through this default also means the live-dispatch
+        parser and the history-write parser share the same 3-stage
+        fallback — including JSON repair — so a recoverable emission
+        produces the same structured record either way.
+        """
+        parsed = self.parse(raw_text)
+        if parsed.action:
+            return {
+                "role": "assistant",
+                "thought": parsed.thought or "",
+                "action": parsed.action,
+                "action_input": (
+                    parsed.action_input if parsed.action_input is not None else {}
+                ),
+            }
+        return {"role": "assistant", "content": raw_text}
+
+    def render_assistant_from_history(self, record: dict) -> dict:
+        """Convert a history.jsonl assistant record into a message dict.
+
+        Default: round-trip the structured fields back to the wire shape
+        via ``self.render_full_example`` so the model on overflow
+        recovery / session resume sees the same shape it originally
+        emitted (self-reinforcement preserved across the recovery
+        boundary).
+
+        ``action_input`` is JSON-serialized before passing to
+        ``render_full_example`` (which accepts a string for shape-
+        agnostic spacing decisions). Records that lack structured fields
+        — typically those that ``serialize_assistant_for_history``
+        stored as bare ``content`` because parse produced no action —
+        are returned as-is.
+
+        Differences from the original emission are limited to JSON
+        normalization (key order, default ``json.dumps`` spacing).
+        Semantic content is preserved verbatim.
+        """
+        if "thought" not in record and "action" not in record:
+            return {"role": "assistant", "content": record.get("content", "")}
+
+        action_input = record.get("action_input", {})
+        if isinstance(action_input, (dict, list)):
+            action_input_str = json.dumps(action_input, ensure_ascii=False)
+        else:
+            action_input_str = str(action_input)
+
+        return {
+            "role": "assistant",
+            "content": self.render_full_example(
+                thought=record.get("thought") or "",
+                action=record.get("action") or "",
+                action_input=action_input_str,
+            ),
+        }

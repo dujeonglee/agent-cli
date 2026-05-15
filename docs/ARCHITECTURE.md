@@ -49,7 +49,7 @@ agent_cli/
 ├── constants.py             (~25)  공유 상수 (timeout, observation 템플릿, INTERRUPT_NOTICE). 외부 모듈 의존 없음 — 저층 레이어. wire-format-specific 상수 (FORMAT_RULES, RETRY_HINT_*, SYSTEM_USER_PREFIXES) 는 ``wire_formats/`` 의 plugin이 소유
 ├── wire_formats/                   Wire format 플러그인 시스템 — 모델 응답 형식 추상화
 │   ├── __init__.py          (130)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react) 자동 등록.
-│   ├── base.py              (340)  `WireFormat` Protocol + `ParsedAction` dataclass. Plugin 인터페이스 (분기점): format_rules / format_rules_anchor / render_full_example / render_action_input (인라인 가이드의 action_input shape swap point — JSON dict이 아닌 wf 미래 호환) / format_rules_field_specific / parse / constraint_reminder_call / constraint_reminder_action_required / failure_framing_parse_fail / failure_framing_no_action / static_retry_hint_no_json / static_retry_hint_no_action / system_user_prefixes / prefill / normalize_assistant_for_messages (turn-internal messages 버퍼 형태) / serialize_assistant_for_history (history.jsonl 저장 형태) / render_assistant_from_history (overflow recovery / session resume 시 messages 형태로 복원) / provider_call_kwargs (+ `name` / `thought_required` 속성). plugin 추가 시 main code 0 변경.
+│   ├── base.py              (410)  `WireFormat` ABC + `ParsedAction` dataclass. Plugin 베이스 클래스 — abstract method (format-specific 부분만, plugin이 반드시 구현)와 concrete default (lifecycle / 식별 hook, 보통 그대로 상속) 분리. Abstract: render_full_example / format_rules_anchor / format_rules_field_specific / parse / 6개 recovery wording / system_user_prefixes. Default: format_rules = `build_format_rules(self)`, render_action_input = identity, normalize_assistant_for_messages = identity, provider_call_kwargs = `{}`, prefill = `""`, serialize_assistant_for_history = `self.parse()` + 구조화 필드 추출, render_assistant_from_history = `self.render_full_example()` 호출로 wire shape 재방출. 모듈 docstring에 assistant turn lifecycle (A → B/C, B → D) 표 포함. plugin 추가 = WireFormat 상속한 새 파일 1개, main code 0 변경.
 │   └── react.py             (730)  ReActFormat — 유일 builtin plugin. ReAct-shape 문자열 + recovery wording + history pipeline 3 메서드 + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. parse_react는 ParsedAction을 직접 반환 (별도 dataclass 없음). `render_assistant_from_history`는 history record의 `thought / action / action_input` 필드를 `json.dumps`로 재직렬화 — overflow recovery / session resume 후에도 모델이 자기 emit한 것과 같은 wire shape를 보게 함 (self-reinforcement 보존). 폴더 째 삭제 가능 boundary — 외부에서 ReAct에 의존하는 코드 0건. (이전 EnvelopeFormat은 2026-05-10 측정 후 폐기 — Phase 1 bakeoff에서 mistral 0% / qwen thought 9.5%로 wire-shape 결정성 약점 확인)
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export (common_recovery / wf_recovery는 호출처가 import — 패키지 자체 format-agnostic 보존)
@@ -682,17 +682,33 @@ LLM 호출 시:
 표현: auth.py를 읽어 구조를 파악해야 한다. → read_file(src/auth.py)
 ```
 
-#### Assistant 표현은 wire_format plugin이 결정
+#### Assistant turn lifecycle — 4 forms, 3 plugin-owned transitions
 
-assistant turn 한 번이 거치는 3개 분기점은 모두 plugin이 소유 — 새 wire format을 추가하면 history 저장·복원이 자동으로 그 형식을 따른다.
+assistant turn 한 번은 4가지 형태(A/B/C/D)로 conversation pipeline을 통과한다. 각 형태는 **소비자가 다르고** 따라서 **요구하는 셰이프도 다르다**. 형태 간 변환은 모두 wire_format plugin이 소유 — 새 wire format 추가 시 lifecycle 전체가 자동으로 그 plugin의 wire shape을 따른다.
 
-| 시점 | Plugin 메서드 | 입력 → 출력 | 호출 사이트 |
+| 형태 | 소비자 | 요구 셰이프 | 어디서 |
 |---|---|---|---|
-| turn 진행 중, 다음 turn prior 누적 | `normalize_assistant_for_messages(raw)` | LLM raw text → in-memory messages 버퍼에 들어갈 문자열 | `loop._append_observation` |
-| 같은 turn, history.jsonl 영속화 | `serialize_assistant_for_history(raw)` | LLM raw text → 디스크에 쓰일 dict | `loop._append_observation` (`ctx.add` 직전) |
-| overflow recovery / session resume | `render_assistant_from_history(record)` | history.jsonl record → chat completion 메시지 dict | `manager._to_natural_language` (assistant branch) |
+| (A) Emit | model이 produces | plugin wire shape, raw string | provider response |
+| (B) Store | history.jsonl reader / 분석 스크립트 | 구조화 dict `{thought, action, action_input}` | `history.jsonl` |
+| (C) Feed live | LLM (같은 세션의 다음 turn) | plugin wire shape | in-memory `messages` 버퍼 |
+| (D) Feed 복원 | LLM (overflow / resume 후) | plugin wire shape ≈ (A) | recovered `messages` |
 
-ReActFormat은 (a) `normalize_assistant_for_messages` = identity (raw 그대로 — 모델 자가 학습 보존), (b) `serialize_assistant_for_history` = JSON 파싱 후 `thought / action / action_input` top-level 분리, (c) `render_assistant_from_history` = (b)의 역연산 — 구조화된 record를 `json.dumps`로 다시 JSON 문자열화. (b) 와 (c) 가 서로의 역연산이라 round-trip이 닫혀 있어 (A) emit ≈ (D) 복원 — overflow 후에도 모델이 자기 wire shape 그대로 봄. byte-level 차이는 JSON 정규화 (key 순서, 공백) 뿐, semantic 동일. 미래 plugin은 자기 wire shape으로 동일한 패턴 구현 (예: PREFIX-MD라면 `## Thought / ## Action / ## Input` markdown 재합성).
+세 plugin 메서드가 형태 간 다리를 놓는다:
+
+| 전이 | Plugin 메서드 | 입력 → 출력 | 호출 사이트 |
+|---|---|---|---|
+| (A) → (C) | `normalize_assistant_for_messages(raw)` | LLM raw text → in-memory messages 버퍼에 들어갈 문자열 | `loop._append_observation` |
+| (A) → (B) | `serialize_assistant_for_history(raw)` | LLM raw text → 디스크에 쓰일 dict | `loop._append_observation` (`ctx.add` 직전) |
+| (B) → (D) | `render_assistant_from_history(record)` | history.jsonl record → chat completion 메시지 dict | `manager._to_natural_language` (assistant branch) |
+
+`serialize ↔ render`는 **서로의 역연산**: round-trip이 닫혀 있어 (A) ≈ (D). overflow / resume 후에도 모델이 자기 wire shape 그대로 봄 (self-reinforcement 보존). byte-level 차이는 JSON 정규화 (key 순서, 공백) 뿐, semantic 동일.
+
+**WireFormat ABC가 lifecycle 디폴트 제공**: `serialize_assistant_for_history` 디폴트 = `self.parse()` + 구조화 필드 추출, `render_assistant_from_history` 디폴트 = `self.render_full_example()` 호출. `normalize_assistant_for_messages` = identity, `render_action_input` = identity, `prefill` = `""`, `provider_call_kwargs` = `{}`, `format_rules` = `build_format_rules(self)`. 새 plugin은 **format-specific 메서드만 구현**하면 lifecycle 전체가 자동으로 작동:
+- `parse(llm_text)` — wire shape 파싱
+- `render_full_example(thought, action, action_input)` — wire shape 출력 (Format Rules section + history round-trip 양쪽 이용)
+- `format_rules_anchor()`, `format_rules_field_specific()` — 안내 문구
+- 6개 recovery wording (framing × 2, reminder × 2, static hint × 2)
+- `system_user_prefixes()` — recent_exchanges 필터링
 
 `manager._to_natural_language`는 user / tool branch만 직접 처리하고 assistant branch는 plugin에 위임 — `context/`는 format-agnostic, plugin이 format-aware. 의존 방향: `context → wire_formats` (downward, lazy import 없음).
 
@@ -1351,23 +1367,27 @@ agent-cli chat [options]
 
 ### 12.4 새 wire format 추가
 
-ReAct 외 새 응답 형식(예: `<tool_use>` envelope, OpenAI 스타일 tool call,
+ReAct 외 새 응답 형식(예: PREFIX-MD 마크다운, OpenAI 스타일 tool call,
 실험용 multi-action 등)을 추가하려면 `agent_cli/wire_formats/`에 새 모듈 한 개를
 만들면 됩니다. **main code path(loop.py / system_prompt.py / recovery/)는 수정하지
-않습니다** — 13개 분기점이 plugin Protocol 안에 격리되어 있기 때문입니다.
+않습니다** — 분기점이 `WireFormat` ABC 안에 격리되어 있기 때문입니다.
+
+ABC가 lifecycle / 식별 hook의 default를 제공하므로 plugin은 **format-specific
+abstract method만 구현**하면 됩니다. 나머지는 자동 작동.
 
 1. `agent_cli/wire_formats/<name>.py` 생성:
    ```python
-   from agent_cli.wire_formats.base import ParsedAction
+   from agent_cli.wire_formats.base import ParsedAction, WireFormat
 
-   class MyFormat:
+   class MyFormat(WireFormat):
        name = "my_format"
-       thought_required = False  # envelope-style이면 False
+       thought_required = True  # thought가 schema 필수 필드면 True
 
-       def format_rules(self) -> str: ...           # system prompt §
-       def wrap_action_input_example(self, action, args_json, idval) -> str: ...
-       def wrap_full_call_example(self, action, args_json, idval) -> str: ...
+       # ── 필수 abstract (format-specific) ──
        def parse(self, llm_text) -> ParsedAction: ...
+       def render_full_example(self, *, thought, action, action_input) -> str: ...
+       def format_rules_anchor(self) -> str: ...
+       def format_rules_field_specific(self) -> str: ...
        def constraint_reminder_call(self) -> str: ...
        def constraint_reminder_action_required(self) -> str: ...
        def failure_framing_parse_fail(self) -> str: ...
@@ -1375,11 +1395,14 @@ ReAct 외 새 응답 형식(예: `<tool_use>` envelope, OpenAI 스타일 tool ca
        def static_retry_hint_no_json(self) -> str: ...
        def static_retry_hint_no_action(self) -> str: ...
        def system_user_prefixes(self) -> tuple[str, ...]: ...
-       def prefill(self) -> str: ...               # ""면 비활성
-       def normalize_assistant_for_messages(self, raw) -> str: ...     # turn-internal messages 버퍼 모양
-       def serialize_assistant_for_history(self, raw) -> dict: ...     # history.jsonl 저장 dict
-       def render_assistant_from_history(self, record) -> dict: ...    # resume / overflow 복원 시 messages 모양
-       def provider_call_kwargs(self) -> dict: ...
+
+       # ── 선택 override (그 plugin이 default와 달라야 할 때만) ──
+       # def prefill(self) -> str: ...               # default ""
+       # def provider_call_kwargs(self) -> dict: ... # default {}
+       # def normalize_assistant_for_messages(self, raw) -> str: ...  # default identity
+       # def render_action_input(self, action_input) -> str: ...      # default identity
+       # serialize_assistant_for_history / render_assistant_from_history /
+       # format_rules도 base default 사용 가능
    ```
 
 2. `agent_cli/wire_formats/__init__.py`의 `_register_builtin_plugins()`에 등록 추가:
@@ -1394,7 +1417,7 @@ ReAct 외 새 응답 형식(예: `<tool_use>` envelope, OpenAI 스타일 tool ca
    agent-cli run "task" --response-format my_format
    ```
 
-`thought_required=True`인 plugin은 추가로 `format_no_thought_retry(prior_content=…) -> Intervention` 인스턴스 메서드를 구현해야 합니다 (Protocol 외 — duck typing; loop이 `thought_required` 가드 후 호출). ReActFormat이 참고 구현입니다.
+`thought_required=True`인 plugin은 추가로 `format_no_thought_retry(prior_content=…) -> Intervention` 인스턴스 메서드를 구현해야 합니다 (ABC base 외 — duck typing; loop이 `thought_required` 가드 후 호출). ReActFormat이 참고 구현입니다.
 
 폐기는 폴더에서 파일을 지우고 `_register_builtin_plugins()`에서 등록 줄을 빼면 끝 — main code 변경 없음.
 
