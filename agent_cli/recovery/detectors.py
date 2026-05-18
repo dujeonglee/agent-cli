@@ -115,13 +115,17 @@ class ActionLoopDetector:
         return f"{action}({args_str})"
 
 
+_THOUGHT_EXEMPT_ACTIONS: frozenset[str] = frozenset({"complete"})
+
+
 def detect_thought_missing(thought: Any, action: Any) -> bool:
     """Stateless A7 detector: did the model emit an action without a thought?
 
-    Returns ``True`` when ``action`` is present (any truthy value) but
-    ``thought`` is missing (``None``) or empty/whitespace-only. The
-    recovery layer uses this to short-circuit dispatch and ask the model
-    to restate the JSON with a populated thought field.
+    Returns ``True`` when ``action`` is present (any truthy value), the
+    action is not in the exempt set, and ``thought`` is missing
+    (``None``) or empty/whitespace-only. The recovery layer uses this
+    to short-circuit dispatch and ask the model to restate with a
+    populated thought field.
 
     The check exists because reasoning omitted from ``thought`` is
     invisible to ``read_context`` (which keys on the field, not on raw
@@ -130,9 +134,19 @@ def detect_thought_missing(thought: Any, action: Any) -> bool:
     becomes a transcript-internal precedent that crowds out the system
     prompt's Format Rule 1. Catching it once and asking the model to
     fix it cuts the mimicry-strengthening loop.
+
+    ``complete`` is exempt from this check: it is the final-answer
+    action, and the model's reasoning slot at that point carries no
+    next-turn obligation — there is no further reasoning to
+    propagate. Phase 2 bakeoff (2026-05-18) measured this exemption
+    eliminates 5/5 NO_THOUGHT recoveries on qwen3.6:27b's
+    ``complete_direct`` task (markdown wire format) and resolves one
+    outlier on the JSON wire format, with no regression elsewhere.
     """
     if not action:
         return False  # NO_ACTION (A3) is a different label
+    if action in _THOUGHT_EXEMPT_ACTIONS:
+        return False
     if thought is None:
         return True
     if isinstance(thought, str) and not thought.strip():

@@ -305,11 +305,19 @@ class TestDetectThoughtMissing:
     def test_action_present_valid_thought_returns_false(self):
         assert detect_thought_missing("I want to read the file", "read_file") is False
 
-    def test_complete_action_with_no_thought_still_fires(self):
-        # The mimicry-strengthening loop targets all actions including
-        # 'complete' — a thoughtless complete still pollutes the
-        # transcript as a precedent for future turns.
-        assert detect_thought_missing(None, "complete") is True
+    def test_complete_action_is_exempt(self):
+        # ``complete`` is the final-answer action — the reasoning slot
+        # carries no next-turn obligation since there is no further
+        # turn to propagate to. Empty thought on complete is no longer
+        # treated as a drift signal. Reverses an earlier design
+        # decision after Phase 2 bakeoff (2026-05-18) measured a
+        # systematic NO_THOUGHT recovery loop on qwen3.6:27b's
+        # ``complete_direct`` (markdown wire format, 5/5 runs).
+        assert detect_thought_missing(None, "complete") is False
+        assert detect_thought_missing("", "complete") is False
+        assert detect_thought_missing("   \n", "complete") is False
+        # A populated thought on complete is still fine (not flagged).
+        assert detect_thought_missing("done", "complete") is False
 
     def test_non_string_thought_returns_false(self):
         # If the parser produced a non-string thought (e.g. a dict that
