@@ -94,8 +94,7 @@ agent_cli/
 │   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
 │   ├── write_file.py        (37)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
 │   ├── edit_file.py         (274)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff) → ToolResult
-│   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult
-│   ├── shell_artifact.py    (249)  Shell stdout 대용량 가드: 한도 초과 시 `<session>/shell/`에 저장하고 head/tail 미리보기로 치환, LRU 회전
+│   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult. 출력은 잘리지 않고 그대로 LLM observation으로 전달 (이전 shell_artifact 가드는 2026-05-19 제거 — head/tail 미리보기가 중간 디버깅 정보를 silent하게 누락시키는 사례 발견, 컨텍스트 budget은 FIFO가 처리)
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
 │   ├── delegate.py          (700)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
 │   ├── context.py           (574)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
@@ -895,67 +894,27 @@ threshold를 적용하지 않는다. 사용자가 "1-to-1200" 범위 같은 bypa
 방지"이지 "1회 전송량 상한"이 아니다. 상한이 필요하다면 context
 manager(대화 압축)가 downstream에서 처리한다.
 
-### 6.5.0b Shell Output Artifact Guard (`tools/shell_artifact.py`)
+### 6.5.0b Shell Output: full passthrough (이전 artifact guard 제거됨)
 
-`read_file` guard와 같은 철학을 shell 출력에 적용한 tool-level
-guard. `find /`, `grep -r`, `pytest -v` 같이 수천 줄을 뿜는 명령이
-context를 통째로 집어삼키는 것을 방지.
+이전엔 shell 출력이 한도(기본 500줄 / 20KB) 초과 시 head/tail 미리보기로
+치환하고 전체를 `<session>/shell/`에 저장하는 guard가 있었음. 2026-05-19
+제거 — 실사용에서 **head/tail이 중간 디버깅 정보(error trace, 핵심
+로그 라인)를 silent하게 누락**시켜 task가 풀리지 않는 사례 두 차례
+관찰. 가드의 절약 효과보다 silent loss의 비용이 컸음.
 
-**핵심 차이** vs read_file guard:
+현재 정책: **shell 출력은 잘리지 않고 그대로 LLM observation으로 전달**.
+컨텍스트 budget 관리는 messages buffer의 FIFO eviction이 담당
+(`context/manager.py`) — 큰 observation은 누적되면 자연히 오래된 turn
+부터 빠짐. 의도된 거대 출력(`find /`, `cat huge.log`)은 모델이 자기 비용
+인지하에 호출한 것으로 간주.
 
-| 측면 | read_file | shell |
-|---|---|---|
-| 명령 재실행 가능성 | ✅ (같은 파일 다시 읽으면 됨) | ❌ (side effect·비결정적·비싼 실행) |
-| 전체 요청 경로 | `line_start=1, line_end=<total>` | artifact 생성 후 read_file이 맡음 |
-| Output 유실 | 없음 (파일은 그대로) | 없음 (artifact에 전체 저장) |
+LLM이 출력을 좁히고 싶으면 도구 호출 자체를 좁혀야 함 (`tail -n 100`,
+`grep ERROR`, `head -c 4096` 등). silent truncation 없음.
 
-**단일 mechanism 체인**: read_file 쪽에 별도 escape-hatch 파라미터가
-사라지면서 shell→read_file 체인도 단순화됨. Shell preview는 `search=`
-와 `line_start/line_end` 두 옵션만 공개. LLM이 artifact 전체가 필요
-하다 판단하면 `read_file(path)` bare 시도 → artifact가 크면 read_file
-full-read guard가 refuse → 그 refusal이 `line_start=1, line_end=<total>`
-구체 예시 제공 → LLM이 복사해서 재호출. 전 체인에서 **동일한
-line-range 기법**으로 "전체 요청"을 표현. 개별 도구마다 서로 다른
-escape hatch를 배울 필요 없음.
-
-**동작 흐름** (loop-level 후처리 — tool_shell 시그니처 불변):
-
-```
-AgentLoop._dispatch_tool_with_hooks:
-  1. _execute_tool("shell", ...) → ToolResult(output=stdout)
-  2. session_dir 있음 + exceeds_limit(output) → 후처리 진입
-       a. save_artifact(session_dir, cmd, output) → session_dir/shell/<ts>-<hash>.log
-       b. build_preview(cmd, output, path, succeeded=...) → head+tail+경로+대안
-       c. result = ToolResult(True, output=preview)
-  3. read_file 호출이 성공했고 path가 session_dir/shell/ 내부 → touch (LRU read-awareness)
-```
-
-**3단 방어** (Context·디스크·LRU):
-
-1. **Per-artifact 상한** (`AGENT_CLI_SHELL_ARTIFACT_MAX_SIZE`, 기본 5 MB):
-   단일 pathological output도 5 MB까지만 기록 + 끝에 truncation 주석.
-2. **Per-session LRU** (`AGENT_CLI_SHELL_ARTIFACT_KEEP`, 기본 20):
-   `session_dir/shell/` 내 파일 > 20이면 mtime-oldest부터 삭제. 매 write 시 1회.
-3. **Read-aware**: read_file이 성공적으로 artifact를 읽으면 loop가 `Path.touch()` 호출 → mtime 갱신 → 활발히 참조되는 artifact는 eviction 안 당함.
-
-**Threshold 2축 OR** (`AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES` 기본 500,
-`AGENT_CLI_SHELL_OUTPUT_LIMIT_BYTES` 기본 20 KB): 둘 중 하나라도 초과면
-guard 발동. 각 env var 0 이하 → 해당 축 비활성.
-
-**Preview 전략**: head 20줄 + tail 20줄 (실패 명령은 tail 30줄 — 에러
-로그는 끝에 몰리는 경향). 중간 생략은 `[... N lines omitted ...]`로
-표시. 끝에 `read_file(path, search=...)` 와 `read_file(path, line_start=N, line_end=M)` 2대안 제시 (전체 artifact가 필요한 경우는 read_file refusal이 line-range 형태로 가이드).
-
-**Read-aware LRU 판정** (`is_session_shell_artifact`):
-`Path.resolve().is_relative_to(session_dir/shell)` 로 엄밀 검사.
-path 문자열에 `/shell/` 있다고 무작정 touch하지 않음 — 사용자 프로젝트의
-`project/shell/build.log` 읽기 같은 false positive 방지. 다른 세션의
-artifact 경로도 우리 LRU에 영향 주지 않도록 session 스코프 확인.
-
-**Config 비활성 조합**:
-- `AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES=0` + `AGENT_CLI_SHELL_OUTPUT_LIMIT_BYTES=0`
-  → guard 완전 off (기존 동작 그대로).
-- `AGENT_CLI_SHELL_ARTIFACT_KEEP=0` → LRU off (artifact 무한 누적).
+관련 환경변수 (`AGENT_CLI_SHELL_OUTPUT_LIMIT_*`, `AGENT_CLI_SHELL_ARTIFACT_*`)
+도 함께 제거됨. read_file의 full-read guard (§6.5.0a)는 유지 — 파일은
+재현 가능하니 escape hatch가 의미 있지만, shell은 부작용/비결정성으로
+재실행이 안전하지 않다는 차이.
 
 ### 6.5.1 Fulfillment Review (`ready_for_review`)
 

@@ -148,10 +148,6 @@ agent-cli run "task" -m nemotron:120b
 | `OLLAMA_BASE_URL` | — | Ollama 엔드포인트 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
 | `AGENT_CLI_READ_FILE_LIMIT` | — | `read_file` full-read 거부 threshold (줄 수, 기본 300). ≤0 = 비활성 |
-| `AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES` | — | shell output이 이 줄 수 초과 시 artifact로 저장 (기본 500). ≤0 = 해당 axis 비활성 |
-| `AGENT_CLI_SHELL_OUTPUT_LIMIT_BYTES` | — | shell output이 이 바이트 초과 시 artifact로 저장 (기본 20 KB). ≤0 = 해당 axis 비활성. 두 axis OR. |
-| `AGENT_CLI_SHELL_ARTIFACT_MAX_SIZE` | — | 단일 shell artifact 파일의 최대 크기 (바이트, 기본 5 MB). 초과 시 truncate + 주석. |
-| `AGENT_CLI_SHELL_ARTIFACT_KEEP` | — | 세션당 유지할 shell artifact 최대 개수 (기본 20, mtime-LRU). ≤0 = 비활성 |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 3 = 최초 + 재시도 2회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. |
 | `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
 | `INTEGRATION_MODELS` | — | 통합 테스트 모델 |
@@ -744,7 +740,7 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 {"action": "shell", "action_input": {"command": "find agent_cli -name '*.py' | wc -l"}}
 ```
 
-대용량 출력은 자동으로 `<session>/shell/`에 artifact로 저장되고 head/tail 미리보기로 치환됩니다 (`find /`, `grep -r` 같은 명령이 컨텍스트를 통째로 잡아먹는 것 방지). 임계치는 `AGENT_CLI_SHELL_OUTPUT_LIMIT_LINES`/`_BYTES` env로 조정.
+shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `grep -r` 같은 큰 명령을 호출하면 컨텍스트가 그만큼 차지되니, 필요한 부분만 받도록 좁히는 명령을 권장 (`tail -n 100`, `grep ERROR`, `head -c 4096` 등). 누적 컨텍스트가 budget을 초과하면 오래된 turn부터 FIFO로 자동 비워집니다.
 
 **위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 묻습니다:
 

@@ -915,16 +915,10 @@ class AgentLoop:
         else:
             result = self._invoke_regular(tool_name, tool_input)
 
-        # 4. Shell oversized stdout → artifact + preview
-        result = self._save_shell_artifact_if_oversized(tool_name, input_dict, result)
-
-        # 5. read_file of an artifact → bump mtime (LRU read-awareness)
-        self._touch_artifact_on_read(tool_name, input_dict, result)
-
-        # 6. PostToolUse hooks
+        # 4. PostToolUse hooks
         self._run_post_hooks(tool_name, input_dict, result)
 
-        # 7. Append to recent_tool_history (B1 detector input)
+        # 5. Append to recent_tool_history (B1 detector input)
         self._record_tool_history(tool_name, tool_input, result)
 
         return result
@@ -1054,67 +1048,7 @@ class AgentLoop:
         session_dir = self.ctx.session_dir if self.ctx else None
         return _execute_tool(tool_name, tool_input, session_dir=session_dir)
 
-    # ── 4. Shell oversized output → artifact + preview ─────────────
-    def _save_shell_artifact_if_oversized(
-        self, tool_name: str, input_dict: dict, result: ToolResult
-    ) -> ToolResult:
-        """If a successful shell call exceeded the size threshold, spill
-        the full output to ``session_dir/shell/<name>.log`` and replace
-        ``result.output`` with a head+tail preview pointing at the file.
-
-        No-op when (tool != shell), (no session_dir), (call failed), or
-        (output under threshold). Best-effort: any IO failure leaves
-        ``result`` untouched.
-        """
-        if tool_name != "shell" or not result.success:
-            return result
-        session_dir = self.ctx.session_dir if self.ctx else None
-        if session_dir is None:
-            return result
-
-        from agent_cli.tools.shell_artifact import (
-            build_preview,
-            exceeds_limit,
-            save_artifact,
-        )
-
-        if not exceeds_limit(result.output):
-            return result
-
-        cmd = input_dict.get("command", "") if isinstance(input_dict, dict) else ""
-        artifact_path = save_artifact(session_dir, cmd, result.output)
-        if artifact_path is None:
-            return result
-        preview = build_preview(
-            cmd,
-            result.output,
-            artifact_path,
-            # Failure tail-bias: stderr + nonzero-exit lines cluster near
-            # the end, so build_preview weights the tail more heavily.
-            succeeded=("[exit code:" not in result.output),
-        )
-        return ToolResult(True, output=preview)
-
-    # ── 5. read_file of artifact → mtime bump ──────────────────────
-    def _touch_artifact_on_read(
-        self, tool_name: str, input_dict: dict, result: ToolResult
-    ) -> None:
-        """Bump mtime on a successful read_file targeting *this session's*
-        shell artifact dir. Standard LRU read-awareness — actively-read
-        files stay out of the eviction queue.
-        """
-        if tool_name != "read_file" or not result.success:
-            return
-        session_dir = self.ctx.session_dir if self.ctx else None
-        if session_dir is None:
-            return
-
-        from agent_cli.tools.shell_artifact import touch_if_artifact
-
-        path = input_dict.get("path", "") if isinstance(input_dict, dict) else ""
-        touch_if_artifact(path, session_dir)
-
-    # ── 6. PostToolUse hooks ───────────────────────────────────────
+    # ── 4. PostToolUse hooks ───────────────────────────────────────
     def _run_post_hooks(
         self, tool_name: str, input_dict: dict, result: ToolResult
     ) -> None:
@@ -1146,7 +1080,7 @@ class AgentLoop:
                 tool_result=_obs,
             )
 
-    # ── 7. recent_tool_history append ──────────────────────────────
+    # ── 5. recent_tool_history append ──────────────────────────────
     def _record_tool_history(
         self, tool_name: str, tool_input, result: ToolResult
     ) -> None:

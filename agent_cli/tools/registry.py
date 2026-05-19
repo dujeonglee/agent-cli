@@ -286,7 +286,8 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
         name="fetch",
         description="Fetch a web page and return its content as markdown. "
         "Supports recursive fetching of same-domain links via depth parameter. "
-        "Full content saved to artifact; truncated version returned.",
+        "Full content returned inline; long pages are subject to the loop's "
+        "FIFO context-budget eviction like any other observation.",
         parameters={
             "type": "object",
             "properties": {
