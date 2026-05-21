@@ -200,9 +200,8 @@ footer {
 #input:focus { outline: 2px solid #93c5fd; outline-offset: 0; border-color: #60a5fa; }
 #input:disabled { background: #f3f4f6; color: #9ca3af; }
 
-#send {
+#send, #abort {
   padding: 8px 16px;
-  background: #2563eb;
   color: white;
   border: none;
   border-radius: 6px;
@@ -210,8 +209,45 @@ footer {
   font-weight: 600;
   font-size: 14px;
 }
+#send { background: #2563eb; }
 #send:hover { background: #1d4ed8; }
 #send:disabled { background: #d1d5db; cursor: not-allowed; }
+#abort { background: #dc2626; }
+#abort:hover { background: #b91c1c; }
+#abort[hidden] { display: none; }
+
+/* Action card variants — distinct from the generic <pre class="args">
+   fallback so per-tool renderings stand out and stay readable. */
+.action-detail {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: #f3f4f6;
+  border-radius: 4px;
+}
+.action-detail .muted { color: #9ca3af; }
+.action-shell {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  margin: 4px 0 0 0;
+  padding: 8px 10px;
+  background: #1f2937;
+  color: #e5e7eb;
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.action-ask, .action-delegate {
+  margin: 6px 0 0 0;
+  padding-left: 24px;
+  font-size: 13px;
+}
+.action-ask li, .action-delegate li {
+  padding: 2px 0;
+}
+.action-delegate li .muted { color: #6b7280; font-size: 12px; }
 
 #confirm-buttons {
   display: flex;

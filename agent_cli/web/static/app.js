@@ -34,6 +34,7 @@
   const $messages = document.getElementById("messages");
   const $input = document.getElementById("input");
   const $send = document.getElementById("send");
+  const $abort = document.getElementById("abort");
   const $info = document.getElementById("info");
   const $status = document.getElementById("conn-status");
   const $modeBadge = document.getElementById("input-mode-badge");
@@ -103,17 +104,118 @@
     } else if (d.action) {
       const a = el("div", ["action"]);
       a.appendChild(
-        el(
-          "div",
-          ["tool"],
-          "⚡ " + escapeHtml(d.action.tool_name || "")
-        )
+        el("div", ["tool"], "⚡ " + escapeHtml(d.action.tool_name || ""))
       );
-      a.appendChild(el("pre", ["args"], escapeHtml(d.action.tool_input || "")));
+      const detail = renderActionInput(
+        d.action.tool_name || "",
+        d.action.tool_input || ""
+      );
+      a.appendChild(detail);
       card.appendChild(a);
     }
     $messages.appendChild(card);
     scrollToBottom();
+  }
+
+  /** Render the action_input portion of an assistant_turn card.
+   *
+   * Known tool names get a custom layout (ask → numbered question list,
+   * shell → ``$ <cmd>``, read_file → path + flags, edit_file →
+   * path + edit count, delegate → task list). Unknown tools fall
+   * back to pretty-printed JSON. Always escapes user-supplied text.
+   */
+  function renderActionInput(toolName, toolInputStr) {
+    let parsed;
+    try {
+      parsed = JSON.parse(toolInputStr);
+    } catch (_e) {
+      // tool_input wasn't valid JSON (e.g. parser returned a string).
+      // Show it verbatim so the user can still inspect what happened.
+      return el("pre", ["args"], escapeHtml(toolInputStr));
+    }
+
+    if (toolName === "ask" && Array.isArray(parsed.questions)) {
+      const ol = el("ol", ["action-ask"]);
+      parsed.questions.forEach(function (q) {
+        const li = document.createElement("li");
+        li.textContent = String(q);
+        ol.appendChild(li);
+      });
+      return ol;
+    }
+
+    if (toolName === "shell" && typeof parsed.command === "string") {
+      return el(
+        "pre",
+        ["action-shell"],
+        "$ " + escapeHtml(parsed.command)
+      );
+    }
+
+    if (toolName === "read_file" && typeof parsed.path === "string") {
+      const parts = [escapeHtml(parsed.path)];
+      if (parsed.stat) parts.push('<span class="muted">(stat)</span>');
+      if (parsed.search) {
+        parts.push(
+          '<span class="muted">search:</span> ' + escapeHtml(parsed.search)
+        );
+      }
+      if (parsed.line_start) {
+        parts.push(
+          '<span class="muted">lines:</span> ' +
+            parsed.line_start +
+            "-" +
+            (parsed.line_end || "?")
+        );
+      }
+      return el("div", ["action-detail"], parts.join(" "));
+    }
+
+    if (toolName === "edit_file" && typeof parsed.path === "string") {
+      const editCount = Array.isArray(parsed.edits) ? parsed.edits.length : 0;
+      return el(
+        "div",
+        ["action-detail"],
+        escapeHtml(parsed.path) +
+          ' <span class="muted">(' +
+          editCount +
+          " edit" +
+          (editCount === 1 ? "" : "s") +
+          ")</span>"
+      );
+    }
+
+    if (toolName === "delegate" && Array.isArray(parsed.tasks)) {
+      const ul = el("ul", ["action-delegate"]);
+      parsed.tasks.forEach(function (t) {
+        const li = document.createElement("li");
+        li.textContent = String(t.task || "");
+        if (t.agent) {
+          const agent = el(
+            "span",
+            ["muted"],
+            " → " + escapeHtml(String(t.agent))
+          );
+          li.appendChild(agent);
+        }
+        ul.appendChild(li);
+      });
+      return ul;
+    }
+
+    if (toolName === "complete" && typeof parsed.result === "string") {
+      // Should not normally hit (complete renders as ``final``) but
+      // act gracefully if the model emits an explicit complete action.
+      return el("div", ["final"], escapeAndFormat(parsed.result));
+    }
+
+    // Fallback: pretty JSON. Two-space indent keeps wide objects readable
+    // without burning horizontal real estate.
+    return el(
+      "pre",
+      ["args"],
+      escapeHtml(JSON.stringify(parsed, null, 2))
+    );
   }
 
   function renderObservation(d) {
@@ -331,6 +433,22 @@
     // structured version; nothing to do here.
   });
 
+  // ── Abort button visibility ────────────────
+  // Shown only during ``input_required`` waits (ask answer / confirm
+  // decision) — POST /api/abort releases the worker thread's blocking
+  // input wait via an EOF sentinel. NOT shown during LLM streaming:
+  // the abort endpoint can't cancel a streaming provider call, and
+  // a button that doesn't do what it says undermines trust. True
+  // streaming cancellation is a Phase D concern (provider-level).
+  function setAbortVisible(visible) {
+    $abort.hidden = !visible;
+  }
+  $abort.addEventListener("click", function () {
+    fetch("/api/abort?token=" + encodeURIComponent(token), {
+      method: "POST",
+    });
+  });
+
   es.addEventListener("prune", function (e) {
     const d = JSON.parse(e.data);
     pruneOldest(d.drop);
@@ -339,10 +457,15 @@
   es.addEventListener("input_required", function (e) {
     const d = JSON.parse(e.data);
     setInputMode(d.kind, d);
+    // Allow aborting a stuck prompt / confirm wait. Worker side
+    // surfaces this as EOFError → ``(no response)`` (ask) or
+    // ``(default_key, "")`` (confirm).
+    setAbortVisible(true);
   });
 
   es.addEventListener("input_resolved", function () {
     setInputMode("chat", null);
+    setAbortVisible(false);
   });
 
   es.addEventListener("takeover", function () {
