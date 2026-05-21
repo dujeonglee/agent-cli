@@ -1350,14 +1350,19 @@ def web(
         raise typer.Exit(code=2)
 
     # 2. Session + ContextManager.
-    from agent_cli.context.session import create_session, finalize_session, save_meta
+    from agent_cli.context.session import (
+        create_session,
+        finalize_session,
+        get_session_dir,
+        save_meta,
+    )
 
-    session = create_session(query="")
+    session = create_session()
     save_meta(session)
     if max_context_tokens <= 0:
         max_context_tokens = (capabilities.context_window * 7) // 10
     ctx = ContextManager(
-        session.session_dir,
+        get_session_dir(session),
         max_context_tokens=max_context_tokens,
         wire_format=wire_format_plugin,
     )
