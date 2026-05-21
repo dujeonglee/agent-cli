@@ -59,6 +59,28 @@
     });
   }
 
+  /** Convert the Rich markup ``write_file`` / ``edit_file`` emit in
+   * their unified-diff blocks (``[bold]…[/bold]``, ``[green]…[/green]``,
+   * etc.) into HTML spans so the diff displays with colour parity to
+   * the CLI. Input MUST already be ``escapeHtml``-ed — we trust the
+   * tag set is closed (Python side controls it) and only the literal
+   * tag names below get translated, so a stray ``[bold]`` in actual
+   * source code (which ``format_diff`` escapes as ``\[bold]``) won't
+   * be misinterpreted. The final pass undoes the ``\[`` escape. */
+  function richMarkupToHtml(escaped) {
+    const tags = ["bold", "cyan", "dim", "green", "red"];
+    let html = escaped;
+    for (const tag of tags) {
+      const re = new RegExp("\\[" + tag + "\\]([\\s\\S]*?)\\[/" + tag + "\\]", "g");
+      html = html.replace(re, '<span class="rich-' + tag + '">$1</span>');
+    }
+    // ``format_diff`` escapes ``[`` in content as ``\[`` so a literal
+    // ``[bold]`` in source code doesn't become styling. Undo after
+    // tag conversion so the escape sequence itself isn't visible.
+    html = html.replace(/\\\[/g, "[");
+    return html;
+  }
+
   /** Apply a tiny subset of markdown — fenced code blocks and inline
    * code. Everything else stays as escaped text. Phase D will swap
    * this for a real markdown renderer if/when the cost is justified. */
@@ -231,7 +253,9 @@
           escapeHtml(d.tool_name || "")
       )
     );
-    card.appendChild(el("pre", ["obs-body"], escapeHtml(d.content || "")));
+    card.appendChild(
+      el("pre", ["obs-body"], richMarkupToHtml(escapeHtml(d.content || "")))
+    );
     $messages.appendChild(card);
     scrollToBottom();
   }
