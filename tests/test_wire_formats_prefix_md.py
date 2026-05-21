@@ -448,6 +448,24 @@ class TestRoundTrip:
         assert re_parsed.action == "shell"
         assert re_parsed.action_input == {"command": "ls -la"}
 
+    def test_string_action_input_renders_as_quoted_in_input_section(self):
+        # Edge case: ``action_input`` is a raw string (legacy / drift
+        # emission, typically a ``complete`` action carrying the final
+        # answer as a string rather than a dict). The ABC default must
+        # ``json.dumps`` it so the ## Input section contains a valid
+        # JSON literal — earlier behaviour str()'d the value and emitted
+        # an unquoted body that the parser couldn't recover as a dict.
+        plugin = PrefixMdFormat()
+        record = {
+            "role": "assistant",
+            "thought": "done",
+            "action": "complete",
+            "action_input": "the answer",
+        }
+        msg = plugin.render_assistant_from_history(record)
+        # ## Input section body is a quoted JSON string literal.
+        assert '## Input\n"the answer"' in msg["content"]
+
     def test_non_ascii_thought_preserved(self):
         plugin = PrefixMdFormat()
         emit = (

@@ -394,11 +394,14 @@ class WireFormat(ABC):
         if "thought" not in record and "action" not in record:
             return {"role": "assistant", "content": record.get("content", "")}
 
+        # ``json.dumps`` handles every valid JSON value (dict, list,
+        # string, number, bool, null) and adds the correct quoting —
+        # ``str()`` would produce bare unquoted output for strings, which
+        # ReAct re-renders as malformed JSON and PREFIX-MD as an Input
+        # body that doesn't parse back as a dict. Real driver: complete
+        # action with raw-string ``action_input`` (legacy / drift).
         action_input = record.get("action_input", {})
-        if isinstance(action_input, (dict, list)):
-            action_input_str = json.dumps(action_input, ensure_ascii=False)
-        else:
-            action_input_str = str(action_input)
+        action_input_str = json.dumps(action_input, ensure_ascii=False)
 
         return {
             "role": "assistant",

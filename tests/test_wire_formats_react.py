@@ -395,6 +395,27 @@ class TestRenderAssistantFromHistory:
         assert "한글 reasoning" in msg["content"]
         assert "\\u" not in msg["content"]
 
+    def test_string_action_input_round_trips_as_quoted_json_literal(self):
+        # Edge case: legacy / drift emission where ``action_input`` is a
+        # raw string (e.g. ``complete`` action carrying the answer as a
+        # bare string). The re-render must produce VALID JSON — earlier
+        # behaviour str()'d the string and spliced it raw, producing
+        # ``"action_input": the answer`` (no quotes, invalid JSON).
+        record = {
+            "role": "assistant",
+            "thought": "done",
+            "action": "complete",
+            "action_input": "the answer",
+        }
+        msg = ReActFormat().render_assistant_from_history(record)
+        # The whole content must parse back as valid JSON.
+        parsed = json.loads(msg["content"])
+        assert parsed == {
+            "thought": "done",
+            "action": "complete",
+            "action_input": "the answer",
+        }
+
     def test_no_structured_fields_falls_back_to_content(self):
         # Defensive: a record that ``serialize_assistant_for_history``
         # could not parse and stored as bare ``content``. The fallback
