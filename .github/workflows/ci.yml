@@ -22,7 +22,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # ``[web]`` brings in fastapi / uvicorn / sse-starlette which
+        # the web-surface tests (test_web_server, test_web_renderer,
+        # test_dispatch_agent_or_skill) import at module level. Without
+        # them pytest fails collection — the web extra ships in this
+        # repo so CI must validate it.
+        run: pip install -e ".[dev,web]"
 
       - name: Run unit tests
         run: pytest tests/ -m "not ollama_integration" -v
