@@ -46,6 +46,17 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # ── CLI-parity slash commands (web mode) ──────────────────
 
 
+_WEB_HELP_TEXT = (
+    "Web mode slash commands:\n"
+    "  /help                    Show this help\n"
+    "  /sh <command>            Run a shell command directly (LLM bypass)\n"
+    "  /skills                  List available skills\n"
+    "\n"
+    "All other input goes to the LLM. Chat REPL slash commands like\n"
+    "/clear, /<skill>, @<agent> are not yet wired for web mode."
+)
+
+
 def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
     """Intercept CLI-parity slash commands before forwarding to AgentLoop.
 
@@ -54,15 +65,39 @@ def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
     ``observation`` event so the frontend renders it as a tool-result
     card alongside whatever else is in the session.
 
-    Currently handles only ``/sh <cmd>`` — direct shell execution,
-    matching the chat REPL's shortcut. Other slash commands
-    (``/skills``, ``/<skill>``, ``/clear``, etc.) intentionally fall
-    through to the LLM in this Phase B scope; if web usage shows demand
-    for them, a future commit extracts the chat REPL's slash dispatcher
-    into a shared helper that both surfaces can call.
+    Handled:
+      - ``/help`` — list supported web slash commands
+      - ``/sh <cmd>`` — direct shell execution
+      - ``/skills`` — list available skills (informational)
+
+    Other chat REPL slash commands (``/clear``, ``/<skill>``,
+    ``@<agent>``, ``/mcp``, ``/compact``) intentionally fall through to
+    the LLM in this Phase scope — they need real dispatcher wiring to
+    work in web (skill / agent invocation paths run their own loops).
+    Future work: extract the chat REPL's slash dispatcher into a shared
+    helper so both surfaces can call it.
     """
-    if not message.startswith("/sh"):
-        return False
+    if message == "/help":
+        renderer.observation(
+            _WEB_HELP_TEXT,
+            turn=0,
+            tool_name="help",
+            success=True,
+        )
+        return True
+
+    if message == "/skills":
+        return _handle_skills_listing(renderer)
+
+    if message.startswith("/sh"):
+        return _handle_sh(message, renderer)
+
+    return False
+
+
+def _handle_sh(message: str, renderer: WebRenderer) -> bool:
+    """``/sh <command>`` — run a shell command, render output as a
+    tool-result observation card."""
     cmd = message[3:].lstrip()
     if not cmd:
         renderer.observation(
@@ -101,6 +136,53 @@ def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
         turn=0,
         tool_name="sh",
         success=result.returncode == 0,
+    )
+    return True
+
+
+def _handle_skills_listing(renderer: WebRenderer) -> bool:
+    """``/skills`` — informational listing of available skills.
+
+    Best-effort: a load failure (corrupt skill file, missing dir) is
+    surfaced as a non-success observation so the user can see what
+    happened instead of silently falling through.
+    """
+    try:
+        from agent_cli.skills import load_skills
+
+        skills = load_skills()
+    except Exception as exc:  # noqa: BLE001 — surfacing for user
+        renderer.observation(
+            f"Failed to load skills: {exc}",
+            turn=0,
+            tool_name="skills",
+            success=False,
+        )
+        return True
+
+    visible = [s for s in skills.values() if not s.disable_model_invocation]
+    if not visible:
+        renderer.observation(
+            "No skills available.",
+            turn=0,
+            tool_name="skills",
+            success=True,
+        )
+        return True
+    lines = ["Available skills (LLM-invocable via `run_skill` tool):"]
+    for s in visible:
+        hint = f" {s.argument_hint}" if s.argument_hint else ""
+        lines.append(f"  {s.name}{hint} — {s.description}")
+    lines.append("")
+    lines.append(
+        "Note: direct ``/<skill>`` invocation from web is not yet wired — "
+        "ask the LLM to run a skill, or use chat mode."
+    )
+    renderer.observation(
+        "\n".join(lines),
+        turn=0,
+        tool_name="skills",
+        success=True,
     )
     return True
 
@@ -297,7 +379,19 @@ def create_app(server: WebServer) -> FastAPI:
             server.renderer.push_user_message(content)
             server.push_chat(content)
             return JSONResponse({"accepted": True})
-        if kind in ("prompt", "confirm"):
+        if kind == "prompt":
+            # Echo prompt answers so the UI shows the user's reply
+            # immediately. Semantic note: the LLM gets the answer via
+            # the ask-tool's observation return (Q/A pair), NOT as a
+            # standalone user message — but for the user a silent
+            # textarea clear feels broken. The user_message card is a
+            # UI-only echo; doesn't change LLM context.
+            content = body.get("content", "")
+            if isinstance(content, str) and content:
+                server.renderer.push_user_message(content)
+            server.renderer.push_user_input(kind, body)
+            return JSONResponse({"accepted": True})
+        if kind == "confirm":
             server.renderer.push_user_input(kind, body)
             return JSONResponse({"accepted": True})
         raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")

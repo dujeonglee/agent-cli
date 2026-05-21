@@ -324,7 +324,26 @@
       $input.placeholder = "Optional comment (empty = no comment)";
     } else {
       // chat or prompt
-      $modeBadge.textContent = kind === "prompt" ? "ANSWERING" : "";
+      // ``data.context`` is the ``ask`` tool's question block (a
+      // plain-text mirror of the CLI's "Agent asks:" announcement).
+      // Surfacing it next to the badge means the user doesn't have
+      // to scroll the chat back to see what they're answering —
+      // the question stays anchored to the input affordance until
+      // they reply.
+      $modeBadge.innerHTML = "";
+      if (kind === "prompt") {
+        const tag = document.createElement("span");
+        tag.className = "mode-tag";
+        tag.textContent = "ANSWERING";
+        $modeBadge.appendChild(tag);
+        const ctx = data && typeof data.context === "string" ? data.context : "";
+        if (ctx) {
+          const ctxEl = document.createElement("span");
+          ctxEl.className = "mode-context";
+          ctxEl.textContent = ctx;
+          $modeBadge.appendChild(ctxEl);
+        }
+      }
       $modeBadge.classList.toggle("visible", kind === "prompt");
       clearConfirmButtons();
       $input.placeholder =
@@ -371,7 +390,20 @@
     }
   });
   $input.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // ``e.isComposing`` / ``keyCode === 229`` guard the IME commit
+    // step: when typing Korean / Japanese / Chinese, the Enter that
+    // finalises the in-flight syllable arrives as a keydown with
+    // ``isComposing: true``. Submitting on that Enter races the IME
+    // commit — the typed-but-not-yet-committed character lands in
+    // the textarea after we already sent the (incomplete) value,
+    // leaving an orphan glyph + newline behind. Only treat Enter as
+    // submit when no composition is active.
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !e.isComposing &&
+      e.keyCode !== 229
+    ) {
       e.preventDefault();
       if (currentMode === "confirm") {
         submitConfirm(confirmDefaultKey);

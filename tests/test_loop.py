@@ -1529,6 +1529,122 @@ def caps_tc():
 
 
 class TestAskTool:
+    def test_ask_emits_action_render_step_before_handler(
+        self, caps, monkeypatch, tmp_path
+    ):
+        """The ask tool must emit ``render_step("action", ...)`` before
+        invoking ``_handle_ask``. Without it, the web renderer's
+        streaming-text card (raw JSON) never gets replaced with a
+        structured ``assistant_turn`` card — and the next turn's
+        streaming chunks visually append to it. Same applies to
+        ``run_skill`` and ``ready_for_review``."""
+        from agent_cli.context.manager import ContextManager
+
+        recorded: list[tuple] = []
+        real_render_step = None
+
+        def fake_render_step(step_type, content, turn, **kwargs):
+            recorded.append((step_type, kwargs.get("tool_name"), content))
+            if real_render_step is not None:
+                real_render_step(step_type, content, turn, **kwargs)
+
+        import agent_cli.loop as loop_mod
+
+        real_render_step = loop_mod.render_step
+        monkeypatch.setattr("agent_cli.loop.render_step", fake_render_step)
+        monkeypatch.setattr("builtins.input", lambda _: "ok")
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "ask the user",
+                        "action": "ask",
+                        "action_input": {"questions": ["What now?"]},
+                    }
+                )
+            ),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "done",
+                        "action": "complete",
+                        "action_input": {"result": "Done"},
+                    }
+                )
+            ),
+        ]
+        ctx = ContextManager(session_dir=tmp_path)
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            ctx=ctx,
+        )
+
+        steps = [(t, name) for (t, name, _) in recorded]
+        # ``action`` for ``ask`` must precede the user's prompt — without
+        # it the web frontend never replaces its streaming card.
+        assert ("action", "ask") in steps
+        thought_idx = steps.index(("thought", None))
+        action_idx = steps.index(("action", "ask"))
+        assert thought_idx < action_idx
+
+    def test_ask_passes_question_block_as_context_to_renderer(self, monkeypatch):
+        """The ask tool builds a plain-text question block and forwards
+        it to ``prompt_user`` as ``context``. Out-of-band renderers
+        (web) read this to attach the question to their input form so
+        the user can see what they're answering without scrolling
+        back. CLI renderers ignore ``context`` because the colored
+        announcement above already covers them."""
+        from agent_cli.loop import _handle_ask
+
+        captured: dict = {}
+
+        class RecordingRenderer:
+            _prefix = ""
+
+            def prompt_user(self, prompt, **kwargs):
+                captured["prompt"] = prompt
+                captured["kwargs"] = kwargs
+                return "the answer"
+
+        monkeypatch.setattr(
+            "agent_cli.render.get_renderer", lambda: RecordingRenderer()
+        )
+
+        result = _handle_ask(["What's your name?", "What's your color?"])
+        assert "context" in captured["kwargs"]
+        ctx = captured["kwargs"]["context"]
+        assert ctx.startswith("Agent asks:")
+        assert "1. What's your name?" in ctx
+        assert "2. What's your color?" in ctx
+        assert "the answer" in result
+
+    def test_ask_context_single_question_drops_numbering(self, monkeypatch):
+        """Single-question shape mirrors the CLI's bullet form — no
+        ``1.`` prefix — so the displayed question reads naturally."""
+        from agent_cli.loop import _handle_ask
+
+        captured: dict = {}
+
+        class RecordingRenderer:
+            _prefix = ""
+
+            def prompt_user(self, prompt, **kwargs):
+                captured["kwargs"] = kwargs
+                return "ok"
+
+        monkeypatch.setattr(
+            "agent_cli.render.get_renderer", lambda: RecordingRenderer()
+        )
+        _handle_ask(["Should I continue?"])
+        ctx = captured["kwargs"]["context"]
+        assert "Should I continue?" in ctx
+        assert "1. Should I continue?" not in ctx
+
     def test_ask_single_question(self, caps, monkeypatch, tmp_path):
         """ask tool with single question in array."""
         from agent_cli.context.manager import ContextManager

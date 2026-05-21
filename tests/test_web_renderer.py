@@ -239,6 +239,34 @@ class TestPromptUserInput:
         assert not t.is_alive()
         assert result == ["hello"]
 
+    def test_prompt_user_forwards_context_field_to_event(self):
+        """``context`` kwarg (used by the ``ask`` tool to ship its
+        question list alongside the input affordance) must land on the
+        ``input_required`` event so the frontend can render it next to
+        the ANSWERING badge."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        def worker():
+            r.prompt_user(
+                "Your answer: ",
+                multiline=True,
+                context="Agent asks:\n  1. What's your name?",
+            )
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.05)
+        try:
+            event, data = conn.queue.get(timeout=1.0)
+            assert event == "input_required"
+            assert data["kind"] == "prompt"
+            assert data["context"] == "Agent asks:\n  1. What's your name?"
+        finally:
+            r.push_user_input("prompt", {"content": ""})
+            t.join(timeout=2.0)
+
     def test_prompt_user_returns_default_on_empty(self):
         r = WebRenderer()
         result: list[str] = []

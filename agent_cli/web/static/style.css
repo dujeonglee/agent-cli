@@ -174,15 +174,40 @@ footer {
 #input-mode-badge {
   display: none;
   font-size: 11px;
+  margin-bottom: 6px;
+  align-items: flex-start;
+  gap: 8px;
+}
+#input-mode-badge.visible { display: flex; }
+/* Static legacy text — the ``CONFIRM`` mode still sets ``textContent``
+   directly on the badge, so we need a fallback when no ``.mode-tag``
+   child is present. */
+#input-mode-badge:not(:has(.mode-tag)) {
   padding: 2px 8px;
   background: #fef3c7;
   color: #78350f;
   border-radius: 4px;
-  margin-bottom: 6px;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
-#input-mode-badge.visible { display: inline-block; }
+#input-mode-badge .mode-tag {
+  padding: 2px 8px;
+  background: #fef3c7;
+  color: #78350f;
+  border-radius: 4px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+  line-height: 1.6;
+}
+#input-mode-badge .mode-context {
+  color: #4b5563;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  padding-top: 2px;
+}
 
 #input-area { display: flex; gap: 8px; align-items: stretch; }
 #input {

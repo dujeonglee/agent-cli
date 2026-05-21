@@ -532,6 +532,7 @@ class MinimalRenderer(Renderer):
         default: str = "",
         multiline: bool = True,
         continuation: str = "... ",
+        context: str = "",
     ) -> str:
         """CLI implementation — readline + paste detection for multi-line,
         single ``input()`` call for one-line prompts.
@@ -544,7 +545,12 @@ class MinimalRenderer(Renderer):
 
         Decode errors get swallowed by ``read_rich_input`` (one-shot
         warning + empty) so the user can retype without aborting.
+
+        ``context`` is ignored — callers that announce pre-input text
+        (e.g. ``_handle_ask``'s coloured question block) print it
+        directly via ``console.print`` so Rich markup survives.
         """
+        del context  # CLI prints announcements separately for color.
         if multiline:
             from agent_cli.input_history import read_rich_input
 

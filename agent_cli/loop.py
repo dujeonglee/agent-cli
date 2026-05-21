@@ -605,6 +605,21 @@ class AgentLoop:
         if parsed.action == "ask":
             questions = _extract_questions(parsed.action_input)
             if questions:
+                # Emit the action step so out-of-band renderers (web)
+                # replace their streaming card with a structured
+                # ``assistant_turn``. Without this, the raw-JSON
+                # streaming card stays on screen and the next turn's
+                # stream chunks visually append to it — the user sees
+                # consecutive assistant emissions glued together.
+                render_step(
+                    "action",
+                    "",
+                    self.turn,
+                    tool_name="ask",
+                    tool_input=json.dumps(parsed.action_input, ensure_ascii=False)
+                    if isinstance(parsed.action_input, dict)
+                    else str(parsed.action_input),
+                )
                 user_response = _handle_ask(questions)
                 obs_msg = f"Observation: User responded:\n{user_response}"
                 _append_observation(
@@ -616,6 +631,16 @@ class AgentLoop:
         if parsed.action == "run_skill":
             skill_input = (
                 parsed.action_input if isinstance(parsed.action_input, dict) else {}
+            )
+            # Same reason as ``ask`` above — close out the streaming
+            # card before the (often long-running) skill subprocess
+            # starts emitting its own events.
+            render_step(
+                "action",
+                "",
+                self.turn,
+                tool_name="run_skill",
+                tool_input=json.dumps(skill_input, ensure_ascii=False),
             )
             skill_tool_result = _handle_run_skill(
                 skill_input,
@@ -658,6 +683,20 @@ class AgentLoop:
             summary = ""
             if isinstance(parsed.action_input, dict):
                 summary = parsed.action_input.get("summary", "")
+            # Same streaming-card concern as ``ask`` / ``run_skill``.
+            # Skill-mode skips the observation render below, so we
+            # only emit the action step at top level too — keeps the
+            # nested skill output clean.
+            if not self.skill_name:
+                render_step(
+                    "action",
+                    "",
+                    self.turn,
+                    tool_name="ready_for_review",
+                    tool_input=json.dumps(parsed.action_input, ensure_ascii=False)
+                    if isinstance(parsed.action_input, dict)
+                    else str(parsed.action_input or {}),
+                )
             obs = _build_review_observation(self.query, summary, ctx=self.ctx)
             if not self.skill_name:
                 render_step(
@@ -1299,6 +1338,18 @@ def _handle_ask(questions: list[str]) -> str:
             console.print(f"{prefix}  {i}. {clean}")
         else:
             console.print(f"{prefix}  {clean}")
+    # Plain-text mirror of the announcement above — passed to
+    # ``prompt_user`` as ``context`` so out-of-band renderers (web)
+    # can surface the question alongside the input affordance. CLI
+    # renderers ignore it; the ``console.print`` block above is
+    # already what the terminal user sees with colour.
+    if len(questions) > 1:
+        context_lines = [
+            f"{i}. {_strip_leading_marker(q)}" for i, q in enumerate(questions, 1)
+        ]
+    else:
+        context_lines = [_strip_leading_marker(questions[0])]
+    context_text = "Agent asks:\n" + "\n".join(f"  {line}" for line in context_lines)
     # Route through the renderer so paste and """ ... """ multiline work
     # at the CLI and a web renderer can serve the same prompt as a form
     # without the loop knowing the difference. ``prompt_user`` propagates
@@ -1311,6 +1362,7 @@ def _handle_ask(questions: list[str]) -> str:
             f"{prefix}\n{prefix}Your answer: ",
             multiline=True,
             continuation=f"{prefix}... ",
+            context=context_text,
         )
     except (EOFError, KeyboardInterrupt):
         answer = "(no response)"

@@ -223,6 +223,7 @@ class Renderer(ABC):
         default: str = "",
         multiline: bool = True,
         continuation: str = "... ",
+        context: str = "",
     ) -> str:
         """Read free-form text input from the user.
 
@@ -243,6 +244,13 @@ class Renderer(ABC):
                 line — setup wizard prompts use this.
             continuation: Prompt prefix shown for subsequent lines of
                 a multi-line block. Ignored when ``multiline=False``.
+            context: Optional pre-input announcement (e.g. the ``ask``
+                tool's question list) that the renderer may surface
+                alongside the input affordance. CLI renderers typically
+                ignore this — they already print such announcements
+                via ``console.print`` for color. Out-of-band UIs (web)
+                use it to attach the question to the input form so
+                the user doesn't have to scroll back.
 
         Returns:
             The stripped user input, or ``default`` on empty input.

@@ -111,13 +111,68 @@ class TestHandleSlashCommand:
         assert "Usage:" in data["content"]
         assert data["success"] is False
 
-    def test_slash_other_falls_through(self):
-        """Slash commands that aren't ``/sh`` are intentionally not
-        intercepted in Phase B — they pass through to the LLM."""
+    def test_slash_help_lists_supported_commands(self):
         from agent_cli.web.server import handle_slash_command
 
         renderer = WebRenderer()
-        for msg in ("/clear", "/skills", "/help"):
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        assert handle_slash_command("/help", renderer) is True
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "observation"
+        # Must mention each supported command so the user can discover
+        # them without leaving the UI.
+        assert "/sh" in data["content"]
+        assert "/skills" in data["content"]
+        assert data["success"] is True
+
+    def test_slash_skills_lists_available(self, monkeypatch):
+        """``/skills`` surfaces the user-invocable skill set as a
+        tool-result observation card."""
+        from agent_cli.skills.models import Skill
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        fake_skills = {
+            "foo": Skill(
+                name="foo",
+                description="foo description",
+                prompt_template="",
+                argument_hint="<args>",
+                disable_model_invocation=False,
+            ),
+            "hidden": Skill(
+                name="hidden",
+                description="hidden description",
+                prompt_template="",
+                disable_model_invocation=True,
+            ),
+        }
+        monkeypatch.setattr(
+            "agent_cli.skills.load_skills",
+            lambda: fake_skills,
+        )
+
+        assert handle_slash_command("/skills", renderer) is True
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "observation"
+        assert "foo" in data["content"]
+        # disable_model_invocation skills must be filtered out.
+        assert "hidden" not in data["content"]
+        assert data["success"] is True
+
+    def test_slash_other_still_falls_through(self):
+        """Slash commands we don't handle yet (``/clear``, ``@<agent>``,
+        ``/<skill>``, ``/mcp``) pass through to the LLM. Documenting
+        the deferred set keeps Phase D scope explicit."""
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        for msg in ("/clear", "@explorer find x", "/mcp", "/optimize ./"):
             assert handle_slash_command(msg, renderer) is False
 
 
@@ -231,6 +286,47 @@ class TestInputEndpoint:
 
         t.join(timeout=2.0)
         assert result == ["answer text"]
+
+    def test_prompt_response_echoes_user_message_for_ui_feedback(
+        self, server_and_client
+    ):
+        """The ask-tool answer flows to the LLM through the renderer's
+        input queue (a tool observation, NOT a user message). For the
+        UI, however, an empty textarea after submit feels like the
+        click did nothing — the server echoes the content as a
+        ``user_message`` event so the chat thread shows the user's
+        reply right away, ahead of the LLM's next emission."""
+        _, renderer, client = server_and_client
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        # Detach a worker so the input_queue has a consumer.
+        def worker():
+            renderer.prompt_user("Q: ")
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.05)
+
+        client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "prompt", "content": "my answer"},
+        )
+        t.join(timeout=2.0)
+
+        # ``user_message`` echo must arrive on the SSE side too.
+        seen_user_message = False
+        # Drain a few events from the queue — order matters but other
+        # transient events may interleave (e.g. input_resolved).
+        for _ in range(5):
+            try:
+                event, data = conn.queue.get(timeout=0.5)
+            except Exception:
+                break
+            if event == "user_message" and data.get("content") == "my answer":
+                seen_user_message = True
+                break
+        assert seen_user_message
 
     def test_confirm_response_decodes_key_and_comment(self, server_and_client):
         from agent_cli.render.base import ConfirmOption

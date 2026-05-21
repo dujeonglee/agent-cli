@@ -73,9 +73,9 @@ agent_cli/
 ├── loop.py                  (1590) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
 ├── render/                         플러그인 가능 렌더링 + 사용자 입력 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
-│   ├── base.py              (~260) Renderer ABC + `ConfirmOption` dataclass. 출력 메서드 19개 (depth, capture, group, thread_status, thinking 등) + 입력 메서드 2개 (`prompt_user` 자유 입력, `confirm` 선택지+코멘트). 입력도 추상화에 포함해 web UI 같은 비-CLI renderer가 SSE+POST로 같은 인터페이스 만족할 수 있게.
+│   ├── base.py              (~270) Renderer ABC + `ConfirmOption` dataclass. 출력 메서드 19개 (depth, capture, group, thread_status, thinking 등) + 입력 메서드 2개 (`prompt_user` 자유 입력 — optional `context` kwarg로 pre-input 안내(예: ask 도구의 질문 블록)을 전달, `confirm` 선택지+코멘트). 입력도 추상화에 포함해 web UI 같은 비-CLI renderer가 SSE+POST로 같은 인터페이스 만족할 수 있게.
 │   ├── minimal.py           (~600) MinimalRenderer — 유일한 번들 렌더러. **출력**: nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, `FrameClock` 공유 (delegate 병렬 패널이 동일 cadence로 reuse), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width, verbose에서 provider thinking 블록 표시. **입력**: `prompt_user`는 multiline 시 `input_history.read_rich_input` (paste + `"""..."""` 블록 지원), 단일 줄은 stdin `input()`; EOF/Ctrl+C는 호출자 정책 분기를 위해 전파. `confirm`은 첫 토큰 매칭 (key + aliases, case-insensitive), EOF/empty/unrecognized는 `default_key` 반환. 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
-│   └── web.py               (~370) WebRenderer — `agent-cli web` 전용. 모든 Renderer emit이 (1) `_event_buffer`에 (persistent만) 누적 + (2) 활성 SSE connection의 queue에 push. `thought()` 는 즉시 emit 안 하고 다음 `action()` / `final()` 에서 `assistant_turn` 한 이벤트로 묶음 (LLM 한 emission = 프런트 카드 한 개). `prompt_user` / `confirm` 은 `input_required` 이벤트 push 후 worker thread에서 `_input_queue.get()` blocking, POST /api/input 이 도착하면 깨움. `unregister_connection` 은 `__close__` sentinel push로 SSE generator의 executor blocking call을 즉시 깨움 — register/unregister 페어의 대칭성으로 production cleanup latency 0
+│   └── web.py               (~380) WebRenderer — `agent-cli web` 전용. 모든 Renderer emit이 (1) `_event_buffer`에 (persistent만) 누적 + (2) 활성 SSE connection의 queue에 push. `thought()` 는 즉시 emit 안 하고 다음 `action()` / `final()` 에서 `assistant_turn` 한 이벤트로 묶음 (LLM 한 emission = 프런트 카드 한 개). `prompt_user` / `confirm` 은 `input_required` 이벤트 push 후 worker thread에서 `_input_queue.get()` blocking, POST /api/input 이 도착하면 깨움. `prompt_user(context=...)` 는 ask 도구의 질문 텍스트를 `input_required.context` 필드로 그대로 전달 → 프런트가 ANSWERING 칩 옆 패널로 렌더 (스크롤 없이 질문 즉시 노출). `unregister_connection` 은 `__close__` sentinel push로 SSE generator의 executor blocking call을 즉시 깨움 — register/unregister 페어의 대칭성으로 production cleanup latency 0
 ├── web/                            agent-cli web 서버 + 정적 UI (optional dep, `pip install agent-cli[web]`)
 │   ├── __init__.py
 │   ├── server.py            (~270) FastAPI app. 엔드포인트: `GET /` (정적 index.html), `GET /static/*` (앱 JS/CSS), `GET /api/health` (auth 없음), `GET /api/stream` (SSE, 토큰 인증, takeover-aware), `POST /api/input` (chat/prompt/confirm 통합), `POST /api/abort` (`prompt_user`/`confirm` 인터럽트). 단일 active client — takeover 모델 (`__close__` sentinel로 깔끔). 토큰은 `secrets.compare_digest` 상수시간 비교. `stream_events` async generator가 snapshot replay → live loop 순서로 yield. **`handle_slash_command(message, renderer)`** — CLI-parity 슬래시 처리. v1은 `/sh <cmd>`만 (LLM 우회, 결과를 observation 이벤트로). 나머지 슬래시(`/clear`, `/skills`, `/<skill>`, `/mcp` 등)는 의도적으로 LLM 통과 — 사용량 측정 후 chat REPL 슬래시 dispatcher 공통화 시 함께 어댑팅.
@@ -335,6 +335,13 @@ class ToolSchema:
 # _ALWAYS_INCLUDE = ("complete", "ready_for_review") — allowed_tools와 무관하게 항상 API tool 목록에 포함
 # delegate는 별도 DELEGATE_TOOL_SCHEMA로 관리
 ```
+
+가상 도구 인터셉트 분기는 일반 dispatch 경로(`§5.x render_step("action", ...)`)를
+거치지 않으므로 분기 진입 시 명시적으로 `render_step("action", ...)` 을 호출해
+`assistant_turn` 이벤트를 발사한다. 이게 없으면 WebRenderer의 streaming-text 카드가
+교체되지 않아 다음 턴의 stream_chunks가 동일 카드에 누적되어 "이전 메시지에 답변이
+붙어 보이는" UX 버그가 발생한다 (`complete` / echo-as-final 은 `render_step("final", ...)` 을
+호출하므로 동일 경로로 해결됨).
 
 ---
 

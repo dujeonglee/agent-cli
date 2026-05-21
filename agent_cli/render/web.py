@@ -342,6 +342,7 @@ class WebRenderer(Renderer):
         default: str = "",
         multiline: bool = True,
         continuation: str = "... ",
+        context: str = "",
     ) -> str:
         """Push an ``input_required`` event and block the worker thread
         until POST /api/input arrives with a chat / ask answer.
@@ -349,6 +350,11 @@ class WebRenderer(Renderer):
         ``EOFError`` is raised if ``push_abort()`` was signalled while
         waiting — gives the same propagation semantics as the CLI
         renderer so chat REPL teardown logic stays consistent.
+
+        ``context`` (e.g. the ``ask`` tool's question block) is
+        forwarded as a separate field so the frontend can attach it
+        to the input affordance — the user doesn't have to scroll
+        back to the assistant card to see what they're answering.
         """
         self._emit(
             "input_required",
@@ -357,6 +363,7 @@ class WebRenderer(Renderer):
                 "prompt": prompt,
                 "multiline": multiline,
                 "continuation": continuation,
+                "context": context,
             },
             persistent=False,
         )
