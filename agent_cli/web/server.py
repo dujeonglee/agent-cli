@@ -47,35 +47,35 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 _WEB_HELP_TEXT = (
-    "Web mode slash commands:\n"
+    "Web mode commands:\n"
     "  /help                    Show this help\n"
     "  /sh <command>            Run a shell command directly (LLM bypass)\n"
     "  /skills                  List available skills\n"
+    "  /<skill> <args>          Invoke a skill directly\n"
+    "  @agents                  List available agents\n"
+    "  @<agent> <task>          Delegate a task to an agent\n"
     "\n"
-    "All other input goes to the LLM. Chat REPL slash commands like\n"
-    "/clear, /<skill>, @<agent> are not yet wired for web mode."
+    "Any other input goes to the LLM as a chat turn."
 )
 
 
 def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
-    """Intercept CLI-parity slash commands before forwarding to AgentLoop.
+    """Intercept web-specific stateless commands.
 
     Returns ``True`` if the message was handled here (caller skips
-    ``run_loop``); ``False`` otherwise. Output surfaces as an
-    ``observation`` event so the frontend renders it as a tool-result
-    card alongside whatever else is in the session.
+    further dispatch / LLM); ``False`` otherwise. Output surfaces as
+    an ``observation`` event so the frontend renders it as a tool-
+    result card alongside whatever else is in the session.
 
     Handled:
-      - ``/help`` — list supported web slash commands
-      - ``/sh <cmd>`` — direct shell execution
-      - ``/skills`` — list available skills (informational)
+      - ``/help`` — list supported web commands
+      - ``/sh <cmd>`` — direct shell execution (no CLI parity yet)
 
-    Other chat REPL slash commands (``/clear``, ``/<skill>``,
-    ``@<agent>``, ``/mcp``, ``/compact``) intentionally fall through to
-    the LLM in this Phase scope — they need real dispatcher wiring to
-    work in web (skill / agent invocation paths run their own loops).
-    Future work: extract the chat REPL's slash dispatcher into a shared
-    helper so both surfaces can call it.
+    ``@<agent>`` / ``/<skill>`` (including the ``@agents`` /
+    ``/skills`` listings and not-found errors) are routed through
+    :func:`agent_cli.main.try_dispatch_agent_or_skill` so chat REPL
+    and web share one prefix-dispatcher with a thin output adapter
+    per surface — see ``WebDispatchOutput`` below.
     """
     if message == "/help":
         renderer.observation(
@@ -86,13 +86,103 @@ def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
         )
         return True
 
-    if message == "/skills":
-        return _handle_skills_listing(renderer)
-
     if message.startswith("/sh"):
         return _handle_sh(message, renderer)
 
     return False
+
+
+class WebDispatchOutput:
+    """Web-flavoured ``DispatchOutput`` — every branch maps to a single
+    ``observation`` event so the frontend renders consistent tool-result
+    cards for listings, errors, and agent results.
+
+    Lives in this module (next to ``handle_slash_command``) because
+    it's the only place that needs ``WebRenderer`` knowledge; keeping
+    ``agent_cli.main`` free of web-renderer imports preserves the
+    optional-extra boundary (``pip install agent-cli`` without ``[web]``
+    must still work).
+    """
+
+    def __init__(self, renderer: WebRenderer) -> None:
+        self.renderer = renderer
+
+    def list_agents(self, names: list[str]) -> None:
+        if not names:
+            self.renderer.observation(
+                "No agents found.",
+                turn=0,
+                tool_name="agents",
+                success=True,
+            )
+            return
+        lines = ["Available agents:"]
+        for name in names:
+            lines.append(f"  @{name}")
+        lines.append("")
+        lines.append("Invoke with ``@<agent> <task>``.")
+        self.renderer.observation(
+            "\n".join(lines),
+            turn=0,
+            tool_name="agents",
+            success=True,
+        )
+
+    def list_skills(self, skills: dict) -> None:
+        user_skills = {k: v for k, v in skills.items() if v.user_invocable}
+        if not user_skills:
+            self.renderer.observation(
+                "No skills available.",
+                turn=0,
+                tool_name="skills",
+                success=True,
+            )
+            return
+        lines = ["Available skills:"]
+        for s in user_skills.values():
+            hint = f" {s.argument_hint}" if s.argument_hint else ""
+            lines.append(f"  /{s.name}{hint} — {s.description}")
+        lines.append("")
+        lines.append(
+            "Invoke directly with ``/<skill> <args>`` or let the LLM call ``run_skill``."
+        )
+        self.renderer.observation(
+            "\n".join(lines),
+            turn=0,
+            tool_name="skills",
+            success=True,
+        )
+
+    def agent_not_found(self, name: str) -> None:
+        self.renderer.observation(
+            f"Agent not found: @{name}. Type ``@agents`` to list available agents.",
+            turn=0,
+            tool_name=f"@{name}",
+            success=False,
+        )
+
+    def agent_result(self, result) -> None:
+        # No-op. The delegate path (``_dispatch_agent`` →
+        # ``tool_delegate``) already emits the final answer through
+        # the renderer's observation channel — re-emitting here would
+        # surface the same body twice in the chat thread.
+        del result
+
+    def skill_not_found(self, name: str) -> None:
+        self.renderer.observation(
+            f"Unknown command: /{name}. Type /help for available commands.",
+            turn=0,
+            tool_name=f"/{name}",
+            success=False,
+        )
+
+    def skill_result(self, name: str, result) -> None:
+        # Same rationale as ``agent_result``: ``_dispatch_skill`` calls
+        # ``render_group_end`` which the frontend uses to close the
+        # nested skill panel. Re-emitting the answer here would
+        # duplicate. The ``None`` (stopped without final) case is
+        # already visible via the unsuccessful group_end.
+        del name, result
 
 
 def _handle_sh(message: str, renderer: WebRenderer) -> bool:
@@ -136,53 +226,6 @@ def _handle_sh(message: str, renderer: WebRenderer) -> bool:
         turn=0,
         tool_name="sh",
         success=result.returncode == 0,
-    )
-    return True
-
-
-def _handle_skills_listing(renderer: WebRenderer) -> bool:
-    """``/skills`` — informational listing of available skills.
-
-    Best-effort: a load failure (corrupt skill file, missing dir) is
-    surfaced as a non-success observation so the user can see what
-    happened instead of silently falling through.
-    """
-    try:
-        from agent_cli.skills import load_skills
-
-        skills = load_skills()
-    except Exception as exc:  # noqa: BLE001 — surfacing for user
-        renderer.observation(
-            f"Failed to load skills: {exc}",
-            turn=0,
-            tool_name="skills",
-            success=False,
-        )
-        return True
-
-    visible = [s for s in skills.values() if not s.disable_model_invocation]
-    if not visible:
-        renderer.observation(
-            "No skills available.",
-            turn=0,
-            tool_name="skills",
-            success=True,
-        )
-        return True
-    lines = ["Available skills (LLM-invocable via `run_skill` tool):"]
-    for s in visible:
-        hint = f" {s.argument_hint}" if s.argument_hint else ""
-        lines.append(f"  {s.name}{hint} — {s.description}")
-    lines.append("")
-    lines.append(
-        "Note: direct ``/<skill>`` invocation from web is not yet wired — "
-        "ask the LLM to run a skill, or use chat mode."
-    )
-    renderer.observation(
-        "\n".join(lines),
-        turn=0,
-        tool_name="skills",
-        success=True,
     )
     return True
 

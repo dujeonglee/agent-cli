@@ -127,53 +127,31 @@ class TestHandleSlashCommand:
         assert "/skills" in data["content"]
         assert data["success"] is True
 
-    def test_slash_skills_lists_available(self, monkeypatch):
-        """``/skills`` surfaces the user-invocable skill set as a
-        tool-result observation card."""
-        from agent_cli.skills.models import Skill
+    def test_handle_slash_command_only_owns_web_specific_commands(self):
+        """``handle_slash_command`` is the web's stateless layer — owns
+        ``/help`` and ``/sh`` only. Everything else (``@<agent>``,
+        ``/<skill>``, listings, not-found) is routed through
+        ``try_dispatch_agent_or_skill`` so chat REPL and web share a
+        single dispatcher. Test pins the surface boundary so a future
+        refactor that re-adds duplicate listing logic here fails loudly.
+        """
         from agent_cli.web.server import handle_slash_command
 
         renderer = WebRenderer()
-        conn = WebConnection(id="c1")
-        renderer.register_connection(conn)
-
-        fake_skills = {
-            "foo": Skill(
-                name="foo",
-                description="foo description",
-                prompt_template="",
-                argument_hint="<args>",
-                disable_model_invocation=False,
-            ),
-            "hidden": Skill(
-                name="hidden",
-                description="hidden description",
-                prompt_template="",
-                disable_model_invocation=True,
-            ),
-        }
-        monkeypatch.setattr(
-            "agent_cli.skills.load_skills",
-            lambda: fake_skills,
-        )
-
-        assert handle_slash_command("/skills", renderer) is True
-        event, data = conn.queue.get(timeout=1.0)
-        assert event == "observation"
-        assert "foo" in data["content"]
-        # disable_model_invocation skills must be filtered out.
-        assert "hidden" not in data["content"]
-        assert data["success"] is True
-
-    def test_slash_other_still_falls_through(self):
-        """Slash commands we don't handle yet (``/clear``, ``@<agent>``,
-        ``/<skill>``, ``/mcp``) pass through to the LLM. Documenting
-        the deferred set keeps Phase D scope explicit."""
-        from agent_cli.web.server import handle_slash_command
-
-        renderer = WebRenderer()
-        for msg in ("/clear", "@explorer find x", "/mcp", "/optimize ./"):
-            assert handle_slash_command(msg, renderer) is False
+        # These belong to ``try_dispatch_agent_or_skill`` now.
+        for msg in (
+            "/skills",
+            "/clear",
+            "/mcp",
+            "/optimize ./",
+            "@",
+            "@agents",
+            "@explorer find x",
+            "/plan some feature",
+        ):
+            assert handle_slash_command(msg, renderer) is False, (
+                f"handle_slash_command should not catch {msg!r}"
+            )
 
 
 # ── Static UI ─────────────────────────────────────

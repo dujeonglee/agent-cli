@@ -257,6 +257,244 @@ _SKILL_NOT_FOUND = (
 _AGENT_NOT_FOUND = object()
 
 
+# ────────────────────────────────────────────────────────────
+# Shared ``@<agent>`` / ``/<skill>`` dispatch (chat REPL + web)
+# ────────────────────────────────────────────────────────────
+
+# Why a Protocol-based dispatcher instead of two parallel branches:
+# the prefix semantics (``@agents`` lists, ``@<name>`` invokes,
+# ``/skills`` lists, ``/<name>`` invokes, both have not-found
+# fallbacks) are identical across surfaces. Only the output format
+# differs — CLI wants coloured ``console.print``; web wants
+# ``renderer.observation`` events. The Protocol pins the contract so
+# adding a new surface (a future TUI, an HTTP API for IDE plugins)
+# means writing one ~30-line output adapter, not re-implementing the
+# 80-line prefix block.
+
+
+class DispatchOutput:
+    """Output adapter for ``try_dispatch_agent_or_skill``.
+
+    All methods are called from the dispatcher — implementors decide
+    how to surface each branch (coloured print, SSE event, log line).
+    Methods MUST NOT raise; failures should degrade to silence so a
+    broken adapter cannot wedge the chat loop.
+    """
+
+    def list_agents(self, names: list[str]) -> None:
+        """Render the available agent names. Empty list = "none found"."""
+        raise NotImplementedError
+
+    def list_skills(self, skills: dict) -> None:
+        """Render user-invocable skills. ``skills`` keyed by name."""
+        raise NotImplementedError
+
+    def agent_not_found(self, name: str) -> None:
+        """Surface an unknown agent name."""
+        raise NotImplementedError
+
+    def agent_result(self, result) -> None:
+        """Final answer string from a delegated agent. ``None`` = silent."""
+        raise NotImplementedError
+
+    def skill_not_found(self, name: str) -> None:
+        """Surface an unknown slash command."""
+        raise NotImplementedError
+
+    def skill_result(self, name: str, result) -> None:
+        """Final answer (or ``None``) from a ``/<skill>`` invocation.
+
+        ``result is None`` means the skill stopped without producing a
+        final answer (e.g. user aborted) — CLI prints a recovery hint
+        so the user knows what to try next; other surfaces may ignore.
+        """
+        raise NotImplementedError
+
+
+class _ConsoleDispatchOutput(DispatchOutput):
+    """CLI-flavoured output — colour, Rich markup, plain ``console.print``."""
+
+    def list_agents(self, names: list[str]) -> None:
+        console.print(f"\n[{C['accent']}]Available agents:[/]")
+        if not names:
+            console.print(f"[{C['muted']}]No agents found.[/]")
+        else:
+            for name in names:
+                console.print(f"  @{name}")
+        console.print(f"\n[{C['muted']}]Usage: @agent-name <task>[/]")
+
+    def list_skills(self, skills: dict) -> None:
+        user_skills = {k: v for k, v in skills.items() if v.user_invocable}
+        if not user_skills:
+            console.print(f"[{C['muted']}]No skills found.[/]")
+            return
+        console.print(f"\n[{C['accent']}]Available skills:[/]")
+        for s in user_skills.values():
+            hint = f" {s.argument_hint}" if s.argument_hint else ""
+            console.print(f"  /{s.name}{hint}  — {s.description}")
+        console.print()
+
+    def agent_not_found(self, name: str) -> None:
+        console.print(f"[{C['error']}]Agent not found: @{name}[/]")
+        console.print(f"[{C['muted']}]Type @ to list available agents[/]")
+
+    def agent_result(self, result) -> None:
+        # ``_dispatch_agent`` already streams the agent's thoughts /
+        # tool calls through the renderer; this is the CLI's
+        # trailing "headline" green print so the final answer is
+        # also immediately visible above the next prompt.
+        if result is not None:
+            console.print(f"\n[{C['final']}]{result}[/]")
+
+    def skill_not_found(self, name: str) -> None:
+        console.print(f"[{C['error']}]Unknown command: /{name}[/]")
+        console.print(f"[{C['muted']}]Type /help for available commands[/]")
+
+    def skill_result(self, name: str, result) -> None:
+        if result is not None:
+            console.print(f"\n[{C['final']}]{result}[/]")
+            return
+        console.print(
+            f"\n[{C['accent']}]Skill /{name} stopped without final answer. "
+            f"You can:[/]\n"
+            f"  - Retry the skill with different arguments\n"
+            f"  - /clear to reset context\n"
+            f"  - /quit to exit"
+        )
+
+
+def _collect_agent_names() -> list[str]:
+    """Sorted, deduped list of agent names from the delegate search paths.
+
+    Lifted from the chat REPL's inline listing block so both surfaces
+    walk the same paths and apply the same dedup rule (first hit wins
+    by ``_AGENT_SEARCH_PATHS`` order).
+    """
+    from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS
+
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    for search_dir in _AGENT_SEARCH_PATHS:
+        if not search_dir.is_dir():
+            continue
+        for md_file in sorted(search_dir.glob("*.md")):
+            name = md_file.stem
+            if name in seen_set:
+                continue
+            seen_set.add(name)
+            seen.append(name)
+    return seen
+
+
+def try_dispatch_agent_or_skill(
+    message: str,
+    output: DispatchOutput,
+    *,
+    llm_provider,
+    capabilities,
+    resolved_model: str,
+    provider: str,
+    resolved_url: str,
+    resolved_key: str,
+    max_turns: int,
+    verbose: bool,
+    max_depth: int,
+    delegate_timeout: int,
+    ctx,
+    session,
+    graceful_interrupt: bool = True,
+) -> bool:
+    """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
+
+    Returns ``True`` when the message was handled (caller skips its
+    LLM path); ``False`` when nothing matched and the caller should
+    treat ``message`` as a normal chat turn.
+
+    Listings (``@``, ``@agents``, ``@<name>`` with no task,
+    ``/skills``) and errors (unknown agent, unknown skill) are
+    surfaced through ``output`` — same code path as a successful
+    invocation, just a different rendering. Unknown commands do NOT
+    fall through to the LLM: a typo shouldn't accidentally trigger a
+    chat round-trip with the LLM, which is the chat REPL's contract
+    and the web UI now matches.
+    """
+    from agent_cli.context.session import save_meta
+
+    if message.startswith("@"):
+        parts = message.split(maxsplit=1)
+        name = parts[0][1:]
+        # CLI parity: any ``@<x>`` with no task — including unknown
+        # agent names — triggers a listing rather than an error.
+        # Typing ``@`` to discover what's available is a documented
+        # UX pattern in the chat REPL help text.
+        if not name or name == "agents" or len(parts) < 2:
+            output.list_agents(_collect_agent_names())
+            return True
+        result = _dispatch_agent(
+            message,
+            llm_provider,
+            capabilities,
+            resolved_model,
+            provider,
+            resolved_url,
+            resolved_key,
+            max_turns=max_turns,
+            verbose=verbose,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
+            ctx=ctx,
+            session=session,
+            graceful_interrupt=graceful_interrupt,
+        )
+        if result is _AGENT_NOT_FOUND:
+            output.agent_not_found(name)
+            return True
+        if session is not None:
+            session.query = message[:100]
+            save_meta(session)
+        output.agent_result(result)
+        return True
+
+    if message.startswith("/"):
+        parts = message.split(maxsplit=1)
+        cmd_name = parts[0][1:]
+        # ``/skills`` is a synthetic command — it isn't a real skill
+        # file, but it serves the listing role symmetric to
+        # ``@agents``. Handle it BEFORE ``_dispatch_skill`` because
+        # the latter would (correctly) report it as not-found.
+        if cmd_name == "skills":
+            from agent_cli.skills import load_skills as _load_skills
+
+            output.list_skills(_load_skills())
+            return True
+        result = _dispatch_skill(
+            message,
+            llm_provider,
+            capabilities,
+            resolved_model,
+            provider,
+            resolved_url,
+            resolved_key,
+            max_turns=max_turns,
+            verbose=verbose,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
+            ctx=ctx,
+            session=session,
+            graceful_interrupt=graceful_interrupt,
+        )
+        if result is _SKILL_NOT_FOUND:
+            output.skill_not_found(cmd_name)
+            return True
+        if session is not None:
+            session.query = message[:100]
+            save_meta(session)
+        output.skill_result(cmd_name, result)
+        return True
+
+    return False
+
+
 def _dispatch_agent(
     query: str,
     llm_provider,
@@ -1101,39 +1339,20 @@ def chat(
             _handle_mcp_command(query, mcp_manager)
             continue
 
-        # Agent dispatch: @agent-name task
-        if query.startswith("@"):
-            agent_parts = query.split(maxsplit=1)
-            agent_name = agent_parts[0][1:]
-
-            if agent_name == "agents" or not agent_name or len(agent_parts) < 2:
-                # List available agents (@agents or @ alone)
-                from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS
-
-                console.print(f"\n[{C['accent']}]Available agents:[/]")
-                seen = set()
-                for search_dir in _AGENT_SEARCH_PATHS:
-                    if not search_dir.is_dir():
-                        continue
-                    for md_file in sorted(search_dir.glob("*.md")):
-                        name = md_file.stem
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                        console.print(f"  @{name}")
-                if not seen:
-                    console.print(f"[{C['muted']}]No agents found.[/]")
-                console.print(f"\n[{C['muted']}]Usage: @agent-name <task>[/]")
-                continue
-
-            result = _dispatch_agent(
+        # Shared ``@<agent>`` / ``/<skill>`` dispatcher — covers
+        # listings (``@``, ``@agents``, ``@<x>`` no task, ``/skills``),
+        # invocations, and not-found errors. Web mode uses the same
+        # function with a different ``DispatchOutput`` adapter.
+        if query.startswith("@") or query.startswith("/"):
+            if try_dispatch_agent_or_skill(
                 query,
-                llm_provider,
-                capabilities,
-                resolved_model,
-                provider,
-                resolved_url,
-                resolved_key,
+                _ConsoleDispatchOutput(),
+                llm_provider=llm_provider,
+                capabilities=capabilities,
+                resolved_model=resolved_model,
+                provider=provider,
+                resolved_url=resolved_url,
+                resolved_key=resolved_key,
                 max_turns=max_turns,
                 verbose=verbose,
                 max_depth=max_depth,
@@ -1141,73 +1360,8 @@ def chat(
                 ctx=ctx,
                 session=session,
                 graceful_interrupt=True,
-            )
-            if result is _AGENT_NOT_FOUND:
-                console.print(f"[{C['error']}]Agent not found: @{agent_name}[/]")
-                console.print(f"[{C['muted']}]Type @ to list available agents[/]")
+            ):
                 continue
-
-            session.query = query[:100]
-            save_meta(session)
-            if result is not None:
-                console.print(f"\n[{C['final']}]{result}[/]")
-            continue
-
-        # Skill dispatch: /skill-name args
-        if query.startswith("/"):
-            from agent_cli.skills import load_skills as _load_skills
-
-            parts = query.split(maxsplit=1)
-            cmd_name = parts[0][1:]
-
-            if cmd_name == "skills":
-                skills = _load_skills()
-                user_skills = {k: v for k, v in skills.items() if v.user_invocable}
-                if not user_skills:
-                    console.print(f"[{C['muted']}]No skills found.[/]")
-                else:
-                    console.print(f"\n[{C['accent']}]Available skills:[/]")
-                    for s in user_skills.values():
-                        hint = f" {s.argument_hint}" if s.argument_hint else ""
-                        console.print(f"  /{s.name}{hint}  — {s.description}")
-                    console.print()
-                continue
-
-            result = _dispatch_skill(
-                query,
-                llm_provider,
-                capabilities,
-                resolved_model,
-                provider,
-                resolved_url,
-                resolved_key,
-                max_turns=max_turns,
-                verbose=verbose,
-                max_depth=max_depth,
-                delegate_timeout=delegate_timeout,
-                ctx=ctx,
-                session=session,
-                graceful_interrupt=True,
-            )
-            if result is _SKILL_NOT_FOUND:
-                console.print(f"[{C['error']}]Unknown command: /{cmd_name}[/]")
-                console.print(f"[{C['muted']}]Type /help for available commands[/]")
-                continue
-
-            session.query = query[:100]
-            save_meta(session)
-            # ctx.add already done inside _dispatch_skill
-            if result is not None:
-                console.print(f"\n[{C['final']}]{result}[/]")
-            else:
-                console.print(
-                    f"\n[{C['accent']}]Skill /{cmd_name} stopped without final answer. "
-                    f"You can:[/]\n"
-                    f"  - Retry the skill with different arguments\n"
-                    f"  - /clear to reset context\n"
-                    f"  - /quit to exit"
-                )
-            continue
 
         session.query = query[:100]
         save_meta(session)
@@ -1372,22 +1526,44 @@ def web(
     set_renderer(renderer)
     server = WebServer(renderer, token=token)
 
-    from agent_cli.web.server import handle_slash_command
+    from agent_cli.web.server import WebDispatchOutput, handle_slash_command
 
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.
 
         Each ``run_loop`` invocation reuses the same ``ctx``, so history
         accumulates across messages exactly like the CLI chat REPL.
-        CLI-parity slash commands (``/sh``) are intercepted here so the
-        web user gets the same shortcuts as a chat-mode user without
-        round-tripping through the LLM.
+        Dispatch order matches the chat REPL surface:
+          1. ``handle_slash_command`` — web-specific stateless cmds
+             (``/help``, ``/sh``)
+          2. ``try_dispatch_agent_or_skill`` — shared with chat REPL,
+             covers ``@``/``/`` listings + invocations + not-found
+          3. Otherwise the message is a chat turn → ``run_loop``.
         """
+        web_output = WebDispatchOutput(renderer)
         while True:
             message = server.pop_chat(timeout=None)
             if message is None:
                 continue
             if handle_slash_command(message, renderer):
+                continue
+            if try_dispatch_agent_or_skill(
+                message,
+                web_output,
+                llm_provider=llm_provider,
+                capabilities=capabilities,
+                resolved_model=resolved_model,
+                provider=provider,
+                resolved_url=resolved_url,
+                resolved_key=resolved_key,
+                max_turns=max_turns,
+                verbose=verbose,
+                max_depth=max_depth,
+                delegate_timeout=delegate_timeout,
+                ctx=ctx,
+                session=session,
+                graceful_interrupt=True,
+            ):
                 continue
             try:
                 run_loop(
