@@ -254,6 +254,33 @@ You: 그 파일 말고 config.py를 먼저 봐   ← 방향 수정 후 이어서
 
 `run` 모드에서는 Ctrl+C로 즉시 종료됩니다 (돌아갈 input loop이 없으므로). 세션은 자동 저장되어 `chat --resume`으로 이어갈 수 있습니다.
 
+### `web` — LAN 웹 UI (실험)
+
+```bash
+pip install 'agent-cli[web]'   # 옵션 의존성 설치 (FastAPI, uvicorn)
+agent-cli web [-p ollama] [-m model] [--port 8080] [--token <hex>]
+```
+
+agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토큰 생성(또는 `--token` 지정), takeover 정책(새 연결이 기존을 종료), 컨텍스트 윈도우와 동기화된 메시지 표시.
+
+| 옵션 | 설명 | 기본값 |
+|---|---|---|
+| `--host` | bind 주소 | `0.0.0.0` (LAN) |
+| `--port` | listen 포트 | `8080` |
+| `--token` | 인증 토큰 | 자동 생성 (32 byte URL-safe) |
+| `--no-browser` | 브라우저 자동 open 비활성 | `false` |
+| 기타 (`-p`, `-m`, `-n`, `--max-depth` 등) | `run` / `chat`과 동일 | |
+
+**Phase A 현황 (2026-05-21)**: 서버 인프라 + WebRenderer 만 구현. 프런트엔드 HTML/JS UI는 Phase B 작업. 현재는 `curl`로 검증 가능:
+
+```bash
+# 서버 띄우면 stdout에 token이 표시됨
+curl -N "http://localhost:8080/api/stream?token=<TOKEN>"
+curl -X POST "http://localhost:8080/api/input?token=<TOKEN>" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"chat","content":"hello"}'
+```
+
 ### `setup` — 설정 마법사
 
 ```bash

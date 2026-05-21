@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -1255,3 +1256,179 @@ def chat(
     console.print(f"[{C['muted']}]Saving session...[/]")
     finalize_session(session, ctx)
     console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
+
+
+@app.command()
+def web(
+    provider: str = typer.Option(
+        "ollama",
+        "--provider",
+        "-p",
+        help="LLM provider: anthropic | openai | ollama",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Model ID (uses provider default if not specified)",
+    ),
+    base_url: Optional[str] = typer.Option(
+        None,
+        "--base-url",
+        help="API base URL (uses provider default if not specified)",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        "--api-key",
+        help="API key (auto-detects from environment if not specified)",
+    ),
+    max_turns: int = typer.Option(
+        0, "--max-turns", "-n", help="Max iterations per chat turn (0=unlimited)"
+    ),
+    max_context_tokens: int = typer.Option(
+        0, "--max-context-tokens", help="Max tokens in context window (0=auto)"
+    ),
+    max_depth: int = typer.Option(2, "--max-depth", help="Subagent nesting depth"),
+    delegate_timeout: int = typer.Option(
+        DELEGATE_DEFAULT_TIMEOUT, "--delegate-timeout", help="Subagent timeout (s)"
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
+    response_format: str = typer.Option(
+        "react",
+        "--response-format",
+        help="Wire format plugin name (default: react).",
+    ),
+    host: str = typer.Option(
+        "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"
+    ),
+    port: int = typer.Option(8080, "--port", help="Listen port (default: 8080)"),
+    token: Optional[str] = typer.Option(
+        None,
+        "--token",
+        help="Auth token. Random 32-byte URL-safe string when omitted.",
+    ),
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Do not open the browser automatically"
+    ),
+) -> None:
+    """Start an LAN web UI for the agent loop.
+
+    Single AgentLoop, single active SSE client (takeover model). Token
+    is generated on startup unless ``--token`` is provided; the URL with
+    the token is printed to stdout for the operator to share.
+
+    Phase A scope: server + WebRenderer only. The frontend HTML/JS UI
+    arrives in Phase B; for now use ``curl`` to drive the API.
+    """
+    # Lazy imports — optional ``web`` extra. Surface a friendlier error
+    # when the dependency is missing rather than a raw ImportError out
+    # of the network stack.
+    try:
+        import uvicorn
+
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.web.server import WebServer, create_app
+    except ImportError as e:
+        console.print(
+            f"[red]Missing optional dependency for 'web' command: {e}.[/]\n"
+            "Install with: [bright_cyan]pip install agent-cli[web][/]"
+        )
+        raise typer.Exit(code=1)
+
+    from agent_cli.render import set_renderer
+
+    # 1. Resolve provider + capabilities (reuse chat helper).
+    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
+        _setup_provider(provider, model, base_url, api_key, quiet=True)
+    )
+
+    try:
+        wire_format_plugin = _get_wire_format(response_format)
+    except KeyError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(code=2)
+
+    # 2. Session + ContextManager.
+    from agent_cli.context.session import create_session, finalize_session, save_meta
+
+    session = create_session(query="")
+    save_meta(session)
+    if max_context_tokens <= 0:
+        max_context_tokens = (capabilities.context_window * 7) // 10
+    ctx = ContextManager(
+        session.session_dir,
+        max_context_tokens=max_context_tokens,
+        wire_format=wire_format_plugin,
+    )
+
+    # 3. Renderer + server + worker thread.
+    renderer = WebRenderer()
+    set_renderer(renderer)
+    server = WebServer(renderer, token=token)
+
+    def _worker_loop() -> None:
+        """Pop chat messages and drive AgentLoop in a background thread.
+
+        Each ``run_loop`` invocation reuses the same ``ctx``, so history
+        accumulates across messages exactly like the CLI chat REPL.
+        """
+        while True:
+            message = server.pop_chat(timeout=None)
+            if message is None:
+                continue
+            try:
+                run_loop(
+                    query=message,
+                    provider=llm_provider,
+                    capabilities=capabilities,
+                    model=resolved_model,
+                    provider_name=provider,
+                    base_url=resolved_url,
+                    api_key=resolved_key,
+                    max_turns=max_turns,
+                    verbose=verbose,
+                    ctx=ctx,
+                    max_depth=max_depth,
+                    delegate_timeout=delegate_timeout,
+                    session=session,
+                    graceful_interrupt=True,
+                    record_turns=record_turns,
+                    wire_format=wire_format_plugin,
+                )
+            except Exception as exc:  # noqa: BLE001 — worker boundary
+                # Push the error into the renderer so the frontend sees
+                # it rather than dying silently. Worker keeps spinning
+                # to handle the next message.
+                renderer.error(f"Worker error: {exc}", 0)
+
+    worker = threading.Thread(target=_worker_loop, daemon=True, name="agent-loop")
+    worker.start()
+
+    # 4. Print URL + start uvicorn.
+    url = f"http://{host}:{port}/api/stream?token={server.token}"
+    console.print(f"\n[bright_cyan]agent-cli web[/]  ({provider} · {resolved_model})")
+    console.print(f"  Stream: [yellow]{url}[/]")
+    console.print(f"  Token:  [yellow]{server.token}[/]")
+    console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
+
+    if not no_browser:
+        # Best-effort browser open — frontend isn't shipped yet in
+        # Phase A, so this only helps once the static UI lands. Quiet
+        # on failure (headless environments).
+        try:
+            import webbrowser
+
+            webbrowser.open(
+                f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}/"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    app_obj = create_app(server)
+    try:
+        uvicorn.run(app_obj, host=host, port=port, log_level="warning")
+    finally:
+        console.print(f"[{C['muted']}]Saving session...[/]")
+        finalize_session(session, ctx)
+        console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")

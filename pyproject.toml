@@ -21,9 +21,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "httpx>=0.27"]
 # macOS: install gnureadline for proper CJK width in chat input
 macos = ["gnureadline>=8.0; sys_platform == 'darwin'"]
+# Optional `agent-cli web` LAN UI — install with `pip install agent-cli[web]`
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sse-starlette>=2.0",
+]
 
 [project.scripts]
 agent-cli = "agent_cli.main:app"
@@ -35,6 +41,8 @@ include = ["agent_cli*"]
 agent_cli = ["default_models.json"]
 
 [tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "ollama_integration: requires running Ollama at localhost:11434",
 ]
