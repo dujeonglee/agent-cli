@@ -14,7 +14,7 @@ from agent_cli.constants import SHELL_COMMAND_TIMEOUT, DELEGATE_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers import create_provider, get_capabilities
-from agent_cli.render import C, console
+from agent_cli.render import C, console, get_renderer
 from agent_cli.wire_formats import get as _get_wire_format
 
 app = typer.Typer(
@@ -440,17 +440,24 @@ def _prompt_model_capabilities(model: str):
         f"[{C['muted']}]Please provide model info (saved for future use):[/]\n"
     )
 
+    renderer = get_renderer()
     try:
-        ctx_input = input("  Context window size [4096]: ").strip()
+        ctx_input = renderer.prompt_user(
+            "  Context window size [4096]: ", multiline=False
+        )
         context_window = int(ctx_input) if ctx_input else 4096
 
-        thinking_input = input("  Supports thinking? (y/n) [n]: ").strip().lower()
+        thinking_input = renderer.prompt_user(
+            "  Supports thinking? (y/n) [n]: ", multiline=False
+        ).lower()
         supports_thinking = thinking_input in ("y", "yes")
 
         thinking_budget = 0
         thinking_format = ""
         if supports_thinking:
-            budget_input = input("  Thinking budget tokens [4096]: ").strip()
+            budget_input = renderer.prompt_user(
+                "  Thinking budget tokens [4096]: ", multiline=False
+            )
             thinking_budget = int(budget_input) if budget_input else 4096
             thinking_format = "think"
 
@@ -834,10 +841,13 @@ def sessions(
 
 
 def _read_user_input(prompt: str) -> str:
-    """REPL wrapper over the shared rich-input reader."""
-    from agent_cli.input_history import read_rich_input
+    """REPL wrapper over the active renderer's input method.
 
-    return read_rich_input(prompt)
+    Going through the renderer means a web renderer can satisfy the
+    same call by streaming the prompt to the browser and waiting on
+    a form submission, with no change to the chat loop here.
+    """
+    return get_renderer().prompt_user(prompt, multiline=True)
 
 
 def _print_recent_exchanges(history_path, n: int = 10) -> None:

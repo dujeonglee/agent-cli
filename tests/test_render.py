@@ -795,6 +795,128 @@ class TestFrameClock:
         assert set(_THINK_FRAMES).issubset(seen)
 
 
+class TestPromptUser:
+    """``Renderer.prompt_user`` — chat REPL / setup wizard / ask tool
+    all route through here so a web renderer can satisfy the same API
+    via form submission instead of stdin."""
+
+    def _make(self):
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        return MinimalRenderer(console)
+
+    def test_single_line_returns_stripped_input(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda _p: "  hello world  ")
+        r = self._make()
+        assert r.prompt_user("prompt: ", multiline=False) == "hello world"
+
+    def test_single_line_empty_returns_default(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda _p: "")
+        r = self._make()
+        assert r.prompt_user("prompt: ", default="4096", multiline=False) == "4096"
+
+    def test_single_line_eof_propagates(self, monkeypatch):
+        # EOF / Ctrl+C propagate so the caller can pick a policy
+        # (chat REPL: end session; setup wizard: abort; ask tool:
+        # catch + substitute fallback).
+        import pytest
+
+        def raise_eof(_p):
+            raise EOFError
+
+        monkeypatch.setattr("builtins.input", raise_eof)
+        r = self._make()
+        with pytest.raises(EOFError):
+            r.prompt_user("prompt: ", default="fallback", multiline=False)
+
+    def test_single_line_keyboard_interrupt_propagates(self, monkeypatch):
+        import pytest
+
+        def raise_int(_p):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("builtins.input", raise_int)
+        r = self._make()
+        with pytest.raises(KeyboardInterrupt):
+            r.prompt_user("prompt: ", default="abort", multiline=False)
+
+    def test_multiline_delegates_to_rich_input(self, monkeypatch):
+        # ``read_rich_input`` is the existing reader; we just verify
+        # we delegate to it and respect default-on-EOF semantics.
+        monkeypatch.setattr(
+            "agent_cli.input_history.read_rich_input",
+            lambda _p, continuation="... ": "  multi  ",
+        )
+        r = self._make()
+        assert r.prompt_user("prompt: ", multiline=True) == "multi"
+
+    def test_multiline_empty_returns_default(self, monkeypatch):
+        monkeypatch.setattr(
+            "agent_cli.input_history.read_rich_input",
+            lambda _p, continuation="... ": "",
+        )
+        r = self._make()
+        assert r.prompt_user("prompt: ", default="def", multiline=True) == "def"
+
+
+class TestConfirm:
+    """``Renderer.confirm`` — single-line confirmation with options +
+    optional comment. Powers the dangerous-command y/n/a prompt today;
+    a web renderer would render one button per option."""
+
+    def _make(self):
+        from agent_cli.render.base import ConfirmOption
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        return MinimalRenderer(console), [
+            ConfirmOption(key="y", label="yes", aliases=("yes",)),
+            ConfirmOption(key="n", label="no", aliases=("no",)),
+            ConfirmOption(key="a", label="always", aliases=("always",)),
+        ]
+
+    def test_exact_key_match(self, monkeypatch):
+        r, opts = self._make()
+        monkeypatch.setattr("builtins.input", lambda _p: "y")
+        assert r.confirm("?", opts, default_key="n") == ("y", "")
+
+    def test_alias_match_case_insensitive(self, monkeypatch):
+        r, opts = self._make()
+        monkeypatch.setattr("builtins.input", lambda _p: "YES")
+        assert r.confirm("?", opts, default_key="n") == ("y", "")
+
+    def test_match_preserves_comment(self, monkeypatch):
+        r, opts = self._make()
+        monkeypatch.setattr("builtins.input", lambda _p: "y  go ahead  ")
+        assert r.confirm("?", opts, default_key="n") == ("y", "go ahead")
+
+    def test_empty_returns_default(self, monkeypatch):
+        r, opts = self._make()
+        monkeypatch.setattr("builtins.input", lambda _p: "   ")
+        assert r.confirm("?", opts, default_key="n") == ("n", "")
+
+    def test_eof_returns_default(self, monkeypatch):
+        r, opts = self._make()
+
+        def raise_eof(_p):
+            raise EOFError
+
+        monkeypatch.setattr("builtins.input", raise_eof)
+        assert r.confirm("?", opts, default_key="n") == ("n", "")
+
+    def test_unrecognized_returns_default_with_full_raw_as_comment(self, monkeypatch):
+        # User typed something we don't recognize as a yes/no/always —
+        # the renderer preserves their full text as a comment so the
+        # caller (e.g. shell danger prompt) can surface it to the LLM.
+        r, opts = self._make()
+        monkeypatch.setattr(
+            "builtins.input", lambda _p: "wait, I don't trust this command"
+        )
+        key, comment = r.confirm("?", opts, default_key="n")
+        assert key == "n"
+        assert comment == "wait, I don't trust this command"
+
+
 class TestGroupDelegatingFunctions:
     """Test render_group_start / render_group_end wrappers."""
 

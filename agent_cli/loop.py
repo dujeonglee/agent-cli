@@ -1299,15 +1299,19 @@ def _handle_ask(questions: list[str]) -> str:
             console.print(f"{prefix}  {i}. {clean}")
         else:
             console.print(f"{prefix}  {clean}")
-    # Use the shared rich-input reader so paste and """ ... """ multiline
-    # work here just like they do at the top-level REPL prompt.
-    from agent_cli.input_history import read_rich_input
+    # Route through the renderer so paste and """ ... """ multiline work
+    # at the CLI and a web renderer can serve the same prompt as a form
+    # without the loop knowing the difference. ``prompt_user`` propagates
+    # EOF / Ctrl+C — caller policy is "(no response)" so the assistant
+    # gets a stable answer slot even when the user bails.
+    from agent_cli.render import get_renderer
 
     try:
-        answer = read_rich_input(
+        answer = get_renderer().prompt_user(
             f"{prefix}\n{prefix}Your answer: ",
+            multiline=True,
             continuation=f"{prefix}... ",
-        ).strip()
+        )
     except (EOFError, KeyboardInterrupt):
         answer = "(no response)"
 

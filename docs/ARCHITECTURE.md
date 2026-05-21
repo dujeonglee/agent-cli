@@ -71,10 +71,10 @@ agent_cli/
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
 ├── loop.py                  (1590) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
-├── render/                         플러그인 가능 렌더링 시스템
+├── render/                         플러그인 가능 렌더링 + 사용자 입력 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
-│   ├── base.py              (189)  Renderer ABC (depth, capture, group, thread_status, 19개 메서드 + thinking, observation success 인자)
-│   └── minimal.py           (524)  MinimalRenderer — 유일한 번들 렌더러 (nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, `FrameClock` 공유 (delegate 병렬 패널이 동일 cadence로 reuse), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width, verbose에서 provider thinking 블록 표시). 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
+│   ├── base.py              (~260) Renderer ABC + `ConfirmOption` dataclass. 출력 메서드 19개 (depth, capture, group, thread_status, thinking 등) + 입력 메서드 2개 (`prompt_user` 자유 입력, `confirm` 선택지+코멘트). 입력도 추상화에 포함해 web UI 같은 비-CLI renderer가 SSE+POST로 같은 인터페이스 만족할 수 있게.
+│   └── minimal.py           (~600) MinimalRenderer — 유일한 번들 렌더러. **출력**: nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, `FrameClock` 공유 (delegate 병렬 패널이 동일 cadence로 reuse), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width, verbose에서 provider thinking 블록 표시. **입력**: `prompt_user`는 multiline 시 `input_history.read_rich_input` (paste + `"""..."""` 블록 지원), 단일 줄은 stdin `input()`; EOF/Ctrl+C는 호출자 정책 분기를 위해 전파. `confirm`은 첫 토큰 매칭 (key + aliases, case-insensitive), EOF/empty/unrecognized는 `default_key` 반환. 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리

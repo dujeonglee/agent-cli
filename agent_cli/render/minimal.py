@@ -9,7 +9,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from agent_cli.render.base import Renderer
+from agent_cli.render.base import ConfirmOption, Renderer
 
 _MUTED = "grey46"
 
@@ -522,3 +522,75 @@ class MinimalRenderer(Renderer):
                 f"  [{_MUTED}]{label} [{turn}] {action_icon} {tool_name}:{detail}[/]",
                 highlight=False,
             )
+
+    # ── User input ──────────────────────────────────
+
+    def prompt_user(
+        self,
+        prompt: str,
+        *,
+        default: str = "",
+        multiline: bool = True,
+        continuation: str = "... ",
+    ) -> str:
+        """CLI implementation — readline + paste detection for multi-line,
+        single ``input()`` call for one-line prompts.
+
+        ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
+        different consumers want different policy (chat REPL ends the
+        session, setup wizard aborts back to caller, ask tool
+        substitutes ``"(no response)"``), so the renderer doesn't
+        impose one. Empty input → ``default`` substitution.
+
+        Decode errors get swallowed by ``read_rich_input`` (one-shot
+        warning + empty) so the user can retype without aborting.
+        """
+        if multiline:
+            from agent_cli.input_history import read_rich_input
+
+            value = read_rich_input(prompt, continuation=continuation).strip()
+        else:
+            try:
+                value = input(prompt).strip()
+            except UnicodeDecodeError:
+                # Mirror read_rich_input's behaviour: drop the broken
+                # paste and let the caller treat it as no input. EOF /
+                # KbInt deliberately not caught — see method docstring.
+                value = ""
+        return value if value else default
+
+    def confirm(
+        self,
+        prompt: str,
+        options: list[ConfirmOption],
+        *,
+        default_key: str,
+    ) -> tuple[str, str]:
+        """CLI implementation — read one line and match the first token
+        case-insensitively against each option's ``key`` and aliases.
+
+        Empty / EOF / Ctrl+C → ``(default_key, "")``. Unrecognized first
+        token → ``(default_key, full_raw_line)`` so the user's typed
+        intent is preserved as a comment (e.g. shell danger prompt
+        surfaces "I don't trust this" as a comment alongside the
+        implicit deny).
+        """
+        try:
+            raw = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            return (default_key, "")
+        if not raw:
+            return (default_key, "")
+
+        parts = raw.split(maxsplit=1)
+        first_lower = parts[0].lower()
+        comment = parts[1].strip() if len(parts) > 1 else ""
+
+        for opt in options:
+            candidates = (opt.key.lower(), *(a.lower() for a in opt.aliases))
+            if first_lower in candidates:
+                return (opt.key, comment)
+
+        # Unrecognized — preserve the full raw input as comment so the
+        # user's intent surfaces upstream (e.g. tool result observation).
+        return (default_key, raw)

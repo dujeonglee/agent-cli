@@ -73,27 +73,22 @@ def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
         f"Allow? (y=once, n=deny, a=always allow `{keyword}` this session)\n"
         f"  [y/n/a, optional comment after]: "
     )
-    try:
-        raw = input(prompt).strip()
-    except (EOFError, KeyboardInterrupt):
-        print("", file=sys.stderr)
-        return ("n", "")
-    if not raw:
-        return ("n", "")
+    from agent_cli.render import get_renderer
+    from agent_cli.render.base import ConfirmOption
 
-    parts = raw.split(maxsplit=1)
-    first = parts[0].lower()
-    comment = parts[1].strip() if len(parts) > 1 else ""
-
-    if first in ("y", "yes"):
-        return ("y", comment)
-    if first in ("a", "always"):
-        return ("a", comment)
-    if first in ("n", "no"):
-        return ("n", comment)
-    # Unrecognized first token — treat as deny but preserve the full
-    # input as the comment so the user's intent isn't dropped.
-    return ("n", raw)
+    options = [
+        ConfirmOption(key="y", label="once (allow this command)", aliases=("yes",)),
+        ConfirmOption(key="n", label="deny", aliases=("no",)),
+        ConfirmOption(
+            key="a",
+            label=f"always allow `{keyword}` this session",
+            aliases=("always",),
+        ),
+    ]
+    # Renderer guarantees ``key`` is one of the option keys (or default
+    # on EOF / empty / unrecognized) and preserves any free-text comment
+    # so the user's intent surfaces upstream to the LLM observation.
+    return get_renderer().confirm(prompt, options, default_key="n")
 
 
 def _is_tty() -> bool:

@@ -1,9 +1,34 @@
-"""Base renderer interface — override methods to customize output."""
+"""Base renderer interface — override methods to customize output and input.
+
+A renderer is the agent loop's window onto the user: it both emits events
+(prompts, observations, status) and reads the user's responses (chat
+queries, confirmations, ask-tool answers). Wrapping input here means a
+web-UI renderer can satisfy the same Protocol just by streaming events
+over SSE and receiving form submissions, with no change to the loop.
+"""
 
 from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class ConfirmOption:
+    """One choice in a multi-option confirmation.
+
+    Used by :meth:`Renderer.confirm` to describe each selectable
+    option without committing the renderer to a particular UI shape
+    (CLI: typed token; web: button). ``aliases`` lists additional
+    accepted typed tokens for CLI ergonomics (e.g. ``"yes"`` for the
+    ``"y"`` key) — case-insensitive match. Web renderers typically
+    only render ``label`` and submit ``key``.
+    """
+
+    key: str
+    label: str
+    aliases: tuple[str, ...] = field(default_factory=tuple)
 
 
 class Renderer(ABC):
@@ -187,3 +212,68 @@ class Renderer(ABC):
         self, label: str, success: bool = True, duration_s: float = 0
     ) -> None:
         """End a nested block. Default: no-op."""
+
+    # ── User input ──────────────────────────────────
+
+    @abstractmethod
+    def prompt_user(
+        self,
+        prompt: str,
+        *,
+        default: str = "",
+        multiline: bool = True,
+        continuation: str = "... ",
+    ) -> str:
+        """Read free-form text input from the user.
+
+        ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
+        different consumers want different policy (chat REPL ends the
+        session, setup wizard aborts, ask tool substitutes a
+        fallback). ``default`` covers only the empty-submission case.
+
+        Args:
+            prompt: Prompt string shown to the user.
+            default: Returned when the user submits empty (whitespace-
+                only) input. Lets callers mirror the bracketed-default
+                pattern (``"  Size [4096]: "``) without inspecting
+                emptiness afterwards. NOT a fallback for EOF / Ctrl+C.
+            multiline: ``True`` enables multi-line submission (triple-
+                quote blocks, paste detection) — chat REPL and the
+                ``ask`` tool answer use this. ``False`` reads a single
+                line — setup wizard prompts use this.
+            continuation: Prompt prefix shown for subsequent lines of
+                a multi-line block. Ignored when ``multiline=False``.
+
+        Returns:
+            The stripped user input, or ``default`` on empty input.
+        """
+
+    @abstractmethod
+    def confirm(
+        self,
+        prompt: str,
+        options: list[ConfirmOption],
+        *,
+        default_key: str,
+    ) -> tuple[str, str]:
+        """Ask the user to pick one of ``options`` and optionally add
+        a free-text comment.
+
+        CLI implementations parse the first token of the typed line
+        against each option's ``key`` and ``aliases`` (case-
+        insensitive). Web implementations render one button per
+        option and submit ``(key, comment)`` directly.
+
+        Args:
+            prompt: Prompt string shown to the user.
+            options: Options the user can pick from. Must be non-empty.
+            default_key: Returned when the user submits empty input or
+                EOF, and when the typed token matches no option key /
+                alias.
+
+        Returns:
+            ``(key, comment)``. ``key`` is one of ``options``' keys
+            (or ``default_key`` on no match). ``comment`` is the rest
+            of the typed line (everything after the first token),
+            stripped, empty when no comment was given.
+        """
