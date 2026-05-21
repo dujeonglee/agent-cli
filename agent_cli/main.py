@@ -1372,15 +1372,22 @@ def web(
     set_renderer(renderer)
     server = WebServer(renderer, token=token)
 
+    from agent_cli.web.server import handle_slash_command
+
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.
 
         Each ``run_loop`` invocation reuses the same ``ctx``, so history
         accumulates across messages exactly like the CLI chat REPL.
+        CLI-parity slash commands (``/sh``) are intercepted here so the
+        web user gets the same shortcuts as a chat-mode user without
+        round-tripping through the LLM.
         """
         while True:
             message = server.pop_chat(timeout=None)
             if message is None:
+                continue
+            if handle_slash_command(message, renderer):
                 continue
             try:
                 run_loop(
@@ -1411,22 +1418,19 @@ def web(
     worker.start()
 
     # 4. Print URL + start uvicorn.
-    url = f"http://{host}:{port}/api/stream?token={server.token}"
+    display_host = "localhost" if host in ("0.0.0.0", "::") else host
+    ui_url = f"http://{display_host}:{port}/?token={server.token}"
     console.print(f"\n[bright_cyan]agent-cli web[/]  ({provider} · {resolved_model})")
-    console.print(f"  Stream: [yellow]{url}[/]")
-    console.print(f"  Token:  [yellow]{server.token}[/]")
+    console.print(f"  UI:      [yellow]{ui_url}[/]")
+    console.print(f"  Token:   [yellow]{server.token}[/]")
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
 
     if not no_browser:
-        # Best-effort browser open — frontend isn't shipped yet in
-        # Phase A, so this only helps once the static UI lands. Quiet
-        # on failure (headless environments).
+        # Best-effort browser open. Quiet on failure (headless envs).
         try:
             import webbrowser
 
-            webbrowser.open(
-                f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}/"
-            )
+            webbrowser.open(ui_url)
         except Exception:  # noqa: BLE001
             pass
 

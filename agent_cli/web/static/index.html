@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>agent-cli</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <span id="info">connecting…</span>
+    <span id="conn-status" title="connection status">●</span>
+  </header>
+  <main id="messages"></main>
+  <footer>
+    <div id="input-mode-badge"></div>
+    <div id="input-area">
+      <textarea id="input"
+                placeholder="Type a message — Enter to send, Shift+Enter for newline"
+                rows="3"></textarea>
+      <button id="send" type="button">Send</button>
+    </div>
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

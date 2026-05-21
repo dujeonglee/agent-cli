@@ -26,15 +26,83 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.render.web import WebConnection, WebRenderer
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+# ── CLI-parity slash commands (web mode) ──────────────────
+
+
+def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
+    """Intercept CLI-parity slash commands before forwarding to AgentLoop.
+
+    Returns ``True`` if the message was handled here (caller skips
+    ``run_loop``); ``False`` otherwise. Output surfaces as an
+    ``observation`` event so the frontend renders it as a tool-result
+    card alongside whatever else is in the session.
+
+    Currently handles only ``/sh <cmd>`` — direct shell execution,
+    matching the chat REPL's shortcut. Other slash commands
+    (``/skills``, ``/<skill>``, ``/clear``, etc.) intentionally fall
+    through to the LLM in this Phase B scope; if web usage shows demand
+    for them, a future commit extracts the chat REPL's slash dispatcher
+    into a shared helper that both surfaces can call.
+    """
+    if not message.startswith("/sh"):
+        return False
+    cmd = message[3:].lstrip()
+    if not cmd:
+        renderer.observation(
+            "Usage: /sh <command>",
+            turn=0,
+            tool_name="sh",
+            success=False,
+        )
+        return True
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=SHELL_COMMAND_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        renderer.observation(
+            f"Command timed out ({SHELL_COMMAND_TIMEOUT}s)",
+            turn=0,
+            tool_name="sh",
+            success=False,
+        )
+        return True
+    parts: list[str] = []
+    if result.stdout:
+        parts.append(result.stdout)
+    if result.stderr:
+        parts.append(result.stderr)
+    if result.returncode != 0:
+        parts.append(f"[exit code: {result.returncode}]")
+    output = "".join(parts) or "(no output)"
+    renderer.observation(
+        output,
+        turn=0,
+        tool_name="sh",
+        success=result.returncode == 0,
+    )
+    return True
 
 
 @dataclass
@@ -172,6 +240,20 @@ def create_app(server: WebServer) -> FastAPI:
     spinning up uvicorn.
     """
     app = FastAPI(title="agent-cli web")
+
+    @app.get("/")
+    async def index():
+        """Serve the static chat UI. JS reads ``?token=…`` from the
+        URL — no auth gate here because the page itself contains no
+        secrets; the SSE / input endpoints are token-protected."""
+        return FileResponse(_STATIC_DIR / "index.html")
+
+    if _STATIC_DIR.exists():
+        app.mount(
+            "/static",
+            StaticFiles(directory=_STATIC_DIR),
+            name="static",
+        )
 
     @app.get("/api/health")
     async def health():

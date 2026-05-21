@@ -51,6 +51,115 @@ def server_and_client():
 # in-process test client's streaming quirks.
 
 
+# ── Slash command dispatch (CLI parity) ───────────
+
+
+class TestHandleSlashCommand:
+    """``handle_slash_command`` intercepts CLI-parity shortcuts before
+    the worker forwards to ``run_loop``. Currently only ``/sh``."""
+
+    def test_non_slash_message_is_passthrough(self):
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        assert handle_slash_command("regular chat message", renderer) is False
+        assert renderer.persistent_count == 0
+
+    def test_slash_sh_runs_command_and_emits_observation(self):
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        handled = handle_slash_command("/sh echo hello-from-shell", renderer)
+
+        assert handled is True
+        # ``observation`` event is emitted as a persistent message —
+        # frontend renders it as a tool-result card.
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "observation"
+        assert data["tool_name"] == "sh"
+        assert data["success"] is True
+        assert "hello-from-shell" in data["content"]
+
+    def test_slash_sh_nonzero_exit_marks_failure(self):
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        handled = handle_slash_command("/sh exit 7", renderer)
+
+        assert handled is True
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "observation"
+        assert data["success"] is False
+        assert "exit code: 7" in data["content"]
+
+    def test_slash_sh_no_args_shows_usage(self):
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        assert handle_slash_command("/sh", renderer) is True
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "observation"
+        assert "Usage:" in data["content"]
+        assert data["success"] is False
+
+    def test_slash_other_falls_through(self):
+        """Slash commands that aren't ``/sh`` are intentionally not
+        intercepted in Phase B — they pass through to the LLM."""
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        for msg in ("/clear", "/skills", "/help"):
+            assert handle_slash_command(msg, renderer) is False
+
+
+# ── Static UI ─────────────────────────────────────
+
+
+class TestStaticUI:
+    """The frontend is served from ``/`` (HTML) + ``/static/*``
+    (JS/CSS). The HTML page reads ``?token=…`` from window.location;
+    the static assets contain no secrets so they don't gate on auth.
+    The SSE / input endpoints behind them stay token-protected.
+    """
+
+    def test_index_html_is_served(self, server_and_client):
+        _, _, client = server_and_client
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/html")
+        body = resp.text
+        # Sanity: the page must reference the SSE + input endpoints
+        # so the token-from-URL flow can connect.
+        assert "/static/app.js" in body
+        assert "/static/style.css" in body
+
+    def test_app_js_is_served(self, server_and_client):
+        _, _, client = server_and_client
+        resp = client.get("/static/app.js")
+        assert resp.status_code == 200
+        body = resp.text
+        # Critical wires must be present.
+        assert "EventSource" in body
+        assert "/api/stream" in body
+        assert "/api/input" in body
+        assert "token" in body
+
+    def test_style_css_is_served(self, server_and_client):
+        _, _, client = server_and_client
+        resp = client.get("/static/style.css")
+        assert resp.status_code == 200
+        assert "text/css" in resp.headers["content-type"]
+
+
 # ── Auth ──────────────────────────────────────────
 
 
