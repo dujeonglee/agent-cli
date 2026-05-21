@@ -349,3 +349,84 @@ class TestAbcConformance:
         r.header("ollama", "qwen3:32b", 10)
         r.turn_sep(1)
         r.status("info", "noted")
+
+
+class TestHeaderWorkspace:
+    """Workspace path rides on the ``ready`` event so the frontend's
+    top bar can disambiguate which checkout an agent-cli session is
+    bound to. Test pins the wire shape — both presence (when supplied
+    at construction) and absence (when not) — so a frontend that reads
+    ``d.workspace`` never sees a dangling field."""
+
+    def test_workspace_included_when_provided(self):
+        r = WebRenderer(workspace="/Users/me/proj")
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.header("ollama", "qwen3:32b", 10)
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "ready"
+        assert data["workspace"] == "/Users/me/proj"
+        # Existing fields must still be present.
+        assert data["provider"] == "ollama"
+        assert data["model"] == "qwen3:32b"
+
+    def test_workspace_omitted_when_empty(self):
+        """Empty workspace means we don't know — omit the field so the
+        frontend's ``if (d.workspace)`` branch is the single source of
+        truth for "show the path or not"."""
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.header("ollama", "qwen3:32b", 10)
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "ready"
+        assert "workspace" not in data
+
+    def test_ready_replays_in_snapshot_for_late_clients(self):
+        """A client that connects AFTER ``header()`` fired still gets
+        the ready event via the snapshot prepend — fixes the
+        "connecting…" stuck state when the browser opens before the
+        first chat turn."""
+        r = WebRenderer(workspace="/proj")
+        # Header fires BEFORE any connection registers.
+        r.header("ollama", "qwen3:32b", 10)
+        # Late client connects.
+        conn = WebConnection(id="late")
+        snapshot = r.register_connection(conn)
+        # The latest ready must be first in the snapshot so the
+        # top-bar renders before any other replayed cards.
+        assert snapshot, "snapshot must contain the ready event"
+        event, data = snapshot[0]
+        assert event == "ready"
+        assert data["workspace"] == "/proj"
+        assert data["model"] == "qwen3:32b"
+
+    def test_nested_skill_header_does_not_clobber_session_info(self):
+        """A skill's nested AgentLoop also calls ``header()`` with
+        ``skill_name`` set. That MUST NOT replace the session-level
+        ready — otherwise the top bar would flicker to a skill name
+        mid-flow and stay there after the skill finishes."""
+        r = WebRenderer(workspace="/proj")
+        r.header("ollama", "qwen3:32b", 10)
+        # Nested skill call.
+        r.header("ollama", "qwen3:32b", 10, skill_name="plan")
+        # Latest ready in snapshot should still be the top-level one,
+        # with NO ``skill_name`` field set on the visible data.
+        conn = WebConnection(id="c")
+        snapshot = r.register_connection(conn)
+        event, data = snapshot[0]
+        assert event == "ready"
+        assert data["skill_name"] == ""
+        assert data["workspace"] == "/proj"
+
+    def test_repeated_header_does_not_accumulate_in_buffer(self):
+        """Chat REPL re-enters AgentLoop on each message, calling
+        ``header()`` repeatedly. The slot replaces; the buffer must
+        stay empty of ``ready`` so replay snapshots stay small."""
+        r = WebRenderer()
+        for _ in range(5):
+            r.header("ollama", "qwen3:32b", 10)
+        # Drain the live queue side and confirm buffer has no rolling
+        # ``ready`` entries (only the slot, which is prepended to
+        # snapshot from outside the buffer).
+        assert all(ev != "ready" for (ev, _) in r._event_buffer)

@@ -429,7 +429,19 @@
 
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
-    $info.textContent = d.provider + " · " + d.model;
+    // ``workspace`` is the agent's working directory at session
+    // creation time. Showing it in the top bar disambiguates which
+    // checkout you're talking to when several LAN sessions are open
+    // side-by-side. Field is omitted (rather than empty-string) when
+    // unavailable so we never render a dangling " · " separator.
+    let label = d.provider + " · " + d.model;
+    if (d.workspace) {
+      label += " · " + d.workspace;
+    }
+    $info.textContent = label;
+    // Full path in the tooltip — the header truncates with ellipsis
+    // for long paths but the user can still hover to see the whole.
+    $info.title = d.workspace || "";
   });
 
   es.addEventListener("user_message", function (e) {

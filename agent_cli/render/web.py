@@ -69,7 +69,7 @@ class WebRenderer(Renderer):
     buffer.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, workspace: str = "") -> None:
         super().__init__()
         self._lock = threading.Lock()
         # event_buffer entries: (event_name, data_dict)
@@ -85,6 +85,22 @@ class WebRenderer(Renderer):
         # Counter for FIFO sync — server compares to context cache size
         # to determine prune drop count.
         self._persistent_count: int = 0
+        # Optional workspace path piggybacks on the ``ready`` event so
+        # the frontend's top bar can show "provider · model · cwd"
+        # without the LLM needing to volunteer the path. Empty string
+        # = field omitted from the event entirely.
+        self._workspace = workspace
+        # Session-info "ready" event lives in its own slot — NOT in
+        # ``_event_buffer`` — so two semantics stay clean:
+        # (1) new SSE connections always see the latest ready in
+        #     their replay snapshot (prepended below in
+        #     ``register_connection``) — fixes the "connecting…"
+        #     stuck state when a client opens the page before the
+        #     first chat turn.
+        # (2) chat REPL re-enters AgentLoop on every user message,
+        #     calling header() again. A slot avoids the buffer
+        #     accumulating one ready per turn.
+        self._latest_ready: tuple[str, dict[str, Any]] | None = None
 
     # ─── Event distribution ─────────────────────────
 
@@ -117,7 +133,14 @@ class WebRenderer(Renderer):
                     old.closed.set()
                     old.queue.put(("takeover", {}))
             self._connections = [conn]
-            return list(self._event_buffer)
+            snapshot = list(self._event_buffer)
+            # Prepend the latest session-info ``ready`` so a client
+            # that opens the page mid-session (or before any chat)
+            # populates its top bar immediately instead of staying
+            # on "connecting…" until the first emission.
+            if self._latest_ready is not None:
+                snapshot.insert(0, self._latest_ready)
+            return snapshot
 
     def unregister_connection(self, conn: WebConnection) -> None:
         """Drop ``conn`` from the active list and signal any pending
@@ -168,18 +191,28 @@ class WebRenderer(Renderer):
         skill_name: str = "",
         skill_args: str = "",
     ) -> None:
-        # Transient — frontend uses this to populate top bar.
-        self._emit(
-            "ready",
-            {
-                "provider": provider,
-                "model": model,
-                "max_turns": max_turns,
-                "skill_name": skill_name,
-                "skill_args": skill_args,
-            },
-            persistent=False,
-        )
+        # Nested AgentLoop runs (delegate, skill) also call header()
+        # but those would clobber the top-level session info — the
+        # frontend's top bar should keep showing "provider · model ·
+        # cwd" while a sub-flow runs, not flicker to a skill name and
+        # back. Skip non-top-level headers entirely.
+        if skill_name or skill_args:
+            return
+        payload = {
+            "provider": provider,
+            "model": model,
+            "max_turns": max_turns,
+            "skill_name": skill_name,
+            "skill_args": skill_args,
+        }
+        if self._workspace:
+            payload["workspace"] = self._workspace
+        # Live broadcast to active connections; snapshot replay for
+        # future connections happens via ``_latest_ready`` in
+        # ``register_connection``.
+        with self._lock:
+            self._latest_ready = ("ready", payload)
+        self._emit("ready", payload, persistent=False)
 
     def turn_sep(self, turn: int) -> None:
         # No frontend event — turn number rides on each message event.

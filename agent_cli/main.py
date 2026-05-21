@@ -1522,9 +1522,15 @@ def web(
     )
 
     # 3. Renderer + server + worker thread.
-    renderer = WebRenderer()
+    renderer = WebRenderer(workspace=session.workspace)
     set_renderer(renderer)
     server = WebServer(renderer, token=token)
+
+    # Prime the session-info ``ready`` so a client opening the page
+    # before the first chat turn already sees the top-bar populated.
+    # AgentLoop calls ``header()`` again on each user message; the
+    # WebRenderer slot-replaces, so the buffer doesn't accumulate.
+    renderer.header(provider, resolved_model, max_turns)
 
     from agent_cli.web.server import WebDispatchOutput, handle_slash_command
 

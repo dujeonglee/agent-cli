@@ -25,6 +25,11 @@ header {
   color: #6b7280;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  margin-right: 12px;
 }
 #conn-status { font-size: 18px; color: #9ca3af; line-height: 1; }
 #conn-status.up { color: #16a34a; }
