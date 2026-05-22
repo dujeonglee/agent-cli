@@ -2111,7 +2111,15 @@ class TestAppendObservationHelpers:
         from agent_cli.wire_formats import get as get_wire_format
 
         messages = []
-        _append_observation(messages, None, get_wire_format("react"), "llm", "obs")
+        _append_observation(
+            messages,
+            None,
+            get_wire_format("react"),
+            "llm",
+            "obs",
+            tool_name="write_file",
+            success=True,
+        )
         assert len(messages) == 2
 
     def test_append_observation_routes_history_through_wire_format(self):
@@ -2138,14 +2146,27 @@ class TestAppendObservationHelpers:
                 return raw
 
         messages: list[dict] = []
-        _append_observation(messages, _FakeCtx(), _FakePlugin(), "LLM_TEXT", "OBS")
+        _append_observation(
+            messages,
+            _FakeCtx(),
+            _FakePlugin(),
+            "LLM_TEXT",
+            "OBS",
+            tool_name="write_file",
+            success=True,
+        )
         # captured[0] is assistant record from plugin; captured[1] is observation.
         assert captured[0] == {
             "role": "assistant",
             "marker": "from_plugin",
             "raw": "LLM_TEXT",
         }
-        assert captured[1] == {"role": "user", "content": "OBS"}
+        assert captured[1] == {
+            "role": "user",
+            "tool": "write_file",
+            "success": True,
+            "content": "OBS",
+        }
 
     def test_append_observation_routes_messages_through_wire_format(self):
         """The in-memory messages buffer's assistant content goes through
@@ -2166,12 +2187,122 @@ class TestAppendObservationHelpers:
                 return f"<rewrapped>{raw}</rewrapped>"
 
         messages: list[dict] = []
-        _append_observation(messages, None, _FakePlugin(), "LLM_TEXT", "OBS")
+        _append_observation(
+            messages,
+            None,
+            _FakePlugin(),
+            "LLM_TEXT",
+            "OBS",
+            tool_name="write_file",
+            success=True,
+        )
         assert messages[0] == {
             "role": "assistant",
             "content": "<rewrapped>LLM_TEXT</rewrapped>",
         }
         assert messages[1] == {"role": "user", "content": "OBS"}
+
+    def test_append_observation_persists_tool_and_success(self):
+        """The observation entry written to ``ctx`` carries the ``tool``
+        and ``success`` fields used by the web renderer's
+        ``replay_from_history`` to distinguish observations from plain
+        user chat turns and to reproduce ✓/✗ on replay."""
+        from agent_cli.loop import _append_observation
+
+        captured: list[dict] = []
+
+        class _FakeCtx:
+            def add(self, entry):
+                captured.append(entry)
+
+        class _FakePlugin:
+            def serialize_assistant_for_history(self, raw):
+                return {"role": "assistant", "content": raw}
+
+            def normalize_assistant_for_messages(self, raw):
+                return raw
+
+        _append_observation(
+            [],
+            _FakeCtx(),
+            _FakePlugin(),
+            "LLM",
+            "Observation: oops",
+            tool_name="edit_file",
+            success=False,
+        )
+        # captured[0] assistant, captured[1] observation
+        obs = captured[1]
+        assert obs["tool"] == "edit_file"
+        assert obs["success"] is False
+        # ``content`` keeps the LLM-facing prefix unchanged — replay
+        # strips it on the way to ``observation()``.
+        assert obs["content"] == "Observation: oops"
+
+    def test_append_observation_accepts_empty_tool_name(self):
+        """Format-retry interventions (no specific tool) use
+        ``tool_name=""``. The ``tool`` key MUST still be present so
+        ``replay_from_history`` routes the entry through ``observation()``
+        rather than mis-classifying it as a user chat message."""
+        from agent_cli.loop import _append_observation
+
+        captured: list[dict] = []
+
+        class _FakeCtx:
+            def add(self, entry):
+                captured.append(entry)
+
+        class _FakePlugin:
+            def serialize_assistant_for_history(self, raw):
+                return {"role": "assistant", "content": raw}
+
+            def normalize_assistant_for_messages(self, raw):
+                return raw
+
+        _append_observation(
+            [],
+            _FakeCtx(),
+            _FakePlugin(),
+            "LLM",
+            "format retry message",
+            tool_name="",
+            success=False,
+        )
+        obs = captured[1]
+        assert "tool" in obs
+        assert obs["tool"] == ""
+        assert obs["success"] is False
+
+    def test_append_observation_stores_artifact_when_provided(self):
+        """``artifact`` (e.g. delegate subdir path) is preserved on disk
+        so a future session viewer can resolve the linked artefact."""
+        from agent_cli.loop import _append_observation
+
+        captured: list[dict] = []
+
+        class _FakeCtx:
+            def add(self, entry):
+                captured.append(entry)
+
+        class _FakePlugin:
+            def serialize_assistant_for_history(self, raw):
+                return {"role": "assistant", "content": raw}
+
+            def normalize_assistant_for_messages(self, raw):
+                return raw
+
+        _append_observation(
+            [],
+            _FakeCtx(),
+            _FakePlugin(),
+            "LLM",
+            "Observation: skill done",
+            tool_name="run_skill",
+            success=True,
+            artifact="path/to/artifact.md",
+        )
+        obs = captured[1]
+        assert obs["artifact"] == "path/to/artifact.md"
 
 
 class TestProviderCallKwargs:

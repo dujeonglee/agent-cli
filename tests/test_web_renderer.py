@@ -512,6 +512,7 @@ class TestReplayFromHistory:
             {
                 "role": "user",
                 "tool": "shell",
+                "success": True,
                 "content": "hello-from-shell",
             }
         )
@@ -524,6 +525,96 @@ class TestReplayFromHistory:
         assert data["tool_name"] == "shell"
         assert data["content"] == "hello-from-shell"
         assert data["success"] is True
+
+    def test_replay_strips_observation_prefix(self, tmp_path):
+        """``_append_observation`` writes content prefixed with
+        ``"Observation: "`` (LLM-facing form). The frontend's tool-result
+        card already labels the entry, so replay must strip the prefix
+        — otherwise the user sees ``Observation: Observation: ...``
+        once the live observation card's own framing is added."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "write_file",
+                "success": True,
+                "content": "Observation: File saved: /tmp/x.txt (12 bytes)",
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        data = next(d for e, d in r._event_buffer if e == "observation")
+        assert data["content"] == "File saved: /tmp/x.txt (12 bytes)"
+
+    def test_replay_preserves_failure_status(self, tmp_path):
+        """A failed tool result stored with ``success=False`` must
+        re-emit with the same ✗ shape — otherwise the user can't tell
+        on resume which historical steps failed."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "edit_file",
+                "success": False,
+                "content": "Observation: ERROR: file not found",
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        data = next(d for e, d in r._event_buffer if e == "observation")
+        assert data["success"] is False
+        assert data["tool_name"] == "edit_file"
+        assert data["content"] == "ERROR: file not found"
+
+    def test_replay_routes_empty_tool_through_observation(self, tmp_path):
+        """Format-retry interventions are stored with ``tool=""`` (no
+        specific tool fired). The ``tool`` *key* presence — not its
+        truthiness — must drive the routing, so the entry still
+        renders as an observation card (✗ visible) instead of being
+        misclassified as a user chat turn."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "",
+                "success": False,
+                "content": "Observation: thought field is required.",
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        names = [e for e, _ in r._event_buffer]
+        assert names == ["observation"]
+        data = r._event_buffer[0][1]
+        assert data["tool_name"] == ""
+        assert data["success"] is False
+
+    def test_replay_routes_plain_user_message(self, tmp_path):
+        """A user chat turn (no ``tool`` key at all) must route through
+        ``push_user_message`` so it renders as the right-aligned blue
+        bubble, not a tool-result card. This is the bug the schema
+        change closes — observations used to be indistinguishable from
+        chat turns on disk."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add({"role": "user", "content": "this is a real chat turn"})
+
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        names = [e for e, _ in r._event_buffer]
+        assert names == ["user_message"]
+        assert r._event_buffer[0][1]["content"] == "this is a real chat turn"
 
     def test_replays_assistant_action_call(self, tmp_path):
         from agent_cli.context.manager import ContextManager

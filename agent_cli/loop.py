@@ -531,6 +531,8 @@ class AgentLoop:
                 self.wire_format,
                 llm_text,
                 intervention.message,
+                tool_name="",
+                success=False,
             )
             outcome["failure_signal"] = FAILURE_NO_THOUGHT
             outcome["primitives"] = list(intervention.primitives)
@@ -623,7 +625,13 @@ class AgentLoop:
                 user_response = _handle_ask(questions)
                 obs_msg = f"Observation: User responded:\n{user_response}"
                 _append_observation(
-                    self.messages, self.ctx, self.wire_format, llm_text, obs_msg
+                    self.messages,
+                    self.ctx,
+                    self.wire_format,
+                    llm_text,
+                    obs_msg,
+                    tool_name="ask",
+                    success=True,
                 )
                 return self._CONTINUE
 
@@ -674,6 +682,8 @@ class AgentLoop:
                 self.wire_format,
                 llm_text,
                 obs_msg,
+                tool_name="run_skill",
+                success=skill_tool_result.success,
                 artifact=skill_tool_result.artifact,
             )
             return self._CONTINUE
@@ -708,7 +718,13 @@ class AgentLoop:
                 )
             obs_msg = f"Observation: {obs}"
             _append_observation(
-                self.messages, self.ctx, self.wire_format, llm_text, obs_msg
+                self.messages,
+                self.ctx,
+                self.wire_format,
+                llm_text,
+                obs_msg,
+                tool_name="ready_for_review",
+                success=True,
             )
             return self._CONTINUE
 
@@ -784,6 +800,8 @@ class AgentLoop:
                     self.wire_format,
                     llm_text,
                     intervention.message,
+                    tool_name=tool_name,
+                    success=False,
                 )
                 outcome["primitives"] = list(intervention.primitives)
                 self.turn -= 1  # Don't count loop nudges as user-facing turns
@@ -823,6 +841,8 @@ class AgentLoop:
                     self.wire_format,
                     llm_text,
                     f"Observation: {err_msg}",
+                    tool_name=tool_name,
+                    success=False,
                 )
                 return self._CONTINUE
 
@@ -849,6 +869,8 @@ class AgentLoop:
                     self.wire_format,
                     llm_text,
                     f"Observation: {err_msg}",
+                    tool_name=tool_name,
+                    success=False,
                 )
                 return self._CONTINUE
             tool_input = normalized  # use post-normalization input for dispatch
@@ -879,6 +901,8 @@ class AgentLoop:
                 self.wire_format,
                 llm_text,
                 obs_msg,
+                tool_name=tool_name,
+                success=tool_result.success,
                 artifact=tool_result.artifact,
             )
             return self._CONTINUE
@@ -913,7 +937,13 @@ class AgentLoop:
                 prior_content=llm_text, wire_format=self.wire_format
             )
         _append_observation(
-            self.messages, self.ctx, self.wire_format, llm_text, intervention.message
+            self.messages,
+            self.ctx,
+            self.wire_format,
+            llm_text,
+            intervention.message,
+            tool_name="",
+            success=False,
         )
         # Surface composed primitive names to the enclosing _handle_text_path
         # so the trailing finally-block records them.
@@ -1580,6 +1610,9 @@ def _append_observation(
     wire_format,
     llm_text: str,
     obs_msg: str,
+    *,
+    tool_name: str,
+    success: bool,
     artifact: str = "",
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
@@ -1593,6 +1626,14 @@ def _append_observation(
     For history.jsonl (via ctx.add), the wire_format plugin shapes the
     assistant record (e.g. ReAct splits ``thought / action / action_input``
     into top-level fields) so the on-disk history retains structured form.
+
+    The observation entry stores ``tool`` (the tool that ran, or an
+    empty string for format-retry interventions) and ``success`` (so
+    the web renderer's ``replay_from_history`` can re-emit the same
+    ✓/✗ shape a live observation event has). The presence of the
+    ``tool`` key — not its truthiness — distinguishes a tool result
+    from a plain user chat turn, so empty-string ``tool_name`` (used
+    by format-retry paths) still routes through ``observation()``.
     """
     messages.append(
         {
@@ -1603,7 +1644,12 @@ def _append_observation(
     messages.append({"role": "user", "content": obs_msg})
     if ctx:
         ctx.add(wire_format.serialize_assistant_for_history(llm_text))
-        obs_entry = {"role": "user", "content": obs_msg}
+        obs_entry = {
+            "role": "user",
+            "tool": tool_name,
+            "success": success,
+            "content": obs_msg,
+        }
         if artifact:
             obs_entry["artifact"] = artifact
         ctx.add(obs_entry)

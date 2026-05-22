@@ -199,16 +199,33 @@ class WebRenderer(Renderer):
         for msg in ctx.get_raw_messages():
             role = msg.get("role")
             if role == "user":
-                tool = msg.get("tool")
-                if tool:
+                # ``tool`` key presence — not truthiness — signals an
+                # observation entry. ``_append_observation`` always
+                # writes both ``tool`` and ``success`` (empty string
+                # ``tool`` for format-retry interventions), so plain
+                # user chat turns (no ``tool`` key) route through
+                # ``push_user_message`` and tool results / retries
+                # route through ``observation()``.
+                if "tool" in msg:
                     content = msg.get("content", "")
-                    success = not msg.get("error")
-                    self.observation(content, turn=0, tool_name=tool, success=success)
+                    # ``_append_observation`` prefixes ``obs_msg`` with
+                    # ``"Observation: "`` for the LLM-facing slot. The
+                    # web frontend's observation card already labels
+                    # the entry, so strip the prefix to match what a
+                    # live ``observation()`` call would emit.
+                    prefix = "Observation: "
+                    if content.startswith(prefix):
+                        content = content[len(prefix) :]
+                    self.observation(
+                        content,
+                        turn=0,
+                        tool_name=msg.get("tool", ""),
+                        success=msg.get("success", True),
+                    )
                 else:
                     content = msg.get("content", "")
-                    if not content:
-                        continue
-                    self.push_user_message(content)
+                    if content:
+                        self.push_user_message(content)
             elif role == "assistant":
                 thought = msg.get("thought", "") or ""
                 action = msg.get("action", "") or ""
