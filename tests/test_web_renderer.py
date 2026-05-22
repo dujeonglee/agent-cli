@@ -430,3 +430,163 @@ class TestHeaderWorkspace:
         # ``ready`` entries (only the slot, which is prepended to
         # snapshot from outside the buffer).
         assert all(ev != "ready" for (ev, _) in r._event_buffer)
+
+
+class TestShutdownAllConnections:
+    """``shutdown_all_connections`` is called on the graceful shutdown
+    path (uvicorn lifespan hook + main.py finally). It must wake up
+    every blocking SSE consumer by pushing the close sentinel so the
+    generator's ``queue.get`` returns immediately rather than waiting
+    out the 15s keep-alive timer."""
+
+    def test_pushes_close_sentinel_to_every_active_connection(self):
+        from agent_cli.render.web import _CLOSE_SENTINEL
+
+        r = WebRenderer()
+        a = WebConnection(id="a")
+        # Two connections — registering ``b`` would take over ``a``
+        # via the existing single-active-client model, so we register
+        # one at a time and validate the active set was closed.
+        r.register_connection(a)
+        r.shutdown_all_connections()
+
+        # Active connection got the sentinel.
+        item = a.queue.get(timeout=0.5)
+        assert item == _CLOSE_SENTINEL
+        assert a.closed.is_set()
+        # Subsequent emits do not reach a (it's been removed from
+        # the connections list).
+        r.final("after-shutdown", turn=1)
+        assert a.queue.empty()
+
+    def test_is_idempotent(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.shutdown_all_connections()
+        # Second call should not raise and should leave the connection
+        # list empty.
+        r.shutdown_all_connections()
+        assert r._connections == []
+
+
+class TestReplayFromHistory:
+    """``replay_from_history`` is the engine behind ``web --resume``:
+    it walks a resumed ContextManager's raw cache and re-emits the
+    same persistent events the live loop would have produced, so a
+    fresh SSE client sees the prior conversation in the snapshot."""
+
+    def test_replays_user_and_assistant_complete(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        session_dir = tmp_path / ".agent-cli" / "sessions" / "s1"
+        ctx = ContextManager(session_dir, max_context_tokens=100_000)
+        ctx.add({"role": "user", "content": "hi"})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "respond friendly",
+                "action": "complete",
+                "action_input": {"result": "hello"},
+            }
+        )
+
+        r = WebRenderer(workspace=str(tmp_path))
+        r.replay_from_history(ctx)
+
+        # Persistent events landed in the buffer for snapshot replay.
+        events = [(ev, data) for (ev, data) in r._event_buffer]
+        names = [e for e, _ in events]
+        assert "user_message" in names
+        assert "assistant_turn" in names
+        # The assistant turn carries the final result text.
+        turn = next(d for e, d in events if e == "assistant_turn")
+        assert turn["final"] == "hello"
+        assert turn["thought"] == "respond friendly"
+
+    def test_replays_tool_observation(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "shell",
+                "content": "hello-from-shell",
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        names = [e for e, _ in r._event_buffer]
+        assert "observation" in names
+        data = next(d for e, d in r._event_buffer if e == "observation")
+        assert data["tool_name"] == "shell"
+        assert data["content"] == "hello-from-shell"
+        assert data["success"] is True
+
+    def test_replays_assistant_action_call(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "I should read the file",
+                "action": "read_file",
+                "action_input": {"path": "x.py"},
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        names = [e for e, _ in r._event_buffer]
+        assert names == ["assistant_turn"]
+        data = r._event_buffer[0][1]
+        assert data["thought"] == "I should read the file"
+        assert data["action"]["tool_name"] == "read_file"
+        # action_input is wire-format JSON so the frontend can render
+        # the same way the live path emits.
+        import json as _json
+
+        parsed = _json.loads(data["action"]["tool_input"])
+        assert parsed == {"path": "x.py"}
+
+    def test_skips_empty_user_message(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add({"role": "user", "content": ""})
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+        assert r._event_buffer == []
+
+    def test_snapshot_includes_replayed_events_for_first_connection(self, tmp_path):
+        """After resume + replay, the FIRST SSE client connecting must
+        receive the prior events via the snapshot — that's how the
+        ``--resume`` flow renders past conversation in a fresh
+        browser tab."""
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add({"role": "user", "content": "earlier question"})
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "",
+                "action": "complete",
+                "action_input": {"result": "earlier answer"},
+            }
+        )
+
+        r = WebRenderer(workspace=str(tmp_path))
+        r.header("ollama", "qwen3:32b", 10)
+        r.replay_from_history(ctx)
+
+        conn = WebConnection(id="late")
+        snapshot = r.register_connection(conn)
+        names = [e for e, _ in snapshot]
+        # ready first (header replay), then the replayed events.
+        assert names[0] == "ready"
+        assert "user_message" in names
+        assert "assistant_turn" in names

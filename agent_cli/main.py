@@ -1465,6 +1465,11 @@ def web(
     no_browser: bool = typer.Option(
         False, "--no-browser", help="Do not open the browser automatically"
     ),
+    resume: Optional[str] = typer.Option(
+        None,
+        "--resume",
+        help="Resume a previous session by ID (use 'agent-cli sessions' to list).",
+    ),
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -1490,6 +1495,16 @@ def web(
         )
         raise typer.Exit(code=1)
 
+    from agent_cli.context.session import load_session as _load_session_pre
+
+    # Validate ``--resume`` BEFORE the provider handshake so an unknown
+    # session ID fails fast without touching the network. The session
+    # load itself is repeated below (after provider setup) so the
+    # workspace can flow into the renderer / context manager.
+    if resume and _load_session_pre(resume) is None:
+        console.print(f"[{C['error']}]Session '{resume}' not found.[/]")
+        raise typer.Exit(code=1)
+
     from agent_cli.render import set_renderer
 
     # 1. Resolve provider + capabilities (reuse chat helper).
@@ -1508,16 +1523,24 @@ def web(
         create_session,
         finalize_session,
         get_session_dir,
+        load_session,
         save_meta,
     )
 
-    session = create_session()
+    if resume:
+        # Pre-check above guarantees this exists; re-load to materialise
+        # the SessionMeta (workspace etc.) for the renderer/context.
+        session = load_session(resume)
+        console.print(f"[{C['accent']}]Resuming session {resume}[/]")
+    else:
+        session = create_session()
     save_meta(session)
     if max_context_tokens <= 0:
         max_context_tokens = (capabilities.context_window * 7) // 10
     ctx = ContextManager(
         get_session_dir(session),
         max_context_tokens=max_context_tokens,
+        resume=bool(resume),
         wire_format=wire_format_plugin,
     )
 
@@ -1531,6 +1554,15 @@ def web(
     # AgentLoop calls ``header()`` again on each user message; the
     # WebRenderer slot-replaces, so the buffer doesn't accumulate.
     renderer.header(provider, resolved_model, max_turns)
+
+    # On resume, fold prior turns back into the persistent event
+    # buffer BEFORE any SSE client connects so the snapshot replay
+    # carries the conversation history. Replay walks ``ctx``'s raw
+    # cache (already populated by ``ContextManager(..., resume=True)``)
+    # and re-emits the same event sequence the live loop would have
+    # produced — see :meth:`WebRenderer.replay_from_history`.
+    if resume:
+        renderer.replay_from_history(ctx)
 
     from agent_cli.web.server import WebDispatchOutput, handle_slash_command
 
@@ -1549,6 +1581,10 @@ def web(
         web_output = WebDispatchOutput(renderer)
         while True:
             message = server.pop_chat(timeout=None)
+            if message is server.SHUTDOWN:
+                # Server shutdown — break out so the worker thread
+                # can exit cleanly instead of being killed daemon-style.
+                break
             if message is None:
                 continue
             if handle_slash_command(message, renderer):
@@ -1617,9 +1653,30 @@ def web(
             pass
 
     app_obj = create_app(server)
+    # ``uvicorn.Server(config).run()`` instead of ``uvicorn.run(...)``
+    # so we can wrap it in a try/except that swallows the
+    # ``KeyboardInterrupt`` uvicorn re-raises after its own SIGINT
+    # handler has done graceful shutdown. The lifespan ``shutdown``
+    # hook (server.create_app → @app.on_event("shutdown")) already
+    # closed the SSE generators, so the only thing left is to tear
+    # down the worker and finalise the session — done in ``finally``.
+    config = uvicorn.Config(app_obj, host=host, port=port, log_level="warning")
+    server_obj = uvicorn.Server(config)
     try:
-        uvicorn.run(app_obj, host=host, port=port, log_level="warning")
+        try:
+            server_obj.run()
+        except KeyboardInterrupt:
+            # Second Ctrl+C arrives here (the first was caught inside
+            # uvicorn's serve loop). Suppress the traceback — finally
+            # finishes the teardown.
+            pass
     finally:
+        renderer.shutdown_all_connections()
+        server.shutdown()
+        worker.join(timeout=2.0)
         console.print(f"[{C['muted']}]Saving session...[/]")
-        finalize_session(session, ctx)
-        console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
+        try:
+            finalize_session(session, ctx)
+            console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]Failed to save session: {exc}[/]")

@@ -81,19 +81,199 @@
     return html;
   }
 
-  /** Apply a tiny subset of markdown — fenced code blocks and inline
-   * code. Everything else stays as escaped text. Phase D will swap
-   * this for a real markdown renderer if/when the cost is justified. */
-  function escapeAndFormat(s) {
-    let html = escapeHtml(s);
-    html = html.replace(
-      /```(\w*)\n([\s\S]*?)```/g,
+  /** Extract fenced code blocks (``` … ```), replacing each with a
+   * placeholder comment so subsequent inline/block markdown passes
+   * can't munge the content. Returns ``{ stripped, blocks }`` where
+   * ``stripped`` contains the placeholders and ``blocks[i].html`` is
+   * the pre-rendered ``<pre><code>`` to splice back in.
+   *
+   * Pre-rendering at extraction time means the placeholder is a
+   * sealed leaf — restore is a literal string replace. Input must be
+   * already-escaped HTML; the code body inside fences IS the escaped
+   * text, so no further escaping is needed when we wrap it. */
+  function extractCodeFences(s) {
+    const blocks = [];
+    const stripped = s.replace(
+      /```([\w-]*)\n([\s\S]*?)```/g,
       function (_m, _lang, code) {
-        return '<pre class="code"><code>' + code + "</code></pre>";
+        const token = "<!--cf:" + blocks.length + "-->";
+        blocks.push({
+          token: token,
+          html: '<pre class="code"><code>' + code + "</code></pre>",
+        });
+        return token;
       }
     );
+    return { stripped: stripped, blocks: blocks };
+  }
+
+  function restoreCodeFences(s, blocks) {
+    let html = s;
+    for (const b of blocks) {
+      html = html.split(b.token).join(b.html);
+    }
+    return html;
+  }
+
+  /** Scan the input line-by-line and replace contiguous GFM pipe-table
+   * runs (header row + ``---`` separator row + body rows) with a
+   * single ``<table>`` block. Lines that don't fit the pattern pass
+   * through untouched.
+   *
+   * Alignment specifiers (``:--``, ``:--:``, ``--:``) are out of
+   * scope for v1 — the separator row just has to look like a
+   * separator. */
+  function renderTables(s) {
+    const lines = s.split("\n");
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const headerLine = lines[i];
+      if (i + 1 < lines.length && /^\s*\|.*\|\s*$/.test(headerLine)) {
+        const sepLine = lines[i + 1];
+        if (/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(sepLine)) {
+          const headerCells = splitTableRow(headerLine);
+          const bodyRows = [];
+          let j = i + 2;
+          while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) {
+            bodyRows.push(splitTableRow(lines[j]));
+            j++;
+          }
+          let table = "<table><thead><tr>";
+          for (const c of headerCells) {
+            table += "<th>" + c + "</th>";
+          }
+          table += "</tr></thead><tbody>";
+          for (const row of bodyRows) {
+            table += "<tr>";
+            for (const c of row) {
+              table += "<td>" + c + "</td>";
+            }
+            table += "</tr>";
+          }
+          table += "</tbody></table>";
+          out.push(table);
+          i = j;
+          continue;
+        }
+      }
+      out.push(headerLine);
+      i++;
+    }
+    return out.join("\n");
+  }
+
+  function splitTableRow(line) {
+    // Strip leading/trailing pipe then split on remaining pipes. Cells
+    // are trimmed to avoid leading-space artefacts but their content
+    // stays as-is (already HTML-escaped upstream).
+    let trimmed = line.trim();
+    if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+    if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+    return trimmed.split("|").map(function (c) {
+      return c.trim();
+    });
+  }
+
+  /** ATX headings: ``# H1`` / ``## H2`` / ``### H3``. ``####`` and
+   * deeper are left as literal text (FR-MD-1). The regex is anchored
+   * to line start with the ``m`` flag so headers inside paragraphs
+   * don't accidentally match. */
+  function renderHeadings(s) {
+    return s.replace(/^(#{1,3})\s+(.+?)\s*$/gm, function (_m, hashes, body) {
+      const level = hashes.length;
+      return "<h" + level + ">" + body + "</h" + level + ">";
+    });
+  }
+
+  /** Group consecutive ``-`` / ``*`` / ``\d+.`` lines into ``<ul>`` /
+   * ``<ol>``. A blank line ends the group. Unordered and ordered
+   * markers are not mixed mid-group — switching markers starts a
+   * fresh list. Nested lists are out of scope (FR-MD-4). */
+  function renderLists(s) {
+    const lines = s.split("\n");
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const ulMatch = /^\s*[-*]\s+(.*)$/.exec(line);
+      const olMatch = /^\s*\d+\.\s+(.*)$/.exec(line);
+      if (ulMatch) {
+        const items = [ulMatch[1]];
+        let j = i + 1;
+        while (j < lines.length) {
+          const m = /^\s*[-*]\s+(.*)$/.exec(lines[j]);
+          if (!m) break;
+          items.push(m[1]);
+          j++;
+        }
+        out.push("<ul>" + items.map(function (x) {
+          return "<li>" + x + "</li>";
+        }).join("") + "</ul>");
+        i = j;
+      } else if (olMatch) {
+        const items = [olMatch[1]];
+        let j = i + 1;
+        while (j < lines.length) {
+          const m = /^\s*\d+\.\s+(.*)$/.exec(lines[j]);
+          if (!m) break;
+          items.push(m[1]);
+          j++;
+        }
+        out.push("<ol>" + items.map(function (x) {
+          return "<li>" + x + "</li>";
+        }).join("") + "</ol>");
+        i = j;
+      } else {
+        out.push(line);
+        i++;
+      }
+    }
+    return out.join("\n");
+  }
+
+  /** Bold (``**…**``) then italic (``*…*``). Bold first so the
+   * leftover single ``*`` characters that bracket italics can't
+   * eat the inner ``*`` of a bold pair. The italic regex requires a
+   * non-``*`` prefix character (or start-of-string) so it doesn't
+   * fire on the middle ``*`` of ``***``. */
+  function renderEmphasis(s) {
+    let html = s.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(
+      /(^|[^*])\*([^*\n]+?)\*(?!\*)/g,
+      "$1<em>$2</em>"
+    );
+    return html;
+  }
+
+  /** Pipeline orchestrator — runs block-level transforms (table,
+   * headings, lists) before inline ones (emphasis, inline code) so
+   * inline regexes never see header / list markers. */
+  function markdownInline(s) {
+    let html = renderTables(s);
+    html = renderHeadings(html);
+    html = renderLists(html);
+    html = renderEmphasis(html);
     html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     return html;
+  }
+
+  /** Apply a tiny subset of markdown — fenced code blocks, headings
+   * (h1-h3), GFM tables, lists, bold/italic, and inline code.
+   * Everything else stays as escaped text. No external library;
+   * variants beyond this set are intentionally out of scope
+   * (NFR-MD-1: zero new JS deps).
+   *
+   * Order is load-bearing for XSS safety (NFR-MD-2): escapeHtml runs
+   * first so every ``<`` becomes ``&lt;``, then fences are extracted
+   * to placeholders (so markdown passes don't fire inside code), then
+   * block + inline transforms run on the stripped body, and finally
+   * fences are restored as pre-rendered ``<pre><code>`` blocks. */
+  function escapeAndFormat(s) {
+    const escaped = escapeHtml(s);
+    const { stripped, blocks } = extractCodeFences(escaped);
+    const transformed = markdownInline(stripped);
+    return restoreCodeFences(transformed, blocks);
   }
 
   // ── DOM helpers ────────────────────────────

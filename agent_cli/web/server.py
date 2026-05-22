@@ -257,6 +257,13 @@ class WebServer:
     request handlers stay thin and unit-testable.
     """
 
+    # Identity sentinel pushed onto ``_chat_queue`` from
+    # :meth:`shutdown` so the worker thread's blocking ``pop_chat``
+    # call wakes up and breaks its loop cleanly. ``is`` comparison
+    # (identity, not equality) keeps the sentinel safe even if a user
+    # happens to type a chat message whose value collides.
+    SHUTDOWN = object()
+
     def __init__(
         self,
         renderer: WebRenderer,
@@ -277,12 +284,27 @@ class WebServer:
         """Queue a top-level chat message for the worker loop."""
         self._chat_queue.put(message)
 
-    def pop_chat(self, timeout: float | None = None) -> str | None:
-        """Worker-side: pop the next chat message (blocks)."""
+    def pop_chat(self, timeout: float | None = None):
+        """Worker-side: pop the next chat message (blocks).
+
+        Returns ``WebServer.SHUTDOWN`` if :meth:`shutdown` was called,
+        a string for normal messages, or ``None`` on poll timeout.
+        Workers must compare with ``is WebServer.SHUTDOWN`` and break.
+        """
         try:
             return self._chat_queue.get(timeout=timeout)
         except Empty:
             return None
+
+    def shutdown(self) -> None:
+        """Wake any worker blocked in :meth:`pop_chat`.
+
+        Pushes the :attr:`SHUTDOWN` sentinel onto the chat queue so the
+        worker thread's ``get()`` returns immediately. Idempotent — a
+        second call just queues another sentinel (worker exits on the
+        first).
+        """
+        self._chat_queue.put(self.SHUTDOWN)
 
     # ─── Auth helper ──────────────────────────────────────────
 
@@ -364,7 +386,21 @@ def create_app(server: WebServer) -> FastAPI:
     drive ``httpx.AsyncClient`` against an in-process app without
     spinning up uvicorn.
     """
-    app = FastAPI(title="agent-cli web")
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        # Startup: nothing to do — worker thread / renderer are wired
+        # by the CLI caller before uvicorn starts.
+        yield
+        # Shutdown: uvicorn's SIGINT path cancels live tasks (sse-starlette
+        # ping coroutines among them). Closing SSE generators first
+        # means those tasks finish quietly instead of bubbling up
+        # CancelledError tracebacks to stderr. Idempotent — main.py's
+        # finally block calls the same teardown.
+        server.renderer.shutdown_all_connections()
+
+    app = FastAPI(title="agent-cli web", lifespan=_lifespan)
 
     @app.get("/")
     async def index():

@@ -353,6 +353,73 @@ class TestInputEndpoint:
         assert resp.status_code == 400
 
 
+class TestWebResumeCli:
+    """Integration smoke for the ``agent-cli web --resume <id>`` CLI
+    surface. Drives :func:`agent_cli.main.web` directly with all heavy
+    deps (uvicorn, AgentLoop) stubbed so we can verify the error path
+    for an unknown session without spinning up a server.
+    """
+
+    def test_unknown_session_exits_with_code_1(self, tmp_path, monkeypatch):
+        """``--resume <bogus>`` aborts before uvicorn is touched."""
+        import typer
+        from typer.testing import CliRunner
+
+        from agent_cli.main import app
+
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["web", "--resume", "DOES-NOT-EXIST", "--no-browser"],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 1
+        assert "not found" in result.stdout.lower()
+        # Belt-and-braces — typer.Exit subclass not leaking.
+        assert not isinstance(result.exception, typer.Exit) or result.exit_code == 1
+
+
+class TestShutdownSentinel:
+    """``WebServer.shutdown()`` pushes ``SHUTDOWN`` onto the chat
+    queue so a worker thread blocked in ``pop_chat`` wakes up and
+    breaks. Identity comparison (``is``) keeps a user-typed message
+    from colliding with the sentinel even if its value happened to
+    look like the same string."""
+
+    def test_shutdown_wakes_worker_with_sentinel(self):
+        renderer = WebRenderer()
+        srv = WebServer(renderer)
+        msgs: list = []
+
+        def worker():
+            while True:
+                m = srv.pop_chat()
+                if m is srv.SHUTDOWN:
+                    msgs.append("done")
+                    break
+                msgs.append(m)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        srv.push_chat("hello")
+        srv.shutdown()
+        t.join(timeout=1.0)
+        assert msgs == ["hello", "done"]
+        assert not t.is_alive()
+
+    def test_shutdown_is_identity_sentinel(self):
+        """``SHUTDOWN`` must be a unique sentinel — ``is`` compares
+        identity so even a chat message that stringifies the same
+        cannot accidentally be mistaken for shutdown."""
+        renderer = WebRenderer()
+        srv = WebServer(renderer)
+        srv.push_chat("SHUTDOWN")  # user types the word
+        item = srv.pop_chat(timeout=0.5)
+        assert item is not srv.SHUTDOWN
+        assert item == "SHUTDOWN"
+
+
 class TestAbortEndpoint:
     def test_abort_releases_blocked_prompt_user(self, server_and_client):
         _, renderer, client = server_and_client

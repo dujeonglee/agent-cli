@@ -38,6 +38,7 @@ runtime UX, not state.
 
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import dataclass, field
 from queue import Empty, SimpleQueue
@@ -157,6 +158,75 @@ class WebRenderer(Renderer):
             if conn in self._connections:
                 self._connections.remove(conn)
         conn.queue.put(_CLOSE_SENTINEL)
+
+    def shutdown_all_connections(self) -> None:
+        """Close every active SSE generator without sending takeover.
+
+        Pushes the ``__close__`` sentinel into each connection's queue
+        so the SSE generator's blocking executor-thread ``queue.get``
+        wakes up and breaks out of its loop. Idempotent — second call
+        finds an empty connection list and no-ops.
+
+        Called from two places: the FastAPI ``shutdown`` lifespan hook
+        (uvicorn's own SIGINT path) and ``main.py``'s ``finally`` block
+        (belt-and-braces). Either ordering leaves the worker thread
+        free to finalise the session.
+        """
+        with self._lock:
+            for conn in self._connections:
+                if not conn.closed.is_set():
+                    conn.closed.set()
+                    conn.queue.put(_CLOSE_SENTINEL)
+            self._connections.clear()
+
+    def replay_from_history(self, ctx) -> None:
+        """Re-emit persistent events from ``ctx`` so reconnecting
+        clients see prior turns.
+
+        Walks the ContextManager's raw cache (already populated by
+        ``ContextManager(..., resume=True)``) and translates each
+        message back into the live-loop's persistent event sequence:
+        ``user_message`` for user input, ``observation`` for tool
+        results, ``assistant_turn`` for assistant thought/action/final.
+
+        Transient events (``stream_chunk``, ``status``, ``spinner``)
+        are runtime UX only and have no on-disk counterpart, so they
+        are not replayed.
+
+        Called once at server startup when ``--resume <id>`` was passed,
+        BEFORE the worker thread starts or any SSE client connects.
+        """
+        for msg in ctx.get_raw_messages():
+            role = msg.get("role")
+            if role == "user":
+                tool = msg.get("tool")
+                if tool:
+                    content = msg.get("content", "")
+                    success = not msg.get("error")
+                    self.observation(content, turn=0, tool_name=tool, success=success)
+                else:
+                    content = msg.get("content", "")
+                    if not content:
+                        continue
+                    self.push_user_message(content)
+            elif role == "assistant":
+                thought = msg.get("thought", "") or ""
+                action = msg.get("action", "") or ""
+                action_input = msg.get("action_input", {})
+                if action == "complete":
+                    if isinstance(action_input, dict):
+                        final_text = action_input.get("result", "") or ""
+                    else:
+                        final_text = str(action_input) if action_input else ""
+                    self.thought(thought, turn=0)
+                    self.final(final_text, turn=0)
+                elif action:
+                    self.thought(thought, turn=0)
+                    if isinstance(action_input, dict):
+                        tool_input = json.dumps(action_input, ensure_ascii=False)
+                    else:
+                        tool_input = str(action_input)
+                    self.action(action, tool_input, turn=0)
 
     def prune(self, drop: int) -> None:
         """Drop the ``drop`` oldest persistent events from the buffer and
