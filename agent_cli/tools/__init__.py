@@ -44,14 +44,8 @@ TOOLS: dict[str, Any] = {
     "fetch": tool_fetch,
 }
 
-# Virtual tool names — intercepted by loop, excluded from tool descriptions
-VIRTUAL_TOOLS: frozenset[str] = frozenset(
-    {"complete", "ask", "run_skill", "ready_for_review", "delegate"}
-)
-
 __all__ = [
     "TOOLS",
-    "VIRTUAL_TOOLS",
     "TOOL_SCHEMAS",
     "ToolResult",
     "validate_tool_input",

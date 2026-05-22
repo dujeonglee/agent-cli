@@ -4,8 +4,6 @@ from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     validate_tool_input,
     get_tool_descriptions,
-    convert_to_anthropic_tools,
-    convert_to_openai_tools,
 )
 
 
@@ -105,66 +103,6 @@ class TestTypeValidation:
         ok, err, _ = validate_tool_input("read_file", {"path": [1, 2, 3]})
         assert ok is False
         assert "expected string" in err
-
-
-class TestConvertToAnthropicTools:
-    def test_converts_all_tools(self):
-        tools = convert_to_anthropic_tools(
-            ["read_file", "write_file", "edit_file", "shell"]
-        )
-        names = {t["name"] for t in tools}
-        # 4 requested + always-included (complete, ready_for_review)
-        assert {"read_file", "write_file", "edit_file", "shell"}.issubset(names)
-        assert "complete" in names
-        assert "ready_for_review" in names
-        assert all("name" in t and "input_schema" in t for t in tools)
-
-    def test_single_tool(self):
-        tools = convert_to_anthropic_tools(["shell"])
-        names = {t["name"] for t in tools}
-        assert "shell" in names
-        # Always-included tools are present
-        assert "complete" in names
-        assert "ready_for_review" in names
-
-    def test_with_delegate(self):
-        tools = convert_to_anthropic_tools(["shell", "delegate"])
-        names = {t["name"] for t in tools}
-        assert "delegate" in names
-
-    def test_without_delegate(self):
-        tools = convert_to_anthropic_tools(["shell"])
-        names = {t["name"] for t in tools}
-        assert "delegate" not in names
-
-    def test_schema_structure(self):
-        tools = convert_to_anthropic_tools(["read_file"])
-        t = next(t for t in tools if t["name"] == "read_file")
-        assert t["input_schema"]["type"] == "object"
-        assert "path" in t["input_schema"]["properties"]
-
-
-class TestConvertToOpenAITools:
-    def test_converts_all_tools(self):
-        tools = convert_to_openai_tools(
-            ["read_file", "write_file", "edit_file", "shell"]
-        )
-        names = {t["function"]["name"] for t in tools}
-        assert {"read_file", "write_file", "edit_file", "shell"}.issubset(names)
-        assert "complete" in names
-        assert "ready_for_review" in names
-        assert all(t["type"] == "function" for t in tools)
-
-    def test_function_structure(self):
-        tools = convert_to_openai_tools(["shell"])
-        t = next(t for t in tools if t["function"]["name"] == "shell")
-        assert t["function"]["name"] == "shell"
-        assert "parameters" in t["function"]
-
-    def test_with_delegate(self):
-        tools = convert_to_openai_tools(["shell", "delegate"])
-        names = {t["function"]["name"] for t in tools}
-        assert "delegate" in names
 
 
 class TestDelegateSchema:

@@ -352,46 +352,6 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
 _ALWAYS_INCLUDE = ("complete", "ready_for_review")
 
 
-def _convert_tools(
-    tool_names: list[str],
-    formatter,
-) -> list[dict]:
-    """Shared logic for converting tool schemas to provider-specific format."""
-    schemas = [TOOL_SCHEMAS[n] for n in tool_names if n in TOOL_SCHEMAS]
-    # Always include essential tools
-    for name in _ALWAYS_INCLUDE:
-        if name not in tool_names and name in TOOL_SCHEMAS:
-            schemas.append(TOOL_SCHEMAS[name])
-    return [formatter(s) for s in schemas]
-
-
-def convert_to_anthropic_tools(tool_names: list[str]) -> list[dict]:
-    """Convert tool schemas to Anthropic API tool format."""
-    return _convert_tools(
-        tool_names,
-        lambda s: {
-            "name": s.name,
-            "description": s.description,
-            "input_schema": s.parameters,
-        },
-    )
-
-
-def convert_to_openai_tools(tool_names: list[str]) -> list[dict]:
-    """Convert tool schemas to OpenAI API tool format."""
-    return _convert_tools(
-        tool_names,
-        lambda s: {
-            "type": "function",
-            "function": {
-                "name": s.name,
-                "description": s.description,
-                "parameters": s.parameters,
-            },
-        },
-    )
-
-
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,

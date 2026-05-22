@@ -19,7 +19,7 @@ from agent_cli.tools.delegate import (
     _format_parallel_results,
     DelegateResult,
 )
-from agent_cli.tools import TOOLS, VIRTUAL_TOOLS, _execute_tool as execute_tool
+from agent_cli.tools import TOOLS, _execute_tool as execute_tool
 
 
 class TestToolResult:
@@ -760,21 +760,6 @@ class TestToolsRegistry:
     def test_tools_contains_virtual_tools(self):
         assert "complete" in TOOLS
         assert "ask" in TOOLS
-
-    def test_virtual_tools_frozenset(self):
-        assert VIRTUAL_TOOLS == frozenset(
-            {"complete", "ask", "run_skill", "ready_for_review", "delegate"}
-        )
-        assert isinstance(VIRTUAL_TOOLS, frozenset)
-
-    def test_virtual_tools_subset_of_tools(self):
-        assert VIRTUAL_TOOLS.issubset(set(TOOLS.keys()))
-
-    def test_real_tools_excludes_virtual(self):
-        real = [t for t in TOOLS if t not in VIRTUAL_TOOLS]
-        assert "complete" not in real
-        assert "ask" not in real
-        assert len(real) == len(TOOLS) - len(VIRTUAL_TOOLS)
 
     def test_complete_lambda_with_result(self):
         fn = TOOLS["complete"]
@@ -2203,10 +2188,6 @@ class TestRunSkillTool:
         """run_skill is registered in TOOLS."""
         assert "run_skill" in TOOLS
 
-    def test_run_skill_in_virtual_tools(self):
-        """run_skill is a virtual tool (intercepted by loop)."""
-        assert "run_skill" in VIRTUAL_TOOLS
-
     def test_run_skill_schema_exists(self):
         """run_skill has a schema with name (required) and arguments."""
         from agent_cli.tools.registry import TOOL_SCHEMAS
@@ -2214,9 +2195,3 @@ class TestRunSkillTool:
         assert "run_skill" in TOOL_SCHEMAS
         schema = TOOL_SCHEMAS["run_skill"]
         assert "name" in schema.parameters["required"]
-
-    def test_run_skill_is_virtual_tool(self):
-        """run_skill is intercepted by loop (virtual tool), not executed directly."""
-        from agent_cli.tools import VIRTUAL_TOOLS
-
-        assert "run_skill" in VIRTUAL_TOOLS
