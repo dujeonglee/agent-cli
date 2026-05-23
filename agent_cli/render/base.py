@@ -104,6 +104,37 @@ class Renderer(ABC):
             if tid in self._captures:  # only when capturing
                 self._thread_status[tid] = status
 
+    # ── Parallel delegate lifecycle ──────────────────
+    #
+    # Out-of-band surfaces (web) need to know when a worker thread
+    # enters / leaves a delegate-parallel context so they can route
+    # the thread's subsequent emits into a dedicated UI group instead
+    # of interleaving them on the main timeline. CLI renderers don't
+    # need this — ``rich.Live`` polls ``get_thread_status`` directly
+    # — so the base implementations are concrete no-ops. WebRenderer
+    # overrides to map ``thread_id → task_id`` and emit SSE markers.
+
+    def begin_delegate_task(
+        self,
+        *,
+        task_id: str,
+        index: int,
+        agent: str,
+        task_text: str,
+    ) -> None:
+        """Mark the current thread as a delegate worker. No-op for CLI."""
+
+    def end_delegate_task(
+        self,
+        *,
+        task_id: str,
+        success: bool,
+        duration_s: float,
+        error: str = "",
+    ) -> None:
+        """Mark the current thread as leaving its delegate context.
+        No-op for CLI."""
+
     # ── Abstract render methods ──────────────────────
 
     @abstractmethod

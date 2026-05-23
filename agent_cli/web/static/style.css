@@ -340,3 +340,96 @@ footer {
   border-radius: 3px;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
+
+/* ── Delegate task groups (collapsible) ──────
+   Wraps every parallel-delegate worker's events in its own card so
+   two concurrent tasks don't visually interleave. Header is the
+   click target; body holds nested cards (assistant_turn, observation,
+   stream_chunk pre block). Default collapsed — the user expands the
+   one they want to inspect. */
+.card-task-group {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-left: 3px solid #6b7280;
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+.card-task-group.task-ok { border-left-color: #16a34a; }
+.card-task-group.task-fail { border-left-color: #dc2626; }
+
+.card-task-group .task-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+.card-task-group .task-header:hover { background: #f9fafb; }
+.card-task-group .task-chevron {
+  font-size: 10px;
+  color: #9ca3af;
+  width: 12px;
+  flex: 0 0 auto;
+}
+.card-task-group .task-title {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-task-group .task-status {
+  color: #6b7280;
+  font-style: italic;
+  font-size: 12px;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+/* While running (no .task-ok / .task-fail yet) status pulses subtly
+   so the user can see the card is live even when collapsed. */
+.card-task-group:not(.task-ok):not(.task-fail) .task-status {
+  animation: task-status-pulse 1.4s ease-in-out infinite;
+}
+@keyframes task-status-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.card-task-group .task-meta {
+  color: #4b5563;
+  font-size: 12px;
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.card-task-group.task-ok .task-meta { color: #16a34a; }
+.card-task-group.task-fail .task-meta { color: #dc2626; }
+
+.card-task-group .task-body {
+  padding: 8px 12px 12px 12px;
+  border-top: 1px solid #f3f4f6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.card-task-group .task-body[hidden] { display: none; }
+/* Nested cards inside a task body lose their outer max-width — the
+   group itself already takes the page width. Avoids double-bordering
+   when an observation card sits inside the group. */
+.card-task-group .task-body .card {
+  max-width: 100%;
+}
+.card-task-group .task-error {
+  color: #7f1d1d;
+  background: #fef2f2;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}

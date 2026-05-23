@@ -432,6 +432,178 @@ class TestHeaderWorkspace:
         assert all(ev != "ready" for (ev, _) in r._event_buffer)
 
 
+class TestDelegateTaskVisibility:
+    """Parallel delegate worker threads register themselves via
+    ``begin_delegate_task`` so subsequent emits from the worker are
+    auto-tagged with ``task_id`` and routed into the right collapsible
+    group on the frontend. Tests pin: lifecycle markers, auto-attach,
+    status routing, and CLI-renderer compatibility (no-op on base).
+    """
+
+    def test_begin_delegate_task_emits_persistent_start_event(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.begin_delegate_task(
+            task_id="t-1", index=0, agent="explorer", task_text="find X"
+        )
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "delegate_task_start"
+        assert data == {
+            "task_id": "t-1",
+            "index": 0,
+            "agent": "explorer",
+            "task_text": "find X",
+        }
+        # Persistent so a late-joining client replays the open card.
+        assert any(ev == "delegate_task_start" for (ev, _) in r._event_buffer)
+
+    def test_end_delegate_task_emits_persistent_end_event(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.begin_delegate_task(task_id="t-1", index=0, agent="", task_text="t")
+        # Drain start.
+        conn.queue.get(timeout=1.0)
+        r.end_delegate_task(task_id="t-1", success=True, duration_s=4.2)
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "delegate_task_end"
+        assert data["task_id"] == "t-1"
+        assert data["success"] is True
+        assert data["duration_s"] == 4.2
+        # ``error`` field omitted when empty — matches the schema the
+        # frontend's conditional render expects.
+        assert "error" not in data
+
+    def test_end_delegate_task_carries_error_when_failed(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.begin_delegate_task(task_id="t-1", index=0, agent="", task_text="t")
+        conn.queue.get(timeout=1.0)
+        r.end_delegate_task(
+            task_id="t-1", success=False, duration_s=1.0, error="timed out"
+        )
+        _, data = conn.queue.get(timeout=1.0)
+        assert data["success"] is False
+        assert data["error"] == "timed out"
+
+    def test_emit_auto_attaches_task_id_from_worker_thread(self):
+        """Inside a ``begin_delegate_task`` → ``end_delegate_task``
+        window the current thread's emits MUST carry ``task_id`` —
+        the whole point of routing parallel work into separate
+        cards. Outside the window the field MUST be absent."""
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+
+        # Before begin: no task_id auto-attach.
+        r._emit("assistant_turn", {"turn": 1, "thought": "no task"}, persistent=True)
+        _, baseline = conn.queue.get(timeout=1.0)
+        assert "task_id" not in baseline
+
+        r.begin_delegate_task(task_id="t-7", index=0, agent="", task_text="")
+        conn.queue.get(timeout=1.0)  # drain start
+
+        # Within the window: every emit picks up task_id.
+        r._emit("observation", {"turn": 1, "content": "obs"}, persistent=True)
+        _, mid = conn.queue.get(timeout=1.0)
+        assert mid["task_id"] == "t-7"
+
+        r.end_delegate_task(task_id="t-7", success=True, duration_s=0.1)
+        conn.queue.get(timeout=1.0)  # drain end
+
+        # After end: back to no task_id.
+        r._emit("assistant_turn", {"turn": 2, "final": "done"}, persistent=True)
+        _, after = conn.queue.get(timeout=1.0)
+        assert "task_id" not in after
+
+    def test_emit_does_not_overwrite_explicit_task_id(self):
+        """If a caller passes ``task_id`` in ``data`` explicitly (e.g.
+        the ``delegate_task_*`` lifecycle events do this), ``_emit``
+        must NOT clobber it with the per-thread map. Without this
+        guard the lifecycle markers' ``task_id`` could be replaced
+        with a stale one if the calling thread is itself inside a
+        nested delegate."""
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+
+        r.begin_delegate_task(task_id="outer", index=0, agent="", task_text="")
+        conn.queue.get(timeout=1.0)  # drain start
+        # Now inside outer's thread, emit with an explicit (different)
+        # task_id — must survive intact.
+        r._emit(
+            "delegate_task_start",
+            {"task_id": "inner", "index": 1, "agent": "", "task_text": ""},
+            persistent=True,
+        )
+        _, data = conn.queue.get(timeout=1.0)
+        assert data["task_id"] == "inner"
+
+    def test_set_thread_status_emits_status_event_when_in_task(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.begin_delegate_task(task_id="t-1", index=0, agent="", task_text="")
+        conn.queue.get(timeout=1.0)  # drain start
+
+        r.set_thread_status("reading file...")
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "delegate_task_status"
+        assert data == {"task_id": "t-1", "status": "reading file..."}
+
+    def test_set_thread_status_silent_outside_delegate(self):
+        """No task → no SSE traffic on status updates. The base dict
+        write still happens (for rich.Live polling on the CLI side)
+        but emitting a frontend event with no card to route to would
+        leak data the UI has nowhere to show."""
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.set_thread_status("orphan status")
+        assert conn.queue.empty()
+
+    def test_set_thread_status_preserves_base_dict(self):
+        """Override must call ``super()`` so the ``_thread_status``
+        dict is still populated — CLI's parallel-delegate Live panel
+        polls ``get_thread_status`` from main thread and would
+        otherwise see empty status. Even on the web renderer this
+        invariant has to hold for the CLI-rendered subagent logs."""
+        r = WebRenderer()
+        r.start_capture()  # base requires capture mode for status write
+        try:
+            r.set_thread_status("from worker")
+        finally:
+            r.stop_capture()
+        # Status was written into base dict (and stop_capture popped it).
+        # Re-create the window and verify the path round-trips.
+        r.start_capture()
+        r.set_thread_status("again")
+        tid = threading.get_ident()
+        # ``get_thread_status`` reads from the dict; same thread reads
+        # the value it just wrote.
+        assert r.get_thread_status(tid) == "again"
+        r.stop_capture()
+
+
+class TestRendererBaseDelegateTaskNoOp:
+    """``MinimalRenderer`` (and any future CLI-only renderer) must
+    inherit the base no-op lifecycle methods so ``delegate.py`` can
+    call them unconditionally without branching on renderer type."""
+
+    def test_minimal_renderer_begin_end_are_no_ops(self):
+        from agent_cli.render.minimal import MinimalRenderer
+        from io import StringIO
+        from rich.console import Console
+
+        r = MinimalRenderer(Console(file=StringIO(), force_terminal=False))
+        # Should not raise — no-op implementations on base.
+        r.begin_delegate_task(task_id="t", index=0, agent="a", task_text="t")
+        r.end_delegate_task(task_id="t", success=True, duration_s=1.0)
+        r.end_delegate_task(task_id="t", success=False, duration_s=2.0, error="x")
+
+
 class TestShutdownAllConnections:
     """``shutdown_all_connections`` is called on the graceful shutdown
     path (uvicorn lifespan hook + main.py finally). It must wake up

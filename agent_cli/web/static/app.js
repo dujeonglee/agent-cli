@@ -288,6 +288,107 @@
     $messages.scrollTop = $messages.scrollHeight;
   }
 
+  // ── Delegate task groups (collapsible cards) ──
+  //
+  // Parallel delegate workers (one per ``delegate({tasks:[...]})``
+  // entry) get their own collapsible card. Every event the worker
+  // emits — assistant_turn, observation, stream_chunk, error —
+  // carries ``task_id`` (auto-attached by ``WebRenderer._emit``),
+  // which routes the card into the matching group's body instead of
+  // the main timeline. Without this routing the parallel work would
+  // interleave and the user couldn't tell which task is doing what.
+  //
+  // Group state per task_id: { card, header, body, statusEl,
+  // streamingCard, streamingText, closed }.
+  const taskGroups = {};
+
+  function ensureTaskGroup(taskId, index, agent, taskText) {
+    if (taskGroups[taskId]) return taskGroups[taskId];
+
+    const card = el("div", ["card", "card-task-group"]);
+    card.dataset.taskId = taskId;
+
+    const header = el("div", ["task-header"]);
+    const chevron = el("span", ["task-chevron"], "▶");
+    const title = el("span", ["task-title"]);
+    const label = agent ? agent + ": " + taskText : taskText;
+    title.textContent = "🦀 [" + (index + 1) + "] " + label;
+    const statusEl = el("span", ["task-status"], "starting…");
+    const meta = el("span", ["task-meta"]);
+    header.appendChild(chevron);
+    header.appendChild(title);
+    header.appendChild(statusEl);
+    header.appendChild(meta);
+
+    const body = el("div", ["task-body"]);
+    body.hidden = true; // default collapsed
+
+    header.addEventListener("click", function () {
+      body.hidden = !body.hidden;
+      chevron.textContent = body.hidden ? "▶" : "▼";
+    });
+
+    card.appendChild(header);
+    card.appendChild(body);
+    $messages.appendChild(card);
+
+    const group = {
+      card: card,
+      header: header,
+      body: body,
+      chevron: chevron,
+      statusEl: statusEl,
+      meta: meta,
+      streamingCard: null,
+      streamingText: "",
+      closed: false,
+    };
+    taskGroups[taskId] = group;
+    scrollToBottom();
+    return group;
+  }
+
+  function updateTaskStatus(taskId, status) {
+    const g = taskGroups[taskId];
+    if (!g || g.closed) return;
+    g.statusEl.textContent = status;
+  }
+
+  function closeTaskGroup(taskId, success, durationS, error) {
+    const g = taskGroups[taskId];
+    if (!g) return;
+    g.closed = true;
+    g.statusEl.textContent = ""; // live status no longer relevant
+    g.card.classList.add(success ? "task-ok" : "task-fail");
+    const icon = success ? "✓" : "✗";
+    const dur = durationS != null ? " (" + durationS.toFixed(1) + "s)" : "";
+    g.meta.textContent = icon + dur;
+    if (!success && error) {
+      const errEl = el("div", ["task-error"], escapeHtml(error));
+      g.body.appendChild(errEl);
+    }
+    // Drop the streaming card if the task ended mid-stream — the
+    // structured event(s) for the final turn have already replaced
+    // it on the body, or won't arrive at all.
+    if (g.streamingCard) {
+      g.streamingCard.remove();
+      g.streamingCard = null;
+      g.streamingText = "";
+    }
+  }
+
+  /** Append ``cardEl`` to either the main timeline or a task group's
+   * body, based on ``taskId``. If the task group hasn't been
+   * registered yet (event raced before ``delegate_task_start``), the
+   * card falls back to the main timeline so it isn't dropped. */
+  function appendToTimeline(cardEl, taskId) {
+    if (taskId && taskGroups[taskId]) {
+      taskGroups[taskId].body.appendChild(cardEl);
+    } else {
+      $messages.appendChild(cardEl);
+    }
+  }
+
   // ── Card renderers ─────────────────────────
   function renderUserMessage(content) {
     const card = el("div", ["card", "card-user"]);
@@ -315,7 +416,7 @@
       a.appendChild(detail);
       card.appendChild(a);
     }
-    $messages.appendChild(card);
+    appendToTimeline(card, d.task_id);
     scrollToBottom();
   }
 
@@ -436,30 +537,61 @@
     card.appendChild(
       el("pre", ["obs-body"], richMarkupToHtml(escapeHtml(d.content || "")))
     );
-    $messages.appendChild(card);
+    appendToTimeline(card, d.task_id);
     scrollToBottom();
   }
 
   function renderError(d) {
     const card = el("div", ["card", "card-error"]);
     card.textContent = d.content;
-    $messages.appendChild(card);
+    appendToTimeline(card, d.task_id);
     scrollToBottom();
   }
 
   // ── Streaming card (transient) ─────────────
-  function ensureStreamingCard() {
+  //
+  // Streaming chunks belong to whoever last fired ``begin_delegate_
+  // task`` on the emitting thread — main thread (no task_id) writes
+  // to the global ``streamingCard`` slot; delegate worker threads
+  // write to their group's per-task streaming slot. This keeps two
+  // parallel workers' raw streams from colliding inside the same
+  // pre element.
+  function ensureStreamingCard(taskId) {
+    if (taskId && taskGroups[taskId]) {
+      const g = taskGroups[taskId];
+      if (g.streamingCard) return;
+      g.streamingCard = el("div", ["card", "card-streaming"]);
+      g.streamingCard.appendChild(el("pre", ["streaming"], ""));
+      g.body.appendChild(g.streamingCard);
+      return;
+    }
     if (streamingCard) return;
     streamingCard = el("div", ["card", "card-streaming"]);
     streamingCard.appendChild(el("pre", ["streaming"], ""));
     $messages.appendChild(streamingCard);
   }
-  function updateStreamingCard() {
+  function updateStreamingCard(taskId) {
+    if (taskId && taskGroups[taskId]) {
+      const g = taskGroups[taskId];
+      if (!g.streamingCard) return;
+      g.streamingCard.querySelector(".streaming").textContent = g.streamingText;
+      scrollToBottom();
+      return;
+    }
     if (!streamingCard) return;
     streamingCard.querySelector(".streaming").textContent = streamingText;
     scrollToBottom();
   }
-  function clearStreamingCard() {
+  function clearStreamingCard(taskId) {
+    if (taskId && taskGroups[taskId]) {
+      const g = taskGroups[taskId];
+      if (g.streamingCard) {
+        g.streamingCard.remove();
+        g.streamingCard = null;
+        g.streamingText = "";
+      }
+      return;
+    }
     if (streamingCard) {
       streamingCard.remove();
       streamingCard = null;
@@ -655,7 +787,7 @@
 
   es.addEventListener("assistant_turn", function (e) {
     const d = JSON.parse(e.data);
-    clearStreamingCard();
+    clearStreamingCard(d.task_id);
     renderAssistantTurn(d);
   });
 
@@ -671,14 +803,40 @@
 
   es.addEventListener("stream_chunk", function (e) {
     const d = JSON.parse(e.data);
-    streamingText += d.text;
-    ensureStreamingCard();
-    updateStreamingCard();
+    if (d.task_id && taskGroups[d.task_id]) {
+      taskGroups[d.task_id].streamingText += d.text;
+    } else {
+      streamingText += d.text;
+    }
+    ensureStreamingCard(d.task_id);
+    updateStreamingCard(d.task_id);
   });
 
   es.addEventListener("stream_end", function () {
     // assistant_turn will replace the streaming card with the
     // structured version; nothing to do here.
+  });
+
+  // ── Delegate task lifecycle ────────────────
+  //
+  // Three event types frame each parallel-delegate worker's
+  // collapsible card:
+  //   delegate_task_start  → open card (default collapsed)
+  //   delegate_task_status → update live status line (transient)
+  //   delegate_task_end    → close card with ✓/✗ + duration
+  es.addEventListener("delegate_task_start", function (e) {
+    const d = JSON.parse(e.data);
+    ensureTaskGroup(d.task_id, d.index, d.agent || "", d.task_text || "");
+  });
+
+  es.addEventListener("delegate_task_status", function (e) {
+    const d = JSON.parse(e.data);
+    updateTaskStatus(d.task_id, d.status || "");
+  });
+
+  es.addEventListener("delegate_task_end", function (e) {
+    const d = JSON.parse(e.data);
+    closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
 
   // ── Abort button visibility ────────────────

@@ -102,6 +102,13 @@ class WebRenderer(Renderer):
         #     calling header() again. A slot avoids the buffer
         #     accumulating one ready per turn.
         self._latest_ready: tuple[str, dict[str, Any]] | None = None
+        # Per-thread delegate-task routing. Worker threads spawned by
+        # ``_run_parallel`` register their ``task_id`` here via
+        # ``begin_delegate_task``; ``_emit`` then auto-attaches
+        # ``task_id`` to every event the worker fires so the frontend
+        # can route into the right collapsible group instead of
+        # interleaving on the main timeline.
+        self._thread_to_task: dict[int, str] = {}
 
     # ─── Event distribution ─────────────────────────
 
@@ -112,7 +119,22 @@ class WebRenderer(Renderer):
         *,
         persistent: bool,
     ) -> None:
-        """Append to buffer (if persistent) and fan out to active connections."""
+        """Append to buffer (if persistent) and fan out to active connections.
+
+        Auto-attaches ``task_id`` from the per-thread delegate map
+        when the emitting thread is a parallel-delegate worker, so
+        every downstream event (``assistant_turn``, ``observation``,
+        ``stream_chunk``, ``error``, …) carries the routing key the
+        frontend uses to keep parallel work visually separated. Skips
+        attachment for events that already carry an explicit
+        ``task_id`` (the ``delegate_task_*`` lifecycle markers fill
+        it in themselves) and for events whose data shape is
+        deliberately bare (e.g. ``input_resolved``, ``takeover``).
+        """
+        tid = threading.get_ident()
+        task_id = self._thread_to_task.get(tid)
+        if task_id is not None and "task_id" not in data:
+            data = {**data, "task_id": task_id}
         with self._lock:
             if persistent:
                 self._event_buffer.append((event, data))
@@ -158,6 +180,78 @@ class WebRenderer(Renderer):
             if conn in self._connections:
                 self._connections.remove(conn)
         conn.queue.put(_CLOSE_SENTINEL)
+
+    # ─── Parallel delegate visibility ───────────────
+
+    def begin_delegate_task(
+        self,
+        *,
+        task_id: str,
+        index: int,
+        agent: str,
+        task_text: str,
+    ) -> None:
+        """Register the current thread as a delegate worker and emit a
+        persistent ``delegate_task_start`` event so the frontend opens
+        a collapsible group card for this task.
+
+        Persistent (not transient): the start marker pairs with
+        ``delegate_task_end`` to bound a card lifetime in the event
+        buffer. If a client connects mid-delegate, the replay snapshot
+        still draws the card so the user isn't staring at a blank
+        view while the worker chugs through.
+        """
+        tid = threading.get_ident()
+        with self._lock:
+            self._thread_to_task[tid] = task_id
+        self._emit(
+            "delegate_task_start",
+            {
+                "task_id": task_id,
+                "index": index,
+                "agent": agent,
+                "task_text": task_text,
+            },
+            persistent=True,
+        )
+
+    def end_delegate_task(
+        self,
+        *,
+        task_id: str,
+        success: bool,
+        duration_s: float,
+        error: str = "",
+    ) -> None:
+        """Unregister the current thread and emit a persistent
+        ``delegate_task_end`` event with the final ✓/✗ + duration so
+        the frontend caps the card header."""
+        tid = threading.get_ident()
+        with self._lock:
+            self._thread_to_task.pop(tid, None)
+        payload = {
+            "task_id": task_id,
+            "success": success,
+            "duration_s": duration_s,
+        }
+        if error:
+            payload["error"] = error
+        self._emit("delegate_task_end", payload, persistent=True)
+
+    def set_thread_status(self, status: str) -> None:
+        """Forward to the base ``_thread_status`` dict (CLI rich.Live
+        polling compatibility) AND emit a transient
+        ``delegate_task_status`` event so the frontend's task card
+        header can update its live status line."""
+        super().set_thread_status(status)
+        tid = threading.get_ident()
+        task_id = self._thread_to_task.get(tid)
+        if task_id is not None:
+            self._emit(
+                "delegate_task_status",
+                {"task_id": task_id, "status": status},
+                persistent=False,
+            )
 
     def shutdown_all_connections(self) -> None:
         """Close every active SSE generator without sending takeover.
@@ -310,6 +404,14 @@ class WebRenderer(Renderer):
         # a single ``assistant_turn`` event per LLM emission.
         self._pending_thought = content
         self._pending_turn = turn
+        # Mirror the CLI behaviour: surface the first line of the
+        # thought as the worker's live status so a delegate-task card
+        # header shows ``💭 reasoning…`` while the worker is still
+        # mid-turn. ``set_thread_status`` is a no-op outside delegate
+        # workers (no ``task_id`` in ``_thread_to_task``).
+        first_line = content.split("\n", 1)[0] if content else ""
+        if first_line:
+            self.set_thread_status(f"💭 {first_line}")
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
         self._emit(

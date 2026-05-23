@@ -504,8 +504,24 @@ def _run_parallel(
 
     def worker(index: int, spec: dict) -> None:
         thread_ids[index] = threading.get_ident()
+        # Per-task identity for out-of-band UIs (web). CLI's renderer
+        # ignores these lifecycle markers; WebRenderer uses them to
+        # open / close a collapsible group card and routes every
+        # subsequent emit from this thread into that card via the
+        # ``_thread_to_task`` map.
+        task_id = f"delegate-{index}-{thread_ids[index]:x}"
+        agent = spec.get("agent", "")
+        task_text = spec.get("task", "")
+        renderer.begin_delegate_task(
+            task_id=task_id,
+            index=index,
+            agent=agent,
+            task_text=task_text,
+        )
         render_start_capture()
         t0 = time.monotonic()
+        result_for_marker = None
+        error_msg = ""
         try:
             results[index] = _run_single(
                 task=spec["task"],
@@ -529,10 +545,20 @@ def _run_parallel(
                 stop_event=stop_event,
                 hooks_config=hooks_config,
             )
+            result_for_marker = results[index]
         finally:
             durations[index] = time.monotonic() - t0
             captured[index] = render_stop_capture()
             done_flags[index] = True
+            success = bool(result_for_marker and result_for_marker.success)
+            if result_for_marker and not result_for_marker.success:
+                error_msg = result_for_marker.error or ""
+            renderer.end_delegate_task(
+                task_id=task_id,
+                success=success,
+                duration_s=durations[index],
+                error=error_msg,
+            )
 
     threads = []
     for i, spec in enumerate(task_specs):
