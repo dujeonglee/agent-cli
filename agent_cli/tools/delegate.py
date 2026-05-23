@@ -709,6 +709,7 @@ def tool_delegate(
     if len(tasks) == 1:
         # Single delegate: grouped nested rendering
         from agent_cli.render import (
+            get_renderer,
             render_group_start,
             render_group_end,
             render_push_depth,
@@ -719,6 +720,22 @@ def tool_delegate(
         agent_name = spec.get("agent", "")
         label = f"delegate:{agent_name}" if agent_name else "delegate"
 
+        # Pair the CLI's group-block rendering with the same
+        # ``begin_delegate_task`` / ``end_delegate_task`` lifecycle
+        # the parallel path uses, so the web frontend opens a
+        # collapsible card here too. Single-task delegate runs on the
+        # main worker thread; the lifecycle markers register that
+        # thread in ``WebRenderer._thread_to_task`` so every nested
+        # emit gets the same ``task_id`` and is routed into the
+        # card. CLI's renderer treats begin/end as no-ops.
+        renderer = get_renderer()
+        task_id = f"delegate-single-{threading.get_ident():x}"
+        renderer.begin_delegate_task(
+            task_id=task_id,
+            index=0,
+            agent=agent_name,
+            task_text=spec.get("task", ""),
+        )
         render_group_start(label, icon="🦀")
         render_push_depth()
         t0 = time.monotonic()
@@ -734,11 +751,22 @@ def tool_delegate(
             )
             return result
         finally:
+            duration = time.monotonic() - t0
             render_pop_depth()
             render_group_end(
                 label,
                 success=result.success if result else False,
-                duration_s=time.monotonic() - t0,
+                duration_s=duration,
+            )
+            success = bool(result and result.success)
+            error_msg = ""
+            if result and not result.success:
+                error_msg = result.error or ""
+            renderer.end_delegate_task(
+                task_id=task_id,
+                success=success,
+                duration_s=duration,
+                error=error_msg,
             )
     else:
         # Parallel: suppress during execution, collect and display after
