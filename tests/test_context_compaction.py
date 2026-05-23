@@ -158,6 +158,57 @@ class TestSummary:
 
         assert len(ctx.summary) == _SUMMARY_CHAR_CAP
 
+    def test_callback_receives_chat_ready_messages(self, tmp_path):
+        """ContextManager → compactor callback contract: every message
+        the callback receives MUST be in chat-ready ``{role, content}``
+        form. Raw history-record keys (``tool``, ``args``, ``thought``,
+        ``action``, ``action_input``) MUST NOT leak through, because the
+        downstream provider only understands ``role + content``.
+
+        Regression guard for the omlx live-test bug: raw evict_set was
+        being passed straight to the provider, which silently dropped
+        the unknown keys and produced corrupt summaries."""
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=120)
+        ctx.add({"role": "system", "content": "sys"})
+        # Mix of user + tool result + assistant action — exercises every
+        # branch of _to_natural_language.
+        ctx.add({"role": "user", "content": "first question"})
+        ctx.add(
+            {
+                "role": "user",
+                "tool": "write_file",
+                "args": {"path": "a.py"},
+                "content": "ok",
+            }
+        )
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "I will read it",
+                "action": "read_file",
+                "action_input": {"path": "a.py"},
+            }
+        )
+        # Pad to force compaction.
+        for _ in range(15):
+            ctx.add({"role": "user", "content": "x" * 30})
+
+        assert len(calls) >= 1, "compactor must have been invoked"
+        forbidden_keys = {"tool", "args", "thought", "action", "action_input"}
+        for callback_invocation in calls:
+            for m in callback_invocation:
+                assert set(m.keys()) <= {"role", "content"}, (
+                    f"callback received message with unexpected keys: "
+                    f"{set(m.keys()) - {'role', 'content'}} in {m!r}"
+                )
+                assert not (forbidden_keys & set(m.keys())), (
+                    f"raw history keys leaked into callback: "
+                    f"{forbidden_keys & set(m.keys())} in {m!r}"
+                )
+                assert isinstance(m.get("content"), str), (
+                    f"callback message content must be a string: {m!r}"
+                )
+
 
 # ── 4. File list ─────────────────────────────────────
 
@@ -610,6 +661,88 @@ def test_compact_with_empty_dynamic_is_noop(tmp_path):
     ctx._compact()
     assert calls == []
     assert ctx.summary == ""
+
+
+# ── 12. AgentLoop._llm_compact_summarize integration ─
+
+
+class TestAgentLoopCompactorCallback:
+    """Cover the AgentLoop side of the compaction wire — the previous
+    suite mocked the callback entirely, so ``_llm_compact_summarize``
+    was 0% covered. Regression guard for the omlx live-test bugs:
+
+      (1) provider.call() called with wrong signature (missing
+          ``system`` / ``capabilities``).
+      (2) capabilities not overridden, so ``supports_structured_output=
+          True`` forced a JSON-mode response instead of plain text.
+    """
+
+    def _make_loop(self, **overrides):
+        """Build a minimum-viable AgentLoop instance that exercises
+        ``_llm_compact_summarize`` without dragging in the full run."""
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.compat import ModelCapabilities
+
+        received: dict = {}
+
+        class FakeProvider:
+            def call(self, messages, system, model, capabilities, **kwargs):
+                received["messages"] = messages
+                received["system"] = system
+                received["model"] = model
+                received["capabilities"] = capabilities
+                received["kwargs"] = kwargs
+                return LLMResponse(content="MOCK SUMMARY", thinking="")
+
+        caps = ModelCapabilities(
+            context_window=4096,
+            max_output_tokens=512,
+            supports_structured_output=True,  # default-on; the callback
+            #                                  must flip it off
+            supports_thinking=True,  # ditto
+            thinking_budget=2048,
+            supports_strict_schema=False,
+        )
+        loop = AgentLoop(
+            query="x",
+            provider=FakeProvider(),
+            capabilities=caps,
+            model="mock-model",
+        )
+        return loop, received
+
+    def test_provider_call_signature_is_correct(self):
+        """Reproduces Issue B: previously the callback called
+        ``provider.call(messages=..., model=..., on_chunk=...)`` and the
+        provider raised ``TypeError: missing positional arguments
+        'system' and 'capabilities'``."""
+        loop, received = self._make_loop()
+        result = loop._llm_compact_summarize([{"role": "user", "content": "hello"}])
+        assert result == "MOCK SUMMARY"
+        # All four required positional args were forwarded.
+        assert received["messages"] == [{"role": "user", "content": "hello"}]
+        assert isinstance(received["system"], str)
+        assert received["system"]  # non-empty summarisation prompt
+        assert received["model"] == "mock-model"
+        assert received["capabilities"] is not None
+
+    def test_capabilities_disable_structured_output_and_thinking(self):
+        """Capabilities passed to the provider for the summary call MUST
+        have ``supports_structured_output=False`` (no JSON mode forced)
+        and ``supports_thinking=False`` (no reasoning trace eating the
+        response budget). The agent-loop's normal capabilities stay
+        untouched."""
+        loop, received = self._make_loop()
+        loop._llm_compact_summarize([{"role": "user", "content": "x"}])
+
+        passed_caps = received["capabilities"]
+        assert passed_caps.supports_structured_output is False
+        assert passed_caps.supports_thinking is False
+        # Original capabilities untouched (frozen dataclass — replace
+        # returns a new instance, doesn't mutate).
+        assert loop.capabilities.supports_structured_output is True
+        assert loop.capabilities.supports_thinking is True
 
 
 # ── 13. CompactionError import sanity ────────────────

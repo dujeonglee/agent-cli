@@ -302,6 +302,17 @@ class ContextManager:
             # loses prior context (e.g. "user originally asked for X")
             # while it's generated, only to be glued back on merge.
             # Single call with prior context wins on both axes.
+            # Convert evict_set (raw history dicts with `tool`/`thought`/
+            # `action` keys) to chat-ready `{role, content}` form via the
+            # same path ``get_messages`` uses. The callback talks to a
+            # provider that only understands role+content; without this
+            # conversion the provider receives unknown keys and may either
+            # error or send junk text. ``_to_natural_language`` is
+            # idempotent for plain user messages, so prepending the prior
+            # summary after conversion stays safe.
+            chat_ready_evict = [
+                _to_natural_language(m, self.wire_format) for m in evict_set
+            ]
             if self._summary:
                 prior_context_msg = {
                     "role": "user",
@@ -312,9 +323,9 @@ class ContextManager:
                         "running summary. Produce one updated summary."
                     ),
                 }
-                summarize_input = [prior_context_msg] + list(evict_set)
+                summarize_input = [prior_context_msg] + chat_ready_evict
             else:
-                summarize_input = list(evict_set)
+                summarize_input = chat_ready_evict
 
             new_summary = self._summarize_messages(summarize_input)
             new_paths = extract_file_paths(evict_set)

@@ -220,22 +220,38 @@ class AgentLoop:
         summarisation system prompt + the evicted messages, return
         the summary text. Raised exceptions are converted to
         ``CompactionError`` inside ContextManager._summarize_messages.
+
+        ``messages`` arrives in chat-ready ``{role, content}`` form —
+        ContextManager._compact does the natural-language conversion
+        via the wire_format plugin before calling here.
+
+        Capabilities are overridden for this one call:
+          - ``supports_structured_output=False`` — we want a plain text
+            summary, not a JSON object. The agent-loop's normal ReAct
+            calls force JSON; here we explicitly opt out.
+          - ``supports_thinking=False`` — summarisation doesn't benefit
+            from a reasoning trace, and the thinking tokens would
+            consume the response budget without ending up in the
+            persisted summary.
         """
+        from dataclasses import replace
+
         summarisation_prompt = (
             "Summarise the conversation below concisely. Preserve "
             "(a) the user's original intent, (b) key actions taken "
             "(tools used, files touched), (c) decisions made, (d) "
             "outcomes / discoveries. Stay under 2000 tokens. Plain text."
         )
-        request_messages = [
-            {"role": "system", "content": summarisation_prompt},
-            *messages,
-        ]
-        # No streaming, no tool calling — pure text completion.
+        summary_capabilities = replace(
+            self.capabilities,
+            supports_structured_output=False,
+            supports_thinking=False,
+        )
         response = self.provider.call(
-            messages=request_messages,
+            messages=messages,
+            system=summarisation_prompt,
             model=self.model,
-            on_chunk=lambda _: None,
+            capabilities=summary_capabilities,
         )
         return response.content if hasattr(response, "content") else str(response)
 
