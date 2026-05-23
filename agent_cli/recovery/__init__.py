@@ -13,6 +13,7 @@ from agent_cli.recovery.detectors import (
     detect_schema_mismatch,
     detect_thought_missing,
     detect_unknown_tool,
+    unwrap_nested_envelope,
 )
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.observability import (
@@ -45,6 +46,7 @@ __all__ = [
     "detect_schema_mismatch",
     "detect_nested_envelope",
     "detect_thought_missing",
+    "unwrap_nested_envelope",
     "FAILURE_NO_JSON",
     "FAILURE_NO_OUTPUT",
     "FAILURE_NO_ACTION",

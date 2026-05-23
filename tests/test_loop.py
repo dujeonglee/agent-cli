@@ -522,11 +522,13 @@ class TestRunLoopObservability:
         # No turns.jsonl should be created anywhere under tmp_path
         assert list(tmp_path.glob("**/turns.jsonl")) == []
 
-    def test_nested_envelope_records_signal_observe_only(self, caps, tmp_path):
-        """A6: model double-wraps the complete payload — detector flags
-        the failure but does NOT auto-unwrap. The user-visible answer
-        is still the raw (nested) string. We're observing trends before
-        deciding remediation (DESIGN.md §4 measure-before-build)."""
+    def test_nested_envelope_records_signal_and_unwraps(self, caps, tmp_path):
+        """A6: model double-wraps the complete payload — the detector
+        still records ``NESTED_ENVELOPE`` (observability for Step 4b
+        analysis), AND the user-facing output is unwrapped one level
+        so the final card / CLI doesn't show the raw ``{"result":
+        "..."}`` artifact. No recovery primitives applied — the
+        unwrap is purely cosmetic; the LLM still completed."""
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
@@ -545,10 +547,11 @@ class TestRunLoopObservability:
         rows = self._read_turns(tmp_path)
         assert len(rows) == 1
         assert rows[0]["failure_signal"] == "NESTED_ENVELOPE"
-        # Observe-only: no recovery primitives applied for A6 in v1
+        # Observability signal preserved — no recovery primitives
+        # applied for A6 since the unwrap is non-corrective.
         assert rows[0]["primitives_applied"] == []
-        # Output preserved as-is — caller still sees the wrapped string
-        assert result.output == nested
+        # Output unwrapped one level — the inner ``result`` string.
+        assert result.output == "the actual story"
 
     def test_well_formed_complete_does_not_flag_nested_envelope(self, caps, tmp_path):
         """Plain text result must NOT trigger the A6 detector."""

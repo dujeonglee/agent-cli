@@ -281,6 +281,76 @@ class TestDetectNestedEnvelope:
         assert detect_nested_envelope('["result"]') is False
 
 
+class TestUnwrapNestedEnvelope:
+    """``unwrap_nested_envelope`` performs the user-facing fix the
+    detector observes: when the model double-wraps the ``complete``
+    payload, peel one layer so the final card shows plain text.
+    """
+
+    def test_unwraps_one_level(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        assert (
+            unwrap_nested_envelope('{"result": "the actual story"}')
+            == "the actual story"
+        )
+
+    def test_plain_text_returns_unchanged(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        assert unwrap_nested_envelope("hello world") == "hello world"
+        assert unwrap_nested_envelope("") == ""
+
+    def test_non_string_returns_unchanged(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        # Non-string inputs (None, dict, int) round-trip untouched —
+        # the caller is responsible for normalising elsewhere.
+        assert unwrap_nested_envelope(None) is None
+        assert unwrap_nested_envelope({"result": "x"}) == {"result": "x"}
+        assert unwrap_nested_envelope(42) == 42
+
+    def test_malformed_json_returns_unchanged(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        # If parsing fails, leave the raw text visible — better to
+        # surface the LLM's actual output than guess.
+        bad = '{"result": "unterminated'
+        assert unwrap_nested_envelope(bad) == bad
+
+    def test_non_envelope_object_returns_unchanged(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        # Object without top-level ``result`` is not the envelope.
+        assert unwrap_nested_envelope('{"answer": "x"}') == '{"answer": "x"}'
+
+    def test_inner_non_string_returns_unchanged(self):
+        """If ``result`` is a dict/list/number, peeling would change
+        the answer's shape — keep the wrapper visible so the caller
+        sees the model's actual output."""
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        wrapped = '{"result": {"nested": "object"}}'
+        # Detector flagged it (top-level result key present), but
+        # unwrap declines because inner isn't a string.
+        assert unwrap_nested_envelope(wrapped) == wrapped
+
+    def test_unwrap_does_not_recurse(self):
+        """``{"result": "{\\"result\\": ...}"}`` (double-nested) only
+        peels one level. Recursive nesting is rare enough that the
+        single-level form keeps the second wrapper visible for
+        debugging instead of silently flattening."""
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        double_nested = '{"result": "{\\"result\\": \\"deep\\"}"}'
+        assert unwrap_nested_envelope(double_nested) == '{"result": "deep"}'
+
+    def test_unwraps_with_leading_whitespace(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        assert unwrap_nested_envelope('  \n{"result": "x"}') == "x"
+
+
 class TestDetectThoughtMissing:
     """A2 NO_THOUGHT detector — fires only when an action is present
     but the thought field is missing/empty. NO_ACTION (A3) is a

@@ -31,6 +31,7 @@ from agent_cli.recovery.detectors import (
     detect_schema_mismatch,
     detect_thought_missing,
     detect_unknown_tool,
+    unwrap_nested_envelope,
 )
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
@@ -567,12 +568,19 @@ class AgentLoop:
                     else "(Completed without result — model may lack capability for this task)"
                 )
 
-            # A6 (Nested envelope) — observe-only, no auto-unwrap. The
-            # answer is preserved as-is so user-visible behaviour does
-            # not change; remediation policy is deferred to Step 4b
-            # once TurnRecord measures occurrence frequency.
+            # A6 (Nested envelope) — detection records the signal for
+            # observability AND we unwrap one level so the user-facing
+            # answer doesn't carry a literal ``{"result": "..."}`` prefix.
+            # Single-level only (recursive nesting indicates a different
+            # bug worth surfacing). ``raw`` may be from ``parsed.action_
+            # input`` (dict path) or the input itself (str path); both
+            # surface as the same artifact, so we re-derive ``answer``
+            # from the unwrapped value.
             if detect_nested_envelope(raw):
                 outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE
+                unwrapped = unwrap_nested_envelope(raw)
+                if unwrapped != raw:
+                    answer = unwrapped or answer
 
             if self.ctx:
                 self.ctx.add(

@@ -204,9 +204,9 @@ def detect_nested_envelope(result_value: Any) -> bool:
     to look like JSON would corrupt observability data more than
     missed cases.
 
-    v1: detection only; the caller does NOT auto-unwrap. TurnRecord
-    captures occurrences so Step 4b can decide remediation based on
-    measured frequency.
+    ``FAILURE_NESTED_ENVELOPE`` is still recorded by the caller for
+    measurement; the auto-unwrap that ``unwrap_nested_envelope``
+    performs only fixes the user-facing artifact.
     """
     if not isinstance(result_value, str):
         return False
@@ -218,3 +218,32 @@ def detect_nested_envelope(result_value: Any) -> bool:
     except (json.JSONDecodeError, ValueError):
         return False
     return isinstance(parsed, dict) and "result" in parsed
+
+
+def unwrap_nested_envelope(result_value: str) -> str:
+    """One-level unwrap for the pattern ``detect_nested_envelope``
+    matches. Returns the inner ``result`` value when it's a string,
+    or ``result_value`` unchanged when:
+      - the input doesn't match the nested-envelope pattern,
+      - parsing fails,
+      - the inner ``result`` is not a string (so the unwrap would
+        change the answer's shape — better to surface the LLM's
+        actual output than silently coerce).
+
+    Single-level only by design: recursive nesting (``{"result":
+    "{\\"result\\": ...}"}``) is rare and almost always indicates a
+    different bug that benefits from staying visible.
+    """
+    if not isinstance(result_value, str):
+        return result_value
+    stripped = result_value.lstrip()
+    if not stripped.startswith('{"result"'):
+        return result_value
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return result_value
+    if not (isinstance(parsed, dict) and "result" in parsed):
+        return result_value
+    inner = parsed["result"]
+    return inner if isinstance(inner, str) else result_value
