@@ -284,9 +284,31 @@
     return e;
   }
 
+  // Auto-scroll follows the bottom while the user is parked there,
+  // but yields the moment they scroll up to read something —
+  // standard chat behaviour. Re-enables itself when the user returns
+  // to within ``SCROLL_BOTTOM_THRESHOLD`` of the bottom edge.
+  let autoScrollEnabled = true;
+  const SCROLL_BOTTOM_THRESHOLD = 50; // px tolerance
+
+  function isAtBottom() {
+    const dist =
+      $messages.scrollHeight - $messages.scrollTop - $messages.clientHeight;
+    return dist <= SCROLL_BOTTOM_THRESHOLD;
+  }
+
   function scrollToBottom() {
+    if (!autoScrollEnabled) return;
     $messages.scrollTop = $messages.scrollHeight;
   }
+
+  $messages.addEventListener("scroll", function () {
+    // Updating the flag from the scroll handler covers both user
+    // wheel/touch input AND our own programmatic scrollTop write —
+    // either way the new position is what determines whether the
+    // next emit should keep following.
+    autoScrollEnabled = isAtBottom();
+  });
 
   // ── Delegate task groups (collapsible cards) ──
   //
