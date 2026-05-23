@@ -20,7 +20,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 - **3단계 파싱 폴백**: json.loads → JSON repair → regex 추출
 - **Basic JSON Mode**: Ollama `format="json"`, OpenAI `response_format={"type":"json_object"}`, Anthropic tool calling (strict JSON Schema는 확장성 위해 미사용)
 - **Hashline 편집**: CRC32 해시 기반 정밀 파일 편집 + 퍼지 매칭
-- **컨텍스트 관리**: FIFO 메시지 큐 + history.jsonl 영속화 (LLM 압축 제거)
+- **컨텍스트 관리**: 토큰 budget 90% 초과 시 LLM 요약 compaction (recursive single-call), 실패/재구성 후 미충족 시 FIFO drop으로 belt-and-braces fallback; history.jsonl 영속화 + compaction.json (resume용 dynamic_start_index)
 - **모델 적응형**: context window, thinking budget에 따른 자동 조정
 
 ### 외부 의존성
@@ -70,7 +70,7 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (1590) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget FIFO, hook, streaming, nested depth rendering, failure-grounding retry)
+├── loop.py                  (1719) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget compaction + FIFO fallback, hook, streaming, nested depth rendering, failure-grounding retry). 생성 시 `ctx.set_compactor(self._llm_compact_summarize)` + `ctx.set_recorder(self.recorder)`로 compaction 진입점을 ContextManager에 주입; `--no-compaction` / `AGENT_CLI_COMPACTION=off`면 미주입 → FIFO만 동작
 ├── render/                         플러그인 가능 렌더링 + 사용자 입력 시스템
 │   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
 │   ├── base.py              (~300) Renderer ABC + `ConfirmOption` dataclass. 출력 메서드 19개 (depth, capture, group, thread_status, thinking 등) + 입력 메서드 2개 (`prompt_user` 자유 입력 — optional `context` kwarg로 pre-input 안내(예: ask 도구의 질문 블록)을 전달, `confirm` 선택지+코멘트). 입력도 추상화에 포함해 web UI 같은 비-CLI renderer가 SSE+POST로 같은 인터페이스 만족할 수 있게. **`begin_delegate_task` / `end_delegate_task`** concrete no-op lifecycle 메서드 — CLI 렌더러는 그대로 무시(rich.Live가 자체 처리), WebRenderer만 override해서 thread→task_id 매핑 + SSE 마커 발사. `delegate.py::_run_parallel` 워커는 둘을 무조건 호출 → 렌더러 타입 분기 없음.
@@ -101,7 +101,7 @@ agent_cli/
 │   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
 │   ├── write_file.py        (37)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
 │   ├── edit_file.py         (274)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff) → ToolResult
-│   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult. 출력은 잘리지 않고 그대로 LLM observation으로 전달 (이전 shell_artifact 가드는 2026-05-19 제거 — head/tail 미리보기가 중간 디버깅 정보를 silent하게 누락시키는 사례 발견, 컨텍스트 budget은 FIFO가 처리)
+│   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult. 출력은 잘리지 않고 그대로 LLM observation으로 전달 (이전 shell_artifact 가드는 2026-05-19 제거 — head/tail 미리보기가 중간 디버깅 정보를 silent하게 누락시키는 사례 발견, 컨텍스트 budget은 compaction/FIFO가 처리)
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
 │   ├── delegate.py          (700)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
 │   ├── context.py           (574)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
@@ -111,7 +111,8 @@ agent_cli/
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (245)  ContextManager (토큰 budget FIFO + history.jsonl + 자연어 변환). 인스턴스마다 wire_format plugin attach (`__init__(wire_format=...)`, default fallback="react"). `get_messages()`는 user/tool branch만 자체 처리하고 assistant branch는 `wire_format.render_assistant_from_history`에 위임 — 한 세션 = 한 wire_format으로 격리
+│   ├── manager.py           (638)  ContextManager (토큰 budget 압축 + FIFO fallback + history.jsonl + 자연어 변환). 캐시가 budget의 90%를 넘으면 `_maybe_compact()`가 LLM 요약 compaction을 시도 (system anchor만 보존 → oldest 절반 evict → 단일 호출로 요약, 이전 summary가 있으면 같은 호출에 prepend하여 recursive 갱신 → `_file_extract`로 touched paths 누적 dedup → `[system][summary][file_list][retained]`로 캐시 재구성 → `compaction.json` atomic write). 요약 실패하거나 재구성된 캐시가 여전히 budget 초과면 belt-and-braces로 `_evict_fifo` (drop-to-budget) 발동 — 무한 트리거 루프 방지. `compaction_enabled=False` 또는 `AGENT_CLI_COMPACTION=off`로 끄면 기존 FIFO만 동작. Resume: `compaction.json`의 `dynamic_start_index`로 history.jsonl 후방 슬라이스만 cache 복원해 summarised tail과 중복 방지. 인스턴스마다 wire_format plugin attach (`__init__(wire_format=...)`, default fallback="react"). `get_messages()`는 system은 verbatim, user/tool branch만 자체 처리하고 assistant branch는 `wire_format.render_assistant_from_history`에 위임 — 한 세션 = 한 wire_format으로 격리. Compactor 콜백(`set_compactor`)과 `TurnRecorder`(`set_recorder`)는 `AgentLoop`가 후입식으로 주입 — headless/unit-test 경로는 미주입 상태로 즉시 사용 가능.
+│   ├── _file_extract.py     (86)   `extract_file_paths(messages)` — `_PATH_TOOLS = {write_file, edit_file, read_file, read_symbols}` 호출과 tool result에서 `path` 추출, delegate는 `<delegate:agent_name>` placeholder로 보존, 입력 순서 dedup. compaction 시 evict 묶음에서 touched files를 끄집어내는 단일 진입점
 │   └── session.py           (~190) 세션 메타데이터 (session.jsonl) + resume용 user↔assistant 페어 추출 (recent_exchanges). System-injected user 메시지 필터는 `wire_formats.all_system_user_prefixes()` (format-agnostic 프리픽스 + 등록된 모든 plugin의 framing prefix) 단일 진입점 사용 — 새 wire format plugin 추가가 자동 반영
 │
 ├── prompts/                        프롬프트 템플릿
@@ -366,7 +367,7 @@ class ToolSchema:
            assistant: 분석이 완료되었다. hooks.py는 3개의 hook 타입을 지원...
 ```
 
-- Scratchpad/Summary inject 없음. messages만 (토큰 budget 기반 FIFO, 자동 계산)
+- Scratchpad 별도 inject 없음. messages만 (토큰 budget 자동 계산, 90% 초과 시 compaction → 그 외 FIFO drop)
 - 저장: history.jsonl (JSON Lines, 구조화)
 - 표현: 자연어 변환 (thought → "목적. → action(인자)")
 
@@ -395,7 +396,7 @@ AgentLoop.run()
     │    │
     │    ├─ _begin_iteration() → turn separator 렌더링
     │    │
-    │    ├─ _call_llm() → LLMResponse (overflow 시 FIFO refresh 후 재시도)
+    │    ├─ _call_llm() → LLMResponse (overflow 시 compaction/FIFO refresh 후 재시도)
     │    │
     │    └─ _handle_text_path()  ← text parsing only (native tool calling 제거)
     │         │
@@ -660,30 +661,45 @@ A5: outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 
-> 상세 설계: `docs/context-redesign/DESIGN.md`
+> 상세 설계: `docs/context-redesign/DESIGN.md`, `docs/context-compaction/DESIGN.md`
 
-#### 토큰 Budget 기반 FIFO
+#### 2-Tier: Compaction (LLM 요약) → FIFO Fallback
 
 ```
 메시지 추가 (add)
     │
-    ├─ 메모리 캐시 (list)에 append + 토큰 추정치 누적
-    │   └─ budget 초과 시 가장 오래된 메시지 단위로 evict (메시지 중간 잘림 없음)
+    ├─ 캐시 append + 토큰 누적
+    │   └─ 90% 초과 시 _maybe_compact:
+    │        1. compaction_enabled=False 또는 콜백 미주입 → _evict_fifo (drop-to-budget)
+    │        2. 그 외 → _compact() 시도
+    │             ├─ Split: [system anchor] + [dynamic]
+    │             ├─ Evict ~절반 (token-based, oldest)
+    │             ├─ LLM 요약 (단일 호출, 이전 summary가 있으면 같은 호출에 prepend → recursive)
+    │             ├─ _file_extract: path 누적 dedup (write/edit/read_file, read_symbols, <delegate:>)
+    │             ├─ Rebuild: [system][summary (≤8K char)][file_list][retained]
+    │             └─ compaction.json atomic write (version, summary, file_list,
+    │                compaction_count, last_compacted_at, dynamic_start_index)
+    │        3. Belt-and-braces: 실패 또는 cache > budget이면 _evict_fifo
     │
-    └─ history.jsonl에 JSON 한 줄 append (write-only)
+    └─ history.jsonl JSON 한 줄 append (write-only)
 
 Budget 계산:
-    budget = context_window - max_output_tokens - 4000 (system prompt 예약)
-    예: 262K context → ~254K token budget
+    budget = context_window - max_output_tokens - 4000
+    Compaction 임계: 0.9 × budget
+    예: 262K context → ~254K budget → ~228K 임계
 
 LLM 호출 시:
-    캐시에서 budget 내 메시지를 자연어 변환 → messages 배열 구성
+    [system verbatim][summary (있으면)][file_list (있으면)][자연어 변환된 dynamic]
 
 세션 재개 시:
-    history.jsonl 뒤에서부터 budget 내 메시지 파싱 → 캐시 초기화
+    compaction.json 로드 → dynamic_start_index 유효하면 history[index:]만 forward 파싱,
+    아니면 history.jsonl 뒤에서부터 budget 내 메시지 파싱 (legacy 경로)
 ```
 
-- **LLM 기반 압축 없음.** 토큰 budget FIFO (모델 context_window에서 자동 계산)
+- **압축 비활성화**: `--no-compaction` 또는 `AGENT_CLI_COMPACTION=off` → 플레인 FIFO만 동작 (env가 flag보다 우선; 운영자 kill switch)
+- **Belt-and-braces**: LLM 요약 실패(`CompactionError`)나 재구성 후 캐시 미충족 모두 같은 FIFO 경로로 수렴 → 무한 트리거 루프 없음
+- **Observability**: `TurnRecorder.record_compaction(tokens_before/after, evicted_count, fallback_used, failure_signal, duration_ms)` → `turns.jsonl`에 `event: "compaction"` 기록
+- **UI**: `render_compaction_progress(phase, ...)` 단일 helper로 start / done / warning 라이프사이클 출력 (CLI·웹·SSE는 renderer 레벨에서 분기)
 - **Scratchpad 없음.** history.jsonl이 대화 기록이자 artifact 인덱스
 - **Context inject 없음.** LLM이 필요할 때 read_file로 pull
 - System prompt에 Context Recovery Guide 포함
@@ -873,7 +889,7 @@ def hello():    →    1#VR:def hello():
 
 ### 6.5 Tool Output 전달 방식
 
-Tool output은 **잘림(truncation) 없이 전체를 그대로** LLM에 전달합니다. 이전에는 context window의 3% 비율로 잘랐으나(`tools/truncation.py`, 삭제됨), LLM이 불완전한 정보로 판단하는 성능 열화가 확인되어 제거. context가 넘치면 `context/manager.py`의 토큰-budget FIFO가 오래된 메시지부터 통째로 떨어냄 (요약 압축 아님).
+Tool output은 **잘림(truncation) 없이 전체를 그대로** LLM에 전달합니다. 이전에는 context window의 3% 비율로 잘랐으나(`tools/truncation.py`, 삭제됨), LLM이 불완전한 정보로 판단하는 성능 열화가 확인되어 제거. context가 budget의 90%를 넘으면 `context/manager.py`의 compaction이 oldest 절반을 LLM 요약으로 흡수하고, 실패/미충족이면 belt-and-braces로 FIFO drop이 메시지 단위로 떨궈냄.
 
 ### 6.5.0 `read_file` Full-Read Guard
 
@@ -917,10 +933,10 @@ manager(대화 압축)가 downstream에서 처리한다.
 관찰. 가드의 절약 효과보다 silent loss의 비용이 컸음.
 
 현재 정책: **shell 출력은 잘리지 않고 그대로 LLM observation으로 전달**.
-컨텍스트 budget 관리는 messages buffer의 FIFO eviction이 담당
-(`context/manager.py`) — 큰 observation은 누적되면 자연히 오래된 turn
-부터 빠짐. 의도된 거대 출력(`find /`, `cat huge.log`)은 모델이 자기 비용
-인지하에 호출한 것으로 간주.
+컨텍스트 budget 관리는 messages buffer의 2-tier 관리가 담당
+(`context/manager.py`) — 90% 초과 시 oldest 절반을 LLM 요약으로 흡수,
+요약 실패/미충족이면 FIFO drop으로 떨궈냄. 의도된 거대 출력
+(`find /`, `cat huge.log`)은 모델이 자기 비용 인지하에 호출한 것으로 간주.
 
 LLM이 출력을 좁히고 싶으면 도구 호출 자체를 좁혀야 함 (`tail -n 100`,
 `grep ERROR`, `head -c 4096` 등). silent truncation 없음.
@@ -1279,7 +1295,7 @@ agent-cli run "task description" [options]
   --depth N         현재 중첩 깊이
 ```
 
-`run`도 `chat`과 동일하게 세션/컨텍스트(FIFO + history.jsonl)를 관리합니다. 완료 후 세션 ID가 출력되며 `chat --resume <id>`로 이어서 작업할 수 있습니다. `--headless`는 서브에이전트(delegate) 전용으로, tmpdir 기반 휘발성 컨텍스트를 사용하고 세션을 저장하지 않습니다.
+`run`도 `chat`과 동일하게 세션/컨텍스트(compaction + FIFO fallback + history.jsonl + compaction.json)를 관리합니다. 완료 후 세션 ID가 출력되며 `chat --resume <id>`로 이어서 작업할 수 있습니다 (compaction state는 `dynamic_start_index`로 복원되어 summarised tail과 중복 없음). `--headless`는 서브에이전트(delegate) 전용으로, tmpdir 기반 휘발성 컨텍스트를 사용하고 세션을 저장하지 않습니다.
 
 ### 11.2 `chat` — 대화형 모드
 

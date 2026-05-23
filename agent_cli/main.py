@@ -868,6 +868,11 @@ def run(
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
+    no_compaction: bool = typer.Option(
+        False,
+        "--no-compaction",
+        help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. Useful for measurement baseline / debugging. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
+    ),
     response_format: str = typer.Option(
         "react",
         "--response-format",
@@ -1015,6 +1020,7 @@ def run(
             hooks_config=_disk_hooks,
             record_turns=record_turns,
             wire_format=wire_format_plugin,
+            compaction_enabled=not no_compaction,
         )
         answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
@@ -1185,6 +1191,11 @@ def chat(
         True,
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
+    ),
+    no_compaction: bool = typer.Option(
+        False,
+        "--no-compaction",
+        help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. Useful for measurement baseline / debugging. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
     ),
     response_format: str = typer.Option(
         "react",
@@ -1388,6 +1399,7 @@ def chat(
             hooks_config=_disk_hooks,
             record_turns=record_turns,
             wire_format=wire_format_plugin,
+            compaction_enabled=not no_compaction,
         )
         result = loop_result.output if loop_result.success else None
 
@@ -1448,6 +1460,11 @@ def web(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
+    no_compaction: bool = typer.Option(
+        False,
+        "--no-compaction",
+        help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
+    ),
     response_format: str = typer.Option(
         "react",
         "--response-format",
@@ -1625,6 +1642,7 @@ def web(
                     graceful_interrupt=True,
                     record_turns=record_turns,
                     wire_format=wire_format_plugin,
+                    compaction_enabled=not no_compaction,
                 )
             except Exception as exc:  # noqa: BLE001 — worker boundary
                 # Push the error into the renderer so the frontend sees

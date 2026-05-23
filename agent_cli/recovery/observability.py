@@ -117,3 +117,46 @@ class TurnRecorder:
         with self._path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
         self._seq += 1
+
+    def record_compaction(
+        self,
+        *,
+        tokens_before: int,
+        tokens_after: int,
+        evicted_count: int,
+        fallback_used: bool,
+        failure_signal: Optional[str] = None,
+        duration_ms: float = 0.0,
+    ) -> None:
+        """Append a compaction event to ``turns.jsonl`` (NFR-CC-6).
+
+        Recorded as ``event: "compaction"`` so analysis scripts can
+        filter cleanly from the per-turn ``TurnRecord`` rows (which
+        don't carry an ``event`` key). No-op when the recorder is
+        disabled.
+
+        ``fallback_used`` flags belt-and-braces FIFO activation —
+        either because ``_compact()`` raised (``failure_signal`` set)
+        OR because the rebuilt cache was still over budget
+        (``failure_signal`` None, ``fallback_used`` True). Both cases
+        share the same downstream signal so threshold / cap tuning
+        can sweep them together.
+        """
+        if self._path is None:
+            return
+
+        rec = {
+            "event": "compaction",
+            "seq": self._seq,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tokens_before": tokens_before,
+            "tokens_after": tokens_after,
+            "evicted_count": evicted_count,
+            "fallback_used": fallback_used,
+            "failure_signal": failure_signal,
+            "duration_ms": duration_ms,
+        }
+        line = json.dumps(rec, ensure_ascii=False)
+        with self._path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        self._seq += 1

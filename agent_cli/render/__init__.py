@@ -107,6 +107,59 @@ def render_status(state: str, message: str, turn: int = 0) -> None:
     _renderer.status(state, message, turn)
 
 
+def render_compaction_progress(
+    *,
+    phase: str,
+    old_tokens: int = 0,
+    new_tokens: int = 0,
+    evicted_count: int = 0,
+    reason: str = "",
+) -> None:
+    """Single entry point for surfacing context-compaction lifecycle.
+
+    ContextManager (and any future caller) routes ALL compaction-
+    related user-facing output through this helper rather than
+    calling ``render_status`` (or ``console.print`` / SSE emit)
+    directly. Keeping the text + presentation logic in one place
+    means a future upgrade (progress bar, dedicated SSE event, web
+    toast) is a single-file edit — callers stay unchanged.
+
+    ``phase`` is one of:
+      - ``"start"``  — just before LLM summarisation begins.
+      - ``"done"``   — after the cache has been rebuilt with the
+        new summary and retained tail.
+      - ``"warning"`` — LLM summarisation failed; the belt-and-braces
+        FIFO fallback handled the over-budget case instead.
+
+    The function intentionally accepts only the data needed to
+    render the text and leaves CLI-vs-web routing to ``_renderer.
+    status`` (which each Renderer subclass already implements).
+    """
+    if phase == "start":
+        _renderer.status(
+            "info",
+            f"Compacting context ({old_tokens:,} tokens, "
+            f"{evicted_count} messages → summary)",
+            0,
+        )
+    elif phase == "done":
+        _renderer.status(
+            "info",
+            f"Compaction done ({old_tokens:,} → {new_tokens:,} tokens)",
+            0,
+        )
+    elif phase == "warning":
+        _renderer.status(
+            "warning",
+            f"Context compaction failed ({reason}); using FIFO drop instead.",
+            0,
+        )
+    else:
+        # Unknown phase — silent rather than raising, since this is a
+        # UX path and a typo here shouldn't break the agent loop.
+        pass
+
+
 def render_model_detected(
     model: str, capabilities, provider: str, saved_path: str
 ) -> None:

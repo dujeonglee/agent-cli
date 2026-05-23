@@ -101,6 +101,7 @@ class AgentLoop:
         hook_runner=None,
         record_turns: bool = True,
         wire_format=None,
+        compaction_enabled: bool = True,
     ):
         # Wire format plugin — ReAct by default. Centralizes the
         # parser, recovery wording, prompt section, and lifecycle hooks
@@ -184,6 +185,59 @@ class AgentLoop:
         # selects the playbook column (1=probe_progress,
         # 2=restate_task, 3+=hard fail).
         self.loop_detector = ActionLoopDetector(threshold=2)
+
+        # Context compaction wiring (RFC docs/context-compaction/).
+        # The compactor callback and the TurnRecorder are injected
+        # into the ContextManager so the manager can summarise
+        # evicted messages via the same provider and emit compaction
+        # events for measurement. ``compaction_enabled=False`` (CLI
+        # ``--no-compaction``) skips the callback registration so the
+        # manager reverts to plain FIFO drop.
+        self.compaction_enabled = compaction_enabled
+        if self.ctx is not None:
+            self.ctx.set_recorder(self.recorder)
+            if self._compaction_enabled():
+                self.ctx.set_compactor(self._llm_compact_summarize)
+
+    def _compaction_enabled(self) -> bool:
+        """Resolve the effective compaction-enabled flag (NFR-CC-5).
+
+        Order of precedence:
+          1. ``AGENT_CLI_COMPACTION`` env var (operator-level kill
+             switch, wins over constructor flag).
+          2. ``compaction_enabled`` constructor flag (CLI
+             ``--no-compaction``).
+        """
+        import os
+
+        env = os.environ.get("AGENT_CLI_COMPACTION", "").strip().lower()
+        if env in ("off", "false", "0", "disabled", "no"):
+            return False
+        return self.compaction_enabled
+
+    def _llm_compact_summarize(self, messages: list[dict]) -> str:
+        """Compactor callback: call the main provider with a
+        summarisation system prompt + the evicted messages, return
+        the summary text. Raised exceptions are converted to
+        ``CompactionError`` inside ContextManager._summarize_messages.
+        """
+        summarisation_prompt = (
+            "Summarise the conversation below concisely. Preserve "
+            "(a) the user's original intent, (b) key actions taken "
+            "(tools used, files touched), (c) decisions made, (d) "
+            "outcomes / discoveries. Stay under 2000 tokens. Plain text."
+        )
+        request_messages = [
+            {"role": "system", "content": summarisation_prompt},
+            *messages,
+        ]
+        # No streaming, no tool calling — pure text completion.
+        response = self.provider.call(
+            messages=request_messages,
+            model=self.model,
+            on_chunk=lambda _: None,
+        )
+        return response.content if hasattr(response, "content") else str(response)
 
     def _fire_hook(self, event: str, **kwargs):
         """Fire a hook event if runner is available. Returns HookContext or None."""
@@ -1215,6 +1269,7 @@ def run_loop(
     hook_runner=None,
     record_turns: bool = True,
     wire_format=None,
+    compaction_enabled: bool = True,
 ):
     """Run the agent loop with the given wire-format plugin. Returns ToolResult.
 
@@ -1253,6 +1308,7 @@ def run_loop(
         hook_runner=hook_runner,
         record_turns=record_turns,
         wire_format=wire_format,
+        compaction_enabled=compaction_enabled,
     ).run()
 
 

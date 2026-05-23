@@ -187,6 +187,7 @@ agent-cli run "task description" [options]
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
+| `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
 | `--response-format` | Wire format 플러그인 이름. 빌트인: `react` (기본 — 순수 JSON `{thought, action, action_input}`), `prefix_md` (실험 — `## Thought / ## Action / ## Input` 마크다운 섹션, small-LLM이 envelope보다 자연스럽게 emit하도록 설계). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `react` |
 
 `run` 실행 후 세션이 자동 저장됩니다. `chat --resume <id>`로 이어서 작업할 수 있습니다:
@@ -220,6 +221,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `--resume <id>` | 이전 세션 이어서 작업 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
+| `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
 | `--response-format` | Wire format 플러그인 이름. 빌트인: `react` (기본 — 순수 JSON `{thought, action, action_input}`), `prefix_md` (실험 — `## Thought / ## Action / ## Input` 마크다운 섹션, small-LLM이 envelope보다 자연스럽게 emit하도록 설계). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `react` |
 
 대화 중 명령어:
@@ -277,7 +279,7 @@ UI 기능:
 - 좌측 어시스턴트 카드 (markdown 렌더링: 헤더 `#`/`##`/`###`, GFM 파이프 표, 순서/비순서 리스트, **bold**/*italic*, 인라인 코드, 펜스 코드 블록) + 우측 사용자 bubble
 - 도구 호출(action) / 결과(observation) 인라인 카드, ✓/✗ 상태 표시
 - 실시간 스트리밍 (점선 카드로 토큰 누적 → 최종 카드로 교체)
-- 컨텍스트 FIFO 동기화: 오래된 turn이 LLM 컨텍스트에서 밀려나면 UI에서도 제거
+- 컨텍스트 동기화: 오래된 turn이 LLM 컨텍스트에서 밀려나거나 compaction으로 요약되면 UI에서도 제거
 - 두 번째 탭이 접속하면 takeover 배너 + 기존 탭 자동 disconnect
 - ANSWERING 모드: `ask` 도구 호출 시 질문 텍스트가 입력창 위에 표시되어 스크롤 없이 답변
 
@@ -475,7 +477,7 @@ Python hook 함수가 받는 컨텍스�� 객체:
 ```python
 def pre_llm_call(ctx):
     ctx.event          # 이벤트 이름 ("PreLLMCall")
-    ctx.messages       # 현재 FIFO messages (읽기/쓰기)
+    ctx.messages       # 현재 cache messages (읽기/쓰기 — compaction/FIFO 후 상태)
     ctx.turn           # 현재 턴 번호
     ctx.session_dir    # 세션 디렉토리 Path
     ctx.tool_name      # PreToolUse/PostToolUse 시 도구 이름
@@ -707,7 +709,7 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 ### read_context — 세션 이력 조회
 
-이전 또는 현재 세션의 이력을 조회합니다. LLM이 FIFO context window 밖의 정보가 필요할 때 자발적으로 사용합니다.
+이전 또는 현재 세션의 이력을 조회합니다. LLM이 context window 밖으로 evict/compaction된 정보가 필요할 때 자발적으로 사용합니다.
 
 ```json
 // 세션 목록 (id, 마지막 활동 시간, 마지막 쿼리)
@@ -785,7 +787,7 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 {"action": "shell", "action_input": {"command": "find agent_cli -name '*.py' | wc -l"}}
 ```
 
-shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `grep -r` 같은 큰 명령을 호출하면 컨텍스트가 그만큼 차지되니, 필요한 부분만 받도록 좁히는 명령을 권장 (`tail -n 100`, `grep ERROR`, `head -c 4096` 등). 누적 컨텍스트가 budget을 초과하면 오래된 turn부터 FIFO로 자동 비워집니다.
+shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `grep -r` 같은 큰 명령을 호출하면 컨텍스트가 그만큼 차지되니, 필요한 부분만 받도록 좁히는 명령을 권장 (`tail -n 100`, `grep ERROR`, `head -c 4096` 등). 누적 컨텍스트가 budget의 90%를 넘으면 compaction이 발동해 오래된 절반을 LLM 요약으로 흡수하고, 그 단계에서도 안 들어가면 플레인 FIFO로 떨어뜨립니다.
 
 **위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 묻습니다:
 
@@ -919,7 +921,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 
 ### 세션 & 컨텍스트 관리 시스템
 
-LLM 기반 압축 없이, 토큰 budget 기반 FIFO + history.jsonl 영속화로 컨텍스트를 관리합니다.
+토큰 budget 기반 컨텍스트 관리. 평상시는 FIFO eviction, 90% 임계 초과 시 LLM 요약 압축(compaction)으로 전환되며, 모든 변경은 `history.jsonl`에 영속화됩니다.
 
 #### 컨텍스트 윈도우 레이아웃
 
@@ -937,9 +939,12 @@ LLM 기반 압축 없이, 토큰 budget 기반 FIFO + history.jsonl 영속화로
 │  │ [Hook Dynamic Sections]                       │  │  ← hook이 주입한 동적 섹션
 │  └───────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────┤
-│                  Messages (FIFO)                     │
+│            Messages (Compaction + FIFO)              │
 │  ┌───────────────────────────────────────────────┐  │
-│  │ [evicted — history.jsonl에만 존재]            │  │  ← budget 초과 시 오래된 것부터 제거
+│  │ [evicted — history.jsonl에만 존재]            │  │  ← 90% 초과 시 oldest half가 요약으로 흡수
+│  │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │  │
+│  │ [Compaction summary]    ← LLM 요약 (recursive)│  │
+│  │ [Touched files] a.py, b.py, <delegate:foo>    │  │
 │  │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │  │
 │  │ user: "hooks.py 분석해줘"                     │  │
 │  │ assistant: thought → action: read_file(...)   │  │  ← 자연어 변환
@@ -960,6 +965,20 @@ LLM 기반 압축 없이, 토큰 budget 기반 FIFO + history.jsonl 영속화로
 - 메시지 **단위로** eviction — 메시지 중간이 잘리는 일 없음
 - `--max-context-tokens`로 수동 override 가능 (0 = 자동)
 - 스킬/delegate는 부모 budget 상속
+
+#### Context Compaction (90% 임계)
+
+캐시가 budget의 90%를 넘으면 단순 FIFO drop 대신 LLM 요약 압축이 실행됩니다.
+
+1. **분할**: `[system anchor][dynamic]` — system prompt만 무조건 보존
+2. **Evict 절반 (token-based)**: oldest 절반을 떼어냄
+3. **LLM 요약**: evict 묶음을 단일 호출로 요약. 이전 요약이 있으면 prior summary를 같은 호출에 prepend (recursive single-call — 합치는 별도 단계 없음)
+4. **파일 경로 추출**: evict 안의 `read_file/write_file/edit_file/read_symbols` 호출과 `<delegate:agent>` placeholder를 누적 file_list에 dedup 머지
+5. **재구성**: `[system][summary][file_list][retained dynamic]`
+6. **영속화**: `compaction.json` (version, summary, file_list, dynamic_start_index 등) — `--resume` 시 압축 상태 그대로 복원
+7. **Belt-and-braces fallback**: LLM 호출 실패 또는 재구성된 cache가 여전히 budget 초과면 플레인 FIFO drop으로 떨어뜨림 — 무한 트리거 루프 방지
+
+`--no-compaction` 플래그 또는 `AGENT_CLI_COMPACTION=off` 환경 변수로 압축을 끄면 기존 플레인 FIFO만 동작합니다 (LLM 호출 비용·외부 의존이 곤란한 배포 환경 대비).
 
 #### 디렉토리 구조
 
@@ -1070,7 +1089,7 @@ agent_cli/
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI, Ollama)
 ├── wire_formats/        wire format 플러그인 (ReAct 외 추가 가능; 파서·복구·history 표현 self-contained)
 ├── tools/               도구 (read/write/edit/shell/delegate/context)
-├── context/             컨텍스트 관리 (FIFO + history.jsonl + 세션 메타)
+├── context/             컨텍스트 관리 (compaction + FIFO + history.jsonl + 세션 메타)
 ├── prompts/             조건부 시스템 프롬프트
 ├── skills/              프롬프트 스킬 시스템 (로더, 실행기, 모델)
 ├── agents/              에이전트 정의 (builtin: explorer)
