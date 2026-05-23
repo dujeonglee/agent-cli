@@ -624,13 +624,20 @@ def _run_parallel(
                 t.join()
     finally:
         # Restore terminal state after Rich Live (prevents readline cursor
-        # confusion with CJK input on subsequent prompts).
+        # confusion with CJK input on subsequent prompts). Only meaningful
+        # when stdin is an actual TTY — ``agent-cli web`` run in the
+        # background detaches stdin, and ``termios.tcflush`` on a non-TTY
+        # raises OSError(ENODEV) on macOS which has surfaced as a worker
+        # error in the SSE stream.
         try:
             import sys
             import termios
 
-            termios.tcflush(sys.stdin, termios.TCIFLUSH)
-        except (ImportError, OSError):
+            if sys.stdin is not None and sys.stdin.isatty():
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except (ImportError, OSError, ValueError):
+            # ValueError catches "I/O operation on closed file" from
+            # ``isatty()`` when the stream was already disposed.
             pass
 
     # Replay each task as a group block

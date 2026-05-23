@@ -324,8 +324,16 @@
     body.hidden = true; // default collapsed
 
     header.addEventListener("click", function () {
+      const wasCollapsed = body.hidden;
       body.hidden = !body.hidden;
       chevron.textContent = body.hidden ? "▶" : "▼";
+      if (wasCollapsed) {
+        // After expand, scroll the header back into the top of the
+        // viewport so the long body that just appeared doesn't
+        // push the header off-screen — otherwise users lose their
+        // anchor and scroll feels stuck.
+        header.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     });
 
     card.appendChild(header);

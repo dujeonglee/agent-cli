@@ -353,7 +353,9 @@ footer {
   border-left: 3px solid #6b7280;
   border-radius: 8px;
   padding: 0;
-  overflow: hidden;
+  /* No ``overflow: hidden`` — when the body expands, nested cards
+     (observation with its own max-height, long stream_chunk pre)
+     would get clipped instead of pushing the outer scroll. */
 }
 .card-task-group.task-ok { border-left-color: #16a34a; }
 .card-task-group.task-fail { border-left-color: #dc2626; }
@@ -424,6 +426,16 @@ footer {
    when an observation card sits inside the group. */
 .card-task-group .task-body .card {
   max-width: 100%;
+}
+/* Disable inner obs-body scroll INSIDE a task group: the body of a
+   delegate task is already a scrollable region (via the outer
+   ``#messages`` flex/auto-overflow), and stacking a second
+   ``max-height + overflow-y: auto`` produced a nested scroll that
+   trapped the wheel and made the main thread feel stuck. Let the
+   observation flow naturally and rely on the page scroll. */
+.card-task-group .card-observation .obs-body {
+  max-height: none;
+  overflow-y: visible;
 }
 .card-task-group .task-error {
   color: #7f1d1d;
