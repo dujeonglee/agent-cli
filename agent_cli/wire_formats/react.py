@@ -277,7 +277,7 @@ _FORMAT_RULES_ANCHOR = (
 
 _FORMAT_RULES_FIELD_SPECIFIC = (
     "1. `thought` MUST state purpose (what you want to achieve) and reason (why this action). Do not leave it empty.\n"
-    "2. `action_input` MUST match the tool's input schema."
+    '2. `action_input` MUST match the tool\'s input schema. For `complete`, `result` is a plain text string — write the answer directly. Do NOT wrap it in another JSON envelope like `{"result": "{\\"result\\": ...}"}`.'
 )
 
 
