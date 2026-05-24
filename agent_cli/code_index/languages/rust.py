@@ -163,6 +163,18 @@ def rs_extract_type(node, src: bytes, rel: str, out: list):
             enum_values=enum_values,
         )
     )
+    # For traits, descend into the body and emit each method signature
+    # (function_signature_item) or default method (function_item) with
+    # `parent` set to the trait name. Without this, a trait's API surface
+    # — its primary point of being — is invisible to the index.
+    if node.type == "trait_item":
+        trait_name = text(name_node, src)
+        for c in node.children:
+            if c.type == "declaration_list":
+                for child in c.children:
+                    if child.type in ("function_item", "function_signature_item"):
+                        rs_extract_function(child, src, rel, trait_name, out)
+                break
 
 
 def rs_extract_const_or_static(node, src: bytes, rel: str, out: list):

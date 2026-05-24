@@ -210,6 +210,48 @@ def walk_refs(
                         language=language,
                     )
                 )
+        elif nt == "type_identifier":
+            # TypeScript distinguishes `type_identifier` from plain
+            # `identifier` for names in type positions (annotations,
+            # generic args, interface/alias declarations). Emit
+            # `kind='type'` refs for these, skipping the cases where
+            # the type_identifier IS the definition site:
+            #   interface Foo {}       → Foo is the name being defined
+            #   type Foo = ...         → ditto
+            #   enum Foo {}            → ditto
+            #   <T extends ...>        → T is a generic parameter site
+            name = text(node, src)
+            identifiers_out.add(name)
+            parent = node.parent
+            skip = False
+            if parent is not None:
+                pt = parent.type
+                if pt in (
+                    "interface_declaration",
+                    "type_alias_declaration",
+                    "enum_declaration",
+                ):
+                    # First type_identifier child of these is the name.
+                    for c in parent.children:
+                        if c.type == "type_identifier":
+                            if c == node:
+                                skip = True
+                            break
+                elif pt == "type_parameter":
+                    # `<T>` itself — T is being declared here.
+                    if parent.children and parent.children[0] == node:
+                        skip = True
+            if not skip:
+                refs.append(
+                    Ref(
+                        name=name,
+                        kind="type",
+                        file=rel,
+                        line=node.start_point[0] + 1,
+                        col=node.start_point[1],
+                        language=language,
+                    )
+                )
         stack.extend(node.children)
 
 

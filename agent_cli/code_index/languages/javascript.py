@@ -286,6 +286,11 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
         t = node.type
         if t == "function_declaration":
             js_extract_function_decl(node, src, rel, None, syms, lang)
+        elif t == "generator_function_declaration":
+            # `function* gen()` — same shape as function_declaration but
+            # produces a generator. Modifier marks the generator-ness so
+            # downstream tools can distinguish if needed.
+            js_extract_function_decl(node, src, rel, None, syms, lang, ["generator"])
         elif t == "class_declaration":
             js_extract_class(node, src, rel, None, syms, lang)
         elif t == "lexical_declaration":
@@ -330,6 +335,10 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                 if c.type == "function_declaration":
                     js_extract_function_decl(
                         c, src, rel, None, syms, lang, ["exported"]
+                    )
+                elif c.type == "generator_function_declaration":
+                    js_extract_function_decl(
+                        c, src, rel, None, syms, lang, ["exported", "generator"]
                     )
                 elif c.type == "class_declaration":
                     js_extract_class(c, src, rel, None, syms, lang)

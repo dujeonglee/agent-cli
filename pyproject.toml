@@ -49,3 +49,9 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "ollama_integration: requires running Ollama at localhost:11434",
 ]
+
+[tool.ruff]
+# Tree-sitter fixture files are intentionally non-conforming source
+# (broken syntax in error.*, unused imports in canonical samples) — exclude
+# them from both lint and format passes.
+extend-exclude = ["tests/code_index/fixtures"]

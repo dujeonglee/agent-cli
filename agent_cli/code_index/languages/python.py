@@ -102,6 +102,18 @@ def py_extract_function(
             params=param_names or None,
         )
     )
+    # Descend into the function body so nested function / class definitions
+    # (closures, helper inner functions, locally-defined classes) become
+    # discoverable. Parent is the dotted chain of enclosing names.
+    if body is not None:
+        inner_parent = (parent + "." + name) if parent else name
+        for stmt in body.children:
+            if stmt.type == "function_definition":
+                py_extract_function(stmt, src, rel, inner_parent, out, [])
+            elif stmt.type == "class_definition":
+                py_extract_class(stmt, src, rel, inner_parent, out, [])
+            elif stmt.type == "decorated_definition":
+                py_extract_decorated(stmt, src, rel, inner_parent, out)
 
 
 def py_extract_class(
