@@ -28,18 +28,29 @@ which is removed in PR-3. See docs/code-index/DESIGN.md for the full
 contract.
 """
 
+from agent_cli.code_index.builder import build
+from agent_cli.code_index.callgraph import build_callgraph
 from agent_cli.code_index.schema import (
+    CODE_NAME_KINDS,
     NAME_KINDS,
     REF_KINDS,
     SCHEMA_VERSION,
     Ref,
     Symbol,
 )
+from agent_cli.code_index.slice import cmd_slice
+from agent_cli.code_index.store import IndexStore, load_index
 
 __all__ = [
+    "CODE_NAME_KINDS",
+    "IndexStore",
     "NAME_KINDS",
     "REF_KINDS",
-    "SCHEMA_VERSION",
     "Ref",
+    "SCHEMA_VERSION",
     "Symbol",
+    "build",
+    "build_callgraph",
+    "cmd_slice",
+    "load_index",
 ]

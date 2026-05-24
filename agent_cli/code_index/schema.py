@@ -52,6 +52,15 @@ NAME_KINDS: frozenset[str] = frozenset(
     {"function", "type", "variable", "constant", "section"}
 )
 
+# Subset of NAME_KINDS that participates in cross-file code reference
+# resolution. The builder's Pass-2 only adds names of these kinds to the
+# `defined_names` set that walk_refs consults — so a Markdown heading
+# `## Setup` does NOT cause every Python file mentioning `Setup` to emit
+# a `kind='name'` ref pointing at the heading. Section symbols are still
+# stored in the index (lookup/kind/file modes return them) — they just
+# don't pollute the cross-file ref graph.
+CODE_NAME_KINDS: frozenset[str] = NAME_KINDS - {"section"}
+
 # Closed set of values for `refs.kind`. See module docstring for
 # semantics. Unlike NAME_KINDS this has not changed from the upstream
 # tsindex schema.

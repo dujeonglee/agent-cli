@@ -16,8 +16,9 @@ Pass-2 (`walk_refs`) extends the C ref vocabulary by also recognising
 `obj.method(...)`, `obj->method(...)`, and `Scope::name(...)` as call
 sites whose target is the right-most identifier.
 
-Preprocess slot is `noop_preprocess` in PR-1.b; the real C/C++
-unifdef + rewriter chain ports separately in PR-1.c.
+Preprocess slot is `preprocess_source` from `code_index.preproc` — the
+same C preprocessor pipeline applies to C++ since the kernel-style
+macros and `__attribute__` constructs also appear in C++ headers.
 
 The internal AST helpers (`find_innermost_function_name`,
 `extract_storage_inline`, `c_modifiers`, etc.) are duplicated here so
@@ -29,8 +30,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
+from agent_cli.code_index.languages import LANGUAGES, LangSpec
 from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.preproc import preprocess_source
 from agent_cli.code_index.schema import Ref, Symbol
 
 
@@ -711,5 +713,5 @@ LANGUAGES["cpp"] = LangSpec(
     grammar_factory=_lang_cpp,
     walk_definitions=walk_definitions,
     walk_refs=walk_refs,
-    preprocess=noop_preprocess,
+    preprocess=preprocess_source,
 )

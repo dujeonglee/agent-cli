@@ -17,16 +17,17 @@ the struct/union/enum/typedef definition name position, and
 `kind='name'` for plain identifiers whose name is in the defined-name
 set.
 
-Preprocess slot is `noop_preprocess` in PR-1.b; the real C/C++
-unifdef + rewriter chain ports separately in PR-1.c.
+Preprocess slot is `preprocess_source` from `code_index.preproc`: the
+kernel-style regex rewrite chain plus an optional `unifdef -b` pass.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
+from agent_cli.code_index.languages import LANGUAGES, LangSpec
 from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.preproc import preprocess_source
 from agent_cli.code_index.schema import Ref, Symbol
 
 
@@ -537,5 +538,5 @@ LANGUAGES["c"] = LangSpec(
     grammar_factory=_lang_c,
     walk_definitions=walk_definitions,
     walk_refs=walk_refs,
-    preprocess=noop_preprocess,
+    preprocess=preprocess_source,
 )
