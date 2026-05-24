@@ -63,6 +63,18 @@ def build_callgraph(idx):
     Param shadowing is filtered (a ref whose name matches the enclosing
     function's parameter is a local var access, not a real call).
 
+    Refs of kind='call' and kind='name' BOTH count toward the graph
+    (the latter captures callback-style references — `register(helper)`
+    — which are real edges in the function dependency graph). However,
+    walkers like Python's emit BOTH a 'call' and a 'name' ref at the
+    same call site (the call_expression and its function-identifier
+    child are visited independently). To avoid double-counting that
+    case while still picking up callback-only refs, we deduplicate by
+    (caller, callee, file, line): each unique site contributes one
+    edge instance. ``sites_of`` records one entry per unique site,
+    with the 'call' kind taking precedence over 'name' when both
+    appear at the same coordinates.
+
     Returns (calls_of, callers_of, sites_of).
       calls_of[fn]   -> Counter[callee_fn]
       callers_of[fn] -> Counter[caller_fn]
@@ -73,9 +85,10 @@ def build_callgraph(idx):
         s["name"] for s in idx["symbols"] if s["kind"] in FUNCTION_KINDS
     }
 
-    calls_of = defaultdict(Counter)
-    callers_of = defaultdict(Counter)
-    sites_of = defaultdict(list)
+    # First pass: collect per-(caller, callee, file, line) the set of
+    # ref kinds observed there. This dedupes the call+name double-emit
+    # while preserving callback-only sites.
+    site_kinds: dict[tuple[str, str, str, int], set[str]] = defaultdict(set)
     for r in idx["refs"]:
         if r["kind"] not in ("call", "name"):
             continue
@@ -87,7 +100,16 @@ def build_callgraph(idx):
         cf, params = ctx
         if cf == r["name"] or r["name"] in params:
             continue
-        calls_of[cf][r["name"]] += 1
-        callers_of[r["name"]][cf] += 1
-        sites_of[(cf, r["name"])].append((r["file"], r["line"], r["kind"]))
+        site_kinds[(cf, r["name"], r["file"], r["line"])].add(r["kind"])
+
+    # Second pass: emit one edge per unique site.
+    calls_of = defaultdict(Counter)
+    callers_of = defaultdict(Counter)
+    sites_of = defaultdict(list)
+    for (cf, callee, file, line), kinds in site_kinds.items():
+        # Prefer 'call' kind when both are observed at the same site.
+        primary_kind = "call" if "call" in kinds else "name"
+        calls_of[cf][callee] += 1
+        callers_of[callee][cf] += 1
+        sites_of[(cf, callee)].append((file, line, primary_kind))
     return calls_of, callers_of, sites_of
