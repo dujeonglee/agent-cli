@@ -85,8 +85,9 @@ _HASHLINE_INLINE = """\
   Constraints:
   - Read the target lines in the CURRENT turn before edit_file. Hashes
     from earlier turns drift if anything else touched the file — do not
-    reuse them. (read_symbols fetch counts as a fresh read; its output
-    is already hashline-formatted and pipes straight into edit_file.)
+    reuse them. (code_index mode='fetch' counts as a fresh read; its
+    output is already hashline-formatted and pipes straight into
+    edit_file.)
   - A hash mismatch is not a failure — it is a guardrail signaling the
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
@@ -170,15 +171,15 @@ def _build_delegate_inline(wire_format) -> str:
 def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     """Build the read_file inline guide.
 
-    When ``read_symbols`` is active, the Flow paragraph routes
-    supported-language files to ``read_symbols`` mode='list' as the
-    entry point — its symbol outline beats stat's 20-line head. The
-    extension list is pulled from
-    :func:`agent_cli.tools.symbols.get_supported_extensions` so a new
-    grammar in ``_EXT_TO_LANG`` updates the prompt automatically
-    (single source of truth).
+    When ``code_index`` is active, the Flow paragraph routes
+    supported-language files to ``code_index`` mode='list' as the entry
+    point — its symbol outline beats stat's 20-line head. The extension
+    list is pulled from
+    :func:`agent_cli.code_index.languages.get_supported_extensions` so
+    adding a walker module automatically updates the prompt (single
+    source of truth).
 
-    When ``read_symbols`` is not active (e.g., subagent with restricted
+    When ``code_index`` is not active (e.g., subagent with restricted
     tools), the steering is omitted to avoid pointing the model at a
     tool it cannot call.
 
@@ -222,13 +223,13 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
   4. Full — the file is known-small or central to the task.
        {ex_full}
 """
-    if "read_symbols" in active_tools:
-        from agent_cli.tools.symbols import get_supported_extensions
+    if "code_index" in active_tools:
+        from agent_cli.code_index.languages import get_supported_extensions
 
         exts = ", ".join(get_supported_extensions())
         flow = f"""
   Flow: for an unknown file, if its extension is supported by
-  read_symbols ({exts}), call read_symbols mode='list' first.
+  code_index ({exts}), call code_index mode='list' first.
   Otherwise stat first to get its size, then pick one of modes 2–4.
   stat alone is never enough — if you stop after stat, you have only
   seen the first 20 lines. A bare full read on a large file (~300+
@@ -242,80 +243,111 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     return base_modes + flow
 
 
-def _build_read_symbols_inline(wire_format) -> str:
-    """Build the read_symbols inline guide.
+def _build_code_index_inline(wire_format) -> str:
+    """Build the code_index inline guide.
 
     Pulls the supported extension list from
-    :func:`agent_cli.tools.symbols.get_supported_extensions` so adding a
-    grammar to ``_EXT_TO_LANG`` automatically updates the prompt.
+    :func:`agent_cli.code_index.languages.get_supported_extensions` so
+    adding a walker module automatically updates the prompt (single
+    source of truth).
 
-    Examples show only the action_input dict — the wire-shape
-    envelope is taught by the Format Rules section, not by repeating
-    a wrapper at every inline example. See ``_build_read_file_inline``
-    docstring for the rationale (small-model placeholder anchoring).
+    Examples show only the action_input dict — the wire-shape envelope
+    is taught by the Format Rules section, not by repeating a wrapper
+    at every inline example. See ``_build_read_file_inline`` docstring
+    for the rationale (small-model placeholder anchoring).
 
     The action_input fragment passes through
-    ``wire_format.render_action_input`` so a future plugin can swap
-    the inner shape without changing this builder. Both current
-    plugins return identity.
+    ``wire_format.render_action_input`` so a future plugin can swap the
+    inner shape without changing this builder. Both current plugins
+    return identity.
     """
-    from agent_cli.tools.symbols import get_supported_extensions
+    from agent_cli.code_index.languages import get_supported_extensions
 
     exts = ", ".join(get_supported_extensions())
     rai = wire_format.render_action_input
-    list_py = rai('{"path": "auth.py", "mode": "list"}')
-    list_cpp = rai('{"path": "src/foo.cpp", "mode": "list"}')
-    list_md = rai('{"path": "README.md", "mode": "list"}')
-    list_search1 = rai('{"path": "auth.py", "mode": "list", "search": "login"}')
-    list_search2 = rai(
-        '{"path": "src/foo.cpp", "mode": "list", "search": "^ns::Foo::"}'
+
+    list_py = rai('{"mode": "list", "path": "auth.py"}')
+    list_cpp = rai('{"mode": "list", "path": "src/foo.cpp"}')
+    list_search = rai('{"mode": "list", "path": "auth.py", "search": "login"}')
+
+    fetch_py = rai('{"mode": "fetch", "path": "auth.py", "name": "User.login"}')
+    fetch_md = rai('{"mode": "fetch", "path": "README.md", "name": "## Setup"}')
+
+    lookup = rai('{"mode": "lookup", "name": "AgentLoop"}')
+    lookup_kind = rai('{"mode": "lookup", "name": "Setup", "symbol_kind": "section"}')
+    kind_all = rai('{"mode": "kind", "symbol_kind": "function"}')
+    file_q = rai('{"mode": "file", "path": "agent_cli/loop.py"}')
+    refs_q = rai('{"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}')
+    callers_q = rai('{"mode": "callers", "name": "process"}')
+    callees_q = rai('{"mode": "callees", "name": "process"}')
+    slice_q = rai(
+        '{"mode": "slice", "name": "process", '
+        '"with_callees": true, "with_types": true, "depth": 2}'
     )
-    list_search3 = rai(
-        '{"path": "tests/test_loop.py", "mode": "list", "search": "^test_"}'
-    )
-    fetch_py = rai('{"path": "auth.py", "mode": "fetch", "name": "User.login"}')
-    fetch_cpp = rai('{"path": "src/foo.cpp", "mode": "fetch", "name": "ns::Foo::bar"}')
-    fetch_md = rai('{"path": "README.md", "mode": "fetch", "name": "## Setup"}')
+    build_q = rai('{"mode": "build"}')
+
     return f"""\
 
-  Structure-aware file reader. Two modes:
+  Persistent code/markdown index backed by a SQLite store at
+  ``<project_root>/.agent-cli/code_index.db``. Lazy-built on first
+  query; sha1-incremental on every call after that, so it stays fresh
+  with no manual invalidation. Ten modes:
 
-  1. mode='list' — outline of the file (functions, classes, methods,
-     structs/enums/typedefs, #defines, markdown headings). Each line is
-     ``name (kind) :start-end``. Use this in place of read_file:stat
-     when the file is a supported language.
+  1. mode='list' — per-file outline (one symbol per line:
+     ``parent.name (kind) file:start-end``). Replaces read_file:stat
+     for any supported-extension file.
        {list_py}
        {list_cpp}
-       {list_md}
-     With optional ``search='<regex>'`` the outline is filtered to
-     symbols whose name matches the regex (re.search semantics) — prefer
-     this over piping list output through shell grep. Patterns scale
-     from substrings to anchored prefixes to grouped families:
-       {list_search1}
-       {list_search2}
-       {list_search3}
-  2. mode='fetch' — body of one named symbol from the outline. The
-     ``name`` must match the outline verbatim. The body is returned in
-     hashline format (LINE#HASH:content), so you can pipe it straight
-     into edit_file without a separate read_file. When the same name
-     has both a declaration and a definition (e.g. .h prototype + .cpp
-     body), the definition is returned.
+     ``search='<regex>'`` filters the outline by symbol name (re.search):
+       {list_search}
+  2. mode='fetch' — single-symbol body in hashline format
+     (``LINE#HASH:content``) so it pipes straight into edit_file
+     without a separate read_file. Definition wins when a name has
+     both a declaration and a definition. Markdown accepts the heading
+     with or without the marker (``## Setup`` ≡ ``Setup``).
        {fetch_py}
-       {fetch_cpp}
        {fetch_md}
+  3. mode='lookup' — find a symbol by name ACROSS the whole index.
+     Optional ``symbol_kind`` (function / type / variable / constant /
+     section) filter.
+       {lookup}
+       {lookup_kind}
+  4. mode='kind' — list every symbol of a given kind in the index.
+     Useful for "show me every section/function/type".
+       {kind_all}
+  5. mode='file' — every symbol in one file from the index (no re-parse).
+       {file_q}
+  6. mode='refs' — every reference site for a name. Optional
+     ``ref_kind`` (call / name / type) — ``call`` for invocation sites,
+     ``name`` for bare-identifier mentions (callbacks), ``type`` for
+     identifiers in type position.
+       {refs_q}
+  7. mode='callers' — functions that call this one (from the callgraph).
+       {callers_q}
+  8. mode='callees' — functions called by this one.
+       {callees_q}
+  9. mode='slice' — LLM-context markdown blob: the symbol's
+     definition body plus optional callees / callers / types / macros
+     up to ``depth`` (default 1, max 5). Use this when you need to
+     understand a function in the company of its neighbours.
+       {slice_q}
+  10. mode='build' — force a full rebuild. Rare — the per-query
+      incremental refresh handles normal cases.
+       {build_q}
+
+  Path scope: ``list`` and ``fetch`` on a path OUTSIDE the indexed root
+  fall through to an on-demand parse (single file, no DB write).
+  ``lookup``, ``kind``, ``file``, ``refs``, ``callers``, ``callees``,
+  ``slice`` are index-scoped — they only see files under the indexed
+  root. ``build`` always operates on the indexed root.
 
   Naming follows each language's convention:
   - Python / JavaScript / TypeScript: ``Class.method``
-  - C / C++: ``namespace::Class::method``
-  - Markdown: heading marker + text (``## Setup``)
+  - C / C++ / Rust: ``namespace::Class::method`` (or ``Type::method``)
+  - Markdown: heading text (``Setup``) or with marker (``## Setup``)
 
-  Supported extensions: {exts}. C and C++ both use the C++ parser.
-  For other formats, use read_file.
-
-  Scope: indexes definitions and structural symbols only. For *call
-  sites* (where a name is invoked) or any text occurrence (comments,
-  strings, identifiers in use) use read_file search — read_symbols will
-  not surface those."""
+  Supported extensions: {exts}.
+  For non-code/non-markdown files, use read_file."""
 
 
 _ASK_INLINE = """\
@@ -349,7 +381,7 @@ _ASK_INLINE = """\
 def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
 
-    ``read_file``'s guide depends on whether ``read_symbols`` is also
+    ``read_file``'s guide depends on whether ``code_index`` is also
     active (steering line gets added in that case), so the map cannot
     be a static module-level dict — it's rebuilt per call.
 
@@ -363,7 +395,7 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
         "edit_file": _HASHLINE_INLINE,
         "delegate": _build_delegate_inline(wire_format),
         "ask": _ASK_INLINE,
-        "read_symbols": _build_read_symbols_inline(wire_format),
+        "code_index": _build_code_index_inline(wire_format),
     }
 
 

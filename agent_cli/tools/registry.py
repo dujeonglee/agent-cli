@@ -110,37 +110,6 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["command"],
         },
     ),
-    "read_symbols": ToolSchema(
-        name="read_symbols",
-        description=(
-            "Structure-aware reader for source/markdown files using tree-sitter. "
-            "Two modes: mode='list' returns the file outline (functions, classes, "
-            "methods, structs, typedefs, #defines, headings) with line ranges; "
-            "mode='fetch' returns the body of one named symbol from that outline. "
-            "When a name has both a declaration and a definition, the definition wins. "
-            "Languages: Python (.py), JavaScript (.js/.jsx), TypeScript (.ts/.tsx), "
-            "C/C++ (.c/.cpp/.h/.hpp/...), Markdown (.md). Other formats → use read_file."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path"},
-                "mode": {
-                    "type": "string",
-                    "enum": ["list", "fetch"],
-                    "description": "'list' for outline (default), 'fetch' for one symbol's body",
-                },
-                "name": {
-                    "type": "string",
-                    "description": (
-                        "Required for mode='fetch'. Exact symbol name as shown by "
-                        "mode='list' (e.g. 'Foo.bar', 'ns::Foo::bar', '## Setup')"
-                    ),
-                },
-            },
-            "required": ["path"],
-        },
-    ),
     "code_index": ToolSchema(
         name="code_index",
         description=(

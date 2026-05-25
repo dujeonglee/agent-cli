@@ -95,8 +95,8 @@ def format_hashlines_range(all_lines: list[str], start_idx: int, end_idx: int) -
     line counts (partial reads, search context windows, structural fetches)
     do not pay the cost of re-splitting the file.
 
-    Public API: also imported by :mod:`agent_cli.tools.symbols` so that
-    ``read_symbols`` fetch output uses the same hashline format —
+    Public API: also imported by :mod:`agent_cli.tools.code_index` so
+    that ``code_index`` fetch output uses the same hashline format —
     callers can pipe a fetched body straight into ``edit_file`` without
     re-reading the file. Keep the signature stable.
     """

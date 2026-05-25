@@ -172,12 +172,12 @@ class TestBuildSystemPrompt:
         """Pre-call routine: "Always read the file first" was too lax —
         models reused hashes from earlier turns and got hash mismatches
         on edit. The guide must require the read to happen in the
-        CURRENT turn, and must call out that read_symbols fetch counts
-        as a fresh read (its output is hashline-formatted), so the model
+        CURRENT turn, and must call out that code_index fetch counts as
+        a fresh read (its output is hashline-formatted), so the model
         doesn't waste a turn doing a redundant read_file after fetch."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["edit_file", "read_symbols"])
+        prompt = build_system_prompt(_make_caps(), ["edit_file", "code_index"])
         flat = re.sub(r"\s+", " ", prompt)
         # Current-turn / immediacy is asserted (case-insensitive: the
         # source uses CURRENT in caps for emphasis).
@@ -185,9 +185,9 @@ class TestBuildSystemPrompt:
         # The drift mechanism is named — hashes from earlier turns are
         # not reusable because something else may have touched the file.
         assert "drift" in flat.lower()
-        # read_symbols fetch is acknowledged as a fresh read so the model
-        # doesn't double-read.
-        assert "read_symbols fetch" in flat or "fetch counts" in flat.lower()
+        # code_index mode='fetch' is acknowledged as a fresh read so the
+        # model doesn't double-read.
+        assert "code_index mode='fetch'" in flat or "fetch counts" in flat.lower()
 
     def test_hashline_guide_reframes_mismatch_as_guardrail(self):
         """Post-error tone: a hash mismatch must read as a guardrail,
@@ -432,68 +432,68 @@ class TestBuildSystemPrompt:
         tools_pos = prompt.index("## Available Tools")
         assert ctx_pos < guidelines_pos < format_pos < tools_pos
 
-    def test_read_symbols_inline_guide_present(self):
-        """When read_symbols is in active_tools, the inline guide should
-        appear in the prompt — covering both modes, the language list,
-        and the naming convention so the model can use the tool without
-        a separate doc lookup."""
-        prompt = build_system_prompt(_make_caps(), ["read_symbols"])
-        assert "- read_symbols:" in prompt
-        # Both modes documented.
+    def test_code_index_inline_guide_present(self):
+        """When code_index is in active_tools, the inline guide should
+        appear in the prompt — covering the principal modes, the
+        language list, and the naming convention so the model can use
+        the tool without a separate doc lookup."""
+        prompt = build_system_prompt(_make_caps(), ["code_index"])
+        assert "- code_index:" in prompt
+        # The principal modes are documented (representative subset).
         assert "mode='list'" in prompt
         assert "mode='fetch'" in prompt
+        assert "mode='lookup'" in prompt
+        assert "mode='callers'" in prompt
+        assert "mode='slice'" in prompt
         # Naming convention covers code (.) and C++ (::) and markdown headings.
-        assert "Class.method" in prompt or "Foo.bar" in prompt
-        assert "::" in prompt  # ns::Foo::bar
+        assert "Class.method" in prompt
+        assert "::" in prompt  # namespace::Class::method
         assert "## Setup" in prompt
 
-    def test_read_symbols_lists_supported_languages(self):
-        """Every extension in _EXT_TO_LANG must appear in the inline
-        guide. This is a single-source-of-truth regression guard: the
-        guide is built from get_supported_extensions(), so adding a
-        grammar to _EXT_TO_LANG should automatically propagate. If
-        anyone reverts to a hardcoded list, this test catches it."""
-        from agent_cli.tools.symbols import get_supported_extensions
+    def test_code_index_lists_supported_languages(self):
+        """Every extension registered by a walker module must appear in
+        the inline guide. This is a single-source-of-truth regression
+        guard: the guide is built from get_supported_extensions(), so
+        adding a walker should automatically propagate. If anyone
+        reverts to a hardcoded list, this test catches it."""
+        from agent_cli.code_index.languages import get_supported_extensions
 
-        prompt = build_system_prompt(_make_caps(), ["read_symbols"])
+        prompt = build_system_prompt(_make_caps(), ["code_index"])
         for ext in get_supported_extensions():
-            assert ext in prompt, f"{ext} missing from read_symbols inline guide"
+            assert ext in prompt, f"{ext} missing from code_index inline guide"
 
-    def test_read_symbols_guide_separates_definition_from_usage(self):
-        """read_symbols indexes definitions / structural symbols only —
-        it does not surface call sites or text occurrences. The guide
-        must split that boundary so the model doesn't try to use
-        read_symbols for "where is X called" / "find string Y" tasks
-        (which return empty or misleading hits) and instead reaches for
-        read_file search."""
+    def test_code_index_guide_distinguishes_per_file_from_index_wide(self):
+        """The 10-mode surface splits into per-file (list/fetch) and
+        index-wide (lookup/kind/refs/callers/callees/slice). The guide
+        must make that scope distinction explicit so the model doesn't
+        try to use mode='file' for an arbitrary out-of-root file."""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["read_file", "read_symbols"])
+        prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
         flat = re.sub(r"\s+", " ", prompt).lower()
-        # Definitions vs usages boundary is named.
-        assert "definitions" in flat
-        assert "call site" in flat or "where a name is invoked" in flat
-        # Redirect for the usage case is read_file search.
-        assert "read_file search" in flat
+        # Per-file out-of-root falls back to on-demand parse.
+        assert "on-demand parse" in flat
+        # Cross-file modes are explicitly index-scoped.
+        assert "index-scoped" in flat
 
     def test_read_file_flow_drops_comparative_tone(self):
         """Earlier wording leaned on a comparison ("stronger entry point
         than stat's 20-line head") to justify routing supported files at
-        read_symbols. Imperative wording is more turn-efficient: just
-        say what to call. Regression guard against re-introducing the
+        code_index. Imperative wording is more turn-efficient: just say
+        what to call. Regression guard against re-introducing the
         comparative phrasing."""
-        prompt = build_system_prompt(_make_caps(), ["read_file", "read_symbols"])
+        prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
         # Old comparative phrasing must not return.
         assert "stronger entry point" not in prompt
         # The imperative form remains (covered by the existing steering
         # test, but pinned here too for clarity).
-        assert "read_symbols mode='list' first" in prompt
+        assert "code_index mode='list' first" in prompt
 
-    def test_read_symbols_guide_advertises_hashline_output(self):
+    def test_code_index_guide_advertises_hashline_output(self):
         """The fetch mode returns hashline-formatted bodies so the model
         can pipe straight into edit_file. The guide must surface that
         invariant — otherwise the model may waste a turn re-reading."""
-        prompt = build_system_prompt(_make_caps(), ["read_symbols"])
+        prompt = build_system_prompt(_make_caps(), ["code_index"])
         assert "hashline" in prompt.lower()
         assert "edit_file" in prompt
 
@@ -519,20 +519,20 @@ class TestBuildSystemPrompt:
         assert "burn context budget" in prompt
         assert "costs turns" in prompt or "more turns" in prompt
 
-    def test_read_file_steers_to_read_symbols_when_active(self):
+    def test_read_file_steers_to_code_index_when_active(self):
         """When both tools are active, the read_file Flow paragraph must
-        steer supported-language files at read_symbols mode='list' as
-        the entry point — that's how we counteract read_file:stat
-        being the cheaper-feeling default and getting read_symbols out
-        of its low-baseline trap."""
-        from agent_cli.tools.symbols import get_supported_extensions
+        steer supported-language files at code_index mode='list' as the
+        entry point — that's how we counteract read_file:stat being the
+        cheaper-feeling default and getting code_index out of its
+        low-baseline trap."""
+        from agent_cli.code_index.languages import get_supported_extensions
 
-        prompt = build_system_prompt(_make_caps(), ["read_file", "read_symbols"])
-        # The Flow line names read_symbols as the entry point.
-        assert "read_symbols mode='list' first" in prompt
+        prompt = build_system_prompt(_make_caps(), ["read_file", "code_index"])
+        # The Flow line names code_index as the entry point.
+        assert "code_index mode='list' first" in prompt
         # Every supported extension must appear in the Flow paragraph
-        # itself (the read_symbols guide already lists them — this
-        # checks the read_file→read_symbols steering also stays in sync).
+        # itself (the code_index guide already lists them — this checks
+        # the read_file→code_index steering also stays in sync).
         flow_start = prompt.index(
             "Flow: for an unknown file, if its extension is supported by"
         )
@@ -541,13 +541,13 @@ class TestBuildSystemPrompt:
         for ext in get_supported_extensions():
             assert ext in flow_text, f"{ext} missing from read_file Flow steering"
 
-    def test_read_file_omits_steering_when_read_symbols_inactive(self):
-        """If read_symbols is not in active_tools (e.g., subagent with a
+    def test_read_file_omits_steering_when_code_index_inactive(self):
+        """If code_index is not in active_tools (e.g., subagent with a
         restricted tool list), the read_file guide must NOT mention it
         — pointing the model at a tool it cannot call wastes a retry on
         UNKNOWN_TOOL."""
         prompt = build_system_prompt(_make_caps(), ["read_file"])
-        assert "read_symbols" not in prompt
+        assert "code_index" not in prompt
         # Original Flow wording survives.
         assert "Flow: for an unknown file, stat first" in prompt
 

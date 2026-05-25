@@ -22,7 +22,7 @@ from typing import Any
 
 
 _PATH_TOOLS: frozenset[str] = frozenset(
-    {"write_file", "edit_file", "read_file", "read_symbols"}
+    {"write_file", "edit_file", "read_file", "code_index"}
 )
 
 
