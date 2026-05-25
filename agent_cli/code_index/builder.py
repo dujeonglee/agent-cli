@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -39,6 +40,43 @@ from agent_cli.code_index.store import IndexStore, load_index
 _PARSER_CACHE: dict[str, object] = {}
 
 
+# Directories the indexer skips by default. Includes the obvious VCS /
+# build-artifact / Python-cache patterns plus agent-cli's own
+# infrastructure dirs (``.agent-cli`` holds the index itself; ``.claude``
+# stores worktrees, command caches, and other ephemerals that look like
+# source files to the walker but shouldn't be indexed as part of the
+# project). Without this prune the index can balloon 5–10x with stale
+# worktree snapshots when the user runs from a repo with active
+# branches.
+_SKIP_DIRS: frozenset[str] = frozenset(
+    {
+        # VCS
+        ".git",
+        ".hg",
+        ".svn",
+        # Agent infrastructure
+        ".agent-cli",
+        ".claude",
+        # Python virtualenv / cache
+        ".venv",
+        "venv",
+        "env",
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        # JS / TS
+        "node_modules",
+        # Build artifacts
+        "build",
+        "dist",
+        "target",
+        # Tox
+        ".tox",
+    }
+)
+
+
 def get_parser(lang: str):
     from tree_sitter import Parser
 
@@ -53,14 +91,18 @@ def get_parser(lang: str):
 def iter_source_files(root: Path):
     """Iterate source files matching any registered language extension.
 
-    `get_supported_extensions()` triggers the lazy walker import as a
-    side effect, so this function works regardless of whether any
-    walker module was imported before now.
+    Walks ``root`` with ``os.walk`` so we can prune common irrelevant
+    directories (``_SKIP_DIRS``) — the previous ``rglob('*')`` version
+    visited every descendant and made the indexer follow VCS / build /
+    worktree dirs that have no business being in the index.
     """
     all_exts = set(get_supported_extensions())
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and p.suffix in all_exts:
-            yield p
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        for name in sorted(filenames):
+            p = Path(dirpath) / name
+            if p.suffix in all_exts:
+                yield p
 
 
 def build(

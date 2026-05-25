@@ -1,0 +1,466 @@
+"""Native ``code_index`` tool entry — agent-cli wrapper over the
+``agent_cli.code_index`` package.
+
+Mode dispatch:
+
+  list       file outline (per-file, on-demand parse if outside root)
+  fetch      single symbol body in hashline format (edit_file-ready)
+  lookup     index-wide symbol lookup by name (+ optional symbol_kind)
+  kind       index-wide symbols by symbol_kind
+  file       all symbols defined in a single file (index lookup)
+  refs       all ref sites for a name (+ optional ref_kind)
+  callers    callers of a function (from callgraph)
+  callees    callees of a function (from callgraph)
+  slice      LLM-context markdown blob (def + optional context)
+  build      force a full rebuild of the SQLite index
+
+Indexed root resolution: walk up from cwd looking for an existing
+``.agent-cli/`` directory; fall back to cwd. DB lives at
+``<root>/.agent-cli/code_index.db`` and is lazy-built on first access
+plus per-query incrementally refreshed by ``build()``'s sha1 path.
+
+Paths outside the indexed root fall through to an on-demand parse for
+``list`` / ``fetch`` only; index-scoped modes (``lookup``, ``kind``,
+``refs``, ``callers``, ``callees``, ``slice``, ``build``) return a
+clear error if the supplied path is out-of-root.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import asdict
+from pathlib import Path
+from typing import Optional
+
+from agent_cli.code_index import (
+    IndexStore,
+    build,
+    build_callgraph,
+    cmd_slice,
+    load_index,
+)
+from agent_cli.code_index.builder import get_parser
+from agent_cli.code_index.languages import LANGUAGES, language_of
+from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
+from agent_cli.tools.read_file import format_hashlines_range
+from agent_cli.tools.result import ToolResult
+
+
+# ----- index root / DB resolution -------------------------------------------
+
+
+def _resolve_index_root() -> Path:
+    """Nearest ancestor that already contains ``.agent-cli/``; else cwd.
+
+    Using an existing ``.agent-cli/`` as the anchor lets multi-subdir
+    project layouts work: running ``agent-cli`` from ``src/`` still
+    shares an index with a previous run from the project root.
+    """
+    cwd = Path.cwd()
+    for d in [cwd, *cwd.parents]:
+        if (d / ".agent-cli").is_dir():
+            return d
+    return cwd
+
+
+def _resolve_db_path() -> Path:
+    """``<index_root>/.agent-cli/code_index.db``. Creates the parent
+    directory if it doesn't yet exist."""
+    db = _resolve_index_root() / ".agent-cli" / "code_index.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    return db
+
+
+def _ensure_index() -> tuple[IndexStore, Path]:
+    """Run ``build()`` (lazy-creates the DB if missing, incrementally
+    refreshes otherwise) and return ``(store, root)``."""
+    root = _resolve_index_root()
+    db = _resolve_db_path()
+    build(root, db, defs_path=None, verbose=False)
+    return load_index(db), root
+
+
+def _path_in_root(p: Path, root: Path) -> bool:
+    try:
+        p.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+# ----- shared formatting ----------------------------------------------------
+
+
+def _format_symbol_line(s: dict) -> str:
+    """Outline-style one-liner for ``list`` / ``file`` / ``lookup`` /
+    ``kind`` output."""
+    parent = s.get("parent")
+    label = f"{parent}.{s['name']}" if parent else s["name"]
+    range_str = (
+        f":{s['line']}"
+        if s["line"] == s["end_line"]
+        else f":{s['line']}-{s['end_line']}"
+    )
+    decl = "" if s.get("is_definition") else " (decl)"
+    return f"{label} ({s['kind']}){decl} {s['file']}{range_str}"
+
+
+def _format_ref_line(r: dict) -> str:
+    """One-liner for ``refs`` output."""
+    return f"{r['file']}:{r['line']}:{r['col']} {r['kind']} {r['name']}"
+
+
+def _fetch_body_hashline(file_abs: Path, line: int, end_line: int) -> str:
+    """Read the file and return the [line..end_line] window in hashline
+    format. 1-indexed inclusive bounds — caller's responsibility."""
+    text = file_abs.read_text(encoding="utf-8", errors="replace")
+    all_lines = text.splitlines()
+    return format_hashlines_range(all_lines, line - 1, end_line)
+
+
+def _pick_definition(matches: list[dict]) -> dict:
+    """Prefer ``is_definition=True`` over declarations when picking one
+    symbol from a list of name-matches."""
+    defs = [s for s in matches if s.get("is_definition")]
+    return defs[0] if defs else matches[0]
+
+
+def _normalize_markdown_name(name: str) -> str:
+    """``## Setup`` → ``Setup``; ``Setup`` → ``Setup``.
+
+    Convenience so the model can pass either the marker form (which
+    shows up in raw markdown) or the canonical name (which the walker
+    emits) to ``mode='fetch'``. Other languages don't have markers in
+    their names so this is a no-op for them.
+    """
+    stripped = name.lstrip("# ").rstrip(" #").strip()
+    return stripped or name
+
+
+# ----- on-demand parse (path outside indexed root) --------------------------
+
+
+def _on_demand_symbols(file_abs: Path) -> Optional[list[dict]]:
+    """Parse ONE file with its registered walker and return symbols as
+    dicts. Returns None if no walker handles the extension."""
+    lang = language_of(file_abs)
+    if lang is None:
+        return None
+    try:
+        raw = file_abs.read_bytes()
+    except OSError:
+        return None
+    spec = LANGUAGES[lang]
+    cleaned = spec.preprocess(raw, []) if spec.preprocess else raw
+    parser = get_parser(lang)
+    tree = parser.parse(cleaned)
+    syms: list = []
+    # On-demand walks use the file's basename as ``file`` so display
+    # output looks reasonable — there's no relative-to-root to compute.
+    spec.walk_definitions(tree.root_node, cleaned, file_abs.name, syms)
+    return [asdict(s) for s in syms]
+
+
+# ----- mode handlers --------------------------------------------------------
+
+
+def _do_list(action_input: dict) -> ToolResult:
+    path_str = action_input.get("path")
+    if not path_str:
+        return ToolResult(False, error="'path' is required for mode='list'")
+    path_abs = Path(path_str).resolve()
+    if not path_abs.is_file():
+        return ToolResult(False, error=f"file not found: {path_str}")
+    if language_of(path_abs) is None:
+        return ToolResult(
+            False,
+            error=(
+                f"unsupported file extension: {path_abs.suffix}. "
+                f"Use read_file for non-code/non-markdown files."
+            ),
+        )
+
+    store, root = _ensure_index()
+    if _path_in_root(path_abs, root):
+        rel = str(path_abs.resolve().relative_to(root.resolve()))
+        syms = store.find_symbols(file=rel)
+    else:
+        # Out-of-root: parse on the spot, no DB write.
+        syms = _on_demand_symbols(path_abs) or []
+
+    search = action_input.get("search")
+    if search:
+        try:
+            regex = re.compile(search)
+        except re.error as e:
+            return ToolResult(False, error=f"invalid search pattern: {e}")
+        syms = [s for s in syms if regex.search(s["name"])]
+
+    if not syms:
+        return ToolResult(True, output="(no symbols found)")
+
+    syms_sorted = sorted(syms, key=lambda s: (s["line"], s["name"]))
+    return ToolResult(
+        True, output="\n".join(_format_symbol_line(s) for s in syms_sorted)
+    )
+
+
+def _do_fetch(action_input: dict) -> ToolResult:
+    path_str = action_input.get("path")
+    name = action_input.get("name")
+    if not path_str:
+        return ToolResult(False, error="'path' is required for mode='fetch'")
+    if not name:
+        return ToolResult(False, error="'name' is required for mode='fetch'")
+    path_abs = Path(path_str).resolve()
+    if not path_abs.is_file():
+        return ToolResult(False, error=f"file not found: {path_str}")
+    if language_of(path_abs) is None:
+        return ToolResult(
+            False,
+            error=f"unsupported file extension: {path_abs.suffix}",
+        )
+
+    store, root = _ensure_index()
+    target_name = _normalize_markdown_name(name)
+    if _path_in_root(path_abs, root):
+        rel = str(path_abs.resolve().relative_to(root.resolve()))
+        candidates = [
+            s for s in store.find_symbols(file=rel) if s["name"] == target_name
+        ]
+    else:
+        all_syms = _on_demand_symbols(path_abs) or []
+        candidates = [s for s in all_syms if s["name"] == target_name]
+
+    if not candidates:
+        return ToolResult(False, error=f"symbol not found: {name}")
+    chosen = _pick_definition(candidates)
+
+    try:
+        body = _fetch_body_hashline(path_abs, chosen["line"], chosen["end_line"])
+    except OSError as e:
+        return ToolResult(False, error=f"read error: {e}")
+    decl = "" if chosen.get("is_definition") else " [declaration]"
+    header = (
+        f"# {chosen['name']} ({chosen['kind']}) "
+        f":{chosen['line']}-{chosen['end_line']}{decl}"
+    )
+    return ToolResult(True, output=header + "\n" + body)
+
+
+def _do_lookup(action_input: dict) -> ToolResult:
+    name = action_input.get("name")
+    if not name:
+        return ToolResult(False, error="'name' is required for mode='lookup'")
+    symbol_kind = action_input.get("symbol_kind")
+    if symbol_kind is not None and symbol_kind not in NAME_KINDS:
+        return ToolResult(
+            False,
+            error=(
+                f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
+            ),
+        )
+
+    store, _ = _ensure_index()
+    syms = store.find_symbols(name=name, kind=symbol_kind)
+    if not syms:
+        return ToolResult(True, output=f"(no symbols match name={name!r})")
+    syms_sorted = sorted(syms, key=lambda s: (s["file"], s["line"]))
+    return ToolResult(
+        True, output="\n".join(_format_symbol_line(s) for s in syms_sorted)
+    )
+
+
+def _do_kind(action_input: dict) -> ToolResult:
+    symbol_kind = action_input.get("symbol_kind")
+    if not symbol_kind:
+        return ToolResult(False, error="'symbol_kind' is required for mode='kind'")
+    if symbol_kind not in NAME_KINDS:
+        return ToolResult(
+            False,
+            error=(
+                f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
+            ),
+        )
+
+    store, _ = _ensure_index()
+    syms = store.find_symbols(kind=symbol_kind)
+
+    search = action_input.get("search")
+    if search:
+        try:
+            regex = re.compile(search)
+        except re.error as e:
+            return ToolResult(False, error=f"invalid search pattern: {e}")
+        syms = [s for s in syms if regex.search(s["name"])]
+
+    if not syms:
+        return ToolResult(True, output=f"(no symbols of kind={symbol_kind!r})")
+    syms_sorted = sorted(syms, key=lambda s: (s["file"], s["line"]))
+    return ToolResult(
+        True, output="\n".join(_format_symbol_line(s) for s in syms_sorted)
+    )
+
+
+def _do_file(action_input: dict) -> ToolResult:
+    path_str = action_input.get("path")
+    if not path_str:
+        return ToolResult(False, error="'path' is required for mode='file'")
+    path_abs = Path(path_str).resolve()
+
+    store, root = _ensure_index()
+    if not _path_in_root(path_abs, root):
+        return ToolResult(
+            False,
+            error=(
+                f"mode='file' is index-scoped — path {path_str!r} is outside "
+                f"the indexed root ({root}). Use mode='list' for one-off "
+                f"out-of-root files."
+            ),
+        )
+    rel = str(path_abs.resolve().relative_to(root.resolve()))
+    syms = store.find_symbols(file=rel)
+    if not syms:
+        return ToolResult(True, output=f"(no symbols in {rel})")
+    syms_sorted = sorted(syms, key=lambda s: (s["line"], s["name"]))
+    return ToolResult(
+        True, output="\n".join(_format_symbol_line(s) for s in syms_sorted)
+    )
+
+
+def _do_refs(action_input: dict) -> ToolResult:
+    name = action_input.get("name")
+    if not name:
+        return ToolResult(False, error="'name' is required for mode='refs'")
+    ref_kind = action_input.get("ref_kind")
+    if ref_kind is not None and ref_kind not in REF_KINDS:
+        return ToolResult(
+            False,
+            error=(f"invalid ref_kind: {ref_kind!r}. Valid: {sorted(REF_KINDS)}"),
+        )
+
+    store, _ = _ensure_index()
+    refs = store.find_refs(name=name, kind=ref_kind)
+    if not refs:
+        filt = f" {ref_kind=}" if ref_kind else ""
+        return ToolResult(True, output=f"(no refs to {name!r}{filt})")
+    refs_sorted = sorted(refs, key=lambda r: (r["file"], r["line"], r["col"]))
+    return ToolResult(True, output="\n".join(_format_ref_line(r) for r in refs_sorted))
+
+
+def _do_callers(action_input: dict) -> ToolResult:
+    name = action_input.get("name")
+    if not name:
+        return ToolResult(False, error="'name' is required for mode='callers'")
+    store, _ = _ensure_index()
+    _, callers_of, sites_of = build_callgraph(store)
+    callers = callers_of.get(name)
+    if not callers:
+        return ToolResult(
+            True,
+            output=f"(no callers of {name!r} in index — function may not be called)",
+        )
+    lines = []
+    for caller, count in sorted(callers.items(), key=lambda kv: (-kv[1], kv[0])):
+        sites = sites_of.get((caller, name), [])
+        site_str = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
+        if len(sites) > 5:
+            site_str += f", … ({len(sites)} total)"
+        lines.append(f"{caller}  ({count}×)  {site_str}")
+    return ToolResult(True, output="\n".join(lines))
+
+
+def _do_callees(action_input: dict) -> ToolResult:
+    name = action_input.get("name")
+    if not name:
+        return ToolResult(False, error="'name' is required for mode='callees'")
+    store, _ = _ensure_index()
+    calls_of, _, sites_of = build_callgraph(store)
+    callees = calls_of.get(name)
+    if not callees:
+        return ToolResult(
+            True,
+            output=f"(no callees of {name!r} in index — function may not call anything indexed)",
+        )
+    lines = []
+    for callee, count in sorted(callees.items(), key=lambda kv: (-kv[1], kv[0])):
+        sites = sites_of.get((name, callee), [])
+        site_str = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
+        if len(sites) > 5:
+            site_str += f", … ({len(sites)} total)"
+        lines.append(f"{callee}  ({count}×)  {site_str}")
+    return ToolResult(True, output="\n".join(lines))
+
+
+def _do_slice(action_input: dict) -> ToolResult:
+    name = action_input.get("name")
+    if not name:
+        return ToolResult(False, error="'name' is required for mode='slice'")
+    store, _ = _ensure_index()
+    text = cmd_slice(
+        store,
+        name,
+        with_callees=bool(action_input.get("with_callees", False)),
+        with_callers=bool(action_input.get("with_callers", False)),
+        with_types=bool(action_input.get("with_types", False)),
+        with_macros=bool(action_input.get("with_macros", False)),
+        depth=int(action_input.get("depth", 1)),
+        max_bytes=int(action_input.get("max_bytes", 0)),
+    )
+    return ToolResult(True, output=text)
+
+
+def _do_build(_action_input: dict) -> ToolResult:
+    root = _resolve_index_root()
+    db = _resolve_db_path()
+    build(root, db, defs_path=None, verbose=False, force_full=True)
+    store = load_index(db)
+    return ToolResult(
+        True,
+        output=(
+            f"Rebuilt index: {store.n_symbols()} symbols, "
+            f"{store.n_refs()} refs across {len(store.files)} files. "
+            f"Root: {root}"
+        ),
+    )
+
+
+_MODES = {
+    "list": _do_list,
+    "fetch": _do_fetch,
+    "lookup": _do_lookup,
+    "kind": _do_kind,
+    "file": _do_file,
+    "refs": _do_refs,
+    "callers": _do_callers,
+    "callees": _do_callees,
+    "slice": _do_slice,
+    "build": _do_build,
+}
+
+
+# ----- entry point ----------------------------------------------------------
+
+
+def tool_code_index(action_input: dict) -> ToolResult:
+    """Dispatch a code_index query to the appropriate mode handler.
+
+    Per-mode arg requirements are documented in the registry ToolSchema
+    description; handlers enforce them and return a descriptive error
+    if missing.
+    """
+    if not isinstance(action_input, dict):
+        return ToolResult(False, error="action_input must be an object")
+    mode = action_input.get("mode")
+    if not mode:
+        return ToolResult(
+            False,
+            error=(f"'mode' is required. Valid: {sorted(_MODES.keys())}"),
+        )
+    handler = _MODES.get(mode)
+    if handler is None:
+        return ToolResult(
+            False,
+            error=(f"unknown mode: {mode!r}. Valid: {sorted(_MODES.keys())}"),
+        )
+    return handler(action_input)

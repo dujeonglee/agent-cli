@@ -141,6 +141,113 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
             "required": ["path"],
         },
     ),
+    "code_index": ToolSchema(
+        name="code_index",
+        description=(
+            "Code/markdown index queries via persistent tree-sitter SQLite store. "
+            "Modes:\n"
+            "  list      - file outline (defs + structural symbols, line ranges) [path]\n"
+            "  fetch     - single symbol body, hashline format for edit_file [path, name]\n"
+            "  lookup    - find symbol by name across the index [name, symbol_kind?]\n"
+            "  kind      - list all symbols of a kind across the index [symbol_kind]\n"
+            "  file      - all symbols in a single file (index lookup) [path]\n"
+            "  refs      - all ref sites for a name [name, ref_kind?]\n"
+            "  callers   - functions that call this one [name]\n"
+            "  callees   - functions called by this one [name]\n"
+            "  slice     - markdown LLM context: def body + optional callees/callers/"
+            "types/macros [name, ...]\n"
+            "  build     - force full rebuild (rare - lazy build handles normal cases)\n"
+            "Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. "
+            "Index at <project_root>/.agent-cli/code_index.db, lazy-built and "
+            "incrementally refreshed. For 'list'/'fetch' on paths outside the indexed "
+            "root: on-demand parse (no DB write). Other modes require the indexed root."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": [
+                        "list",
+                        "fetch",
+                        "lookup",
+                        "kind",
+                        "file",
+                        "refs",
+                        "callers",
+                        "callees",
+                        "slice",
+                        "build",
+                    ],
+                    "description": "Operation. See tool description for per-mode params.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path. Required for list/fetch/file.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Symbol name (exact, as shown by 'list'). Required for "
+                        "fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' "
+                        "also accepts the heading with marker (e.g. '## Setup')."
+                    ),
+                },
+                "symbol_kind": {
+                    "type": "string",
+                    "enum": ["function", "type", "variable", "constant", "section"],
+                    "description": (
+                        "Symbol category filter. Optional for lookup. Required for "
+                        "kind. 'section' = markdown heading."
+                    ),
+                },
+                "ref_kind": {
+                    "type": "string",
+                    "enum": ["call", "name", "type"],
+                    "description": (
+                        "Reference site category. Optional for refs. "
+                        "call = invocation; name = bare identifier mention "
+                        "(callback, pointer); type = identifier in type position."
+                    ),
+                },
+                "search": {
+                    "type": "string",
+                    "description": (
+                        "Optional regex (re.search) to filter symbol names. "
+                        "Applies to list and kind modes."
+                    ),
+                },
+                "with_callees": {
+                    "type": "boolean",
+                    "description": "slice mode: include callee bodies (transitive up to depth).",
+                },
+                "with_callers": {
+                    "type": "boolean",
+                    "description": "slice mode: include caller bodies (transitive up to depth).",
+                },
+                "with_types": {
+                    "type": "boolean",
+                    "description": "slice mode: include types/structs referenced inside target body.",
+                },
+                "with_macros": {
+                    "type": "boolean",
+                    "description": "slice mode: include function-like macros invoked inside target body.",
+                },
+                "depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "slice mode: transitive depth for callees/callers (default 1).",
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "slice mode: cap output bytes (default unlimited).",
+                },
+            },
+            "required": ["mode"],
+        },
+    ),
     "complete": ToolSchema(
         name="complete",
         description="Call this tool when the task is done. Provide the final result.",
