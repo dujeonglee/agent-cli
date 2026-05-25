@@ -1609,6 +1609,12 @@ class TestAskTool:
         class RecordingRenderer:
             _prefix = ""
 
+            def announce_ask(self, questions, *, prefix=""):
+                # No-op stub — the announcement is what CLI renderers
+                # print before reading stdin; the test only cares
+                # about the prompt_user context arg.
+                pass
+
             def prompt_user(self, prompt, **kwargs):
                 captured["prompt"] = prompt
                 captured["kwargs"] = kwargs
@@ -1635,6 +1641,9 @@ class TestAskTool:
 
         class RecordingRenderer:
             _prefix = ""
+
+            def announce_ask(self, questions, *, prefix=""):
+                pass
 
             def prompt_user(self, prompt, **kwargs):
                 captured["kwargs"] = kwargs

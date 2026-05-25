@@ -29,7 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_cli.render.web import WebRenderer
-from agent_cli.web.server import WebServer, create_app
+from agent_cli.web.server import WebServer, create_app, pick_port
 
 
 @pytest.fixture
@@ -191,6 +191,42 @@ class TestStaticUI:
         resp = client.get("/static/style.css")
         assert resp.status_code == 200
         assert "text/css" in resp.headers["content-type"]
+
+    def test_pre_code_does_not_let_inline_code_bleed_through(self, server_and_client):
+        # ``<pre class="code"><code>...</code></pre>`` is how the markdown
+        # pipeline wraps fenced blocks. ``.card code`` styles inline
+        # backticks with a LIGHT background — without a reset it plates
+        # over the dark slab the parent ``pre.code`` paints, and the
+        # ``#e5e7eb`` text inherited from ``pre.code`` becomes nearly
+        # invisible (light-on-light). This was the user-reported "gray
+        # text on white" leak in markdown fenced blocks.
+        _, _, client = server_and_client
+        css = client.get("/static/style.css").text
+        # The reset rule MUST exist and MUST kill the inline background
+        # when the code element is nested in pre.code.
+        assert ".card pre.code code" in css, (
+            "missing reset rule: .card code would override pre.code's "
+            "dark slab and hide the text"
+        )
+        # And the reset must zero out the background — anything other
+        # than transparent / inherit would re-introduce the same bug
+        # with a different value.
+        idx = css.find(".card pre.code code")
+        block = css[idx : idx + 200]
+        assert "background: transparent" in block, block
+
+    def test_static_responses_set_no_cache(self, server_and_client):
+        # Editable installs ship live source for /static/*; without an
+        # explicit Cache-Control header the browser falls back to
+        # heuristic caching and stale CSS / JS lingers across edits.
+        # All three frontend endpoints must carry no-cache so a server
+        # restart is the only revalidation the operator has to perform.
+        _, _, client = server_and_client
+        for path in ("/", "/static/app.js", "/static/style.css"):
+            resp = client.get(path)
+            assert resp.status_code == 200, path
+            cc = resp.headers.get("cache-control", "")
+            assert "no-cache" in cc, f"{path}: missing no-cache (got {cc!r})"
 
 
 # ── Auth ──────────────────────────────────────────
@@ -440,6 +476,47 @@ class TestAbortEndpoint:
 
         t.join(timeout=2.0)
         assert exc and isinstance(exc[0], EOFError)
+
+
+# ── pick_port (8080-preferred, OS-fallback) ───────
+
+
+class TestPickPort:
+    """``pick_port`` decides which port the web server binds to.
+
+    Earlier the CLI hard-coded 8080 in the URL printed to the operator
+    even though uvicorn might fail to bind it; explicit ``--port`` still
+    binds exactly that, but the no-flag default now tries 8080 first
+    and falls back to whatever the OS gives us if it's busy.
+    """
+
+    def test_returns_preferred_when_free(self):
+        # Probe with port 0 to discover *some* port that's currently
+        # free, then ask pick_port to prefer it — should hand back the
+        # same number unchanged.
+        import socket as _s
+
+        with _s.socket(_s.AF_INET, _s.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            free = probe.getsockname()[1]
+        assert pick_port("127.0.0.1", free) == free
+
+    def test_falls_back_when_preferred_busy(self):
+        # Hold a port for the duration of the call so pick_port's bind
+        # probe sees EADDRINUSE and must fall through to (host, 0).
+        import socket as _s
+
+        holder = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+        try:
+            holder.bind(("127.0.0.1", 0))
+            holder.listen(1)
+            busy = holder.getsockname()[1]
+            picked = pick_port("127.0.0.1", busy)
+            assert picked != busy
+            # Sanity: an ephemeral port number is positive and bindable.
+            assert picked > 0
+        finally:
+            holder.close()
 
 
 # ── SSE stream (async, ASGITransport) ─────────────

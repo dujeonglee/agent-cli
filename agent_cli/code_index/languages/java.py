@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Optional
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
 
 
@@ -92,6 +92,7 @@ def java_extract_method(
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(parent, name),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -126,6 +127,7 @@ def java_extract_field(node, src: bytes, rel: str, parent: Optional[str], out: l
         out.append(
             Symbol(
                 name=name,
+                qualified_name=qualify(parent, name),
                 kind="constant" if is_const else "variable",
                 file=rel,
                 line=decl.start_point[0] + 1,
@@ -157,6 +159,7 @@ def java_extract_class(
     out.append(
         Symbol(
             name=cls_name,
+            qualified_name=qualify(parent, cls_name),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,
@@ -172,7 +175,7 @@ def java_extract_class(
     body = node.child_by_field_name("body")
     if body is None:
         return
-    inner = (parent + "." + cls_name) if parent else cls_name
+    inner = qualify(parent, cls_name)
     for stmt in body.children:
         if stmt.type == "method_declaration":
             java_extract_method(stmt, src, rel, inner, out)
@@ -205,6 +208,7 @@ def java_extract_enum(node, src: bytes, rel: str, parent: Optional[str], out: li
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(parent, name),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,

@@ -129,7 +129,7 @@ main#messages {
    cyan hunks, green/red add/remove, dim line numbers + context. */
 .rich-bold { font-weight: 600; }
 .rich-cyan { color: #0891b2; }
-.rich-dim  { color: #9ca3af; }
+.rich-dim  { color: #6b7280; }
 .rich-green { color: #16a34a; }
 .rich-red   { color: #dc2626; }
 
@@ -176,6 +176,17 @@ main#messages {
   border-radius: 3px;
   font-size: 0.92em;
   font-family: ui-monospace, SFMono-Regular, monospace;
+}
+/* Reset inline-code styling when ``<code>`` lives inside a fenced
+   block — the parent ``<pre class="code">`` already paints a dark
+   slab, and the inline ``background: #f3f4f6`` would otherwise
+   plate light-gray over it and collide with the ``#e5e7eb`` text
+   inherited from the parent (nearly-invisible light-on-light). */
+.card pre.code code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
 }
 
 /* ── Footer / input ─────────────────────────── */

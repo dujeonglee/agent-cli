@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,60 @@ from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.render.web import WebConnection, WebRenderer
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# ``no-cache`` (revalidate-required) rather than ``no-store`` so the
+# browser can still take a 304 fast path when nothing changed, but a
+# CSS/JS edit lands without forcing the operator to hard-refresh.
+# Editable installs serve files straight from the git checkout, so an
+# in-session iteration would otherwise be invisible until the operator
+# bypassed cache manually.
+_NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """``StaticFiles`` that stamps every response with ``no-cache``.
+
+    Mounting plain ``StaticFiles`` leaves caching at Starlette's
+    defaults — no ``Cache-Control`` set, so browsers fall back to
+    heuristic caching of CSS/JS. Editable-install iteration becomes
+    "edit, restart server, hard-refresh browser"; the override drops
+    the last step.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = _NO_CACHE_HEADERS["Cache-Control"]
+        return response
+
+
+def pick_port(host: str, preferred: int) -> int:
+    """Pick a bindable port for the web server.
+
+    Prefer ``preferred`` (default 8080) when free; if it's bound by
+    another process, fall back to an OS-assigned ephemeral port. The
+    caller passes the result straight to ``uvicorn.Config(port=...)``,
+    so the URL printed before ``server_obj.run()`` shows whatever the
+    OS actually gave us.
+
+    Bind to ``host`` (not ``localhost``) so a port that's only free on
+    the loopback interface but bound LAN-wide doesn't fool the probe.
+    The socket is closed before returning — there's a tiny TOCTOU
+    window before uvicorn re-binds, but a same-host race in that
+    window is rare enough that handling it would cost more than it
+    saves.
+    """
+    for candidate in (preferred, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, candidate))
+            except OSError:
+                continue
+            return s.getsockname()[1]
+    # Both candidates failed — preferred busy AND OS refused 0. That's
+    # a misconfigured host (no IPv4 stack, etc.); let uvicorn surface
+    # the underlying error to the operator instead of silently retrying.
+    return preferred
 
 
 # ── CLI-parity slash commands (web mode) ──────────────────
@@ -407,12 +462,12 @@ def create_app(server: WebServer) -> FastAPI:
         """Serve the static chat UI. JS reads ``?token=…`` from the
         URL — no auth gate here because the page itself contains no
         secrets; the SSE / input endpoints are token-protected."""
-        return FileResponse(_STATIC_DIR / "index.html")
+        return FileResponse(_STATIC_DIR / "index.html", headers=_NO_CACHE_HEADERS)
 
     if _STATIC_DIR.exists():
         app.mount(
             "/static",
-            StaticFiles(directory=_STATIC_DIR),
+            _NoCacheStaticFiles(directory=_STATIC_DIR),
             name="static",
         )
 

@@ -20,3 +20,17 @@ def text(node, src: bytes) -> str:
     resort because we still get a stable string for downstream code.
     """
     return src[node.start_byte : node.end_byte].decode("utf-8", "replace")
+
+
+def qualify(parent: str | None, name: str, sep: str = ".") -> str:
+    """Compose a symbol's display form from its parent chain + leaf name.
+
+    Used by every walker to fill the ``qualified_name`` field on Symbol.
+    The ``parent`` value is already a chain in the walkers that nest
+    (Python / JS / TS / Java join with '.', C++ with '::') so this
+    helper just concatenates one more level on top.
+
+    For top-level symbols (parent is None) the qualified form equals
+    the bare name.
+    """
+    return f"{parent}{sep}{name}" if parent else name

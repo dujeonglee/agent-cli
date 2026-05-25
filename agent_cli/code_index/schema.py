@@ -42,7 +42,13 @@ from typing import Optional
 # in a way that older indexes cannot be queried by current code. Loading
 # an index whose meta.schema_version mismatches forces a full rebuild
 # (see builder.build / store.IndexStore).
-SCHEMA_VERSION = 1
+#
+# v2: added `qualified_name` column. Walker emits the full display form
+#     (Python/JS/TS/Java/Go/Rust/Markdown joined by '.', C++ joined by
+#     '::', C is flat → equals name). Tool handlers query this column
+#     first and fall back to `name` for bare-leaf inputs. See
+#     docs/code-index/DESIGN.md for the rationale.
+SCHEMA_VERSION = 2
 
 # Closed set of values for `symbols.kind`. Adding to this set is an
 # intentional design decision (e.g. adding 'section' for markdown) and
@@ -98,6 +104,21 @@ class Symbol:
     return_type: Optional[str] = None
     enum_values: Optional[list[str]] = None
     params: Optional[list[str]] = field(default=None)
+
+    # Full display form — what `list` output shows and what the model
+    # most naturally passes back. For symbols WITHOUT a parent this
+    # equals `name`. For nested symbols this joins parent + native
+    # separator + name:
+    #
+    #   Python / JS / TS / Java / Go / Rust / Markdown : "."  (e.g. "Outer.method")
+    #   C++                                            : "::" (e.g. "ns::Foo::bar")
+    #   C                                              :  flat → same as `name`
+    #
+    # Walkers compute this once at emit time. Tool handlers look up by
+    # this field first and fall back to `name` for bare-leaf inputs.
+    # refs↔defs matching still uses `name` (bare), because refs are
+    # extracted from raw source identifiers.
+    qualified_name: str = ""
 
 
 @dataclass

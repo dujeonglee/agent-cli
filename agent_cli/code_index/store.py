@@ -161,13 +161,16 @@ class IndexStore:
             return matches[0]
         return None
 
-    def find_symbols(self, *, name=None, kind=None, file=None):
+    def find_symbols(self, *, name=None, qualified_name=None, kind=None, file=None):
         if file is not None:
             file = self.normalize_file_path(file) or file
         clauses, params = [], []
         if name is not None:
             clauses.append("name = ?")
             params.append(name)
+        if qualified_name is not None:
+            clauses.append("qualified_name = ?")
+            params.append(qualified_name)
         if kind is not None:
             clauses.append("kind = ?")
             params.append(kind)

@@ -71,12 +71,26 @@ def _resolve_db_path() -> Path:
     return db
 
 
+def _resolve_defs_path(root: Path) -> Optional[Path]:
+    """Conventional defconfig location: ``<root>/.agent-cli/defconfig``.
+
+    Returned only when the file exists so callers can pass the result
+    straight through to ``build(defs_path=...)``. The defconfig wires
+    ``#define`` / ``#undef`` lines into ``unifdef -b`` so C source with
+    ``#ifdef CONFIG_X`` branches around function signatures parses
+    cleanly into a single ``function_definition`` node instead of an
+    ERROR run that swallows the definition.
+    """
+    defs = root / ".agent-cli" / "defconfig"
+    return defs if defs.is_file() else None
+
+
 def _ensure_index() -> tuple[IndexStore, Path]:
     """Run ``build()`` (lazy-creates the DB if missing, incrementally
     refreshes otherwise) and return ``(store, root)``."""
     root = _resolve_index_root()
     db = _resolve_db_path()
-    build(root, db, defs_path=None, verbose=False)
+    build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
     return load_index(db), root
 
 
@@ -119,7 +133,7 @@ def post_hook(path: str | Path) -> None:
         file_abs = Path(path).resolve()
         if not _path_in_root(file_abs, root):
             return
-        build(root, db, defs_path=None, verbose=False)
+        build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
     except Exception:
         # Best-effort: never block the user op.
         return
@@ -130,9 +144,14 @@ def post_hook(path: str | Path) -> None:
 
 def _format_symbol_line(s: dict) -> str:
     """Outline-style one-liner for ``list`` / ``file`` / ``lookup`` /
-    ``kind`` output."""
-    parent = s.get("parent")
-    label = f"{parent}.{s['name']}" if parent else s["name"]
+    ``kind`` output.
+
+    Uses ``qualified_name`` directly so the displayed form matches what
+    the model can pass back to subsequent queries verbatim. For older
+    on-demand-parsed symbol dicts that pre-date the v2 schema, the
+    fallback to ``name`` keeps display working.
+    """
+    label = s.get("qualified_name") or s.get("name", "")
     range_str = (
         f":{s['line']}"
         if s["line"] == s["end_line"]
@@ -140,6 +159,35 @@ def _format_symbol_line(s: dict) -> str:
     )
     decl = "" if s.get("is_definition") else " (decl)"
     return f"{label} ({s['kind']}){decl} {s['file']}{range_str}"
+
+
+def _resolve_symbol(store, name: str, *, file: Optional[str] = None) -> list[dict]:
+    """Dual-lookup resolver for model-supplied symbol names.
+
+    The model usually passes the qualified form it saw in ``list``
+    output (``AgentLoop._call_llm`` / ``ns::Foo::bar`` / ``A.B.Setup``).
+    Internal walkers store ``qualified_name`` for exactly that — try it
+    first. If empty, fall back to bare ``name`` lookup so a stripped
+    leaf (``_call_llm``) also resolves.
+
+    Returns the matching symbol record list. Empty list = not found.
+    Caller decides what to do with multi-match (some modes want a
+    single target, others embrace multiple).
+
+    ``file`` (root-relative path) optionally narrows the search to one
+    file — used by per-file modes like ``fetch`` so a bare leaf doesn't
+    accidentally pick the wrong file's symbol.
+    """
+    target = _normalize_markdown_name(name)
+    kw_q: dict = {"qualified_name": target}
+    kw_n: dict = {"name": target}
+    if file is not None:
+        kw_q["file"] = file
+        kw_n["file"] = file
+    syms = store.find_symbols(**kw_q)
+    if syms:
+        return syms
+    return store.find_symbols(**kw_n)
 
 
 def _format_ref_line(r: dict) -> str:
@@ -262,12 +310,15 @@ def _do_fetch(action_input: dict) -> ToolResult:
     target_name = _normalize_markdown_name(name)
     if _path_in_root(path_abs, root):
         rel = str(path_abs.resolve().relative_to(root.resolve()))
-        candidates = [
-            s for s in store.find_symbols(file=rel) if s["name"] == target_name
-        ]
+        candidates = _resolve_symbol(store, target_name, file=rel)
     else:
+        # On-demand path: walker produces dicts with `qualified_name`
+        # populated (PR-3 v2 schema) — try the same dual lookup in
+        # memory.
         all_syms = _on_demand_symbols(path_abs) or []
-        candidates = [s for s in all_syms if s["name"] == target_name]
+        candidates = [s for s in all_syms if s.get("qualified_name") == target_name]
+        if not candidates:
+            candidates = [s for s in all_syms if s["name"] == target_name]
 
     if not candidates:
         return ToolResult(False, error=f"symbol not found: {name}")
@@ -278,9 +329,9 @@ def _do_fetch(action_input: dict) -> ToolResult:
     except OSError as e:
         return ToolResult(False, error=f"read error: {e}")
     decl = "" if chosen.get("is_definition") else " [declaration]"
+    display = chosen.get("qualified_name") or chosen["name"]
     header = (
-        f"# {chosen['name']} ({chosen['kind']}) "
-        f":{chosen['line']}-{chosen['end_line']}{decl}"
+        f"# {display} ({chosen['kind']}) :{chosen['line']}-{chosen['end_line']}{decl}"
     )
     return ToolResult(True, output=header + "\n" + body)
 
@@ -299,7 +350,13 @@ def _do_lookup(action_input: dict) -> ToolResult:
         )
 
     store, _ = _ensure_index()
-    syms = store.find_symbols(name=name, kind=symbol_kind)
+    # Dual lookup: try qualified_name first, fall back to bare name.
+    # If symbol_kind filter is supplied, apply it to BOTH paths so the
+    # caller still gets a kind-narrow result regardless of which match
+    # path hits.
+    syms = _resolve_symbol(store, name)
+    if symbol_kind is not None:
+        syms = [s for s in syms if s["kind"] == symbol_kind]
     if not syms:
         return ToolResult(True, output=f"(no symbols match name={name!r})")
     syms_sorted = sorted(syms, key=lambda s: (s["file"], s["line"]))
@@ -377,7 +434,12 @@ def _do_refs(action_input: dict) -> ToolResult:
         )
 
     store, _ = _ensure_index()
-    refs = store.find_refs(name=name, kind=ref_kind)
+    # Refs table stores bare names (because they come from raw source
+    # identifiers). If the model passed a qualified form, resolve it
+    # via the symbols table to a bare leaf first.
+    syms = _resolve_symbol(store, name)
+    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
+    refs = store.find_refs(name=bare, kind=ref_kind)
     if not refs:
         filt = f" {ref_kind=}" if ref_kind else ""
         return ToolResult(True, output=f"(no refs to {name!r}{filt})")
@@ -390,8 +452,12 @@ def _do_callers(action_input: dict) -> ToolResult:
     if not name:
         return ToolResult(False, error="'name' is required for mode='callers'")
     store, _ = _ensure_index()
+    # Callgraph indexes by bare name (refs are bare-name). Resolve
+    # qualified → bare via the symbols table.
+    syms = _resolve_symbol(store, name)
+    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
     _, callers_of, sites_of = build_callgraph(store)
-    callers = callers_of.get(name)
+    callers = callers_of.get(bare)
     if not callers:
         return ToolResult(
             True,
@@ -399,7 +465,7 @@ def _do_callers(action_input: dict) -> ToolResult:
         )
     lines = []
     for caller, count in sorted(callers.items(), key=lambda kv: (-kv[1], kv[0])):
-        sites = sites_of.get((caller, name), [])
+        sites = sites_of.get((caller, bare), [])
         site_str = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
         if len(sites) > 5:
             site_str += f", … ({len(sites)} total)"
@@ -412,8 +478,10 @@ def _do_callees(action_input: dict) -> ToolResult:
     if not name:
         return ToolResult(False, error="'name' is required for mode='callees'")
     store, _ = _ensure_index()
+    syms = _resolve_symbol(store, name)
+    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
     calls_of, _, sites_of = build_callgraph(store)
-    callees = calls_of.get(name)
+    callees = calls_of.get(bare)
     if not callees:
         return ToolResult(
             True,
@@ -421,7 +489,7 @@ def _do_callees(action_input: dict) -> ToolResult:
         )
     lines = []
     for callee, count in sorted(callees.items(), key=lambda kv: (-kv[1], kv[0])):
-        sites = sites_of.get((name, callee), [])
+        sites = sites_of.get((bare, callee), [])
         site_str = ", ".join(f"{f}:{ln}" for f, ln, _ in sites[:5])
         if len(sites) > 5:
             site_str += f", … ({len(sites)} total)"
@@ -434,9 +502,13 @@ def _do_slice(action_input: dict) -> ToolResult:
     if not name:
         return ToolResult(False, error="'name' is required for mode='slice'")
     store, _ = _ensure_index()
+    # cmd_slice picks a symbol by bare ``name``; resolve qualified
+    # input through the symbols table first.
+    syms = _resolve_symbol(store, name)
+    bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
     text = cmd_slice(
         store,
-        name,
+        bare,
         with_callees=bool(action_input.get("with_callees", False)),
         with_callers=bool(action_input.get("with_callers", False)),
         with_types=bool(action_input.get("with_types", False)),
@@ -450,14 +522,16 @@ def _do_slice(action_input: dict) -> ToolResult:
 def _do_build(_action_input: dict) -> ToolResult:
     root = _resolve_index_root()
     db = _resolve_db_path()
-    build(root, db, defs_path=None, verbose=False, force_full=True)
+    defs = _resolve_defs_path(root)
+    build(root, db, defs_path=defs, verbose=False, force_full=True)
     store = load_index(db)
+    defs_note = f" defconfig: {defs}" if defs else " defconfig: (none)"
     return ToolResult(
         True,
         output=(
             f"Rebuilt index: {store.n_symbols()} symbols, "
             f"{store.n_refs()} refs across {len(store.files)} files. "
-            f"Root: {root}"
+            f"Root: {root}.{defs_note}"
         ),
     )
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Optional
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
 
 
@@ -90,6 +90,7 @@ def js_extract_function_decl(
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(parent, name),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -128,6 +129,7 @@ def js_extract_method(
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(parent, name),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -154,6 +156,7 @@ def js_extract_class(
     out.append(
         Symbol(
             name=cls,
+            qualified_name=qualify(parent, cls),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,
@@ -168,7 +171,7 @@ def js_extract_class(
     body = node.child_by_field_name("body")
     if body is None:
         return
-    inner = (parent + "." + cls) if parent else cls
+    inner = qualify(parent, cls)
     for stmt in body.children:
         if stmt.type == "method_definition":
             js_extract_method(stmt, src, rel, inner, out, lang)
@@ -188,6 +191,7 @@ def js_extract_class(
             out.append(
                 Symbol(
                     name=text(n, src),
+                    qualified_name=qualify(inner, text(n, src)),
                     kind="variable",
                     file=rel,
                     line=stmt.start_point[0] + 1,
@@ -231,6 +235,7 @@ def js_extract_lexical(node, src: bytes, rel: str, out: list, lang: str):
         out.append(
             Symbol(
                 name=name,
+                qualified_name=qualify(None, name),
                 # `const` → compile-time constant; `let`/`var` → variable.
                 # Uppercase-naming convention is not promoted to `constant`
                 # for let/var (matches upstream tsindex behaviour).
@@ -265,6 +270,7 @@ def js_extract_function_expr_into(
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(None, name),
             kind="function",
             file=rel,
             line=declarator.start_point[0] + 1,
@@ -303,6 +309,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                 syms.append(
                     Symbol(
                         name=text(nm, src),
+                        qualified_name=qualify(None, text(nm, src)),
                         kind="type",
                         file=rel,
                         line=node.start_point[0] + 1,
@@ -319,6 +326,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                 syms.append(
                     Symbol(
                         name=text(nm, src),
+                        qualified_name=qualify(None, text(nm, src)),
                         kind="type",
                         file=rel,
                         line=node.start_point[0] + 1,
@@ -352,6 +360,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                         syms.append(
                             Symbol(
                                 name=text(nm, src),
+                                qualified_name=qualify(None, text(nm, src)),
                                 kind="type",
                                 file=rel,
                                 line=c.start_point[0] + 1,
@@ -369,6 +378,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                         syms.append(
                             Symbol(
                                 name=text(nm, src),
+                                qualified_name=qualify(None, text(nm, src)),
                                 kind="type",
                                 file=rel,
                                 line=c.start_point[0] + 1,

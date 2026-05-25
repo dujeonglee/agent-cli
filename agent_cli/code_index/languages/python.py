@@ -23,7 +23,7 @@ import re
 from typing import Optional
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
 
 
@@ -87,6 +87,7 @@ def py_extract_function(
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(parent, name),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -106,7 +107,7 @@ def py_extract_function(
     # (closures, helper inner functions, locally-defined classes) become
     # discoverable. Parent is the dotted chain of enclosing names.
     if body is not None:
-        inner_parent = (parent + "." + name) if parent else name
+        inner_parent = qualify(parent, name)
         for stmt in body.children:
             if stmt.type == "function_definition":
                 py_extract_function(stmt, src, rel, inner_parent, out, [])
@@ -131,6 +132,7 @@ def py_extract_class(
     out.append(
         Symbol(
             name=cls_name,
+            qualified_name=qualify(parent, cls_name),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,
@@ -146,7 +148,7 @@ def py_extract_class(
     body = node.child_by_field_name("body")
     if body is None:
         return
-    inner_parent = (parent + "." + cls_name) if parent else cls_name
+    inner_parent = qualify(parent, cls_name)
     for stmt in body.children:
         if stmt.type == "function_definition":
             py_extract_function(stmt, src, rel, inner_parent, out, [])
@@ -208,6 +210,7 @@ def py_extract_assignment(
         out.append(
             Symbol(
                 name=name,
+                qualified_name=qualify(parent, name),
                 # Class attributes are also variables — `parent` distinguishes
                 # them from module-level globals.
                 kind="constant" if (is_const and not is_class_attr) else "variable",
