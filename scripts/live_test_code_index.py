@@ -91,7 +91,7 @@ def _cases():
         ),
         (
             "P4-lookup-section",
-            "README.md 와 docs/ 의 markdown 헤딩 중 이름이 'Setup' 인 것들을 모두 찾아줘.",
+            "이 프로젝트 markdown 헤딩 중 이름이 '설치' 인 섹션을 모두 찾아줘.",
             "code_index",
             {"lookup", "kind"},
         ),
@@ -109,7 +109,7 @@ def _cases():
         ),
         (
             "P8-md-heading",
-            "README.md 의 '## 도구' 섹션 본문을 fetch 해줘.",
+            "README.md 의 '## 도구' 섹션 한 곳의 본문만 보여줘 (전체 파일 말고 그 섹션만).",
             "code_index",
             {"fetch"},
         ),

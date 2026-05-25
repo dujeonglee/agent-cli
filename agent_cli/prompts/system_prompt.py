@@ -305,6 +305,11 @@ def _build_code_index_inline(wire_format) -> str:
      without a separate read_file. Definition wins when a name has
      both a declaration and a definition. Markdown accepts the heading
      with or without the marker (``## Setup`` ≡ ``Setup``).
+     After a ``list`` (or ``lookup`` / ``file``) hit, prefer ``fetch``
+     over ``read_file`` with the line range — fetch gives the body
+     hashline-formatted in one call, ready to edit; read_file would
+     return the same lines as plain text and lose the edit_file
+     shortcut.
        {fetch_py}
        {fetch_md}
   3. mode='lookup' — find a symbol by name ACROSS the whole index.
