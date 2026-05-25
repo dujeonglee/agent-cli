@@ -3,10 +3,10 @@
 > **이 문서는 코드와 함께 유지보수되어야 합니다.**
 > 코드 수정 시 관련 섹션을 반드시 업데이트하세요.
 >
-> 최종 업데이트: 2026-04-25
+> 최종 업데이트: 2026-05-25
 > 버전: 2.0.0-dev
-> 총 소스: 10,974 LOC (56 Python 파일) + 15,180 LOC 테스트 (37 파일)
-> 총 테스트: 985 유닛 + 22 통합 (36 ollama_integration deselected)
+> 총 소스: ~22,800 LOC (89 Python 파일) + ~27,200 LOC 테스트 (70 파일)
+> 총 테스트: 1814 유닛 + 22 통합 (36 ollama_integration deselected)
 
 ---
 
@@ -31,8 +31,16 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 | `rich` | >=13.0 | 터미널 렌더링 (Panel, Table, Rule 등) |
 | `requests` | >=2.28 | HTTP 클라이언트 (LLM API 호출) |
 | `pyyaml` | >=6.0 | 스킬 frontmatter 파싱 |
+| `tree-sitter` | >=0.23 | code_index 파서 코어 |
+| `tree-sitter-python` / `-javascript` / `-typescript` / `-cpp` / `-go` / `-rust` / `-java` | >=0.23 | code_index 언어 grammar |
+| `tree-sitter-markdown` | >=0.3 | code_index markdown heading 인덱스 |
 
-표준 라이브러리: json, re, dataclasses, pathlib, os, sys, zlib, textwrap, unicodedata, copy, tempfile, threading
+**Optional**: `agent-cli[web]` → `fastapi` / `uvicorn[standard]` / `sse-starlette`.
+**Dev**: `pytest`, `pytest-asyncio`, `httpx`, `hypothesis` (property-based 테스트).
+
+**시스템 패키지**: C/C++ 인덱싱 시 `unifdef` 권장 (`brew install unifdef` / `apt install unifdef`) — 없어도 raw fallback 동작.
+
+표준 라이브러리: json, re, dataclasses, pathlib, os, sys, zlib, textwrap, unicodedata, copy, tempfile, threading, sqlite3 (code_index)
 
 ---
 
@@ -51,14 +59,14 @@ agent_cli/
 │   ├── __init__.py          (132)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react, prefix_md) 자동 등록.
 │   ├── base.py              (410)  `WireFormat` ABC + `ParsedAction` dataclass. Plugin 베이스 클래스 — abstract method (format-specific 부분만, plugin이 반드시 구현)와 concrete default (lifecycle / 식별 hook, 보통 그대로 상속) 분리. Abstract: render_full_example / format_rules_anchor / format_rules_field_specific / parse / 6개 recovery wording / system_user_prefixes. Default: format_rules = `build_format_rules(self)`, render_action_input = identity, normalize_assistant_for_messages = identity, provider_call_kwargs = `{}`, prefill = `""`, serialize_assistant_for_history = `self.parse()` + 구조화 필드 추출, render_assistant_from_history = `self.render_full_example()` 호출로 wire shape 재방출. 모듈 docstring에 assistant turn lifecycle (A → B/C, B → D) 표 포함. plugin 추가 = WireFormat 상속한 새 파일 1개, main code 0 변경.
 │   ├── react.py             (655)  ReActFormat — 기본 plugin. ReAct-shape 문자열 (JSON `{thought, action, action_input}`) + recovery wording + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. WireFormat ABC 상속해 lifecycle default 사용 — format-specific 메서드만 정의. (이전 EnvelopeFormat은 2026-05-10 측정 후 폐기 — Phase 1 bakeoff에서 mistral 0% / qwen thought 9.5%로 wire-shape 결정성 약점 확인)
-│   └── prefix_md.py         (~400) PrefixMdFormat — 마크다운 H2 헤딩 wire format (`## Thought / ## Action / ## Input`). small-LLM이 XML envelope보다 자연스럽게 emit하도록 설계. parser: strict `^## X$` line-anchored 매칭, last-wins on `## Action`+`## Input` (sub-header drift 방어), action body는 단일 토큰 (`^[\w.-]+$`) 검증. 4-state parse_stage (0=no Action, 1=full, 2=Action 있고 Input 깨짐, 3=Action body invalid). provider_call_kwargs override (`skip_json_format=True`) — Ollama format=json 모드가 `{` 강제하는데 markdown은 `## `로 시작이라 충돌. 나머지 lifecycle은 ABC default 사용.
+│   └── prefix_md.py         (~436) PrefixMdFormat — 마크다운 H2 헤딩 wire format (`## Thought / ## Action / ## Input`). small-LLM이 XML envelope보다 자연스럽게 emit하도록 설계. parser: strict `^## X$` line-anchored 매칭, last-wins on `## Action`+`## Input` (sub-header drift 방어), action body는 단일 토큰 (`^[\w.-]+$`) 검증. 4-state parse_stage (0=no Action, 1=full, 2=Action 있고 Input 깨짐, 3=Action body invalid). provider_call_kwargs override (`skip_json_format=True`) — Ollama format=json 모드가 `{` 강제하는데 markdown은 `## `로 시작이라 충돌. 나머지 lifecycle은 ABC default 사용.
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
 │   ├── __init__.py                 primitive·detector·observability 재export (common_recovery / wf_recovery는 호출처가 import — 패키지 자체 format-agnostic 보존)
 │   ├── common_recovery.py   (~65)  WF-agnostic Intervention factory — `format_action_loop_intervention` (B1). 모든 plugin이 같은 텍스트를 봄. 새 wire-format plugin 추가 시 0 변경
 │   ├── wf_recovery.py       (~110) WF-aware Intervention factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A3). plugin의 framing/reminder/static fallback 사용. WF 의존이 한 파일에 모여 audit 용이. ReAct-only NO_THOUGHT recovery는 `ReActFormat.format_no_thought_retry` 메서드 (plugin = boundary)
-│   ├── detectors.py         (~210) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용), `detect_thought_missing` (A7, action 있고 thought 없음 — mimicry-strengthening loop trigger; loop이 `wire_format.thought_required` 가드 후 호출. `complete` 액션은 제외 — 최종 답이라 next-turn 의무 없음, Phase 2 bakeoff 2026-05-18에서 27b prefix_md complete_direct 5/5 recovery loop 해소 측정).
+│   ├── detectors.py         (~250) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용), `detect_thought_missing` (A7, action 있고 thought 없음 — mimicry-strengthening loop trigger; loop이 `wire_format.thought_required` 가드 후 호출. `complete` 액션은 제외 — 최종 답이라 next-turn 의무 없음, Phase 2 bakeoff 2026-05-18에서 27b prefix_md complete_direct 5/5 recovery loop 해소 측정).
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
-│   ├── observability.py     (~115) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 8종 (NO_JSON / NO_OUTPUT / NO_ACTION / NO_THOUGHT / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
+│   ├── observability.py     (~160) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 8종 (NO_JSON / NO_OUTPUT / NO_ACTION / NO_THOUGHT / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP)
 │   └── primitives.py        (~109) format-agnostic 회복 primitive (`echo_prior_output`, `probe_progress`, `restate_task`) — provider/모델/채널/wire format 이름 모름. ReAct-shape constraint reminders는 ``ReActFormat`` 가 소유
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
@@ -70,10 +78,10 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (1719) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget compaction + FIFO fallback, hook, streaming, nested depth rendering, failure-grounding retry). 생성 시 `ctx.set_compactor(self._llm_compact_summarize)` + `ctx.set_recorder(self.recorder)`로 compaction 진입점을 ContextManager에 주입; `--no-compaction` / `AGENT_CLI_COMPACTION=off`면 미주입 → FIFO만 동작
+├── loop.py                  (~1735) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget compaction + FIFO fallback, hook, streaming, nested depth rendering, failure-grounding retry). 생성 시 `ctx.set_compactor(self._llm_compact_summarize)` + `ctx.set_recorder(self.recorder)`로 compaction 진입점을 ContextManager에 주입; `--no-compaction` / `AGENT_CLI_COMPACTION=off`면 미주입 → FIFO만 동작
 ├── render/                         플러그인 가능 렌더링 + 사용자 입력 시스템
-│   ├── __init__.py          (211)  렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
-│   ├── base.py              (~300) Renderer ABC + `ConfirmOption` dataclass. 출력 메서드 19개 (depth, capture, group, thread_status, thinking 등) + 입력 메서드 2개 (`prompt_user` 자유 입력 — optional `context` kwarg로 pre-input 안내(예: ask 도구의 질문 블록)을 전달, `confirm` 선택지+코멘트). 입력도 추상화에 포함해 web UI 같은 비-CLI renderer가 SSE+POST로 같은 인터페이스 만족할 수 있게. **`begin_delegate_task` / `end_delegate_task`** concrete no-op lifecycle 메서드 — CLI 렌더러는 그대로 무시(rich.Live가 자체 처리), WebRenderer만 override해서 thread→task_id 매핑 + SSE 마커 발사. `delegate.py::_run_parallel` 워커는 둘을 무조건 호출 → 렌더러 타입 분기 없음.
+│   ├── __init__.py          (~270) 렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
+│   ├── base.py              (~320) Renderer ABC + `ConfirmOption` dataclass. 출력 메서드 19개 (depth, capture, group, thread_status, thinking 등) + 입력 메서드 2개 (`prompt_user` 자유 입력 — optional `context` kwarg로 pre-input 안내(예: ask 도구의 질문 블록)을 전달, `confirm` 선택지+코멘트). 입력도 추상화에 포함해 web UI 같은 비-CLI renderer가 SSE+POST로 같은 인터페이스 만족할 수 있게. **`begin_delegate_task` / `end_delegate_task`** concrete no-op lifecycle 메서드 — CLI 렌더러는 그대로 무시(rich.Live가 자체 처리), WebRenderer만 override해서 thread→task_id 매핑 + SSE 마커 발사. `delegate.py::_run_parallel` 워커는 둘을 무조건 호출 → 렌더러 타입 분기 없음.
 │   ├── minimal.py           (~600) MinimalRenderer — 유일한 번들 렌더러. **출력**: nested depth, markdown, ASCII-art talking-face streaming progress with token counter + 시간 기반 프레임 throttle + 폭 통일 패딩 + 좁은 터미널 안전망 + resize-recovery, ASCII-art thinking spinner, `FrameClock` 공유 (delegate 병렬 패널이 동일 cadence로 reuse), write_file/edit_file unified-diff 렌더링, ToolResult.success 직접 전달로 정확한 ✓/✗ 표시, capture, group blocks, CJK+Ambiguous width, verbose에서 provider thinking 블록 표시. **입력**: `prompt_user`는 multiline 시 `input_history.read_rich_input` (paste + `"""..."""` 블록 지원), 단일 줄은 stdin `input()`; EOF/Ctrl+C는 호출자 정책 분기를 위해 전파. `confirm`은 첫 토큰 매칭 (key + aliases, case-insensitive), EOF/empty/unrecognized는 `default_key` 반환. 커스텀은 `render/{name}.py`에 Renderer 서브클래스를 두면 `--style {name}`으로 로드됨
 │   └── web.py               (~680) WebRenderer — `agent-cli web` 전용. 모든 Renderer emit이 (1) `_event_buffer`에 (persistent만) 누적 + (2) 활성 SSE connection의 queue에 push. `thought()` 는 즉시 emit 안 하고 다음 `action()` / `final()` 에서 `assistant_turn` 한 이벤트로 묶음 (LLM 한 emission = 프런트 카드 한 개). `prompt_user` / `confirm` 은 `input_required` 이벤트 push 후 worker thread에서 `_input_queue.get()` blocking, POST /api/input 이 도착하면 깨움. `prompt_user(context=...)` 는 ask 도구의 질문 텍스트를 `input_required.context` 필드로 그대로 전달 → 프런트가 ANSWERING 칩 옆 패널로 렌더 (스크롤 없이 질문 즉시 노출). **세션 정보 ``ready`` 이벤트는 별도 ``_latest_ready`` slot에 보관** — buffer와 분리해서 chat REPL 재진입 시 N개 누적 방지 + 새 connection snapshot 앞에 prepend → 첫 chat turn 전에 페이지 새로고침해도 top-bar 즉시 채워짐. 중첩 AgentLoop(`skill_name`/`skill_args` 세팅)에서의 header()는 무시 (sub-flow가 top-bar를 클로버하지 않도록). `unregister_connection` 은 `__close__` sentinel push로 SSE generator의 executor blocking call을 즉시 깨움 — register/unregister 페어의 대칭성으로 production cleanup latency 0. **`shutdown_all_connections()`** — 모든 active connection에 `__close__` sentinel을 일괄 push하고 리스트를 비움; FastAPI lifespan shutdown 훅과 main.py `finally` 양쪽에서 호출되며 idempotent (두 번째 호출은 빈 리스트 위에서 no-op). **`replay_from_history(ctx)`** — `--resume` 시 worker 시작 + SSE 연결 이전에 한 번 호출, `ctx.get_raw_messages()`를 walk해 user/tool/assistant 메시지를 각각 `push_user_message` / `observation` / `thought+action` 또는 `thought+final` 시퀀스로 재방출 → 새 클라이언트의 snapshot replay가 자연스럽게 이전 turn을 복원 (transient stream_chunk/status/spinner는 on-disk 기록 없음 = 재생 안 함). `__init__(workspace=...)` 로 workspace 경로 받아 ready 이벤트에 포함. **Parallel delegate visibility**: `_thread_to_task` dict + `_emit` 자동 task_id 첨부 + `begin_delegate_task` / `end_delegate_task` / `set_thread_status` override로 worker thread별 SSE 이벤트 라우팅. 프런트는 task_id 보고 collapsible group 카드로 격리 표시 → 두 parallel worker 출력이 인터리브하지 않음.
 ├── web/                            agent-cli web 서버 + 정적 UI (optional dep, `pip install agent-cli[web]`)
@@ -93,40 +101,40 @@ agent_cli/
 │   └── ollama.py            (176)  Ollama API (basic JSON mode + message.thinking + streaming + TTFT)
 │
 ├── tools/                          도구 시스템
-│   ├── __init__.py          (~70)  TOOLS dict (실제+가상) + _execute_tool() (internal primitive)
+│   ├── __init__.py          (77)   TOOLS dict (실제+가상) + _execute_tool() (internal primitive)
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
-│   ├── action_summary.py    (37)   tool 이름 분기 자연어 요약 헬퍼: `summarize_tool_args` (observation record 측 — `{"tool":"<tool>","args":{...}}`)만 남음. manager._to_natural_language(observation 브랜치)가 `[<tool>] <args summary>` 헤더 합성에 사용. assistant emission 측은 `wire_format.render_assistant_from_history`가 JSON 재직렬화로 round-trip하므로 별도 요약 함수 불필요 (이전 `summarize_action_args`는 2026-05-15 제거).
-│   ├── registry.py          (481)  스키마 정의, 검증 (3-tuple 리턴), inline 가이드
+│   ├── action_summary.py    (34)   tool 이름 분기 자연어 요약 헬퍼: `summarize_tool_args` (observation record 측 — `{"tool":"<tool>","args":{...}}`)만 남음. manager._to_natural_language(observation 브랜치)가 `[<tool>] <args summary>` 헤더 합성에 사용. assistant emission 측은 `wire_format.render_assistant_from_history`가 JSON 재직렬화로 round-trip하므로 별도 요약 함수 불필요 (이전 `summarize_action_args`는 2026-05-15 제거).
+│   ├── registry.py          (~600) 스키마 정의, 검증 (3-tuple 리턴), inline 가이드
 │   ├── _diff.py             (113)  write_file/edit_file 공용 unified-diff 포매터 (Rich markup, OLD/NEW line-number gutter, 100줄 cap)
-│   ├── read_file.py         (264)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
-│   ├── write_file.py        (37)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
-│   ├── edit_file.py         (274)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff) → ToolResult
-│   ├── shell.py             (167)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult. 출력은 잘리지 않고 그대로 LLM observation으로 전달 (이전 shell_artifact 가드는 2026-05-19 제거 — head/tail 미리보기가 중간 디버깅 정보를 silent하게 누락시키는 사례 발견, 컨텍스트 budget은 compaction/FIFO가 처리)
+│   ├── read_file.py         (~280) 파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 + 대용량 가드 → ToolResult
+│   ├── write_file.py        (43)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
+│   ├── edit_file.py         (280)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff) → ToolResult
+│   ├── shell.py             (162)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env로 비활성 가능) → ToolResult. 출력은 잘리지 않고 그대로 LLM observation으로 전달 (이전 shell_artifact 가드는 2026-05-19 제거 — head/tail 미리보기가 중간 디버깅 정보를 silent하게 누락시키는 사례 발견, 컨텍스트 budget은 compaction/FIFO가 처리)
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
-│   ├── delegate.py          (700)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
+│   ├── delegate.py          (~770) in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
 │   ├── context.py           (574)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
-│   └── code_index.py        (~470) code_index 도구 — `agent_cli.code_index` 패키지의 native-tool wrapper. 10 mode dispatch (list/fetch/lookup/kind/file/refs/callers/callees/slice/build). 인덱스 root 자동 해석 (cwd 또는 가장 가까운 조상 `.agent-cli/`), lazy build + per-query incremental refresh. list/fetch는 root 바깥 path에 대해 on-demand parse fallback (DB 갱신 없음); 나머지 모드는 index-scoped (out-of-root 명시적 거부). fetch 결과는 hashline 포맷 → edit_file 직결. `post_hook(path)`는 edit_file/write_file 성공 직후 호출되어 자동 incremental refresh — 모든 예외 swallow (인덱싱 hiccup이 user-facing op 막지 않음).
+│   └── code_index.py        (561)  code_index 도구 — `agent_cli.code_index` 패키지의 native-tool wrapper. 10 mode dispatch (list/fetch/lookup/kind/file/refs/callers/callees/slice/build). 인덱스 root 자동 해석 (cwd 또는 가장 가까운 조상 `.agent-cli/`), lazy build + per-query incremental refresh. list/fetch는 root 바깥 path에 대해 on-demand parse fallback (DB 갱신 없음); 나머지 모드는 index-scoped (out-of-root 명시적 거부). fetch 결과는 hashline 포맷 → edit_file 직결. `post_hook(path)`는 edit_file/write_file 성공 직후 호출되어 자동 incremental refresh — 모든 예외 swallow (인덱싱 hiccup이 user-facing op 막지 않음).
 │
 ├── code_index/                     code_index 패키지 — tree-sitter SQLite 코드 인덱서 (`minish.ai/Agent-tools tsindex.py` Apache 2.0 port — NOTICE 참조). 총 ~5,000 LOC.
-│   ├── __init__.py          (54)   public API: build / load_index / build_callgraph / cmd_slice / IndexStore / Symbol / Ref / NAME_KINDS / CODE_NAME_KINDS / REF_KINDS / SCHEMA_VERSION
-│   ├── schema.py            (97)   SCHEMA_VERSION=1, Symbol/Ref dataclass, NAME_KINDS(5-vocab: function/type/variable/constant/section), CODE_NAME_KINDS(=NAME_KINDS-{section}, cross-file ref name resolution 전용 4-vocab), REF_KINDS(call/name/type). `section`은 markdown heading 5번째 vocab으로 추가됨 (upstream 4-vocab → 5-vocab).
-│   ├── preproc.py           (452)  C/C++ 전처리: unifdef 드라이버 + rewriter chain (foreach/decl_macro/bare_attribute/variadic/ifdef_zero/define_comments/pp_trailing_ws/consecutive_attr/pp_continuation/type_arg). `unifdef` 미설치 시 graceful fallback (raw parse). `compute_preproc`이 fingerprint 산출 — defs file 내용 변경 시 인덱스 자동 invalidate.
-│   ├── store.py             (254)  IndexStore (SQLite reader). find_symbols/find_refs/find_refs_in_range, normalize_file_path (exact/absolute/basename/suffix), kind_counts/ref_kind_counts/top_ref_names. dict-style 접근(`idx['symbols']`)도 호환 유지.
-│   ├── builder.py           (~440) build() — Pass-1(definitions) + Pass-2(refs) + sha1 incremental + Option-B re-Pass2 (변경 파일의 새 이름을 mention하는 unchanged 파일 자동 re-walk). `iter_source_files`가 `_SKIP_DIRS` (.git/.agent-cli/.claude/.venv/node_modules/build/dist 등) prune → 인덱스 폭주 방지. 무효화 트리거 3개: schema_version mismatch / meta.root 변경 / preproc_fingerprint 변경.
-│   ├── callgraph.py         (105)  build_callgraph → (calls_of, callers_of, sites_of). 호출 사이트 (caller, callee, file, line) dedup으로 walker의 call+name 더블 emit을 1 edge로 정리. callback-only(kind='name' 단독) 사이트는 1× 그대로 유지.
+│   ├── __init__.py          (56)   public API: build / load_index / build_callgraph / cmd_slice / IndexStore / Symbol / Ref / NAME_KINDS / CODE_NAME_KINDS / REF_KINDS / SCHEMA_VERSION
+│   ├── schema.py            (~140) SCHEMA_VERSION=2 (v2: `qualified_name` 컬럼 추가, walker가 emit 시 full display form 산출 — Python/JS/TS/Java/Go/Rust/Markdown은 `.`, C++는 `::`, C는 flat=name; tool handler가 qualified_name 우선 lookup + bare-leaf fallback). Symbol/Ref dataclass, NAME_KINDS(5-vocab: function/type/variable/constant/section), CODE_NAME_KINDS(=NAME_KINDS-{section}, cross-file ref name resolution 전용 4-vocab), REF_KINDS(call/name/type). `section`은 markdown heading 5번째 vocab으로 추가됨 (upstream 4-vocab → 5-vocab).
+│   ├── preproc.py           (449)  C/C++ 전처리: unifdef 드라이버 + rewriter chain (foreach/decl_macro/bare_attribute/variadic/ifdef_zero/define_comments/pp_trailing_ws/consecutive_attr/pp_continuation/type_arg). `unifdef` 미설치 시 graceful fallback (raw parse). `compute_preproc`이 fingerprint 산출 — defs file 내용 변경 시 인덱스 자동 invalidate.
+│   ├── store.py             (257)  IndexStore (SQLite reader). find_symbols/find_refs/find_refs_in_range, normalize_file_path (exact/absolute/basename/suffix), kind_counts/ref_kind_counts/top_ref_names. dict-style 접근(`idx['symbols']`)도 호환 유지.
+│   ├── builder.py           (440)  build() — Pass-1(definitions) + Pass-2(refs) + sha1 incremental + Option-B re-Pass2 (변경 파일의 새 이름을 mention하는 unchanged 파일 자동 re-walk). `iter_source_files`가 `_SKIP_DIRS` (.git/.agent-cli/.claude/.venv/node_modules/build/dist 등) prune → 인덱스 폭주 방지. 무효화 트리거 3개: schema_version mismatch / meta.root 변경 / preproc_fingerprint 변경.
+│   ├── callgraph.py         (115)  build_callgraph → (calls_of, callers_of, sites_of). 호출 사이트 (caller, callee, file, line) dedup으로 walker의 call+name 더블 emit을 1 edge로 정리. callback-only(kind='name' 단독) 사이트는 1× 그대로 유지.
 │   ├── slice.py             (194)  cmd_slice → LLM-context markdown blob (definition + 선택적 callees/callers/types/macros, depth/max_bytes 캡). stdout 출력 대신 str 반환 (tool 통합).
 │   └── languages/                  per-language walker 모듈 (lazy import — Python-only 프로젝트가 Rust grammar wheel 비용 안 냄)
-│       ├── __init__.py      (132)  LangSpec dataclass + LANGUAGES dict + lazy `_ensure_loaded()` + `language_of(path)` / `get_supported_extensions()` helpers (prompt inline guide + error 메시지 single source)
-│       ├── _shared.py       (21)   `text(node, src)` 공통 helper
-│       ├── python.py        (~290) 함수/클래스/decorated/UPPER_SNAKE → constant. async/decorator modifiers. nested def/class도 emit (parent dotted chain).
-│       ├── go.py            (~270) func/method (receiver type → parent), type/const/var, exported(uppercase) modifier. selector_expression call site.
-│       ├── rust.py          (~410) function_item / function_signature_item (trait body sig은 is_definition=False with parent=trait_name), struct/enum/trait/type_item, impl block methods. macro_rules! → kind=function.
+│       ├── __init__.py      (~160) LangSpec dataclass + LANGUAGES dict + lazy `_ensure_loaded()` + `language_of(path)` / `get_supported_extensions()` helpers (prompt inline guide + error 메시지 single source)
+│       ├── _shared.py       (36)   `text(node, src)` 공통 helper
+│       ├── python.py        (~330) 함수/클래스/decorated/UPPER_SNAKE → constant. async/decorator modifiers. nested def/class도 emit (parent dotted chain).
+│       ├── go.py            (~290) func/method (receiver type → parent), type/const/var, exported(uppercase) modifier. selector_expression call site.
+│       ├── rust.py          (~420) function_item / function_signature_item (trait body sig은 is_definition=False with parent=trait_name), struct/enum/trait/type_item, impl block methods. macro_rules! → kind=function.
 │       ├── java.py          (~340) class/interface/enum/abstract method/field. interface method = is_definition=False. generics, variadic args.
-│       ├── javascript.py    (~480) function/class/method/field/lexical. const/let/var → kind 결정. arrow fn / generator (`function*`) → modifiers ['generator']. JS 헬퍼는 typescript.py가 import해 재사용.
-│       ├── typescript.py    (~280) interface/type_alias/enum + js의 헬퍼 재사용. walk_refs는 type_identifier 추가 처리 → kind='type' ref emit (정의 사이트 제외).
-│       ├── c.py             (~540) self-contained C walker (add_function_def/declaration/record/typedef/macro/c_walk_definitions/c_walk_refs). preprocess slot은 preproc.preprocess_source.
-│       ├── cpp.py           (~720) self-contained C++ walker (template/namespace/class). C helper를 복제 보유 — upstream의 'language="c" inside .cpp' oddity 회피, .cpp 파일은 일관되게 language="cpp".
-│       └── markdown.py      (199)  ATX (`## heading`) + setext heading walker. kind='section', kind_raw='atx_heading_N'/'setext_heading_N', parent stack chain, end_line은 다음 same-or-higher level heading 직전. refs 없음.
+│       ├── javascript.py    (~490) function/class/method/field/lexical. const/let/var → kind 결정. arrow fn / generator (`function*`) → modifiers ['generator']. JS 헬퍼는 typescript.py가 import해 재사용.
+│       ├── typescript.py    (~270) interface/type_alias/enum + js의 헬퍼 재사용. walk_refs는 type_identifier 추가 처리 → kind='type' ref emit (정의 사이트 제외).
+│       ├── c.py             (~550) self-contained C walker (add_function_def/declaration/record/typedef/macro/c_walk_definitions/c_walk_refs). preprocess slot은 preproc.preprocess_source.
+│       ├── cpp.py           (~725) self-contained C++ walker (template/namespace/class). C helper를 복제 보유 — upstream의 'language="c" inside .cpp' oddity 회피, .cpp 파일은 일관되게 language="cpp".
+│       └── markdown.py      (~225) ATX (`## heading`) + setext heading walker. kind='section', kind_raw='atx_heading_N'/'setext_heading_N', parent stack chain, end_line은 다음 same-or-higher level heading 직전. refs 없음.
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
@@ -355,7 +363,7 @@ class ToolSchema:
 # 가상 도구 (loop에서 인터셉트, 별도 set 상수 없음 — loop.py if-cascade가 단일 진실원):
 #   complete, ask, run_skill, ready_for_review, delegate
 # _ALWAYS_INCLUDE = ("complete", "ready_for_review") — allowed_tools와 무관하게 항상 API tool 목록에 포함
-# delegate는 별도 DELEGATE_TOOL_SCHEMA로 관리
+# delegate는 TOOL_SCHEMAS의 일반 항목으로 등록 (`include_delegate` 플래그로 시스템 프롬프트 노출 제어)
 ```
 
 가상 도구 인터셉트 분기는 일반 dispatch 경로(`§5.x render_step("action", ...)`)를
@@ -1254,9 +1262,9 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
 
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
-| 유닛 테스트 | 36 | 985 | `pytest tests/ -m "not ollama_integration"` |
+| 유닛 테스트 | ~69 | ~1814 | `pytest tests/ -m "not ollama_integration"` |
 | 통합 테스트 | 1 | 22 | `pytest tests/test_integration.py` |
-| **전체** | **37** | **1007** | `pytest tests/` |
+| **전체** | **70** | **~1850** | `pytest tests/` |
 
 ### 10.2 통합 테스트 모델 구성 (`tests/conftest.py`)
 

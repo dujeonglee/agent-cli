@@ -646,7 +646,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
-| `fetch` | 웹 페이지 fetch → 마크다운 변환 |
+| `ready_for_review` | 완료 직전 자가 검증 — 원본 query를 observation으로 받아 누락 점검 후 `complete` 호출 |
 
 ### read_file — 파일 읽기
 
@@ -889,7 +889,6 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 |------|------|
 | `none` (기본) | 독립 실행. task에 모든 정보 포함 필요 |
 | `fork` | 부모 컨텍스트를 복사하여 실행. 맥락 인지 + 독립 |
-| `inherit` | 부모 컨텍스트를 공유. 메시지가 부모에 누적 |
 
 ```json
 {"action": "delegate", "action_input": {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}}
