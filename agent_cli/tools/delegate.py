@@ -487,10 +487,8 @@ def _run_parallel(
         render_group_start,
         render_group_end,
         get_renderer,
-        console,
     )
-    from rich.live import Live
-    from rich.text import Text
+    from agent_cli.render.base import ParallelTaskState
 
     results: list[ToolResult | None] = [None] * len(task_specs)
     captured: list[list[str]] = [[] for _ in task_specs]
@@ -566,60 +564,51 @@ def _run_parallel(
         threads.append(t)
         t.start()
 
-    # Live status panel during parallel execution. Reuses the renderer
-    # module's `FrameClock(_THINK_FRAMES)` so the parallel-delegate
-    # spinner matches the single-task thinking spinner — same frames,
-    # same `_FRAME_INTERVAL` cadence, single source of truth for both.
-    from agent_cli.render.minimal import FrameClock, _THINK_FRAMES
+    # Parallel-delegate progress display is owned by the renderer
+    # (UI rendering lives in the render module — no ``rich.Live`` /
+    # console writes from tools). The data the renderer needs to
+    # paint a snapshot of all workers is built here as a list of
+    # ``ParallelTaskState`` records on each refresh tick; the renderer
+    # decides what (if anything) to draw with it. WebRenderer's
+    # default is a no-op context manager because the same progress
+    # information already flows out via begin_delegate_task /
+    # end_delegate_task SSE cards.
 
-    clock = FrameClock(_THINK_FRAMES)
-
-    def render_live():
-        lines = [Text(f"Running {len(task_specs)} tasks in parallel:", style="grey46")]
-        frame = clock.current()
+    def _state_snapshot() -> list[ParallelTaskState]:
+        out: list[ParallelTaskState] = []
         for i, spec in enumerate(task_specs):
-            task_text = spec.get("task", "")
-            agent = spec.get("agent", "")
-            label = (
-                f"[{i + 1}] {agent}: {task_text}" if agent else f"[{i + 1}] {task_text}"
-            )
-            if done_flags[i]:
-                ok = results[i] and results[i].success
-                icon = "✓" if ok else "✗"
-                lines.append(
-                    Text(f"  {icon} {label} ({durations[i]:.1f}s)", style="grey46")
-                )
+            done = done_flags[i]
+            ok: bool | None
+            if done:
+                ok = bool(results[i] and results[i].success)
             else:
-                status = (
-                    renderer.get_thread_status(thread_ids[i])
-                    if thread_ids[i]
-                    else "starting..."
+                ok = None
+            status = (
+                renderer.get_thread_status(thread_ids[i])
+                if thread_ids[i]
+                else "starting..."
+            )
+            out.append(
+                ParallelTaskState(
+                    index=i,
+                    agent=spec.get("agent", ""),
+                    task=spec.get("task", ""),
+                    done=done,
+                    success=ok,
+                    duration_s=durations[i] if done else 0.0,
+                    status=status,
                 )
-                lines.append(Text(f"  {frame} {label}", style="grey46"))
-                # Show thought on separate indented line below task
-                lines.append(Text(f"       {status}", style="grey46"))
-        group = Text("\n").join(lines)
-        return group
+            )
+        return out
 
-    # Skip Live panel if we're already inside a capturing thread
-    # (nested parallel delegate — outer Live would compete with this one).
-    show_live = not renderer.is_capturing
     try:
-        if show_live:
-            try:
-                with Live(
-                    render_live(),
-                    console=console,
-                    refresh_per_second=8,
-                    transient=True,
-                    get_renderable=render_live,
-                ):
-                    for t in threads:
-                        t.join()
-            except Exception:
+        try:
+            with renderer.parallel_live_panel(_state_snapshot):
                 for t in threads:
                     t.join()
-        else:
+        except Exception:
+            # Live host (if any) raised — fall back to a plain join
+            # so workers still get reaped.
             for t in threads:
                 t.join()
     finally:

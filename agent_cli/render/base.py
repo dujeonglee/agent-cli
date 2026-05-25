@@ -31,6 +31,25 @@ class ConfirmOption:
     aliases: tuple[str, ...] = field(default_factory=tuple)
 
 
+@dataclass
+class ParallelTaskState:
+    """Snapshot of one parallel-delegate task at a point in time.
+
+    Passed to :meth:`Renderer.parallel_live_panel` so the renderer can
+    paint a progress region without importing tool internals. The
+    delegate tool builds these on each refresh tick; the renderer
+    decides what (if anything) to draw with them.
+    """
+
+    index: int  # 0-based position in the fan-out
+    agent: str  # agent name (or "" for ad-hoc task)
+    task: str  # task description
+    done: bool  # worker finished?
+    success: bool | None  # only meaningful when done; None while running
+    duration_s: float  # 0 while running; final elapsed once done
+    status: str  # live thought / status line emitted by the worker
+
+
 class Renderer(ABC):
     """Abstract base for all renderers.
 
@@ -103,6 +122,56 @@ class Renderer(ABC):
         with self._capture_lock:
             if tid in self._captures:  # only when capturing
                 self._thread_status[tid] = status
+
+    # ── Parallel delegate live panel ─────────────────
+    #
+    # The parallel-delegate progress display (per-task spinner +
+    # status lines while workers run) is a UI concern, so the actual
+    # rendering primitives — ``rich.Live``, console writes, SSE
+    # markers — must live in the render module, not the tool. The
+    # delegate tool just calls ``renderer.parallel_live_panel(...)``
+    # as a context manager and joins worker threads inside it; each
+    # renderer decides what (if anything) to draw.
+    #
+    # Default: no-op. WebRenderer keeps the default because it
+    # already publishes per-task SSE cards via
+    # ``begin_delegate_task`` / ``end_delegate_task`` — duplicating
+    # them as a console Live region would only bleed terminal noise
+    # into the parent process where the user is reading the URL.
+    # MinimalRenderer overrides to host the CLI Live region.
+
+    def parallel_live_panel(self, state_getter):
+        """Context manager surrounding parallel-delegate execution.
+
+        ``state_getter`` is a zero-arg callable returning the current
+        ``list[ParallelTaskState]`` for every task. The renderer is
+        free to poll it on a refresh cadence or ignore it entirely.
+
+        The ABC default is a no-op context manager so the delegate
+        tool can call this unconditionally — every renderer is
+        guaranteed to satisfy the protocol.
+        """
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+    # ── Ask-tool announcement ────────────────────────
+    #
+    # The ``ask`` tool's "Agent asks:" header + question list is a UI
+    # concern too. CLI surfaces need to print the questions before
+    # reading stdin (terminals don't echo the prompt context back).
+    # Web surfaces don't because ``prompt_user(context=...)`` already
+    # carries the question text into the form. The loop calls this
+    # before ``prompt_user``; the renderer decides what to draw.
+
+    def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:
+        """Announce the ask-tool questions before the input prompt.
+
+        Default: no-op. WebRenderer keeps the default — the same text
+        already arrives at the UI via the ``context`` argument of
+        ``prompt_user``, so a duplicate emission would just be noise.
+        MinimalRenderer overrides to print a colored block.
+        """
 
     # ── Parallel delegate lifecycle ──────────────────
     #

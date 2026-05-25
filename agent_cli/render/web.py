@@ -70,6 +70,12 @@ class WebRenderer(Renderer):
     buffer.
     """
 
+    # Web mode already pushes per-task SSE cards through
+    # begin_delegate_task / end_delegate_task — a parallel
+    # console-side Live region would only leak terminal noise into
+    # the parent process where the user is reading the URL.
+    supports_parallel_live_panel: bool = False
+
     def __init__(self, *, workspace: str = "") -> None:
         super().__init__()
         self._lock = threading.Lock()

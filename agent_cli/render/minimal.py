@@ -600,3 +600,86 @@ class MinimalRenderer(Renderer):
         # Unrecognized — preserve the full raw input as comment so the
         # user's intent surfaces upstream (e.g. tool result observation).
         return (default_key, raw)
+
+    # ── Parallel delegate live panel ─────────────────
+
+    def parallel_live_panel(self, state_getter):
+        """Host a ``rich.Live`` region that polls ``state_getter`` for
+        per-task progress and paints one line per task.
+
+        ``state_getter`` returns ``list[ParallelTaskState]``; the
+        local imports below pull both the type and the Rich widgets
+        only when this method actually runs (skips the Live import
+        cost for headless / web renderer paths).
+
+        Returns a context manager; the caller (``delegate.py``)
+        joins worker threads inside the ``with`` body. ``transient=
+        True`` means the region clears on exit so the final per-task
+        capture blocks (printed by ``delegate.py`` afterwards) own the
+        terminal space cleanly.
+
+        Nested case: if this thread is already capturing (= we're an
+        inner parallel delegate inside an outer one), defer to the
+        ABC no-op so the outer Live keeps the surface. ABC default
+        returns ``nullcontext()`` — use it directly.
+        """
+        if self.is_capturing:
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+        clock = FrameClock(_THINK_FRAMES)
+
+        def render_live():
+            states = state_getter()
+            lines = [Text(f"Running {len(states)} tasks in parallel:", style="grey46")]
+            frame = clock.current()
+            for s in states:
+                label = (
+                    f"[{s.index + 1}] {s.agent}: {s.task}"
+                    if s.agent
+                    else f"[{s.index + 1}] {s.task}"
+                )
+                if s.done:
+                    icon = "✓" if s.success else "✗"
+                    lines.append(
+                        Text(
+                            f"  {icon} {label} ({s.duration_s:.1f}s)",
+                            style="grey46",
+                        )
+                    )
+                else:
+                    lines.append(Text(f"  {frame} {label}", style="grey46"))
+                    lines.append(Text(f"       {s.status}", style="grey46"))
+            return Text("\n").join(lines)
+
+        return Live(
+            render_live(),
+            console=self.con,
+            refresh_per_second=8,
+            transient=True,
+            get_renderable=render_live,
+        )
+
+    # ── Ask-tool announcement ────────────────────────
+
+    def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:
+        """Print the ``Agent asks:`` header + each question in colour.
+
+        Mirrors the plain-text version that ``loop.py`` passes to
+        ``prompt_user(context=...)`` for web surfaces; the CLI needs
+        the spelled-out version because terminals don't echo the
+        prompt context back to the user.
+        """
+        # Local import to keep `C` palette resolution lazy — the
+        # render/__init__ module sets up `_renderer` at import time
+        # and we don't want a hard circular dependency.
+        from agent_cli.render import C
+
+        accent = C["accent"]
+        self.con.print(f"{prefix}\n{prefix}[{accent}]Agent asks:[/]")
+        if len(questions) > 1:
+            for i, q in enumerate(questions, 1):
+                self.con.print(f"{prefix}  {i}. {q}")
+        else:
+            self.con.print(f"{prefix}  {questions[0]}")

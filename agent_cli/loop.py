@@ -1431,7 +1431,7 @@ def _handle_ask(questions: list[str]) -> str:
     """Display all questions at once and collect a single response."""
     import re
 
-    from agent_cli.render import C, console, get_renderer
+    from agent_cli.render import get_renderer
 
     # Strip existing leading "1.", "2)", "- ", etc. so our numbering isn't doubled
     def _strip_leading_marker(q: str) -> str:
@@ -1441,18 +1441,18 @@ def _handle_ask(questions: list[str]) -> str:
     renderer = get_renderer()
     prefix = getattr(renderer, "_prefix", "")
 
-    console.print(f"{prefix}\n{prefix}[{C['accent']}]Agent asks:[/]")
-    for i, q in enumerate(questions, 1):
-        clean = _strip_leading_marker(q)
-        if len(questions) > 1:
-            console.print(f"{prefix}  {i}. {clean}")
-        else:
-            console.print(f"{prefix}  {clean}")
+    # Announce the questions through the renderer instead of writing
+    # to ``console`` directly. CLI renderers print the colored block;
+    # WebRenderer no-ops because the same text reaches the UI via
+    # ``prompt_user(context=...)`` below, and a duplicate emission
+    # would just bleed terminal noise into the web-launch terminal.
+    cleaned_questions = [_strip_leading_marker(q) for q in questions]
+    renderer.announce_ask(cleaned_questions, prefix=prefix)
     # Plain-text mirror of the announcement above — passed to
     # ``prompt_user`` as ``context`` so out-of-band renderers (web)
     # can surface the question alongside the input affordance. CLI
-    # renderers ignore it; the ``console.print`` block above is
-    # already what the terminal user sees with colour.
+    # renderers ignore it; ``announce_ask`` is what the terminal
+    # user sees with colour.
     if len(questions) > 1:
         context_lines = [
             f"{i}. {_strip_leading_marker(q)}" for i, q in enumerate(questions, 1)
