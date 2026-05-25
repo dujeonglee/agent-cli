@@ -43,6 +43,30 @@ from agent_cli.render.web import WebConnection, WebRenderer
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+# ``no-cache`` (revalidate-required) rather than ``no-store`` so the
+# browser can still take a 304 fast path when nothing changed, but a
+# CSS/JS edit lands without forcing the operator to hard-refresh.
+# Editable installs serve files straight from the git checkout, so an
+# in-session iteration would otherwise be invisible until the operator
+# bypassed cache manually.
+_NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """``StaticFiles`` that stamps every response with ``no-cache``.
+
+    Mounting plain ``StaticFiles`` leaves caching at Starlette's
+    defaults — no ``Cache-Control`` set, so browsers fall back to
+    heuristic caching of CSS/JS. Editable-install iteration becomes
+    "edit, restart server, hard-refresh browser"; the override drops
+    the last step.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = _NO_CACHE_HEADERS["Cache-Control"]
+        return response
+
 
 def pick_port(host: str, preferred: int) -> int:
     """Pick a bindable port for the web server.
@@ -438,12 +462,12 @@ def create_app(server: WebServer) -> FastAPI:
         """Serve the static chat UI. JS reads ``?token=…`` from the
         URL — no auth gate here because the page itself contains no
         secrets; the SSE / input endpoints are token-protected."""
-        return FileResponse(_STATIC_DIR / "index.html")
+        return FileResponse(_STATIC_DIR / "index.html", headers=_NO_CACHE_HEADERS)
 
     if _STATIC_DIR.exists():
         app.mount(
             "/static",
-            StaticFiles(directory=_STATIC_DIR),
+            _NoCacheStaticFiles(directory=_STATIC_DIR),
             name="static",
         )
 

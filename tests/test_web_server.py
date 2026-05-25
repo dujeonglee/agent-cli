@@ -192,6 +192,19 @@ class TestStaticUI:
         assert resp.status_code == 200
         assert "text/css" in resp.headers["content-type"]
 
+    def test_static_responses_set_no_cache(self, server_and_client):
+        # Editable installs ship live source for /static/*; without an
+        # explicit Cache-Control header the browser falls back to
+        # heuristic caching and stale CSS / JS lingers across edits.
+        # All three frontend endpoints must carry no-cache so a server
+        # restart is the only revalidation the operator has to perform.
+        _, _, client = server_and_client
+        for path in ("/", "/static/app.js", "/static/style.css"):
+            resp = client.get(path)
+            assert resp.status_code == 200, path
+            cc = resp.headers.get("cache-control", "")
+            assert "no-cache" in cc, f"{path}: missing no-cache (got {cc!r})"
+
 
 # ── Auth ──────────────────────────────────────────
 
