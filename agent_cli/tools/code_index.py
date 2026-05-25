@@ -88,6 +88,43 @@ def _path_in_root(p: Path, root: Path) -> bool:
         return False
 
 
+# ----- post-hook (incremental refresh after edit_file / write_file) ---------
+
+
+def post_hook(path: str | Path) -> None:
+    """Refresh the index after a successful edit_file / write_file.
+
+    Called from ``tool_edit_file`` and ``tool_write_file`` so that the
+    next ``code_index`` query sees the change without the model having
+    to manually trigger ``mode='build'``. Semantics:
+
+      - If no index DB exists yet, no-op — lazy build will pick the file
+        up on the model's first index query.
+      - If the path is outside the resolved index root, no-op — we
+        don't track files we don't index.
+      - Otherwise call ``build()`` with the existing DB; its sha1
+        per-file scan re-walks only the one file we just touched
+        (~50ms on a 265-file repo from the upstream tsindex benchmark).
+
+    All exceptions are swallowed: the post-hook is best-effort and MUST
+    NOT cause the user-facing edit/write to fail because the index
+    refresh stumbled. A failed refresh just means the next query will
+    pay the lazy-build cost instead.
+    """
+    try:
+        root = _resolve_index_root()
+        db = root / ".agent-cli" / "code_index.db"
+        if not db.is_file():
+            return
+        file_abs = Path(path).resolve()
+        if not _path_in_root(file_abs, root):
+            return
+        build(root, db, defs_path=None, verbose=False)
+    except Exception:
+        # Best-effort: never block the user op.
+        return
+
+
 # ----- shared formatting ----------------------------------------------------
 
 

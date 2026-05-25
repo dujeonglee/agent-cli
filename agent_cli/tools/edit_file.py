@@ -271,4 +271,10 @@ def tool_edit_file(args: dict) -> ToolResult:
     diff = format_diff(original_text, result_text, path)
     if diff:
         msg += "\n\n" + diff
+    # Refresh code_index after a successful edit. Best-effort —
+    # post_hook swallows its own exceptions so an indexing hiccup
+    # never poisons the user-facing edit.
+    from agent_cli.tools.code_index import post_hook
+
+    post_hook(path)
     return ToolResult(True, output=msg)

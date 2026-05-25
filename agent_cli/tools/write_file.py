@@ -32,6 +32,12 @@ def tool_write_file(args: dict) -> ToolResult:
         diff = format_diff(old, content, path)
         if diff:
             msg += "\n\n" + diff
+        # Refresh code_index after a successful write. Best-effort —
+        # post_hook swallows its own exceptions so an indexing hiccup
+        # never poisons the user-facing write.
+        from agent_cli.tools.code_index import post_hook
+
+        post_hook(path)
         return ToolResult(True, output=msg)
     except Exception as e:
         return ToolResult(False, error=f"write_file failed: {e}")
