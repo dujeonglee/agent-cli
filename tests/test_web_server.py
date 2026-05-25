@@ -192,6 +192,29 @@ class TestStaticUI:
         assert resp.status_code == 200
         assert "text/css" in resp.headers["content-type"]
 
+    def test_pre_code_does_not_let_inline_code_bleed_through(self, server_and_client):
+        # ``<pre class="code"><code>...</code></pre>`` is how the markdown
+        # pipeline wraps fenced blocks. ``.card code`` styles inline
+        # backticks with a LIGHT background — without a reset it plates
+        # over the dark slab the parent ``pre.code`` paints, and the
+        # ``#e5e7eb`` text inherited from ``pre.code`` becomes nearly
+        # invisible (light-on-light). This was the user-reported "gray
+        # text on white" leak in markdown fenced blocks.
+        _, _, client = server_and_client
+        css = client.get("/static/style.css").text
+        # The reset rule MUST exist and MUST kill the inline background
+        # when the code element is nested in pre.code.
+        assert ".card pre.code code" in css, (
+            "missing reset rule: .card code would override pre.code's "
+            "dark slab and hide the text"
+        )
+        # And the reset must zero out the background — anything other
+        # than transparent / inherit would re-introduce the same bug
+        # with a different value.
+        idx = css.find(".card pre.code code")
+        block = css[idx : idx + 200]
+        assert "background: transparent" in block, block
+
     def test_static_responses_set_no_cache(self, server_and_client):
         # Editable installs ship live source for /static/*; without an
         # explicit Cache-Control header the browser falls back to
