@@ -642,7 +642,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
 | `read_context` | 세션 이력 조회 (현재 세션 기본, scope/sessions 필터) |
-| `read_symbols` | tree-sitter 기반 구조 인지 reader. `mode='list'`로 파일 outline(함수·클래스·헤딩 등), `mode='fetch'`로 단일 심볼 body. Python/JS/TS/C/C++/Markdown |
+| `code_index` | tree-sitter 기반 SQLite 코드 인덱스. lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
@@ -742,33 +742,99 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 **fetch는 search와 정반대로 cap 없음** — 모델이 의도적으로 부른 회상이라 multi-line/대용량 observation도 그대로 반환. 다중 loc는 all-or-nothing (하나라도 잘못되면 전체 실패).
 
-### read_symbols — 구조 인지 파일 reader
+### code_index — SQLite 코드 인덱스
 
-tree-sitter로 파일을 파싱해 함수·클래스·메서드·헤딩 등의 구조 단위로 읽습니다. `read_file`이 텍스트(line range)에 답한다면 `read_symbols`는 의미 단위(symbol)에 답합니다.
+tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_index.db`에 영구 SQLite 인덱스를 만듭니다. 첫 query 시 lazy build, 이후 query마다 sha1 비교로 변경 파일만 incremental rebuild. `edit_file` / `write_file` 성공 시 자동 post-hook이 인덱스 갱신 → 모델이 직접 `mode='build'` 호출할 필요 거의 없음.
+
+`read_file`이 텍스트(line range)에 답한다면 `code_index`는 의미 단위(symbol)와 cross-file 관계(refs/callers/callees)에 답합니다.
+
+#### 10 mode 한눈에
 
 ```json
-// outline (read_file:stat의 구조 인지 대안)
-{"action": "read_symbols", "action_input": {"path": "agent_cli/loop.py", "mode": "list"}}
+// 1. 파일 outline (read_file:stat의 구조 인지 대안)
+{"action": "code_index", "action_input": {"mode": "list", "path": "agent_cli/loop.py"}}
 
-// outline + name regex 필터 (큰 파일에서 한두 심볼만 필요할 때)
-{"action": "read_symbols", "action_input": {"path": "agent_cli/loop.py", "mode": "list", "search": "_call_llm"}}
-{"action": "read_symbols", "action_input": {"path": "src/server.cpp", "mode": "list", "search": "^ns::Server::"}}
+// 2. 단일 심볼 body (hashline 포맷 → edit_file 직결)
+{"action": "code_index", "action_input": {"mode": "fetch", "path": "agent_cli/loop.py", "name": "AgentLoop._call_llm"}}
+{"action": "code_index", "action_input": {"mode": "fetch", "path": "README.md", "name": "## Setup"}}
 
-// 한 심볼의 body
-{"action": "read_symbols", "action_input": {"path": "agent_cli/loop.py", "mode": "fetch", "name": "AgentLoop._call_llm"}}
-{"action": "read_symbols", "action_input": {"path": "src/server.cpp", "mode": "fetch", "name": "ns::Server::handle"}}
-{"action": "read_symbols", "action_input": {"path": "README.md", "mode": "fetch", "name": "## Setup"}}
+// 3. 이름으로 심볼 찾기 (인덱스 전역)
+{"action": "code_index", "action_input": {"mode": "lookup", "name": "AgentLoop"}}
+{"action": "code_index", "action_input": {"mode": "lookup", "name": "Setup", "symbol_kind": "section"}}
+
+// 4. 특정 kind 심볼 전부 (function/type/variable/constant/section)
+{"action": "code_index", "action_input": {"mode": "kind", "symbol_kind": "function"}}
+
+// 5. 한 파일의 모든 심볼 (재파싱 없이 인덱스 조회)
+{"action": "code_index", "action_input": {"mode": "file", "path": "agent_cli/loop.py"}}
+
+// 6. 참조 사이트 (call=호출, name=콜백/포인터, type=타입 위치)
+{"action": "code_index", "action_input": {"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}}
+
+// 7. 누가 호출하나
+{"action": "code_index", "action_input": {"mode": "callers", "name": "process"}}
+
+// 8. 무엇을 호출하나
+{"action": "code_index", "action_input": {"mode": "callees", "name": "process"}}
+
+// 9. LLM 컨텍스트용 markdown blob (정의 + 선택적 callees/callers/types/macros)
+{"action": "code_index", "action_input": {"mode": "slice", "name": "process", "with_callees": true, "with_types": true, "depth": 2}}
+
+// 10. 전체 rebuild 강제 (드묾 — 보통 lazy build + post-hook으로 충분)
+{"action": "code_index", "action_input": {"mode": "build"}}
 ```
 
-**mode='list' 출력 형식:** `<name> (<kind>)[ (decl)] :<start>-<end>`. 함수/클래스/메서드/struct/enum/typedef/`#define`/Markdown 헤딩. 선택적 `search='<regex>'`를 주면 심볼 이름에 `re.search` 매칭되는 항목만 반환되고 첫 줄에 `[search] {path}: K matches for 'X'` 헤더가 붙습니다 (read_file:search와 동일한 어조). 매치 0건이면 `no matches for 'X' (in N symbols)`.
+#### 인덱스 root 결정 + 가지치기
 
-**Nested 표기는 언어 관습:** Python·JS·TS는 `Class.method`, C/C++는 `ns::Class::method`, Markdown은 헤딩 마커 + 텍스트(`## Setup`).
+- **Root**: cwd 또는 가장 가까운 조상 디렉토리 중 `.agent-cli/` 가 있는 곳. 없으면 cwd 사용 (`.agent-cli/` 자동 생성).
+- **DB**: `<root>/.agent-cli/code_index.db`. `.gitignore` 기본 패턴이 이미 `.agent-cli/` 를 덮음.
+- **자동 prune 디렉토리**: `.git`/`.hg`/`.svn`, `.agent-cli`/`.claude`, `.venv`/`venv`/`env`, `__pycache__`/`.pytest_cache`/`.ruff_cache`/`.mypy_cache`, `node_modules`, `build`/`dist`/`target`, `.tox`. 인덱스 폭주 방지.
 
-**선언 vs 정의:** 같은 이름이 헤더의 prototype과 .cpp의 정의에 모두 있으면 fetch는 *정의*를 반환합니다. 선언만 있으면 그 선언을 `[declaration]` 표시와 함께 반환.
+#### Scope 경계 — index-scoped vs per-file
 
-**hashline 출력:** fetch 결과의 body는 `read_file`과 동일한 hashline 포맷(`LINE#HASH:content`)으로 반환됩니다. 따라서 fetch 결과를 그대로 `edit_file`에 넘길 수 있고, 다시 read하지 않아도 됩니다.
+- `lookup` / `kind` / `file` / `refs` / `callers` / `callees` / `slice`: **인덱스 root 안에서만** 동작. 바깥 path 주면 명시적 에러.
+- `list` / `fetch`: root 안이면 인덱스 조회, **root 바깥이면 on-demand parse fallback** (한 파일만 즉석 파싱, DB 갱신 없음). `/tmp/scratch.py` 같은 ad-hoc 파일도 동작.
 
-**지원 확장자:** `.py` · `.js`/`.jsx`/`.mjs`/`.cjs` · `.ts`/`.tsx` · `.c`/`.cc`/`.cpp`/`.cxx`/`.h`/`.hh`/`.hpp`/`.hxx` · `.md`/`.markdown`. C와 C++ 모두 C++ grammar로 파싱 (심볼 추출 수준에서 충분히 정확하고 파서 둘 유지하지 않아도 됨). 그 외 형식은 `read_file` 사용.
+#### 표기 관습
+
+- Python·JS·TS: `Class.method`
+- C·C++·Rust: `namespace::Class::method` (또는 `Type::method`)
+- Markdown: `Setup` 또는 `## Setup` (양쪽 다 fetch 동작)
+
+#### 선언 vs 정의
+
+같은 이름이 헤더의 prototype과 .cpp의 정의에 모두 있으면 fetch는 *정의*를 반환합니다. 선언만 있으면 그 선언을 `[declaration]` 표시와 함께 반환. Rust trait body의 method signature, Java interface method, C prototype 모두 `is_definition=False` 로 별도 기록됩니다.
+
+#### hashline 출력 (`mode='fetch'`)
+
+fetch 결과의 body는 `read_file`과 동일한 hashline 포맷(`LINE#HASH:content`)으로 반환됩니다. 따라서 fetch 결과를 그대로 `edit_file`에 넘길 수 있고, 다시 read하지 않아도 됩니다.
+
+#### 지원 언어 (9개)
+
+| 언어 | 확장자 |
+|---|---|
+| Python | `.py`, `.pyi` |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
+| TypeScript | `.ts`, `.tsx` |
+| C | `.c`, `.h` |
+| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, `.hxx`, `.h++` |
+| Go | `.go` |
+| Rust | `.rs` |
+| Java | `.java` |
+| Markdown | `.md`, `.markdown` (heading → `kind='section'`) |
+
+C/C++는 dedicated grammar 각각 사용. 그 외 형식은 `read_file` 으로.
+
+#### C/C++ 전처리 (선택)
+
+C/C++ 코드의 `#define` / `#ifdef` 분기를 제대로 처리하려면 시스템 패키지 `unifdef` 가 필요합니다:
+
+- macOS: `brew install unifdef`
+- Debian/Ubuntu: `sudo apt install unifdef`
+
+`unifdef` 없이도 raw parsing fallback으로 대부분 동작 — 다만 kernel-style 복잡한 `#if defined(...)` 분기는 일부 누락될 수 있음. 프로젝트 루트에 `tsindex.defs` 같은 defs 파일을 두면 `#define X 1` / `#undef Y` 줄로 분기를 강제할 수 있습니다 (advanced).
+
+Python/JS/TS/Go/Rust/Java/Markdown만 쓰는 사용자는 `unifdef` 설치 불필요.
 
 ### ask — 사용자에게 질문 (chat 모드 전용)
 
@@ -973,7 +1039,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 1. **분할**: `[system anchor][dynamic]` — system prompt만 무조건 보존
 2. **Evict 절반 (token-based)**: oldest 절반을 떼어냄
 3. **LLM 요약**: evict 묶음을 단일 호출로 요약. 이전 요약이 있으면 prior summary를 같은 호출에 prepend (recursive single-call — 합치는 별도 단계 없음)
-4. **파일 경로 추출**: evict 안의 `read_file/write_file/edit_file/read_symbols` 호출과 `<delegate:agent>` placeholder를 누적 file_list에 dedup 머지
+4. **파일 경로 추출**: evict 안의 `read_file/write_file/edit_file/code_index` 호출과 `<delegate:agent>` placeholder를 누적 file_list에 dedup 머지
 5. **재구성**: `[system][summary][file_list][retained dynamic]`
 6. **영속화**: `compaction.json` (version, summary, file_list, dynamic_start_index 등) — `--resume` 시 압축 상태 그대로 복원
 7. **Belt-and-braces fallback**: LLM 호출 실패 또는 재구성된 cache가 여전히 budget 초과면 플레인 FIFO drop으로 떨어뜨림 — 무한 트리거 루프 방지

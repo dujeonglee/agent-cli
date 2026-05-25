@@ -272,8 +272,8 @@ class TestFileExtractHelper:
         msgs = [
             {
                 "role": "assistant",
-                "action": "read_symbols",
-                "action_input": {"path": "x.py", "mode": "list"},
+                "action": "code_index",
+                "action_input": {"mode": "list", "path": "x.py"},
             },
         ]
         assert extract_file_paths(msgs) == ["x.py"]

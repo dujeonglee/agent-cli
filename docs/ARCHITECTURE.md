@@ -105,19 +105,40 @@ agent_cli/
 │   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
 │   ├── delegate.py          (700)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
 │   ├── context.py           (574)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
-│   ├── symbols.py           (~785) read_symbols 도구 — tree-sitter 기반 구조 인지 reader (mode='list' outline + 선택적 `search='<regex>'` name 필터(re.search) / mode='fetch' 단일 심볼 body, hashline 포맷 출력 → fetch→edit_file 직결). 언어: Python·JS/TS·C/C++·Markdown (.c/.h 포함 모두 C++ grammar). 정의 우선(declaration vs definition), nested 표기는 언어별 관습 (`Foo.bar` / `ns::Foo::bar` / `## Setup`). `get_supported_extensions()`가 prompt inline guide + error 메시지 single source. 의존성: per-language tree-sitter 패키지(tree-sitter-python/javascript/typescript/cpp/markdown) 직접 사용 — tree-sitter-language-pack ≥1.x가 Linux wheel에서 Python 모듈을 누락한 채 발행되어 회피
+│   └── code_index.py        (~470) code_index 도구 — `agent_cli.code_index` 패키지의 native-tool wrapper. 10 mode dispatch (list/fetch/lookup/kind/file/refs/callers/callees/slice/build). 인덱스 root 자동 해석 (cwd 또는 가장 가까운 조상 `.agent-cli/`), lazy build + per-query incremental refresh. list/fetch는 root 바깥 path에 대해 on-demand parse fallback (DB 갱신 없음); 나머지 모드는 index-scoped (out-of-root 명시적 거부). fetch 결과는 hashline 포맷 → edit_file 직결. `post_hook(path)`는 edit_file/write_file 성공 직후 호출되어 자동 incremental refresh — 모든 예외 swallow (인덱싱 hiccup이 user-facing op 막지 않음).
+│
+├── code_index/                     code_index 패키지 — tree-sitter SQLite 코드 인덱서 (`minish.ai/Agent-tools tsindex.py` Apache 2.0 port — NOTICE 참조). 총 ~5,000 LOC.
+│   ├── __init__.py          (54)   public API: build / load_index / build_callgraph / cmd_slice / IndexStore / Symbol / Ref / NAME_KINDS / CODE_NAME_KINDS / REF_KINDS / SCHEMA_VERSION
+│   ├── schema.py            (97)   SCHEMA_VERSION=1, Symbol/Ref dataclass, NAME_KINDS(5-vocab: function/type/variable/constant/section), CODE_NAME_KINDS(=NAME_KINDS-{section}, cross-file ref name resolution 전용 4-vocab), REF_KINDS(call/name/type). `section`은 markdown heading 5번째 vocab으로 추가됨 (upstream 4-vocab → 5-vocab).
+│   ├── preproc.py           (452)  C/C++ 전처리: unifdef 드라이버 + rewriter chain (foreach/decl_macro/bare_attribute/variadic/ifdef_zero/define_comments/pp_trailing_ws/consecutive_attr/pp_continuation/type_arg). `unifdef` 미설치 시 graceful fallback (raw parse). `compute_preproc`이 fingerprint 산출 — defs file 내용 변경 시 인덱스 자동 invalidate.
+│   ├── store.py             (254)  IndexStore (SQLite reader). find_symbols/find_refs/find_refs_in_range, normalize_file_path (exact/absolute/basename/suffix), kind_counts/ref_kind_counts/top_ref_names. dict-style 접근(`idx['symbols']`)도 호환 유지.
+│   ├── builder.py           (~440) build() — Pass-1(definitions) + Pass-2(refs) + sha1 incremental + Option-B re-Pass2 (변경 파일의 새 이름을 mention하는 unchanged 파일 자동 re-walk). `iter_source_files`가 `_SKIP_DIRS` (.git/.agent-cli/.claude/.venv/node_modules/build/dist 등) prune → 인덱스 폭주 방지. 무효화 트리거 3개: schema_version mismatch / meta.root 변경 / preproc_fingerprint 변경.
+│   ├── callgraph.py         (105)  build_callgraph → (calls_of, callers_of, sites_of). 호출 사이트 (caller, callee, file, line) dedup으로 walker의 call+name 더블 emit을 1 edge로 정리. callback-only(kind='name' 단독) 사이트는 1× 그대로 유지.
+│   ├── slice.py             (194)  cmd_slice → LLM-context markdown blob (definition + 선택적 callees/callers/types/macros, depth/max_bytes 캡). stdout 출력 대신 str 반환 (tool 통합).
+│   └── languages/                  per-language walker 모듈 (lazy import — Python-only 프로젝트가 Rust grammar wheel 비용 안 냄)
+│       ├── __init__.py      (132)  LangSpec dataclass + LANGUAGES dict + lazy `_ensure_loaded()` + `language_of(path)` / `get_supported_extensions()` helpers (prompt inline guide + error 메시지 single source)
+│       ├── _shared.py       (21)   `text(node, src)` 공통 helper
+│       ├── python.py        (~290) 함수/클래스/decorated/UPPER_SNAKE → constant. async/decorator modifiers. nested def/class도 emit (parent dotted chain).
+│       ├── go.py            (~270) func/method (receiver type → parent), type/const/var, exported(uppercase) modifier. selector_expression call site.
+│       ├── rust.py          (~410) function_item / function_signature_item (trait body sig은 is_definition=False with parent=trait_name), struct/enum/trait/type_item, impl block methods. macro_rules! → kind=function.
+│       ├── java.py          (~340) class/interface/enum/abstract method/field. interface method = is_definition=False. generics, variadic args.
+│       ├── javascript.py    (~480) function/class/method/field/lexical. const/let/var → kind 결정. arrow fn / generator (`function*`) → modifiers ['generator']. JS 헬퍼는 typescript.py가 import해 재사용.
+│       ├── typescript.py    (~280) interface/type_alias/enum + js의 헬퍼 재사용. walk_refs는 type_identifier 추가 처리 → kind='type' ref emit (정의 사이트 제외).
+│       ├── c.py             (~540) self-contained C walker (add_function_def/declaration/record/typedef/macro/c_walk_definitions/c_walk_refs). preprocess slot은 preproc.preprocess_source.
+│       ├── cpp.py           (~720) self-contained C++ walker (template/namespace/class). C helper를 복제 보유 — upstream의 'language="c" inside .cpp' oddity 회피, .cpp 파일은 일관되게 language="cpp".
+│       └── markdown.py      (199)  ATX (`## heading`) + setext heading walker. kind='section', kind_raw='atx_heading_N'/'setext_heading_N', parent stack chain, end_line은 다음 same-or-higher level heading 직전. refs 없음.
 │
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
 │   ├── overflow.py          (45)   프로바이더별 오버플로 감지
 │   ├── manager.py           (638)  ContextManager (토큰 budget 압축 + FIFO fallback + history.jsonl + 자연어 변환). 캐시가 budget의 90%를 넘으면 `_maybe_compact()`가 LLM 요약 compaction을 시도 (system anchor만 보존 → oldest 절반 evict → 단일 호출로 요약, 이전 summary가 있으면 같은 호출에 prepend하여 recursive 갱신 → `_file_extract`로 touched paths 누적 dedup → `[system][summary][file_list][retained]`로 캐시 재구성 → `compaction.json` atomic write). 요약 실패하거나 재구성된 캐시가 여전히 budget 초과면 belt-and-braces로 `_evict_fifo` (drop-to-budget) 발동 — 무한 트리거 루프 방지. `compaction_enabled=False` 또는 `AGENT_CLI_COMPACTION=off`로 끄면 기존 FIFO만 동작. Resume: `compaction.json`의 `dynamic_start_index`로 history.jsonl 후방 슬라이스만 cache 복원해 summarised tail과 중복 방지. 인스턴스마다 wire_format plugin attach (`__init__(wire_format=...)`, default fallback="react"). `get_messages()`는 system은 verbatim, user/tool branch만 자체 처리하고 assistant branch는 `wire_format.render_assistant_from_history`에 위임 — 한 세션 = 한 wire_format으로 격리. Compactor 콜백(`set_compactor`)과 `TurnRecorder`(`set_recorder`)는 `AgentLoop`가 후입식으로 주입 — headless/unit-test 경로는 미주입 상태로 즉시 사용 가능.
-│   ├── _file_extract.py     (86)   `extract_file_paths(messages)` — `_PATH_TOOLS = {write_file, edit_file, read_file, read_symbols}` 호출과 tool result에서 `path` 추출, delegate는 `<delegate:agent_name>` placeholder로 보존, 입력 순서 dedup. compaction 시 evict 묶음에서 touched files를 끄집어내는 단일 진입점
+│   ├── _file_extract.py     (86)   `extract_file_paths(messages)` — `_PATH_TOOLS = {write_file, edit_file, read_file, code_index}` 호출과 tool result에서 `path` 추출, delegate는 `<delegate:agent_name>` placeholder로 보존, 입력 순서 dedup. compaction 시 evict 묶음에서 touched files를 끄집어내는 단일 진입점
 │   └── session.py           (~190) 세션 메타데이터 (session.jsonl) + resume용 user↔assistant 페어 추출 (recent_exchanges). System-injected user 메시지 필터는 `wire_formats.all_system_user_prefixes()` (format-agnostic 프리픽스 + 등록된 모든 plugin의 framing prefix) 단일 진입점 사용 — 새 wire format plugin 추가가 자동 반영
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   └── system_prompt.py     (665)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide). `build_system_prompt(wire_format=…)` — Response Format 섹션은 `wire_format.format_rules()`, 스킬·에이전트 호출 예시는 `wire_format.render_full_example(thought=None, ...)`, 도구 inline 가이드의 action_input 단편은 `wire_format.render_action_input(...)`로 렌더링 (ReAct는 identity; action_input shape이 다른 미래 plugin이 swap할 수 있는 hook). 인라인 예시는 wire 셰이프로 감싸지 않음 — 와이어 셰이프 학습은 Format Rules + skill/agent 예시(각 1번)에서 일어나고, 인라인은 mode 분기 / 의미론 학습. Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools, wire_format)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `read_symbols` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `read_symbols mode='list'`로 우회 — 확장자 목록은 `get_supported_extensions()` 단일 출처에서 가져와 grammar 추가가 자동 전파). read_symbols 가이드는 definitions/structural symbols만 인덱싱한다는 scope를 명시하고 call site/usage 검색은 `read_file search`로 안내. edit_file `_HASHLINE_INLINE`는 (1) 편집 직전에 CURRENT turn에서 read 하도록 요구(read_symbols fetch도 fresh read로 카운트) (2) hash mismatch를 failure가 아닌 guardrail로 reframe해 모델이 panic 없이 re-read/retry 하도록 톤 조정.
+│   └── system_prompt.py     (~690) Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide). `build_system_prompt(wire_format=…)` — Response Format 섹션은 `wire_format.format_rules()`, 스킬·에이전트 호출 예시는 `wire_format.render_full_example(thought=None, ...)`, 도구 inline 가이드의 action_input 단편은 `wire_format.render_action_input(...)`로 렌더링 (ReAct는 identity; action_input shape이 다른 미래 plugin이 swap할 수 있는 hook). 인라인 예시는 wire 셰이프로 감싸지 않음 — 와이어 셰이프 학습은 Format Rules + skill/agent 예시(각 1번)에서 일어나고, 인라인은 mode 분기 / 의미론 학습. Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools, wire_format)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `code_index` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `code_index mode='list'`로 우회 — 확장자 목록은 `code_index.languages.get_supported_extensions()` 단일 출처에서 가져와 walker 추가가 자동 전파). code_index 가이드는 per-file (list/fetch) vs index-wide (lookup/kind/file/refs/callers/callees/slice) scope 경계를 명시, on-demand parse fallback 위치도 안내. edit_file `_HASHLINE_INLINE`는 (1) 편집 직전에 CURRENT turn에서 read 하도록 요구(code_index mode='fetch'도 fresh read로 카운트) (2) hash mismatch를 failure가 아닌 guardrail로 reframe해 모델이 panic 없이 re-read/retry 하도록 톤 조정.
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
@@ -330,7 +351,7 @@ class ToolSchema:
     parameters: dict  # JSON Schema 형태
 
 # 등록된 도구: read_file, write_file, edit_file, shell, read_context,
-#               complete, ask, run_skill, ready_for_review, fetch, read_symbols, delegate
+#               complete, ask, run_skill, ready_for_review, fetch, code_index, delegate
 # 가상 도구 (loop에서 인터셉트, 별도 set 상수 없음 — loop.py if-cascade가 단일 진실원):
 #   complete, ask, run_skill, ready_for_review, delegate
 # _ALWAYS_INCLUDE = ("complete", "ready_for_review") — allowed_tools와 무관하게 항상 API tool 목록에 포함
@@ -675,7 +696,7 @@ A5: outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
     │             ├─ Split: [system anchor] + [dynamic]
     │             ├─ Evict ~절반 (token-based, oldest)
     │             ├─ LLM 요약 (단일 호출, 이전 summary가 있으면 같은 호출에 prepend → recursive)
-    │             ├─ _file_extract: path 누적 dedup (write/edit/read_file, read_symbols, <delegate:>)
+    │             ├─ _file_extract: path 누적 dedup (write/edit/read_file, code_index, <delegate:>)
     │             ├─ Rebuild: [system][summary (≤8K char)][file_list][retained]
     │             └─ compaction.json atomic write (version, summary, file_list,
     │                compaction_count, last_compacted_at, dynamic_start_index)

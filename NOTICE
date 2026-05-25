@@ -1,0 +1,22 @@
+agent-cli
+Copyright 2026 Dujeong Lee
+
+This product includes software developed at minish.ai (Agent-tools).
+
+The `agent_cli/code_index/` package is a derivative work of `tsindex.py`
+from minish.ai/Agent-tools (Apache License 2.0). Modifications include:
+
+  - Splitting the single-file CLI into a package
+    (schema/builder/store/callgraph/slice/preproc + per-language walkers).
+  - Adding a `section` kind and a tree-sitter-markdown walker.
+  - Integrating with agent-cli's tool registry as a native tool
+    (`code_index`) with mode dispatch.
+  - Wiring lazy build + per-query incremental rebuild
+    (sha1 compare) + edit/write post-hook invalidation
+    into the agent loop.
+  - Hashline-format output wrapper for `mode='fetch'` and `mode='slice'`
+    so `edit_file` accepts the output directly.
+  - On-demand parse fallback for paths outside the indexed root.
+
+Each source file in `agent_cli/code_index/` carries an `Originally
+ported from minish.ai/Agent-tools tsindex.py (Apache 2.0).` header.

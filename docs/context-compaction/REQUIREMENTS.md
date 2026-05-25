@@ -140,7 +140,7 @@ Compaction 진행 중 사용자에게 표시:
 3. **"절반" 정의: 토큰 기준** — anchor(system prompt only) 제외한 남은 cache의 토큰 절반. 메시지 count는 토큰 분포 불균등 시 부적합. **마지막 user query는 dynamic 끝에 있어 evict 대상 아님** (FR-CC-4 참조).
 4. **요약 길이 cap: 2000 토큰** — `max_tokens=2000` LLM 요청. 초과 시 truncate. 측정 후 조정 가능.
 5. **요약 실패 fallback: FIFO drop + 자연 재시도** — 한 번 LLM 요약 실패 시 단순 FIFO drop으로 fallback, `render_status` 경고. 다음 turn에 다시 90% 초과하면 자연스럽게 compaction 재시도 (별도 retry counter 없음).
-6. **파일 액션 추출 범위: tool path 필드만** — `write_file`/`edit_file`/`read_file`/`read_symbols`의 `path` 필드, `delegate` subagent 액션 (parent에서 추적). shell 명령은 skip (false positive 회피). pre-hook redirect 아이디어는 별도 PR.
+6. **파일 액션 추출 범위: tool path 필드만** — `write_file`/`edit_file`/`read_file`/`code_index`의 `path` 필드, `delegate` subagent 액션 (parent에서 추적). shell 명령은 skip (false positive 회피). pre-hook redirect 아이디어는 별도 PR.
 7. **시스템 프롬프트 섹션 위치: anchor 직후** — `[system prompt][summary section][file list section][anchor user query][dynamic messages]`. Wire format 무관 위치.
 8. **Resume 저장 형식: `session_dir/compaction.json`** — 별도 JSON 파일. schema는 DESIGN.md §4. history.jsonl 원본 보존.
 9. **사용자 가시화: progress text 한 줄** — `render_status("info", f"Compacting context ({old_tokens:,} → {new_tokens:,} tokens, summarizing {N} messages)…")`. CLI는 console.print, web은 SSE status 이벤트로 자동 전달.

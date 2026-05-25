@@ -217,7 +217,7 @@ new_summary = self._summarize_messages(summarize_input)
 스크립트 추출 (LLM 호출 없음). tool record 기반.
 
 ```python
-_PATH_TOOLS = {"write_file", "edit_file", "read_file", "read_symbols"}
+_PATH_TOOLS = {"write_file", "edit_file", "read_file", "code_index"}
 
 def _extract_file_paths(self, messages: list[dict]) -> list[str]:
     """Walk evicted messages, extract path field from known tool
@@ -443,7 +443,7 @@ v1은 helper로 충분. abstract method 추가는 위 조건 충족 시 별도 �
 ```python
 _COMPACTION_THRESHOLD_RATIO = 0.9       # FR-CC-2: 90%
 _SUMMARY_CHAR_CAP = 8000                 # ~2000 tokens (4 chars/token 추정)
-_PATH_TOOLS = {"write_file", "edit_file", "read_file", "read_symbols"}
+_PATH_TOOLS = {"write_file", "edit_file", "read_file", "code_index"}
 ```
 
 ## 6. AgentLoop 변경
