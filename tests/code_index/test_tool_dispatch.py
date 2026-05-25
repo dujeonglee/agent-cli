@@ -251,3 +251,42 @@ class TestBuild:
         # markdown headings = 8). Exact value is fixture-dependent; just
         # confirm a non-zero count was reported.
         assert "symbols" in r.output
+
+
+class TestDefconfigWiring:
+    """`<root>/.agent-cli/defconfig` opt-in wiring.
+
+    Earlier the tool wrapper hard-coded ``defs_path=None`` for every
+    ``build()`` call, so user-authored defconfigs had no reachable path
+    through ``code_index`` modes — kernel-style C with ``#ifdef CONFIG_X``
+    around function signatures parsed as ERROR runs and silently dropped
+    the definition from the index.
+    """
+
+    def test_build_reports_no_defconfig_when_absent(self, project):
+        r = tool_code_index({"mode": "build"})
+        assert r.success
+        assert "defconfig: (none)" in r.output
+
+    def test_build_reports_defconfig_path_when_present(self, project):
+        defs = project / ".agent-cli" / "defconfig"
+        defs.parent.mkdir(parents=True, exist_ok=True)
+        defs.write_text("#define CONFIG_EXAMPLE\n")
+        r = tool_code_index({"mode": "build"})
+        assert r.success
+        assert "defconfig:" in r.output
+        assert str(defs) in r.output
+
+    def test_resolve_defs_path_returns_none_when_missing(self, project):
+        from agent_cli.tools.code_index import _resolve_defs_path
+
+        assert _resolve_defs_path(project) is None
+
+    def test_resolve_defs_path_returns_path_when_present(self, project):
+        from agent_cli.tools.code_index import _resolve_defs_path
+
+        defs = project / ".agent-cli" / "defconfig"
+        defs.parent.mkdir(parents=True, exist_ok=True)
+        defs.write_text("#define CONFIG_FOO\n")
+        resolved = _resolve_defs_path(project)
+        assert resolved == defs

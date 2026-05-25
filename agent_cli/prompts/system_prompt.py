@@ -352,7 +352,16 @@ def _build_code_index_inline(wire_format) -> str:
   - Markdown: heading text (``Setup``) or with marker (``## Setup``)
 
   Supported extensions: {exts}.
-  For non-code/non-markdown files, use read_file."""
+  For non-code/non-markdown files, use read_file.
+
+  Defconfig (C/C++ kernel-style only): if
+  ``<project_root>/.agent-cli/defconfig`` exists it is fed to ``unifdef``
+  to prune ``#ifdef CONFIG_*`` branches before tree-sitter parses. Use
+  ``#define CONFIG_FOO`` / ``#undef CONFIG_BAR`` lines. Without it,
+  functions whose signature is split by ``#ifdef`` (common in kernel
+  drivers) may parse as ERROR nodes and disappear from the index — if
+  ``mode='lookup'`` returns only a declaration when you expected a
+  definition, ask the user to add a defconfig."""
 
 
 _ASK_INLINE = """\

@@ -71,12 +71,26 @@ def _resolve_db_path() -> Path:
     return db
 
 
+def _resolve_defs_path(root: Path) -> Optional[Path]:
+    """Conventional defconfig location: ``<root>/.agent-cli/defconfig``.
+
+    Returned only when the file exists so callers can pass the result
+    straight through to ``build(defs_path=...)``. The defconfig wires
+    ``#define`` / ``#undef`` lines into ``unifdef -b`` so C source with
+    ``#ifdef CONFIG_X`` branches around function signatures parses
+    cleanly into a single ``function_definition`` node instead of an
+    ERROR run that swallows the definition.
+    """
+    defs = root / ".agent-cli" / "defconfig"
+    return defs if defs.is_file() else None
+
+
 def _ensure_index() -> tuple[IndexStore, Path]:
     """Run ``build()`` (lazy-creates the DB if missing, incrementally
     refreshes otherwise) and return ``(store, root)``."""
     root = _resolve_index_root()
     db = _resolve_db_path()
-    build(root, db, defs_path=None, verbose=False)
+    build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
     return load_index(db), root
 
 
@@ -119,7 +133,7 @@ def post_hook(path: str | Path) -> None:
         file_abs = Path(path).resolve()
         if not _path_in_root(file_abs, root):
             return
-        build(root, db, defs_path=None, verbose=False)
+        build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
     except Exception:
         # Best-effort: never block the user op.
         return
@@ -508,14 +522,16 @@ def _do_slice(action_input: dict) -> ToolResult:
 def _do_build(_action_input: dict) -> ToolResult:
     root = _resolve_index_root()
     db = _resolve_db_path()
-    build(root, db, defs_path=None, verbose=False, force_full=True)
+    defs = _resolve_defs_path(root)
+    build(root, db, defs_path=defs, verbose=False, force_full=True)
     store = load_index(db)
+    defs_note = f" defconfig: {defs}" if defs else " defconfig: (none)"
     return ToolResult(
         True,
         output=(
             f"Rebuilt index: {store.n_symbols()} symbols, "
             f"{store.n_refs()} refs across {len(store.files)} files. "
-            f"Root: {root}"
+            f"Root: {root}.{defs_note}"
         ),
     )
 

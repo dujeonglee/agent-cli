@@ -825,14 +825,33 @@ fetch 결과의 body는 `read_file`과 동일한 hashline 포맷(`LINE#HASH:cont
 
 C/C++는 dedicated grammar 각각 사용. 그 외 형식은 `read_file` 으로.
 
-#### C/C++ 전처리 (선택)
+#### C/C++ 전처리 — defconfig (kernel/driver 필수)
 
 C/C++ 코드의 `#define` / `#ifdef` 분기를 제대로 처리하려면 시스템 패키지 `unifdef` 가 필요합니다:
 
 - macOS: `brew install unifdef`
 - Debian/Ubuntu: `sudo apt install unifdef`
 
-`unifdef` 없이도 raw parsing fallback으로 대부분 동작 — 다만 kernel-style 복잡한 `#if defined(...)` 분기는 일부 누락될 수 있음. 프로젝트 루트에 `tsindex.defs` 같은 defs 파일을 두면 `#define X 1` / `#undef Y` 줄로 분기를 강제할 수 있습니다 (advanced).
+`unifdef` 없이도 raw parsing fallback으로 대부분 동작합니다. 단 **함수 시그니처가 `#ifdef CONFIG_X` 로 분기되는 코드** (커널 드라이버 등에서 흔함):
+
+```c
+#ifdef CONFIG_SOMETHING
+void foo(int x)
+#else
+static void foo(int x)
+#endif
+{ ... body ... }
+```
+
+은 tree-sitter가 ERROR로 파싱해 정의가 인덱스에서 누락됩니다. 이 경우 `<project_root>/.agent-cli/defconfig` 에 `#define`/`#undef` 줄을 적으면 `unifdef -b` 가 분기를 사전에 잘라 정의가 살아납니다:
+
+```
+# .agent-cli/defconfig
+#define CONFIG_SOMETHING
+#undef CONFIG_LEGACY
+```
+
+파일은 사용자가 직접 작성합니다 (LLM이 추측하면 잘못된 분기를 인덱싱할 위험). `code_index` tool은 첫 query 시 이 파일이 있으면 자동으로 unifdef 에 전달합니다 — 별도 옵션 불필요. `mode='build'` 출력에 `defconfig:` 라인으로 적용 여부가 보입니다.
 
 Python/JS/TS/Go/Rust/Java/Markdown만 쓰는 사용자는 `unifdef` 설치 불필요.
 
