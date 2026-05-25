@@ -126,6 +126,34 @@ class TestTurnRecorderEnabled:
         # Both wrote seq=0 because each instance counts independently
         assert [r["seq"] for r in rows] == [0, 0]
 
+    def test_record_recreates_session_dir_if_removed(self, session_dir):
+        """Same parallel-delegate cleanup race that hits
+        ContextManager._append_to_history: if the session dir gets
+        wiped between recorder construction and the first record()
+        call (external `rm -rf .agent-cli/sessions/`), record() must
+        defensively re-mkdir rather than crash."""
+        import shutil
+
+        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        shutil.rmtree(session_dir)
+        assert not session_dir.is_dir()
+        recorder.record(model="m", parse_stage=0)
+        assert (session_dir / "turns.jsonl").is_file()
+
+    def test_record_compaction_recreates_session_dir_if_removed(self, session_dir):
+        """Same guard for the compaction event path."""
+        import shutil
+
+        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
+        shutil.rmtree(session_dir)
+        recorder.record_compaction(
+            tokens_before=1000,
+            tokens_after=500,
+            evicted_count=4,
+            fallback_used=False,
+        )
+        assert (session_dir / "turns.jsonl").is_file()
+
 
 class TestSchemaInvariants:
     def test_record_omits_no_prompt_or_response_text(self, session_dir):

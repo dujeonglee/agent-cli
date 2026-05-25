@@ -111,9 +111,14 @@ class TurnRecorder:
             primitives_applied=list(primitives_applied) if primitives_applied else [],
         )
         line = json.dumps(asdict(rec), ensure_ascii=False)
-        # Parent dir is created by ContextManager; if absent (edge case)
-        # we let the OSError propagate so the caller knows recording is
-        # broken — better than silently dropping data.
+        # Parent dir is normally created by ContextManager. Recreate
+        # defensively in case it got removed between construction and
+        # the first write (external cleanup, parallel `rm -rf` of
+        # `.agent-cli/sessions/`, etc.). Without this guard parallel
+        # delegate workers crash on the first recorded turn — see the
+        # matching defensive mkdir in
+        # ``ContextManager._append_to_history``.
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
         self._seq += 1
@@ -157,6 +162,7 @@ class TurnRecorder:
             "duration_ms": duration_ms,
         }
         line = json.dumps(rec, ensure_ascii=False)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
         self._seq += 1

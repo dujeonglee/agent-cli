@@ -467,7 +467,16 @@ class ContextManager:
     # ── Persistence ──────────────────────────────────
 
     def _append_to_history(self, message: dict) -> None:
-        """Append a single JSON line to history.jsonl."""
+        """Append a single JSON line to history.jsonl.
+
+        Defensively recreates the parent directory before opening — the
+        session dir is created in ``__init__`` but can disappear between
+        construction and the first write if an external process (user
+        cleanup, parallel `rm -rf .agent-cli/sessions/`, etc.) wipes the
+        tree mid-run. Without this guard, parallel delegate workers
+        would crash on the first turn's history flush.
+        """
+        self._history_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._history_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(message, ensure_ascii=False) + "\n")
 

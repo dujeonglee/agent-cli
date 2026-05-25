@@ -111,6 +111,29 @@ class TestHistoryPersistence:
         restored = json.loads(lines[0])
         assert restored["content"] == "한글 테스트 🚀"
 
+    def test_append_recreates_session_dir_if_removed(self, session_dir):
+        """If the session dir is wiped between ctx construction and the
+        first write (external `rm -rf .agent-cli/sessions/`, parallel
+        cleanup, etc.), ``_append_to_history`` must defensively
+        re-mkdir rather than crash with FileNotFoundError. This guards
+        the parallel delegate path where 8 worker contexts all share
+        the parent session tree and a stale cleanup can race the first
+        history flush."""
+        import shutil
+
+        ctx = ContextManager(session_dir, max_context_tokens=1000)
+        assert session_dir.is_dir()
+        # Simulate external rm -rf between ctx init and first write.
+        shutil.rmtree(session_dir)
+        assert not session_dir.is_dir()
+        # First write should resurrect the dir + succeed without
+        # raising. Without the defensive mkdir this would raise
+        # FileNotFoundError on the open().
+        ctx.add({"role": "user", "content": "post-rm"})
+        assert (session_dir / "history.jsonl").is_file()
+        lines = (session_dir / "history.jsonl").read_text().strip().split("\n")
+        assert json.loads(lines[0])["content"] == "post-rm"
+
 
 # ── Session Resume ────────────────────────────────────
 
