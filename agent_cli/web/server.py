@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,36 @@ from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.render.web import WebConnection, WebRenderer
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def pick_port(host: str, preferred: int) -> int:
+    """Pick a bindable port for the web server.
+
+    Prefer ``preferred`` (default 8080) when free; if it's bound by
+    another process, fall back to an OS-assigned ephemeral port. The
+    caller passes the result straight to ``uvicorn.Config(port=...)``,
+    so the URL printed before ``server_obj.run()`` shows whatever the
+    OS actually gave us.
+
+    Bind to ``host`` (not ``localhost``) so a port that's only free on
+    the loopback interface but bound LAN-wide doesn't fool the probe.
+    The socket is closed before returning — there's a tiny TOCTOU
+    window before uvicorn re-binds, but a same-host race in that
+    window is rare enough that handling it would cost more than it
+    saves.
+    """
+    for candidate in (preferred, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, candidate))
+            except OSError:
+                continue
+            return s.getsockname()[1]
+    # Both candidates failed — preferred busy AND OS refused 0. That's
+    # a misconfigured host (no IPv4 stack, etc.); let uvicorn surface
+    # the underlying error to the operator instead of silently retrying.
+    return preferred
 
 
 # ── CLI-parity slash commands (web mode) ──────────────────

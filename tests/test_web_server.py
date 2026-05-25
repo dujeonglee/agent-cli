@@ -29,7 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_cli.render.web import WebRenderer
-from agent_cli.web.server import WebServer, create_app
+from agent_cli.web.server import WebServer, create_app, pick_port
 
 
 @pytest.fixture
@@ -440,6 +440,47 @@ class TestAbortEndpoint:
 
         t.join(timeout=2.0)
         assert exc and isinstance(exc[0], EOFError)
+
+
+# ── pick_port (8080-preferred, OS-fallback) ───────
+
+
+class TestPickPort:
+    """``pick_port`` decides which port the web server binds to.
+
+    Earlier the CLI hard-coded 8080 in the URL printed to the operator
+    even though uvicorn might fail to bind it; explicit ``--port`` still
+    binds exactly that, but the no-flag default now tries 8080 first
+    and falls back to whatever the OS gives us if it's busy.
+    """
+
+    def test_returns_preferred_when_free(self):
+        # Probe with port 0 to discover *some* port that's currently
+        # free, then ask pick_port to prefer it — should hand back the
+        # same number unchanged.
+        import socket as _s
+
+        with _s.socket(_s.AF_INET, _s.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            free = probe.getsockname()[1]
+        assert pick_port("127.0.0.1", free) == free
+
+    def test_falls_back_when_preferred_busy(self):
+        # Hold a port for the duration of the call so pick_port's bind
+        # probe sees EADDRINUSE and must fall through to (host, 0).
+        import socket as _s
+
+        holder = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+        try:
+            holder.bind(("127.0.0.1", 0))
+            holder.listen(1)
+            busy = holder.getsockname()[1]
+            picked = pick_port("127.0.0.1", busy)
+            assert picked != busy
+            # Sanity: an ephemeral port number is positive and bindable.
+            assert picked > 0
+        finally:
+            holder.close()
 
 
 # ── SSE stream (async, ASGITransport) ─────────────

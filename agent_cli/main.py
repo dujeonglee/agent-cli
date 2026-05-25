@@ -1473,7 +1473,15 @@ def web(
     host: str = typer.Option(
         "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"
     ),
-    port: int = typer.Option(8080, "--port", help="Listen port (default: 8080)"),
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        help=(
+            "Listen port. Omitted: prefer 8080, fall back to an OS-assigned "
+            "free port if 8080 is busy. Explicit: bind that port exactly "
+            "(uvicorn raises if it's in use)."
+        ),
+    ),
     token: Optional[str] = typer.Option(
         None,
         "--token",
@@ -1504,7 +1512,7 @@ def web(
         import uvicorn
 
         from agent_cli.render.web import WebRenderer
-        from agent_cli.web.server import WebServer, create_app
+        from agent_cli.web.server import WebServer, create_app, pick_port
     except ImportError as e:
         console.print(
             f"[red]Missing optional dependency for 'web' command: {e}.[/]\n"
@@ -1654,8 +1662,12 @@ def web(
     worker.start()
 
     # 4. Print URL + start uvicorn.
+    # When ``--port`` is omitted, prefer 8080 but fall back to an
+    # OS-assigned port if 8080 is busy. Explicit ``--port N`` skips the
+    # probe — let uvicorn surface the bind error so the operator notices.
+    resolved_port = port if port is not None else pick_port(host, 8080)
     display_host = "localhost" if host in ("0.0.0.0", "::") else host
-    ui_url = f"http://{display_host}:{port}/?token={server.token}"
+    ui_url = f"http://{display_host}:{resolved_port}/?token={server.token}"
     console.print(f"\n[bright_cyan]agent-cli web[/]  ({provider} · {resolved_model})")
     console.print(f"  UI:      [yellow]{ui_url}[/]")
     console.print(f"  Token:   [yellow]{server.token}[/]")
@@ -1678,7 +1690,7 @@ def web(
     # hook (server.create_app → @app.on_event("shutdown")) already
     # closed the SSE generators, so the only thing left is to tear
     # down the worker and finalise the session — done in ``finally``.
-    config = uvicorn.Config(app_obj, host=host, port=port, log_level="warning")
+    config = uvicorn.Config(app_obj, host=host, port=resolved_port, log_level="warning")
     server_obj = uvicorn.Server(config)
     try:
         try:
