@@ -67,7 +67,7 @@ main#messages {
   border-radius: 8px;
 }
 .card-assistant .thought {
-  color: #4b5563;
+  color: #6b7280;
   font-style: italic;
   margin-bottom: 8px;
   font-size: 13px;
@@ -149,6 +149,7 @@ main#messages {
   border: 1px dashed #d1d5db;
   padding: 12px;
   border-radius: 8px;
+  opacity: 0.85;
 }
 .card-streaming .streaming {
   font-family: ui-monospace, SFMono-Regular, monospace;
