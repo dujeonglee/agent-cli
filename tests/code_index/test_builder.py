@@ -58,7 +58,7 @@ class TestFullBuild:
         _write(tmp_path / "a.py", "x = 1\n")
         idx = _build(tmp_path, tmp_path / ".db")
         assert idx.meta["root"] == str(tmp_path.resolve())
-        assert idx.meta["schema_version"] == 1
+        assert idx.meta["schema_version"] == 2
 
     def test_unsupported_extension_is_ignored(self, tmp_path):
         _write(tmp_path / "data.txt", "not a source file\n")
@@ -138,7 +138,7 @@ class TestInvalidation:
         # symbol names — proves the symbols are re-extracted, not reused.
         _write(tmp_path / "a.py", "def alpha2():\n    pass\n")
         idx = _build(tmp_path, tmp_path / ".db")
-        assert idx.meta["schema_version"] == 1
+        assert idx.meta["schema_version"] == 2
         assert {s["name"] for s in idx.all_symbols()} == {"alpha2"}
 
     def test_root_mismatch_forces_full_rebuild(self, tmp_path):

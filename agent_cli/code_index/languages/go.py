@@ -17,7 +17,7 @@ type_identifier mentions outside the definition position, and
 from __future__ import annotations
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
 
 
@@ -88,6 +88,7 @@ def go_extract_function(node, src: bytes, rel: str, out: list, is_method: bool =
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(parent, name),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -127,6 +128,7 @@ def go_extract_type(node, src: bytes, rel: str, out: list):
         out.append(
             Symbol(
                 name=name,
+                qualified_name=qualify(None, name),
                 kind="type",
                 file=rel,
                 line=spec.start_point[0] + 1,
@@ -154,6 +156,7 @@ def go_extract_const_or_var(node, src: bytes, rel: str, out: list, is_const: boo
             out.append(
                 Symbol(
                     name=name,
+                    qualified_name=qualify(None, name),
                     kind=out_kind,
                     file=rel,
                     line=spec.start_point[0] + 1,

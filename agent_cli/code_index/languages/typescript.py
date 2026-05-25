@@ -13,7 +13,7 @@ extraction helpers from `javascript.py` and provides
 from __future__ import annotations
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.languages.javascript import (
     js_extract_class,
     js_extract_function_decl,
@@ -47,6 +47,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                 syms.append(
                     Symbol(
                         name=text(nm, src),
+                        qualified_name=qualify(None, text(nm, src)),
                         kind="type",
                         file=rel,
                         line=node.start_point[0] + 1,
@@ -63,6 +64,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                 syms.append(
                     Symbol(
                         name=text(nm, src),
+                        qualified_name=qualify(None, text(nm, src)),
                         kind="type",
                         file=rel,
                         line=node.start_point[0] + 1,
@@ -92,6 +94,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                         syms.append(
                             Symbol(
                                 name=text(nm, src),
+                                qualified_name=qualify(None, text(nm, src)),
                                 kind="type",
                                 file=rel,
                                 line=c.start_point[0] + 1,
@@ -109,6 +112,7 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                         syms.append(
                             Symbol(
                                 name=text(nm, src),
+                                qualified_name=qualify(None, text(nm, src)),
                                 kind="type",
                                 file=rel,
                                 line=c.start_point[0] + 1,

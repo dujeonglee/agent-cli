@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Optional
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.preproc import preprocess_source
 from agent_cli.code_index.schema import Ref, Symbol
 
@@ -241,6 +241,7 @@ def add_declaration(node, src, rel, out):
             out.append(
                 Symbol(
                     name=text(name_node, src),
+                    qualified_name=qualify(None, text(name_node, src), "::"),
                     kind="function",
                     file=rel,
                     line=node.start_point[0] + 1,
@@ -261,6 +262,7 @@ def add_declaration(node, src, rel, out):
             out.append(
                 Symbol(
                     name=text(name_node, src),
+                    qualified_name=qualify(None, text(name_node, src), "::"),
                     kind="variable",
                     file=rel,
                     line=node.start_point[0] + 1,
@@ -293,6 +295,7 @@ def add_record(node, src, rel, out):
     out.append(
         Symbol(
             name=text(name_node, src),
+            qualified_name=qualify(None, text(name_node, src), "::"),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,
@@ -339,6 +342,7 @@ def add_typedef(node, src, rel, out):
         out.append(
             Symbol(
                 name=text(target, src),
+                qualified_name=qualify(None, text(target, src), "::"),
                 kind="type",
                 file=rel,
                 line=node.start_point[0] + 1,
@@ -365,6 +369,7 @@ def add_macro(node, src, rel, out, fn_form: bool):
     out.append(
         Symbol(
             name=text(name, src),
+            qualified_name=qualify(None, text(name, src), "::"),
             kind="function" if fn_form else "constant",
             file=rel,
             line=node.start_point[0] + 1,
@@ -423,6 +428,7 @@ def cpp_extract_function_def(
     out.append(
         Symbol(
             name=text(name_node, src),
+            qualified_name=qualify(eff_parent, text(name_node, src), "::"),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -460,6 +466,7 @@ def cpp_extract_class(node, src: bytes, rel: str, parent: Optional[str], out: li
     out.append(
         Symbol(
             name=cls,
+            qualified_name=qualify(parent, cls, "::"),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,
@@ -473,7 +480,7 @@ def cpp_extract_class(node, src: bytes, rel: str, parent: Optional[str], out: li
     )
     if body is None:
         return
-    inner_parent = (parent + "::" + cls) if parent else cls
+    inner_parent = qualify(parent, cls, "::")
     for stmt in body.children:
         st = stmt.type
         if st == "function_definition":
@@ -488,6 +495,7 @@ def cpp_extract_class(node, src: bytes, rel: str, parent: Optional[str], out: li
                     out.append(
                         Symbol(
                             name=text(nm, src),
+                            qualified_name=qualify(inner_parent, text(nm, src), "::"),
                             kind="function",
                             file=rel,
                             line=stmt.start_point[0] + 1,
@@ -533,6 +541,7 @@ def cpp_extract_class(node, src: bytes, rel: str, parent: Optional[str], out: li
                     out.append(
                         Symbol(
                             name=text(nm, src),
+                            qualified_name=qualify(inner_parent, text(nm, src), "::"),
                             kind="constant" if is_const else "variable",
                             file=rel,
                             line=stmt.start_point[0] + 1,

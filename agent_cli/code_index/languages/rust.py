@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Optional
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
 
 
@@ -93,6 +93,7 @@ def rs_extract_function(node, src: bytes, rel: str, parent: Optional[str], out: 
     out.append(
         Symbol(
             name=name,
+            qualified_name=qualify(parent, name),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -151,6 +152,7 @@ def rs_extract_type(node, src: bytes, rel: str, out: list):
     out.append(
         Symbol(
             name=text(name_node, src),
+            qualified_name=qualify(None, text(name_node, src)),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,
@@ -191,6 +193,7 @@ def rs_extract_const_or_static(node, src: bytes, rel: str, out: list):
     out.append(
         Symbol(
             name=text(name_node, src),
+            qualified_name=qualify(None, text(name_node, src)),
             kind="constant" if is_const else "variable",
             file=rel,
             line=node.start_point[0] + 1,
@@ -236,6 +239,7 @@ def rs_extract_macro(node, src: bytes, rel: str, out: list):
     out.append(
         Symbol(
             name=text(name_node, src),
+            qualified_name=qualify(None, text(name_node, src)),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,

@@ -324,27 +324,29 @@ CREATE TABLE IF NOT EXISTS files (
     language    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS symbols (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT NOT NULL,
-    kind          TEXT NOT NULL,     -- function|type|variable|constant|section
-    file          TEXT NOT NULL,
-    line          INTEGER NOT NULL,
-    col           INTEGER NOT NULL,
-    end_line      INTEGER NOT NULL,
-    is_definition INTEGER NOT NULL,
-    language      TEXT NOT NULL,
-    kind_raw      TEXT,              -- original AST node type
-    modifiers     TEXT,              -- JSON array
-    parent        TEXT,              -- enclosing symbol (class/namespace/module)
-    signature     TEXT,
-    return_type   TEXT,
-    enum_values   TEXT,              -- JSON array
-    params        TEXT               -- JSON array
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    name           TEXT NOT NULL,
+    qualified_name TEXT NOT NULL,    -- display form (parent + sep + name)
+    kind           TEXT NOT NULL,    -- function|type|variable|constant|section
+    file           TEXT NOT NULL,
+    line           INTEGER NOT NULL,
+    col            INTEGER NOT NULL,
+    end_line       INTEGER NOT NULL,
+    is_definition  INTEGER NOT NULL,
+    language       TEXT NOT NULL,
+    kind_raw       TEXT,             -- original AST node type
+    modifiers      TEXT,             -- JSON array
+    parent         TEXT,             -- enclosing symbol (class/namespace/module)
+    signature      TEXT,
+    return_type    TEXT,
+    enum_values    TEXT,             -- JSON array
+    params         TEXT              -- JSON array
 );
-CREATE INDEX IF NOT EXISTS idx_symbols_name     ON symbols(name);
-CREATE INDEX IF NOT EXISTS idx_symbols_kind     ON symbols(kind);
-CREATE INDEX IF NOT EXISTS idx_symbols_file     ON symbols(file);
-CREATE INDEX IF NOT EXISTS idx_symbols_language ON symbols(language);
+CREATE INDEX IF NOT EXISTS idx_symbols_name           ON symbols(name);
+CREATE INDEX IF NOT EXISTS idx_symbols_qualified_name ON symbols(qualified_name);
+CREATE INDEX IF NOT EXISTS idx_symbols_kind           ON symbols(kind);
+CREATE INDEX IF NOT EXISTS idx_symbols_file           ON symbols(file);
+CREATE INDEX IF NOT EXISTS idx_symbols_language       ON symbols(language);
 CREATE TABLE IF NOT EXISTS refs (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     name     TEXT NOT NULL,
@@ -393,12 +395,14 @@ def write_sqlite_index(path: Path, top: dict):
             ],
         )
         cur.executemany(
-            "INSERT INTO symbols(name, kind, file, line, col, end_line, is_definition, "
-            "language, kind_raw, modifiers, parent, signature, return_type, enum_values, params) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO symbols(name, qualified_name, kind, file, line, col, end_line, "
+            "is_definition, language, kind_raw, modifiers, parent, signature, "
+            "return_type, enum_values, params) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     s["name"],
+                    s.get("qualified_name") or s["name"],
                     s["kind"],
                     s["file"],
                     s["line"],

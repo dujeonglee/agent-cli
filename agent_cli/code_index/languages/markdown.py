@@ -163,19 +163,25 @@ def walk_definitions(root, src: bytes, rel: str, syms: list):
                 break
         end_lines.append(end)
 
-    # parent via stack sweep.
+    # parent via stack sweep. Collect both the immediate parent (top of
+    # the stack after popping) AND the full ancestor chain so we can build
+    # the dotted qualified_name (`A.B.Setup`) instead of just `B.Setup`.
     stack: list[tuple[int, str]] = []
     parents: list[str | None] = []
+    qualified_names: list[str] = []
     for _start_line, _col, level, name, _sig, _raw, _node in headings:
         while stack and stack[-1][0] >= level:
             stack.pop()
         parents.append(stack[-1][1] if stack else None)
+        chain = [n for _lvl, n in stack]  # full ancestor list, top-down
+        qualified_names.append(".".join(chain + [name]) if chain else name)
         stack.append((level, name))
 
     for i, (start_line, col, level, name, sig, raw, _node) in enumerate(headings):
         syms.append(
             Symbol(
                 name=name,
+                qualified_name=qualified_names[i],
                 kind="section",
                 file=rel,
                 line=start_line,

@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Optional
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec
-from agent_cli.code_index.languages._shared import text
+from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.preproc import preprocess_source
 from agent_cli.code_index.schema import Ref, Symbol
 
@@ -223,6 +223,7 @@ def add_function_def(node, src, rel, out):
     out.append(
         Symbol(
             name=text(name_node, src),
+            qualified_name=qualify(None, text(name_node, src)),
             kind="function",
             file=rel,
             line=node.start_point[0] + 1,
@@ -272,6 +273,7 @@ def add_declaration(node, src, rel, out):
             out.append(
                 Symbol(
                     name=text(name_node, src),
+                    qualified_name=qualify(None, text(name_node, src)),
                     kind="function",
                     file=rel,
                     line=node.start_point[0] + 1,
@@ -292,6 +294,7 @@ def add_declaration(node, src, rel, out):
             out.append(
                 Symbol(
                     name=text(name_node, src),
+                    qualified_name=qualify(None, text(name_node, src)),
                     kind="variable",
                     file=rel,
                     line=node.start_point[0] + 1,
@@ -324,6 +327,7 @@ def add_record(node, src, rel, out):
     out.append(
         Symbol(
             name=text(name_node, src),
+            qualified_name=qualify(None, text(name_node, src)),
             kind="type",
             file=rel,
             line=node.start_point[0] + 1,
@@ -373,6 +377,7 @@ def add_typedef(node, src, rel, out):
         out.append(
             Symbol(
                 name=text(target, src),
+                qualified_name=qualify(None, text(target, src)),
                 kind="type",
                 file=rel,
                 line=node.start_point[0] + 1,
@@ -399,6 +404,7 @@ def add_macro(node, src, rel, out, fn_form: bool):
     out.append(
         Symbol(
             name=text(name, src),
+            qualified_name=qualify(None, text(name, src)),
             # Function-like macros are callable → kind="function".
             # Object-like macros are values → kind="constant".
             # Both keep kind_raw so callers can filter precisely.
