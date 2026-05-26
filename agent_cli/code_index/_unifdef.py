@@ -493,53 +493,64 @@ def run_unifdef(text: str, flags: list[str]) -> str:
                            #elif/#else fall to NOT_TAKEN once a TAKEN
                            branch has fired.
 
+    Critical semantic match with upstream unifdef: ``PASS_THROUGH``
+    does *not* cascade to child frames. A nested ``#ifdef`` inside an
+    UNKNOWN frame is still evaluated independently — only its own
+    ancestor's NOT_TAKEN status can force it dead. This mirrors the
+    behaviour observed against the C implementation: an outer
+    header-guard (``#ifndef __FOO_H__``) whose macro isn't on the
+    flag list keeps its own directives verbatim but every inner
+    ``#ifdef CONFIG_X`` is still resolved against the supplied flags
+    just as if the outer frame were taken.
+
     Output rules per line:
 
-      * directive line (#if/.../#endif) → emit blank in known regions
-        (whether taken or not — directives themselves are noise), emit
-        verbatim in PASS_THROUGH regions.
-      * non-directive line → emit verbatim if every frame is TAKEN
-        (or stack empty), blank if any frame is NOT_TAKEN, emit
-        verbatim if any frame is PASS_THROUGH (and no NOT_TAKEN
-        intervenes — checked frame-by-frame).
+      * non-directive line → blank if any frame in the stack is
+        NOT_TAKEN, otherwise keep verbatim. PASS_THROUGH frames do
+        *not* affect non-directive lines (their bodies are kept).
+      * directive line → blank if the owning frame is TAKEN or
+        NOT_TAKEN; keep verbatim if the owning frame is PASS_THROUGH.
+        A NOT_TAKEN ancestor always overrides to blank — the
+        directive is inside dead code regardless of its own merit.
     """
     defs = parse_flags(flags)
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     stack: list[dict] = []
 
-    def line_decision() -> str:
-        # Output policy for a non-directive line, walking outermost
-        # to innermost: the first NOT_TAKEN frame wins (blanks), else
-        # the first PASS_THROUGH frame wins (verbatim), else verbatim.
-        for f in stack:
-            if f["mode"] == _NOT_TAKEN:
-                return "blank"
-        if any(f["mode"] == _PASS_THROUGH for f in stack):
-            return "verbatim"
-        return "verbatim"
+    def body_emit(line: str) -> str:
+        # Non-directive line: dies only if a frame is NOT_TAKEN.
+        # PASS_THROUGH frames keep their bodies (the unknown branch
+        # might be the live one, so we conservatively retain it).
+        return _blank_line(line) if _any(stack, _NOT_TAKEN) else line
+
+    def directive_emit(owning_mode: str, line: str, *, ancestors: list[dict]) -> str:
+        # A NOT_TAKEN ancestor pins everything below to dead — even a
+        # PASS_THROUGH owning frame can't override that, since the
+        # whole region won't be reached at compile time.
+        if _any(ancestors, _NOT_TAKEN):
+            return _blank_line(line)
+        # Otherwise: PASS_THROUGH owning frame keeps its directives
+        # verbatim (we can't safely prune them); TAKEN / NOT_TAKEN
+        # owning frame blanks them (the directive itself is noise
+        # once we've decided which branch is active).
+        return line if owning_mode == _PASS_THROUGH else _blank_line(line)
 
     for line in lines:
         m = _DIRECTIVE_RE.match(line)
         if not m:
-            decision = line_decision()
-            out.append(line if decision == "verbatim" else _blank_line(line))
+            out.append(body_emit(line))
             continue
 
         directive, rest = m.group(1), m.group(2)
         rest = _strip_trailing_comment(rest)
 
         if directive in ("if", "ifdef", "ifndef"):
-            # New frame. Where the new frame's mode comes from:
-            #   * if any ancestor is NOT_TAKEN → mode = NOT_TAKEN
-            #     (this whole block is dead anyway, no point eval'ing)
-            #   * if any ancestor is PASS_THROUGH → mode = PASS_THROUGH
-            #     (parent uncertainty cascades down)
-            #   * else evaluate the directive against current defs
+            # New frame. Only NOT_TAKEN ancestors short-circuit
+            # evaluation — PASS_THROUGH ancestors leave us free to
+            # evaluate this frame independently.
             if _any(stack, _NOT_TAKEN):
                 mode = _NOT_TAKEN
-            elif _any(stack, _PASS_THROUGH):
-                mode = _PASS_THROUGH
             else:
                 if directive == "if":
                     val = _eval_expr(rest, defs)
@@ -549,61 +560,50 @@ def run_unifdef(text: str, flags: list[str]) -> str:
                 else:  # ifndef
                     state = _is_defined(defs, rest)
                     val = _UNKNOWN if state is None else (0 if state else 1)
-
                 if val is _UNKNOWN:
                     mode = _PASS_THROUGH
                 else:
                     mode = _TAKEN if val else _NOT_TAKEN
 
+            ancestors = list(stack)  # snapshot before push
             stack.append({"mode": mode, "prior_taken": (mode == _TAKEN)})
-            # Emit the directive line itself.
-            if mode == _PASS_THROUGH:
-                # Verbatim, so the matching #endif also passes through.
-                out.append(line)
-            elif _any(stack[:-1], _NOT_TAKEN):
-                out.append(_blank_line(line))
-            elif _any(stack[:-1], _PASS_THROUGH):
-                out.append(line)
-            else:
-                out.append(_blank_line(line))
+            out.append(directive_emit(mode, line, ancestors=ancestors))
             continue
 
         if directive == "elif":
             if not stack:
-                # Stray #elif — emit verbatim, ignore.
                 out.append(line)
                 continue
             top = stack[-1]
+            ancestors = stack[:-1]
             if top["mode"] == _PASS_THROUGH:
-                out.append(line)
+                # The owning chain is uncertain — keep the #elif
+                # verbatim and stay in PASS_THROUGH for the new branch.
+                out.append(directive_emit(_PASS_THROUGH, line, ancestors=ancestors))
                 continue
-            if _any(stack[:-1], _NOT_TAKEN):
-                # Ancestor already says everything inside is dead.
+            if _any(ancestors, _NOT_TAKEN):
                 top["mode"] = _NOT_TAKEN
                 out.append(_blank_line(line))
-                continue
-            if _any(stack[:-1], _PASS_THROUGH):
-                out.append(line)
                 continue
             if top["prior_taken"]:
                 top["mode"] = _NOT_TAKEN
-                out.append(_blank_line(line))
+                out.append(directive_emit(_NOT_TAKEN, line, ancestors=ancestors))
                 continue
             val = _eval_expr(rest, defs)
             if val is _UNKNOWN:
-                # Switching to PASS_THROUGH from here on — we no
-                # longer know which branch is the right one, so
-                # everything (including the matching #endif) must
-                # round-trip unchanged.
+                # Once the chain becomes uncertain we have to keep
+                # this and every subsequent branch verbatim, including
+                # the matching #endif — otherwise we'd lose the
+                # boundary the downstream tooling needs.
                 top["mode"] = _PASS_THROUGH
-                out.append(line)
+                out.append(directive_emit(_PASS_THROUGH, line, ancestors=ancestors))
             elif val:
                 top["mode"] = _TAKEN
                 top["prior_taken"] = True
-                out.append(_blank_line(line))
+                out.append(directive_emit(_TAKEN, line, ancestors=ancestors))
             else:
                 top["mode"] = _NOT_TAKEN
-                out.append(_blank_line(line))
+                out.append(directive_emit(_NOT_TAKEN, line, ancestors=ancestors))
             continue
 
         if directive == "else":
@@ -611,22 +611,20 @@ def run_unifdef(text: str, flags: list[str]) -> str:
                 out.append(line)
                 continue
             top = stack[-1]
+            ancestors = stack[:-1]
             if top["mode"] == _PASS_THROUGH:
-                out.append(line)
+                out.append(directive_emit(_PASS_THROUGH, line, ancestors=ancestors))
                 continue
-            if _any(stack[:-1], _NOT_TAKEN):
+            if _any(ancestors, _NOT_TAKEN):
                 top["mode"] = _NOT_TAKEN
                 out.append(_blank_line(line))
-                continue
-            if _any(stack[:-1], _PASS_THROUGH):
-                out.append(line)
                 continue
             if top["prior_taken"]:
                 top["mode"] = _NOT_TAKEN
             else:
                 top["mode"] = _TAKEN
                 top["prior_taken"] = True
-            out.append(_blank_line(line))
+            out.append(directive_emit(top["mode"], line, ancestors=ancestors))
             continue
 
         if directive == "endif":
@@ -634,20 +632,12 @@ def run_unifdef(text: str, flags: list[str]) -> str:
                 out.append(line)
                 continue
             popped = stack.pop()
-            if popped["mode"] == _PASS_THROUGH:
-                out.append(line)
-            elif _any(stack, _NOT_TAKEN):
-                out.append(_blank_line(line))
-            elif _any(stack, _PASS_THROUGH):
-                out.append(line)
-            else:
-                out.append(_blank_line(line))
+            out.append(directive_emit(popped["mode"], line, ancestors=stack))
             continue
 
         # Any other directive (#define, #include, #pragma, ...) is
         # data, not control flow — same emit policy as a normal line.
-        decision = line_decision()
-        out.append(line if decision == "verbatim" else _blank_line(line))
+        out.append(body_emit(line))
 
     return "".join(out)
 
