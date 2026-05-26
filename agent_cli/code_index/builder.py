@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sqlite3
 import sys
 import time
 from collections import defaultdict
@@ -28,6 +27,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+from agent_cli.code_index._sqlite import sqlite3
 from agent_cli.code_index.languages import (
     LANGUAGES,
     get_supported_extensions,

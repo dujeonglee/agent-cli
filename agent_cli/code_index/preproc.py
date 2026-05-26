@@ -23,6 +23,7 @@ branch pruning is skipped (graceful fallback).
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -30,9 +31,28 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from agent_cli.code_index import _unifdef
 from agent_cli.code_index.schema import SCHEMA_VERSION
 
 UNIFDEF_BIN = shutil.which("unifdef")
+
+# Backend selector for the ``-b`` pass:
+#
+#   auto    — prefer system ``UNIFDEF_BIN`` (battle-tested C
+#             implementation) when present, fall back to the bundled
+#             pure-Python ``_unifdef.run_unifdef`` otherwise.
+#   system  — only use the system binary; raise / no-op if missing.
+#   pure    — always use the pure-Python implementation, even when the
+#             binary is on PATH. Mainly useful for parity testing and
+#             reproducibility on hosts where the system unifdef
+#             version is unknown.
+#
+# Read once at import time so a single setting is sticky for the
+# process lifetime (no per-call cost, no surprise behaviour swap
+# mid-build).
+_UNIFDEF_MODE = os.environ.get("AGENT_CLI_UNIFDEF", "auto").lower()
+if _UNIFDEF_MODE not in ("auto", "system", "pure"):
+    _UNIFDEF_MODE = "auto"
 KV_RE = re.compile(r"KERNEL_VERSION\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)")
 # IS_ENABLED(X) → defined(X). unifdef can't evaluate function-like macros, but
 # it does evaluate `defined()`, so this lets it prune CONFIG_* branches uniformly.
@@ -379,18 +399,45 @@ def preprocess_source(src: bytes, unifdef_flags: list[str]) -> bytes:
     text = rewrite_decl_macros(text)
     text = rewrite_bare_attributes(text)
     text = rewrite_consecutive_attrs(text)
-    if not unifdef_flags or UNIFDEF_BIN is None:
+    if not unifdef_flags:
         return text.encode("utf-8")
-    r = subprocess.run(
-        [UNIFDEF_BIN, "-b", *unifdef_flags],
-        input=text,
-        capture_output=True,
-        text=True,
-    )
-    # unifdef returns 0 (unchanged) or 1 (changed) on success, 2 on error.
-    if r.returncode == 2:
-        return text.encode("utf-8")
-    return r.stdout.encode("utf-8")
+    return _apply_unifdef(text, unifdef_flags).encode("utf-8")
+
+
+def _apply_unifdef(text: str, unifdef_flags: list[str]) -> str:
+    """Run ``unifdef -b`` semantics on ``text`` using whichever backend
+    the operator (or auto-detection) selected.
+
+    The system binary path keeps the exact behaviour every existing
+    install relied on; the pure-Python fallback only kicks in when the
+    binary is absent or explicitly disabled via ``AGENT_CLI_UNIFDEF``.
+    If the system binary returns ``2`` (parse error on its end) we
+    still try the pure-Python pass — it might handle the input even
+    when the C tool gave up — before finally surrendering with the
+    untouched source.
+    """
+    if _UNIFDEF_MODE != "pure" and UNIFDEF_BIN is not None:
+        r = subprocess.run(
+            [UNIFDEF_BIN, "-b", *unifdef_flags],
+            input=text,
+            capture_output=True,
+            text=True,
+        )
+        # unifdef returns 0 (unchanged) or 1 (changed) on success,
+        # 2 on parse error. On success the stdout is authoritative.
+        if r.returncode != 2:
+            return r.stdout
+        if _UNIFDEF_MODE == "system":
+            # Operator opted out of the fallback explicitly.
+            return text
+        # Auto mode: fall through to the pure-Python implementation
+        # before giving up. Lets a one-off C-tool parse error get
+        # rescued by the in-process pass without losing the prune.
+    if _UNIFDEF_MODE == "system":
+        # System requested but binary not on PATH — same outcome as
+        # the previous "no unifdef" fallback: leave text untouched.
+        return text
+    return _unifdef.run_unifdef(text, unifdef_flags)
 
 
 def compute_preproc(
@@ -420,27 +467,29 @@ def compute_preproc(
             extras = collect_unknown_configs(root, explicit)
             unifdef_flags.extend(f"-U{k}" for k in extras)
             auto_undef_count = len(extras)
+        # The pure-Python fallback is always available, so the
+        # presence/absence of the system binary no longer gates
+        # whether the preproc pass runs — only whether we got any
+        # flags. ``unifdef_bin`` still reports the system binary path
+        # (for diagnostics / verbose output) but it's no longer a
+        # hard prerequisite.
+        backend = (
+            "system" if UNIFDEF_BIN is not None and _UNIFDEF_MODE != "pure" else "pure"
+        )
         preproc_info = {
-            "enabled": bool(unifdef_flags) and UNIFDEF_BIN is not None,
+            "enabled": bool(unifdef_flags),
             "defs_file": str(defs_path),
             "unifdef_bin": UNIFDEF_BIN,
+            "backend": backend,
             "n_flags": len(unifdef_flags),
             "auto_undef_count": auto_undef_count,
         }
         if verbose:
-            if UNIFDEF_BIN is None:
-                print(
-                    "  [warn] unifdef not in PATH — #if branches won't be pruned",
-                    file=sys.stderr,
-                )
-            else:
-                msg = (
-                    f"  [preproc] {defs_path} → {len(unifdef_flags)} flag(s) "
-                    f"via {UNIFDEF_BIN}"
-                )
-                if auto_undef_count:
-                    msg += f"  (incl. {auto_undef_count} auto-undef CONFIG_*)"
-                print(msg, file=sys.stderr)
+            via = UNIFDEF_BIN if backend == "system" else "_unifdef.py (pure-Python)"
+            msg = f"  [preproc] {defs_path} → {len(unifdef_flags)} flag(s) via {via}"
+            if auto_undef_count:
+                msg += f"  (incl. {auto_undef_count} auto-undef CONFIG_*)"
+            print(msg, file=sys.stderr)
 
     # Fingerprint: anything that would make old parsed data incompatible.
     h = hashlib.sha256()

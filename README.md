@@ -788,6 +788,7 @@ tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_
 
 - **Root**: cwd 또는 가장 가까운 조상 디렉토리 중 `.agent-cli/` 가 있는 곳. 없으면 cwd 사용 (`.agent-cli/` 자동 생성).
 - **DB**: `<root>/.agent-cli/code_index.db`. `.gitignore` 기본 패턴이 이미 `.agent-cli/` 를 덮음.
+- **SQLite 백엔드 자동 폴백 (Linux)**: stdlib `sqlite3` 가 없는 CPython 빌드 (예: `--without-sqlite` 로 빌드된 잠금 서버) 에선 `agent_cli/code_index/_sqlite.py` shim 이 `pysqlite3-binary` 휠로 자동 폴백. macOS / Windows 는 stdlib `sqlite3` 가 사실상 항상 존재해서 wheel 설치 X — pyproject 의 `sys_platform == 'linux'` marker 가 Linux 에서만 폴백 휠을 끌어들임.
 - **자동 prune 디렉토리**: `.git`/`.hg`/`.svn`, `.agent-cli`/`.claude`, `.venv`/`venv`/`env`, `__pycache__`/`.pytest_cache`/`.ruff_cache`/`.mypy_cache`, `node_modules`, `build`/`dist`/`target`, `.tox`. 인덱스 폭주 방지.
 
 #### Scope 경계 — index-scoped vs per-file
@@ -827,12 +828,11 @@ C/C++는 dedicated grammar 각각 사용. 그 외 형식은 `read_file` 으로.
 
 #### C/C++ 전처리 — defconfig (kernel/driver 필수)
 
-C/C++ 코드의 `#define` / `#ifdef` 분기를 제대로 처리하려면 시스템 패키지 `unifdef` 가 필요합니다:
+C/C++ 코드의 `#define` / `#ifdef` 분기 처리는 **번들된 pure-Python `_unifdef.py`** 가 기본 수행합니다 — 별도 설치 불필요. 시스템에 `unifdef` 바이너리가 있으면 (`brew install unifdef` / `apt install unifdef`) 자동으로 그것을 우선 사용 (battle-tested C 구현). 명시적 강제는 `AGENT_CLI_UNIFDEF=pure|system|auto` 환경변수.
 
-- macOS: `brew install unifdef`
-- Debian/Ubuntu: `sudo apt install unifdef`
+**기능상 차이 없음** — 두 백엔드는 ifdef/elif/else/endif + `defined()`/논리/비교/산술 표현식에서 byte-identical 출력 (parity 테스트로 보장).
 
-`unifdef` 없이도 raw parsing fallback으로 대부분 동작합니다. 단 **함수 시그니처가 `#ifdef CONFIG_X` 로 분기되는 코드** (커널 드라이버 등에서 흔함):
+함수 시그니처가 `#ifdef CONFIG_X` 로 분기되는 코드 (커널 드라이버 등에서 흔함):
 
 ```c
 #ifdef CONFIG_SOMETHING
@@ -853,7 +853,7 @@ static void foo(int x)
 
 파일은 사용자가 직접 작성합니다 (LLM이 추측하면 잘못된 분기를 인덱싱할 위험). `code_index` tool은 첫 query 시 이 파일이 있으면 자동으로 unifdef 에 전달합니다 — 별도 옵션 불필요. `mode='build'` 출력에 `defconfig:` 라인으로 적용 여부가 보입니다.
 
-Python/JS/TS/Go/Rust/Java/Markdown만 쓰는 사용자는 `unifdef` 설치 불필요.
+C/C++ 사용자도 시스템 `unifdef` 설치 선택 사항 — 번들된 pure-Python 으로 동일 동작. Python/JS/TS/Go/Rust/Java/Markdown 만 쓰는 사용자는 전처리 단계 자체가 no-op.
 
 ### ask — 사용자에게 질문 (chat 모드 전용)
 

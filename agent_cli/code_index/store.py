@@ -15,10 +15,11 @@ don't need to think about the class name.
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections import Counter
 from pathlib import Path
 from typing import Optional
+
+from agent_cli.code_index._sqlite import sqlite3
 
 
 class IndexStore:
