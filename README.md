@@ -788,6 +788,7 @@ tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_
 
 - **Root**: cwd 또는 가장 가까운 조상 디렉토리 중 `.agent-cli/` 가 있는 곳. 없으면 cwd 사용 (`.agent-cli/` 자동 생성).
 - **DB**: `<root>/.agent-cli/code_index.db`. `.gitignore` 기본 패턴이 이미 `.agent-cli/` 를 덮음.
+- **SQLite 백엔드 자동 폴백 (Linux)**: stdlib `sqlite3` 가 없는 CPython 빌드 (예: `--without-sqlite` 로 빌드된 잠금 서버) 에선 `agent_cli/code_index/_sqlite.py` shim 이 `pysqlite3-binary` 휠로 자동 폴백. macOS / Windows 는 stdlib `sqlite3` 가 사실상 항상 존재해서 wheel 설치 X — pyproject 의 `sys_platform == 'linux'` marker 가 Linux 에서만 폴백 휠을 끌어들임.
 - **자동 prune 디렉토리**: `.git`/`.hg`/`.svn`, `.agent-cli`/`.claude`, `.venv`/`venv`/`env`, `__pycache__`/`.pytest_cache`/`.ruff_cache`/`.mypy_cache`, `node_modules`, `build`/`dist`/`target`, `.tox`. 인덱스 폭주 방지.
 
 #### Scope 경계 — index-scoped vs per-file

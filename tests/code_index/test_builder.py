@@ -13,10 +13,10 @@ fixture mutation pitfalls.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 from agent_cli.code_index import build, load_index
+from agent_cli.code_index._sqlite import sqlite3
 
 
 # ----- small helpers ----------------------------------------------------------

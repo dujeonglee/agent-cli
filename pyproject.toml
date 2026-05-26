@@ -22,6 +22,18 @@ dependencies = [
     "tree-sitter-go>=0.23",
     "tree-sitter-rust>=0.23",
     "tree-sitter-java>=0.23",
+    # ``pysqlite3-binary`` ships a precompiled SQLite C library inside
+    # the wheel. The ``agent_cli.code_index._sqlite`` shim prefers
+    # stdlib ``sqlite3`` (zero cost when Python was built with SQLite
+    # support) and only reaches for this wheel if the stdlib module
+    # is missing — i.e., on locked-down servers whose Python was
+    # compiled ``--without-sqlite``. The project only publishes
+    # Linux manylinux wheels (no macOS / Windows binaries), and that
+    # matches the deployment target where the SQLite gap actually
+    # happens (locked-down server VMs); macOS / Windows hosts ship
+    # stdlib sqlite3 in their normal Python distributions, so the
+    # marker keeps the wheel out of dev installs that don't need it.
+    "pysqlite3-binary>=0.5; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
