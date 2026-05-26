@@ -249,14 +249,81 @@ class TestNesting:
         # Lines preserved.
         assert out.count("\n") == src.count("\n")
 
-    def test_outer_pass_through_includes_inner(self):
-        # OUTER unknown → entire outer block must pass through —
-        # the INNER directives stay in the output even if we *could*
-        # have resolved them on their own, because pruning the inner
-        # block would change what the outer #if controls.
+    def test_outer_pass_through_keeps_only_its_own_directives(self):
+        # When the outer ``#if`` is UNKNOWN, only the outer's own
+        # directive lines (and matching ``#endif``) stay verbatim —
+        # the INNER directive is still evaluated independently. This
+        # mirrors upstream unifdef: a header guard like
+        # ``#ifndef __FOO_H__`` whose macro isn't on the flag list
+        # shouldn't strand every CONFIG_* branch inside it as
+        # un-prunable. Previously a PASS_THROUGH cascade made the
+        # whole outer block pass through, which left inner directives
+        # in the index for the user's wonder driver project to
+        # stumble over (+236 false-positive symbols on a full rebuild).
         src = "#ifdef OUTER\n#ifdef INNER\ndeep\n#endif\n#endif\n"
         out = run_unifdef(src, ["-DINNER"])
+        # Outer directives stay verbatim …
+        assert out.startswith("#ifdef OUTER\n")
+        assert out.rstrip().endswith("#endif")
+        # … but the inner #ifdef INNER directive itself is blanked
+        # (we proved INNER is defined, so the directive is noise).
+        assert "#ifdef INNER" not in out
+        # The body is kept because INNER evaluated true.
+        assert "deep" in out
+        # And the line count contract still holds.
+        assert out.count("\n") == src.count("\n")
+
+    def test_inner_evaluated_false_under_outer_pass_through(self):
+        # Same shape as above but INNER is known-undefined → inner
+        # body must be blanked, inner directives blanked, outer
+        # directives stay verbatim. Confirms the independence cuts
+        # both ways: it doesn't only "keep more", it can also "blank
+        # more" inside an UNKNOWN frame.
+        src = "#ifdef OUTER\n#ifdef INNER\ndead\n#endif\n#endif\n"
+        out = run_unifdef(src, ["-UINNER"])
+        assert out.startswith("#ifdef OUTER\n")
+        assert "#ifdef INNER" not in out
+        # Body of false branch is blanked, not kept.
+        assert "dead" not in out
+        # Outer #endif stays verbatim.
+        assert out.rstrip().endswith("#endif")
+        assert out.count("\n") == src.count("\n")
+
+    def test_inner_unknown_under_outer_unknown_cascades_verbatim(self):
+        # Two UNKNOWN frames stacked: nothing can be proven, so the
+        # whole tree must pass through byte-identical. This is the
+        # only case where PASS_THROUGH effectively cascades — because
+        # the inner couldn't be resolved on its own merits, not
+        # because the outer forces it.
+        src = "#ifdef OUTER\n#ifdef INNER\nmaybe\n#endif\n#endif\n"
+        out = run_unifdef(src, [])
         assert out == src
+
+    def test_header_guard_pattern_does_not_strand_inner_configs(self):
+        # The actual scenario that broke the wonder index: a header
+        # guard wraps the entire file, and a defconfig-driven CONFIG_*
+        # branch nested inside used to pass through verbatim instead
+        # of being resolved. End-to-end regression so a future
+        # walker change can't silently bring the bug back.
+        src = (
+            "#ifndef __DEBUG_H__\n"
+            "#define __DEBUG_H__\n"
+            "\n"
+            "#ifdef CONFIG_SCSC_WLAN_DEBUG\n"
+            '#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"\n'
+            "#endif\n"
+            "\n"
+            "#endif\n"
+        )
+        out = run_unifdef(src, ["-DCONFIG_SCSC_WLAN_DEBUG=1"])
+        # Inner CONFIG_* directive must be blanked.
+        assert "#ifdef CONFIG_SCSC_WLAN_DEBUG" not in out
+        # Its body survives because CONFIG_SCSC_WLAN_DEBUG is true.
+        assert 'MACSTR "%02x' in out
+        # Header guard directives are kept verbatim — downstream
+        # toolchain might still want them.
+        assert "#ifndef __DEBUG_H__" in out
+        assert "#define __DEBUG_H__" in out
 
 
 class TestLineCountContract:
