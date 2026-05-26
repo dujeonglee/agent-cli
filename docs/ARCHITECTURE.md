@@ -39,7 +39,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 **Optional**: `agent-cli[web]` → `fastapi` / `uvicorn[standard]` / `sse-starlette`.
 **Dev**: `pytest`, `pytest-asyncio`, `httpx`, `hypothesis` (property-based 테스트).
 
-**시스템 패키지**: C/C++ 인덱싱 시 `unifdef` 권장 (`brew install unifdef` / `apt install unifdef`) — 없어도 raw fallback 동작.
+**시스템 패키지**: C/C++ 인덱싱의 `unifdef` 단계는 번들된 pure-Python (`_unifdef.py`) 이 기본 처리 — 설치 불필요. 시스템 `unifdef` 바이너리가 있으면 자동 우선 사용 (battle-tested C). `AGENT_CLI_UNIFDEF=pure|system|auto` 환경변수로 명시적 강제 가능.
 
 표준 라이브러리: json, re, dataclasses, pathlib, os, sys, zlib, textwrap, unicodedata, copy, tempfile, threading, sqlite3 (code_index — stdlib 우선, 미존재 시 `_sqlite.py` shim 이 `pysqlite3-binary` 로 폴백)
 
@@ -119,7 +119,8 @@ agent_cli/
 ├── code_index/                     code_index 패키지 — tree-sitter SQLite 코드 인덱서 (`minish.ai/Agent-tools tsindex.py` Apache 2.0 port — NOTICE 참조). 총 ~5,000 LOC. `_sqlite.py` shim 이 stdlib `sqlite3` 우선 / 미존재(`--without-sqlite` CPython) 시 `pysqlite3-binary` 폴백 — Linux 잠금 서버에서도 무설정 동작.
 │   ├── __init__.py          (56)   public API: build / load_index / build_callgraph / cmd_slice / IndexStore / Symbol / Ref / NAME_KINDS / CODE_NAME_KINDS / REF_KINDS / SCHEMA_VERSION
 │   ├── schema.py            (~140) SCHEMA_VERSION=2 (v2: `qualified_name` 컬럼 추가, walker가 emit 시 full display form 산출 — Python/JS/TS/Java/Go/Rust/Markdown은 `.`, C++는 `::`, C는 flat=name; tool handler가 qualified_name 우선 lookup + bare-leaf fallback). Symbol/Ref dataclass, NAME_KINDS(5-vocab: function/type/variable/constant/section), CODE_NAME_KINDS(=NAME_KINDS-{section}, cross-file ref name resolution 전용 4-vocab), REF_KINDS(call/name/type). `section`은 markdown heading 5번째 vocab으로 추가됨 (upstream 4-vocab → 5-vocab).
-│   ├── preproc.py           (449)  C/C++ 전처리: unifdef 드라이버 + rewriter chain (foreach/decl_macro/bare_attribute/variadic/ifdef_zero/define_comments/pp_trailing_ws/consecutive_attr/pp_continuation/type_arg). `unifdef` 미설치 시 graceful fallback (raw parse). `compute_preproc`이 fingerprint 산출 — defs file 내용 변경 시 인덱스 자동 invalidate.
+│   ├── preproc.py           (498)  C/C++ 전처리: unifdef 드라이버 + rewriter chain (foreach/decl_macro/bare_attribute/variadic/ifdef_zero/define_comments/pp_trailing_ws/consecutive_attr/pp_continuation/type_arg). `_apply_unifdef` 헬퍼가 백엔드 선택 (시스템 `UNIFDEF_BIN` 우선, 없거나 `AGENT_CLI_UNIFDEF=pure` 면 `_unifdef.run_unifdef` 사용). `compute_preproc`이 fingerprint 산출 — defs file 내용 변경 시 인덱스 자동 invalidate. 백엔드 선택 정보 `preproc_info["backend"]` 에 노출.
+│   ├── _unifdef.py          (653)  Pure-Python `unifdef -b` 구현 — Pratt-style 표현식 parser (defined/논리/비교/산술/비트), UNKNOWN 전파 + short-circuit 평가, directive walker (TAKEN/NOT_TAKEN/PASS_THROUGH 상태 스택). `-b` 라인 보존 contract 준수. 시스템 unifdef 와 byte-identical parity (parity 테스트로 8 케이스 보장). preproc.py 가 백엔드 fallback 으로 사용 — 시스템 binary 없는 잠금 서버에서도 무설정 동작.
 │   ├── store.py             (257)  IndexStore (SQLite reader). find_symbols/find_refs/find_refs_in_range, normalize_file_path (exact/absolute/basename/suffix), kind_counts/ref_kind_counts/top_ref_names. dict-style 접근(`idx['symbols']`)도 호환 유지.
 │   ├── builder.py           (440)  build() — Pass-1(definitions) + Pass-2(refs) + sha1 incremental + Option-B re-Pass2 (변경 파일의 새 이름을 mention하는 unchanged 파일 자동 re-walk). `iter_source_files`가 `_SKIP_DIRS` (.git/.agent-cli/.claude/.venv/node_modules/build/dist 등) prune → 인덱스 폭주 방지. 무효화 트리거 3개: schema_version mismatch / meta.root 변경 / preproc_fingerprint 변경.
 │   ├── callgraph.py         (115)  build_callgraph → (calls_of, callers_of, sites_of). 호출 사이트 (caller, callee, file, line) dedup으로 walker의 call+name 더블 emit을 1 edge로 정리. callback-only(kind='name' 단독) 사이트는 1× 그대로 유지.
