@@ -28,6 +28,7 @@ clear error if the supplied path is out-of-root.
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -44,6 +45,16 @@ from agent_cli.code_index.languages import LANGUAGES, language_of
 from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
 from agent_cli.tools.read_file import format_hashlines_range
 from agent_cli.tools.result import ToolResult
+
+# Serialize index builds within a single process. Parallel delegate
+# workers can land on ``code_index`` at the same instant, and even
+# though ``write_sqlite_index`` is now atomic (race-safe at the
+# filesystem layer), letting N workers each run a full incremental
+# rebuild simultaneously burns CPU on identical work and amplifies
+# lock contention inside SQLite. One build at a time per process —
+# the second arrival waits, then trivially re-reads the freshly
+# written DB.
+_BUILD_LOCK = threading.Lock()
 
 
 # ----- index root / DB resolution -------------------------------------------
@@ -87,10 +98,18 @@ def _resolve_defs_path(root: Path) -> Optional[Path]:
 
 def _ensure_index() -> tuple[IndexStore, Path]:
     """Run ``build()`` (lazy-creates the DB if missing, incrementally
-    refreshes otherwise) and return ``(store, root)``."""
+    refreshes otherwise) and return ``(store, root)``.
+
+    Holds ``_BUILD_LOCK`` for the duration of the build so concurrent
+    callers (typically parallel delegate workers each invoking a
+    ``code_index`` mode) don't race on a redundant rebuild. The lock
+    is *not* held during ``load_index`` — that's a read-only open of
+    the just-written file, safe to overlap freely.
+    """
     root = _resolve_index_root()
     db = _resolve_db_path()
-    build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
+    with _BUILD_LOCK:
+        build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
     return load_index(db), root
 
 
@@ -133,7 +152,8 @@ def post_hook(path: str | Path) -> None:
         file_abs = Path(path).resolve()
         if not _path_in_root(file_abs, root):
             return
-        build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
+        with _BUILD_LOCK:
+            build(root, db, defs_path=_resolve_defs_path(root), verbose=False)
     except Exception:
         # Best-effort: never block the user op.
         return
@@ -523,7 +543,8 @@ def _do_build(_action_input: dict) -> ToolResult:
     root = _resolve_index_root()
     db = _resolve_db_path()
     defs = _resolve_defs_path(root)
-    build(root, db, defs_path=defs, verbose=False, force_full=True)
+    with _BUILD_LOCK:
+        build(root, db, defs_path=defs, verbose=False, force_full=True)
     store = load_index(db)
     defs_note = f" defconfig: {defs}" if defs else " defconfig: (none)"
     return ToolResult(

@@ -20,7 +20,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sys
+import threading
 import time
 from collections import defaultdict
 from dataclasses import asdict
@@ -363,11 +365,45 @@ CREATE INDEX IF NOT EXISTS idx_refs_language ON refs(language);
 """
 
 
+def _new_tmp_path(path: Path) -> Path:
+    """Pick a tmp filename adjacent to ``path`` that's unique per
+    process / thread / random suffix.
+
+    Lives in the same directory so the final ``os.replace(tmp, path)``
+    is a same-filesystem rename (POSIX-atomic). The pid / tid / nonce
+    combination keeps concurrent writers from colliding on a shared
+    name even if they happen to land in the same millisecond.
+    """
+    suffix = f".{os.getpid()}.{threading.get_ident()}.{secrets.token_hex(4)}.tmp"
+    return path.with_name(path.name + suffix)
+
+
 def write_sqlite_index(path: Path, top: dict):
-    """Replace the SQLite file with a fresh build from `top`."""
-    if path.exists():
-        path.unlink()
-    conn = sqlite3.connect(str(path))
+    """Replace the SQLite file with a fresh build from `top`.
+
+    Atomic write contract: the active ``path`` is never opened,
+    truncated, or unlinked. We build the full DB at a unique tmp file
+    next to ``path``, then ``os.replace`` it on top. Any reader (or
+    concurrent writer doing the same dance) sees either the old
+    complete DB or the new complete DB — never an in-progress
+    half-written state, never a "file disappeared" inode whose
+    earlier inhabitant was a SQLite connection.
+
+    The previous implementation called ``path.unlink()`` then
+    re-created the file in place. Under parallel delegate workers
+    that pattern produced ``sqlite3.OperationalError: disk I/O
+    error`` when one worker's unlink ripped the file out from under
+    another worker's open connection. Atomic rename eliminates that
+    window — there's no reachable state where a connection's
+    underlying inode can vanish.
+    """
+    tmp = _new_tmp_path(path)
+    # Make sure the parent dir exists. ``_ensure_index`` already
+    # creates ``.agent-cli/`` but defensive mkdir keeps this function
+    # self-contained for callers (e.g. tests) that build into a
+    # freshly-created directory.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(tmp))
     try:
         conn.executescript(SQLITE_SCHEMA)
         cur = conn.cursor()
@@ -436,5 +472,21 @@ def write_sqlite_index(path: Path, top: dict):
             ],
         )
         conn.commit()
-    finally:
+    except Exception:
+        # Build failed somewhere in the inserts. The active ``path``
+        # is untouched (we wrote to ``tmp`` only), so the operator
+        # still has the prior good index. Just clean up the
+        # partial tmp before re-raising.
         conn.close()
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    else:
+        conn.close()
+        # POSIX ``os.replace`` is atomic when source and target sit
+        # on the same filesystem (we placed tmp in path.parent for
+        # exactly this reason). Any observer either sees the prior
+        # complete DB or the new complete DB at any instant.
+        os.replace(tmp, path)
