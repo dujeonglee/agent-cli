@@ -45,6 +45,39 @@
   let confirmDefaultKey = null;
   let streamingCard = null;
   let streamingText = "";
+  // ``workerBusy`` mirrors the server's ``worker_state`` event: true
+  // means the chat worker is between popping a user message and
+  // returning to the next ``pop_chat`` blocking call. While busy,
+  // the chat ``Send`` button stays disabled so a second message
+  // can't be queued into an in-flight turn. The prompt-mode answer
+  // path is not gated by this flag — answering an ``ask`` is the
+  // expected way to *unblock* the worker, not an additional message.
+  // Refresh / reconnect uses the server's ``_latest_worker_state``
+  // snapshot prepend, so this flag is set from the very first event
+  // a fresh client receives.
+  let workerBusy = false;
+
+  function updateSendEnabled() {
+    // chat mode: only when idle (worker is ready for next message).
+    // prompt mode: always (answering IS what unblocks the worker).
+    // confirm mode: send button isn't the primary control —
+    // ``renderConfirmButtons`` owns the input affordance there.
+    if (currentMode === "prompt") {
+      $send.disabled = false;
+    } else if (currentMode === "confirm") {
+      $send.disabled = false; // Falls back to default option
+    } else {
+      $send.disabled = workerBusy;
+    }
+    $input.placeholder =
+      currentMode === "prompt"
+        ? "Type your answer — Enter to send"
+        : currentMode === "confirm"
+          ? "Optional comment (empty = no comment)"
+          : workerBusy
+            ? "Worker is processing… Send disabled until reply lands"
+            : "Type a message — Enter to send, Shift+Enter for newline";
+  }
 
   // ── HTML escaping + minimal markdown ───────
   function escapeHtml(s) {
@@ -712,11 +745,11 @@
       }
       $modeBadge.classList.toggle("visible", kind === "prompt");
       clearConfirmButtons();
-      $input.placeholder =
-        kind === "prompt"
-          ? "Type your answer — Enter to send"
-          : "Type a message — Enter to send, Shift+Enter for newline";
     }
+    // Mode just changed — recompute the send button + placeholder.
+    // ``updateSendEnabled`` reads currentMode + workerBusy and
+    // owns the placeholder text now, so we don't set it here.
+    updateSendEnabled();
   }
 
   // ── POST helpers ───────────────────────────
@@ -747,12 +780,23 @@
 
   // ── Input bindings ─────────────────────────
   $send.addEventListener("click", function () {
+    if ($send.disabled) return;
     if (currentMode === "confirm") {
       // No textarea-only path in confirm — buttons are the contract.
       // Pressing Send falls back to the default option.
       submitConfirm(confirmDefaultKey);
-    } else {
+    } else if (currentMode === "prompt") {
+      // Answering an ``ask`` — server flips to worker_busy on its
+      // own when the answer arrives. No optimistic flip here.
       submitChatOrPrompt();
+    } else {
+      // Chat send: optimistically flip to busy so the button
+      // disables instantly. The server's ``worker_busy`` event
+      // will arrive a moment later and confirm the state (and any
+      // future refresh will see the latest one via snapshot).
+      submitChatOrPrompt();
+      workerBusy = true;
+      updateSendEnabled();
     }
   });
   $input.addEventListener("keydown", function (e) {
@@ -771,10 +815,19 @@
       e.keyCode !== 229
     ) {
       e.preventDefault();
+      // Mirror the click handler — refuse to submit when send is
+      // gated. Without this Enter would still queue a chat message
+      // into a busy worker even though the button looks disabled,
+      // defeating the whole point of the gating.
+      if ($send.disabled) return;
       if (currentMode === "confirm") {
         submitConfirm(confirmDefaultKey);
+      } else if (currentMode === "prompt") {
+        submitChatOrPrompt();
       } else {
         submitChatOrPrompt();
+        workerBusy = true;
+        updateSendEnabled();
       }
     }
   });
@@ -902,6 +955,19 @@
   es.addEventListener("input_resolved", function () {
     setInputMode("chat", null);
     setAbortVisible(false);
+  });
+
+  es.addEventListener("worker_state", function (e) {
+    // Server-side flip: worker_busy fires right after popping a
+    // user message, worker_idle right before the next pop_chat
+    // wait. Refresh / reconnect lands here too — the server
+    // prepends the latest worker_state to the snapshot replay so
+    // a freshly-connected client sees the correct send-button
+    // state on the very first event, without having to wait for
+    // the worker to actually transition.
+    const d = JSON.parse(e.data);
+    workerBusy = !!d.busy;
+    updateSendEnabled();
   });
 
   es.addEventListener("takeover", function () {

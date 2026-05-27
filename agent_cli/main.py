@@ -1605,13 +1605,27 @@ def web(
         """
         web_output = WebDispatchOutput(renderer)
         while True:
+            # Tell the frontend we're waiting for the next user
+            # message. Goes through ``_latest_worker_state`` so a
+            # refreshed client also lands on the right send-button
+            # state via snapshot replay, not just live listeners.
+            renderer.worker_idle()
             message = server.pop_chat(timeout=None)
             if message is server.SHUTDOWN:
                 # Server shutdown — break out so the worker thread
                 # can exit cleanly instead of being killed daemon-style.
+                # No worker_busy flip here: SHUTDOWN isn't a user
+                # message, and the connections are being torn down
+                # anyway.
                 break
             if message is None:
                 continue
+            # Real user message — flip to busy until the next ``pop_chat``
+            # call (after handle_slash_command / try_dispatch_agent_or_skill /
+            # run_loop finish). Anything that follows — including a
+            # ``prompt_user`` / ``confirm`` wait — keeps the worker in
+            # the busy state until the next loop iteration.
+            renderer.worker_busy()
             if handle_slash_command(message, renderer):
                 continue
             if try_dispatch_agent_or_skill(
