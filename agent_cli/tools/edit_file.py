@@ -114,6 +114,30 @@ def tool_edit_file(args: dict) -> ToolResult:
             error="No valid edit operations found (each edit must be a JSON object).",
         )
 
+    # Field-type pre-validation. ``pos`` / ``end`` MUST be hashline
+    # strings like ``"5#VR"`` — but smaller models sometimes emit
+    # them as bare integers (``pos: 5``) or null-wrapped values
+    # (``pos: [null]``). Without this guard those propagate into
+    # ``_parse_ref`` → ``re.match`` and raise a raw ``TypeError`` from
+    # ``re.py`` that escapes the worker thread, killing the loop
+    # instead of surfacing an Observation the LLM can recover from.
+    # Catch the bad shape here and return a clear retry message.
+    for i, edit in enumerate(edits):
+        for field in ("pos", "end"):
+            v = edit.get(field)
+            if v is None:
+                continue
+            if not isinstance(v, str):
+                return ToolResult(
+                    False,
+                    error=(
+                        f"edit #{i + 1}: '{field}' must be a hashline "
+                        f"string like '5#VR', got {type(v).__name__} "
+                        f"({v!r}). Re-read the file with read_file to "
+                        f"get fresh hashline tags, then retry."
+                    ),
+                )
+
     try:
         text = Path(path).read_text(encoding="utf-8")
     except Exception as e:

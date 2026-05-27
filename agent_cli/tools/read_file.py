@@ -38,7 +38,22 @@ def format_hashlines(text: str) -> str:
 
 
 def _parse_ref(ref: str) -> tuple[int, str]:
-    """Parse a hashline ref like '5#VR' -> (5, 'VR')."""
+    """Parse a hashline ref like '5#VR' -> (5, 'VR').
+
+    Contract: always raises ``RuntimeError`` on bad input — never lets
+    a ``TypeError`` from ``re.match`` propagate. Callers catch
+    ``RuntimeError`` and translate it into a ToolResult error so the
+    LLM sees a clean Observation it can retry from. Without this guard
+    a malformed payload (e.g. ``pos: 5`` instead of ``pos: "5#VR"``)
+    would crash the worker thread inside ``re.py`` instead.
+    """
+    if not isinstance(ref, str):
+        raise RuntimeError(
+            f"Invalid hashline ref: {ref!r} (expected string, got "
+            f"{type(ref).__name__}). Expected format: LINE#HASH "
+            f"(e.g. 5#VR). Re-read the file with read_file to get "
+            f"fresh hashline tags."
+        )
     m = re.match(r"^(\d+)#([A-Z]{2})$", ref)
     if not m:
         raise RuntimeError(
