@@ -487,6 +487,8 @@ def build_system_prompt(
     session_dir: str = "",
     mcp_manager=None,
     wire_format=None,
+    depth: int = 0,
+    max_depth: int = 0,
 ) -> str:
     """Build a system prompt adapted to model capabilities and active tools.
 
@@ -558,7 +560,7 @@ def build_system_prompt(
     # Last because it's the only Recency section that mutates within a
     # session — keeping it last leaves the preceding three as a stable
     # KV-cache-friendly prefix.
-    exec_ctx = _build_execution_context(skill_stack, agent_stack)
+    exec_ctx = _build_execution_context(skill_stack, agent_stack, depth, max_depth)
     if exec_ctx:
         sections.append(exec_ctx)
 
@@ -566,10 +568,25 @@ def build_system_prompt(
 
 
 def _build_execution_context(
-    skill_stack: list[str] | None, agent_stack: list[str] | None
+    skill_stack: list[str] | None,
+    agent_stack: list[str] | None,
+    depth: int = 0,
+    max_depth: int = 0,
 ) -> str:
-    """Build execution context showing current call stack position."""
-    if not skill_stack and not agent_stack:
+    """Build execution context showing current call stack position.
+
+    Depth annotations (``depth/max_depth``) are surfaced so the model
+    can see *how much room is left* before further nesting will be
+    refused. When the limit has already been reached the section
+    explicitly says so, since at that point ``run_skill`` /
+    ``delegate`` won't even appear in the tool list and the model
+    needs to know why. Both fields are only printed when meaningful
+    (``max_depth > 0``) so non-loop callers (tests, ad-hoc builders)
+    aren't forced to thread depth state.
+    """
+    has_stack = bool(skill_stack or agent_stack)
+    show_depth = max_depth > 0 and depth > 0
+    if not has_stack and not show_depth:
         return ""
 
     lines = ["## Execution Context"]
@@ -579,16 +596,38 @@ def _build_execution_context(
         stack_parts.extend(f"agent:{a}" for a in agent_stack)
     if skill_stack:
         stack_parts.extend(f"skill:{s}" for s in skill_stack)
-    lines.append(f"Call stack: {' → '.join(stack_parts)}")
+
+    if show_depth:
+        # Annotate the stack line itself: ``Call stack (depth N/M)``.
+        # Single line keeps the section compact for KV cache friendliness.
+        lines.append(
+            f"Call stack (depth {depth}/{max_depth}): {' → '.join(stack_parts)}"
+        )
+    else:
+        lines.append(f"Call stack: {' → '.join(stack_parts)}")
 
     blocked = []
     if agent_stack:
         blocked.extend(agent_stack)
     if skill_stack:
         blocked.extend(skill_stack)
-    lines.append(
-        f"Do not delegate to or invoke: {', '.join(blocked)} (already in call stack)."
-    )
+    if blocked:
+        lines.append(
+            f"Do not delegate to or invoke: {', '.join(blocked)} "
+            f"(already in call stack)."
+        )
+
+    if max_depth > 0 and depth >= max_depth:
+        # Hit the limit: ``run_skill`` and ``delegate`` are gone from
+        # the tool list. Without this line a careful model might
+        # still emit a delegate/skill action that then bounces back
+        # as "unknown tool". Saying it out loud here saves one
+        # recovery turn.
+        lines.append(
+            f"Depth limit reached ({depth}/{max_depth}): no further "
+            f"'run_skill' or 'delegate' calls are possible from here. "
+            f"Finish the current level with 'complete'."
+        )
 
     return "\n".join(lines)
 

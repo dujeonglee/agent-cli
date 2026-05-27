@@ -327,11 +327,31 @@ def _run_single(
             False, error="Delegation rejected: missing provider/capabilities"
         )
 
-    # Agent stack: prevent recursive calls (A→B→A)
+    # Agent cycle check (A → B → A). Named delegates only — anonymous
+    # ones aren't pushed onto ``agent_stack`` so they can't loop on
+    # name, only on depth (handled below).
     if agent_name and agent_stack and agent_name in agent_stack:
+        from agent_cli.recovery.recursion import format_recursion_error
+
         return ToolResult(
             False,
-            error=f"Recursive agent call blocked: '{agent_name}' is already in the call stack {agent_stack}.",
+            error=format_recursion_error("agent", agent_name, list(agent_stack)),
+        )
+
+    # Depth ceiling — belt-and-suspenders. Mirrors the run_skill
+    # path: AgentLoop init strips ``delegate`` from tools_list when
+    # we hit the limit, so the live loop never reaches here through
+    # normal dispatch. Direct callers (tests, the parallel-tasks
+    # path with a custom ``active_tools``) hit it here so the
+    # caller gets the same actionable message instead of a silent
+    # bounce.
+    if depth >= max_depth:
+        from agent_cli.recovery.recursion import format_depth_limit_error
+
+        label = agent_name or "(anonymous)"
+        return ToolResult(
+            False,
+            error=format_depth_limit_error("agent", label, depth, max_depth),
         )
 
     # ── Agent loading ──

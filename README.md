@@ -182,7 +182,7 @@ agent-cli run "task description" [options]
 | `--base-url` | API 엔드포인트 | 프로바이더 기본값 |
 | `--api-key` | API 키 (환경 변수 자동 감지) | |
 | `-n, --max-turns` | 최대 턴 (0=무제한) | `0` |
-| `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
+| `--max-depth` | 중첩 깊이 (delegate + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
@@ -215,7 +215,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `--base-url` | API 엔드포인트 | 프로바이더 기본값 |
 | `--api-key` | API 키 (환경 변수 자동 감지) | |
 | `-n, --max-turns` | 턴당 최대 턴 (0=무제한) | `0` |
-| `--max-depth` | 서브에이전트 중첩 깊이 | `2` |
+| `--max-depth` | 중첩 깊이 (delegate + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--resume <id>` | 이전 세션 이어서 작업 | |
@@ -1155,9 +1155,9 @@ agent-cli chat --resume <session_id>   # 이전 세션 이어서 작업
 - **반복 호출 감지**: 동일 도구를 같은 파라미터로 3회 연속 호출 시 자동 중단
 - **echo-as-final**: `echo`로 답하는 소형 모델 패턴 자동 감지 → `complete` 도구 호출로 변환
 - **잘린 JSON 복구**: LLM 응답이 잘릴 때 JSON repair 후 마지막 불완전한 edit 라인 제거, 적용된 edit 수 리포트
-- **Execution Context**: 스킬/delegate 실행 시 call stack을 시스템 프롬프트에 표시, 재귀 호출 억제
-- **agent_stack / skill_stack**: 런타임 재귀 방지 (A→B→A 차단)
-- **max_depth**: delegate 중첩 깊이 제한 (기본 2)
+- **Execution Context**: 스킬/delegate 실행 시 call stack + `depth N/M` 을 시스템 프롬프트에 표시, 재귀 호출 억제. 한계 도달 시 그 사실도 명시.
+- **agent_stack / skill_stack**: 런타임 재귀 방지 (A→B→A 차단). 블록 메시지에 3가지 recovery option 포함 (다른 접근 / complete / ask).
+- **max_depth**: **skill + delegate 합산 중첩 깊이** 제한 (기본 2). 한계 도달 시 `AgentLoop.__init__` 가 `delegate` 와 `run_skill` 둘 다 tool list 에서 제거 (대칭). dispatch 단계 belt-and-suspenders check 도 동일 메시지 출력.
 
 ## 프로젝트 구조
 

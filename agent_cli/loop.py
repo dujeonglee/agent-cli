@@ -141,9 +141,18 @@ class AgentLoop:
 
         # Derived state
         self.tools_list = active_tools or list(TOOLS.keys())
-        # Remove "delegate" when depth >= max_depth
-        if depth >= max_depth and "delegate" in self.tools_list:
-            self.tools_list = [t for t in self.tools_list if t != "delegate"]
+        # Remove both 'delegate' and 'run_skill' when the combined
+        # call depth has reached its ceiling. Skills now count
+        # toward depth (parity with delegate), so the ceiling treats
+        # both kinds of nesting the same way — and the LLM never
+        # sees a tool it'd be refused from. The dispatch-time
+        # ``_handle_run_skill`` / ``_run_single`` checks remain as a
+        # belt-and-suspenders layer for direct callers that built a
+        # custom ``active_tools`` list.
+        if depth >= max_depth:
+            self.tools_list = [
+                t for t in self.tools_list if t not in ("delegate", "run_skill")
+            ]
         # Remove "ask" in non-interactive mode (no ctx)
         if not ctx and "ask" in self.tools_list:
             self.tools_list = [t for t in self.tools_list if t != "ask"]
@@ -374,6 +383,8 @@ class AgentLoop:
             session_dir=session_dir,
             mcp_manager=self.mcp_manager,
             wire_format=self.wire_format,
+            depth=self.depth,
+            max_depth=self.max_depth,
         )
 
         render_header(
@@ -744,6 +755,8 @@ class AgentLoop:
                 hook_runner=self.hook_runner,
                 mcp_manager=self.mcp_manager,
                 parent_hooks_config=self.hooks_config,
+                parent_depth=self.depth,
+                max_depth=self.max_depth,
             )
             obs = skill_tool_result.output or skill_tool_result.error
             render_step(
@@ -1540,9 +1553,15 @@ def _handle_run_skill(
     hook_runner=None,
     mcp_manager=None,
     parent_hooks_config: dict | None = None,
+    parent_depth: int = 0,
+    max_depth: int = 2,
 ):
     """Handle run_skill at loop level with full ctx access."""
     # Inline import: circular dependency — executor.py imports run_loop from this module
+    from agent_cli.recovery.recursion import (
+        format_depth_limit_error,
+        format_recursion_error,
+    )
     from agent_cli.skills import load_skills
     from agent_cli.skills.executor import execute_skill
 
@@ -1555,11 +1574,24 @@ def _handle_run_skill(
     if not name:
         return ToolResult(False, error="run_skill: 'name' is required.")
 
-    # Skill stack: prevent recursive calls (A→B→A)
+    # Cycle check (A → B → A). Stack lookup is O(N) but the stack
+    # is bounded by ``max_depth`` so this is effectively constant.
     if skill_stack and name in skill_stack:
         return ToolResult(
             False,
-            error=f"Recursive skill call blocked: '{name}' is already in the call stack {skill_stack}.",
+            error=format_recursion_error("skill", name, list(skill_stack)),
+        )
+
+    # Depth ceiling — belt-and-suspenders. The AgentLoop init has
+    # already removed ``run_skill`` from the tools_list when we hit
+    # the limit, so a model going through the normal dispatch path
+    # never reaches this branch. Direct callers (tests, custom
+    # active_tools, future integrations) hit it here with the same
+    # message the LLM would otherwise see.
+    if parent_depth >= max_depth:
+        return ToolResult(
+            False,
+            error=format_depth_limit_error("skill", name, parent_depth, max_depth),
         )
 
     skills = load_skills()
@@ -1601,12 +1633,14 @@ def _handle_run_skill(
             provider_name=provider_name,
             base_url=base_url,
             api_key=api_key,
+            max_depth=max_depth,
             ctx=ctx,
             session=session,
             skill_stack=skill_stack,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             parent_hooks_config=parent_hooks_config,
+            parent_depth=parent_depth,
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")

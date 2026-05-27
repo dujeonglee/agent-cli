@@ -106,6 +106,7 @@ def execute_skill(
     parent_tools: list[str] | None = None,
     parent_role: str = "",
     parent_hooks_config: dict | None = None,
+    parent_depth: int = 0,
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -178,7 +179,7 @@ def execute_skill(
         api_key=api_key,
         max_turns=effective_max_turns,
         verbose=verbose,
-        depth=0,
+        depth=parent_depth + 1,
         max_depth=max_depth,
         delegate_timeout=delegate_timeout,
         active_tools=effective_tools,
