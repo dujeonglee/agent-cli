@@ -36,6 +36,20 @@ def _make_provider(*responses):
     return provider
 
 
+def _messages_from_call(call_obj):
+    """Pull the ``messages`` argument out of a ``MagicMock.call`` record.
+
+    The loop sometimes passes ``messages`` positionally (first arg) and
+    sometimes as a keyword. ``MagicMock.call_args_list`` records both
+    shapes; this helper normalises so tests don't need to know which
+    invocation form the loop happened to pick.
+    """
+    args, kwargs = call_obj
+    if args:
+        return args[0]
+    return kwargs.get("messages") or []
+
+
 class TestRunLoopComplete:
     def test_direct_complete(self, caps):
         provider = _make_provider(_complete("42"))
@@ -191,6 +205,236 @@ class TestRunLoopToolExecution:
             model="test-model",
         )
         assert result.output == "ok"
+
+
+class TestToolExceptionSafetyNet:
+    """``_dispatch_tool_with_hooks`` wraps the invoke step in a
+    ``try/except Exception`` so a tool that raises instead of
+    returning a ``ToolResult`` doesn't tear down the worker thread
+    (web) or the whole process (chat / run). The user-reported
+    ``edit_file`` TypeError was the case that exposed this gap:
+    the exception escaped re.py with no Observation reaching the
+    LLM, no path to recovery.
+
+    The contract pinned here:
+
+      1. Tool ``Exception`` → ``ToolResult(False, error=...)``,
+         loop continues, observation lands in messages, LLM gets
+         next turn.
+      2. ``KeyboardInterrupt`` / ``SystemExit`` still propagate so
+         user Ctrl+C exits the loop cleanly — Exception only, NOT
+         BaseException.
+      3. Error message mentions the tool name + a recovery hint so
+         the LLM has actionable info to retry from.
+    """
+
+    def _patch_tool(self, monkeypatch, name, fn):
+        """Replace a registered tool function. Restored automatically
+        by monkeypatch.setitem on teardown."""
+        from agent_cli.tools import TOOLS
+
+        monkeypatch.setitem(TOOLS, name, fn)
+
+    def test_tool_typeerror_becomes_tool_result_error(self, caps, monkeypatch):
+        # The exact failure mode the user hit: a tool raises TypeError
+        # somewhere deep (in their case ``re.match`` inside
+        # ``_parse_ref``). The loop must convert this to a normal
+        # tool failure and continue.
+        def boom(args):
+            raise TypeError("expected string or bytes-like object")
+
+        self._patch_tool(monkeypatch, "shell", boom)
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "try shell",
+                    "action": "shell",
+                    "action_input": {"command": "pwd"},
+                }
+            ),
+            _complete("recovered after tool crashed"),
+        )
+        result = run_loop(
+            query="run something",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        # Loop did NOT die — it completed via the second LLM emission.
+        assert result.success
+        assert result.output == "recovered after tool crashed"
+
+    def test_tool_runtime_error_message_reaches_llm_as_observation(
+        self, caps, monkeypatch
+    ):
+        # The observation passed to the LLM must include the tool
+        # name AND the original exception text so the model can
+        # diagnose. Verify by capturing the messages the second LLM
+        # call received.
+        def boom(args):
+            raise RuntimeError("internal tool bug 12345")
+
+        self._patch_tool(monkeypatch, "shell", boom)
+        captured_messages: list = []
+
+        def capture_then_complete(messages, **kwargs):
+            captured_messages.extend(messages)
+            return LLMResponse(content=_complete("done"))
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "try",
+                        "action": "shell",
+                        "action_input": {"command": "pwd"},
+                    }
+                )
+            ),
+            LLMResponse(content=_complete("done")),
+        ]
+        run_loop(
+            query="x",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        # Second call's input messages should contain the
+        # observation with the error text.
+        assert provider.call.call_count == 2
+        second_call_messages = _messages_from_call(provider.call.call_args_list[1])
+        observation_msgs = [
+            m for m in second_call_messages if "Observation" in (m.get("content") or "")
+        ]
+        assert observation_msgs, "no observation made it into the next turn"
+        obs_text = observation_msgs[-1]["content"]
+        assert "shell" in obs_text  # tool name
+        assert "internal tool bug 12345" in obs_text  # original exception text
+
+    def test_tool_exception_observation_mentions_retry_path(self, caps, monkeypatch):
+        # LLM-facing vocabulary check: the error message has to
+        # suggest a recovery path. Without that hint the model
+        # might keep retrying the same broken call.
+        def boom(args):
+            raise ValueError("bad")
+
+        self._patch_tool(monkeypatch, "shell", boom)
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "try",
+                    "action": "shell",
+                    "action_input": {"command": "x"},
+                }
+            ),
+            _complete("ok"),
+        )
+        run_loop(
+            query="x",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        second_call_messages = _messages_from_call(provider.call.call_args_list[1])
+        obs_text = next(
+            m["content"]
+            for m in second_call_messages
+            if "Observation" in (m.get("content") or "")
+        )
+        # The wording should explicitly prompt the model to consider
+        # an alternative — not just keep trying the same call.
+        assert "retry" in obs_text.lower() or "different approach" in obs_text.lower()
+
+    def test_keyboard_interrupt_propagates(self, caps, monkeypatch):
+        # User Ctrl+C must exit the loop, not be silently swallowed
+        # into "Tool 'x' raised KeyboardInterrupt — retry?" — that
+        # would trap the user in a runaway loop they can't quit.
+        def interrupted(args):
+            raise KeyboardInterrupt()
+
+        self._patch_tool(monkeypatch, "shell", interrupted)
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "try",
+                    "action": "shell",
+                    "action_input": {"command": "x"},
+                }
+            ),
+        )
+        with pytest.raises(KeyboardInterrupt):
+            run_loop(
+                query="x",
+                provider=provider,
+                capabilities=caps,
+                model="test-model",
+            )
+
+    def test_system_exit_propagates(self, caps, monkeypatch):
+        # Same rationale as KeyboardInterrupt — SystemExit is a
+        # deliberate shutdown signal, not a tool failure to recover
+        # from.
+        def quit(args):
+            raise SystemExit(0)
+
+        self._patch_tool(monkeypatch, "shell", quit)
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "try",
+                    "action": "shell",
+                    "action_input": {"command": "x"},
+                }
+            ),
+        )
+        with pytest.raises(SystemExit):
+            run_loop(
+                query="x",
+                provider=provider,
+                capabilities=caps,
+                model="test-model",
+            )
+
+    def test_normal_tool_failure_via_tool_result_still_works(self, caps, monkeypatch):
+        # The safety net must not change behaviour for tools that
+        # report failure the *normal* way (return ToolResult(False)).
+        # Such tools never raise, so the except clause never runs,
+        # and the existing observation path handles them. Regression
+        # guard so a future refactor of the safety net can't
+        # accidentally double-wrap or swallow these.
+        from agent_cli.tools.result import ToolResult
+
+        def polite_fail(args):
+            return ToolResult(False, error="polite error")
+
+        self._patch_tool(monkeypatch, "shell", polite_fail)
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "try",
+                    "action": "shell",
+                    "action_input": {"command": "x"},
+                }
+            ),
+            _complete("ok"),
+        )
+        run_loop(
+            query="x",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        second_call_messages = _messages_from_call(provider.call.call_args_list[1])
+        obs_text = next(
+            m["content"]
+            for m in second_call_messages
+            if "Observation" in (m.get("content") or "")
+        )
+        # The original tool message should land verbatim — no
+        # "raised X" framing applied to a non-exceptional failure.
+        assert "polite error" in obs_text
+        assert "raised" not in obs_text
 
 
 class TestRunLoopParseFailure:
