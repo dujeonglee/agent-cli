@@ -1056,11 +1056,54 @@ class AgentLoop:
         if blocked is not None:
             return blocked
 
-        # 2/3. Dispatch (delegate special-case or regular)
-        if tool_name == "delegate":
-            result = self._invoke_delegate(tool_input, input_dict)
-        else:
-            result = self._invoke_regular(tool_name, tool_input)
+        # 2/3. Dispatch (delegate special-case or regular).
+        #
+        # Safety net: a tool that raises instead of returning a
+        # ``ToolResult`` would otherwise propagate up through
+        # ``_execute_turn`` → ``run()`` and either kill the worker
+        # thread (web) or the whole process (chat / run). Worse, the
+        # LLM never sees the failure as an Observation it could
+        # recover from. Catch ``Exception`` here and convert to
+        # ``ToolResult(False, error=...)`` so the rest of the
+        # pipeline (post-hooks, history recording, observation
+        # injection) treats it as a normal tool failure and the LLM
+        # gets a chance to retry on the next turn.
+        #
+        # Deliberately catches ``Exception``, NOT ``BaseException``:
+        # ``KeyboardInterrupt`` / ``SystemExit`` must still propagate
+        # so a user Ctrl+C exits the loop cleanly. Per-tool error
+        # paths (e.g. ``edit_file`` returning ``RuntimeError`` as a
+        # ToolResult) are unchanged — they hit the normal return
+        # path and never reach this except. The net here is for the
+        # *unexpected* — a tool author bug, a malformed input that
+        # slipped past pre-validation, an underlying library raising
+        # ``TypeError`` from inside ``re.py``, etc.
+        try:
+            if tool_name == "delegate":
+                result = self._invoke_delegate(tool_input, input_dict)
+            else:
+                result = self._invoke_regular(tool_name, tool_input)
+        except Exception as e:  # noqa: BLE001 — safety net by design
+            import traceback as _tb
+
+            # Full traceback to debug log so diagnosis isn't lost.
+            # LLM-facing message stays short: it has to fit a single
+            # Observation card without ballooning context, and the
+            # model recovers from intent, not stack frames.
+            _debug_log(
+                f"TOOL EXCEPTION turn={self.turn} tool={tool_name}\n{_tb.format_exc()}"
+            )
+            result = ToolResult(
+                False,
+                error=(
+                    f"Tool '{tool_name}' raised "
+                    f"{type(e).__name__}: {e}. "
+                    f"This is likely a malformed input or an internal "
+                    f"tool error. Review the action_input shape and "
+                    f"retry, or try a different approach if the same "
+                    f"input keeps failing."
+                ),
+            )
 
         # 4. PostToolUse hooks
         self._run_post_hooks(tool_name, input_dict, result)
