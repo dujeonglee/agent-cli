@@ -853,3 +853,260 @@ class TestReplayFromHistory:
         assert names[0] == "ready"
         assert "user_message" in names
         assert "assistant_turn" in names
+
+
+class TestWorkerStateEmit:
+    """``worker_busy`` / ``worker_idle`` are the chat worker's
+    transitions between accepting messages and running them. The
+    frontend uses them to gate the chat ``Send`` button so a second
+    message can't queue into an in-flight turn.
+
+    Live behaviour: both methods emit a ``worker_state`` event with
+    ``{busy: True/False}`` payload to every active connection.
+    Both also update ``_latest_worker_state`` so reconnecting clients
+    see the right thing (covered by ``TestWorkerStateReconnect``).
+    """
+
+    def test_worker_busy_emits_busy_true(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.worker_busy()
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "worker_state"
+        assert data == {"busy": True}
+
+    def test_worker_idle_emits_busy_false(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.worker_idle()
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "worker_state"
+        assert data == {"busy": False}
+
+    def test_worker_state_event_is_transient_not_buffered(self):
+        # Per-turn transitions would balloon the persistent buffer if
+        # buffered — we keep only the latest in a slot. Confirm the
+        # event itself never lands in ``_event_buffer``.
+        r = WebRenderer()
+        for _ in range(3):
+            r.worker_busy()
+            r.worker_idle()
+        buffered = [ev for (ev, _) in r._event_buffer]
+        assert "worker_state" not in buffered
+
+    def test_latest_worker_state_replaces_not_accumulates(self):
+        # Every transition overwrites the slot — there should only
+        # ever be one ``_latest_worker_state`` value, reflecting the
+        # most recent call.
+        r = WebRenderer()
+        r.worker_busy()
+        r.worker_idle()
+        r.worker_busy()
+        assert r._latest_worker_state == ("worker_state", {"busy": True})
+        r.worker_idle()
+        assert r._latest_worker_state == ("worker_state", {"busy": False})
+
+
+class TestWorkerStateReconnect:
+    """The user's explicit requirement: send-button gating must
+    survive a page refresh or a fresh SSE connection mid-turn. The
+    server holds the latest ``worker_state`` in a slot (parallel to
+    ``_latest_ready``) and prepends it to the snapshot every new
+    connection receives.
+    """
+
+    def test_late_client_sees_busy_state_in_snapshot(self):
+        # Simulate: worker pops a message and starts processing.
+        # No client is connected at that moment. Then the user
+        # refreshes / a fresh client connects. The snapshot the new
+        # client receives MUST include worker_state busy=True so the
+        # send button immediately disables — even though no new
+        # event will fire until the turn finishes.
+        r = WebRenderer()
+        r.worker_busy()
+        conn = WebConnection(id="reconnect")
+        snapshot = r.register_connection(conn)
+        names = [e for e, _ in snapshot]
+        assert "worker_state" in names
+        data = next(d for e, d in snapshot if e == "worker_state")
+        assert data == {"busy": True}
+
+    def test_late_client_sees_idle_state_in_snapshot(self):
+        # Symmetric: worker has finished a turn and is waiting in
+        # pop_chat. New client must see worker_state busy=False so
+        # the send button enables on connect.
+        r = WebRenderer()
+        r.worker_busy()
+        r.worker_idle()
+        conn = WebConnection(id="fresh")
+        snapshot = r.register_connection(conn)
+        data = next(d for e, d in snapshot if e == "worker_state")
+        assert data == {"busy": False}
+
+    def test_no_worker_state_in_snapshot_before_any_transition(self):
+        # On the very first SSE connection of a brand-new session
+        # the worker hasn't emitted anything yet. The snapshot
+        # should NOT include a synthetic worker_state event —
+        # frontend defaults to ``workerBusy = false`` and that
+        # matches the actual server state.
+        r = WebRenderer()
+        conn = WebConnection(id="first")
+        snapshot = r.register_connection(conn)
+        names = [e for e, _ in snapshot]
+        assert "worker_state" not in names
+
+    def test_snapshot_reflects_latest_transition_across_many(self):
+        # Pop / process / pop loop runs many times. Each refresh
+        # should reflect ONLY the most recent state — not a trail
+        # of every transition the worker ever did.
+        r = WebRenderer()
+        for _ in range(5):
+            r.worker_busy()
+            r.worker_idle()
+        r.worker_busy()  # ends busy
+
+        conn = WebConnection(id="late")
+        snapshot = r.register_connection(conn)
+        worker_states = [d for e, d in snapshot if e == "worker_state"]
+        # Exactly one — the slot, not the history.
+        assert len(worker_states) == 1
+        assert worker_states[0] == {"busy": True}
+
+    def test_busy_state_replays_after_takeover(self):
+        # Takeover model: a new client kicks the old one. The new
+        # client must still see the current busy state — takeover
+        # is just a connection swap, not a state reset.
+        r = WebRenderer()
+        old = WebConnection(id="old")
+        r.register_connection(old)
+        r.worker_busy()
+        # Drain the live event from old's queue to confirm it fired.
+        ev, _ = old.queue.get(timeout=1.0)
+        assert ev == "worker_state"
+
+        # New client takes over.
+        new = WebConnection(id="new")
+        snapshot = r.register_connection(new)
+
+        # Old got a takeover sentinel.
+        ev_old, _ = old.queue.get(timeout=1.0)
+        assert ev_old == "takeover"
+
+        # New sees the busy state in its replay.
+        names = [e for e, _ in snapshot]
+        assert "worker_state" in names
+        data = next(d for e, d in snapshot if e == "worker_state")
+        assert data == {"busy": True}
+
+    def test_busy_state_persists_after_unregister_and_reconnect(self):
+        # The classic "user closed the tab and reopened it" path.
+        # ``unregister_connection`` drops the active SSE but does
+        # NOT clear server-side state. The next ``register`` must
+        # still hand back the current worker_state in snapshot.
+        r = WebRenderer()
+        c1 = WebConnection(id="c1")
+        r.register_connection(c1)
+        r.worker_busy()
+        r.unregister_connection(c1)
+
+        c2 = WebConnection(id="c2")
+        snapshot = r.register_connection(c2)
+        data = next(d for e, d in snapshot if e == "worker_state")
+        assert data == {"busy": True}
+
+    def test_worker_state_ordering_in_snapshot(self):
+        # ``ready`` must come first so the top bar renders before
+        # any other affordance settles, and ``worker_state`` lands
+        # at the end so the send-button gating is applied AFTER
+        # all replayed messages are on screen — matches the
+        # implementation's snapshot composition.
+        r = WebRenderer(workspace="/proj")
+        r.header("ollama", "qwen3:32b", 10)
+        r.thought("thinking", 1)
+        r.final("done", 1)  # closes assistant_turn for turn 1
+        r.worker_idle()
+
+        conn = WebConnection(id="late")
+        snapshot = r.register_connection(conn)
+        names = [e for e, _ in snapshot]
+        # ready leads.
+        assert names[0] == "ready"
+        # worker_state trails.
+        assert names[-1] == "worker_state"
+
+
+class TestWorkerLoopIntegration:
+    """End-to-end: main.py's chat worker thread must emit
+    ``worker_idle`` immediately before every ``pop_chat`` blocking
+    call and ``worker_busy`` immediately after popping. The SHUTDOWN
+    sentinel must NOT trigger a busy flip — that would race the
+    connection teardown.
+
+    These tests exercise the renderer + server together (no main.py
+    import) by mimicking the worker_loop's pop/process pattern with
+    a minimal helper.
+    """
+
+    def _worker_pop_process(self, server, renderer, message):
+        """One iteration of main.py's _worker_loop, abstracted to
+        avoid importing typer / setting up the whole CLI. The wiring
+        we're testing is the renderer+server contract; the loop
+        body itself is uninteresting for this test."""
+        renderer.worker_idle()
+        popped = server.pop_chat(timeout=2.0)
+        assert popped == message
+        if popped is server.SHUTDOWN or popped is None:
+            return False
+        renderer.worker_busy()
+        return True
+
+    def test_full_cycle_emits_idle_then_busy(self):
+        from agent_cli.web.server import WebServer
+
+        r = WebRenderer()
+        s = WebServer(r, token="t")
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+
+        # Caller pushes a message before the worker pops, then the
+        # worker emits idle → pop → busy. The frontend sees
+        # idle (transient) and busy (transient) in order.
+        s.push_chat("hello")
+        ran = self._worker_pop_process(s, r, "hello")
+        assert ran is True
+
+        events = []
+        while True:
+            try:
+                events.append(conn.queue.get(timeout=0.2))
+            except Exception:
+                break
+        names = [ev for ev, _ in events]
+        # Both transitions delivered live.
+        assert "worker_state" in names
+        states = [d["busy"] for ev, d in events if ev == "worker_state"]
+        # idle (False) then busy (True), in that order.
+        assert states == [False, True]
+
+    def test_shutdown_does_not_flip_to_busy(self):
+        from agent_cli.web.server import WebServer
+
+        r = WebRenderer()
+        s = WebServer(r, token="t")
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+
+        # Simulate the SHUTDOWN sentinel path. ``_worker_pop_process``
+        # would emit worker_busy after popping a real message, but
+        # SHUTDOWN must skip that flip — busy after shutdown is
+        # nonsensical and the connections are tearing down anyway.
+        r.worker_idle()
+        s.shutdown()
+        popped = s.pop_chat(timeout=2.0)
+        assert popped is s.SHUTDOWN
+        # No worker_busy after SHUTDOWN.
+
+        # Latest state should still be idle.
+        assert r._latest_worker_state == ("worker_state", {"busy": False})

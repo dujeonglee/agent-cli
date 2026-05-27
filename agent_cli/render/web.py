@@ -108,6 +108,20 @@ class WebRenderer(Renderer):
         #     calling header() again. A slot avoids the buffer
         #     accumulating one ready per turn.
         self._latest_ready: tuple[str, dict[str, Any]] | None = None
+        # Worker busy/idle visibility for the frontend send-button
+        # gating. The chat worker thread emits ``worker_state`` on every
+        # transition: ``busy=True`` right after popping a user message,
+        # ``busy=False`` right before blocking on the next pop. Keeping
+        # only the *latest* state in a slot (rather than appending to
+        # the persistent buffer) means:
+        # (1) a refreshed/reconnecting client sees the current state
+        #     immediately via the snapshot prepend below, even if the
+        #     worker has been busy for 30s and won't emit anything new
+        #     until completion;
+        # (2) the buffer doesn't accumulate one entry per turn.
+        # Event payload: ``{"busy": bool}``. Server-side
+        # ``_worker_loop`` is the sole writer.
+        self._latest_worker_state: tuple[str, dict[str, Any]] | None = None
         # Per-thread delegate-task routing. Worker threads spawned by
         # ``_run_parallel`` register their ``task_id`` here via
         # ``begin_delegate_task``; ``_emit`` then auto-attaches
@@ -169,6 +183,13 @@ class WebRenderer(Renderer):
             # on "connecting…" until the first emission.
             if self._latest_ready is not None:
                 snapshot.insert(0, self._latest_ready)
+            # Also prepend the latest worker_state so a refresh or
+            # reconnect lands with the correct send-button state even
+            # if the worker is mid-turn (no new event would otherwise
+            # fire until completion). Goes after ``ready`` so the
+            # top-bar renders first, then the input affordance settles.
+            if self._latest_worker_state is not None:
+                snapshot.append(self._latest_worker_state)
             return snapshot
 
     def unregister_connection(self, conn: WebConnection) -> None:
@@ -522,6 +543,34 @@ class WebRenderer(Renderer):
 
     def spinner_stop(self) -> None:
         self._emit("spinner", {"state": "stop"}, persistent=False)
+
+    def worker_busy(self) -> None:
+        """Signal that the chat worker just picked up a user message
+        and is processing it. Stays busy until the worker returns to
+        ``pop_chat`` — through every intermediate LLM turn, tool call,
+        and even any ``prompt_user`` / ``confirm`` wait. The frontend
+        uses this to disable the chat ``Send`` button so the user
+        doesn't queue a second message into an actively-running turn.
+
+        Latest state is cached in ``_latest_worker_state`` so a
+        refreshed / reconnected client gets the correct send-button
+        state immediately via the snapshot replay, without waiting
+        for the next transition.
+        """
+        payload = {"busy": True}
+        with self._lock:
+            self._latest_worker_state = ("worker_state", payload)
+        self._emit("worker_state", payload, persistent=False)
+
+    def worker_idle(self) -> None:
+        """Signal that the chat worker is back at the top-level
+        ``pop_chat`` and ready to accept the next user message.
+        Re-enables the frontend ``Send`` button. See ``worker_busy``
+        for the persistence + reconnect semantics."""
+        payload = {"busy": False}
+        with self._lock:
+            self._latest_worker_state = ("worker_state", payload)
+        self._emit("worker_state", payload, persistent=False)
 
     def dispatch_progress(
         self,
