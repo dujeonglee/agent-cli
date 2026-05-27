@@ -2,8 +2,12 @@
 
 import pytest
 
-from agent_cli.tools.read_file import compute_line_hash
-from agent_cli.tools.edit_file import fuzzy_verify_ref, _normalize_for_fuzzy
+from agent_cli.tools.edit_file import (
+    _normalize_for_fuzzy,
+    fuzzy_verify_ref,
+    tool_edit_file,
+)
+from agent_cli.tools.read_file import _parse_ref, compute_line_hash
 
 
 class TestNormalize:
@@ -373,3 +377,203 @@ class TestHashMismatchMessage:
         """Apply-time path context — suggests multi-edit interaction."""
         with pytest.raises(RuntimeError, match="multi-edit"):
             fuzzy_verify_ref(["hello"], "1#ZZ")
+
+
+class TestParseRefTypeGuard:
+    """``_parse_ref`` was previously letting non-string ``ref`` reach
+    ``re.match`` and crash with ``TypeError: expected string or
+    bytes-like object`` straight out of ``re.py``. That escaped the
+    worker thread instead of surfacing as an Observation the LLM
+    could retry from. Contract: any non-string input raises a
+    ``RuntimeError`` with the standard ``LINE#HASH`` hint, so callers
+    catch it the same way as a malformed string.
+
+    Each parametrize entry pins one ``type``-flavour the LLM has been
+    observed to produce. ``None`` is exempt: callers gate on
+    ``if pos:`` before reaching ``_parse_ref``, and the falsy guard
+    means ``None`` never gets here. The list / dict / bool cases
+    matter because ``[None]`` and ``True`` are *truthy* — they slip
+    past the falsy guard and would otherwise hit ``re.match``.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_ref",
+        [
+            5,
+            [],
+            ["5#VR"],
+            {"line": 5, "hash": "VR"},
+            True,
+            False,
+        ],
+    )
+    def test_non_string_raises_runtime_error(self, bad_ref):
+        with pytest.raises(RuntimeError) as exc:
+            _parse_ref(bad_ref)
+        # Message must point the LLM at the right shape AND the
+        # retry recipe (re-read the file). Without "read_file" in
+        # the text the model wouldn't know how to recover.
+        msg = str(exc.value)
+        assert "Expected format" in msg or "expected string" in msg
+        assert "read_file" in msg
+
+    def test_valid_string_still_works(self):
+        # Sanity — the guard must not regress the happy path.
+        line, h = _parse_ref("5#VR")
+        assert line == 5 and h == "VR"
+
+
+class TestEditFileFieldTypeValidation:
+    """The user-reported crash: an LLM (typically a smaller model
+    that's not careful with JSON typing) sent ``pos: 5`` instead of
+    ``pos: "5#VR"`` to ``edit_file``. The ``if pos:`` guard passed
+    (``5`` is truthy), the value reached ``_parse_ref``, ``re.match``
+    raised ``TypeError`` from inside ``re.py``, and the worker thread
+    died with a stack trace the model couldn't see, never mind retry
+    from.
+
+    The fix: validate ``pos`` / ``end`` types right after the
+    non-dict edit filter and return a ``ToolResult`` error pointing
+    at the bad edit's index. That surfaces as an Observation, the
+    LLM re-reads the file, and the next attempt has the right
+    hashline shape.
+    """
+
+    def test_pos_as_int_returns_tool_result_error_not_crash(self, tmp_path):
+        # The exact shape from the user's traceback.
+        f = tmp_path / "x.py"
+        f.write_text("line1\nline2\n")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [{"op": "replace", "pos": 5, "lines": ["new"]}],
+            }
+        )
+        assert result.success is False
+        # Error must blame the right edit and tell the LLM what to do.
+        assert "edit #1" in result.error
+        assert "pos" in result.error
+        assert "read_file" in result.error
+
+    def test_end_as_int_also_caught(self, tmp_path):
+        f = tmp_path / "x.py"
+        f.write_text("line1\nline2\n")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [
+                    {
+                        "op": "replace",
+                        "pos": "1#AA",  # valid shape, ignored — end caught first
+                        "end": 7,
+                        "lines": ["new"],
+                    }
+                ],
+            }
+        )
+        assert result.success is False
+        assert "end" in result.error
+        assert "read_file" in result.error
+
+    def test_pos_as_list_caught(self, tmp_path):
+        # ``[None]`` is truthy so it slips past the ``if pos:``
+        # guard. Pre-validation has to catch it.
+        f = tmp_path / "x.py"
+        f.write_text("line1\n")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [{"op": "replace", "pos": [None], "lines": ["x"]}],
+            }
+        )
+        assert result.success is False
+        assert "edit #1" in result.error
+
+    def test_pos_as_dict_caught(self, tmp_path):
+        f = tmp_path / "x.py"
+        f.write_text("line1\n")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [
+                    {
+                        "op": "replace",
+                        "pos": {"line": 1, "hash": "AA"},
+                        "lines": ["x"],
+                    }
+                ],
+            }
+        )
+        assert result.success is False
+        assert "edit #1" in result.error
+
+    def test_pos_as_bool_caught(self, tmp_path):
+        # ``True`` is truthy. Pre-validation catches it explicitly so
+        # the error message blames the type rather than letting it
+        # fail mysteriously later in ``_parse_ref``.
+        f = tmp_path / "x.py"
+        f.write_text("line1\n")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [{"op": "replace", "pos": True, "lines": ["x"]}],
+            }
+        )
+        assert result.success is False
+
+    def test_second_edit_bad_type_points_at_correct_index(self, tmp_path):
+        # Mixed batch: first edit valid, second edit malformed.
+        # Error must say "edit #2" not "edit #1".
+        f = tmp_path / "x.py"
+        f.write_text("a\nb\nc\nd\n")
+        h_a = compute_line_hash(1, "a")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [
+                    {"op": "replace", "pos": f"1#{h_a}", "lines": ["A"]},
+                    {"op": "replace", "pos": 3, "lines": ["C"]},
+                ],
+            }
+        )
+        assert result.success is False
+        assert "edit #2" in result.error
+
+    def test_none_pos_still_allowed_for_append_to_eof(self, tmp_path):
+        # ``op=append`` without ``pos`` means "append to end of file".
+        # The pre-validation guard must skip type checks when the
+        # field is missing or None — otherwise it would break the
+        # legitimate "no-pos" code path.
+        f = tmp_path / "x.py"
+        f.write_text("line1\n")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [{"op": "append", "lines": ["appended"]}],
+            }
+        )
+        assert result.success is True
+        assert "appended" in f.read_text()
+
+    def test_error_message_is_observation_friendly(self, tmp_path):
+        # The full LLM-facing chain: tool returns ToolResult(False,
+        # error=msg) → loop wraps it as ``Observation: <msg>`` → LLM
+        # sees it next turn. For the recovery to work the message
+        # has to read as a self-contained instruction. Pin the
+        # vocabulary the LLM-facing prompt teaches it to look for.
+        f = tmp_path / "x.py"
+        f.write_text("line1\n")
+        result = tool_edit_file(
+            {
+                "path": str(f),
+                "edits": [{"op": "replace", "pos": 1, "lines": ["x"]}],
+            }
+        )
+        assert result.success is False
+        msg = result.error
+        # The fix-recipe ("re-read with read_file") must be there
+        # since that's how the LLM learns to recover.
+        assert "read_file" in msg
+        # And the expected shape, so a careful model can correct
+        # without re-reading every time.
+        assert "5#VR" in msg or "LINE#HASH" in msg or "hashline" in msg
