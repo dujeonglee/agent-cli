@@ -514,7 +514,7 @@ class TestRunLoopParseFailure:
     def test_retry_no_content_uses_static_template(self, caps):
         """Empty content → static fallback. Path stays clean for
         providers that produce no echoable signal."""
-        # Whitespace-only content is treated as empty by _truncate_head,
+        # Whitespace-only content strips to empty inside echo_prior_output,
         # so the echo block produces nothing and the fallback fires.
         provider = MagicMock()
         provider.call.side_effect = [

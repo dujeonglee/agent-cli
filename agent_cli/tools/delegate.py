@@ -88,11 +88,23 @@ class DelegateResult:
     last_actions: list[str] = field(default_factory=list)
 
 
-def _extract_activity_log(messages: list[dict], max_entries: int = 20) -> list[str]:
+# Caps for the per-iteration summaries handed back to the parent
+# loop in ``DelegateResult``. The parent splices these into its
+# observation card, so they're token cost in the parent's context —
+# a runaway sub-agent (50+ iterations) would otherwise drown out
+# the actual answer. Module-level so the values are discoverable
+# without spelunking through the extractor body.
+_ACTIVITY_LOG_MAX_ENTRIES = 20
+_LAST_ACTIONS_KEEP = 5
+
+
+def _extract_activity_log(messages: list[dict]) -> list[str]:
     """Extract per-iteration action summaries from context messages.
 
     Parses assistant messages for ReAct JSON (action/action_input),
-    formats each into a one-line summary.
+    formats each into a one-line summary. Capped at
+    ``_ACTIVITY_LOG_MAX_ENTRIES``; overflow surfaces as a single
+    ``... and N more`` footer so the parent knows the log was trimmed.
 
     Returns list of strings like:
       ["iter 1: read_file auth.py", "iter 2: shell pytest"]
@@ -120,9 +132,9 @@ def _extract_activity_log(messages: list[dict], max_entries: int = 20) -> list[s
         summary = _summarize_action(action, action_input)
         log.append(f"iter {iter_num}: {summary}")
 
-    if len(log) > max_entries:
-        trimmed = log[:max_entries]
-        trimmed.append(f"... and {len(log) - max_entries} more")
+    if len(log) > _ACTIVITY_LOG_MAX_ENTRIES:
+        trimmed = log[:_ACTIVITY_LOG_MAX_ENTRIES]
+        trimmed.append(f"... and {len(log) - _ACTIVITY_LOG_MAX_ENTRIES} more")
         return trimmed
     return log
 
@@ -147,8 +159,16 @@ def _summarize_action(action: str, action_input: dict) -> str:
         return action
 
 
-def _extract_last_actions(messages: list[dict], n: int = 5) -> list[str]:
-    """Extract last N actions with their observation results.
+def _extract_last_actions(messages: list[dict]) -> list[str]:
+    """Extract the last ``_LAST_ACTIONS_KEEP`` actions with their
+    observation results.
+
+    Distinct from ``_extract_activity_log`` in two ways: (1) it's
+    intentionally a tail-slice, not a head-with-overflow, since the
+    parent uses these lines to spot the most recent failures, and
+    (2) it scrapes the immediately-following user-role message for
+    error keywords (``ERROR``/``FAIL``/``EXCEPTION``/``TRACEBACK``)
+    and appends a one-line hint when found.
 
     Returns list of strings like:
       ["iter 4: shell pytest -> ERROR: 3 tests failed",
@@ -170,7 +190,7 @@ def _extract_last_actions(messages: list[dict], n: int = 5) -> list[str]:
         summary = _summarize_action(data["action"], data.get("action_input", {}))
         actions.append((i, iter_num, summary))
 
-    last_n = actions[-n:]
+    last_n = actions[-_LAST_ACTIONS_KEEP:]
 
     result: list[str] = []
     for msg_idx, it, summary in last_n:

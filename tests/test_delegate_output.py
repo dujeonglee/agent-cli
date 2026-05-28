@@ -78,7 +78,7 @@ class TestExtractActivityLog:
             )
             messages.append(_make_obs_msg("content"))
 
-        log = _extract_activity_log(messages, max_entries=20)
+        log = _extract_activity_log(messages)
         assert len(log) == 21  # 20 entries + "... and 5 more"
         assert log[-1] == "... and 5 more"
 
@@ -178,7 +178,7 @@ class TestExtractLastActions:
             )
             messages.append(_make_obs_msg(f"content of file_{i}"))
 
-        result = _extract_last_actions(messages, n=5)
+        result = _extract_last_actions(messages)
         assert len(result) == 5
         assert "iter 6:" in result[0]
         assert "iter 10:" in result[4]
@@ -191,7 +191,7 @@ class TestExtractLastActions:
             _make_action_msg("edit_file", {"path": "/src/auth.py"}),
             _make_obs_msg("ok"),
         ]
-        result = _extract_last_actions(messages, n=5)
+        result = _extract_last_actions(messages)
         assert len(result) == 2
         assert "ERROR: 3 tests failed" in result[0]
         assert "→" not in result[1]  # no error in second observation
@@ -206,7 +206,7 @@ class TestExtractLastActions:
             _make_action_msg("read_file", {"path": "/src/c.py"}),
             _make_obs_msg("content"),
         ]
-        result = _extract_last_actions(messages, n=5)
+        result = _extract_last_actions(messages)
         assert len(result) == 3
 
     def test_no_observation(self):
@@ -215,13 +215,13 @@ class TestExtractLastActions:
             _make_action_msg("shell", {"command": "pytest"}),
             # No observation follows
         ]
-        result = _extract_last_actions(messages, n=5)
+        result = _extract_last_actions(messages)
         assert len(result) == 1
         assert "→" not in result[0]
 
     def test_empty(self):
         """DO-18: Empty messages returns empty list."""
-        assert _extract_last_actions([], n=5) == []
+        assert _extract_last_actions([]) == []
 
 
 # ── DO-19 ~ DO-21: Duration ──────────────────────────────────
@@ -325,7 +325,7 @@ class TestIterationsCount:
             )
             messages.append(_make_obs_msg("content"))
 
-        log = _extract_activity_log(messages, max_entries=20)
+        log = _extract_activity_log(messages)
         real_entries = [e for e in log if not e.startswith("...")]
         assert len(real_entries) == 20
         assert len(log) == 21  # 20 + "... and 5 more"
