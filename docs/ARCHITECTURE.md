@@ -978,10 +978,16 @@ LLM이 출력을 좁히고 싶으면 도구 호출 자체를 좁혀야 함 (`tai
 LLM이 작업 완료 전 자기 검증을 수행하는 가상 도구입니다.
 
 1. LLM이 `ready_for_review(summary="...")` 호출
-2. Loop이 intercept → **원본 query + summary**를 observation으로 반환
+2. Loop이 intercept → **원본 query + summary + 검증 절차**를 observation으로 반환
 3. LLM이 요청 vs 실행 내역을 대조 → 빠뜨린 게 있으면 계속, 다 했으면 `complete` 호출
 
 `_ALWAYS_INCLUDE`에 등록되어 skill의 `allowed_tools`와 무관하게 항상 API tool 목록에 포함됩니다.
+
+Observation은 `_build_review_observation` (loop.py)이 4개 섹션으로 합성합니다:
+`--- ORIGINAL REQUEST ---` / `--- YOUR SUMMARY ---` / `--- REVIEW INSTRUCTIONS ---` /
+`Format your review like this:`. 마지막 섹션은 모델이 자유 텍스트로 "Done" 한 줄 응답하지 못하도록
+`Requirement N: ... → [DONE | MISSING]: ...` / `Decision: complete | continue` 출력 템플릿을
+강제합니다. self-review가 *생성* 되어야 reasoning이 따라오는 작은 모델 특성에 맞춘 디자인.
 
 ### 6.6 스키마 검증 (`tools/registry.py`)
 

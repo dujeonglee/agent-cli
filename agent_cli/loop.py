@@ -1676,7 +1676,16 @@ def _handle_run_skill(
 
 
 def _build_review_observation(query: str, summary: str, ctx=None) -> str:
-    """Build the observation returned by ready_for_review tool."""
+    """Build the observation returned by ready_for_review tool.
+
+    The observation re-injects the original request (often pushed out of
+    recency by long transcripts), pairs it with the model's self-summary,
+    and asks the model to write out a per-requirement check against its
+    previous Observations. The structured "Format your review like this"
+    block forces the self-review to be *generated* rather than asserted
+    in one line — small models that follow output templates also tend
+    to follow the reasoning the template implies.
+    """
     parts = [
         "--- ORIGINAL REQUEST ---",
         query,
@@ -1688,10 +1697,21 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
             "",
             "--- REVIEW INSTRUCTIONS ---",
             "Be adversarial. Try to find gaps, not confirm success.",
+            "",
             "1. List each requirement from the ORIGINAL REQUEST.",
-            "2. For each requirement, check if the WORK LOG shows evidence it was completed.",
-            "3. If a requirement is NOT met or evidence is missing, continue working on it.",
-            "4. Only call complete if EVERY requirement has clear evidence of completion.",
+            "2. For each requirement, check your previous Observations in this "
+            "conversation for evidence it was completed.",
+            "3. If a requirement is NOT met or evidence is missing, continue "
+            "working on it.",
+            "4. Only call complete if EVERY requirement has clear evidence of "
+            "completion.",
+            "",
+            "Format your review like this:",
+            "Requirement 1: <short paraphrase of the requirement>",
+            "  -> [DONE | MISSING]: <evidence from an Observation, or what "
+            "is still needed>",
+            "Requirement 2: ...",
+            "Decision: complete | continue",
         ]
     )
     return "\n".join(parts)

@@ -2881,6 +2881,89 @@ class TestReadyForReviewTextPath:
             assert len(render_calls) == 0
 
 
+class TestBuildReviewObservation:
+    """Unit tests for the ready_for_review observation builder.
+
+    These pin the exact prompt shape so any future tweak is intentional
+    and reviewed — small changes here can shift model self-review
+    behavior significantly.
+    """
+
+    def test_includes_original_request(self):
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("Fix the auth bug", "patched login.py")
+        assert "--- ORIGINAL REQUEST ---" in obs
+        assert "Fix the auth bug" in obs
+
+    def test_includes_summary(self):
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "I changed three files")
+        assert "--- YOUR SUMMARY ---" in obs
+        assert "I changed three files" in obs
+
+    def test_includes_review_instructions_header(self):
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "s")
+        assert "--- REVIEW INSTRUCTIONS ---" in obs
+        assert "Be adversarial" in obs
+
+    def test_terminology_says_previous_observations_not_work_log(self):
+        """(D) WORK LOG -> 'previous Observations' — small models
+        understand the concrete term but were silently dropping the
+        abstract 'WORK LOG' reference."""
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "s")
+        assert "previous Observations" in obs
+        assert "WORK LOG" not in obs
+
+    def test_includes_output_format_template(self):
+        """(A) Forces the self-review to be *generated*, not asserted."""
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "s")
+        assert "Format your review like this:" in obs
+        assert "Requirement 1:" in obs
+        assert "[DONE | MISSING]" in obs
+        assert "Decision: complete | continue" in obs
+
+    def test_numbered_steps_still_present(self):
+        """The 4-step checklist remains — A+D are additive, not a rewrite."""
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "s")
+        for step in (
+            "1. List each requirement",
+            "2. For each requirement",
+            "3. If a requirement is NOT met",
+            "4. Only call complete",
+        ):
+            assert step in obs
+
+    def test_decision_keywords_explicit(self):
+        """The terminal line forces a binary outcome word — prevents
+        ambiguous reviews like 'looks good' that don't commit to next
+        action."""
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "s")
+        last_line = obs.rstrip().splitlines()[-1]
+        assert last_line == "Decision: complete | continue"
+
+    def test_sections_appear_in_canonical_order(self):
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "s")
+        pos_req = obs.index("--- ORIGINAL REQUEST ---")
+        pos_sum = obs.index("--- YOUR SUMMARY ---")
+        pos_ins = obs.index("--- REVIEW INSTRUCTIONS ---")
+        pos_fmt = obs.index("Format your review like this:")
+        assert pos_req < pos_sum < pos_ins < pos_fmt
+
+
 class TestNoOutputTruncation:
     """Verify tool output is passed to LLM without truncation."""
 
