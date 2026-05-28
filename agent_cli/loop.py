@@ -1675,16 +1675,97 @@ def _handle_run_skill(
     return ToolResult(skill_result.success, output=obs, artifact=skill_result.artifact)
 
 
+_REVIEW_VIRTUAL_TOOLS: frozenset[str] = frozenset(
+    {"ready_for_review", "complete", "ask"}
+)
+
+
+def _short_review_args(args, max_len: int = 80) -> str:
+    """Render a tool's action_input as a compact one-liner for review injection.
+
+    Long strings are head-truncated to 40 chars; non-scalar values
+    (list / dict) collapse to ``<type>`` markers so the line stays
+    short. The combined render is then capped at ``max_len``. The goal
+    is "model can recognize what was called and on what target" — not
+    a faithful replay.
+    """
+    if not isinstance(args, dict):
+        s = repr(args)
+        return s if len(s) <= max_len else s[: max_len - 3] + "..."
+    pairs = []
+    for k, v in args.items():
+        if isinstance(v, str):
+            v_show = v if len(v) <= 40 else v[:37] + "..."
+            pairs.append(f"{k}={v_show!r}")
+        elif isinstance(v, (int, float, bool)) or v is None:
+            pairs.append(f"{k}={v!r}")
+        else:
+            pairs.append(f"{k}=<{type(v).__name__}>")
+    line = ", ".join(pairs)
+    if len(line) > max_len:
+        line = line[: max_len - 3] + "..."
+    return line
+
+
+def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
+    """Build the ``--- YOUR TOOL CALLS ---`` section for review injection.
+
+    Returns "" (no section emitted) when ctx is None, has no
+    assistant tool calls, or only virtual tools were used. Virtual
+    tools (``ready_for_review`` / ``complete`` / ``ask``) are
+    filtered — they don't represent work the model has done.
+
+    The section gives the model a *factual* list of what it actually
+    invoked, independent of whether the corresponding Observations
+    have been evicted by context FIFO. The model can then dispute or
+    confirm its summary against this list before calling ``complete``.
+
+    When the count exceeds ``max_calls``, the most recent
+    ``max_calls`` entries are kept (most relevant to "is the work
+    done?") and a header note records the omission.
+    """
+    if ctx is None:
+        return ""
+    try:
+        raw = ctx.get_raw_messages()
+    except Exception:
+        return ""
+
+    calls = []
+    for msg in raw:
+        if msg.get("role") != "assistant":
+            continue
+        action = msg.get("action")
+        if not action or action in _REVIEW_VIRTUAL_TOOLS:
+            continue
+        args = msg.get("action_input") or {}
+        calls.append(f"- {action}({_short_review_args(args)})")
+
+    if not calls:
+        return ""
+
+    total = len(calls)
+    if total > max_calls:
+        calls = calls[-max_calls:]
+        header = f"--- YOUR TOOL CALLS (last {max_calls} of {total}) ---"
+    else:
+        header = "--- YOUR TOOL CALLS ---"
+
+    return "\n".join([header, *calls])
+
+
 def _build_review_observation(query: str, summary: str, ctx=None) -> str:
     """Build the observation returned by ready_for_review tool.
 
     The observation re-injects the original request (often pushed out of
     recency by long transcripts), pairs it with the model's self-summary,
-    and asks the model to write out a per-requirement check against its
-    previous Observations. The structured "Format your review like this"
-    block forces the self-review to be *generated* rather than asserted
-    in one line — small models that follow output templates also tend
-    to follow the reasoning the template implies.
+    optionally appends a factual list of tool calls extracted from
+    ``ctx`` (so the review survives Observation eviction by context
+    FIFO), and asks the model to write out a per-requirement check
+    against its previous Observations. The structured "Format your
+    review like this" block forces the self-review to be *generated*
+    rather than asserted in one line — small models that follow output
+    templates also tend to follow the reasoning the template implies.
     """
     parts = [
         "--- ORIGINAL REQUEST ---",
@@ -1692,6 +1773,9 @@ def _build_review_observation(query: str, summary: str, ctx=None) -> str:
         "--- YOUR SUMMARY ---",
         summary,
     ]
+    tool_calls_block = _format_tool_calls_for_review(ctx)
+    if tool_calls_block:
+        parts.extend(["", tool_calls_block])
     parts.extend(
         [
             "",

@@ -2963,6 +2963,240 @@ class TestBuildReviewObservation:
         pos_fmt = obs.index("Format your review like this:")
         assert pos_req < pos_sum < pos_ins < pos_fmt
 
+    def test_omits_tool_calls_section_when_ctx_is_none(self):
+        """ctx=None path must not synthesize the section."""
+        from agent_cli.loop import _build_review_observation
+
+        obs = _build_review_observation("q", "s", ctx=None)
+        assert "--- YOUR TOOL CALLS" not in obs
+
+
+class _FakeCtx:
+    """Minimal stand-in for ContextManager — exposes ``get_raw_messages``
+    only. Real ctx is heavyweight; the helper under test only reads
+    that one method."""
+
+    def __init__(self, messages):
+        self._messages = list(messages)
+
+    def get_raw_messages(self):
+        return list(self._messages)
+
+
+class TestFormatToolCallsForReview:
+    """Unit tests for the ctx -> tool-calls section helper."""
+
+    def test_returns_empty_when_ctx_is_none(self):
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        assert _format_tool_calls_for_review(None) == ""
+
+    def test_returns_empty_when_no_assistant_messages(self):
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        ctx = _FakeCtx(
+            [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hi"},
+            ]
+        )
+        assert _format_tool_calls_for_review(ctx) == ""
+
+    def test_returns_empty_when_only_virtual_tools(self):
+        """ready_for_review / complete / ask should not produce a section."""
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "ready_for_review",
+                    "action_input": {"summary": "done"},
+                },
+                {
+                    "role": "assistant",
+                    "action": "complete",
+                    "action_input": {"result": "ok"},
+                },
+            ]
+        )
+        assert _format_tool_calls_for_review(ctx) == ""
+
+    def test_lists_real_tool_calls_in_order(self):
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "read_file",
+                    "action_input": {"path": "login.py"},
+                },
+                {"role": "user", "tool": "read_file", "content": "Observation: ..."},
+                {
+                    "role": "assistant",
+                    "action": "shell",
+                    "action_input": {"command": "pytest"},
+                },
+            ]
+        )
+        out = _format_tool_calls_for_review(ctx)
+        assert "--- YOUR TOOL CALLS ---" in out
+        pos_read = out.index("read_file(")
+        pos_shell = out.index("shell(")
+        assert pos_read < pos_shell
+
+    def test_filters_virtual_tools_when_mixed(self):
+        """A mix of real + virtual: only real ones appear."""
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "read_file",
+                    "action_input": {"path": "a.py"},
+                },
+                {
+                    "role": "assistant",
+                    "action": "ask",
+                    "action_input": {"question": "?"},
+                },
+                {
+                    "role": "assistant",
+                    "action": "shell",
+                    "action_input": {"command": "ls"},
+                },
+                {
+                    "role": "assistant",
+                    "action": "ready_for_review",
+                    "action_input": {"summary": "s"},
+                },
+            ]
+        )
+        out = _format_tool_calls_for_review(ctx)
+        assert "read_file(" in out
+        assert "shell(" in out
+        assert "ask(" not in out
+        assert "ready_for_review(" not in out
+
+    def test_truncates_to_last_N_when_too_many(self):
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        msgs = [
+            {
+                "role": "assistant",
+                "action": "shell",
+                "action_input": {"command": f"echo {i}"},
+            }
+            for i in range(35)
+        ]
+        out = _format_tool_calls_for_review(_FakeCtx(msgs), max_calls=30)
+        assert "last 30 of 35" in out
+        assert "echo 34" in out
+        # Earliest entry (echo 0) should be omitted (token-bounded check)
+        assert "'echo 0'" not in out
+
+    def test_long_string_args_are_truncated(self):
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        long_cmd = "x" * 200
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "shell",
+                    "action_input": {"command": long_cmd},
+                }
+            ]
+        )
+        out = _format_tool_calls_for_review(ctx)
+        max_line = max(len(line) for line in out.splitlines())
+        assert max_line < 150
+
+    def test_non_scalar_args_collapse_to_type_marker(self):
+        """Lists and dicts should render as <list>/<dict>, not full JSON."""
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "edit_file",
+                    "action_input": {
+                        "path": "a.py",
+                        "edits": [{"op": "replace", "lines": ["x"]}],
+                    },
+                }
+            ]
+        )
+        out = _format_tool_calls_for_review(ctx)
+        assert "edits=<list>" in out
+
+    def test_get_raw_messages_failure_returns_empty(self):
+        """Helper must not raise if ctx.get_raw_messages() blows up."""
+        from agent_cli.loop import _format_tool_calls_for_review
+
+        class _BrokenCtx:
+            def get_raw_messages(self):
+                raise RuntimeError("boom")
+
+        assert _format_tool_calls_for_review(_BrokenCtx()) == ""
+
+
+class TestBuildReviewObservationWithCtx:
+    """Verify the ctx injection path in _build_review_observation."""
+
+    def test_includes_tool_calls_section_when_ctx_has_real_calls(self):
+        from agent_cli.loop import _build_review_observation
+
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "shell",
+                    "action_input": {"command": "ls"},
+                }
+            ]
+        )
+        obs = _build_review_observation("q", "s", ctx=ctx)
+        assert "--- YOUR TOOL CALLS ---" in obs
+        assert "shell(" in obs
+
+    def test_omits_tool_calls_section_when_ctx_has_only_virtual_tools(self):
+        from agent_cli.loop import _build_review_observation
+
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "ready_for_review",
+                    "action_input": {"summary": "done"},
+                }
+            ]
+        )
+        obs = _build_review_observation("q", "s", ctx=ctx)
+        assert "--- YOUR TOOL CALLS" not in obs
+
+    def test_tool_calls_section_between_summary_and_instructions(self):
+        """REQ -> SUM -> CALLS -> INSTRUCTIONS order."""
+        from agent_cli.loop import _build_review_observation
+
+        ctx = _FakeCtx(
+            [
+                {
+                    "role": "assistant",
+                    "action": "shell",
+                    "action_input": {"command": "ls"},
+                }
+            ]
+        )
+        obs = _build_review_observation("q", "s", ctx=ctx)
+        pos_sum = obs.index("--- YOUR SUMMARY ---")
+        pos_calls = obs.index("--- YOUR TOOL CALLS ---")
+        pos_ins = obs.index("--- REVIEW INSTRUCTIONS ---")
+        assert pos_sum < pos_calls < pos_ins
+
 
 class TestNoOutputTruncation:
     """Verify tool output is passed to LLM without truncation."""
