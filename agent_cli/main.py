@@ -110,7 +110,7 @@ def _maybe_setup() -> None:
         SetupWizard().run()
 
 
-def _setup_mcp(quiet: bool = False):
+def _setup_mcp():
     """Initialize MCP servers from mcp.json. Returns (manager, mcp_tools) or (None, {})."""
     from agent_cli.mcp.config import load_mcp_config
     from agent_cli.mcp.client import McpClientManager
@@ -123,13 +123,12 @@ def _setup_mcp(quiet: bool = False):
     manager = McpClientManager()
     results = manager.connect_all(configs)
 
-    if not quiet:
-        for name, status in results.items():
-            if status == "connected":
-                tool_count = len(manager.list_tools(name))
-                console.print(f"  [green]●[/] MCP {name}: {tool_count} tools")
-            else:
-                console.print(f"  [red]●[/] MCP {name}: {status}")
+    for name, status in results.items():
+        if status == "connected":
+            tool_count = len(manager.list_tools(name))
+            console.print(f"  [green]●[/] MCP {name}: {tool_count} tools")
+        else:
+            console.print(f"  [red]●[/] MCP {name}: {status}")
 
     mcp_tools = register_mcp_tools(manager)
     return manager, mcp_tools
@@ -846,18 +845,6 @@ def run(
         "-v",
         help="Show raw LLM response",
     ),
-    depth: int = typer.Option(
-        0,
-        "--depth",
-        hidden=True,
-        help="Current nesting depth (used internally by subagents)",
-    ),
-    headless: bool = typer.Option(
-        False,
-        "--headless",
-        hidden=True,
-        help="No session/rendering; volatile tmpdir context (used by subagents)",
-    ),
     style: Optional[str] = typer.Option(
         None,
         "--style",
@@ -882,7 +869,7 @@ def run(
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     _apply_style(style)
     # /sh prefix: Run shell command directly without LLM
-    if not headless and (query.startswith("/sh ") or query == "/sh"):
+    if query.startswith("/sh ") or query == "/sh":
         cmd = query[3:].strip()
         if not cmd:
             console.print(f"[{C['error']}]No command to execute.[/]")
@@ -891,11 +878,11 @@ def run(
         raise typer.Exit(0)
 
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
-        _setup_provider(provider, model, base_url, api_key, quiet=headless)
+        _setup_provider(provider, model, base_url, api_key)
     )
 
     # MCP servers
-    mcp_manager, mcp_tools = _setup_mcp(quiet=headless)
+    mcp_manager, mcp_tools = _setup_mcp()
     if mcp_tools:
         from agent_cli.tools import TOOLS
 
@@ -919,31 +906,16 @@ def run(
         console.print(f"[{C['error']}]{exc}[/]")
         raise typer.Exit(2) from exc
 
-    session = None
-    ctx = None
-    _tmpdir = None  # prevent GC of TemporaryDirectory
+    from agent_cli.context.session import create_session, save_meta
 
-    if headless:
-        import tempfile
-        from pathlib import Path as _Path
-
-        _tmpdir = tempfile.TemporaryDirectory(prefix="agent-cli-")
-        ctx = ContextManager(
-            session_dir=_Path(_tmpdir.name),
-            max_context_tokens=max_context_tokens,
-            wire_format=wire_format_plugin,
-        )
-    else:
-        from agent_cli.context.session import create_session, save_meta
-
-        session = create_session()
-        session.query = query[:100]
-        save_meta(session)
-        ctx = ContextManager(
-            session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-            max_context_tokens=max_context_tokens,
-            wire_format=wire_format_plugin,
-        )
+    session = create_session()
+    session.query = query[:100]
+    save_meta(session)
+    ctx = ContextManager(
+        session_dir=Path(".agent-cli") / "sessions" / session.session_id,
+        max_context_tokens=max_context_tokens,
+        wire_format=wire_format_plugin,
+    )
 
     # Skill dispatch: /skill-name args
     if query.startswith("/") and not query.startswith("/sh"):
@@ -964,11 +936,8 @@ def run(
         )
         if answer is not _SKILL_NOT_FOUND:
             if answer is not None:
-                if headless:
-                    print(answer)
-                else:
-                    console.print(f"\n[{C['final']}]{answer}[/]")
-            _finalize_run(session, ctx, headless)
+                console.print(f"\n[{C['final']}]{answer}[/]")
+            _finalize_run(session, ctx)
             return
 
     # Agent dispatch: @agent-name task
@@ -990,11 +959,8 @@ def run(
         )
         if answer is not _AGENT_NOT_FOUND:
             if answer is not None:
-                if headless:
-                    print(answer)
-                else:
-                    console.print(f"\n[{C['final']}]{answer}[/]")
-            _finalize_run(session, ctx, headless)
+                console.print(f"\n[{C['final']}]{answer}[/]")
+            _finalize_run(session, ctx)
             return
 
     from agent_cli.hooks import load_hooks as _load_hooks
@@ -1011,7 +977,6 @@ def run(
             api_key=resolved_key,
             max_turns=max_turns,
             verbose=verbose,
-            depth=depth,
             max_depth=max_depth,
             delegate_timeout=delegate_timeout,
             ctx=ctx,
@@ -1025,16 +990,12 @@ def run(
         answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
         answer = None
-        if not headless:
-            console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
+        console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
 
-    if headless and answer:
-        print(answer)
-
-    _finalize_run(session, ctx, headless, mcp_manager)
+    _finalize_run(session, ctx, mcp_manager)
 
 
-def _finalize_run(session, ctx, headless: bool, mcp_manager=None) -> None:
+def _finalize_run(session, ctx, mcp_manager=None) -> None:
     """Finalize session after run command (save summary, print session ID)."""
     from agent_cli.render import render_spinner_stop
 
@@ -1046,11 +1007,10 @@ def _finalize_run(session, ctx, headless: bool, mcp_manager=None) -> None:
     from agent_cli.context.session import finalize_session
 
     finalize_session(session, ctx)
-    if not headless:
-        console.print(
-            f"[{C['muted']}]Session {session.session_id} saved. "
-            f"Resume with: agent-cli chat --resume {session.session_id}[/]"
-        )
+    console.print(
+        f"[{C['muted']}]Session {session.session_id} saved. "
+        f"Resume with: agent-cli chat --resume {session.session_id}[/]"
+    )
 
 
 @app.command()
