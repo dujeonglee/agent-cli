@@ -335,6 +335,77 @@ class TestUnwrapNestedEnvelope:
         # unwrap declines because inner isn't a string.
         assert unwrap_nested_envelope(wrapped) == wrapped
 
+
+class TestNestedEnvelopeLenientParse:
+    """Real-world regression. Qwen3.6 produced parallel-delegate
+    ``complete`` payloads where the inner JSON body contained
+    literal newlines / tabs inside string fields — model wrote
+    markdown bodies with actual line breaks instead of properly
+    escaped ``\\n``. ``json.loads`` in strict mode rejects those
+    as "Invalid control character", so the detector silently
+    missed the wrap and the user saw the ``{"result": "..."}``
+    artifact at the head of their answer.
+
+    The fix is ``strict=False`` on the json.loads call inside both
+    detector and unwrapper, accepting the messy bodies these
+    models actually produce.
+    """
+
+    def test_detector_flags_envelope_with_literal_newlines(self):
+        # Body has real newlines in the middle — strict json.loads
+        # would reject this. Lenient mode parses cleanly.
+        body = "# 시계탑의 마지막 초침\n\n비가 내리던 어느 밤, 한 사람이..."
+        wrapped = '{"result": "' + body + '"}'
+        assert detect_nested_envelope(wrapped) is True
+
+    def test_unwrapper_returns_clean_body_for_literal_newlines(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        body = "# Title\n\nFirst paragraph.\nSecond line."
+        wrapped = '{"result": "' + body + '"}'
+        # Inner body must come back with its newlines intact (not
+        # escaped, not stripped).
+        assert unwrap_nested_envelope(wrapped) == body
+
+    def test_detector_flags_envelope_with_literal_tabs(self):
+        # Same shape, different control character. ``\t`` inside the
+        # body would also fail strict mode but pass lenient.
+        wrapped = '{"result": "a\tb\tc"}'
+        assert detect_nested_envelope(wrapped) is True
+
+    def test_unwrapper_preserves_markdown_body(self):
+        from agent_cli.recovery.detectors import unwrap_nested_envelope
+
+        # Real-world shape: markdown headers + paragraphs + escaped
+        # double-quotes inside the body. The user-reported example.
+        body = (
+            "## 달빛을 훔친 고양이\n\n"
+            '서울의 한 골목길에 살던 검은 고양이 \\"월암\\"은\n'
+            "평범하지 않은 습관이 있었다."
+        )
+        wrapped = '{"result": "' + body + '"}'
+        result = unwrap_nested_envelope(wrapped)
+        # The body's literal newlines come back as actual newlines
+        # in the unwrapped string.
+        assert "달빛을 훔친 고양이" in result
+        assert "골목길" in result
+        # The leading wrapper artifact is gone.
+        assert not result.startswith('{"result"')
+
+    def test_lenient_does_not_widen_to_non_envelope_shapes(self):
+        # The ``{"result"`` head guard still applies — a JSON object
+        # with literal newlines but a different top-level key must
+        # not be flagged as a nested envelope.
+        wrapped = '{"answer": "line1\nline2"}'
+        assert detect_nested_envelope(wrapped) is False
+
+    def test_strict_unparseable_still_returns_false(self):
+        # The body claims to be the envelope but is genuinely
+        # malformed (unterminated string). Lenient mode doesn't
+        # change that — still False, no silent recovery.
+        wrapped = '{"result": "unterminated\nnewline\n'
+        assert detect_nested_envelope(wrapped) is False
+
     def test_unwrap_does_not_recurse(self):
         """``{"result": "{\\"result\\": ...}"}`` (double-nested) only
         peels one level. Recursive nesting is rare enough that the
