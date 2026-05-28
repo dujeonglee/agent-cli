@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from io import StringIO
 
 from rich.console import Console
@@ -160,6 +161,24 @@ class MinimalRenderer(Renderer):
         # chunk. Reset to 0 in `stream_end`.
         self._last_term_w: int = 0
         self._last_painted_w: int = 0
+        # Parallel-delegate orchestration. Owned entirely by
+        # MinimalRenderer (was previously driven from tool_delegate
+        # via the parallel_live_panel context manager). The Live
+        # region starts when the first ``begin_delegate_task`` fires
+        # and stops when the last ``end_delegate_task`` fires; the
+        # delegate tool only signals lifecycle via begin/end markers
+        # now, not the panel context manager or the capture pair.
+        self._parallel_lock = threading.Lock()
+        self._parallel_live: Live | None = None
+        self._parallel_clock: FrameClock | None = None
+        # task_id → dict with keys: index, agent, task, tid, done,
+        # success, duration_s, captured (list[str])
+        self._parallel_tasks: dict[str, dict] = {}
+        # Registration order for the post-completion dump — the
+        # ``_parallel_tasks`` dict's insertion order matches but we
+        # keep an explicit list for clarity and stability across
+        # future dict-mutation refactors.
+        self._parallel_order: list[str] = []
 
     @property
     def _prefix(self) -> str:
@@ -601,65 +620,193 @@ class MinimalRenderer(Renderer):
         # user's intent surfaces upstream (e.g. tool result observation).
         return (default_key, raw)
 
-    # ── Parallel delegate live panel ─────────────────
+    # ── Parallel delegate panel (begin/end-driven) ────
+
+    def _render_parallel_panel(self) -> Text:
+        """Build the multi-task progress region for the Live refresh.
+
+        Reads ``_parallel_tasks`` under ``_parallel_lock`` so a
+        mid-frame mutation (worker finishing) can't corrupt the
+        drawn state. The per-task status line is fetched from the
+        base ``_thread_status`` dict via ``get_thread_status(tid)``
+        — same source the previous panel implementation polled, so
+        no behavioural change.
+
+        ``_parallel_clock.current()`` advances the animation frame
+        at the throttled cadence shared with ``spinner_start``.
+        """
+        with self._parallel_lock:
+            snapshot = [
+                (tid, dict(self._parallel_tasks[tid])) for tid in self._parallel_order
+            ]
+        lines = [Text(f"Running {len(snapshot)} tasks in parallel:", style="grey46")]
+        frame = self._parallel_clock.current() if self._parallel_clock else "..."
+        for _tid, t in snapshot:
+            label = (
+                f"[{t['index'] + 1}] {t['agent']}: {t['task']}"
+                if t["agent"]
+                else f"[{t['index'] + 1}] {t['task']}"
+            )
+            if t["done"]:
+                icon = "✓" if t["success"] else "✗"
+                lines.append(
+                    Text(
+                        f"  {icon} {label} ({t['duration_s']:.1f}s)",
+                        style="grey46",
+                    )
+                )
+            else:
+                status = self.get_thread_status(t["tid"])
+                lines.append(Text(f"  {frame} {label}", style="grey46"))
+                lines.append(Text(f"       {status}", style="grey46"))
+        return Text("\n").join(lines)
+
+    def begin_delegate_task(
+        self,
+        *,
+        task_id: str,
+        index: int,
+        agent: str,
+        task_text: str,
+    ) -> None:
+        """Register a worker thread into the live panel + start
+        capturing its output. First call starts the ``rich.Live``
+        region; subsequent calls just register their card.
+
+        Called from inside the worker thread (i.e. the thread that
+        will run ``_run_single`` next), so ``start_capture()`` here
+        attaches the capture buffer to the correct thread without
+        the caller needing a separate ``render_start_capture()``.
+        """
+        with self._parallel_lock:
+            if self._parallel_live is None and self.con.is_terminal:
+                # First task on a real terminal — bring the panel up.
+                # ``transient=True`` so the live region clears on stop
+                # and the captured output dump owns the terminal space
+                # afterwards. When ``is_terminal`` is False (unit tests
+                # with StringIO, headless redirected runs) we skip the
+                # Live region entirely: the panel would have nowhere
+                # to render and rich's refresh thread can hang on
+                # output-blocking writes against a non-tty backend.
+                # Task state and capture machinery still run so the
+                # captured-output dump in ``end_delegate_task`` works
+                # the same way.
+                self._parallel_clock = FrameClock(_THINK_FRAMES)
+                self._parallel_live = Live(
+                    self._render_parallel_panel(),
+                    console=self.con,
+                    refresh_per_second=8,
+                    transient=True,
+                    get_renderable=self._render_parallel_panel,
+                )
+                self._parallel_live.start()
+            if not self._parallel_order:
+                # Fresh dump order for this parallel set (first task
+                # of a new fan-out, regardless of whether the Live
+                # region is active).
+                self._parallel_order = []
+            self._parallel_tasks[task_id] = {
+                "index": index,
+                "agent": agent,
+                "task": task_text,
+                "tid": threading.get_ident(),
+                "done": False,
+                "success": None,
+                "duration_s": 0.0,
+                "status": "",
+                "captured": [],
+            }
+            self._parallel_order.append(task_id)
+        # ``start_capture`` writes to ``self._captures`` under the
+        # base lock; safe to call outside the panel lock.
+        self.start_capture()
+
+    def end_delegate_task(
+        self,
+        *,
+        task_id: str,
+        success: bool,
+        duration_s: float,
+        error: str = "",
+    ) -> None:
+        """Finalise a worker thread: stop its capture, mark its card
+        done. When this is the LAST outstanding task, tear down the
+        Live region and dump the captured output in registration
+        order so the user sees per-task transcripts after the panel
+        clears.
+        """
+        captured = self.stop_capture()
+        should_stop = False
+        with self._parallel_lock:
+            state = self._parallel_tasks.get(task_id)
+            if state is not None:
+                state["done"] = True
+                state["success"] = success
+                state["duration_s"] = duration_s
+                state["captured"] = captured
+                if error:
+                    state["error"] = error
+            # All tasks in this set are done?
+            if all(self._parallel_tasks[tid]["done"] for tid in self._parallel_order):
+                should_stop = True
+        if not should_stop:
+            return
+        # Tear down outside the lock — ``Live.stop`` joins the
+        # refresh thread, which could otherwise contend with our
+        # lock if it's mid-render.
+        live = self._parallel_live
+        self._parallel_live = None
+        self._parallel_clock = None
+        if live is not None:
+            live.stop()
+        # Replay each task's captured output wrapped in the group
+        # framing the user would have seen if the worker ran live —
+        # ``[N] agent: task`` opening header, indented body, closing
+        # header with ✓/✗ and duration. This was previously the
+        # delegate tool's job after the parallel_live_panel exited;
+        # now the renderer owns the whole presentation so the tool
+        # layer only needs to signal begin/end.
+        with self._parallel_lock:
+            order_snapshot = list(self._parallel_order)
+            task_snapshot = {
+                tid: dict(self._parallel_tasks[tid]) for tid in order_snapshot
+            }
+        for tid in order_snapshot:
+            t = task_snapshot[tid]
+            task_text = (t["task"] or "")[:40]
+            agent = t["agent"]
+            label = (
+                f"[{t['index'] + 1}] {agent}: {task_text}"
+                if agent
+                else f"[{t['index'] + 1}] {task_text}"
+            )
+            self.group_start(label, icon="🦀")
+            self.push_depth()
+            prefix = self._prefix
+            for line in t["captured"]:
+                self.con.print(f"{prefix}{line}", highlight=False)
+            self.pop_depth()
+            self.group_end(
+                label, success=bool(t["success"]), duration_s=t["duration_s"]
+            )
+        # Reset registration state for the next parallel set.
+        with self._parallel_lock:
+            for tid in order_snapshot:
+                self._parallel_tasks.pop(tid, None)
+            self._parallel_order = []
 
     def parallel_live_panel(self, state_getter):
-        """Host a ``rich.Live`` region that polls ``state_getter`` for
-        per-task progress and paints one line per task.
+        """Legacy entry point — superseded by the begin/end-driven
+        panel orchestration above.
 
-        ``state_getter`` returns ``list[ParallelTaskState]``; the
-        local imports below pull both the type and the Rich widgets
-        only when this method actually runs (skips the Live import
-        cost for headless / web renderer paths).
-
-        Returns a context manager; the caller (``delegate.py``)
-        joins worker threads inside the ``with`` body. ``transient=
-        True`` means the region clears on exit so the final per-task
-        capture blocks (printed by ``delegate.py`` afterwards) own the
-        terminal space cleanly.
-
-        Nested case: if this thread is already capturing (= we're an
-        inner parallel delegate inside an outer one), defer to the
-        ABC no-op so the outer Live keeps the surface. ABC default
-        returns ``nullcontext()`` — use it directly.
+        Kept as a no-op so transitional callers (any code still in the
+        middle of being migrated) don't crash. Tool layer should not
+        call this any more; ``begin_delegate_task`` /
+        ``end_delegate_task`` are the only surface needed.
         """
-        if self.is_capturing:
-            from contextlib import nullcontext
+        from contextlib import nullcontext
 
-            return nullcontext()
-
-        clock = FrameClock(_THINK_FRAMES)
-
-        def render_live():
-            states = state_getter()
-            lines = [Text(f"Running {len(states)} tasks in parallel:", style="grey46")]
-            frame = clock.current()
-            for s in states:
-                label = (
-                    f"[{s.index + 1}] {s.agent}: {s.task}"
-                    if s.agent
-                    else f"[{s.index + 1}] {s.task}"
-                )
-                if s.done:
-                    icon = "✓" if s.success else "✗"
-                    lines.append(
-                        Text(
-                            f"  {icon} {label} ({s.duration_s:.1f}s)",
-                            style="grey46",
-                        )
-                    )
-                else:
-                    lines.append(Text(f"  {frame} {label}", style="grey46"))
-                    lines.append(Text(f"       {s.status}", style="grey46"))
-            return Text("\n").join(lines)
-
-        return Live(
-            render_live(),
-            console=self.con,
-            refresh_per_second=8,
-            transient=True,
-            get_renderable=render_live,
-        )
+        return nullcontext()
 
     # ── Ask-tool announcement ────────────────────────
 
