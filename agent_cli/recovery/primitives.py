@@ -10,36 +10,28 @@ See ``docs/robust-harness/DESIGN.md`` §2.2 for the contract.
 
 from __future__ import annotations
 
-# Cap echoed segment length. Head-truncate keeps the prefix where
-# structural drift markers (YAML-style ``thought:`` / function-call
-# ``tool(args)`` syntax / leading prose) typically appear.
-ECHO_HEAD = 400
 
-
-def _truncate_head(text: str, n: int = ECHO_HEAD) -> str:
-    """Strip and head-truncate (keep first ``n`` chars)."""
-    cleaned = text.strip() if text else ""
-    if not cleaned:
-        return ""
-    if len(cleaned) > n:
-        cleaned = cleaned[:n] + "..."
-    return cleaned
-
-
-def echo_prior_output(content: str = "") -> str:
+def echo_prior_output(content: str) -> str:
     """Mirror the model's prior emitted text back at it for failure grounding.
 
-    Returns the *body* of the echo block — a delimited section quoting the
-    head of ``content``. Caller wraps with framing text appropriate to
+    Returns the *body* of the echo block — a delimited section quoting
+    ``content`` in full. Caller wraps with framing text appropriate to
     the failure (e.g. "Your response was not valid JSON.").
 
-    Returns an empty string when ``content`` is empty/whitespace — the
-    caller should fall back to a static reminder in that case.
+    Returns an empty string when ``content`` is empty / whitespace —
+    the caller should fall back to a static reminder in that case.
+
+    Why no truncation: format-failure signals can appear at *either*
+    end of a malformed output. A truncated JSON whose closing brace
+    is missing looks fine in the head; a long-prose drift only shows
+    its error at the tail. The full echo costs more tokens but yields
+    a more accurate diagnosis from the model on the next turn. Recovery
+    fires rarely enough that the extra context isn't a hot path.
     """
-    content_quote = _truncate_head(content)
-    if not content_quote:
+    cleaned = content.strip() if content else ""
+    if not cleaned:
         return ""
-    return "\n".join(["Your prior output:", "---", content_quote, "---", ""])
+    return "\n".join(["Your prior output:", "---", cleaned, "---", ""])
 
 
 # ``constrain_format_json`` / ``constrain_action_required`` lived here

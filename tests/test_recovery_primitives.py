@@ -8,7 +8,6 @@ See docs/robust-harness/DESIGN.md §2.2.
 """
 
 from agent_cli.recovery.primitives import (
-    ECHO_HEAD,
     echo_prior_output,
     probe_progress,
     restate_task,
@@ -21,9 +20,6 @@ class TestEchoPriorOutput:
 
     def test_whitespace_only_returns_empty(self):
         assert echo_prior_output("   \n\t  ") == ""
-
-    def test_default_no_args_returns_empty(self):
-        assert echo_prior_output() == ""
 
     def test_short_content_quoted_verbatim(self):
         out = echo_prior_output("hello world")
@@ -40,23 +36,19 @@ class TestEchoPriorOutput:
         assert lines[2] == "payload"
         assert lines[3] == "---"
 
-    def test_long_content_head_truncated(self):
-        long = "HEAD" + "x" * (ECHO_HEAD * 2)
+    def test_long_content_quoted_in_full(self):
+        # Truncation was removed deliberately — format-failure signals
+        # can sit at either end of the malformed output, so giving the
+        # model only the head sometimes hid the real defect (e.g.
+        # JSON whose closing brace is the missing piece). Full echo
+        # costs more tokens but yields more accurate next-turn fixes.
+        long = "HEAD" + "x" * 2000 + "TAIL"
         out = echo_prior_output(long)
         assert "HEAD" in out
-        assert "..." in out
-        # Output should not contain the full padding
-        assert out.count("x") < long.count("x")
-
-    def test_truncation_threshold_at_echo_head(self):
-        exactly_n = "a" * ECHO_HEAD
-        over_n = "a" * (ECHO_HEAD + 1)
-        out_exact = echo_prior_output(exactly_n)
-        out_over = echo_prior_output(over_n)
-        # Exactly N chars: no ellipsis
-        assert "..." not in out_exact
-        # Over N chars: ellipsis appended
-        assert "..." in out_over
+        assert "TAIL" in out  # tail must reach the model too
+        assert "..." not in out
+        # All padding survives — no head-cap artifact.
+        assert out.count("x") == 2000
 
     def test_strips_leading_trailing_whitespace(self):
         out = echo_prior_output("  payload  \n\n")

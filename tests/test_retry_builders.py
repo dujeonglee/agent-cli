@@ -66,14 +66,29 @@ class TestFormatNoJsonRetry:
         intv = format_no_json_retry(prior_content="something")
         assert intv.primitives == ["echo_prior_output", "constrain_format_json"]
 
-    def test_long_content_is_head_truncated(self):
-        # Structural drift markers ('thought:', 'action:') sit at the head
-        long_content = "thought: HEAD MARKER " + ("noise " * 200)
+    def test_long_content_is_echoed_in_full(self):
+        # No head truncation any more — format-failure signals can
+        # sit at either end (a JSON whose closing brace is missing
+        # looks fine in the head; long-prose drift only shows its
+        # error at the tail). Echo gives the model the whole thing.
+        head_marker = "thought: HEAD MARKER"
+        tail_marker = "TAIL MARKER closing }"
+        long_content = head_marker + (" noise " * 200) + tail_marker
         intv = format_no_json_retry(prior_content=long_content)
-        assert "thought: HEAD MARKER" in intv.message
-        assert "..." in intv.message
-        # Tail should be dropped — count of "noise" must drop
-        assert intv.message.count("noise") < long_content.count("noise")
+        # Pull out only the quoted echo block; the surrounding
+        # framing text contains its own placeholder "..." in JSON
+        # example shapes (e.g. ``{"thought": "...", "action": ...}``)
+        # so a whole-message check would be tripped by the framing.
+        body = intv.message.split("---")
+        # Structure: [pre, body, post] — middle is the echoed payload.
+        assert len(body) >= 3
+        echo_body = body[1]
+        assert head_marker in echo_body
+        assert tail_marker in echo_body
+        # No truncation marker INSIDE the echo body specifically.
+        assert "..." not in echo_body
+        # All padding survives between the markers.
+        assert echo_body.count("noise") == long_content.count("noise")
 
     def test_quotes_in_content_do_not_break_message(self):
         content = "thought: \"quoted\" with 'mixed' delimiters"
