@@ -168,7 +168,21 @@ class MinimalRenderer(Renderer):
         # and stops when the last ``end_delegate_task`` fires; the
         # delegate tool only signals lifecycle via begin/end markers
         # now, not the panel context manager or the capture pair.
-        self._parallel_lock = threading.Lock()
+        #
+        # Why ``RLock`` instead of ``Lock``: ``begin_delegate_task``
+        # constructs a ``rich.Live(get_renderable=...)`` while
+        # holding this lock, and rich.Live's constructor invokes
+        # ``get_renderable()`` once SYNCHRONOUSLY to seed the first
+        # paint. That callable is ``_render_parallel_panel``, which
+        # itself re-acquires the same lock to snapshot per-task
+        # state. With a non-reentrant ``threading.Lock`` the same
+        # thread blocks on its own held lock — a self-deadlock that
+        # surfaces immediately on real terminals (the bug the user
+        # reported with 8 parallel delegate tasks hanging). A
+        # reentrant ``RLock`` lets the same thread re-acquire, so
+        # the constructor's synchronous probe completes and rich
+        # gets its initial renderable.
+        self._parallel_lock = threading.RLock()
         self._parallel_live: Live | None = None
         self._parallel_clock: FrameClock | None = None
         # task_id → dict with keys: index, agent, task, tid, done,
@@ -678,6 +692,16 @@ class MinimalRenderer(Renderer):
         attaches the capture buffer to the correct thread without
         the caller needing a separate ``render_start_capture()``.
         """
+        # The Live region's ``start()`` synchronously calls
+        # ``get_renderable`` once to seed the first paint —
+        # ``_render_parallel_panel`` then tries to acquire
+        # ``_parallel_lock`` to snapshot state. If we did
+        # ``live.start()`` while STILL holding ``_parallel_lock``,
+        # the same thread would block on its own non-reentrant
+        # ``threading.Lock`` and the whole worker would hang. So we
+        # construct the Live + register state under the lock, but
+        # release the lock BEFORE calling ``start()``.
+        new_live: Live | None = None
         with self._parallel_lock:
             if self._parallel_live is None and self.con.is_terminal:
                 # First task on a real terminal — bring the panel up.
@@ -692,14 +716,20 @@ class MinimalRenderer(Renderer):
                 # captured-output dump in ``end_delegate_task`` works
                 # the same way.
                 self._parallel_clock = FrameClock(_THINK_FRAMES)
-                self._parallel_live = Live(
-                    self._render_parallel_panel(),
+                # Static placeholder as the initial renderable —
+                # ``get_renderable`` (the callable below) is the
+                # source of truth on every refresh tick. ``start()``
+                # below will fire ``get_renderable`` once
+                # synchronously to draw frame 0; the lock is
+                # released by then so re-acquisition is safe.
+                new_live = Live(
+                    Text(""),
                     console=self.con,
                     refresh_per_second=8,
                     transient=True,
                     get_renderable=self._render_parallel_panel,
                 )
-                self._parallel_live.start()
+                self._parallel_live = new_live
             if not self._parallel_order:
                 # Fresh dump order for this parallel set (first task
                 # of a new fan-out, regardless of whether the Live
@@ -717,6 +747,12 @@ class MinimalRenderer(Renderer):
                 "captured": [],
             }
             self._parallel_order.append(task_id)
+        # Outside the lock: ``start()`` does a synchronous first-
+        # paint via ``get_renderable``, which re-acquires the
+        # ``_parallel_lock``. Calling it after the ``with`` block
+        # avoids the self-deadlock.
+        if new_live is not None:
+            new_live.start()
         # ``start_capture`` writes to ``self._captures`` under the
         # base lock; safe to call outside the panel lock.
         self.start_capture()
