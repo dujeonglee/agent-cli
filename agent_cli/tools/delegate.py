@@ -517,37 +517,31 @@ def _run_parallel(
     stop_event=None,
     hooks_config: dict | None = None,
 ) -> ToolResult:
-    """Execute multiple delegate tasks in parallel using threading."""
-    from agent_cli.render import (
-        render_push_depth,
-        render_pop_depth,
-        render_start_capture,
-        render_stop_capture,
-        render_replay_captured,
-        render_group_start,
-        render_group_end,
-        get_renderer,
-    )
-    from agent_cli.render.base import ParallelTaskState
+    """Execute multiple delegate tasks in parallel using threading.
+
+    UI orchestration (Live panel, per-task capture, group framing on
+    completion) lives entirely in the renderer now — this function
+    only signals the begin/end lifecycle markers. MinimalRenderer
+    starts a Live region on the first ``begin_delegate_task`` and
+    tears it down + dumps captured per-task output on the last
+    ``end_delegate_task``. WebRenderer routes per-task events via
+    the same markers into SSE collapsible cards.
+    """
+    from agent_cli.render import get_renderer
 
     results: list[ToolResult | None] = [None] * len(task_specs)
-    captured: list[list[str]] = [[] for _ in task_specs]
     durations: list[float] = [0.0] * len(task_specs)
-    thread_ids: list[int] = [0] * len(task_specs)
-    done_flags: list[bool] = [False] * len(task_specs)
     if stop_event is None:
         stop_event = threading.Event()
 
     renderer = get_renderer()
 
     def worker(index: int, spec: dict) -> None:
-        thread_ids[index] = threading.get_ident()
-        # Per-task identity for out-of-band UIs (web). CLI's renderer
-        # ignores these lifecycle markers; WebRenderer uses them to
-        # open / close a collapsible group card and routes every
-        # subsequent emit from this thread into that card via the
-        # ``_thread_to_task`` map.
-        task_id = f"delegate-{index}-{thread_ids[index]:x}"
+        # Per-task identity for renderer routing (CLI Live panel slot,
+        # Web SSE collapsible card). Including the thread id keeps it
+        # unique even if a future caller fans out the same index
+        # twice.
+        task_id = f"delegate-{index}-{threading.get_ident():x}"
         agent = spec.get("agent", "")
         task_text = spec.get("task", "")
         renderer.begin_delegate_task(
@@ -556,7 +550,6 @@ def _run_parallel(
             agent=agent,
             task_text=task_text,
         )
-        render_start_capture()
         t0 = time.monotonic()
         result_for_marker = None
         error_msg = ""
@@ -586,8 +579,6 @@ def _run_parallel(
             result_for_marker = results[index]
         finally:
             durations[index] = time.monotonic() - t0
-            captured[index] = render_stop_capture()
-            done_flags[index] = True
             success = bool(result_for_marker and result_for_marker.success)
             if result_for_marker and not result_for_marker.success:
                 error_msg = result_for_marker.error or ""
@@ -603,61 +594,17 @@ def _run_parallel(
         t = threading.Thread(target=worker, args=(i, spec), daemon=True)
         threads.append(t)
         t.start()
-
-    # Parallel-delegate progress display is owned by the renderer
-    # (UI rendering lives in the render module — no ``rich.Live`` /
-    # console writes from tools). The data the renderer needs to
-    # paint a snapshot of all workers is built here as a list of
-    # ``ParallelTaskState`` records on each refresh tick; the renderer
-    # decides what (if anything) to draw with it. WebRenderer's
-    # default is a no-op context manager because the same progress
-    # information already flows out via begin_delegate_task /
-    # end_delegate_task SSE cards.
-
-    def _state_snapshot() -> list[ParallelTaskState]:
-        out: list[ParallelTaskState] = []
-        for i, spec in enumerate(task_specs):
-            done = done_flags[i]
-            ok: bool | None
-            if done:
-                ok = bool(results[i] and results[i].success)
-            else:
-                ok = None
-            status = (
-                renderer.get_thread_status(thread_ids[i])
-                if thread_ids[i]
-                else "starting..."
-            )
-            out.append(
-                ParallelTaskState(
-                    index=i,
-                    agent=spec.get("agent", ""),
-                    task=spec.get("task", ""),
-                    done=done,
-                    success=ok,
-                    duration_s=durations[i] if done else 0.0,
-                    status=status,
-                )
-            )
-        return out
-
     try:
-        try:
-            with renderer.parallel_live_panel(_state_snapshot):
-                for t in threads:
-                    t.join()
-        except Exception:
-            # Live host (if any) raised — fall back to a plain join
-            # so workers still get reaped.
-            for t in threads:
-                t.join()
+        for t in threads:
+            t.join()
     finally:
-        # Restore terminal state after Rich Live (prevents readline cursor
-        # confusion with CJK input on subsequent prompts). Only meaningful
-        # when stdin is an actual TTY — ``agent-cli web`` run in the
-        # background detaches stdin, and ``termios.tcflush`` on a non-TTY
-        # raises OSError(ENODEV) on macOS which has surfaced as a worker
-        # error in the SSE stream.
+        # Restore terminal state after the renderer's Live region (if
+        # any) — prevents readline cursor confusion with CJK input on
+        # subsequent prompts. Only meaningful when stdin is an actual
+        # TTY; ``agent-cli web`` run in the background detaches stdin
+        # and ``termios.tcflush`` on a non-TTY raises OSError(ENODEV)
+        # on macOS, which has surfaced as a worker error in the SSE
+        # stream.
         try:
             import sys
             import termios
@@ -668,20 +615,6 @@ def _run_parallel(
             # ValueError catches "I/O operation on closed file" from
             # ``isatty()`` when the stream was already disposed.
             pass
-
-    # Replay each task as a group block
-    for i, spec in enumerate(task_specs):
-        task_text = spec.get("task", "")[:40]
-        agent = spec.get("agent", "")
-        label = f"[{i + 1}] {agent}: {task_text}" if agent else f"[{i + 1}] {task_text}"
-        success = bool(results[i] and results[i].success)
-
-        render_group_start(label, icon="🦀")
-        render_push_depth()
-        if captured[i]:
-            render_replay_captured(captured[i])
-        render_pop_depth()
-        render_group_end(label, success=success, duration_s=durations[i])
 
     return _format_parallel_results(task_specs, results)
 

@@ -732,20 +732,26 @@ class TestFrameWidthAlignment:
         spinner. A regression here would split the user's mental
         model of "agent is working" across two visual languages.
 
-        The Live region now lives in
-        ``MinimalRenderer.parallel_live_panel`` (the render module
-        owns all UI rendering); delegate.py just calls into it. We
-        grep the renderer source to confirm the same constant is in
-        use.
+        The Live region is built inside MinimalRenderer (the render
+        module owns all UI rendering). After the begin/end-driven
+        refactor the panel renderable lives in ``_render_parallel_panel``
+        and the Live lifecycle in ``begin_delegate_task`` /
+        ``end_delegate_task``. We grep the renderer source to confirm
+        the same constant is in use.
         """
         import inspect
 
         from agent_cli.render import minimal as _minimal
 
-        src = inspect.getsource(_minimal.MinimalRenderer.parallel_live_panel)
-        assert "_THINK_FRAMES" in src
+        # ``_render_parallel_panel`` is the body that draws each frame;
+        # ``begin_delegate_task`` constructs the FrameClock with the
+        # think-frames tuple.
+        panel_src = inspect.getsource(_minimal.MinimalRenderer._render_parallel_panel)
+        begin_src = inspect.getsource(_minimal.MinimalRenderer.begin_delegate_task)
+        combined = panel_src + begin_src
+        assert "_THINK_FRAMES" in combined
         # The old Braille frame literal must be gone.
-        assert "⣾" not in src
+        assert "⣾" not in combined
         # And the delegate tool must NOT host its own Live region
         # anymore — that would re-introduce the architectural leak
         # (UI rendering outside the render module).
@@ -758,23 +764,24 @@ class TestFrameWidthAlignment:
     def test_parallel_delegate_uses_frameclock(self):
         """The throttle/advance logic must live in ``FrameClock`` (the
         shared single-source-of-truth in render.minimal), not be
-        copy-pasted into delegate.py or elsewhere. The renderer's
-        ``parallel_live_panel`` is the only callsite outside the
-        single-task spinner."""
+        copy-pasted into delegate.py or elsewhere. After the begin/
+        end-driven refactor the FrameClock instantiation lives in
+        ``begin_delegate_task`` and the per-frame call in
+        ``_render_parallel_panel``."""
         import inspect
 
         from agent_cli.render import minimal as _minimal
 
-        src = inspect.getsource(_minimal.MinimalRenderer.parallel_live_panel)
-        assert "FrameClock" in src
+        begin_src = inspect.getsource(_minimal.MinimalRenderer.begin_delegate_task)
+        panel_src = inspect.getsource(_minimal.MinimalRenderer._render_parallel_panel)
+        assert "FrameClock" in begin_src
+        assert "FrameClock" in panel_src or ".current()" in panel_src
         # The hand-rolled throttle pattern must NOT reappear anywhere.
-        # (Comments mentioning ``_FRAME_INTERVAL`` are fine; the
-        # give-away is ``last_advance``, which only the open-coded
-        # form needs.)
         from agent_cli.tools import delegate as _delegate
 
         assert "last_advance" not in inspect.getsource(_delegate)
-        assert "last_advance" not in src
+        assert "last_advance" not in begin_src
+        assert "last_advance" not in panel_src
 
 
 class TestFrameClock:
