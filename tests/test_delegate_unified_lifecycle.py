@@ -142,6 +142,189 @@ class TestLiveRegionLifecycle:
         r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
 
 
+class TestNoSelfDeadlockOnPanelStart:
+    """User-reported regression. The first parallel ``delegate`` call
+    after PR #13 hung on real terminals — never returned from
+    ``begin_delegate_task``. Root cause was a non-reentrant
+    ``threading.Lock`` acquired by ``begin_delegate_task`` and again
+    (transitively) by ``_render_parallel_panel`` when that method
+    was invoked synchronously to seed ``Live``'s initial renderable.
+
+    The fix is to construct ``Live`` with a static placeholder
+    (``Text("")``) and let ``get_renderable=self._render_parallel_panel``
+    do the actual rendering on each refresh tick — at which point
+    the caller's lock has been released.
+
+    Two complementary checks below:
+      1. Source-level pattern check. Cheap, deterministic, and
+         pinpoints the exact bad pattern if it returns.
+      2. Runtime smoke test. Forces a terminal-like console so the
+         Live region actually starts, then runs begin/end inside a
+         thread with a timeout. Catches any future locking bug that
+         is shaped differently (e.g. someone refactoring the lock
+         into RLock and forgetting that ``Live`` writes block).
+    """
+
+    def test_begin_does_not_invoke_panel_method_synchronously(self):
+        # The exact bad pattern:
+        #   Live(self._render_parallel_panel(), ...)
+        # That call evaluates the panel method WHILE
+        # begin_delegate_task is holding _parallel_lock. The method
+        # itself acquires _parallel_lock to read state — non-reentrant
+        # → hang.
+        #
+        # Whitebox check: strip docstrings + comments before pattern
+        # match so the explanatory text in begin_delegate_task (which
+        # describes the bad pattern as a warning) doesn't false-trip
+        # the assertion.
+        src = inspect.getsource(MinimalRenderer.begin_delegate_task)
+        # Drop comments (anything after a # on a line).
+        # Drop docstring (triple-quoted block right after def).
+        executable_lines = []
+        in_docstring = False
+        for line in src.splitlines():
+            stripped = line.strip()
+            if not in_docstring and (
+                stripped.startswith('"""') or stripped.startswith("'''")
+            ):
+                # Open of docstring; check for same-line close.
+                quote = stripped[:3]
+                rest = stripped[3:]
+                if rest.endswith(quote) and len(rest) >= 3:
+                    continue  # single-line docstring
+                in_docstring = True
+                continue
+            if in_docstring:
+                if stripped.endswith('"""') or stripped.endswith("'''"):
+                    in_docstring = False
+                continue
+            # Strip trailing comment on executable line.
+            no_comment = line.split("#", 1)[0]
+            executable_lines.append(no_comment)
+        executable = "\n".join(executable_lines)
+
+        assert "self._render_parallel_panel()" not in executable, (
+            "begin_delegate_task invokes self._render_parallel_panel() "
+            "synchronously — this re-enters _parallel_lock and "
+            "self-deadlocks on the non-reentrant threading.Lock. "
+            'Pass a static placeholder (e.g. Text("")) as the '
+            "Live constructor's initial renderable, and use "
+            "``get_renderable=self._render_parallel_panel`` (callable "
+            "reference without parens) for the refresh loop."
+        )
+        # Positive companion: the safe pattern is in place.
+        assert "get_renderable=self._render_parallel_panel" in executable, (
+            "Live constructor must accept the panel method as a "
+            "callable via ``get_renderable=...`` (no parens) so it "
+            "runs later from rich's refresh thread, not inside "
+            "begin_delegate_task's lock-guarded block."
+        )
+
+    def test_begin_end_complete_without_hanging_on_terminal_like_console(self):
+        # Runtime regression. ``force_terminal=True`` makes
+        # ``Console.is_terminal`` return True, so MinimalRenderer's
+        # terminal-only branch fires and actually spins up the Live
+        # region — i.e. the exact code path the user hit.
+        #
+        # We run begin → end in a worker thread guarded by a hard
+        # timeout. If the deadlock returns, the thread can't finish
+        # and the assertion below fires instead of hanging the whole
+        # test session.
+        r = MinimalRenderer(Console(file=io.StringIO(), force_terminal=True))
+        done = threading.Event()
+        failure: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="task")
+                r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+            except BaseException as e:  # noqa: BLE001
+                failure.append(e)
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+
+        completed = done.wait(timeout=5)
+        if not completed:
+            # Best-effort cleanup: if Live was started, stop it so
+            # the suite can move on without leaking the refresh
+            # thread. (We're in the test thread here, not the
+            # deadlocked worker.)
+            live = r._parallel_live
+            if live is not None:
+                try:
+                    live.stop()
+                except Exception:
+                    pass
+            raise AssertionError(
+                "begin_delegate_task + end_delegate_task did not "
+                "complete within 5s on a terminal-like console — "
+                "MinimalRenderer's panel orchestration self-"
+                "deadlocked. See test_begin_does_not_invoke_panel"
+                "_method_synchronously for the typical cause."
+            )
+        assert failure == [], (
+            "begin/end raised on a terminal-like console: "
+            + ", ".join(f"{type(e).__name__}: {e}" for e in failure)
+        )
+
+    def test_multiple_workers_no_deadlock_on_terminal_like_console(self):
+        # Wider exercise: N concurrent workers all calling begin/end
+        # with the Live region actually live. This is the user's
+        # reported scenario (8 parallel tasks). If any lock-ordering
+        # bug reintroduces itself, this is the test most likely to
+        # surface it.
+        r = MinimalRenderer(Console(file=io.StringIO(), force_terminal=True))
+        N = 8
+        errors: list[BaseException] = []
+        done = threading.Event()
+        finished = [False] * N
+
+        def worker(i: int) -> None:
+            try:
+                tid = f"t{i}"
+                r.begin_delegate_task(
+                    task_id=tid, index=i, agent="", task_text=f"task {i}"
+                )
+                r.end_delegate_task(task_id=tid, success=True, duration_s=0.05)
+                finished[i] = True
+            except BaseException as e:  # noqa: BLE001
+                errors.append(e)
+
+        def all_workers() -> None:
+            threads = [
+                threading.Thread(target=worker, args=(i,), daemon=True)
+                for i in range(N)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+            done.set()
+
+        driver = threading.Thread(target=all_workers, daemon=True)
+        driver.start()
+        if not done.wait(timeout=10):
+            live = r._parallel_live
+            if live is not None:
+                try:
+                    live.stop()
+                except Exception:
+                    pass
+            raise AssertionError(
+                f"{sum(finished)}/{N} workers finished within 10s; "
+                "the rest deadlocked. Likely lock-ordering regression "
+                "in begin_delegate_task or _render_parallel_panel."
+            )
+        assert errors == [], (
+            "concurrent begin/end on terminal-like console raised: "
+            + ", ".join(f"{type(e).__name__}: {e}" for e in errors)
+        )
+        assert all(finished), f"only {sum(finished)}/{N} workers finished"
+
+
 # ─── Captured output replay ───────────────────────────────────
 
 
