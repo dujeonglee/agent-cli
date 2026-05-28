@@ -795,19 +795,6 @@ class MinimalRenderer(Renderer):
                 self._parallel_tasks.pop(tid, None)
             self._parallel_order = []
 
-    def parallel_live_panel(self, state_getter):
-        """Legacy entry point — superseded by the begin/end-driven
-        panel orchestration above.
-
-        Kept as a no-op so transitional callers (any code still in the
-        middle of being migrated) don't crash. Tool layer should not
-        call this any more; ``begin_delegate_task`` /
-        ``end_delegate_task`` are the only surface needed.
-        """
-        from contextlib import nullcontext
-
-        return nullcontext()
-
     # ── Ask-tool announcement ────────────────────────
 
     def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:
