@@ -204,6 +204,17 @@ def detect_nested_envelope(result_value: Any) -> bool:
     to look like JSON would corrupt observability data more than
     missed cases.
 
+    Uses ``strict=False`` for the parse: the same models that
+    double-wrap also routinely emit the inner JSON body with
+    literal newlines / tabs inside its string fields (markdown
+    bodies, line-wrapped prose) instead of properly escaped
+    ``\\n`` / ``\\t``. Strict mode rejects those as "invalid
+    control character", which previously slipped 5 / 8 cases on
+    a real parallel-delegate run through the detector unchanged.
+    ``strict=False`` keeps the structural guard (must be a JSON
+    object with ``result`` key) while accepting the messy bodies
+    these models actually produce.
+
     ``FAILURE_NESTED_ENVELOPE`` is still recorded by the caller for
     measurement; the auto-unwrap that ``unwrap_nested_envelope``
     performs only fixes the user-facing artifact.
@@ -214,7 +225,7 @@ def detect_nested_envelope(result_value: Any) -> bool:
     if not stripped.startswith('{"result"'):
         return False
     try:
-        parsed = json.loads(stripped)
+        parsed = json.loads(stripped, strict=False)
     except (json.JSONDecodeError, ValueError):
         return False
     return isinstance(parsed, dict) and "result" in parsed
@@ -230,6 +241,9 @@ def unwrap_nested_envelope(result_value: str) -> str:
         change the answer's shape — better to surface the LLM's
         actual output than silently coerce).
 
+    Uses ``strict=False`` for parity with ``detect_nested_envelope``
+    — see its docstring for why the lenient mode matters.
+
     Single-level only by design: recursive nesting (``{"result":
     "{\\"result\\": ...}"}``) is rare and almost always indicates a
     different bug that benefits from staying visible.
@@ -240,7 +254,7 @@ def unwrap_nested_envelope(result_value: str) -> str:
     if not stripped.startswith('{"result"'):
         return result_value
     try:
-        parsed = json.loads(stripped)
+        parsed = json.loads(stripped, strict=False)
     except (json.JSONDecodeError, ValueError):
         return result_value
     if not (isinstance(parsed, dict) and "result" in parsed):
