@@ -359,6 +359,123 @@ class TestGetMessagesPrepend:
         assert all("Summary" not in m["content"] for m in msgs)
 
 
+# ── force_fit (reactive overflow recovery, flow 2) ───
+
+
+def _fill(ctx, n: int, *, system: bool = True):
+    """Add ``n`` user messages (plus an optional leading system msg)."""
+    if system:
+        ctx.add({"role": "system", "content": "sys"})
+    for i in range(n):
+        ctx.add({"role": "user", "content": f"m{i} " * 8})
+
+
+class TestEvictFifoTarget:
+    def test_target_param_sheds_more_than_default(self, tmp_path):
+        """A smaller target_tokens evicts more aggressively than the
+        default (max_context_tokens)."""
+        ctx, _ = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        _fill(ctx, 20)
+        ctx._evict_fifo(target_tokens=30)
+        assert ctx._cache_tokens <= 30 or len(ctx._cache) == 1
+
+    def test_default_target_is_budget(self, tmp_path):
+        """No arg → drops to max_context_tokens (legacy behaviour)."""
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=40, compaction_enabled=False)
+        _fill(ctx, 20)
+        ctx._evict_fifo()
+        assert ctx._cache_tokens <= 40 or len(ctx._cache) == 1
+
+
+class TestForceFit:
+    def test_ratio_shrink_with_actual_and_target(self, tmp_path):
+        """keep_ratio = target/actual; cache estimate drops to that
+        fraction (FIFO path, compaction disabled)."""
+        ctx, _ = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        _fill(ctx, 20)
+        before_tokens = ctx._cache_tokens
+        before_len = len(ctx._cache)
+        # Server: actual=1000, target=500 → keep half.
+        shrunk = ctx.force_fit(target_tokens=500, actual_tokens=1000)
+        assert shrunk is True
+        assert len(ctx._cache) < before_len
+        assert ctx._cache_tokens <= before_tokens * 0.5
+
+    def test_returns_false_when_only_anchor(self, tmp_path):
+        """A single-message cache can't shrink → False, message kept."""
+        ctx, _ = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        ctx.add({"role": "user", "content": "only"})
+        assert ctx.force_fit(target_tokens=1, actual_tokens=100) is False
+        assert len(ctx._cache) == 1
+
+    def test_forward_progress_when_estimate_underflows(self, tmp_path):
+        """Even when the local estimate is absurdly low (CJK under-count),
+        force_fit removes at least one oldest message so the retry can
+        make headway."""
+        ctx, _ = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        _fill(ctx, 10)
+        before_len = len(ctx._cache)
+        # Simulate a severe under-estimate: estimate says 0 tokens, but the
+        # server rejected a 500-token prompt.
+        ctx._cache_tokens = 0
+        shrunk = ctx.force_fit(target_tokens=100, actual_tokens=500)
+        assert shrunk is True
+        assert len(ctx._cache) < before_len
+
+    def test_no_actual_trims_fraction(self, tmp_path):
+        """Without a server count, force_fit trims ~25% and lets the
+        retry loop converge."""
+        ctx, _ = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        _fill(ctx, 20)
+        before_tokens = ctx._cache_tokens
+        shrunk = ctx.force_fit(target_tokens=999_999, actual_tokens=None)
+        assert shrunk is True
+        assert ctx._cache_tokens <= before_tokens * 0.75
+
+    def test_compaction_attempted_before_fifo(self, tmp_path):
+        """When compaction is enabled, force_fit summarises first."""
+        ctx, calls = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=True
+        )
+        _fill(ctx, 20)
+        ctx.force_fit(target_tokens=10, actual_tokens=1_000_000)
+        assert len(calls) >= 1, "summariser should run before FIFO"
+
+    def test_compaction_disabled_uses_fifo_only(self, tmp_path):
+        """compaction_enabled=False → no summariser, pure FIFO."""
+        ctx, calls = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        _fill(ctx, 20)
+        before_len = len(ctx._cache)
+        ctx.force_fit(target_tokens=10, actual_tokens=1_000)
+        assert calls == []
+        assert len(ctx._cache) < before_len
+
+    def test_never_empties_cache_preserves_most_recent(self, tmp_path):
+        """Shedding everything possible still leaves the most recent
+        message as the anchor."""
+        ctx, _ = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        ctx.add({"role": "system", "content": "sys"})
+        for i in range(10):
+            ctx.add({"role": "user", "content": f"m{i} " * 8})
+        ctx.force_fit(target_tokens=0, actual_tokens=1_000_000)
+        assert len(ctx._cache) >= 1
+        assert ctx._cache[-1]["content"].startswith("m9")
+
+
 # ── 6. Fallback ──────────────────────────────────────
 
 

@@ -3243,3 +3243,89 @@ class TestNoOutputTruncation:
         assert "500#" in all_content, "Last line (500) should be in context"
         # Verify no truncation notice
         assert "[... truncated" not in all_content
+
+
+# Verified live against an omlx server (Qwen3.6-27B-MLX-8bit, 2026-05-30).
+_OMLX_OVERFLOW_MSG = (
+    "Prompt too long: 360012 tokens exceeds max context window of 262144 tokens"
+)
+
+
+class TestContextOverflowRecovery:
+    """flow 2 — reactive recovery when the server rejects an over-long
+    prompt with a 400. The loop must shrink the cache via force_fit and
+    retry, bounded so it never loops forever."""
+
+    def _ctx_with_history(self, tmp_path, n=12):
+        from agent_cli.context.manager import ContextManager
+
+        # compaction_enabled=False so force_fit takes the pure-FIFO path
+        # and doesn't call the (provider-backed) summariser, which would
+        # otherwise consume our mocked retry responses. The compact-first
+        # path is covered separately in test_context_compaction.py with a
+        # fake compactor.
+        ctx = ContextManager(
+            session_dir=tmp_path,
+            max_context_tokens=1_000_000,
+            compaction_enabled=False,
+        )
+        for i in range(n):
+            ctx.add({"role": "user", "content": f"old turn {i} " * 30})
+        return ctx
+
+    def test_shrinks_and_retries_then_succeeds(self, caps, tmp_path):
+        ctx = self._ctx_with_history(tmp_path)
+        before = len(ctx.get_raw_messages())
+        provider = MagicMock()
+        provider.call.side_effect = [
+            RuntimeError(_OMLX_OVERFLOW_MSG),  # first call: server 400
+            LLMResponse(content=_complete("recovered")),  # retry succeeds
+        ]
+        result = run_loop(
+            query="do it",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert result.output == "recovered"
+        assert provider.call.call_count == 2  # failed once, retried once
+        # The cache was shed before the retry.
+        assert len(ctx.get_raw_messages()) < before
+
+    def test_bounded_gives_up_cleanly(self, caps, tmp_path):
+        """Server keeps rejecting → loop gives up without spinning; the
+        number of attempts is bounded by _MAX_OVERFLOW_RETRIES."""
+        from agent_cli.loop import _MAX_OVERFLOW_RETRIES
+
+        ctx = self._ctx_with_history(tmp_path, n=40)
+        provider = MagicMock()
+        provider.call.side_effect = [RuntimeError(_OMLX_OVERFLOW_MSG)] * 30
+        result = run_loop(
+            query="do it",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        # Did not succeed, but terminated (no infinite loop).
+        assert result.output != "recovered"
+        # initial attempt + at most _MAX_OVERFLOW_RETRIES shrink-retries
+        assert provider.call.call_count <= 1 + _MAX_OVERFLOW_RETRIES
+
+    def test_non_overflow_error_not_retried(self, caps, tmp_path):
+        """A non-overflow failure must NOT trigger force_fit/retry."""
+        ctx = self._ctx_with_history(tmp_path)
+        before = len(ctx.get_raw_messages())
+        provider = MagicMock()
+        provider.call.side_effect = [RuntimeError("Connection refused")]
+        run_loop(
+            query="do it",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert provider.call.call_count == 1  # no retry
+        # cache untouched by recovery (only the query was appended by setup)
+        assert len(ctx.get_raw_messages()) == before + 1
