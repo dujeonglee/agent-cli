@@ -11,7 +11,16 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+
+# Serializes every interactive user read (``confirm`` y/n/a AND ``ask``'s
+# free-text ``prompt_user``) across threads. Parallel delegate runs each
+# task in its own worker thread; without one shared lock two workers could
+# prompt at once and a single answer could be consumed by the wrong one.
+# Re-entrant so a caller that already holds it (e.g. the dangerous-shell
+# guard re-checking its allowlist around ``confirm``) can nest the read.
+interactive_lock = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -315,19 +324,43 @@ class Renderer(ABC):
             The stripped user input, or ``default`` on empty input.
         """
 
-    def can_confirm(self) -> bool:
-        """Whether an interactive confirmation can actually be shown to
-        the user right now.
+    def can_prompt(self) -> bool:
+        """Whether an interactive prompt — a ``confirm`` y/n/a or ``ask``'s
+        free-text question — can actually be shown to the user right now.
 
-        The dangerous-shell guard calls this before prompting: a renderer
-        that can't surface a prompt (no TTY, no connected client) reports
-        ``False`` so the caller refuses the command with a clear error
-        instead of hanging on input that will never arrive. Default
-        ``True`` — most renderers are attached to a live interactive
-        surface; those whose ability depends on runtime state (a terminal,
-        an open connection) override this.
+        Callers check this before blocking on a read: a renderer that
+        can't surface a prompt (no TTY, no connected client) reports
+        ``False`` so the caller refuses / substitutes a default instead of
+        hanging on input that will never arrive. Default ``True`` — most
+        renderers are attached to a live interactive surface; those whose
+        ability depends on runtime state (a terminal, an open connection)
+        override this.
         """
         return True
+
+    @contextmanager
+    def _prompt_display_guard(self):
+        """Context wrapping a blocking user read so the renderer can quiet
+        any output that would clash with it.
+
+        Default no-op. ``MinimalRenderer`` overrides it to pause an active
+        Rich ``Live`` region (spinner / parallel-delegate panel) that would
+        otherwise repaint over the prompt; ``WebRenderer`` needs nothing
+        (its prompt is an out-of-band SSE event).
+        """
+        yield
+
+    def _guarded_read(self, read):
+        """Run a blocking user read under the shared serialization lock and
+        the renderer's display guard. ``confirm`` and ``prompt_user`` both
+        route their read through here so they serialize against each other
+        (one outstanding prompt at a time → answers can't cross wires) and
+        share one display-quieting policy. ``read`` is a zero-arg callable
+        performing the actual blocking read; its return value is passed
+        through, its exceptions (EOF/abort) propagate to the caller."""
+        with interactive_lock:
+            with self._prompt_display_guard():
+                return read()
 
     @abstractmethod
     def confirm(

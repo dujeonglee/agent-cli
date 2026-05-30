@@ -8,6 +8,18 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
+from agent_cli.render.minimal import MinimalRenderer
+
+
+@pytest.fixture(autouse=True)
+def _force_can_prompt(monkeypatch):
+    """``_handle_ask`` now refuses to block when the renderer can't prompt
+    (no TTY under pytest). These tests exercise the input-reading path, so
+    force the capability True; the gate itself is covered elsewhere."""
+    monkeypatch.setattr(MinimalRenderer, "can_prompt", lambda self: True)
+
 
 class TestReadUserInput:
     def test_single_line(self):

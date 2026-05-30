@@ -174,7 +174,7 @@ class TestShellDangerousCommandConfirmation:
         check)."""
         from agent_cli.render import get_renderer
 
-        monkeypatch.setattr(get_renderer(), "can_confirm", lambda: True)
+        monkeypatch.setattr(get_renderer(), "can_prompt", lambda: True)
 
     def test_disabled_via_env_var_runs_without_prompt(self, monkeypatch):
         """AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 — bypass entirely."""
@@ -189,7 +189,7 @@ class TestShellDangerousCommandConfirmation:
         """Confirmation enabled + renderer can't prompt = refuse. We do
         NOT silently drop the check; the LLM is told why so it doesn't
         keep retrying. Under pytest the CLI renderer has no TTY, so
-        ``can_confirm()`` is False."""
+        ``can_prompt()`` is False."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
         result = tool_shell({"command": "rm -rf /tmp/build"})
         assert not result.success
@@ -347,7 +347,7 @@ class TestShellConfirmationComments:
     def _force_tty(self, monkeypatch):
         from agent_cli.render import get_renderer
 
-        monkeypatch.setattr(get_renderer(), "can_confirm", lambda: True)
+        monkeypatch.setattr(get_renderer(), "can_prompt", lambda: True)
 
     def test_ask_returns_decision_and_empty_comment(self):
         from agent_cli.tools.shell import _ask_confirmation

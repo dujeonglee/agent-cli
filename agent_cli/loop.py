@@ -1662,15 +1662,23 @@ def _handle_ask(questions: list[str]) -> str:
     # gets a stable answer slot even when the user bails.
     from agent_cli.render import get_renderer
 
-    try:
-        answer = get_renderer().prompt_user(
-            f"{prefix}\n{prefix}Your answer: ",
-            multiline=True,
-            continuation=f"{prefix}... ",
-            context=context_text,
-        )
-    except (EOFError, KeyboardInterrupt):
+    if not get_renderer().can_prompt():
+        # No interactive channel right now (non-TTY CLI / no connected web
+        # client) → don't block forever on an answer that can't arrive;
+        # give the model a stable answer slot. ``prompt_user`` itself
+        # serializes + pauses any Live panel, so a delegate worker thread
+        # is fine when a channel IS available.
         answer = "(no response)"
+    else:
+        try:
+            answer = get_renderer().prompt_user(
+                f"{prefix}\n{prefix}Your answer: ",
+                multiline=True,
+                continuation=f"{prefix}... ",
+                context=context_text,
+            )
+        except (EOFError, KeyboardInterrupt):
+            answer = "(no response)"
 
     q_part = "\n".join(f"Q: {_strip_leading_marker(q)}" for q in questions)
     return f"{q_part}\nA: {answer}"
