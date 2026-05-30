@@ -173,6 +173,52 @@ class TestHandleSlashCommand:
         assert "Usage:" in data["content"]
         assert data["success"] is False
 
+    def test_slash_compact_reports_before_after(self):
+        from unittest.mock import MagicMock
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+        ctx = MagicMock()
+        ctx.compact_now.return_value = (5000, 2000)
+
+        handled = handle_slash_command("/compact", renderer, ctx=ctx)
+
+        assert handled is True
+        ctx.compact_now.assert_called_once()
+        event, data = conn.queue.get(timeout=1.0)
+        assert event == "observation"
+        assert data["tool_name"] == "compact"
+        assert data["success"] is True
+        assert "5,000" in data["content"] and "2,000" in data["content"]
+
+    def test_slash_compact_no_change(self):
+        from unittest.mock import MagicMock
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+        ctx = MagicMock()
+        ctx.compact_now.return_value = (3000, 3000)
+        ctx.max_context_tokens = 100000
+
+        handle_slash_command("/compact", renderer, ctx=ctx)
+        _, data = conn.queue.get(timeout=1.0)
+        assert "Nothing to compact" in data["content"]
+
+    def test_slash_compact_without_ctx_reports_unavailable(self):
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        assert handle_slash_command("/compact", renderer, ctx=None) is True
+        _, data = conn.queue.get(timeout=1.0)
+        assert data["success"] is False
+
     def test_slash_help_lists_supported_commands(self):
         from agent_cli.web.server import handle_slash_command
 

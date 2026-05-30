@@ -934,3 +934,33 @@ class TestEnsureWithin:
         ctx.ensure_within(20)
         assert calls == []  # no summariser
         assert len(ctx.get_raw_messages()) < before  # FIFO shed
+
+
+class TestCompactNow:
+    """Manual compaction trigger (the /compact command)."""
+
+    def test_compacts_and_reports_before_after(self, tmp_path):
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        ctx.add({"role": "system", "content": "sys"})
+        for i in range(20):
+            ctx.add({"role": "user", "content": f"m{i} " * 10})
+        before, after = ctx.compact_now()
+        assert len(calls) >= 1  # summariser ran
+        assert after < before  # cache shrank
+
+    def test_noop_when_nothing_to_evict(self, tmp_path):
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        ctx.add({"role": "system", "content": "sys"})
+        before, after = ctx.compact_now()
+        assert before == after  # only anchor — nothing old enough to evict
+        assert calls == []
+
+    def test_noop_when_compaction_disabled(self, tmp_path):
+        ctx, calls = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        for i in range(20):
+            ctx.add({"role": "user", "content": f"m{i} " * 10})
+        before, after = ctx.compact_now()
+        assert before == after  # disabled → no-op, no FIFO drop
+        assert calls == []

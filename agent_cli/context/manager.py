@@ -317,6 +317,28 @@ class ContextManager:
         if self._cache_tokens > target_tokens:
             self._evict_fifo(target_tokens)
 
+    def compact_now(self) -> tuple[int, int]:
+        """Manual compaction — the ``/compact`` command. Run one
+        ``_compact`` pass (summarise the oldest ~half of the dynamic
+        cache) and return ``(tokens_before, tokens_after)``.
+
+        No-op (equal values) when compaction is disabled, no compactor
+        callback is wired, or there's nothing old enough to evict
+        (``_split_for_compaction`` yields an empty set — e.g. only the
+        system anchor + one turn). A summariser failure surfaces a
+        warning and leaves the cache as-is; unlike ``ensure_within`` we
+        don't force a FIFO drop here, because a manual ``/compact`` asks
+        to *summarise*, not to silently discard turns.
+        """
+        before = self._cache_tokens
+        if not self._compaction_enabled or self._compactor_callback is None:
+            return before, before
+        try:
+            self._compact()
+        except CompactionError as e:
+            render_compaction_progress(phase="warning", reason=str(e))
+        return before, self._cache_tokens
+
     def _compact(self) -> None:
         """Execute one compaction pass — split, summarise, extract paths,
         rebuild cache, persist. Raises ``CompactionError`` on summariser
