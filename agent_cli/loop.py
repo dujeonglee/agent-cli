@@ -57,6 +57,7 @@ from agent_cli.render import (
     render_step,
     render_stream_chunk,
     render_stream_end,
+    render_token_usage,
     render_push_depth,
     render_pop_depth,
     render_group_start,
@@ -184,6 +185,10 @@ class AgentLoop:
         # cannot shrink enough, or the server keeps rejecting) fails
         # cleanly instead of looping forever.
         self.overflow_retries = 0
+        # Cumulative output tokens across this loop's turns — fed to the
+        # renderer's per-turn token-usage line / web top-bar so the user
+        # sees a running session total alongside the per-turn numbers.
+        self._total_output_tokens = 0
         self._interrupted = False
         self._prev_sigint_handler = None
         self.graceful_interrupt = graceful_interrupt
@@ -467,7 +472,13 @@ class AgentLoop:
 
         # Show token stats if available (Ollama provides eval durations)
         if response.usage:
-            _render_token_stats(response.usage, self.turn, self.verbose)
+            self._total_output_tokens += response.usage.output_tokens or 0
+            stats = _build_token_stats(
+                response.usage,
+                self.capabilities.context_window,
+                self._total_output_tokens,
+            )
+            render_token_usage(stats, self.turn, self.verbose)
 
         # PostLLMCall hook
         self._fire_hook("PostLLMCall", llm_response=llm_text)
@@ -1475,40 +1486,33 @@ def run_loop(
     ).run()
 
 
-def _render_token_stats(usage, turn: int, verbose: bool = False) -> None:
-    """Render token throughput stats when duration data is available.
+def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
+    """Build the render-agnostic token-usage payload for one turn.
 
-    When verbose is False, append a short hint pointing at --verbose so users
-    know raw LLM responses are available on demand (the per-turn `📄 raw ...`
-    line is suppressed in non-verbose mode to keep the stream uncluttered).
+    Pure data — the renderer (CLI line / web top-bar) decides how to
+    show it. ``input_tokens`` is the server's count for the whole prompt
+    (system + messages), i.e. the current context occupancy; with
+    ``context_window`` the renderer derives a usage %. Speeds/ttft are
+    included when the provider reported durations (Ollama/omlx do; the
+    Anthropic streaming path leaves them 0 → omitted by the renderer).
     """
-    parts = []
-    if usage.ttft_ns > 0:
-        parts.append(f"ttft: {usage.ttft_ns / 1e6:.0f}ms")
-    if usage.input_tokens:
-        if usage.prompt_eval_ns > 0:
-            speed = usage.input_tokens / (usage.prompt_eval_ns / 1e9)
-            parts.append(f"in: {usage.input_tokens} tok ({speed:.0f} tok/s)")
-        else:
-            parts.append(f"in: {usage.input_tokens} tok")
-    if usage.output_tokens:
-        if usage.eval_ns > 0:
-            speed = usage.output_tokens / (usage.eval_ns / 1e9)
-            parts.append(f"out: {usage.output_tokens} tok ({speed:.0f} tok/s)")
-        else:
-            parts.append(f"out: {usage.output_tokens} tok")
-    # Anthropic prompt cache visibility — only render when non-zero so
-    # other providers' summary lines stay unchanged.
-    if usage.cache_read_input_tokens:
-        parts.append(f"cache hit: {usage.cache_read_input_tokens} tok")
-    if usage.cache_creation_input_tokens:
-        parts.append(f"cache write: {usage.cache_creation_input_tokens} tok")
-    if not parts:
-        return
-    msg = " | ".join(parts)
-    if not verbose:
-        msg += "  (use --verbose to view raw response)"
-    render_status("running", msg, turn)
+    return {
+        "in": usage.input_tokens,
+        "out": usage.output_tokens,
+        "in_speed": (
+            usage.input_tokens / (usage.prompt_eval_ns / 1e9)
+            if usage.prompt_eval_ns > 0
+            else 0
+        ),
+        "out_speed": (
+            usage.output_tokens / (usage.eval_ns / 1e9) if usage.eval_ns > 0 else 0
+        ),
+        "ttft_ms": usage.ttft_ns / 1e6 if usage.ttft_ns > 0 else 0,
+        "cache_read": usage.cache_read_input_tokens,
+        "cache_write": usage.cache_creation_input_tokens,
+        "context_window": context_window,
+        "total_out": total_out,
+    }
 
 
 # Fields a model might use to wrap a question's text inside a dict —

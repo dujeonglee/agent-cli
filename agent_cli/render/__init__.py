@@ -107,6 +107,10 @@ def render_status(state: str, message: str, turn: int = 0) -> None:
     _renderer.status(state, message, turn)
 
 
+def render_token_usage(stats: dict, turn: int, verbose: bool = False) -> None:
+    _renderer.token_usage(stats, turn, verbose)
+
+
 def render_compaction_progress(
     *,
     phase: str,

@@ -113,6 +113,44 @@ class TestConnectionLifecycle:
         assert conn.queue.empty()
 
 
+class TestTokenUsage:
+    """Per-turn token usage: live emit + latest-cached snapshot replay."""
+
+    _STATS = {"in": 5000, "out": 320, "context_window": 262144, "total_out": 320}
+
+    def test_emits_token_usage_event(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.token_usage(self._STATS, turn=2)
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "token_usage"
+        assert data["in"] == 5000
+        assert data["context_window"] == 262144
+        assert data["turn"] == 2
+
+    def test_token_usage_is_transient_not_buffered(self):
+        """Each turn's usage replaces the last — it must not pile up in
+        the persistent buffer (only the latest is cached separately)."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.token_usage(self._STATS, turn=1)
+        assert r.persistent_count == 0
+
+    def test_latest_token_usage_replayed_on_reconnect(self):
+        """A client connecting after a turn sees the latest usage in its
+        snapshot, so the top-bar readout isn't blank until the next turn."""
+        r = WebRenderer()
+        first = WebConnection(id="c1")
+        r.register_connection(first)
+        r.token_usage(self._STATS, turn=1)
+        # New connection (takeover) — snapshot should carry the usage.
+        second = WebConnection(id="c2")
+        snapshot = r.register_connection(second)
+        assert any(ev == "token_usage" and d.get("in") == 5000 for ev, d in snapshot)
+
+
 # ── Prune (FIFO sync) ──────────────────────────────
 
 

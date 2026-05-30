@@ -36,6 +36,7 @@
   const $send = document.getElementById("send");
   const $abort = document.getElementById("abort");
   const $info = document.getElementById("info");
+  const $tokenUsage = document.getElementById("token-usage");
   const $status = document.getElementById("conn-status");
   const $modeBadge = document.getElementById("input-mode-badge");
   const $inputArea = document.getElementById("input-area");
@@ -893,6 +894,42 @@
     // Full path in the tooltip — the header truncates with ellipsis
     // for long paths but the user can still hover to see the whole.
     $info.title = d.workspace || "";
+  });
+
+  function fmtTok(n) {
+    n = n || 0;
+    return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
+  }
+
+  es.addEventListener("token_usage", function (e) {
+    // Top-bar readout: context occupancy %, this turn's in/out, and the
+    // cumulative session output. Server sends raw counts; we format here.
+    const d = JSON.parse(e.data);
+    const parts = [];
+    const inTok = d.in || 0;
+    const win = d.context_window || 0;
+    if (inTok && win) {
+      const pct = Math.round((inTok / win) * 100);
+      parts.push("ctx " + fmtTok(inTok) + "/" + fmtTok(win) + " (" + pct + "%)");
+    }
+    if (inTok || d.out) {
+      parts.push("↑" + fmtTok(inTok) + " ↓" + fmtTok(d.out));
+    }
+    if (d.total_out) {
+      parts.push("Σ↓" + fmtTok(d.total_out));
+    }
+    $tokenUsage.textContent = parts.join(" · ");
+    $tokenUsage.title =
+      "context " +
+      fmtTok(inTok) +
+      " / " +
+      fmtTok(win) +
+      " · turn in " +
+      fmtTok(inTok) +
+      " out " +
+      fmtTok(d.out) +
+      " · session out " +
+      fmtTok(d.total_out);
   });
 
   es.addEventListener("user_message", function (e) {
