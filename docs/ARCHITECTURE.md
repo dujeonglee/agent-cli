@@ -1318,15 +1318,21 @@ build_system_prompt(capabilities, active_tools, include_delegate, skill_stack, s
 | 분류 | 파일 수 | 테스트 수 | 실행 방법 |
 |------|---------|----------|----------|
 | 유닛 테스트 | ~69 | ~2030 | `pytest tests/` |
+| omlx 통합 (E2E) | 2 | ~25 | `pytest tests/ -m omlx_integration` |
+
+**omlx 통합 테스트:** `tests/test_integration_omlx.py` + `tests/test_integration_omlx_builtin.py`. 실 OpenAI 호환 omlx 서버를 대상으로 `run_loop`(질문/read/shell/write/edit/multi-step), `provider.call` ReAct 파싱, 런타임 capability 감지, 스킬 실행(fork·dynamic injection·allowed_tools·디렉토리 구조·bracket args), 훅(Pre/PostToolUse), delegate(none/fork), explorer 에이전트, plan 스킬, @agent dispatch를 검증. conftest fixtures(`omlx_provider`, `integration_model`, `model_capabilities`)는 서버 `/v1/models` 프로브로 가용성을 확인하고, 미가용 시 전부 skip → `pytest tests/`는 항상 green. 연결은 env(`OMLX_BASE_URL` 기본 `http://127.0.0.1:8000/v1`, `OMLX_API_KEY`, `INTEGRATION_MODELS` 기본 `Qwen3.6-27B-MLX-8bit`)로 override. 순수 로딩/프롬프트 검증은 유닛(test_builtin_skills/agents)에 있어 통합에서는 제외.
 
 ### 10.2 테스트 실행
 
 ```bash
-# 전체 (유닛)
+# 전체 (유닛; 통합은 서버 미가용 시 자동 skip)
 pytest tests/ -v
 
 # 특정 모듈
 pytest tests/test_react_parser.py -v
+
+# omlx 통합 E2E (실 서버 필요)
+pytest tests/ -m omlx_integration -v
 ```
 
 ---
