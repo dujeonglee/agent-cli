@@ -112,6 +112,38 @@ class TestObservationCompact:
         assert "@@" not in out
 
 
+class TestColorizeDiffLine:
+    """``_colorize_diff_line`` applies Rich style to a PLAIN unified-diff
+    line by its leading char (colour lives in the renderer now, not in
+    format_diff)."""
+
+    def _c(self, line):
+        from agent_cli.render.minimal import _colorize_diff_line
+
+        return _colorize_diff_line(line)
+
+    def test_added_line_green(self):
+        assert self._c("+new code") == "[green]+new code[/green]"
+
+    def test_removed_line_red(self):
+        assert self._c("-old code") == "[red]-old code[/red]"
+
+    def test_hunk_header_cyan(self):
+        assert self._c("@@ -1,2 +1,2 @@") == "[cyan]@@ -1,2 +1,2 @@[/cyan]"
+
+    def test_file_headers_bold(self):
+        assert self._c("--- a/x.py") == "[bold]--- a/x.py[/bold]"
+        assert self._c("+++ b/x.py") == "[bold]+++ b/x.py[/bold]"
+
+    def test_context_line_plain(self):
+        assert self._c(" unchanged") == " unchanged"
+
+    def test_source_brackets_escaped(self):
+        # A literal `[` in the diff content must be escaped so Rich
+        # doesn't parse it as a style tag.
+        assert self._c("+x = [1, 2]") == "[green]+x = \\[1, 2][/green]"
+
+
 class TestThoughtRendering:
     def test_thought_icon(self):
         out = _capture(lambda: render_step("thought", "I need to think...", 1))
