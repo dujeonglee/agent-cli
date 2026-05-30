@@ -30,7 +30,7 @@ import pytest
 
 from agent_cli.loop import AgentLoop
 from agent_cli.prompts.system_prompt import _build_execution_context
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.recursion import (
     format_depth_limit_error,
     format_recursion_error,

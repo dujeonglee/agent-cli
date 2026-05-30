@@ -243,7 +243,7 @@ class TestProviderWiring:
 
     def test_anthropic_retries_on_timeout(self, monkeypatch):
         from agent_cli.providers.anthropic import AnthropicProvider
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=4096,
@@ -272,7 +272,7 @@ class TestProviderWiring:
 
     def test_openai_compat_retries_on_timeout(self, monkeypatch):
         from agent_cli.providers.openai_compat import OpenAICompatProvider
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=4096,
@@ -300,7 +300,7 @@ class TestProviderWiring:
 
     def test_openai_retries_on_timeout(self, monkeypatch):
         from agent_cli.providers.openai_compat import OpenAICompatProvider
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=4096,

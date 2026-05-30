@@ -31,7 +31,7 @@ from agent_cli.prompts.system_prompt import (
     _load_directives,
     build_system_prompt,
 )
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 
 
 def _make_caps(ctx_window: int = 32768) -> ModelCapabilities:

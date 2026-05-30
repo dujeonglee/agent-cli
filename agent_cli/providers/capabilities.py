@@ -17,7 +17,7 @@ from agent_cli.config import get_model_entry, save_model_entry
 # runtime capability detection so the user sees what each probe step
 # is doing. Cold-load + two probes can take 20-30s for a large model
 # the first time; without progress the CLI appears frozen. Default
-# None keeps compat.py callable in isolation (tests, scripts).
+# None keeps capabilities.py callable in isolation (tests, scripts).
 _progress_cb: Callable[[str], None] | None = None
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from agent_cli.constants import DELEGATE_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.resource_loader import ResourceLoader
 from agent_cli.tools.result import ToolResult
 

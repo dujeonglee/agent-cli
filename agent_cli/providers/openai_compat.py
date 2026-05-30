@@ -12,7 +12,7 @@ import requests
 from agent_cli.constants import LLM_API_TIMEOUT
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import post_with_retry
 
 

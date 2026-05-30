@@ -6,7 +6,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 from agent_cli.providers.base import LLMResponse
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 
 # Shared test capabilities
 _CAPS = ModelCapabilities(
