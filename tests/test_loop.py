@@ -1443,8 +1443,10 @@ class TestGracefulInterrupt:
         # LLM was called once (first iteration)
         assert provider.call.call_count == 1
 
-    def test_interrupt_records_in_ctx(self, caps, tmp_path):
-        """Interrupt adds message to ctx."""
+    def test_interrupt_records_observation_in_ctx(self, caps, tmp_path):
+        """Interrupt is recorded as a tool-style observation, not a bare
+        user message — so the transcript doesn't show two consecutive
+        user turns and recent_exchanges skips it via the ``tool`` field."""
         from agent_cli.loop import AgentLoop
         from agent_cli.context.manager import ContextManager
 
@@ -1464,13 +1466,29 @@ class TestGracefulInterrupt:
         loop._interrupted = True
         loop.run()
 
-        # Check ctx has interrupt message
-        msgs = ctx.get_messages()
-        user_msgs = [m for m in msgs if m["role"] == "user"]
-        interrupt_msgs = [
-            m for m in user_msgs if m["content"].startswith("⚡ User interrupted")
+        # Raw history: the interrupt is a tool observation, not a plain
+        # user message.
+        raw = ctx.get_raw_messages()
+        interrupts = [m for m in raw if m.get("tool") == "interrupt"]
+        assert len(interrupts) == 1
+        assert interrupts[0]["role"] == "user"
+        assert interrupts[0]["success"] is False
+        assert interrupts[0]["content"].startswith("⚡ User interrupted")
+        # No bare user-role INTERRUPT_NOTICE (the old shape).
+        from agent_cli.constants import INTERRUPT_NOTICE
+
+        bare = [
+            m
+            for m in raw
+            if m.get("role") == "user"
+            and not m.get("tool")
+            and m.get("content") == INTERRUPT_NOTICE
         ]
-        assert len(interrupt_msgs) == 1
+        assert bare == []
+
+        # Rendered for the LLM: shows up as an "[interrupt] …" observation.
+        rendered = [m["content"] for m in ctx.get_messages() if m["role"] == "user"]
+        assert any(c.startswith("[interrupt]") for c in rendered)
 
     def test_stop_event_between_turns_reports_interrupt(self, caps, tmp_path):
         """Repro for the "Max turns (0) reached" misreport: a Ctrl+C during

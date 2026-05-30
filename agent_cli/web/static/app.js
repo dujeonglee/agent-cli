@@ -57,25 +57,39 @@
   // a fresh client receives.
   let workerBusy = false;
 
+  // True when the Send button is acting as a Stop button: chat mode +
+  // worker busy. In that state a click POSTs /api/stop instead of
+  // sending, halting the in-flight turn at the next turn boundary
+  // (server.trigger_stop → run_loop stop_event). Enter is NOT wired to
+  // stop — the button is the deliberate affordance, so a stray Enter
+  // can't abort a run by accident.
+  function isStopMode() {
+    return currentMode === "chat" && workerBusy;
+  }
+
   function updateSendEnabled() {
-    // chat mode: only when idle (worker is ready for next message).
-    // prompt mode: always (answering IS what unblocks the worker).
+    // chat mode: idle → "Send" (ready for next message); busy → "Stop"
+    //   (interrupt the in-flight turn) rather than a dead disabled button.
+    // prompt mode: always enabled (answering IS what unblocks the worker).
     // confirm mode: send button isn't the primary control —
-    // ``renderConfirmButtons`` owns the input affordance there.
+    //   ``renderConfirmButtons`` owns the input affordance there.
+    const stopMode = isStopMode();
     if (currentMode === "prompt") {
       $send.disabled = false;
     } else if (currentMode === "confirm") {
       $send.disabled = false; // Falls back to default option
     } else {
-      $send.disabled = workerBusy;
+      $send.disabled = false; // busy → enabled as "Stop"
     }
+    $send.textContent = stopMode ? "Stop" : "Send";
+    $send.classList.toggle("send-stop", stopMode);
     $input.placeholder =
       currentMode === "prompt"
         ? "Type your answer — Enter to send"
         : currentMode === "confirm"
           ? "Optional comment (empty = no comment)"
-          : workerBusy
-            ? "Worker is processing… Send disabled until reply lands"
+          : stopMode
+            ? "Worker is processing… click Stop to interrupt"
             : "Type a message — Enter to send, Shift+Enter for newline";
   }
 
@@ -779,8 +793,23 @@
   }
 
   // ── Input bindings ─────────────────────────
+  function requestStop() {
+    // Halt the in-flight chat turn at the next turn boundary. Fire and
+    // forget — the worker's _on_interrupt path emits the observation and
+    // flips back to worker_idle, which the SSE stream reflects.
+    fetch("/api/stop?token=" + encodeURIComponent(token), {
+      method: "POST",
+    }).catch(function () {
+      /* network blip — ignore; the turn will end on its own anyway */
+    });
+  }
+
   $send.addEventListener("click", function () {
     if ($send.disabled) return;
+    if (isStopMode()) {
+      requestStop();
+      return;
+    }
     if (currentMode === "confirm") {
       // No textarea-only path in confirm — buttons are the contract.
       // Pressing Send falls back to the default option.
@@ -820,6 +849,9 @@
       // into a busy worker even though the button looks disabled,
       // defeating the whole point of the gating.
       if ($send.disabled) return;
+      // In stop mode the button says "Stop"; Enter must NOT trigger it
+      // (and must not queue a message). Stop is click-only by design.
+      if (isStopMode()) return;
       if (currentMode === "confirm") {
         submitConfirm(confirmDefaultKey);
       } else if (currentMode === "prompt") {

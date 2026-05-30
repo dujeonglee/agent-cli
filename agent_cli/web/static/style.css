@@ -262,6 +262,9 @@ footer {
 #send { background: #2563eb; }
 #send:hover { background: #1d4ed8; }
 #send:disabled { background: #d1d5db; cursor: not-allowed; }
+/* Send button acting as Stop (chat mode, worker busy) — red, like #abort. */
+#send.send-stop { background: #dc2626; }
+#send.send-stop:hover { background: #b91c1c; }
 #abort { background: #dc2626; }
 #abort:hover { background: #b91c1c; }
 #abort[hidden] { display: none; }

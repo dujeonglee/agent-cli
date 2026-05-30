@@ -402,8 +402,15 @@ def try_dispatch_agent_or_skill(
     ctx,
     session,
     graceful_interrupt: bool = True,
+    stop_event=None,
 ) -> bool:
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
+
+    ``stop_event`` is threaded into the ``/skill`` path (``_dispatch_skill``
+    → ``execute_skill`` → ``run_loop``) so the web Stop button can halt a
+    skill run at a turn boundary, same as a plain chat turn. The ``@agent``
+    path runs via ``tool_delegate`` (separate worker/fork), which doesn't
+    consume the handle yet — stopping a delegated agent is a follow-up.
 
     Returns ``True`` when the message was handled (caller skips its
     LLM path); ``False`` when nothing matched and the caller should
@@ -481,6 +488,7 @@ def try_dispatch_agent_or_skill(
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
+            stop_event=stop_event,
         )
         if result is _SKILL_NOT_FOUND:
             output.skill_not_found(cmd_name)
@@ -581,6 +589,7 @@ def _dispatch_skill(
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,
+    stop_event=None,
 ):
     """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
     from agent_cli.skills import load_skills, execute_skill
@@ -639,6 +648,7 @@ def _dispatch_skill(
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
+            stop_event=stop_event,
             parent_hooks_config=_parent_hooks,
         )
     finally:
@@ -1591,51 +1601,64 @@ def web(
             # ``prompt_user`` / ``confirm`` wait — keeps the worker in
             # the busy state until the next loop iteration.
             renderer.worker_busy()
-            if handle_slash_command(message, renderer):
-                continue
-            if try_dispatch_agent_or_skill(
-                message,
-                web_output,
-                llm_provider=llm_provider,
-                capabilities=capabilities,
-                resolved_model=resolved_model,
-                provider=provider,
-                resolved_url=resolved_url,
-                resolved_key=resolved_key,
-                max_turns=max_turns,
-                verbose=verbose,
-                max_depth=max_depth,
-                delegate_timeout=delegate_timeout,
-                ctx=ctx,
-                session=session,
-                graceful_interrupt=True,
-            ):
-                continue
+            # Fresh stop handle for this turn so the web "Stop" button
+            # (POST /api/stop → server.trigger_stop) can signal the loop
+            # to exit at the next turn boundary — the same ``stop_event``
+            # path Ctrl+C uses in the CLI. Cleared in ``finally`` so a
+            # stop press between turns (or during a @agent//skill
+            # dispatch, which doesn't thread the handle yet) is a no-op.
+            stop_event = threading.Event()
+            server.set_stop_handle(stop_event)
             try:
-                run_loop(
-                    query=message,
-                    provider=llm_provider,
+                if handle_slash_command(message, renderer):
+                    continue
+                if try_dispatch_agent_or_skill(
+                    message,
+                    web_output,
+                    llm_provider=llm_provider,
                     capabilities=capabilities,
-                    model=resolved_model,
-                    provider_name=provider,
-                    base_url=resolved_url,
-                    api_key=resolved_key,
+                    resolved_model=resolved_model,
+                    provider=provider,
+                    resolved_url=resolved_url,
+                    resolved_key=resolved_key,
                     max_turns=max_turns,
                     verbose=verbose,
-                    ctx=ctx,
                     max_depth=max_depth,
                     delegate_timeout=delegate_timeout,
+                    ctx=ctx,
                     session=session,
                     graceful_interrupt=True,
-                    record_turns=record_turns,
-                    wire_format=wire_format_plugin,
-                    compaction_enabled=not no_compaction,
-                )
-            except Exception as exc:  # noqa: BLE001 — worker boundary
-                # Push the error into the renderer so the frontend sees
-                # it rather than dying silently. Worker keeps spinning
-                # to handle the next message.
-                renderer.error(f"Worker error: {exc}", 0)
+                    stop_event=stop_event,
+                ):
+                    continue
+                try:
+                    run_loop(
+                        query=message,
+                        provider=llm_provider,
+                        capabilities=capabilities,
+                        model=resolved_model,
+                        provider_name=provider,
+                        base_url=resolved_url,
+                        api_key=resolved_key,
+                        max_turns=max_turns,
+                        verbose=verbose,
+                        ctx=ctx,
+                        max_depth=max_depth,
+                        delegate_timeout=delegate_timeout,
+                        session=session,
+                        graceful_interrupt=True,
+                        stop_event=stop_event,
+                        record_turns=record_turns,
+                        wire_format=wire_format_plugin,
+                        compaction_enabled=not no_compaction,
+                    )
+                except Exception as exc:  # noqa: BLE001 — worker boundary
+                    # Push the error into the renderer so the frontend
+                    # sees it rather than dying silently. Worker keeps
+                    # spinning to handle the next message.
+                    renderer.error(f"Worker error: {exc}", 0)
+            finally:
+                server.set_stop_handle(None)
 
     worker = threading.Thread(target=_worker_loop, daemon=True, name="agent-loop")
     worker.start()
