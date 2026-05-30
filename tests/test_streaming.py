@@ -523,58 +523,64 @@ class TestTTFTMeasurement:
         assert result.usage is not None
         assert result.usage.ttft_ns == 0
 
-    def test_render_token_stats_shows_ttft(self):
-        """_render_token_stats displays TTFT when available."""
-
-        from agent_cli.loop import _render_token_stats
+    def _usage(self, **kw):
         from agent_cli.providers.base import TokenUsage
 
-        usage = TokenUsage(
+        defaults = dict(
             input_tokens=100,
             output_tokens=50,
             prompt_eval_ns=200_000_000,
             eval_ns=100_000_000,
             ttft_ns=200_000_000,
         )
+        defaults.update(kw)
+        return TokenUsage(**defaults)
 
-        with patch("agent_cli.loop.render_status") as mock_status:
-            _render_token_stats(usage, turn=1)
-            msg = mock_status.call_args[0][1]
-            assert "ttft: 200ms" in msg
-            assert "tok/s" in msg
+    def test_token_stats_shows_ttft_speed_and_context(self):
+        """_format_token_stats renders ttft, speed, and context occupancy."""
+        from agent_cli.loop import _build_token_stats
+        from agent_cli.render.minimal import _format_token_stats
 
-    def test_render_token_stats_non_verbose_hints_raw_access(self):
-        """Non-verbose stats line tells users raw responses need --verbose."""
-        from agent_cli.loop import _render_token_stats
-        from agent_cli.providers.base import TokenUsage
+        stats = _build_token_stats(self._usage(), context_window=4096, total_out=50)
+        msg = _format_token_stats(stats)
+        assert "ttft: 200ms" in msg
+        assert "tok/s" in msg
+        assert "ctx:" in msg  # context occupancy shown
 
-        usage = TokenUsage(
-            input_tokens=100,
-            output_tokens=50,
-            prompt_eval_ns=200_000_000,
-            eval_ns=100_000_000,
-            ttft_ns=200_000_000,
+    def test_token_stats_context_percent(self):
+        from agent_cli.loop import _build_token_stats
+        from agent_cli.render.minimal import _format_token_stats
+
+        stats = _build_token_stats(
+            self._usage(input_tokens=2048, output_tokens=10),
+            context_window=4096,
+            total_out=10,
         )
+        assert "(50%)" in _format_token_stats(stats)
 
-        with patch("agent_cli.loop.render_status") as mock_status:
-            _render_token_stats(usage, turn=1, verbose=False)
-            msg = mock_status.call_args[0][1]
-            assert "--verbose" in msg
+    def test_token_stats_cumulative_output(self):
+        from agent_cli.loop import _build_token_stats
+        from agent_cli.render.minimal import _format_token_stats
 
-    def test_render_token_stats_verbose_omits_hint(self):
-        """Verbose mode shows the raw response panel, so no hint on stats line."""
-        from agent_cli.loop import _render_token_stats
-        from agent_cli.providers.base import TokenUsage
+        stats = _build_token_stats(self._usage(), context_window=4096, total_out=1800)
+        assert "Σout: 1.8K" in _format_token_stats(stats)
 
-        usage = TokenUsage(
-            input_tokens=100,
-            output_tokens=50,
-            prompt_eval_ns=200_000_000,
-            eval_ns=100_000_000,
-            ttft_ns=200_000_000,
-        )
+    def _minimal_render_to_string(self, verbose):
+        from io import StringIO
+        from rich.console import Console
+        from agent_cli.loop import _build_token_stats
+        from agent_cli.render.minimal import MinimalRenderer
 
-        with patch("agent_cli.loop.render_status") as mock_status:
-            _render_token_stats(usage, turn=1, verbose=True)
-            msg = mock_status.call_args[0][1]
-            assert "--verbose" not in msg
+        buf = StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=False))
+        stats = _build_token_stats(self._usage(), context_window=4096, total_out=50)
+        r.token_usage(stats, turn=1, verbose=verbose)
+        return buf.getvalue()
+
+    def test_token_usage_non_verbose_hints_raw_access(self):
+        """Non-verbose line tells users raw responses need --verbose."""
+        assert "--verbose" in self._minimal_render_to_string(verbose=False)
+
+    def test_token_usage_verbose_omits_hint(self):
+        """Verbose mode shows the raw response panel, so no hint here."""
+        assert "--verbose" not in self._minimal_render_to_string(verbose=True)

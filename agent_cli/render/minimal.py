@@ -15,6 +15,43 @@ from agent_cli.render.base import ConfirmOption, Renderer
 _MUTED = "grey46"
 
 
+def _fmt_tok(n: int) -> str:
+    """Compact token count: 5234 → '5.2K', 980 → '980'."""
+    return f"{n / 1000:.1f}K" if n >= 1000 else str(int(n))
+
+
+def _format_token_stats(stats: dict) -> str:
+    """Render the token-usage dict into the CLI's single-line summary.
+
+    Order: ttft, in (+speed), out (+speed), context %, cumulative out,
+    cache. Each part is omitted when its value is zero/absent so other
+    providers' lines stay lean.
+    """
+    parts: list[str] = []
+    if stats.get("ttft_ms"):
+        parts.append(f"ttft: {stats['ttft_ms']:.0f}ms")
+    in_tok = stats.get("in", 0)
+    if in_tok:
+        sp = stats.get("in_speed", 0)
+        parts.append(f"in: {_fmt_tok(in_tok)}" + (f" ({sp:.0f} tok/s)" if sp else ""))
+    out_tok = stats.get("out", 0)
+    if out_tok:
+        sp = stats.get("out_speed", 0)
+        parts.append(f"out: {_fmt_tok(out_tok)}" + (f" ({sp:.0f} tok/s)" if sp else ""))
+    win = stats.get("context_window", 0)
+    if in_tok and win:
+        parts.append(
+            f"ctx: {_fmt_tok(in_tok)}/{_fmt_tok(win)} ({in_tok / win * 100:.0f}%)"
+        )
+    if stats.get("total_out"):
+        parts.append(f"Σout: {_fmt_tok(stats['total_out'])}")
+    if stats.get("cache_read"):
+        parts.append(f"cache hit: {_fmt_tok(stats['cache_read'])}")
+    if stats.get("cache_write"):
+        parts.append(f"cache write: {_fmt_tok(stats['cache_write'])}")
+    return " | ".join(parts)
+
+
 # East Asian "Ambiguous" (A) chars — `…` `—` `─` `※` `→` `《》` etc. — are
 # rendered as 2 columns in CJK-locale terminals (macOS Terminal.app and
 # iTerm2 with Korean/Japanese/Chinese locale). Counting them as 1 caused
@@ -340,6 +377,14 @@ class MinimalRenderer(Renderer):
     def status(self, state: str, message: str, turn: int = 0) -> None:
         it = f"  turn {turn}" if turn else ""
         self._p(f"  ● {message}{it}", highlight=False)
+
+    def token_usage(self, stats: dict, turn: int, verbose: bool = False) -> None:
+        msg = _format_token_stats(stats)
+        if not msg:
+            return
+        if not verbose:
+            msg += "  (use --verbose to view raw response)"
+        self.status("running", msg, turn)
 
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str

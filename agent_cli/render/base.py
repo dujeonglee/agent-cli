@@ -215,6 +215,16 @@ class Renderer(ABC):
     def status(self, state: str, message: str, turn: int = 0) -> None:
         """Status update (running/done/error)."""
 
+    def token_usage(self, stats: dict, turn: int, verbose: bool = False) -> None:
+        """Per-turn token usage: in/out tokens (+speed), context-window
+        occupancy %, and cumulative session output. ``stats`` is the
+        render-agnostic dict from ``loop._build_token_stats``.
+
+        Non-abstract with a no-op default so custom ``render/<name>.py``
+        renderers keep working without implementing it; MinimalRenderer
+        (CLI line) and WebRenderer (top-bar SSE) override.
+        """
+
     @abstractmethod
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str

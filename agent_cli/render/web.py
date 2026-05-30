@@ -116,6 +116,12 @@ class WebRenderer(Renderer):
         # Event payload: ``{"busy": bool}``. Server-side
         # ``_worker_loop`` is the sole writer.
         self._latest_worker_state: tuple[str, dict[str, Any]] | None = None
+        # Latest per-turn token usage, cached (like worker_state) so a
+        # refresh/reconnect repopulates the top-bar token readout from
+        # the snapshot instead of waiting for the next turn. Emitted
+        # non-persistent (live) so the buffer doesn't accumulate one
+        # entry per turn — only the latest matters.
+        self._latest_token_usage: tuple[str, dict[str, Any]] | None = None
         # Per-thread delegate-task routing. Worker threads spawned by
         # ``_run_parallel`` register their ``task_id`` here via
         # ``begin_delegate_task``; ``_emit`` then auto-attaches
@@ -184,6 +190,10 @@ class WebRenderer(Renderer):
             # top-bar renders first, then the input affordance settles.
             if self._latest_worker_state is not None:
                 snapshot.append(self._latest_worker_state)
+            # Latest token usage so the top-bar readout survives a
+            # refresh/reconnect instead of blanking until the next turn.
+            if self._latest_token_usage is not None:
+                snapshot.append(self._latest_token_usage)
             return snapshot
 
     def unregister_connection(self, conn: WebConnection) -> None:
@@ -496,6 +506,16 @@ class WebRenderer(Renderer):
             {"state": state, "message": message, "turn": turn},
             persistent=False,
         )
+
+    def token_usage(self, stats: dict, turn: int, verbose: bool = False) -> None:
+        """Emit the per-turn token usage for the frontend's top-bar
+        readout. Raw stats go over the wire (the frontend formats); the
+        latest is cached so a refresh repopulates the bar from snapshot.
+        """
+        payload = {**stats, "turn": turn}
+        with self._lock:
+            self._latest_token_usage = ("token_usage", payload)
+        self._emit("token_usage", payload, persistent=False)
 
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str
