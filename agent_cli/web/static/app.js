@@ -57,6 +57,11 @@
   // snapshot prepend, so this flag is set from the very first event
   // a fresh client receives.
   let workerBusy = false;
+  // True between clicking "Stop" and the worker actually returning to
+  // idle. While set, the button shows "Stopping…" and is disabled so a
+  // second click can't fire a redundant /api/stop. Reset on the next
+  // worker_state event (idle = the turn ended; busy = a fresh turn).
+  let stopRequested = false;
 
   // True when the Send button is acting as a Stop button: chat mode +
   // worker busy. In that state a click POSTs /api/stop instead of
@@ -75,23 +80,30 @@
     // confirm mode: send button isn't the primary control —
     //   ``renderConfirmButtons`` owns the input affordance there.
     const stopMode = isStopMode();
+    // chat: idle → "Send" (enabled); busy → "Stop" (enabled) until the
+    // user clicks it, then "Stopping…" (disabled) until the turn ends.
+    const stopping = stopMode && stopRequested;
     if (currentMode === "prompt") {
       $send.disabled = false;
     } else if (currentMode === "confirm") {
       $send.disabled = false; // Falls back to default option
     } else {
-      $send.disabled = false; // busy → enabled as "Stop"
+      $send.disabled = stopping; // "Stopping…" → disabled; else enabled
     }
-    $send.textContent = stopMode ? "Stop" : "Send";
-    $send.classList.toggle("send-stop", stopMode);
+    $send.textContent = stopMode ? (stopping ? "Stopping…" : "Stop") : "Send";
+    // Red only while actionable ("Stop"); the disabled "Stopping…" uses
+    // the default disabled grey.
+    $send.classList.toggle("send-stop", stopMode && !stopRequested);
     $input.placeholder =
       currentMode === "prompt"
         ? "Type your answer — Enter to send"
         : currentMode === "confirm"
           ? "Optional comment (empty = no comment)"
-          : stopMode
-            ? "Worker is processing… click Stop to interrupt"
-            : "Type a message — Enter to send, Shift+Enter for newline";
+          : stopping
+            ? "Stopping… waiting for the current step to finish"
+            : stopMode
+              ? "Worker is processing… click Stop to interrupt"
+              : "Type a message — Enter to send, Shift+Enter for newline";
   }
 
   // ── HTML escaping + minimal markdown ───────
@@ -807,6 +819,10 @@
     // Halt the in-flight chat turn at the next turn boundary. Fire and
     // forget — the worker's _on_interrupt path emits the observation and
     // flips back to worker_idle, which the SSE stream reflects.
+    // Flip to "Stopping…" (disabled) immediately so the user gets
+    // feedback and can't double-fire /api/stop.
+    stopRequested = true;
+    updateSendEnabled();
     fetch("/api/stop?token=" + encodeURIComponent(token), {
       method: "POST",
     }).catch(function () {
@@ -1045,6 +1061,9 @@
     // the worker to actually transition.
     const d = JSON.parse(e.data);
     workerBusy = !!d.busy;
+    // Any worker_state transition ends a pending stop: idle = the turn
+    // we were stopping has finished; busy = a fresh turn started.
+    stopRequested = false;
     updateSendEnabled();
   });
 
