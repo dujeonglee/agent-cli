@@ -3,8 +3,10 @@
 Stores full conversation in history.jsonl (JSON Lines, append-only).
 Maintains an in-memory context cache that fits within a token budget.
 
-When the cache exceeds 90% of budget the manager triggers a *compaction*
-pass (RFC docs/context-compaction/):
+Before each LLM call the loop calls ``ensure_within(target)`` (flow 1),
+which triggers a *compaction* pass when the cache exceeds the target
+(``(context − system − output) × 0.8``, system measured live). The pass
+(RFC docs/context-compaction/):
 
   1. Split cache into system anchor + dynamic.
   2. Evict roughly half of dynamic (oldest, token-based).
@@ -17,7 +19,7 @@ pass (RFC docs/context-compaction/):
 
 When the LLM summariser fails OR the rebuilt cache is still over budget
 (small ``max_context_tokens`` + dominant summary cap edge case), the
-``_maybe_compact`` wrapper falls through to a belt-and-braces FIFO drop
+``ensure_within`` wrapper falls through to a belt-and-braces FIFO drop
 so the cache always returns under budget — no infinite-trigger loop.
 
 Compaction can be disabled entirely (NFR-CC-5) by passing
@@ -51,10 +53,16 @@ _COMPACTION_JSON_VERSION = 1
 
 
 def compute_token_budget(context_window: int, max_output_tokens: int) -> int:
-    """Compute context token budget from model capabilities.
+    """Compute the fallback context budget (``max_context_tokens``).
 
-    budget = context_window - max_output_tokens - system_prompt_reserve
-    System prompt reserve is estimated at 4000 tokens.
+    budget = context_window - max_output_tokens - 4000 (system reserve)
+
+    NOTE: this is no longer the live compaction threshold. flow 1
+    computes the real target per call as ``(context − system(measured)
+    − max_output) × 0.8`` in ``AgentLoop._call_llm``. This value remains
+    the ``_evict_fifo`` default target and the budget used to restore the
+    cache on resume (before the first call's ``ensure_within`` refines
+    it), where a fixed 4000-token system estimate is good enough.
     """
     reserve = max_output_tokens + 4000
     budget = context_window - reserve
@@ -71,7 +79,7 @@ def _compaction_disabled_via_env() -> bool:
 
 class CompactionError(RuntimeError):
     """Raised when the summariser callback fails (provider error,
-    empty/non-string return, etc.). ``_maybe_compact`` catches this and
+    empty/non-string return, etc.). ``ensure_within`` catches this and
     falls back to the belt-and-braces FIFO drop."""
 
 
@@ -80,7 +88,8 @@ class ContextManager:
 
     - history.jsonl: append-only JSON Lines, every message ever added.
     - In-memory cache: messages within ``max_context_tokens``, refined by
-      compaction at the 90% mark.
+      preventive compaction before each call (flow 1, ``ensure_within``)
+      and reactive ``force_fit`` after a server overflow (flow 2).
     - ``compaction.json``: tracks the recursive summary, accumulated file
       list, and the ``dynamic_start_index`` offset into history so that
       ``--resume`` restores cache without overlapping with already-
@@ -163,16 +172,41 @@ class ContextManager:
     def add(self, message: dict) -> None:
         """Add a message to cache and persist to history.jsonl.
 
-        Triggers compaction when the resulting cache exceeds 90% of the
-        token budget. Falls back to plain FIFO drop when compaction is
-        disabled, the summariser fails, or the rebuilt cache is still
-        over budget.
+        Compaction is NOT triggered here. Preventive compaction (flow 1)
+        runs once per turn — right before the LLM call — via
+        ``ensure_within``. The loop knows the live system-prompt size and
+        the model's context window at that point, so the threshold
+        reflects actual headroom ``(context − system − output) × 0.8``
+        instead of a fixed 90%-of-budget estimate against a 4000-token
+        system reserve. See docs/ARCHITECTURE.md §compaction.
         """
         msg_tokens = _estimate_message_tokens(message)
         self._cache.append(message)
         self._cache_tokens += msg_tokens
-        self._maybe_compact()
         self._append_to_history(message)
+
+    def reconcile_actual_tokens(
+        self, actual_total_tokens: int, system_tokens: int = 0
+    ) -> None:
+        """Re-anchor the cache token count to the server's actual input
+        count (flow 1, part B).
+
+        ``actual_total_tokens`` is what the provider reported for the
+        last call's prompt (``usage.input_tokens`` + cache fields) — it
+        covers system + messages. The cache holds only messages, so we
+        subtract ``system_tokens`` (measured by the loop for that same
+        call) and store the remainder.
+
+        The local ``chars/4`` estimate under-counts CJK badly; replacing
+        the accumulated estimate with ground truth each call means error
+        never compounds across turns — at most one turn's worth of
+        newly-added (still-estimated) messages drifts before the next
+        reconcile. No-op when the provider reported no usage (cold start
+        / provider without usage), leaving the running estimate in place.
+        """
+        if actual_total_tokens <= 0:
+            return
+        self._cache_tokens = max(actual_total_tokens - system_tokens, 0)
 
     def get_messages(self) -> list[dict]:
         """Return cached messages converted to natural language for LLM.
@@ -245,24 +279,32 @@ class ContextManager:
 
     # ── Compaction / eviction ────────────────────────
 
-    def _maybe_compact(self) -> None:
-        """Trigger compaction when cache exceeds the 90% threshold.
+    def ensure_within(self, target_tokens: int) -> None:
+        """Preventive compaction (flow 1): bring the cache to/under
+        ``target_tokens`` before the next LLM call.
 
         Two-layer safety:
           1. Attempt ``_compact()`` (LLM summarisation + cache rebuild).
           2. Whether (1) succeeded or raised ``CompactionError``, if the
-             cache is *still* above threshold, drop oldest with plain
-             FIFO until it fits. Same fallback path catches both the
-             summariser-failure case and the small-budget-with-large-
+             cache is *still* above ``target_tokens``, drop oldest with
+             plain FIFO until it fits. Same fallback path catches both
+             the summariser-failure case and the small-budget-with-large-
              summary edge case in §2.1 of DESIGN.
+
+        The loop computes ``target_tokens`` as ``(context_window −
+        system_tokens − max_output) × 0.8`` each call — system measured
+        live, so a large tool-laden system prompt correctly reduces the
+        room left for messages. Paired with ``reconcile_actual_tokens``
+        keeping ``_cache_tokens`` anchored to the server's real count,
+        this fires on time even for CJK-heavy content the chars/4
+        estimate would under-count.
         """
-        threshold = int(self.max_context_tokens * _COMPACTION_THRESHOLD_RATIO)
-        if self._cache_tokens <= threshold:
+        if self._cache_tokens <= target_tokens:
             return
 
         # Compaction disabled (CLI flag or env): skip directly to FIFO.
         if not self._compaction_enabled or self._compactor_callback is None:
-            self._evict_fifo()
+            self._evict_fifo(target_tokens)
             return
 
         try:
@@ -271,9 +313,9 @@ class ContextManager:
             render_compaction_progress(phase="warning", reason=str(e))
 
         # Belt-and-braces: idempotent — no-op when ``_compact()`` already
-        # brought the cache below threshold.
-        if self._cache_tokens > threshold:
-            self._evict_fifo()
+        # brought the cache below the target.
+        if self._cache_tokens > target_tokens:
+            self._evict_fifo(target_tokens)
 
     def _compact(self) -> None:
         """Execute one compaction pass — split, summarise, extract paths,
@@ -347,9 +389,9 @@ class ContextManager:
         finally:
             duration_ms = (time.monotonic() - t0) * 1000.0
             # Determine ``fallback_used`` AFTER the try-block. If we
-            # raised, the caller (_maybe_compact) will run FIFO so
+            # raised, the caller (ensure_within) will run FIFO so
             # mark fallback now. If we succeeded but the cache is
-            # still over threshold, _maybe_compact's belt-and-braces
+            # still over threshold, ensure_within's belt-and-braces
             # will also run FIFO — same flag.
             threshold = int(self.max_context_tokens * _COMPACTION_THRESHOLD_RATIO)
             if failure_signal is not None or self._cache_tokens > threshold:
@@ -444,7 +486,7 @@ class ContextManager:
     def _evict_fifo(self, target_tokens: int | None = None) -> None:
         """Plain FIFO drop until cache fits within ``target_tokens``. Used
         as the ``compaction_enabled=False`` path, the belt-and-braces
-        fallback inside ``_maybe_compact``, and the FIFO stage of
+        fallback inside ``ensure_within``, and the FIFO stage of
         ``force_fit``.
 
         ``target_tokens`` defaults to the full budget
@@ -476,7 +518,7 @@ class ContextManager:
         shed history before retrying. It runs ``compact`` first (least
         information loss), then FIFO-evicts the oldest messages.
 
-        Why a dedicated method instead of trusting ``_maybe_compact``:
+        Why a dedicated method instead of trusting ``ensure_within``:
         the local token estimate (``chars/4``) under-counts CJK text
         badly, so ``_cache_tokens`` can sit well below the threshold
         while the *real* prompt is over the limit — compaction never

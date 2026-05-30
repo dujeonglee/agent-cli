@@ -3329,3 +3329,93 @@ class TestContextOverflowRecovery:
         assert provider.call.call_count == 1  # no retry
         # cache untouched by recovery (only the query was appended by setup)
         assert len(ctx.get_raw_messages()) == before + 1
+
+
+class TestFlow1PreventiveCompaction:
+    """flow 1 — preventive compaction before each call + reconcile after."""
+
+    def _ctx(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        return ContextManager(
+            session_dir=tmp_path,
+            max_context_tokens=1_000_000,
+            compaction_enabled=False,
+        )
+
+    def test_reconcile_called_with_server_count(self, caps, tmp_path):
+        """After a successful call, ctx is re-anchored with the server's
+        total input count (input + cache_creation + cache_read)."""
+        from unittest.mock import patch
+        from agent_cli.providers.base import TokenUsage
+
+        ctx = self._ctx(tmp_path)
+        ctx.add({"role": "user", "content": "x" * 40})
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=_complete("ok"),
+                usage=TokenUsage(
+                    input_tokens=500,
+                    output_tokens=5,
+                    cache_creation_input_tokens=30,
+                    cache_read_input_tokens=70,
+                ),
+            ),
+        ]
+        with patch.object(
+            ctx, "reconcile_actual_tokens", wraps=ctx.reconcile_actual_tokens
+        ) as spy:
+            run_loop(
+                query="q",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+            )
+        spy.assert_called()
+        assert spy.call_args.args[0] == 600  # 500 + 30 + 70
+
+    def test_no_reconcile_without_usage(self, caps, tmp_path):
+        """Providers that report no usage leave the running estimate."""
+        from unittest.mock import patch
+
+        ctx = self._ctx(tmp_path)
+        ctx.add({"role": "user", "content": "x"})
+        provider = _make_provider(_complete("ok"))  # LLMResponse usage=None
+        with patch.object(ctx, "reconcile_actual_tokens") as spy:
+            run_loop(
+                query="q",
+                provider=provider,
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+            )
+        spy.assert_not_called()
+
+    def test_preventive_compaction_before_call(self, tmp_path):
+        """A tiny context window → ensure_within sheds history before the
+        (successful) call, so the prompt never overflows in the first
+        place."""
+        small_caps = ModelCapabilities(
+            context_window=2000,
+            max_output_tokens=256,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        ctx = self._ctx(tmp_path)
+        for i in range(40):
+            ctx.add({"role": "user", "content": "word " * 40})
+        before = len(ctx.get_raw_messages())
+        provider = _make_provider(_complete("ok"))
+        result = run_loop(
+            query="q",
+            provider=provider,
+            capabilities=small_caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert result.output == "ok"
+        assert len(ctx.get_raw_messages()) < before  # shed before the call

@@ -51,6 +51,14 @@ def _make_ctx(
     return ctx, calls
 
 
+def _add(ctx, msg):
+    """Add a message, then run flow-1's preventive pass at the budget
+    threshold. Mirrors the pre-flow-1 inline trigger: compaction now
+    fires from the loop's per-call ``ensure_within``, not from ``add``."""
+    ctx.add(msg)
+    ctx.ensure_within(ctx.max_context_tokens)
+
+
 # ── 1. Trigger ───────────────────────────────────────
 
 
@@ -58,17 +66,17 @@ class TestCompactionTrigger:
     def test_triggers_above_90_percent(self, tmp_path):
         """``add`` fires ``_compact`` when cache > 0.9 * budget."""
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=100)
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         # ~10 tokens per message → 11 messages ~ 110 tokens > 90.
         for i in range(20):
-            ctx.add({"role": "user", "content": f"x{i}" * 8})
+            _add(ctx, {"role": "user", "content": f"x{i}" * 8})
         assert len(calls) >= 1, "summariser must have been invoked"
 
     def test_skipped_below_threshold(self, tmp_path):
         """Small cache (well under threshold) doesn't trigger."""
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=10_000)
-        ctx.add({"role": "system", "content": "sys"})
-        ctx.add({"role": "user", "content": "small"})
+        _add(ctx, {"role": "system", "content": "sys"})
+        _add(ctx, {"role": "user", "content": "small"})
         assert calls == []
         assert ctx.summary == ""
 
@@ -113,9 +121,9 @@ class TestSplitForCompaction:
 class TestSummary:
     def test_first_compaction_stores_summary(self, tmp_path):
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=80, summary="first-summary")
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         assert "first-summary" in ctx.summary
 
     def test_recursive_summarisation_passes_prior_context(self, tmp_path):
@@ -123,10 +131,10 @@ class TestSummary:
         include the prior summary as a context message (single-call
         recursive design — no separate merge step)."""
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=80)
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         # Force first compaction.
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         assert len(calls) >= 1
         first_call = calls[0]
         # First call has no "Running summary" header.
@@ -137,7 +145,7 @@ class TestSummary:
 
         # Force second compaction.
         for _ in range(15):
-            ctx.add({"role": "user", "content": "y" * 30})
+            _add(ctx, {"role": "user", "content": "y" * 30})
         assert len(calls) >= 2
         second_call = calls[1]
         assert any(
@@ -151,9 +159,9 @@ class TestSummary:
             max_context_tokens=80,
             summary="z" * 100_000,
         )
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         from agent_cli.context.manager import _SUMMARY_CHAR_CAP
 
         assert len(ctx.summary) == _SUMMARY_CHAR_CAP
@@ -169,29 +177,31 @@ class TestSummary:
         being passed straight to the provider, which silently dropped
         the unknown keys and produced corrupt summaries."""
         ctx, calls = _make_ctx(tmp_path, max_context_tokens=120)
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         # Mix of user + tool result + assistant action — exercises every
         # branch of _to_natural_language.
-        ctx.add({"role": "user", "content": "first question"})
-        ctx.add(
+        _add(ctx, {"role": "user", "content": "first question"})
+        _add(
+            ctx,
             {
                 "role": "user",
                 "tool": "write_file",
                 "args": {"path": "a.py"},
                 "content": "ok",
-            }
+            },
         )
-        ctx.add(
+        _add(
+            ctx,
             {
                 "role": "assistant",
                 "thought": "I will read it",
                 "action": "read_file",
                 "action_input": {"path": "a.py"},
-            }
+            },
         )
         # Pad to force compaction.
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
 
         assert len(calls) >= 1, "compactor must have been invoked"
         forbidden_keys = {"tool", "args", "thought", "action", "action_input"}
@@ -216,18 +226,19 @@ class TestSummary:
 class TestFileList:
     def test_paths_accumulate_across_compactions(self, tmp_path):
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=80)
-        ctx.add({"role": "system", "content": "sys"})
-        ctx.add(
+        _add(ctx, {"role": "system", "content": "sys"})
+        _add(
+            ctx,
             {
                 "role": "user",
                 "tool": "write_file",
                 "args": {"path": "a.py"},
                 "content": "written",
-            }
+            },
         )
         # Add padding to force compaction.
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         assert "a.py" in ctx.file_list
 
     def test_dedup_across_compactions(self, tmp_path):
@@ -365,9 +376,9 @@ class TestGetMessagesPrepend:
 def _fill(ctx, n: int, *, system: bool = True):
     """Add ``n`` user messages (plus an optional leading system msg)."""
     if system:
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
     for i in range(n):
-        ctx.add({"role": "user", "content": f"m{i} " * 8})
+        _add(ctx, {"role": "user", "content": f"m{i} " * 8})
 
 
 class TestEvictFifoTarget:
@@ -410,7 +421,7 @@ class TestForceFit:
         ctx, _ = _make_ctx(
             tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
         )
-        ctx.add({"role": "user", "content": "only"})
+        _add(ctx, {"role": "user", "content": "only"})
         assert ctx.force_fit(target_tokens=1, actual_tokens=100) is False
         assert len(ctx._cache) == 1
 
@@ -468,9 +479,9 @@ class TestForceFit:
         ctx, _ = _make_ctx(
             tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
         )
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for i in range(10):
-            ctx.add({"role": "user", "content": f"m{i} " * 8})
+            _add(ctx, {"role": "user", "content": f"m{i} " * 8})
         ctx.force_fit(target_tokens=0, actual_tokens=1_000_000)
         assert len(ctx._cache) >= 1
         assert ctx._cache[-1]["content"].startswith("m9")
@@ -485,9 +496,9 @@ class TestFallback:
         belt-and-braces FIFO drop. Cache ends up within the budget."""
         ctx = ContextManager(tmp_path / "s", max_context_tokens=80)
         ctx.set_compactor(lambda msgs: (_ for _ in ()).throw(RuntimeError("boom")))
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         assert ctx._cache_tokens <= ctx.max_context_tokens
         # Summary stays empty because LLM never produced one.
         assert ctx.summary == ""
@@ -506,14 +517,14 @@ class TestFallback:
             return "later success"
 
         ctx.set_compactor(sometimes_failing)
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         # First call raised.
         assert call_count[0] >= 1
         # Add more to exceed threshold again.
         for _ in range(15):
-            ctx.add({"role": "user", "content": "y" * 30})
+            _add(ctx, {"role": "user", "content": "y" * 30})
         assert call_count[0] >= 2
         assert "later success" in ctx.summary
 
@@ -524,9 +535,9 @@ class TestFallback:
         # Budget tiny so even the summary dominates.
         ctx = ContextManager(tmp_path / "s", max_context_tokens=40)
         ctx.set_compactor(lambda msgs: "S" * 500)  # forces big summary
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         # Final cache fits.
         assert ctx._cache_tokens <= ctx.max_context_tokens
 
@@ -537,9 +548,9 @@ class TestFallback:
 class TestPersistence:
     def test_compaction_json_schema(self, tmp_path):
         ctx, _ = _make_ctx(tmp_path, max_context_tokens=80, summary="persisted")
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         comp = ctx.session_dir / "compaction.json"
         assert comp.is_file()
         data = json.loads(comp.read_text())
@@ -635,9 +646,9 @@ class TestCompactionToggle:
         )
         called = []
         ctx.set_compactor(lambda msgs: called.append(msgs) or "should-not-be-used")
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         # Callback never invoked — FIFO did the work.
         assert called == []
         # Cache still under budget.
@@ -652,9 +663,9 @@ class TestCompactionToggle:
         )
         called = []
         ctx.set_compactor(lambda msgs: called.append(msgs) or "X")
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         # Env var off wins → FIFO instead.
         assert called == []
 
@@ -675,9 +686,9 @@ class TestRecorderIntegration:
         ctx._history_path = sdir / "history.jsonl"
         ctx._compaction_path = sdir / "compaction.json"
         ctx.set_recorder(recorder)
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         turns = sdir / "turns.jsonl"
         assert turns.is_file()
         rows = [json.loads(line) for line in turns.read_text().splitlines() if line]
@@ -699,9 +710,9 @@ class TestRecorderIntegration:
         ctx = ContextManager(sdir, max_context_tokens=80)
         ctx.set_compactor(lambda msgs: (_ for _ in ()).throw(RuntimeError("x")))
         ctx.set_recorder(recorder)
-        ctx.add({"role": "system", "content": "sys"})
+        _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
-            ctx.add({"role": "user", "content": "x" * 30})
+            _add(ctx, {"role": "user", "content": "x" * 30})
         rows = [
             json.loads(line)
             for line in (sdir / "turns.jsonl").read_text().splitlines()
@@ -867,3 +878,59 @@ class TestAgentLoopCompactorCallback:
 
 def test_compaction_error_is_exception():
     assert issubclass(CompactionError, RuntimeError)
+
+
+class TestReconcileActualTokens:
+    """flow 1 (part B): re-anchor cache token count to the server's
+    actual input count."""
+
+    def test_anchors_to_server_count_minus_system(self, tmp_path):
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        ctx._cache_tokens = 50  # bogus chars/4 estimate
+        ctx.reconcile_actual_tokens(500, system_tokens=120)
+        assert ctx._cache_tokens == 380  # 500 (system+messages) − 120 system
+
+    def test_zero_actual_is_noop(self, tmp_path):
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        ctx._cache_tokens = 50
+        ctx.reconcile_actual_tokens(0)
+        assert ctx._cache_tokens == 50  # provider had no usage → estimate kept
+
+    def test_system_larger_than_actual_floors_at_zero(self, tmp_path):
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        ctx.reconcile_actual_tokens(100, system_tokens=200)
+        assert ctx._cache_tokens == 0
+
+    def test_default_system_tokens_zero(self, tmp_path):
+        ctx, _ = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        ctx.reconcile_actual_tokens(300)
+        assert ctx._cache_tokens == 300
+
+
+class TestEnsureWithin:
+    """flow 1 (part A): preventive compaction toward an explicit target."""
+
+    def test_noop_when_under_target(self, tmp_path):
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        ctx.add({"role": "user", "content": "small"})
+        ctx.ensure_within(1_000_000)
+        assert calls == []  # nothing compacted
+        assert len(ctx.get_raw_messages()) == 1
+
+    def test_compacts_when_over_target(self, tmp_path):
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=1_000_000)
+        for i in range(20):
+            ctx.add({"role": "user", "content": f"m{i} " * 10})
+        ctx.ensure_within(20)  # tiny target → must summarise
+        assert len(calls) >= 1
+
+    def test_fifo_when_compaction_disabled(self, tmp_path):
+        ctx, calls = _make_ctx(
+            tmp_path, max_context_tokens=1_000_000, compaction_enabled=False
+        )
+        for i in range(20):
+            ctx.add({"role": "user", "content": f"m{i} " * 10})
+        before = len(ctx.get_raw_messages())
+        ctx.ensure_within(20)
+        assert calls == []  # no summariser
+        assert len(ctx.get_raw_messages()) < before  # FIFO shed

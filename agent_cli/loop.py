@@ -22,6 +22,7 @@ from agent_cli.tools.result import ToolResult
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
+from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
@@ -457,6 +458,27 @@ class AgentLoop:
 
     def _call_llm(self):
         """LLM call with overflow retry and streaming. Returns response or sentinel."""
+        # flow 1 — preventive compaction before the call. The threshold
+        # uses the live system-prompt size and the model's window, so it
+        # reflects real headroom (not a fixed budget). ``sys_tokens`` is
+        # reused below to reconcile the cache against the server's actual
+        # input count once the call succeeds.
+        sys_tokens = estimate_tokens(self.system) if self.ctx else 0
+        if self.ctx:
+            target = max(
+                int(
+                    (
+                        self.capabilities.context_window
+                        - sys_tokens
+                        - self.capabilities.max_output_tokens
+                    )
+                    * 0.8
+                ),
+                1,
+            )
+            self.ctx.ensure_within(target)
+            self.messages = self.ctx.get_messages()
+
         # Context dump (verbose only)
         if self.verbose:
             render_context_dump(self.messages, self.turn)
@@ -515,6 +537,17 @@ class AgentLoop:
                 from dataclasses import replace as _replace
 
                 response = _replace(response, content=prefill + response.content)
+            # flow 1 (part B) — re-anchor the cache to the server's actual
+            # input count so the chars/4 estimate can't compound across
+            # turns. usage covers system+messages; ctx subtracts the same
+            # sys_tokens used for the threshold above. No-op without usage.
+            if self.ctx and response.usage:
+                actual_total = (
+                    response.usage.input_tokens
+                    + response.usage.cache_creation_input_tokens
+                    + response.usage.cache_read_input_tokens
+                )
+                self.ctx.reconcile_actual_tokens(actual_total, system_tokens=sys_tokens)
             # A successful call means we're no longer in overflow for this
             # turn — reset the counter so a later turn gets a fresh budget
             # of shrink-and-retry attempts.
