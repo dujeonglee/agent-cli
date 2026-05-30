@@ -22,6 +22,7 @@ full SSE client.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 
@@ -29,7 +30,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_cli.render.web import WebRenderer
-from agent_cli.web.server import WebServer, create_app, pick_port
+from agent_cli.web.server import (
+    WebServer,
+    create_app,
+    pick_port,
+    suppress_incomplete_response_log,
+    _IncompleteResponseLogFilter,
+)
 
 
 @pytest.fixture
@@ -52,6 +59,61 @@ def server_and_client():
 
 
 # ── Slash command dispatch (CLI parity) ───────────
+
+
+class TestIncompleteResponseLogFilter:
+    """The Ctrl+C cosmetic-noise filter for uvicorn's SSE shutdown log."""
+
+    def test_drops_the_incomplete_response_message(self):
+        f = _IncompleteResponseLogFilter()
+        rec = logging.LogRecord(
+            "uvicorn.error",
+            logging.ERROR,
+            __file__,
+            0,
+            "ASGI callable returned without completing response.",
+            None,
+            None,
+        )
+        assert f.filter(rec) is False
+
+    def test_keeps_other_messages(self):
+        f = _IncompleteResponseLogFilter()
+        rec = logging.LogRecord(
+            "uvicorn.error",
+            logging.ERROR,
+            __file__,
+            0,
+            "Some other real error",
+            None,
+            None,
+        )
+        assert f.filter(rec) is True
+
+    def test_suppress_is_idempotent(self):
+        logger = logging.getLogger("uvicorn.error")
+        before = len(
+            [f for f in logger.filters if isinstance(f, _IncompleteResponseLogFilter)]
+        )
+        try:
+            suppress_incomplete_response_log()
+            suppress_incomplete_response_log()
+            count = len(
+                [
+                    f
+                    for f in logger.filters
+                    if isinstance(f, _IncompleteResponseLogFilter)
+                ]
+            )
+            assert count == 1  # not stacked
+        finally:
+            # Clean up so the global logger isn't left mutated for other tests.
+            logger.filters = [
+                f
+                for f in logger.filters
+                if not isinstance(f, _IncompleteResponseLogFilter)
+            ]
+        assert before == 0 or before == 1
 
 
 class TestHandleSlashCommand:
