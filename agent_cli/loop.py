@@ -367,11 +367,28 @@ class AgentLoop:
             signal.signal(signal.SIGINT, self._prev_sigint_handler)
 
     def _on_interrupt(self):
-        """Handle graceful interrupt: record in ctx, return ToolResult."""
+        """Handle graceful interrupt: record as an observation, return ToolResult.
 
-        interrupt_msg = INTERRUPT_NOTICE
+        Recorded as a tool-style observation (``tool="interrupt"``) rather
+        than a bare ``role=user`` message. Two reasons:
+          - The transcript no longer shows two consecutive user turns
+            (interrupt notice + the next real instruction); the notice
+            renders as ``[interrupt] …`` via ``_convert_observation``.
+          - ``recent_exchanges`` skips any ``role=user`` entry carrying a
+            ``tool`` field, so the notice is excluded from resume previews
+            without relying on the legacy prefix match.
+        Shared by both surfaces: Ctrl+C (chat) and the web stop button
+        both land here through ``stop_event`` → ``_should_continue``.
+        """
         if self.ctx:
-            self.ctx.add({"role": "user", "content": interrupt_msg})
+            self.ctx.add(
+                {
+                    "role": "user",
+                    "tool": "interrupt",
+                    "success": False,
+                    "content": INTERRUPT_NOTICE,
+                }
+            )
         from agent_cli.render import C, console
 
         console.print(f"\n[{C['accent']}]⚡ Interrupted after turn {self.turn}.[/]")

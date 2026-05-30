@@ -540,6 +540,47 @@ class TestAbortEndpoint:
         assert exc and isinstance(exc[0], EOFError)
 
 
+class TestStopEndpoint:
+    """POST /api/stop → server.trigger_stop → the turn's stop_event."""
+
+    def test_stop_wrong_token_is_401(self, server_and_client):
+        _, _, client = server_and_client
+        resp = client.post("/api/stop?token=nope")
+        assert resp.status_code == 401
+
+    def test_stop_no_active_turn_returns_false(self, server_and_client):
+        _, _, client = server_and_client
+        resp = client.post("/api/stop?token=testtoken")
+        assert resp.status_code == 200
+        assert resp.json()["stopped"] is False
+
+    def test_stop_sets_registered_handle(self, server_and_client):
+        server, _, client = server_and_client
+        ev = threading.Event()
+        server.set_stop_handle(ev)
+        resp = client.post("/api/stop?token=testtoken")
+        assert resp.status_code == 200
+        assert resp.json()["stopped"] is True
+        assert ev.is_set()
+
+    def test_set_stop_handle_none_clears(self, server_and_client):
+        server, _, client = server_and_client
+        ev = threading.Event()
+        server.set_stop_handle(ev)
+        server.set_stop_handle(None)
+        resp = client.post("/api/stop?token=testtoken")
+        assert resp.json()["stopped"] is False
+        assert not ev.is_set()
+
+    def test_trigger_stop_unit(self, server_and_client):
+        server, _, _ = server_and_client
+        assert server.trigger_stop() is False  # no handle registered
+        ev = threading.Event()
+        server.set_stop_handle(ev)
+        assert server.trigger_stop() is True
+        assert ev.is_set()
+
+
 # ── pick_port (8080-preferred, OS-fallback) ───────
 
 

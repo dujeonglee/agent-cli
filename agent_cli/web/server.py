@@ -28,6 +28,7 @@ import json
 import logging
 import secrets
 import socket
+import threading
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -333,8 +334,39 @@ class WebServer:
         # thread pops one, runs the loop, repeats. Bounded queue is
         # unnecessary (single active client, throttled by SSE flow).
         self._chat_queue: SimpleQueue = SimpleQueue()
+        # Stop handle for the in-flight chat turn. The worker registers a
+        # fresh ``threading.Event`` per message and passes it to
+        # ``run_loop(stop_event=…)``; ``/api/stop`` sets it so the loop
+        # exits at the next turn boundary (same path as Ctrl+C in chat).
+        # Guarded by a lock — set from the worker thread, read from the
+        # request handler thread.
+        self._stop_lock = threading.Lock()
+        self._stop_handle: threading.Event | None = None
 
     # ─── External hooks (used by the CLI ``web`` command) ─────
+
+    def set_stop_handle(self, event: threading.Event | None) -> None:
+        """Register (or clear) the stop Event for the current chat turn.
+
+        Called by the worker: a fresh Event before each ``run_loop``,
+        then ``None`` once the turn returns.
+        """
+        with self._stop_lock:
+            self._stop_handle = event
+
+    def trigger_stop(self) -> bool:
+        """Signal the in-flight turn to stop at the next turn boundary.
+
+        Returns ``True`` if a turn was active (a handle was registered),
+        ``False`` otherwise — lets ``/api/stop`` report whether anything
+        was actually stopped.
+        """
+        with self._stop_lock:
+            handle = self._stop_handle
+        if handle is not None:
+            handle.set()
+            return True
+        return False
 
     def push_chat(self, message: str) -> None:
         """Queue a top-level chat message for the worker loop."""
@@ -567,6 +599,17 @@ def create_app(server: WebServer) -> FastAPI:
         server._require_token(token)
         server.renderer.push_abort()
         return JSONResponse({"accepted": True})
+
+    @app.post("/api/stop")
+    async def stop(token: str = Query(...)):
+        """Stop the in-flight chat turn at the next turn boundary.
+
+        Sets the worker's ``stop_event`` (same mechanism as Ctrl+C in
+        the CLI). ``stopped`` is ``False`` when no turn was active.
+        """
+        server._require_token(token)
+        stopped = server.trigger_stop()
+        return JSONResponse({"stopped": stopped})
 
     return app
 
