@@ -322,11 +322,15 @@ class TestOpenAICompatRuntimeDetection:
     @patch("agent_cli.providers.compat.requests.get")
     @patch("agent_cli.providers.compat.requests.post")
     def test_fallback_context_when_no_models_api(self, mock_post, mock_get):
-        """Server without /v1/models → conservative 4096 default."""
+        """Server without /v1/models and an inconclusive overflow probe
+        (200 = prompt fit, no number) → 128K conservative default
+        (not the old 4096)."""
         mock_get.side_effect = Exception("Not found")
 
+        # Both the overflow probe and the thinking probe hit this 200.
         probe_resp = MagicMock()
         probe_resp.status_code = 200
+        probe_resp.text = ""
         probe_resp.json.return_value = {
             "choices": [{"message": {"content": "Hello!"}}],
         }
@@ -339,7 +343,7 @@ class TestOpenAICompatRuntimeDetection:
             "http://localhost:8080/v1", "local-model"
         )
         assert caps is not None
-        assert caps.context_window == 4096  # default
+        assert caps.context_window == 131072  # 128K fallback
         assert caps.supports_thinking is False
 
     @patch("agent_cli.providers.compat.requests.get")
@@ -602,3 +606,95 @@ class TestProgressCallback:
         assert caps.context_window == 32768  # came from registry
         assert messages == []  # no probes, no messages
         mock_post.assert_not_called()
+
+
+# Verified live against an omlx server (Qwen3.6-27B-MLX-8bit, 2026-05-30).
+_OMLX_OVERFLOW_400 = (
+    "Prompt too long: 360012 tokens exceeds max context window of 262144 tokens"
+)
+
+
+class TestContextWindowProbe:
+    """PR C — detect-time context-window discovery via overflow probe.
+
+    Covers _probe_context_window_via_overflow in isolation plus the
+    _detect_openai_context_window tier ordering (metadata → probe →
+    128K fallback)."""
+
+    def _resp(self, status, text=""):
+        r = MagicMock()
+        r.status_code = status
+        r.text = text
+        return r
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_probe_parses_limit_from_overflow_400(self, mock_post):
+        from agent_cli.providers.compat import _probe_context_window_via_overflow
+
+        mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
+        assert _probe_context_window_via_overflow("http://x/v1", "m") == 262144
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_probe_returns_none_when_prompt_fits(self, mock_post):
+        """200 means the window exceeds our probe — can't learn exact size."""
+        from agent_cli.providers.compat import _probe_context_window_via_overflow
+
+        mock_post.return_value = self._resp(200, "")
+        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_probe_returns_none_on_overflow_without_number(self, mock_post):
+        from agent_cli.providers.compat import _probe_context_window_via_overflow
+
+        # Classified as overflow, but no parseable number.
+        mock_post.return_value = self._resp(400, "context length exceeded")
+        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_probe_returns_none_on_non_overflow_400(self, mock_post):
+        from agent_cli.providers.compat import _probe_context_window_via_overflow
+
+        mock_post.return_value = self._resp(400, "invalid_request: unknown field")
+        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_probe_returns_none_on_connection_error(self, mock_post):
+        from agent_cli.providers.compat import _probe_context_window_via_overflow
+
+        mock_post.side_effect = Exception("Connection refused")
+        assert _probe_context_window_via_overflow("http://x/v1", "m") is None
+
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_detect_uses_metadata_and_skips_probe(self, mock_post, mock_get):
+        """When /v1/models has max_model_len, no probe POST is sent."""
+        from agent_cli.providers.compat import _detect_openai_context_window
+
+        mock_get.return_value = self._resp(200, "")
+        mock_get.return_value.json.return_value = {
+            "data": [{"id": "m", "max_model_len": 32768}]
+        }
+        assert _detect_openai_context_window("http://x/v1", "m") == 32768
+        mock_post.assert_not_called()
+
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_detect_falls_back_to_probe(self, mock_post, mock_get):
+        """No metadata → probe discovers the real limit (omlx path)."""
+        from agent_cli.providers.compat import _detect_openai_context_window
+
+        mock_get.return_value = self._resp(200, "")
+        mock_get.return_value.json.return_value = {"data": []}  # model absent
+        mock_post.return_value = self._resp(400, _OMLX_OVERFLOW_400)
+        assert _detect_openai_context_window("http://x/v1", "m") == 262144
+
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_detect_falls_back_to_128k_when_probe_fails(self, mock_post, mock_get):
+        """No metadata + probe yields nothing → 128K (not the old 4096)."""
+        from agent_cli.providers.compat import _detect_openai_context_window
+
+        mock_get.return_value = self._resp(200, "")
+        mock_get.return_value.json.return_value = {"data": []}
+        mock_post.return_value = self._resp(200, "")  # prompt fit → no number
+        assert _detect_openai_context_window("http://x/v1", "m") == 131072

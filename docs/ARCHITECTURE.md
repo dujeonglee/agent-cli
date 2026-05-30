@@ -95,7 +95,7 @@ agent_cli/
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
 │   ├── base.py              (50)   LLMProvider 프로토콜, LLMResponse(+thinking), TokenUsage(+cache_creation/cache_read tokens)
-│   ├── compat.py            (419)  ModelCapabilities + 프로브 감지 (thinking + format) + 진행 콜백 + 자동 저장
+│   ├── compat.py            (508)  ModelCapabilities + 프로브 감지 (thinking + format + context-window overflow probe) + 진행 콜백 + 자동 저장. OpenAI 호환 context window는 `/v1/models` 메타 → overflow probe → 128K fallback 3-tier
 │   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
 │   ├── anthropic.py         (216)  Anthropic Messages API (tool_use + thinking blocks + streaming + TTFT + prompt cache via cache_control)
 │   ├── openai_compat.py     (194)  OpenAI 호환 API (function calling + reasoning_content + streaming + TTFT)
@@ -325,8 +325,8 @@ class ModelCapabilities:
 
 능력치 조회 우선순위:
 1. `models.json` 정적 설정 (최우선)
-2. 런타임 API 감지 (Ollama `/api/show` + thinking probe + format probe)
-3. 보수적 기본값 (4096 context, 모든 기능 비활성)
+2. 런타임 API 감지 (Ollama `/api/show` + thinking/format probe; OpenAI 호환 `/v1/models` + context overflow probe)
+3. 보수적 기본값 (4096 context, 모든 기능 비활성 — `DEFAULT_CAPABILITIES`, provider/base_url 없을 때만)
 
 **런타임 감지 세부 (Ollama):**
 1. `/api/show` — 메타데이터 (context_length 등)
@@ -334,6 +334,13 @@ class ModelCapabilities:
 3. **format probe** — `format="json"`을 붙여 똑같이 단순 요청을 보낸 뒤 HTTP 200 + `error` 없는 응답이 오는지 검사. mlx 엔진으로 패키징된 일부 모델(예: bf16 safetensors) 이 `format` 파라미터에서 깨지기 때문에 사전에 걸러냄. 실패 시 `supports_structured_output=False`로 저장하고 stderr에 `[warn]` 한 줄 기록 → 이후 실 요청이 `format` 파라미터 자체를 생략.
 
 첫 감지 시 probe 2번(thinking, format)이 `/api/chat`에 가기 때문에 cold-load 비용이 1회 발생 (~10초). 감지 결과는 `~/.agent-cli/models.json`에 저장되어 이후엔 재실행 없음.
+
+**런타임 감지 세부 (OpenAI 호환 / omlx · vLLM · mlx-lm):** `_detect_openai_context_window` 가 3-tier로 context window 결정 —
+1. `/v1/models` 메타데이터 `max_model_len`(vLLM) / `context_length` — 있으면 그대로 (가장 쌈·정확).
+2. **overflow probe** (`_probe_context_window_via_overflow`) — 메타데이터에 없는 서버(omlx 등)는 의도적으로 상한 초과 prompt(`"word "×2M` ≈ 1.5M 토큰)를 보내 400을 유발하고 `parse_overflow_amounts`로 응답의 상한 숫자를 추출 (omlx: `exceeds max context window of 262144 tokens`). 상한 초과 prompt는 **토크나이즈 직후 즉시 거부**되어 eval/생성이 없으므로 서버 점유 없음(실서버 검증 2026-05-30) — 그래서 경계로 수렴하는 binary search는 **안 함**(상한 *이하* probe는 full prompt-eval을 유발해 서버를 점유시킴).
+3. `_DEFAULT_CONTEXT_FALLBACK` = **128K**(`131072`) — 메타데이터·probe 모두 숫자를 못 주면. 보수적/under-set이라 자체적으로 400을 유발하지 않고, 실제가 더 작으면 flow 2 런타임 복구가 교정. (이전 4096 기본값을 대체 — 4096은 256K 서버에서 컨텍스트의 1.5%만 쓰는 심각한 낭비였음.)
+
+모든 첫-실행 probe(thinking / format / context overflow)는 `constants.DETECTION_PROBE_TIMEOUT`(60s) 공유 — cold-load를 감내하는 여유값이며 사용자 셸 명령용 `SHELL_COMMAND_TIMEOUT`(30s)과 구분.
 
 ### 4.3 파서 결과 — `ParsedAction` (`wire_formats/base.py`)
 
