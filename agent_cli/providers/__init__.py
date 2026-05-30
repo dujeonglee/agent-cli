@@ -1,13 +1,18 @@
 """Provider adapters and capabilities."""
 
 from agent_cli.providers.base import LLMProvider, LLMResponse, TokenUsage
-from agent_cli.providers.compat import ModelCapabilities, get_capabilities
+from agent_cli.providers.compat import (
+    ModelCapabilities,
+    UnsupportedModelError,
+    get_capabilities,
+)
 
 __all__ = [
     "LLMProvider",
     "LLMResponse",
     "TokenUsage",
     "ModelCapabilities",
+    "UnsupportedModelError",
     "get_capabilities",
     "create_provider",
 ]

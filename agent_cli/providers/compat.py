@@ -63,6 +63,24 @@ DEFAULT_CAPABILITIES = ModelCapabilities(
     thinking_format="",
 )
 
+# Auto-detected output token budget = context_window // this. A model
+# with a 256K window gets 64K output; 16K → 4K. (Registry/models.json
+# entries keep their stored value — this only governs detection.)
+_OUTPUT_TOKEN_DIVISOR = 4
+
+# Models with a context window below this are rejected at detection
+# time: even output (= window//4) would be under 4K, too small to run
+# the agent loop usefully. Surfaced as UnsupportedModelError so the CLI
+# can fail fast with a clear message instead of silently degrading.
+MIN_CONTEXT_WINDOW = 16384
+
+
+class UnsupportedModelError(RuntimeError):
+    """Raised during capability detection when a model's context window
+    is too small (< MIN_CONTEXT_WINDOW) to run the agent. Propagates out
+    of get_capabilities; the CLI catches it and exits with a message."""
+
+
 # Context-window detection fallback when neither /v1/models metadata nor
 # the overflow probe yields a number. 128K is a realistic floor for
 # modern local models — far less wasteful than the old 4096 default,
@@ -183,7 +201,12 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
                     context_length = value
                     break
 
-        max_output = min(context_length // 4, 4096)
+        if context_length < MIN_CONTEXT_WINDOW:
+            raise UnsupportedModelError(
+                f"{model}: context window {context_length:,} is below the "
+                f"{MIN_CONTEXT_WINDOW:,} minimum — too small to run the agent."
+            )
+        max_output = context_length // _OUTPUT_TOKEN_DIVISOR
 
         # Step 2: Probe for thinking support by sending a simple prompt
         _emit_progress(
@@ -210,6 +233,10 @@ def _detect_ollama_capabilities(base_url: str, model: str) -> ModelCapabilities 
             supports_strict_schema=False,
             thinking_format=thinking_format,
         )
+    except UnsupportedModelError:
+        # Hard reject — must reach the CLI, not be swallowed as a
+        # detection failure (which would silently fall back to defaults).
+        raise
     except Exception as e:
         import sys
 
@@ -379,7 +406,12 @@ def _detect_openai_compat_capabilities(
             supports_thinking = True
             thinking_format = match.group(1).lower()
 
-        max_output = min(context_window // 4, 4096)
+        if context_window < MIN_CONTEXT_WINDOW:
+            raise UnsupportedModelError(
+                f"{model}: context window {context_window:,} is below the "
+                f"{MIN_CONTEXT_WINDOW:,} minimum — too small to run the agent."
+            )
+        max_output = context_window // _OUTPUT_TOKEN_DIVISOR
 
         _emit_progress(f"Detection complete for {model}")
 
@@ -392,6 +424,9 @@ def _detect_openai_compat_capabilities(
             supports_strict_schema=False,
             thinking_format=thinking_format,
         )
+    except UnsupportedModelError:
+        # Hard reject — propagate to the CLI instead of degrading to defaults.
+        raise
     except Exception as e:
         import sys
 

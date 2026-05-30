@@ -95,7 +95,7 @@ agent_cli/
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
 │   ├── base.py              (50)   LLMProvider 프로토콜, LLMResponse(+thinking), TokenUsage(+cache_creation/cache_read tokens)
-│   ├── compat.py            (508)  ModelCapabilities + 프로브 감지 (thinking + format + context-window overflow probe) + 진행 콜백 + 자동 저장. OpenAI 호환 context window는 `/v1/models` 메타 → overflow probe → 128K fallback 3-tier
+│   ├── compat.py            (543)  ModelCapabilities + 프로브 감지 (thinking + format + context-window overflow probe) + 진행 콜백 + 자동 저장. OpenAI 호환 context window는 `/v1/models` 메타 → overflow probe → 128K fallback 3-tier. **auto-detect 시 `max_output_tokens = context_window // 4`** (예: 256K→64K, 16K→4K; 기존 4096 cap 제거). context window가 `MIN_CONTEXT_WINDOW`(16K) 미만이면 `UnsupportedModelError` raise → CLI(`_setup_provider`)가 잡아 fail-fast (registry/models.json 저장값은 이 규칙 미적용 — 저장값 그대로)
 │   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
 │   ├── anthropic.py         (216)  Anthropic Messages API (tool_use + thinking blocks + streaming + TTFT + prompt cache via cache_control)
 │   ├── openai_compat.py     (194)  OpenAI 호환 API (function calling + reasoning_content + streaming + TTFT)
@@ -325,7 +325,7 @@ class ModelCapabilities:
 
 능력치 조회 우선순위:
 1. `models.json` 정적 설정 (최우선)
-2. 런타임 API 감지 (Ollama `/api/show` + thinking/format probe; OpenAI 호환 `/v1/models` + context overflow probe)
+2. 런타임 API 감지 (Ollama `/api/show` + thinking/format probe; OpenAI 호환 `/v1/models` + context overflow probe). 감지 시 `max_output = context // 4`; context < 16K(`MIN_CONTEXT_WINDOW`)면 `UnsupportedModelError`로 reject
 3. 보수적 기본값 (4096 context, 모든 기능 비활성 — `DEFAULT_CAPABILITIES`, provider/base_url 없을 때만)
 
 **런타임 감지 세부 (Ollama):**
