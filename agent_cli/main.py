@@ -1472,7 +1472,12 @@ def web(
         import uvicorn
 
         from agent_cli.render.web import WebRenderer
-        from agent_cli.web.server import WebServer, create_app, pick_port
+        from agent_cli.web.server import (
+            WebServer,
+            create_app,
+            pick_port,
+            suppress_incomplete_response_log,
+        )
     except ImportError as e:
         console.print(
             f"[red]Missing optional dependency for 'web' command: {e}.[/]\n"
@@ -1666,6 +1671,11 @@ def web(
     # down the worker and finalise the session — done in ``finally``.
     config = uvicorn.Config(app_obj, host=host, port=resolved_port, log_level="warning")
     server_obj = uvicorn.Server(config)
+    # Silence uvicorn's cosmetic "ASGI callable returned without completing
+    # response" line that fires on Ctrl+C while an SSE client is connected
+    # (sse-starlette cancels the stream task before the final body chunk).
+    # The session still finalises normally; see the filter's docstring.
+    suppress_incomplete_response_log()
     try:
         try:
             server_obj.run()

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 import socket
 import subprocess
@@ -429,6 +430,36 @@ def _queue_get_with_timeout(q: SimpleQueue, timeout: float):
         return q.get(timeout=timeout)
     except Empty as e:
         raise _QueueEmpty() from e
+
+
+class _IncompleteResponseLogFilter(logging.Filter):
+    """Drop uvicorn's "ASGI callable returned without completing response"
+    line.
+
+    On Ctrl+C with an SSE client connected, sse-starlette's
+    ``EventSourceResponse`` cancels its ``_stream_response`` task (its
+    ``_listen_for_exit_signal`` watcher fires and cancels the whole task
+    group) *before* it sends the final ``more_body=False`` chunk. uvicorn
+    then logs this error for the truncated response. It is cosmetic — the
+    session finalises normally — and only ever appears during shutdown,
+    never in normal operation (verified live, 2026-05-30). Suppressing
+    just this one message keeps real ASGI errors visible.
+    """
+
+    _MSG = "ASGI callable returned without completing response"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return self._MSG not in record.getMessage()
+
+
+def suppress_incomplete_response_log() -> None:
+    """Attach ``_IncompleteResponseLogFilter`` to uvicorn's error logger.
+
+    Idempotent — calling twice won't stack duplicate filters.
+    """
+    logger = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _IncompleteResponseLogFilter) for f in logger.filters):
+        logger.addFilter(_IncompleteResponseLogFilter())
 
 
 # ── FastAPI app factory ────────────────────────────────────
