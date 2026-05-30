@@ -3463,3 +3463,92 @@ class TestFlow1PreventiveCompaction:
         )
         assert result.output == "ok"
         assert len(ctx.get_raw_messages()) < before  # shed before the call
+
+
+class TestOutputTruncationGuard:
+    """stop_reason=length → the incomplete action is NOT dispatched; a
+    truncation notice is recorded so the model retries smaller."""
+
+    def test_truncated_write_file_not_executed(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        target = tmp_path / "x.txt"
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "writing",
+                        "action": "write_file",
+                        "action_input": {"path": str(target), "content": "partial"},
+                    }
+                ),
+                stop_reason="length",
+            ),
+            LLMResponse(content=_complete("done")),
+        ]
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            query="write x",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        # The truncated write_file must NOT have run.
+        assert not target.exists()
+        # A truncation notice observation was recorded.
+        raw = ctx.get_raw_messages()
+        assert any(m.get("tool") == "output_truncated" for m in raw)
+        # Loop continued and recovered on the retry.
+        assert result.output == "done"
+
+    def test_truncated_complete_is_blocked_and_retried(self, caps, tmp_path):
+        """Even ``complete`` is blocked on length — a clipped final answer
+        shouldn't be accepted."""
+        from agent_cli.context.manager import ContextManager
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=_complete("truncated ans"), stop_reason="length"),
+            LLMResponse(content=_complete("full answer")),
+        ]
+        ctx = ContextManager(session_dir=tmp_path)
+        result = run_loop(
+            query="q",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert result.output == "full answer"
+
+    def test_normal_stop_dispatches_action(self, caps, tmp_path):
+        """stop_reason='stop' (or None) → action runs as usual (no guard)."""
+        from agent_cli.context.manager import ContextManager
+
+        target = tmp_path / "y.txt"
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "thought": "writing",
+                        "action": "write_file",
+                        "action_input": {"path": str(target), "content": "hello"},
+                    }
+                ),
+                stop_reason="stop",
+            ),
+            LLMResponse(content=_complete("done")),
+        ]
+        ctx = ContextManager(session_dir=tmp_path)
+        run_loop(
+            query="write y",
+            provider=provider,
+            capabilities=caps,
+            model="test",
+            ctx=ctx,
+        )
+        assert target.exists()
+        assert target.read_text() == "hello"
