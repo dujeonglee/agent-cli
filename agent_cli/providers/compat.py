@@ -8,7 +8,7 @@ import re
 
 import requests
 
-from agent_cli.constants import SHELL_COMMAND_TIMEOUT
+from agent_cli.constants import DETECTION_PROBE_TIMEOUT
 
 from agent_cli.config import get_model_entry, save_model_entry
 
@@ -62,6 +62,20 @@ DEFAULT_CAPABILITIES = ModelCapabilities(
     supports_strict_schema=False,
     thinking_format="",
 )
+
+# Context-window detection fallback when neither /v1/models metadata nor
+# the overflow probe yields a number. 128K is a realistic floor for
+# modern local models — far less wasteful than the old 4096 default,
+# while staying under-set (safe: flow 2 overflow recovery corrects at
+# runtime if the real window is smaller). See docs/ARCHITECTURE.md.
+_DEFAULT_CONTEXT_FALLBACK = 131072  # 128K
+
+# Filler size for the overflow probe (in repetitions of "word "). At
+# ~0.75 tokens/word this is ≈1.5M tokens — over the limit of essentially
+# every local model, so the server rejects it right after tokenisation
+# (no eval/generation, no server occupancy). Models whose real window
+# exceeds ~1.5M simply return 200 and the caller falls back.
+_CONTEXT_PROBE_WORDS = 2_000_000
 
 
 # Tracks whether the last get_capabilities() call triggered runtime detection
@@ -235,7 +249,7 @@ def _probe_format_support(base_url: str, model: str) -> bool:
     try:
         # Generous timeout: first-time probe includes the model's
         # cold-load into VRAM which can take 10s+ for big models.
-        r = requests.post(url, json=body, timeout=60)
+        r = requests.post(url, json=body, timeout=DETECTION_PROBE_TIMEOUT)
     except Exception as e:
         print(
             f"[warn] Ollama format probe for {model} failed ({type(e).__name__}: "
@@ -295,7 +309,7 @@ def _probe_thinking_support(base_url: str, model: str) -> tuple[bool, str]:
                     {"role": "user", "content": "What is 2+2?"},
                 ],
             },
-            timeout=SHELL_COMMAND_TIMEOUT,
+            timeout=DETECTION_PROBE_TIMEOUT,
         )
         r.raise_for_status()
         msg = r.json().get("message", {})
@@ -351,7 +365,7 @@ def _detect_openai_compat_capabilities(
                 "max_tokens": 512,
             },
             headers=headers,
-            timeout=SHELL_COMMAND_TIMEOUT,
+            timeout=DETECTION_PROBE_TIMEOUT,
         )
         r.raise_for_status()
         data = r.json()
@@ -389,10 +403,18 @@ def _detect_openai_compat_capabilities(
 
 
 def _detect_openai_context_window(base_url: str, model: str, api_key: str = "") -> int:
-    """Try to get context window from /v1/models endpoint.
+    """Determine the model's context window for an OpenAI-compatible server.
 
-    vLLM returns max_model_len. Other servers may not.
-    Returns detected value or 4096 default.
+    Three tiers, in order:
+      1. ``/v1/models`` metadata — ``max_model_len`` (vLLM) or
+         ``context_length``. Cheapest and exact when present.
+      2. Overflow probe — servers that don't expose the window in
+         metadata (notably omlx/mlx-lm) still reveal it by rejecting an
+         over-limit prompt with a 400 that names the limit. See
+         ``_probe_context_window_via_overflow``.
+      3. ``_DEFAULT_CONTEXT_FALLBACK`` (128K) when neither yields a
+         number — conservative/under-set so it never triggers a 400 on
+         its own; flow-2 runtime recovery corrects a too-large estimate.
     """
     try:
         headers = {}
@@ -416,4 +438,71 @@ def _detect_openai_context_window(base_url: str, model: str, api_key: str = "") 
     except Exception:
         pass
 
-    return 4096  # conservative default
+    # Metadata didn't expose it (e.g. omlx) — probe via overflow.
+    _emit_progress(f"Probing context window via overflow ({model})")
+    probed = _probe_context_window_via_overflow(base_url, model, api_key)
+    if probed:
+        return probed
+
+    return _DEFAULT_CONTEXT_FALLBACK
+
+
+def _probe_context_window_via_overflow(
+    base_url: str, model: str, api_key: str = ""
+) -> int | None:
+    """Read the real context window from an intentional overflow rejection.
+
+    Servers that don't advertise their window in ``/v1/models`` metadata
+    (notably omlx/mlx-lm) reject an over-limit prompt with a 400 whose
+    body names the limit, e.g. ``"...exceeds max context window of
+    262144 tokens"``. We send a deliberately huge prompt and parse that
+    number out via the same ``parse_overflow_amounts`` the runtime
+    recovery layer uses.
+
+    Cost: an over-limit prompt is rejected right after *tokenisation* —
+    no eval, no generation — so the server is not occupied the way an
+    under-limit prompt would be (verified live against omlx, 2026-05-30).
+    This is why we never binary-search toward the boundary: an
+    under-limit probe would force a full prompt-eval and block the
+    server for the duration.
+
+    Returns the parsed limit, or ``None`` when the server accepted the
+    prompt (window exceeds the probe size), didn't return an overflow
+    400, or returned a 400 without a parseable number. The caller falls
+    back to a conservative default in those cases.
+    """
+    from agent_cli.context.overflow import (
+        is_context_overflow,
+        parse_overflow_amounts,
+    )
+
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": "word " * _CONTEXT_PROBE_WORDS}],
+        "max_tokens": 16,
+    }
+    try:
+        r = requests.post(
+            url, json=body, headers=headers, timeout=DETECTION_PROBE_TIMEOUT
+        )
+    except Exception:
+        return None
+
+    if r.status_code == 200:
+        # Prompt fit — the window is larger than our probe; can't learn
+        # the exact value this way.
+        return None
+
+    try:
+        text = r.text
+    except Exception:
+        return None
+
+    if not is_context_overflow(text):
+        return None
+    _actual, limit = parse_overflow_amounts(text)
+    return limit if (limit and limit > 0) else None

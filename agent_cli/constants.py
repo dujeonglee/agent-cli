@@ -4,6 +4,12 @@
 SHELL_COMMAND_TIMEOUT = 30
 LLM_API_TIMEOUT = 1200
 DELEGATE_DEFAULT_TIMEOUT = 300
+# First-run capability detection probes (thinking support, JSON-format
+# tolerance, context-window overflow). All run once per model and may
+# incur a cold model load, so they share a generous allowance distinct
+# from SHELL_COMMAND_TIMEOUT (which is for user shell commands, not
+# probes).
+DETECTION_PROBE_TIMEOUT = 60
 
 # ── Token estimation ─────────────────────────
 CHARS_PER_TOKEN = 4
