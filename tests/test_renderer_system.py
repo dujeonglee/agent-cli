@@ -24,8 +24,8 @@ class _FakeStream:
         return self._tty
 
 
-class TestMinimalCanConfirm:
-    """``can_confirm`` gates the dangerous-shell prompt — it must reflect
+class TestMinimalCanPrompt:
+    """``can_prompt`` gates the dangerous-shell prompt — it must reflect
     whether a real terminal is attached (not Live/thread state, which
     ``confirm`` itself handles)."""
 
@@ -33,22 +33,22 @@ class TestMinimalCanConfirm:
         r = MinimalRenderer(Console())
         monkeypatch.setattr(minimal_mod.sys, "stdin", _FakeStream(True))
         monkeypatch.setattr(minimal_mod.sys, "stdout", _FakeStream(True))
-        assert r.can_confirm() is True
+        assert r.can_prompt() is True
 
     def test_false_when_stdin_not_tty(self, monkeypatch):
         r = MinimalRenderer(Console())
         monkeypatch.setattr(minimal_mod.sys, "stdin", _FakeStream(False))
         monkeypatch.setattr(minimal_mod.sys, "stdout", _FakeStream(True))
-        assert r.can_confirm() is False
+        assert r.can_prompt() is False
 
     def test_true_even_with_active_live(self, monkeypatch):
-        """An active Live region does NOT make ``can_confirm`` False —
+        """An active Live region does NOT make ``can_prompt`` False —
         ``confirm`` pauses the Live, so a TTY is the only precondition."""
         r = MinimalRenderer(Console())
         r._parallel_live = MagicMock()
         monkeypatch.setattr(minimal_mod.sys, "stdin", _FakeStream(True))
         monkeypatch.setattr(minimal_mod.sys, "stdout", _FakeStream(True))
-        assert r.can_confirm() is True
+        assert r.can_prompt() is True
 
 
 class TestMinimalConfirmPausesLive:
@@ -99,6 +99,53 @@ class TestMinimalConfirmPausesLive:
             default_key="y",
         )
         assert key == "n"
+
+    def test_prompt_user_pauses_active_live(self, monkeypatch):
+        """``ask`` shares the same guard — prompt_user must also pause the
+        Live panel so a delegate-worker question isn't painted over."""
+        r = MinimalRenderer(Console())
+        live = MagicMock()
+        r._parallel_live = live
+        monkeypatch.setattr("builtins.input", lambda prompt="": "the answer")
+
+        value = r.prompt_user("Q: ", multiline=False)
+
+        assert value == "the answer"
+        live.stop.assert_called_once()
+        live.start.assert_called_once()
+
+    def test_prompt_user_resumes_live_on_eof(self, monkeypatch):
+        """prompt_user propagates EOF (caller policy), but the Live must
+        still resume via the guard's finally."""
+
+        def _raise(prompt=""):
+            raise EOFError
+
+        r = MinimalRenderer(Console())
+        live = MagicMock()
+        r._parallel_live = live
+        monkeypatch.setattr("builtins.input", _raise)
+
+        try:
+            r.prompt_user("Q: ", multiline=False)
+        except EOFError:
+            pass
+        live.stop.assert_called_once()
+        live.start.assert_called_once()
+
+
+class TestInteractivePromptSerialization:
+    """confirm and ask share one re-entrant lock so they serialize against
+    each other across delegate worker threads."""
+
+    def test_shared_lock_is_reentrant(self):
+        # The dangerous-shell guard holds the lock then calls confirm,
+        # which re-acquires it on the same thread — must not deadlock.
+        from agent_cli.render import interactive_lock
+
+        with interactive_lock:
+            with interactive_lock:
+                assert True
 
 
 class TestLoadRendererByName:

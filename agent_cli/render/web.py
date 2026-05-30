@@ -647,28 +647,36 @@ class WebRenderer(Renderer):
         to the input affordance — the user doesn't have to scroll
         back to the assistant card to see what they're answering.
         """
-        self._emit(
-            "input_required",
-            {
-                "kind": "prompt",
-                "prompt": prompt,
-                "multiline": multiline,
-                "continuation": continuation,
-                "context": context,
-            },
-            persistent=False,
-        )
-        try:
-            value = self._wait_for_input()
-        finally:
-            self._emit("input_resolved", {}, persistent=False)
+
+        # Emit + wait run together under ``_guarded_read``'s shared lock so
+        # only one ``input_required`` is outstanding at a time — otherwise
+        # two concurrent delegate prompts would both block on the single
+        # ``_input_queue`` and one answer could satisfy the wrong worker.
+        def _do() -> str:
+            self._emit(
+                "input_required",
+                {
+                    "kind": "prompt",
+                    "prompt": prompt,
+                    "multiline": multiline,
+                    "continuation": continuation,
+                    "context": context,
+                },
+                persistent=False,
+            )
+            try:
+                return self._wait_for_input()
+            finally:
+                self._emit("input_resolved", {}, persistent=False)
+
+        value = self._guarded_read(_do)
         return value if value else default
 
-    def can_confirm(self) -> bool:
+    def can_prompt(self) -> bool:
         """We can prompt whenever a browser is connected to answer the
         ``input_required`` event — no TTY needed; the SSE + ``/api/input``
-        channel carries the confirmation. Returns ``False`` when nothing
-        is connected, so a dangerous command is refused with a clear error
+        channel carries it. Returns ``False`` when nothing is connected, so
+        an interactive prompt is refused / defaulted with a clear path
         rather than blocking on an answer no one can give."""
         with self._lock:
             return any(not c.closed.is_set() for c in self._connections)
@@ -687,30 +695,37 @@ class WebRenderer(Renderer):
         so callers see the same "safe default" semantics regardless of
         where the user disconnected.
         """
-        self._emit(
-            "input_required",
-            {
-                "kind": "confirm",
-                "prompt": prompt,
-                "options": [
-                    {"key": o.key, "label": o.label, "aliases": list(o.aliases)}
-                    for o in options
-                ],
-                "default_key": default_key,
-            },
-            persistent=False,
-        )
-        try:
+
+        # Emit + wait run together under ``_guarded_read``'s shared lock
+        # (same serialization as ``prompt_user``) so confirm and ask never
+        # have two prompts outstanding on the single ``_input_queue``.
+        def _do():
+            self._emit(
+                "input_required",
+                {
+                    "kind": "confirm",
+                    "prompt": prompt,
+                    "options": [
+                        {"key": o.key, "label": o.label, "aliases": list(o.aliases)}
+                        for o in options
+                    ],
+                    "default_key": default_key,
+                },
+                persistent=False,
+            )
             try:
-                value = self._wait_for_input()
-            except EOFError:
-                # Mirror MinimalRenderer: confirm is "pick or default" —
-                # abort collapses to the safe default rather than
-                # propagating an exception (the caller passed a
-                # default_key precisely so confirm can always answer).
-                return (default_key, "")
-        finally:
-            self._emit("input_resolved", {}, persistent=False)
+                return self._wait_for_input()
+            finally:
+                self._emit("input_resolved", {}, persistent=False)
+
+        try:
+            value = self._guarded_read(_do)
+        except EOFError:
+            # Mirror MinimalRenderer: confirm is "pick or default" — abort
+            # collapses to the safe default rather than propagating (the
+            # caller passed a default_key precisely so confirm can always
+            # answer).
+            return (default_key, "")
         if isinstance(value, tuple) and len(value) == 2:
             return value  # type: ignore[return-value]
         # Malformed payload — fall back to default.

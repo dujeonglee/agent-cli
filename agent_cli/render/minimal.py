@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
+from contextlib import contextmanager
 from io import StringIO
 
 from rich.console import Console
@@ -649,13 +650,19 @@ class MinimalRenderer(Renderer):
         directly via ``console.print`` so Rich markup survives.
         """
         del context  # CLI prints announcements separately for color.
+        # Reads go through ``_guarded_read`` → serialized against other
+        # prompts (confirm / concurrent delegate asks) and wrapped in
+        # ``_prompt_display_guard`` so an active Live panel doesn't paint
+        # over the prompt. EOF / KbInt propagate (see docstring).
         if multiline:
             from agent_cli.input_history import read_rich_input
 
-            value = read_rich_input(prompt, continuation=continuation).strip()
+            value = self._guarded_read(
+                lambda: read_rich_input(prompt, continuation=continuation)
+            ).strip()
         else:
             try:
-                value = input(prompt).strip()
+                value = self._guarded_read(lambda: input(prompt)).strip()
             except UnicodeDecodeError:
                 # Mirror read_rich_input's behaviour: drop the broken
                 # paste and let the caller treat it as no input. EOF /
@@ -663,16 +670,40 @@ class MinimalRenderer(Renderer):
                 value = ""
         return value if value else default
 
-    def can_confirm(self) -> bool:
-        """A CLI prompt needs a real terminal on both ends. ``confirm``
-        itself pauses any active Live region (spinner / parallel-delegate
-        panel) and the dangerous-shell caller serializes prompts, so a TTY
-        is the only precondition — Live state and worker-thread origin are
-        handled at prompt time, not gated here."""
+    def can_prompt(self) -> bool:
+        """A CLI prompt needs a real terminal on both ends. The active
+        Live region is paused by ``_prompt_display_guard`` and reads are
+        serialized by the shared lock, so a TTY is the only precondition —
+        Live state and worker-thread origin are handled at read time, not
+        gated here."""
         try:
             return bool(sys.stdin.isatty() and sys.stdout.isatty())
         except Exception:
             return False
+
+    @contextmanager
+    def _prompt_display_guard(self):
+        """Pause an active Live region (spinner / parallel-delegate panel)
+        for the duration of a user read, then resume — otherwise Rich's
+        repaint loop overwrites the prompt and the user sees a frozen panel
+        with no question. Used by both ``confirm`` and ``prompt_user`` via
+        ``_guarded_read``."""
+        live = self._parallel_live or self._live
+        paused = False
+        if live is not None:
+            try:
+                live.stop()
+                paused = True
+            except Exception:
+                paused = False
+        try:
+            yield
+        finally:
+            if paused:
+                try:
+                    live.start()
+                except Exception:
+                    pass
 
     def confirm(
         self,
@@ -690,32 +721,14 @@ class MinimalRenderer(Renderer):
         surfaces "I don't trust this" as a comment alongside the
         implicit deny).
 
-        Any active Live region (spinner, or the parallel-delegate panel
-        when this runs in a delegate worker thread) is paused for the
-        duration of the read — otherwise Rich's repaint loop overwrites
-        the prompt and the user sees a frozen panel with no question.
-        The dangerous-shell caller holds a process-wide lock so only one
-        worker reads stdin at a time; with the panel paused and the main
-        thread parked in ``join()``, this worker is the sole stdin reader.
+        The read goes through ``_guarded_read`` → serialized against other
+        prompts and wrapped in ``_prompt_display_guard`` so an active Live
+        panel (parallel-delegate worker context) doesn't paint over it.
         """
-        live = self._parallel_live or self._live
-        paused = False
-        if live is not None:
-            try:
-                live.stop()
-                paused = True
-            except Exception:
-                paused = False
         try:
-            raw = input(prompt).strip()
+            raw = self._guarded_read(lambda: input(prompt)).strip()
         except (EOFError, KeyboardInterrupt):
             return (default_key, "")
-        finally:
-            if paused:
-                try:
-                    live.start()
-                except Exception:
-                    pass
         if not raw:
             return (default_key, "")
 

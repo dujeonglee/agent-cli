@@ -1897,6 +1897,9 @@ class TestAskTool:
         class RecordingRenderer:
             _prefix = ""
 
+            def can_prompt(self):
+                return True
+
             def announce_ask(self, questions, *, prefix=""):
                 # No-op stub — the announcement is what CLI renderers
                 # print before reading stdin; the test only cares
@@ -1929,6 +1932,9 @@ class TestAskTool:
 
         class RecordingRenderer:
             _prefix = ""
+
+            def can_prompt(self):
+                return True
 
             def announce_ask(self, questions, *, prefix=""):
                 pass
@@ -2389,6 +2395,12 @@ class TestContextContinuity:
         )
         ctx = ContextManager(session_dir=tmp_path)
         monkeypatch.setattr("builtins.input", lambda _: "test.py")
+        # No TTY under pytest → force the prompt capability so _handle_ask
+        # actually reads instead of substituting "(no response)".
+        monkeypatch.setattr(
+            "agent_cli.render.minimal.MinimalRenderer.can_prompt",
+            lambda self: True,
+        )
         run_loop(
             query="Help",
             provider=provider,

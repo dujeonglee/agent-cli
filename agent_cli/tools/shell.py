@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-import threading
 
 from agent_cli.tools.result import ToolResult
 
@@ -21,14 +20,6 @@ _DANGEROUS_KEYWORDS = frozenset(("rm", "rmdir", "mv"))
 # Per-process "always allow" set: keywords the user has greenlit for the
 # rest of this CLI session. Cleared when the process exits.
 _session_allowlist: set[str] = set()
-
-# Serializes dangerous-command confirmation across threads. Parallel
-# delegate runs each task in its own worker thread; without this lock two
-# workers could prompt at once and a single user answer could be consumed
-# by the wrong one. Holding it guarantees exactly one outstanding prompt,
-# so the answer (CLI ``input()`` return / web ``/api/input`` queue item)
-# can only route back to the worker that asked.
-_confirm_lock = threading.Lock()
 
 
 def _confirmation_enabled() -> bool:
@@ -112,14 +103,14 @@ def tool_shell(args: dict) -> ToolResult:
     if _confirmation_enabled():
         keyword = _detect_dangerous(cmd)
         if keyword and keyword not in _session_allowlist:
-            from agent_cli.render import get_renderer
+            from agent_cli.render import get_renderer, interactive_lock
 
             # "Can we ask the user?" is a renderer capability, not a TTY
             # fact: the CLI renderer needs a terminal, the web renderer
             # needs a connected client (no TTY). Gating on the renderer
             # lets web prompt over SSE and stops the CLI from trying when
             # no prompt could be shown.
-            if not get_renderer().can_confirm():
+            if not get_renderer().can_prompt():
                 return ToolResult(
                     False,
                     error=(
@@ -130,11 +121,13 @@ def tool_shell(args: dict) -> ToolResult:
                         "for non-interactive runs."
                     ),
                 )
-            # Serialize so only one worker prompts at a time → the answer
-            # routes unambiguously to the asking worker. Re-check the
-            # allowlist inside the lock: another worker may have just been
-            # granted "always" for this keyword while we waited.
-            with _confirm_lock:
+            # Hold the shared interactive lock (re-entrant) across the
+            # allowlist re-check + prompt: it serializes against confirm
+            # AND ask everywhere, and ``renderer.confirm`` re-acquires it
+            # internally on this same thread. Re-check the allowlist inside
+            # — another worker may have been granted "always" while we
+            # waited.
+            with interactive_lock:
                 if keyword not in _session_allowlist:
                     decision, user_comment = _ask_confirmation(cmd, keyword)
                     if decision == "n":

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from agent_cli.render.base import Renderer
+from agent_cli.render.base import Renderer, interactive_lock
 from agent_cli.render.minimal import MinimalRenderer
+
+__all__ = ["Renderer", "MinimalRenderer", "interactive_lock", "get_renderer"]
 
 # ── Global state ──────────────────────────────────
 console = Console()
