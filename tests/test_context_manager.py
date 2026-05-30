@@ -20,6 +20,14 @@ def ctx(session_dir):
     return ContextManager(session_dir, max_context_tokens=10000)
 
 
+def _add(ctx, msg):
+    """Add a message, then run flow-1's preventive pass at the budget
+    threshold. Mirrors the pre-flow-1 inline trigger: compaction/FIFO now
+    fires from the loop's per-call ``ensure_within``, not from ``add``."""
+    ctx.add(msg)
+    ctx.ensure_within(ctx.max_context_tokens)
+
+
 @pytest.fixture
 def wf():
     """ReAct wire-format plugin used by ``_to_natural_language`` tests.
@@ -39,14 +47,15 @@ def wf():
 
 class TestFIFO:
     def test_add_and_get(self, ctx):
-        ctx.add({"role": "user", "content": "hello"})
-        ctx.add(
+        _add(ctx, {"role": "user", "content": "hello"})
+        _add(
+            ctx,
             {
                 "role": "assistant",
                 "thought": "greeting",
                 "action": "complete",
                 "action_input": {"result": "hi"},
-            }
+            },
         )
         msgs = ctx.get_messages()
         assert len(msgs) == 2
@@ -58,7 +67,7 @@ class TestFIFO:
         # Each "msg-N" message is 5 tokens. Budget 25 holds 5, so 7 → 5.
         ctx = ContextManager(session_dir, max_context_tokens=25)
         for i in range(7):
-            ctx.add({"role": "user", "content": f"msg-{i}"})
+            _add(ctx, {"role": "user", "content": f"msg-{i}"})
         msgs = ctx.get_raw_messages()
         assert len(msgs) == 5
         assert msgs[0]["content"] == "msg-2"
@@ -69,7 +78,7 @@ class TestFIFO:
         # Each "u-N" message is 4 tokens. Budget 20 holds 5, so 6 → 5.
         ctx = ContextManager(session_dir, max_context_tokens=20)
         for i in range(6):
-            ctx.add({"role": "user", "content": f"u{i}"})
+            _add(ctx, {"role": "user", "content": f"u{i}"})
         raw = ctx.get_raw_messages()
         assert len(raw) == 5
         assert raw[0]["content"] == "u1"  # u0 evicted
@@ -84,12 +93,12 @@ class TestFIFO:
 
 class TestHistoryPersistence:
     def test_append_creates_file(self, ctx):
-        ctx.add({"role": "user", "content": "first"})
+        _add(ctx, {"role": "user", "content": "first"})
         assert ctx.history_path.is_file()
 
     def test_append_only(self, ctx):
-        ctx.add({"role": "user", "content": "msg1"})
-        ctx.add({"role": "user", "content": "msg2"})
+        _add(ctx, {"role": "user", "content": "msg1"})
+        _add(ctx, {"role": "user", "content": "msg2"})
         lines = ctx.history_path.read_text().strip().split("\n")
         assert len(lines) == 2
         assert json.loads(lines[0])["content"] == "msg1"
@@ -100,13 +109,13 @@ class TestHistoryPersistence:
         # Each "msg-N" is 5 tokens. Budget 25 holds 5.
         ctx = ContextManager(session_dir, max_context_tokens=25)
         for i in range(10):
-            ctx.add({"role": "user", "content": f"msg-{i}"})
+            _add(ctx, {"role": "user", "content": f"msg-{i}"})
         lines = ctx.history_path.read_text().strip().split("\n")
         assert len(lines) == 10  # All 10 messages persisted
         assert len(ctx.get_raw_messages()) == 5  # Only 5 in cache
 
     def test_unicode_content(self, ctx):
-        ctx.add({"role": "user", "content": "한글 테스트 🚀"})
+        _add(ctx, {"role": "user", "content": "한글 테스트 🚀"})
         lines = ctx.history_path.read_text().strip().split("\n")
         restored = json.loads(lines[0])
         assert restored["content"] == "한글 테스트 🚀"
@@ -129,7 +138,7 @@ class TestHistoryPersistence:
         # First write should resurrect the dir + succeed without
         # raising. Without the defensive mkdir this would raise
         # FileNotFoundError on the open().
-        ctx.add({"role": "user", "content": "post-rm"})
+        _add(ctx, {"role": "user", "content": "post-rm"})
         assert (session_dir / "history.jsonl").is_file()
         lines = (session_dir / "history.jsonl").read_text().strip().split("\n")
         assert json.loads(lines[0])["content"] == "post-rm"
@@ -346,14 +355,15 @@ class TestNaturalLanguageConversion:
 class TestFork:
     def test_fork_copies_history(self, session_dir, tmp_path):
         ctx = ContextManager(session_dir, max_context_tokens=25)
-        ctx.add({"role": "user", "content": "parent msg 1"})
-        ctx.add(
+        _add(ctx, {"role": "user", "content": "parent msg 1"})
+        _add(
+            ctx,
             {
                 "role": "assistant",
                 "thought": "ok",
                 "action": "complete",
                 "action_input": {"result": "done"},
-            }
+            },
         )
 
         target = tmp_path / "delegate_coder_abc_123"
@@ -367,7 +377,7 @@ class TestFork:
     def test_fork_then_resume(self, session_dir, tmp_path):
         """Forked history can be used to create a new ContextManager."""
         ctx = ContextManager(session_dir, max_context_tokens=25)
-        ctx.add({"role": "user", "content": "parent msg"})
+        _add(ctx, {"role": "user", "content": "parent msg"})
 
         target = tmp_path / "delegate_test"
         ctx.fork_history_to(target)
@@ -399,30 +409,33 @@ class TestGetMessagesIntegration:
     def test_full_conversation_flow(self, session_dir):
         """Simulate a realistic conversation and verify output."""
         ctx = ContextManager(session_dir, max_context_tokens=10000)
-        ctx.add({"role": "user", "content": "auth.py를 리팩토링 해줘"})
-        ctx.add(
+        _add(ctx, {"role": "user", "content": "auth.py를 리팩토링 해줘"})
+        _add(
+            ctx,
             {
                 "role": "assistant",
                 "thought": "현재 구조를 파악하기 위해 auth.py를 읽겠다",
                 "action": "read_file",
                 "action_input": {"path": "src/auth.py"},
-            }
+            },
         )
-        ctx.add(
+        _add(
+            ctx,
             {
                 "role": "user",
                 "tool": "read_file",
                 "args": {"path": "src/auth.py"},
                 "content": "class AuthManager:\n    pass",
-            }
+            },
         )
-        ctx.add(
+        _add(
+            ctx,
             {
                 "role": "assistant",
                 "thought": "리팩토링이 완료되었다",
                 "action": "complete",
                 "action_input": {"result": "AuthManager 리팩토링 완료"},
-            }
+            },
         )
 
         msgs = ctx.get_messages()
@@ -441,14 +454,15 @@ class TestGetMessagesIntegration:
 
     def test_artifact_paths_preserved_in_messages(self, ctx):
         """Artifact paths from observations appear in get_messages output."""
-        ctx.add(
+        _add(
+            ctx,
             {
                 "role": "user",
                 "tool": "delegate",
                 "agent": "coder",
                 "content": "구현 완료",
                 "artifact": "delegate_coder_f1a9_20260405T143230456/",
-            }
+            },
         )
         msgs = ctx.get_messages()
         assert "delegate_coder_f1a9_20260405T143230456/" in msgs[0]["content"]
