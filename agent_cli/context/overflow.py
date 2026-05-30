@@ -6,7 +6,7 @@ import re
 
 from agent_cli.constants import OVERFLOW_RESERVE_TOKENS
 from agent_cli.context.token_estimator import estimate_tokens_from_messages
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 
 # Provider-specific overflow error patterns (pi-mono reference)
 OVERFLOW_PATTERNS = [

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_cli.providers.base import LLMResponse
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.skills.executor import execute_skill, substitute_arguments
 from agent_cli.skills.loader import _parse_skill_file, load_skills
 from agent_cli.skills.models import Skill

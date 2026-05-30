@@ -5,7 +5,7 @@ from agent_cli.context.overflow import (
     check_preemptive_overflow,
     parse_overflow_amounts,
 )
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 
 # Verified live against an omlx server (Qwen3.6-27B-MLX-8bit, 2026-05-30):
 # a prompt over the configured context returns HTTP 400 with this body.

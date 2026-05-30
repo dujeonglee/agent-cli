@@ -1,7 +1,7 @@
 """Provider adapters and capabilities."""
 
 from agent_cli.providers.base import LLMProvider, LLMResponse, TokenUsage
-from agent_cli.providers.compat import (
+from agent_cli.providers.capabilities import (
     ModelCapabilities,
     UnsupportedModelError,
     get_capabilities,

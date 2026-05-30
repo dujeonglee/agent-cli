@@ -691,7 +691,7 @@ def _dispatch_skill(
 def _prompt_model_capabilities(model: str):
     """Interactively ask user for model capabilities when detection fails."""
     from agent_cli.config import save_model_entry
-    from agent_cli.providers.compat import ModelCapabilities
+    from agent_cli.providers.capabilities import ModelCapabilities
 
     console.print(
         f"\n[{C['accent']}]Model '{model}' not found in registry and detection failed.[/]"
@@ -758,7 +758,7 @@ def _setup_provider(
 ):
     """Resolve settings + create provider + get capabilities. Returns tuple."""
     _maybe_setup()
-    from agent_cli.providers.compat import (
+    from agent_cli.providers.capabilities import (
         DEFAULT_CAPABILITIES,
         set_progress_callback,
         was_runtime_detected,
