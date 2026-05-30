@@ -810,7 +810,7 @@ class TestAgentLoopCompactorCallback:
         ``_llm_compact_summarize`` without dragging in the full run."""
         from agent_cli.loop import AgentLoop
         from agent_cli.providers.base import LLMResponse
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         received: dict = {}
 

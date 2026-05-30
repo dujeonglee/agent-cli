@@ -324,7 +324,7 @@ class TestSkillHooksWiring:
         field is write-only dead data."""
         from unittest.mock import MagicMock
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
         from agent_cli.skills.executor import execute_skill
         from agent_cli.skills.models import Skill
         from agent_cli.tools.result import ToolResult
@@ -383,7 +383,7 @@ class TestSkillHooksWiring:
         None so the downstream `if hooks_config:` branches skip cleanly."""
         from unittest.mock import MagicMock
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
         from agent_cli.skills.executor import execute_skill
         from agent_cli.skills.models import Skill
         from agent_cli.tools.result import ToolResult
@@ -435,7 +435,7 @@ class TestSkillHooksEndToEnd:
     """
 
     def _caps(self):
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         return ModelCapabilities(
             context_window=32768,
@@ -618,7 +618,7 @@ class TestDelegateHooksWiring:
     def test_tool_delegate_forwards_hooks_config_to_subagent(self, tmp_path):
         from unittest.mock import patch
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
         from agent_cli.tools.delegate import tool_delegate
         from agent_cli.tools.result import ToolResult
 
@@ -665,7 +665,7 @@ class TestDelegateHooksWiring:
         short-circuit normally."""
         from unittest.mock import patch
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
         from agent_cli.tools.delegate import tool_delegate
         from agent_cli.tools.result import ToolResult
 
@@ -707,7 +707,7 @@ class TestAgentFrontmatterHooks:
     """
 
     def _caps(self):
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         return ModelCapabilities(
             context_window=32768,

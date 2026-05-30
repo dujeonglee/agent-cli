@@ -7,7 +7,7 @@ import pytest
 
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 
 
 def _complete(result: str) -> str:

@@ -26,7 +26,7 @@ from agent_cli.context.overflow import is_context_overflow, parse_overflow_amoun
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
     detect_nested_envelope,

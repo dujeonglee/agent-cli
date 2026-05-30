@@ -20,7 +20,7 @@ from __future__ import annotations
 import platform
 from pathlib import Path
 
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import get_tool_descriptions
 from agent_cli.wire_formats import get as _get_wire_format
 

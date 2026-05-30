@@ -669,7 +669,7 @@ class TestParallelTimeout:
         import time
         from unittest.mock import MagicMock, patch
         from agent_cli.providers.base import LLMResponse
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=8192,
@@ -711,7 +711,7 @@ class TestSignalHandlerThreadSafety:
         import signal
         import threading
         from unittest.mock import MagicMock
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=8192,

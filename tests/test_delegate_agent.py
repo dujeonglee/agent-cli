@@ -212,7 +212,7 @@ class TestRunSingleWithAgent:
 
         monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -245,7 +245,7 @@ class TestRunSingleWithAgent:
 
         _dm._reset_agent_loader([agents_dir])
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -291,7 +291,7 @@ class TestRunSingleWithAgent:
 
         monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -337,7 +337,7 @@ class TestRunSingleWithAgent:
 
         monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -384,7 +384,7 @@ class TestRunSingleWithAgent:
 
         monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -421,7 +421,7 @@ class TestRunSingleWithAgent:
 
         monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -460,7 +460,7 @@ class TestToolDelegatePassesAgent:
 
         monkeypatch.setattr("agent_cli.tools.delegate._run_single", mock_run_single)
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,
@@ -495,7 +495,7 @@ class TestToolDelegatePassesAgent:
 
         monkeypatch.setattr("agent_cli.tools.delegate._run_single", mock_run_single)
 
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=32768,

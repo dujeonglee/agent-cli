@@ -85,7 +85,7 @@ class TestDispatchAgent:
     def test_dispatch_agent_not_found(self):
         from unittest.mock import MagicMock
         from agent_cli.main import _dispatch_agent, _AGENT_NOT_FOUND
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
             context_window=8192,

@@ -95,7 +95,7 @@ agent_cli/
 ├── providers/                      LLM 프로바이더 어댑터
 │   ├── __init__.py          (33)   create_provider() 팩토리
 │   ├── base.py              (50)   LLMProvider 프로토콜, LLMResponse(+thinking), TokenUsage(+cache_creation/cache_read tokens)
-│   ├── compat.py            (543)  ModelCapabilities + 프로브 감지 (OpenAI 호환 thinking + context-window overflow probe) + 진행 콜백 + 자동 저장. OpenAI 호환 context window는 `/v1/models` 메타 → overflow probe → 128K fallback 3-tier. **auto-detect 시 `max_output_tokens = context_window // 4`** (예: 256K→64K, 16K→4K; 기존 4096 cap 제거). context window가 `MIN_CONTEXT_WINDOW`(16K) 미만이면 `UnsupportedModelError` raise → CLI(`_setup_provider`)가 잡아 fail-fast (registry/models.json 저장값은 이 규칙 미적용 — 저장값 그대로)
+│   ├── capabilities.py            (543)  ModelCapabilities + 프로브 감지 (OpenAI 호환 thinking + context-window overflow probe) + 진행 콜백 + 자동 저장. OpenAI 호환 context window는 `/v1/models` 메타 → overflow probe → 128K fallback 3-tier. **auto-detect 시 `max_output_tokens = context_window // 4`** (예: 256K→64K, 16K→4K; 기존 4096 cap 제거). context window가 `MIN_CONTEXT_WINDOW`(16K) 미만이면 `UnsupportedModelError` raise → CLI(`_setup_provider`)가 잡아 fail-fast (registry/models.json 저장값은 이 규칙 미적용 — 저장값 그대로)
 │   ├── http.py              (147)  post_with_retry (Timeout/ConnectionError 재시도, pre-stream only, 고정 1초 백오프)
 │   ├── anthropic.py         (216)  Anthropic Messages API (tool_use + thinking blocks + streaming + TTFT + prompt cache via cache_control)
 │   └── openai_compat.py     (194)  OpenAI 호환 API (function calling + reasoning_content + streaming + TTFT)
@@ -206,7 +206,7 @@ agent-cli.py                        하위 호환 래퍼 (4줄)
 │openai_   ││try    ││overflow││prompt  ││react     │
 │compat    ││read_  ││token_  ││        ││  (parser │
 │http      ││write_ ││estima- ││        ││  + repair│
-│compat    ││edit_  ││tor     ││        ││  + rules)│
+│capab.    ││edit_  ││tor     ││        ││  + rules)│
 │base      ││shell  ││session ││        ││registry  │
 │          ││fetch  ││        ││        ││+ all_    │
 │          ││dele-  ││        ││        ││system_   │
@@ -224,16 +224,16 @@ agent-cli.py                        하위 호환 래퍼 (4줄)
 
 ### 3.2 모듈별 import 관계
 
-**순환 의존 없음.** 단방향 흐름: config → compat → base → adapters → loop → main
+**순환 의존 없음.** 단방향 흐름: config → capabilities → base → adapters → loop → main
 
 ```
 config.py           → (외부만: json, pathlib)
 constants.py        → (외부만: 없음, 순수 상수)
 verbose.py          → (외부만: sys, time) — providers/http, loop가 공유
-providers/compat.py → config
-providers/base.py   → providers/compat
+providers/capabilities.py → config
+providers/base.py   → providers/capabilities
 providers/http.py   → verbose, render (lazy)
-providers/*.py      → providers/base, providers/compat, providers/http
+providers/*.py      → providers/base, providers/capabilities, providers/http
 wire_formats/base   → (외부만: dataclasses, typing)
 wire_formats/react  → recovery/intervention, recovery/primitives,
                       tools/action_summary, wire_formats/base
@@ -251,9 +251,9 @@ tools/context.py    → tools/result, context/session
 tools/delegate.py   → tools/result, context/manager, resource_loader, loop (lazy import)
 tools/registry.py   → (외부만: json, dataclasses)
 context/token_est.  → (외부만: 없음)
-context/overflow.py → context/token_estimator, providers/compat
+context/overflow.py → context/token_estimator, providers/capabilities
 context/manager.py  → context/token_estimator, tools/action_summary, wire_formats
-prompts/system_pr.  → providers/compat, tools/registry, wire_formats
+prompts/system_pr.  → providers/capabilities, tools/registry, wire_formats
 context/session.py  → wire_formats (recent_exchanges가 all_system_user_prefixes 호출)
 recovery/common_recovery → recovery/intervention, recovery/primitives
                       (WF 의존 없음 — 모든 plugin이 같은 텍스트를 봄)
@@ -261,12 +261,12 @@ recovery/wf_recovery   → recovery/intervention, recovery/primitives, wire_form
                       (recovery/__init__.py 는 wf_recovery 를 re-export 안 함 —
                        패키지 자체는 format-agnostic, 직접 import 만이 wire_formats 끌어옴)
 loop.py             → constants, context/manager, context/overflow,
-                      prompts/system_prompt, providers/base, providers/compat,
+                      prompts/system_prompt, providers/base, providers/capabilities,
                       render, tools, tools/delegate, tools/registry,
                       verbose, wire_formats
 skills/loader.py    → skills/models, resource_loader
 resource_loader.py  → yaml (optional)
-skills/executor.py  → loop, skills/models, providers/base, providers/compat
+skills/executor.py  → loop, skills/models, providers/base, providers/capabilities
 main.py             → config, context/manager, loop, providers, render, skills
 ```
 
@@ -302,7 +302,7 @@ class LLMResponse:
 
 **소비처 (v1):** verbose 모드의 `render_thinking` 디버그 출력 *전용*. recovery 레이어(`format_no_*_retry`, `recovery/primitives.py`)는 thinking을 *읽지 않음* — primitive contract가 channel-agnostic이어야 누더기를 막기 때문 (`docs/robust-harness/DESIGN.md` §2.2).
 
-### 4.2 모델 능력치 (`providers/compat.py`)
+### 4.2 모델 능력치 (`providers/capabilities.py`)
 
 ```python
 @dataclass(frozen=True)
@@ -1219,7 +1219,7 @@ env vars (AGENT_CLI_*)  →  최저 우선순위
 3. `.agent-cli/models.json` (프로젝트 로컬) — 동일 키 덮어쓰기 (최종)
 4. 하드코딩 폴백 (모든 파일 없어도 동작)
 
-### 8.4 능력치 조회 우선순위 (`providers/compat.py`)
+### 8.4 능력치 조회 우선순위 (`providers/capabilities.py`)
 
 1. `models.json` 정적 설정 (병합된 결과)
 2. 런타임 감지 → **`~/.agent-cli/models.json`에 자동 저장**
@@ -1658,4 +1658,4 @@ AgentLoop.run()
 3. **소형 모델 우선 설계** — 보수적 기본값, 적응형 출력 압축, 스키마 자동 변환
 4. **비용 제로 보정 우선** — LLM 재호출 없이 harness에서 보정 (퍼지 매칭, 타입 변환)
 5. **점진적 기능 저하** — 기능 미지원 시 에러 대신 다음 폴백으로 graceful degradation
-6. **순환 의존 없는 단방향 모듈 구조** — config → compat → base → adapters → loop → main
+6. **순환 의존 없는 단방향 모듈 구조** — config → capabilities → base → adapters → loop → main

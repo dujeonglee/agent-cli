@@ -437,7 +437,7 @@ class TestLoopHookIntegration:
         from unittest.mock import MagicMock
 
         from agent_cli.loop import AgentLoop
-        from agent_cli.providers.compat import ModelCapabilities
+        from agent_cli.providers.capabilities import ModelCapabilities
 
         provider = MagicMock()
         caps = ModelCapabilities(

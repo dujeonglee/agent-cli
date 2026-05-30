@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from agent_cli.skills.executor import execute_skill
 from agent_cli.skills.models import Skill
 from agent_cli.context.manager import ContextManager
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 
 
 @pytest.fixture

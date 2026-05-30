@@ -7,7 +7,7 @@ import pytest
 from agent_cli.providers import create_provider
 from agent_cli.providers.anthropic import AnthropicProvider
 from agent_cli.providers.base import LLMResponse
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.openai_compat import OpenAICompatProvider
 
 
