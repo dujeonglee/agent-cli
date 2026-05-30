@@ -33,7 +33,7 @@ Pick exactly one of these modes, not a fake approximation of them:
 - **Not essential to the question**: skip it entirely. A file you did not read simply does not appear in your answer. That is fine. What is not fine: describing a file as if you read it when you only saw its name in a directory listing.
 - Do not re-read a file you already have in context. Do not re-run a search whose output you already saw.
 
-For broad-survey questions ("analyze the workspace", "how is this project organized?"), the stop criterion bites harder: **describe only the subsystems where you actually read an implementation file**. If you only read `providers/__init__.py`, your answer can say "the `providers/` package exposes a `create_provider` factory" — that is in `__init__.py`. It must not describe how the Ollama streaming path works, because those details live in `providers/ollama.py` which you did not open. When context or time forces a choice, read fewer subsystems deeply rather than many shallowly.
+For broad-survey questions ("analyze the workspace", "how is this project organized?"), the stop criterion bites harder: **describe only the subsystems where you actually read an implementation file**. If you only read `providers/__init__.py`, your answer can say "the `providers/` package exposes a `create_provider` factory" — that is in `__init__.py`. It must not describe how the Anthropic streaming path works, because those details live in `providers/anthropic.py` which you did not open. When context or time forces a choice, read fewer subsystems deeply rather than many shallowly.
 
 ## Shell usage
 

@@ -383,9 +383,9 @@ class MinimalRenderer(Renderer):
         self._p(f"  [{_MUTED}]── end raw ──[/]\n")
 
     def thinking(self, text: str, turn: int) -> None:
-        # Reasoning content from a provider-side field (Ollama
-        # `message.thinking` for Qwen3 family). Caller decides whether
-        # to invoke (gated on verbose at the call site).
+        # Reasoning content from a provider-side field (Anthropic thinking
+        # blocks, OpenAI reasoning). Caller decides whether to invoke
+        # (gated on verbose at the call site).
         if not text:
             return
         self._p(f"\n  [{_MUTED}]── thinking turn {turn} ──[/]")

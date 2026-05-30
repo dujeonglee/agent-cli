@@ -59,9 +59,6 @@ agent_cli = ["default_models.json", "web/static/*"]
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
-markers = [
-    "ollama_integration: requires running Ollama at localhost:11434",
-]
 
 [tool.ruff]
 # Tree-sitter fixture files are intentionally non-conforming source

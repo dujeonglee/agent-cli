@@ -13,7 +13,7 @@ class TokenUsage:
     input_tokens: int
     output_tokens: int
     # Durations in nanoseconds.
-    # Ollama: server-reported values. OpenAI/Anthropic: client-measured via streaming.
+    # OpenAI/Anthropic: client-measured via streaming.
     prompt_eval_ns: int = 0  # prefill / time-to-first-token
     eval_ns: int = 0  # decode / first-to-last token
     ttft_ns: int = 0  # client-measured TTFT (all providers, streaming only)
@@ -30,8 +30,8 @@ class LLMResponse:
     tool_calls: list[dict] | None = None
     usage: TokenUsage | None = None
     stop_reason: str | None = None
-    # Reasoning content surfaced via a separate API field (e.g. Ollama's
-    # `message.thinking` for Qwen3 family). Empty string when the provider
+    # Reasoning content surfaced via a separate API field (e.g. Anthropic
+    # thinking blocks, OpenAI reasoning). Empty string when the provider
     # doesn't expose it or the model didn't produce any.
     thinking: str = ""
 

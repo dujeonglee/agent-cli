@@ -24,7 +24,8 @@ from agent_cli.wire_formats import get as _get_wire_format
 
 app = typer.Typer(
     name="agent-cli",
-    help="AI agent CLI with ReAct pattern. Supports Ollama, OpenAI, Anthropic.\n\n"
+    help="AI agent CLI with ReAct pattern. Supports OpenAI-compatible "
+    "(OpenAI, vLLM, omlx, LM Studio) and Anthropic.\n\n"
     "Run 'agent-cli setup' to configure.\n"
     "Run 'agent-cli chat' for interactive mode.\n"
     "Run 'agent-cli run <task>' for single-shot execution.\n"
@@ -55,27 +56,31 @@ def _run_shell_inline(cmd: str) -> None:
 
 
 def _resolve_provider(
-    provider: str,
+    provider: str | None,
     model: str | None,
     base_url: str | None,
     api_key: str | None,
 ):
-    """Resolve provider settings: CLI args > config.json > provider defaults."""
+    """Resolve provider settings: CLI args > config.json > provider defaults.
+
+    ``provider`` is the ``-p`` flag value, or ``None`` when not passed.
+    Precedence: explicit flag → config.json's provider → "openai"
+    (OpenAI-compatible: covers OpenAI, vLLM, omlx, LM Studio).
+    """
     from agent_cli.config import load_config
 
     config = load_config()
 
-    # CLI -p flag overrides config provider; "ollama" is the CLI default,
-    # so only use it as fallback when config has no provider set.
     config_provider = config.get("provider", "")
-    if provider != "ollama":
-        # Explicit CLI flag: use it
+    if provider:
+        # Explicit CLI flag (-p): use it.
         effective_provider = provider
     elif config_provider:
-        # No explicit flag, but config has a provider
+        # No flag, but config.json specifies a provider.
         effective_provider = config_provider
     else:
-        effective_provider = provider  # fallback to "ollama"
+        # No flag, no config — default to OpenAI-compatible.
+        effective_provider = "openai"
 
     # Resolve: CLI args > config (only if same provider) > provider defaults
     defaults = get_provider_defaults(effective_provider)
@@ -818,11 +823,11 @@ def _setup_provider(
 @app.command()
 def run(
     query: str = typer.Argument(..., help="Task to execute"),
-    provider: str = typer.Option(
-        "ollama",
+    provider: Optional[str] = typer.Option(
+        None,
         "--provider",
         "-p",
-        help="LLM provider: anthropic | openai | ollama",
+        help="LLM provider: openai | anthropic (default: openai)",
     ),
     model: Optional[str] = typer.Option(
         None,
@@ -1110,11 +1115,11 @@ def _print_recent_exchanges(history_path, n: int = 10) -> None:
 
 @app.command()
 def chat(
-    provider: str = typer.Option(
-        "ollama",
+    provider: Optional[str] = typer.Option(
+        None,
         "--provider",
         "-p",
-        help="LLM provider: anthropic | openai | ollama",
+        help="LLM provider: openai | anthropic (default: openai)",
     ),
     model: Optional[str] = typer.Option(
         None,
@@ -1414,11 +1419,11 @@ def chat(
 
 @app.command()
 def web(
-    provider: str = typer.Option(
-        "ollama",
+    provider: Optional[str] = typer.Option(
+        None,
         "--provider",
         "-p",
-        help="LLM provider: anthropic | openai | ollama",
+        help="LLM provider: openai | anthropic (default: openai)",
     ),
     model: Optional[str] = typer.Option(
         None,

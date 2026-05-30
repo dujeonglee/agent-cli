@@ -86,7 +86,7 @@ class AgentLoop:
         provider: LLMProvider,
         capabilities: ModelCapabilities,
         model: str,
-        provider_name: str = "ollama",
+        provider_name: str = "openai",
         base_url: str = "",
         api_key: str = "",
         max_turns: int = 0,
@@ -471,7 +471,7 @@ class AgentLoop:
 
         llm_text = response.content
 
-        # Show token stats if available (Ollama provides eval durations)
+        # Show token stats if available (providers report eval durations)
         if response.usage:
             self._total_output_tokens += response.usage.output_tokens or 0
             stats = _build_token_stats(
@@ -582,9 +582,9 @@ class AgentLoop:
         else:
             render_spinner_start()
         # Plugin-defined provider hints (e.g. envelope formats need
-        # ``skip_json_format=True`` so Ollama doesn't force ``{`` as the
-        # first token, which would conflict with the ``<tool_use>``
-        # envelope opening). ReAct returns ``{}`` so the call path is
+        # ``skip_json_format=True`` so the provider's JSON mode doesn't
+        # force ``{`` as the first token, which would conflict with the
+        # ``<tool_use>`` envelope opening). ReAct returns ``{}`` so the call path is
         # byte-equivalent for the default plugin.
         extra_call_kwargs = self.wire_format.provider_call_kwargs()
 
@@ -675,7 +675,7 @@ class AgentLoop:
                 render_stream_end()
 
     def _handle_text_path(self, llm_text: str):
-        """Handle text parsing response (Ollama, fallback).
+        """Handle text parsing response (non-JSON fallback).
 
         Recovery primitives consume only the emitted text (``llm_text``)
         — the thinking channel is intentionally excluded from the
@@ -1462,7 +1462,7 @@ def run_loop(
     provider: LLMProvider,
     capabilities: ModelCapabilities,
     model: str,
-    provider_name: str = "ollama",
+    provider_name: str = "openai",
     base_url: str = "",
     api_key: str = "",
     max_turns: int = 0,
@@ -1536,8 +1536,9 @@ def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
     show it. ``input_tokens`` is the server's count for the whole prompt
     (system + messages), i.e. the current context occupancy; with
     ``context_window`` the renderer derives a usage %. Speeds/ttft are
-    included when the provider reported durations (Ollama/omlx do; the
-    Anthropic streaming path leaves them 0 → omitted by the renderer).
+    included when the provider reported durations (omlx and other
+    OpenAI-compatible servers do; the Anthropic streaming path leaves
+    them 0 → omitted by the renderer).
     """
     return {
         "in": usage.input_tokens,

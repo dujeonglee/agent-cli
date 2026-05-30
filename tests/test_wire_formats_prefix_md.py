@@ -13,7 +13,8 @@ Coverage axes:
 3. **Recovery wording** — failure framings, reminders, static hints,
    NO_THOUGHT intervention.
 4. **Provider override** — ``provider_call_kwargs`` returns
-   ``skip_json_format`` so Ollama doesn't force a JSON first token.
+   ``skip_json_format`` so the provider's JSON mode doesn't force a
+   JSON first token.
 5. **Lifecycle defaults** — confirms PREFIX-MD's serialize / render
    round-trip via the base ABC default behaviour.
 """
@@ -341,8 +342,8 @@ class TestFormatNoThoughtRetry:
 
 class TestProviderCallKwargs:
     def test_skip_json_format_enabled(self):
-        # Markdown opening ``## `` conflicts with Ollama's
-        # ``format=json`` mode which forces a ``{`` first token.
+        # Markdown opening ``## `` conflicts with an OpenAI-compatible
+        # JSON mode which forces a ``{`` first token.
         kwargs = PrefixMdFormat().provider_call_kwargs()
         assert kwargs == {"skip_json_format": True}
 

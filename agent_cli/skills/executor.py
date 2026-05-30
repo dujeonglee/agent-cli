@@ -91,7 +91,7 @@ def execute_skill(
     provider: LLMProvider,
     capabilities: ModelCapabilities,
     model: str,
-    provider_name: str = "ollama",
+    provider_name: str = "openai",
     base_url: str = "",
     api_key: str = "",
     max_turns: int = 0,

@@ -208,7 +208,7 @@ class Renderer(ABC):
 
         Default no-op so existing plugin renderers keep working without
         forced overrides. Override to surface provider-side reasoning
-        (e.g. Ollama's `message.thinking` for Qwen3 family).
+        (e.g. Anthropic thinking blocks, OpenAI reasoning).
         """
 
     @abstractmethod

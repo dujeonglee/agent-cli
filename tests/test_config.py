@@ -26,11 +26,11 @@ def _clear_cache():
 
 class TestGetModelEntry:
     def test_known_model(self):
-        """Models from ~/.agent-cli/models.json should load."""
-        entry = get_model_entry("qwen3:32b")
+        """Models from default_models.json should load."""
+        entry = get_model_entry("gpt-4o")
         assert entry is not None
-        assert entry["provider"] == "ollama"
-        assert entry["context_window"] == 32768
+        assert entry["provider"] == "openai"
+        assert entry["context_window"] == 128000
 
     def test_unknown_model(self):
         assert get_model_entry("nonexistent-model") is None
@@ -43,22 +43,18 @@ class TestGetModelEntry:
 
 
 class TestGetProviderDefaults:
-    def test_ollama_defaults(self):
-        defaults = get_provider_defaults("ollama")
-        assert defaults.base_url == "http://localhost:11434"
-        assert defaults.default_model == "qwen3:32b"
+    def test_anthropic_defaults(self):
+        defaults = get_provider_defaults("anthropic")
+        assert "api.anthropic.com" in defaults.base_url
+        assert defaults.default_model == "claude-sonnet-4-20250514"
 
     def test_openai_defaults(self):
         defaults = get_provider_defaults("openai")
         assert "api.openai.com" in defaults.base_url
 
-    def test_anthropic_defaults(self):
-        defaults = get_provider_defaults("anthropic")
-        assert "anthropic.com" in defaults.base_url
-
     def test_unknown_provider_fallback(self):
         defaults = get_provider_defaults("unknown_provider")
-        assert defaults.base_url == "http://localhost:11434"
+        assert defaults.base_url == "http://127.0.0.1:8000/v1"
         assert defaults.default_model == ""
 
 
@@ -266,9 +262,9 @@ class TestLoadConfig:
         user_config.write_text(
             json.dumps(
                 {
-                    "provider": "ollama",
-                    "base_url": "http://localhost:11434",
-                    "default_model": "qwen3:32b",
+                    "provider": "openai",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "default_model": "gpt-4o",
                 }
             )
         )
@@ -287,8 +283,8 @@ class TestLoadConfig:
             monkeypatch.delenv(key, raising=False)
 
         config = load_config(use_cache=False)
-        assert config["provider"] == "ollama"
-        assert config["default_model"] == "qwen3:32b"
+        assert config["provider"] == "openai"
+        assert config["default_model"] == "gpt-4o"
 
     def test_workspace_overrides_user(self, tmp_path, monkeypatch):
         """Workspace config overrides user config."""
@@ -300,16 +296,16 @@ class TestLoadConfig:
         user_config.write_text(
             json.dumps(
                 {
-                    "provider": "ollama",
-                    "base_url": "http://localhost:11434",
-                    "default_model": "qwen3:32b",
+                    "provider": "openai",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "default_model": "gpt-4o",
                 }
             )
         )
         ws_config.write_text(
             json.dumps(
                 {
-                    "default_model": "nemotron:120b",
+                    "default_model": "gpt-4o-mini",
                 }
             )
         )
@@ -324,8 +320,8 @@ class TestLoadConfig:
             monkeypatch.delenv(key, raising=False)
 
         config = load_config(use_cache=False)
-        assert config["provider"] == "ollama"  # from user
-        assert config["default_model"] == "nemotron:120b"  # workspace wins
+        assert config["provider"] == "openai"  # from user
+        assert config["default_model"] == "gpt-4o-mini"  # workspace wins
 
     def test_env_vars_as_base(self, tmp_path, monkeypatch):
         """Environment variables provide base layer."""
@@ -347,7 +343,7 @@ class TestLoadConfig:
         """Config file overrides env vars."""
         user_config = tmp_path / "user" / "config.json"
         user_config.parent.mkdir(parents=True)
-        user_config.write_text(json.dumps({"provider": "ollama"}))
+        user_config.write_text(json.dumps({"provider": "openai"}))
 
         monkeypatch.setattr(
             _config,
@@ -357,7 +353,7 @@ class TestLoadConfig:
         monkeypatch.setenv("AGENT_CLI_PROVIDER", "anthropic")
 
         config = load_config(use_cache=False)
-        assert config["provider"] == "ollama"  # file wins over env
+        assert config["provider"] == "openai"  # file wins over env
 
     def test_partial_workspace_merge(self, tmp_path, monkeypatch):
         """Workspace with only 1 field merges with user for the rest."""
@@ -369,10 +365,10 @@ class TestLoadConfig:
         user_config.write_text(
             json.dumps(
                 {
-                    "provider": "ollama",
-                    "base_url": "http://localhost:11434",
+                    "provider": "openai",
+                    "base_url": "http://127.0.0.1:8000/v1",
                     "api_key": "",
-                    "default_model": "qwen3:32b",
+                    "default_model": "gpt-4o",
                 }
             )
         )
@@ -394,15 +390,15 @@ class TestLoadConfig:
             monkeypatch.delenv(key, raising=False)
 
         config = load_config(use_cache=False)
-        assert config["provider"] == "ollama"
-        assert config["base_url"] == "http://localhost:11434"
+        assert config["provider"] == "openai"
+        assert config["base_url"] == "http://127.0.0.1:8000/v1"
         assert config["api_key"] == "special-key"  # workspace override
-        assert config["default_model"] == "qwen3:32b"
+        assert config["default_model"] == "gpt-4o"
 
     def test_caching(self, tmp_path, monkeypatch):
         """load_config caches result."""
         user_config = tmp_path / "config.json"
-        user_config.write_text(json.dumps({"provider": "ollama"}))
+        user_config.write_text(json.dumps({"provider": "openai"}))
 
         monkeypatch.setattr(_config, "_CONFIG_PATHS", [user_config])
         for key in [
@@ -422,17 +418,17 @@ class TestSaveConfig:
     def test_save_to_user(self, tmp_path):
         """Save config to user path."""
         target = tmp_path / "config.json"
-        save_config({"provider": "ollama", "default_model": "qwen3:32b"}, target)
+        save_config({"provider": "openai", "default_model": "gpt-4o"}, target)
 
         assert target.exists()
         data = json.loads(target.read_text())
-        assert data["provider"] == "ollama"
-        assert data["default_model"] == "qwen3:32b"
+        assert data["provider"] == "openai"
+        assert data["default_model"] == "gpt-4o"
 
     def test_save_creates_directory(self, tmp_path):
         """Save creates parent directory if needed."""
         target = tmp_path / "subdir" / "config.json"
-        save_config({"provider": "ollama"}, target)
+        save_config({"provider": "openai"}, target)
         assert target.exists()
 
     def test_has_config_false_when_empty(self, tmp_path, monkeypatch):
@@ -457,7 +453,7 @@ class TestSaveConfig:
     def test_has_config_true_with_file(self, tmp_path, monkeypatch):
         """has_config returns True when config file exists."""
         cfg = tmp_path / "config.json"
-        cfg.write_text(json.dumps({"provider": "ollama"}))
+        cfg.write_text(json.dumps({"provider": "openai"}))
 
         monkeypatch.setattr(_config, "_CONFIG_PATHS", [cfg])
 

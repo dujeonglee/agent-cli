@@ -17,7 +17,7 @@ OVERFLOW_PATTERNS = [
     r"maximum context length.*exceeded",
     r"This model's maximum context length is",
     r"reduce the length of the messages",
-    # Ollama / llama.cpp
+    # Other OpenAI-compatible servers (vLLM, llama.cpp, LM Studio)
     r"context length exceeded",
     r"token limit",
     r"exceeds the model's context",

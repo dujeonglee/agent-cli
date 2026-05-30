@@ -194,7 +194,7 @@ class TestRunSkillDispatchDepthCheck:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            provider_name="ollama",
+            provider_name="openai",
             base_url="",
             api_key="",
             capabilities=_caps(),
@@ -220,7 +220,7 @@ class TestRunSkillDispatchDepthCheck:
         # found", proving we got past the depth check.
         result = _handle_run_skill(
             {"name": "does_not_exist"},
-            provider_name="ollama",
+            provider_name="openai",
             base_url="",
             api_key="",
             capabilities=_caps(),
@@ -241,7 +241,7 @@ class TestRunSkillDispatchDepthCheck:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            provider_name="ollama",
+            provider_name="openai",
             base_url="",
             api_key="",
             capabilities=_caps(),
@@ -511,7 +511,7 @@ class TestExistingRecursionPathsUnchanged:
 
         result = _handle_run_skill(
             {"name": "summarize"},
-            provider_name="ollama",
+            provider_name="openai",
             base_url="",
             api_key="",
             capabilities=_caps(),

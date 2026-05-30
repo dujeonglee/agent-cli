@@ -8,7 +8,6 @@ from agent_cli.providers import create_provider
 from agent_cli.providers.anthropic import AnthropicProvider
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.compat import ModelCapabilities
-from agent_cli.providers.ollama import OllamaProvider
 from agent_cli.providers.openai_compat import OpenAICompatProvider
 
 
@@ -232,145 +231,6 @@ class TestOpenAICompatProvider:
         assert "Authorization" not in headers
 
 
-class TestOllamaProvider:
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_structured_output_sends_basic_json_mode(self, mock_post, caps_structured):
-        """supports_structured_output=True → format="json" (basic JSON mode).
-        Strict JSON Schema was dropped because Ollama's mlx engine broke
-        on it for some model packagings; basic mode is universally
-        supported. See the Ollama provider docstring."""
-        mock_post.return_value = _mock_response(
-            {
-                "message": {"content": '{"thought": "hi"}'},
-                "prompt_eval_count": 10,
-                "eval_count": 5,
-                "done_reason": "stop",
-            }
-        )
-
-        provider = OllamaProvider("http://localhost:11434")
-        result = provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="qwen3:32b",
-            capabilities=caps_structured,
-        )
-
-        body = mock_post.call_args.kwargs["json"]
-        assert body["format"] == "json"
-        assert result.usage.input_tokens == 10
-        assert result.usage.output_tokens == 5
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_no_structured_output_omits_format(self, mock_post, caps_basic):
-        """supports_structured_output=False → no `format` key at all.
-        The model is free to emit prose; the parser's regex stage has
-        to pick up the slack."""
-        mock_post.return_value = _mock_response(
-            {
-                "message": {"content": '{"thought": "hi"}'},
-            }
-        )
-
-        provider = OllamaProvider("http://localhost:11434")
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="old-model",
-            capabilities=caps_basic,
-        )
-
-        body = mock_post.call_args.kwargs["json"]
-        assert "format" not in body
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_skip_json_format_omits_format(self, mock_post, caps_structured):
-        """skip_json_format=True escape hatch (used by free-form tasks
-        like plan generation) must drop `format` even when the model
-        claims structured-output support."""
-        mock_post.return_value = _mock_response({"message": {"content": "plain text"}})
-
-        provider = OllamaProvider("http://localhost:11434")
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="qwen3:32b",
-            capabilities=caps_structured,
-            skip_json_format=True,
-        )
-        body = mock_post.call_args.kwargs["json"]
-        assert "format" not in body
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_403_surfaces_as_httperror(self, mock_post, caps_structured):
-        """Repro: Ollama Cloud returns 403 for unsubscribed models.
-        raise_for_status must surface it instead of swallowing."""
-        import requests as _requests
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        err = _requests.exceptions.HTTPError("403 Forbidden")
-        err.response = mock_resp
-        mock_resp.raise_for_status.side_effect = err
-        mock_post.return_value = mock_resp
-
-        provider = OllamaProvider("http://localhost:11434")
-        with pytest.raises(_requests.exceptions.HTTPError):
-            provider.call(
-                messages=[{"role": "user", "content": "hi"}],
-                system="sys",
-                model="glm-5.1:cloud",
-                capabilities=caps_structured,
-            )
-        assert mock_post.call_count == 1
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_5xx_surfaces_as_httperror(self, mock_post, caps_structured):
-        """Same contract for 5xx — no silent swallowing."""
-        import requests as _requests
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        err = _requests.exceptions.HTTPError("500 Internal Server Error")
-        err.response = mock_resp
-        mock_resp.raise_for_status.side_effect = err
-        mock_post.return_value = mock_resp
-
-        provider = OllamaProvider("http://localhost:11434")
-        with pytest.raises(_requests.exceptions.HTTPError):
-            provider.call(
-                messages=[{"role": "user", "content": "hi"}],
-                system="sys",
-                model="qwen3:32b",
-                capabilities=caps_structured,
-            )
-        assert mock_post.call_count == 1
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_400_surfaces_as_httperror(self, mock_post, caps_structured):
-        """After dropping the JSON Schema path there is no special
-        400-fallback anymore — every HTTP 4xx/5xx surfaces the same
-        way."""
-        import requests as _requests
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 400
-        err = _requests.exceptions.HTTPError("400 Bad Request")
-        err.response = mock_resp
-        mock_resp.raise_for_status.side_effect = err
-        mock_post.return_value = mock_resp
-
-        provider = OllamaProvider("http://localhost:11434")
-        with pytest.raises(_requests.exceptions.HTTPError):
-            provider.call(
-                messages=[{"role": "user", "content": "hi"}],
-                system="sys",
-                model="qwen3:32b",
-                capabilities=caps_structured,
-            )
-        assert mock_post.call_count == 1
-
-
 @pytest.fixture
 def caps_thinking():
     return ModelCapabilities(
@@ -396,40 +256,6 @@ def caps_no_thinking():
 
 
 class TestThinkingBudget:
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_ollama_num_predict(self, mock_post, caps_thinking):
-        mock_post.return_value = _mock_response(
-            {
-                "message": {"content": '{"thought": "hi"}'},
-            }
-        )
-        provider = OllamaProvider("http://localhost:11434")
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="qwen3:32b",
-            capabilities=caps_thinking,
-        )
-        body = mock_post.call_args.kwargs["json"]
-        assert body["options"]["num_predict"] == 4096 + 4096
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_ollama_no_thinking_no_options(self, mock_post, caps_no_thinking):
-        mock_post.return_value = _mock_response(
-            {
-                "message": {"content": '{"thought": "hi"}'},
-            }
-        )
-        provider = OllamaProvider("http://localhost:11434")
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="llama3.1:8b",
-            capabilities=caps_no_thinking,
-        )
-        body = mock_post.call_args.kwargs["json"]
-        assert "options" not in body
-
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_thinking_param(self, mock_post, caps_thinking):
         mock_post.return_value = _mock_response(
@@ -512,10 +338,6 @@ class TestCreateProvider:
         p = create_provider("openai", "https://api.openai.com/v1", "key")
         assert isinstance(p, OpenAICompatProvider)
 
-    def test_ollama(self):
-        p = create_provider("ollama", "http://localhost:11434", "")
-        assert isinstance(p, OllamaProvider)
-
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
             create_provider("gemini", "http://x", "")
@@ -525,46 +347,6 @@ class TestThinkingFieldCapture:
     """Each provider must surface its native reasoning channel through
     LLMResponse.thinking. Empty string when the response carries none —
     this is the graceful fallback path for non-reasoning models."""
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_ollama_captures_thinking_field(self, mock_post, caps_structured):
-        # Qwen3 family on Ollama emits message.thinking alongside content
-        mock_post.return_value = _mock_response(
-            {
-                "message": {
-                    "content": '{"action":"complete"}',
-                    "thinking": "I need to wrap this in JSON.",
-                },
-                "done": True,
-                "done_reason": "stop",
-            }
-        )
-        provider = OllamaProvider("http://localhost:11434")
-        result = provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="qwen3:32b",
-            capabilities=caps_structured,
-        )
-        assert result.thinking == "I need to wrap this in JSON."
-        assert result.content == '{"action":"complete"}'
-
-    @patch("agent_cli.providers.ollama.requests.post")
-    def test_ollama_no_thinking_field_returns_empty(self, mock_post, caps_structured):
-        mock_post.return_value = _mock_response(
-            {
-                "message": {"content": '{"action":"complete"}'},
-                "done": True,
-            }
-        )
-        provider = OllamaProvider("http://localhost:11434")
-        result = provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="qwen3:32b",
-            capabilities=caps_structured,
-        )
-        assert result.thinking == ""
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_anthropic_captures_thinking_block(self, mock_post, caps_structured):

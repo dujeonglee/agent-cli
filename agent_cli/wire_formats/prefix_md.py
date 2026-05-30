@@ -34,8 +34,9 @@ Parser policy (parse_prefix_md):
 
 Inherits the WireFormat ABC's lifecycle defaults (serialize / render
 round-trip, identity hooks). Overrides only ``provider_call_kwargs``
-because Ollama's ``format=json`` mode forces the first token to ``{``
-which conflicts with the ``## `` markdown opening.
+because an OpenAI-compatible JSON mode (``response_format`` json_object)
+forces the first token to ``{`` which conflicts with the ``## `` markdown
+opening.
 
 Self-contained boundary: this module owns the format-rules text, the
 parser, the recovery wording, and the provider hint. No external file
@@ -333,9 +334,9 @@ class PrefixMdFormat(WireFormat):
 
     See module docstring for the wire shape and design rationale.
     Inherits lifecycle defaults from :class:`WireFormat` ABC; the only
-    override is :meth:`provider_call_kwargs` to disable Ollama's
-    ``format=json`` mode (the markdown opening ``## `` conflicts with
-    the JSON mode's forced ``{`` first token).
+    override is :meth:`provider_call_kwargs` to disable the provider's
+    JSON mode (the markdown opening ``## `` conflicts with the JSON
+    mode's forced ``{`` first token).
     """
 
     name = "prefix_md"
@@ -429,7 +430,7 @@ class PrefixMdFormat(WireFormat):
     # ─── Provider / lifecycle (override) ───────────────────────
 
     def provider_call_kwargs(self) -> dict:
-        # Ollama's ``format=json`` mode forces the first generated token
+        # An OpenAI-compatible JSON mode forces the first generated token
         # to be ``{``. PREFIX-MD opens with ``## `` so the modes
         # conflict — request the provider hint to skip JSON mode for
         # this plugin. Other providers ignore the unknown kwarg.
