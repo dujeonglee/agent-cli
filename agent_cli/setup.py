@@ -57,6 +57,27 @@ def _list_ollama_models(base_url: str) -> list[dict]:
     return []
 
 
+def _list_openai_models(base_url: str, api_key: str = "") -> list[str]:
+    """List model ids from an OpenAI-compatible ``/v1/models`` endpoint.
+
+    Works for omlx, vLLM, LM Studio, and OpenAI itself. ``base_url``
+    already includes the ``/v1`` suffix (see ``_DEFAULT_URLS``). Returns
+    an empty list on any failure so the caller falls back to manual
+    entry.
+    """
+    try:
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        r = requests.get(f"{base_url.rstrip('/')}/models", headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json().get("data", [])
+            return [m["id"] for m in data if isinstance(m, dict) and m.get("id")]
+    except Exception:
+        pass
+    return []
+
+
 def _format_size(size_bytes: int) -> str:
     """Format byte size to human-readable."""
     if size_bytes >= 1_000_000_000:
@@ -195,12 +216,39 @@ class SetupWizard:
 
         if provider == "ollama":
             return self._select_ollama_model(base_url)
+        elif provider == "openai":
+            # OpenAI-compatible (omlx, vLLM, LM Studio, OpenAI) — list via
+            # /v1/models so on-prem servers show their real model ids.
+            return self._select_openai_model(base_url, api_key)
         else:
-            # For OpenAI/Anthropic, just ask for model name
-            default = "gpt-4o" if provider == "openai" else "claude-sonnet-4-20250514"
-            model = Prompt.ask("   Model name", default=default)
+            # Anthropic has no equivalent listing endpoint here — ask.
+            model = Prompt.ask("   Model name", default="claude-sonnet-4-20250514")
             self.console.print()
             return model
+
+    def _select_openai_model(self, base_url: str, api_key: str) -> str:
+        models = _list_openai_models(base_url, api_key)
+        if not models:
+            self.console.print(
+                "   [yellow]Could not list models from /v1/models. "
+                "Enter model name manually.[/]"
+            )
+            model = Prompt.ask("   Model name", default="gpt-4o")
+            self.console.print()
+            return model
+
+        self.console.print("   Available models:")
+        for i, m in enumerate(models, 1):
+            self.console.print(f"   [{i}] {m}")
+
+        choice = IntPrompt.ask(
+            "   Select",
+            default=1,
+            choices=[str(i) for i in range(1, len(models) + 1)],
+        )
+        selected = models[choice - 1]
+        self.console.print(f"   [green]Selected: {selected}[/]\n")
+        return selected
 
     def _select_ollama_model(self, base_url: str) -> str:
         models = _list_ollama_models(base_url)

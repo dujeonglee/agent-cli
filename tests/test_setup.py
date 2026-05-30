@@ -10,6 +10,7 @@ from agent_cli.setup import (
     SetupWizard,
     _check_ollama_connection,
     _list_ollama_models,
+    _list_openai_models,
 )
 
 
@@ -50,6 +51,74 @@ class TestListOllamaModels:
         with patch("agent_cli.setup.requests.get", side_effect=Exception("fail")):
             models = _list_ollama_models("http://localhost:11434")
             assert models == []
+
+
+class TestListOpenAIModels:
+    def test_returns_ids(self):
+        """omlx/vLLM /v1/models → list of model ids."""
+        with patch("agent_cli.setup.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {
+                    "data": [
+                        {"id": "Qwen3.6-27B-MLX-8bit", "object": "model"},
+                        {"id": "Qwen3.6-35B-A3B-MLX-8bit", "object": "model"},
+                    ]
+                },
+            )
+            models = _list_openai_models("http://127.0.0.1:8000/v1")
+            assert models == ["Qwen3.6-27B-MLX-8bit", "Qwen3.6-35B-A3B-MLX-8bit"]
+
+    def test_passes_api_key(self):
+        with patch("agent_cli.setup.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200, json=lambda: {"data": []}
+            )
+            _list_openai_models("http://x/v1", api_key="secret")
+            headers = mock_get.call_args.kwargs.get("headers", {})
+            assert headers.get("Authorization") == "Bearer secret"
+
+    def test_empty_on_failure(self):
+        with patch("agent_cli.setup.requests.get", side_effect=Exception("fail")):
+            assert _list_openai_models("http://x/v1") == []
+
+    def test_empty_on_non_200(self):
+        with patch("agent_cli.setup.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(status_code=404, json=lambda: {})
+            assert _list_openai_models("http://x/v1") == []
+
+    def test_skips_entries_without_id(self):
+        with patch("agent_cli.setup.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {"data": [{"object": "model"}, {"id": "good"}]},
+            )
+            assert _list_openai_models("http://x/v1") == ["good"]
+
+
+class TestSelectModelRouting:
+    def test_openai_provider_uses_v1_models(self):
+        """provider=openai must route to the /v1/models listing path."""
+        wiz = SetupWizard()
+        with (
+            patch(
+                "agent_cli.setup._list_openai_models",
+                return_value=["m1", "m2"],
+            ) as mock_list,
+            patch("agent_cli.setup.IntPrompt.ask", return_value=2),
+        ):
+            selected = wiz._select_model("openai", "http://x/v1", "")
+        mock_list.assert_called_once()
+        assert selected == "m2"
+
+    def test_openai_falls_back_to_manual_when_empty(self):
+        wiz = SetupWizard()
+        with (
+            patch("agent_cli.setup._list_openai_models", return_value=[]),
+            patch("agent_cli.setup.Prompt.ask", return_value="typed-model"),
+        ):
+            selected = wiz._select_model("openai", "http://x/v1", "")
+        assert selected == "typed-model"
 
 
 class TestSetupWizardConfig:
