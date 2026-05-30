@@ -113,10 +113,8 @@ class TestPlanSkill:
             skill = skills["plan"]
 
             ctx = ContextManager(
-                provider=omlx_provider,
-                model=integration_model,
-                capabilities=model_capabilities,
-                scratchpad_dir=tmp_path,
+                session_dir=tmp_path,
+                max_context_tokens=model_capabilities.context_window,
             )
 
             result = execute_skill(
@@ -127,7 +125,7 @@ class TestPlanSkill:
                 model=integration_model,
                 ctx=ctx,
             )
-            assert result is not None
+            assert result.success
 
             plan_dir = tmp_path / "plan"
             if plan_dir.is_dir():
@@ -152,10 +150,8 @@ class TestPlanSkill:
             skill = skills["plan"]
 
             ctx = ContextManager(
-                provider=omlx_provider,
-                model=integration_model,
-                capabilities=model_capabilities,
-                scratchpad_dir=tmp_path,
+                session_dir=tmp_path,
+                max_context_tokens=model_capabilities.context_window,
             )
 
             result = execute_skill(
@@ -166,8 +162,8 @@ class TestPlanSkill:
                 model=integration_model,
                 ctx=ctx,
             )
-            assert result is not None
-            assert len(result) > 20
+            assert result.success
+            assert len(result.output) > 20
         finally:
             os.chdir(original_cwd)
 
@@ -183,10 +179,8 @@ class TestAgentDispatchIntegration:
         from agent_cli.main import _AGENT_NOT_FOUND, _dispatch_agent
 
         ctx = ContextManager(
-            provider=omlx_provider,
-            model=integration_model,
-            capabilities=model_capabilities,
-            scratchpad_dir=tmp_path,
+            session_dir=tmp_path,
+            max_context_tokens=model_capabilities.context_window,
         )
 
         result = _dispatch_agent(

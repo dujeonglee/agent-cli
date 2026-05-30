@@ -232,8 +232,7 @@ class TestSkillExecution:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """context: fork → skill runs in independent context and returns result."""
-        from unittest.mock import MagicMock
-
+        from agent_cli.context.manager import ContextManager
         from agent_cli.skills.executor import execute_skill
         from agent_cli.skills.models import Skill
 
@@ -249,19 +248,20 @@ class TestSkillExecution:
             context="fork",
         )
 
-        fake_ctx = MagicMock()
-        fake_ctx.session_dir = tmp_path
-        # executor builds its own ContextManager from ctx.max_context_tokens;
-        # the constructor checks `max_context_tokens > 0`, so it must be a
-        # real int rather than an auto-generated MagicMock attribute.
-        fake_ctx.max_context_tokens = 32768
+        # fork serializes the parent conversation into the child context, so
+        # the parent must be a real ContextManager (a MagicMock yields
+        # non-serializable message history).
+        ctx = ContextManager(
+            session_dir=tmp_path,
+            max_context_tokens=model_capabilities.context_window,
+        )
         result = execute_skill(
             skill=skill,
             arguments=str(test_file),
             provider=omlx_provider,
             capabilities=model_capabilities,
             model=integration_model,
-            ctx=fake_ctx,
+            ctx=ctx,
         )
         assert result.success
         assert "FORK_CONTENT_ABC" in result.output
