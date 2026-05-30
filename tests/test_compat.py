@@ -7,9 +7,12 @@ import pytest
 from agent_cli.config import reload_registry
 from agent_cli.providers.compat import (
     DEFAULT_CAPABILITIES,
+    MIN_CONTEXT_WINDOW,
+    UnsupportedModelError,
     get_capabilities,
     set_progress_callback,
     _detect_ollama_capabilities,
+    _detect_openai_compat_capabilities,
     _probe_format_support,
     _emit_progress,
 )
@@ -89,7 +92,7 @@ class TestOllamaRuntimeDetection:
         show_resp = MagicMock()
         show_resp.status_code = 200
         show_resp.json.return_value = {
-            "model_info": {"llama.context_length": 8192},
+            "model_info": {"llama.context_length": 32768},
             "details": {"family": "llama", "parameter_size": "8B"},
         }
         show_resp.raise_for_status.return_value = None
@@ -108,7 +111,9 @@ class TestOllamaRuntimeDetection:
             "http://localhost:11434", "llama3.1:8b-custom"
         )
         assert caps is not None
-        assert caps.context_window == 8192
+        assert caps.context_window == 32768
+        # Auto-detected output budget = context_window // 4 (no 4096 cap).
+        assert caps.max_output_tokens == 8192
         assert caps.supports_structured_output is True
         assert caps.thinking_format == ""
 
@@ -145,7 +150,7 @@ class TestOllamaRuntimeDetection:
         show_resp = MagicMock()
         show_resp.status_code = 200
         show_resp.json.return_value = {
-            "model_info": {"llama.context_length": 8192},
+            "model_info": {"llama.context_length": 32768},
             "details": {"family": "llama"},
         }
         show_resp.raise_for_status.return_value = None
@@ -265,7 +270,7 @@ class TestOpenAICompatRuntimeDetection:
         models_resp = MagicMock()
         models_resp.status_code = 200
         models_resp.json.return_value = {
-            "data": [{"id": "model", "max_model_len": 8192}],
+            "data": [{"id": "model", "max_model_len": 32768}],
         }
         models_resp.raise_for_status.return_value = None
         mock_get.return_value = models_resp
@@ -698,3 +703,76 @@ class TestContextWindowProbe:
         mock_get.return_value.json.return_value = {"data": []}
         mock_post.return_value = self._resp(200, "")  # prompt fit → no number
         assert _detect_openai_context_window("http://x/v1", "m") == 131072
+
+
+class TestModelRejectAndOutputScaling:
+    """Auto-detect: output = context_window // 4 (no 4096 cap); context
+    below MIN_CONTEXT_WINDOW (16K) is rejected with UnsupportedModelError."""
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_ollama_output_is_context_over_4(self, mock_post):
+        show = MagicMock(status_code=200)
+        show.json.return_value = {"model_info": {"llama.context_length": 262144}}
+        show.raise_for_status.return_value = None
+        mock_post.side_effect = [show, _ok_probe_resp(), _ok_probe_resp()]
+        caps = _detect_ollama_capabilities("http://x", "big")
+        assert caps.context_window == 262144
+        assert caps.max_output_tokens == 262144 // 4  # 65536, no 4096 cap
+
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_ollama_small_context_rejected(self, mock_post):
+        show = MagicMock(status_code=200)
+        show.json.return_value = {
+            "model_info": {"llama.context_length": MIN_CONTEXT_WINDOW - 1}
+        }
+        show.raise_for_status.return_value = None
+        mock_post.side_effect = [show]
+        with pytest.raises(UnsupportedModelError):
+            _detect_ollama_capabilities("http://x", "tiny")
+
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_openai_output_is_context_over_4(self, mock_post, mock_get):
+        models = MagicMock(status_code=200)
+        models.json.return_value = {"data": [{"id": "big", "max_model_len": 262144}]}
+        models.raise_for_status.return_value = None
+        mock_get.return_value = models
+        probe = MagicMock(status_code=200)
+        probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
+        probe.raise_for_status.return_value = None
+        mock_post.return_value = probe
+        caps = _detect_openai_compat_capabilities("http://x/v1", "big")
+        assert caps.max_output_tokens == 262144 // 4
+
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_openai_small_context_rejected(self, mock_post, mock_get):
+        models = MagicMock(status_code=200)
+        models.json.return_value = {
+            "data": [{"id": "tiny", "max_model_len": MIN_CONTEXT_WINDOW - 1}]
+        }
+        models.raise_for_status.return_value = None
+        mock_get.return_value = models
+        probe = MagicMock(status_code=200)
+        probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
+        probe.raise_for_status.return_value = None
+        mock_post.return_value = probe
+        with pytest.raises(UnsupportedModelError):
+            _detect_openai_compat_capabilities("http://x/v1", "tiny")
+
+    def test_exactly_min_is_accepted(self, monkeypatch):
+        """Boundary: context == MIN_CONTEXT_WINDOW is allowed (>= , not >)."""
+
+        @patch("agent_cli.providers.compat.requests.post")
+        def run(mock_post):
+            show = MagicMock(status_code=200)
+            show.json.return_value = {
+                "model_info": {"llama.context_length": MIN_CONTEXT_WINDOW}
+            }
+            show.raise_for_status.return_value = None
+            mock_post.side_effect = [show, _ok_probe_resp(), _ok_probe_resp()]
+            caps = _detect_ollama_capabilities("http://x", "edge")
+            assert caps is not None
+            assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4
+
+        run()

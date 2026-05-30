@@ -14,7 +14,11 @@ from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT, DELEGATE_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
-from agent_cli.providers import create_provider, get_capabilities
+from agent_cli.providers import (
+    create_provider,
+    get_capabilities,
+    UnsupportedModelError,
+)
 from agent_cli.render import C, console, get_renderer
 from agent_cli.wire_formats import get as _get_wire_format
 
@@ -777,6 +781,11 @@ def _setup_provider(
         capabilities = get_capabilities(
             resolved_model, provider, resolved_url, resolved_key
         )
+    except UnsupportedModelError as e:
+        # Context window below the agent's minimum — fail fast with a
+        # clear message rather than degrading to a 4K default.
+        console.print(f"[{C['error']}]Unsupported model: {e}[/]")
+        raise typer.Exit(1) from e
     finally:
         set_progress_callback(None)
 
