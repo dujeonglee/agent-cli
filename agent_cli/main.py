@@ -1268,7 +1268,7 @@ def chat(
             console.print("  /clear              Reset context")
             console.print("  /sh <cmd>           Run shell command")
             console.print(
-                "  /compact [prompt]   Compress context (optional focus prompt)"
+                "  /compact            Compact context now (summarise oldest half)"
             )
             console.print("  /skills             List available skills")
             console.print("  /<skill> <args>     Run a skill")
@@ -1297,10 +1297,16 @@ def chat(
             continue
 
         if query == "/compact" or query.startswith("/compact "):
-            console.print(
-                f"[{C['muted']}]Context: {ctx.get_estimated_tokens():,} / {ctx.max_context_tokens:,} tokens. "
-                f"No compression needed.[/]"
-            )
+            before, after = ctx.compact_now()
+            if after < before:
+                console.print(
+                    f"[{C['muted']}]Compacted: {before:,} → {after:,} tokens.[/]"
+                )
+            else:
+                console.print(
+                    f"[{C['muted']}]Nothing to compact "
+                    f"({before:,} / {ctx.max_context_tokens:,} tokens).[/]"
+                )
             continue
 
         if query == "/ctx_window":
@@ -1613,7 +1619,7 @@ def web(
             stop_event = threading.Event()
             server.set_stop_handle(stop_event)
             try:
-                if handle_slash_command(message, renderer):
+                if handle_slash_command(message, renderer, ctx=ctx):
                     continue
                 if try_dispatch_agent_or_skill(
                     message,

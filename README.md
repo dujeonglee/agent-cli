@@ -232,7 +232,7 @@ agent-cli chat -p ollama -m qwen3:32b
 | `/quit`, `/exit` | 세션 종료 (요약 생성 후 저장) |
 | `/clear` | 컨텍스트 초기화 |
 | `/sh <cmd>` | 셸 명령 실행 |
-| `/compact` | FIFO 상태 확인 |
+| `/compact` | 수동 컨텍스트 compaction (oldest 절반 요약, before→after 토큰 표시) |
 | `/skills` | 사용 가능한 스킬 목록 |
 | `/<skill> <args>` | 스킬 실행 (예: `/optimize ./`) |
 | `@agents` | 사용 가능한 에이전트 목록 |

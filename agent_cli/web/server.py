@@ -5,6 +5,7 @@ Endpoints:
   - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query)
   - ``POST /api/input``  — submit chat message / ask answer / confirm reply
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
+  - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
 
 Auth: every authenticated endpoint requires the ``token`` query param to
 match ``WebServer.token``. The token is generated at startup (or
@@ -106,6 +107,7 @@ def pick_port(host: str, preferred: int) -> int:
 _WEB_HELP_TEXT = (
     "Web mode commands:\n"
     "  /help                    Show this help\n"
+    "  /compact                 Compact context now (summarise oldest half)\n"
     "  /sh <command>            Run a shell command directly (LLM bypass)\n"
     "  /skills                  List available skills\n"
     "  /<skill> <args>          Invoke a skill directly\n"
@@ -116,8 +118,8 @@ _WEB_HELP_TEXT = (
 )
 
 
-def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
-    """Intercept web-specific stateless commands.
+def handle_slash_command(message: str, renderer: WebRenderer, ctx=None) -> bool:
+    """Intercept web-specific commands.
 
     Returns ``True`` if the message was handled here (caller skips
     further dispatch / LLM); ``False`` otherwise. Output surfaces as
@@ -127,6 +129,7 @@ def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
     Handled:
       - ``/help`` — list supported web commands
       - ``/sh <cmd>`` — direct shell execution (no CLI parity yet)
+      - ``/compact`` — manual context compaction (needs ``ctx``)
 
     ``@<agent>`` / ``/<skill>`` (including the ``@agents`` /
     ``/skills`` listings and not-found errors) are routed through
@@ -141,6 +144,25 @@ def handle_slash_command(message: str, renderer: WebRenderer) -> bool:
             tool_name="help",
             success=True,
         )
+        return True
+
+    if message == "/compact" or message.startswith("/compact "):
+        if ctx is None:
+            renderer.observation(
+                "Compaction unavailable in this session.",
+                turn=0,
+                tool_name="compact",
+                success=False,
+            )
+            return True
+        before, after = ctx.compact_now()
+        if after < before:
+            msg = f"Compacted: {before:,} → {after:,} tokens."
+        else:
+            msg = (
+                f"Nothing to compact ({before:,} / {ctx.max_context_tokens:,} tokens)."
+            )
+        renderer.observation(msg, turn=0, tool_name="compact", success=True)
         return True
 
     if message.startswith("/sh"):
