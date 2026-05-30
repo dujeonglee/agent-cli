@@ -167,13 +167,14 @@ class TestShellDangerousCommandConfirmation:
         shell_mod._session_allowlist.clear()
 
     def _force_tty(self, monkeypatch):
-        """Tests run under pytest which is not a TTY. The confirmation
-        path bails early when there is no TTY (safe default), so for
-        tests of the prompt flow itself we have to convince the module
-        that a TTY is attached."""
-        from agent_cli.tools import shell as shell_mod
+        """Tests run under pytest which is not a TTY, so the renderer
+        reports it can't prompt and the guard refuses early. For tests of
+        the prompt flow itself, force the active renderer to say it can
+        confirm (the gate is now a renderer capability, not a raw TTY
+        check)."""
+        from agent_cli.render import get_renderer
 
-        monkeypatch.setattr(shell_mod, "_is_tty", lambda: True)
+        monkeypatch.setattr(get_renderer(), "can_confirm", lambda: True)
 
     def test_disabled_via_env_var_runs_without_prompt(self, monkeypatch):
         """AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 — bypass entirely."""
@@ -184,14 +185,15 @@ class TestShellDangerousCommandConfirmation:
         # prompt was triggered.
         assert "exit code:" in (result.output or "") or result.success
 
-    def test_dangerous_no_tty_refused(self, monkeypatch):
-        """Confirmation enabled + no TTY = refuse. We do NOT silently
-        drop the check; the LLM is told why so it doesn't keep retrying."""
+    def test_dangerous_cannot_confirm_refused(self, monkeypatch):
+        """Confirmation enabled + renderer can't prompt = refuse. We do
+        NOT silently drop the check; the LLM is told why so it doesn't
+        keep retrying. Under pytest the CLI renderer has no TTY, so
+        ``can_confirm()`` is False."""
         monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
-        # Default test environment: not a TTY.
         result = tool_shell({"command": "rm -rf /tmp/build"})
         assert not result.success
-        assert "no TTY" in (result.error or "")
+        assert "confirm" in (result.error or "")
         assert "rm" in (result.error or "")
 
     def test_dangerous_user_says_yes_once(self, monkeypatch):
@@ -343,9 +345,9 @@ class TestShellConfirmationComments:
         shell_mod._session_allowlist.clear()
 
     def _force_tty(self, monkeypatch):
-        from agent_cli.tools import shell as shell_mod
+        from agent_cli.render import get_renderer
 
-        monkeypatch.setattr(shell_mod, "_is_tty", lambda: True)
+        monkeypatch.setattr(get_renderer(), "can_confirm", lambda: True)
 
     def test_ask_returns_decision_and_empty_comment(self):
         from agent_cli.tools.shell import _ask_confirmation

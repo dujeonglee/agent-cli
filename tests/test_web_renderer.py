@@ -27,6 +27,28 @@ from agent_cli.render.web import WebConnection, WebRenderer
 # ── Event distribution ─────────────────────────────
 
 
+class TestCanConfirm:
+    """``can_confirm`` reports whether the dangerous-shell guard can
+    actually prompt — for web that means a client is connected to answer
+    the ``input_required`` event (no TTY needed)."""
+
+    def test_false_without_connection(self):
+        r = WebRenderer()
+        assert r.can_confirm() is False
+
+    def test_true_with_open_connection(self):
+        r = WebRenderer()
+        r.register_connection(WebConnection(id="c1"))
+        assert r.can_confirm() is True
+
+    def test_false_when_connection_closed(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        conn.closed.set()
+        assert r.can_confirm() is False
+
+
 class TestEventDistribution:
     """Persistent vs transient routing."""
 

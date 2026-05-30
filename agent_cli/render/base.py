@@ -315,6 +315,20 @@ class Renderer(ABC):
             The stripped user input, or ``default`` on empty input.
         """
 
+    def can_confirm(self) -> bool:
+        """Whether an interactive confirmation can actually be shown to
+        the user right now.
+
+        The dangerous-shell guard calls this before prompting: a renderer
+        that can't surface a prompt (no TTY, no connected client) reports
+        ``False`` so the caller refuses the command with a clear error
+        instead of hanging on input that will never arrive. Default
+        ``True`` — most renderers are attached to a live interactive
+        surface; those whose ability depends on runtime state (a terminal,
+        an open connection) override this.
+        """
+        return True
+
     @abstractmethod
     def confirm(
         self,

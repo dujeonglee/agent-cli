@@ -664,6 +664,15 @@ class WebRenderer(Renderer):
             self._emit("input_resolved", {}, persistent=False)
         return value if value else default
 
+    def can_confirm(self) -> bool:
+        """We can prompt whenever a browser is connected to answer the
+        ``input_required`` event — no TTY needed; the SSE + ``/api/input``
+        channel carries the confirmation. Returns ``False`` when nothing
+        is connected, so a dangerous command is refused with a clear error
+        rather than blocking on an answer no one can give."""
+        with self._lock:
+            return any(not c.closed.is_set() for c in self._connections)
+
     def confirm(
         self,
         prompt: str,

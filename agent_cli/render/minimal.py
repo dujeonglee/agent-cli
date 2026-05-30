@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from io import StringIO
 
@@ -662,6 +663,17 @@ class MinimalRenderer(Renderer):
                 value = ""
         return value if value else default
 
+    def can_confirm(self) -> bool:
+        """A CLI prompt needs a real terminal on both ends. ``confirm``
+        itself pauses any active Live region (spinner / parallel-delegate
+        panel) and the dangerous-shell caller serializes prompts, so a TTY
+        is the only precondition — Live state and worker-thread origin are
+        handled at prompt time, not gated here."""
+        try:
+            return bool(sys.stdin.isatty() and sys.stdout.isatty())
+        except Exception:
+            return False
+
     def confirm(
         self,
         prompt: str,
@@ -677,11 +689,33 @@ class MinimalRenderer(Renderer):
         intent is preserved as a comment (e.g. shell danger prompt
         surfaces "I don't trust this" as a comment alongside the
         implicit deny).
+
+        Any active Live region (spinner, or the parallel-delegate panel
+        when this runs in a delegate worker thread) is paused for the
+        duration of the read — otherwise Rich's repaint loop overwrites
+        the prompt and the user sees a frozen panel with no question.
+        The dangerous-shell caller holds a process-wide lock so only one
+        worker reads stdin at a time; with the panel paused and the main
+        thread parked in ``join()``, this worker is the sole stdin reader.
         """
+        live = self._parallel_live or self._live
+        paused = False
+        if live is not None:
+            try:
+                live.stop()
+                paused = True
+            except Exception:
+                paused = False
         try:
             raw = input(prompt).strip()
         except (EOFError, KeyboardInterrupt):
             return (default_key, "")
+        finally:
+            if paused:
+                try:
+                    live.start()
+                except Exception:
+                    pass
         if not raw:
             return (default_key, "")
 
