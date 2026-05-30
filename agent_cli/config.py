@@ -43,7 +43,6 @@ _cached_registry: dict[str, Any] | None = None
 _PROVIDER_FALLBACKS = {
     "anthropic": ("https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
     "openai": ("https://api.openai.com/v1", "gpt-4o"),
-    "ollama": ("http://localhost:11434", "qwen3:32b"),
 }
 
 
@@ -82,7 +81,9 @@ def get_provider_defaults(provider: str) -> ProviderDefaults:
     registry = _load_registry()
     entry = registry.get("provider_defaults", {}).get(provider, {})
 
-    fb_url, fb_model = _PROVIDER_FALLBACKS.get(provider, ("http://localhost:11434", ""))
+    fb_url, fb_model = _PROVIDER_FALLBACKS.get(
+        provider, ("http://127.0.0.1:8000/v1", "")
+    )
 
     return ProviderDefaults(
         base_url=entry.get("base_url", fb_url),
@@ -109,7 +110,7 @@ def save_model_entry(model: str, entry: dict) -> bool:
             return False
 
     # Don't overwrite manually registered entries;
-    # allow refresh for auto-detected ones (model updates, Ollama version changes)
+    # allow refresh for auto-detected ones (model or server-config updates)
     existing_entry = existing.get("models", {}).get(model)
     if existing_entry is not None and not existing_entry.get("_auto_detected"):
         return False

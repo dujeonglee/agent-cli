@@ -28,11 +28,5 @@ def create_provider(provider: str, base_url: str, api_key: str) -> LLMProvider:
         from agent_cli.providers.openai_compat import OpenAICompatProvider
 
         return OpenAICompatProvider(base_url, api_key)
-    elif provider == "ollama":
-        from agent_cli.providers.ollama import OllamaProvider
-
-        return OllamaProvider(base_url, api_key)
     else:
-        raise ValueError(
-            f"Unknown provider: {provider}. Available: anthropic, openai, ollama"
-        )
+        raise ValueError(f"Unknown provider: {provider}. Available: anthropic, openai")

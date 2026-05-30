@@ -11,22 +11,9 @@ from agent_cli.providers.compat import (
     UnsupportedModelError,
     get_capabilities,
     set_progress_callback,
-    _detect_ollama_capabilities,
     _detect_openai_compat_capabilities,
-    _probe_format_support,
     _emit_progress,
 )
-
-
-def _ok_probe_resp(**extra) -> MagicMock:
-    """Mock a successful probe /api/chat response (200 + message.content)."""
-    resp = MagicMock()
-    resp.status_code = 200
-    base_body = {"message": {"content": "ok"}}
-    base_body.update(extra)
-    resp.json.return_value = base_body
-    resp.raise_for_status.return_value = None
-    return resp
 
 
 @pytest.fixture(autouse=True)
@@ -38,12 +25,11 @@ def _clear_cache():
 
 class TestGetCapabilities:
     def test_registered_model(self):
-        caps = get_capabilities("qwen3:32b")
-        assert caps.context_window == 32768
-        assert caps.max_output_tokens == 4096
-        assert caps.supports_structured_output is True
+        caps = get_capabilities("claude-sonnet-4-20250514")
+        assert caps.context_window == 200000
+        assert caps.max_output_tokens == 8192
         assert caps.supports_thinking is True
-        assert caps.thinking_budget == 4096
+        assert caps.thinking_budget == 16384
 
     def test_unregistered_model(self):
         caps = get_capabilities("unknown-model:latest")
@@ -56,12 +42,8 @@ class TestGetCapabilities:
         assert caps.supports_structured_output is True
         assert caps.context_window == 128000
 
-    def test_thinking_format_registered(self):
-        caps = get_capabilities("qwen3:32b")
-        assert caps.thinking_format == "think"
-
     def test_thinking_format_empty_for_non_thinking(self):
-        caps = get_capabilities("llama3.1:8b")
+        caps = get_capabilities("gpt-4o")
         assert caps.thinking_format == ""
 
     def test_thinking_format_empty_for_anthropic(self):
@@ -69,165 +51,21 @@ class TestGetCapabilities:
         assert caps.thinking_format == ""
 
     def test_frozen(self):
-        caps = get_capabilities("qwen3:32b")
+        caps = get_capabilities("gpt-4o")
         with pytest.raises(AttributeError):
             caps.context_window = 9999  # type: ignore
 
     def test_static_registry_takes_priority(self):
         """models.json entry should override runtime detection."""
         caps = get_capabilities(
-            "qwen3:32b", provider="ollama", base_url="http://localhost:11434"
+            "gpt-4o", provider="openai", base_url="http://localhost:8000/v1"
         )
-        assert caps.context_window == 32768  # from models.json, not runtime
+        assert caps.context_window == 128000  # from models.json, not runtime
 
     def test_unregistered_with_runtime_fallback(self):
         """Unregistered model without runtime detection → defaults."""
         caps = get_capabilities("unknown:latest")
         assert caps == DEFAULT_CAPABILITIES
-
-
-class TestOllamaRuntimeDetection:
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_detects_capabilities(self, mock_post):
-        show_resp = MagicMock()
-        show_resp.status_code = 200
-        show_resp.json.return_value = {
-            "model_info": {"llama.context_length": 32768},
-            "details": {"family": "llama", "parameter_size": "8B"},
-        }
-        show_resp.raise_for_status.return_value = None
-
-        probe_resp = MagicMock()
-        probe_resp.status_code = 200
-        probe_resp.json.return_value = {
-            "message": {"content": "Hello!"},
-        }
-        probe_resp.raise_for_status.return_value = None
-
-        # 3 calls: /api/show (metadata), thinking probe, format probe.
-        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
-
-        caps = _detect_ollama_capabilities(
-            "http://localhost:11434", "llama3.1:8b-custom"
-        )
-        assert caps is not None
-        assert caps.context_window == 32768
-        # Auto-detected output budget = context_window // 4 (no 4096 cap).
-        assert caps.max_output_tokens == 8192
-        assert caps.supports_structured_output is True
-        assert caps.thinking_format == ""
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_detects_thinking_model(self, mock_post):
-        """Probe-based detection: /api/show for metadata, /api/chat for thinking."""
-        show_resp = MagicMock()
-        show_resp.status_code = 200
-        show_resp.json.return_value = {
-            "model_info": {"llama.context_length": 32768},
-            "details": {"family": "qwen3"},
-        }
-        show_resp.raise_for_status.return_value = None
-
-        probe_resp = MagicMock()
-        probe_resp.status_code = 200
-        probe_resp.json.return_value = {
-            "message": {"content": "<think>\nLet me think...\n</think>\nHello!"},
-        }
-        probe_resp.raise_for_status.return_value = None
-
-        # 3 calls: /api/show, thinking probe, format probe.
-        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
-
-        caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3:14b")
-        assert caps is not None
-        assert caps.supports_thinking is True
-        assert caps.thinking_budget > 0
-        assert caps.thinking_format == "think"
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_detects_non_thinking_model(self, mock_post):
-        """Probe returns no thinking tags → non-thinking model."""
-        show_resp = MagicMock()
-        show_resp.status_code = 200
-        show_resp.json.return_value = {
-            "model_info": {"llama.context_length": 32768},
-            "details": {"family": "llama"},
-        }
-        show_resp.raise_for_status.return_value = None
-
-        probe_resp = MagicMock()
-        probe_resp.status_code = 200
-        probe_resp.json.return_value = {
-            "message": {"content": "Hello! How can I help you?"},
-        }
-        probe_resp.raise_for_status.return_value = None
-
-        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
-
-        caps = _detect_ollama_capabilities("http://localhost:11434", "llama3:8b")
-        assert caps is not None
-        assert caps.supports_thinking is False
-        assert caps.thinking_format == ""
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_detects_thinking_via_field(self, mock_post):
-        """Probe detects thinking via message.thinking field (Qwen3, GLM)."""
-        show_resp = MagicMock()
-        show_resp.status_code = 200
-        show_resp.json.return_value = {
-            "model_info": {"qwen3moe.context_length": 262144},
-            "details": {"family": "qwen3moe"},
-        }
-        show_resp.raise_for_status.return_value = None
-
-        probe_resp = MagicMock()
-        probe_resp.status_code = 200
-        probe_resp.json.return_value = {
-            "message": {
-                "content": "2 + 2 = 4",
-                "thinking": "Let me calculate step by step...",
-            },
-        }
-        probe_resp.raise_for_status.return_value = None
-
-        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
-
-        caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3.5:35b")
-        assert caps is not None
-        assert caps.supports_thinking is True
-        assert caps.thinking_format == "thinking_field"
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_detects_non_llama_architecture(self, mock_post):
-        """Should detect context_length from any architecture prefix (e.g. qwen3next)."""
-        show_resp = MagicMock()
-        show_resp.status_code = 200
-        show_resp.json.return_value = {
-            "model_info": {"qwen3next.context_length": 262144},
-            "details": {"family": "qwen3next"},
-        }
-        show_resp.raise_for_status.return_value = None
-
-        probe_resp = MagicMock()
-        probe_resp.status_code = 200
-        probe_resp.json.return_value = {
-            "message": {"content": "<think>reasoning</think>\nHello"},
-        }
-        probe_resp.raise_for_status.return_value = None
-
-        mock_post.side_effect = [show_resp, probe_resp, _ok_probe_resp()]
-
-        caps = _detect_ollama_capabilities(
-            "http://localhost:11434", "qwen3-coder-next:q8_0"
-        )
-        assert caps is not None
-        assert caps.context_window == 262144
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_returns_none_on_error(self, mock_post):
-        mock_post.side_effect = Exception("Connection refused")
-        caps = _detect_ollama_capabilities("http://localhost:11434", "unknown")
-        assert caps is None
 
 
 class TestOpenAICompatRuntimeDetection:
@@ -431,101 +269,6 @@ class TestPromptModelCapabilities:
         assert caps is None
 
 
-class TestFormatSupportProbe:
-    """Unit tests for _probe_format_support in isolation."""
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_clean_response_returns_true(self, mock_post):
-        mock_post.return_value = _ok_probe_resp()
-        assert _probe_format_support("http://localhost:11434", "qwen3:32b") is True
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_http_500_returns_false(self, mock_post, capsys):
-        """HTTP 500 (the non-streaming mlx-runner-fail shape)."""
-        resp = MagicMock()
-        resp.status_code = 500
-        mock_post.return_value = resp
-        assert _probe_format_support("http://localhost:11434", "mlx-bad:bf16") is False
-        captured = capsys.readouterr()
-        assert "HTTP 500" in captured.err
-        assert "mlx-bad:bf16" in captured.err
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_200_with_error_body_returns_false(self, mock_post, capsys):
-        """The exact shape Ollama emits when mlx runner fails mid-request:
-        HTTP 200 plus a body-level {"error": "..."}."""
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = {"error": "mlx runner failed: pipeline.go:129 msg=..."}
-        mock_post.return_value = resp
-        assert (
-            _probe_format_support(
-                "http://localhost:11434", "qwen3.6:35b-a3b-coding-bf16"
-            )
-            is False
-        )
-        captured = capsys.readouterr()
-        assert "mlx runner failed" in captured.err
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_connection_error_returns_false(self, mock_post, capsys):
-        import requests as _requests
-
-        mock_post.side_effect = _requests.ConnectionError("refused")
-        assert _probe_format_support("http://localhost:11434", "model") is False
-        captured = capsys.readouterr()
-        assert "ConnectionError" in captured.err
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_non_json_body_returns_false(self, mock_post, capsys):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.side_effect = ValueError("not json")
-        mock_post.return_value = resp
-        assert _probe_format_support("http://localhost:11434", "model") is False
-        captured = capsys.readouterr()
-        assert "non-JSON" in captured.err
-
-
-class TestDetectionWiresProbeResult:
-    """Integration: _detect_ollama_capabilities must carry the format probe
-    result into the returned ModelCapabilities.supports_structured_output."""
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_broken_format_sets_false(self, mock_post):
-        """Emulate coding-bf16: /api/show succeeds, thinking probe
-        succeeds, format probe comes back with the mlx error body."""
-        show_resp = MagicMock()
-        show_resp.status_code = 200
-        show_resp.json.return_value = {
-            "model_info": {"qwen3moe.context_length": 262144},
-            "details": {"family": "qwen3moe"},
-        }
-        show_resp.raise_for_status.return_value = None
-
-        thinking_resp = MagicMock()
-        thinking_resp.status_code = 200
-        thinking_resp.json.return_value = {
-            "message": {"content": "ok", "thinking": "pondering"},
-        }
-        thinking_resp.raise_for_status.return_value = None
-
-        format_fail_resp = MagicMock()
-        format_fail_resp.status_code = 200
-        format_fail_resp.json.return_value = {"error": "mlx runner failed: ..."}
-
-        mock_post.side_effect = [show_resp, thinking_resp, format_fail_resp]
-
-        caps = _detect_ollama_capabilities(
-            "http://localhost:11434", "qwen3.6:35b-a3b-coding-bf16"
-        )
-        assert caps is not None
-        # Probe failure pins the flag to False so live requests skip format.
-        assert caps.supports_structured_output is False
-        # Thinking detection still works regardless of format probe.
-        assert caps.supports_thinking is True
-
-
 class TestProgressCallback:
     """Runtime detection emits progress messages through a registered
     callback so the CLI can show the user what each probe step is
@@ -562,42 +305,6 @@ class TestProgressCallback:
             set_progress_callback(None)
 
     @patch("agent_cli.providers.compat.requests.post")
-    def test_detect_ollama_emits_step_messages(self, mock_post):
-        """Ollama runtime detection emits one message per stage: show,
-        thinking probe, format probe, plus a start/end bookend. Pins
-        that the probe UI sees each step, not silence until done."""
-        show_resp = MagicMock()
-        show_resp.status_code = 200
-        show_resp.json.return_value = {
-            "model_info": {"qwen3.context_length": 32768},
-            "details": {"family": "qwen3"},
-        }
-        show_resp.raise_for_status.return_value = None
-
-        thinking_resp = MagicMock()
-        thinking_resp.status_code = 200
-        thinking_resp.json.return_value = {"message": {"content": "<think>x</think>4"}}
-        thinking_resp.raise_for_status.return_value = None
-
-        mock_post.side_effect = [show_resp, thinking_resp, _ok_probe_resp()]
-
-        messages: list[str] = []
-        set_progress_callback(messages.append)
-        try:
-            caps = _detect_ollama_capabilities("http://localhost:11434", "qwen3:14b")
-        finally:
-            set_progress_callback(None)
-
-        assert caps is not None
-        # Three distinct stages plus a start/completion bookend, all
-        # naming the model so the user can tell which probe is running.
-        joined = "\n".join(messages)
-        assert "metadata" in joined  # /api/show
-        assert "thinking" in joined  # thinking probe
-        assert "format" in joined  # format probe
-        assert any("qwen3:14b" in m for m in messages)
-
-    @patch("agent_cli.providers.compat.requests.post")
     def test_cached_capability_silent(self, mock_post):
         """Cache hit (models.json entry) must NOT fire the progress
         callback — probes don't run, user shouldn't see phantom
@@ -605,10 +312,10 @@ class TestProgressCallback:
         messages: list[str] = []
         set_progress_callback(messages.append)
         try:
-            caps = get_capabilities("qwen3:32b")  # in default_models.json
+            caps = get_capabilities("gpt-4o")  # in default_models.json
         finally:
             set_progress_callback(None)
-        assert caps.context_window == 32768  # came from registry
+        assert caps.context_window == 128000  # came from registry
         assert messages == []  # no probes, no messages
         mock_post.assert_not_called()
 
@@ -709,27 +416,6 @@ class TestModelRejectAndOutputScaling:
     """Auto-detect: output = context_window // 4 (no 4096 cap); context
     below MIN_CONTEXT_WINDOW (16K) is rejected with UnsupportedModelError."""
 
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_ollama_output_is_context_over_4(self, mock_post):
-        show = MagicMock(status_code=200)
-        show.json.return_value = {"model_info": {"llama.context_length": 262144}}
-        show.raise_for_status.return_value = None
-        mock_post.side_effect = [show, _ok_probe_resp(), _ok_probe_resp()]
-        caps = _detect_ollama_capabilities("http://x", "big")
-        assert caps.context_window == 262144
-        assert caps.max_output_tokens == 262144 // 4  # 65536, no 4096 cap
-
-    @patch("agent_cli.providers.compat.requests.post")
-    def test_ollama_small_context_rejected(self, mock_post):
-        show = MagicMock(status_code=200)
-        show.json.return_value = {
-            "model_info": {"llama.context_length": MIN_CONTEXT_WINDOW - 1}
-        }
-        show.raise_for_status.return_value = None
-        mock_post.side_effect = [show]
-        with pytest.raises(UnsupportedModelError):
-            _detect_ollama_capabilities("http://x", "tiny")
-
     @patch("agent_cli.providers.compat.requests.get")
     @patch("agent_cli.providers.compat.requests.post")
     def test_openai_output_is_context_over_4(self, mock_post, mock_get):
@@ -760,19 +446,20 @@ class TestModelRejectAndOutputScaling:
         with pytest.raises(UnsupportedModelError):
             _detect_openai_compat_capabilities("http://x/v1", "tiny")
 
-    def test_exactly_min_is_accepted(self, monkeypatch):
+    @patch("agent_cli.providers.compat.requests.get")
+    @patch("agent_cli.providers.compat.requests.post")
+    def test_exactly_min_is_accepted(self, mock_post, mock_get):
         """Boundary: context == MIN_CONTEXT_WINDOW is allowed (>= , not >)."""
-
-        @patch("agent_cli.providers.compat.requests.post")
-        def run(mock_post):
-            show = MagicMock(status_code=200)
-            show.json.return_value = {
-                "model_info": {"llama.context_length": MIN_CONTEXT_WINDOW}
-            }
-            show.raise_for_status.return_value = None
-            mock_post.side_effect = [show, _ok_probe_resp(), _ok_probe_resp()]
-            caps = _detect_ollama_capabilities("http://x", "edge")
-            assert caps is not None
-            assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4
-
-        run()
+        models = MagicMock(status_code=200)
+        models.json.return_value = {
+            "data": [{"id": "edge", "max_model_len": MIN_CONTEXT_WINDOW}]
+        }
+        models.raise_for_status.return_value = None
+        mock_get.return_value = models
+        probe = MagicMock(status_code=200)
+        probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
+        probe.raise_for_status.return_value = None
+        mock_post.return_value = probe
+        caps = _detect_openai_compat_capabilities("http://x/v1", "edge")
+        assert caps is not None
+        assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4

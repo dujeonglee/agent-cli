@@ -24,7 +24,7 @@ class TestIsContextOverflow:
             is True
         )
 
-    def test_ollama_pattern(self):
+    def test_context_length_exceeded_pattern(self):
         assert is_context_overflow("context length exceeded") is True
 
     def test_generic_pattern(self):

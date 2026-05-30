@@ -298,8 +298,8 @@ class TestProviderWiring:
             assert resp.content == "ok"
             assert mock_post.call_count == 2
 
-    def test_ollama_retries_on_timeout(self, monkeypatch):
-        from agent_cli.providers.ollama import OllamaProvider
+    def test_openai_retries_on_timeout(self, monkeypatch):
+        from agent_cli.providers.openai_compat import OpenAICompatProvider
         from agent_cli.providers.compat import ModelCapabilities
 
         caps = ModelCapabilities(
@@ -314,15 +314,14 @@ class TestProviderWiring:
         good.status_code = 200
         good.raise_for_status.return_value = None
         good.json.return_value = {
-            "message": {"content": "ok"},
-            "eval_count": 1,
-            "prompt_eval_count": 1,
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
         }
         with patch(
-            "agent_cli.providers.ollama.requests.post",
+            "agent_cli.providers.openai_compat.requests.post",
             side_effect=[requests.Timeout("t1"), good],
         ) as mock_post:
-            provider = OllamaProvider("http://localhost:11434")
+            provider = OpenAICompatProvider("https://api.openai.com/v1", "test-key")
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2

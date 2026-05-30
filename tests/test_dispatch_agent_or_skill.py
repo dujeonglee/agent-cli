@@ -78,7 +78,7 @@ def base_state(tmp_path):
         "llm_provider": MagicMock(),
         "capabilities": MagicMock(),
         "resolved_model": "test-model",
-        "provider": "ollama",
+        "provider": "openai",
         "resolved_url": "http://localhost:11434",
         "resolved_key": "",
         "max_turns": 0,

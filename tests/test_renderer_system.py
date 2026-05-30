@@ -102,8 +102,8 @@ class TestDispatchAgent:
             provider,
             caps,
             "test",
-            "ollama",
-            "http://localhost:11434",
+            "openai",
+            "http://127.0.0.1:8000/v1",
             "",
         )
         assert result is _AGENT_NOT_FOUND
@@ -117,8 +117,8 @@ class TestDispatchAgent:
             MagicMock(),
             None,
             "test",
-            "ollama",
-            "http://localhost:11434",
+            "openai",
+            "http://127.0.0.1:8000/v1",
             "",
         )
         assert result is _AGENT_NOT_FOUND

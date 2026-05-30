@@ -384,7 +384,7 @@ class TestAbcConformance:
         # would already have raised TypeError.
         assert isinstance(r, Renderer)
         # Smoke pass over a handful of abstract methods.
-        r.header("ollama", "qwen3:32b", 10)
+        r.header("openai", "gpt-4o", 10)
         r.turn_sep(1)
         r.status("info", "noted")
 
@@ -400,13 +400,13 @@ class TestHeaderWorkspace:
         r = WebRenderer(workspace="/Users/me/proj")
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        r.header("ollama", "qwen3:32b", 10)
+        r.header("openai", "gpt-4o", 10)
         event, data = conn.queue.get(timeout=1.0)
         assert event == "ready"
         assert data["workspace"] == "/Users/me/proj"
         # Existing fields must still be present.
-        assert data["provider"] == "ollama"
-        assert data["model"] == "qwen3:32b"
+        assert data["provider"] == "openai"
+        assert data["model"] == "gpt-4o"
 
     def test_workspace_omitted_when_empty(self):
         """Empty workspace means we don't know — omit the field so the
@@ -415,7 +415,7 @@ class TestHeaderWorkspace:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        r.header("ollama", "qwen3:32b", 10)
+        r.header("openai", "gpt-4o", 10)
         event, data = conn.queue.get(timeout=1.0)
         assert event == "ready"
         assert "workspace" not in data
@@ -427,7 +427,7 @@ class TestHeaderWorkspace:
         first chat turn."""
         r = WebRenderer(workspace="/proj")
         # Header fires BEFORE any connection registers.
-        r.header("ollama", "qwen3:32b", 10)
+        r.header("openai", "gpt-4o", 10)
         # Late client connects.
         conn = WebConnection(id="late")
         snapshot = r.register_connection(conn)
@@ -437,7 +437,7 @@ class TestHeaderWorkspace:
         event, data = snapshot[0]
         assert event == "ready"
         assert data["workspace"] == "/proj"
-        assert data["model"] == "qwen3:32b"
+        assert data["model"] == "gpt-4o"
 
     def test_nested_skill_header_does_not_clobber_session_info(self):
         """A skill's nested AgentLoop also calls ``header()`` with
@@ -445,9 +445,9 @@ class TestHeaderWorkspace:
         ready — otherwise the top bar would flicker to a skill name
         mid-flow and stay there after the skill finishes."""
         r = WebRenderer(workspace="/proj")
-        r.header("ollama", "qwen3:32b", 10)
+        r.header("openai", "gpt-4o", 10)
         # Nested skill call.
-        r.header("ollama", "qwen3:32b", 10, skill_name="plan")
+        r.header("openai", "gpt-4o", 10, skill_name="plan")
         # Latest ready in snapshot should still be the top-level one,
         # with NO ``skill_name`` field set on the visible data.
         conn = WebConnection(id="c")
@@ -463,7 +463,7 @@ class TestHeaderWorkspace:
         stay empty of ``ready`` so replay snapshots stay small."""
         r = WebRenderer()
         for _ in range(5):
-            r.header("ollama", "qwen3:32b", 10)
+            r.header("openai", "gpt-4o", 10)
         # Drain the live queue side and confirm buffer has no rolling
         # ``ready`` entries (only the slot, which is prepended to
         # snapshot from outside the buffer).
@@ -881,7 +881,7 @@ class TestReplayFromHistory:
         )
 
         r = WebRenderer(workspace=str(tmp_path))
-        r.header("ollama", "qwen3:32b", 10)
+        r.header("openai", "gpt-4o", 10)
         r.replay_from_history(ctx)
 
         conn = WebConnection(id="late")
@@ -1061,7 +1061,7 @@ class TestWorkerStateReconnect:
         # all replayed messages are on screen — matches the
         # implementation's snapshot composition.
         r = WebRenderer(workspace="/proj")
-        r.header("ollama", "qwen3:32b", 10)
+        r.header("openai", "gpt-4o", 10)
         r.thought("thinking", 1)
         r.final("done", 1)  # closes assistant_turn for turn 1
         r.worker_idle()

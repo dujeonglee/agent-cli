@@ -22,39 +22,14 @@ console = Console()
 
 # Provider choices
 _PROVIDERS = [
-    ("ollama", "Ollama (local, default)"),
-    ("openai", "OpenAI compatible (vLLM, LM Studio, mlx-lm)"),
+    ("openai", "OpenAI compatible (OpenAI, vLLM, LM Studio, omlx) — default"),
     ("anthropic", "Anthropic"),
 ]
 
 _DEFAULT_URLS = {
-    "ollama": "http://localhost:11434",
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com/v1",
 }
-
-
-def _check_ollama_connection(base_url: str) -> tuple[bool, str]:
-    """Check Ollama connection. Returns (ok, version_string)."""
-    try:
-        r = requests.get(f"{base_url}/api/version", timeout=5)
-        if r.status_code == 200:
-            version = r.json().get("version", "unknown")
-            return True, version
-    except Exception:
-        pass
-    return False, ""
-
-
-def _list_ollama_models(base_url: str) -> list[dict]:
-    """List available Ollama models. Returns list of model dicts."""
-    try:
-        r = requests.get(f"{base_url}/api/tags", timeout=10)
-        if r.status_code == 200:
-            return r.json().get("models", [])
-    except Exception:
-        pass
-    return []
 
 
 def _list_openai_models(base_url: str, api_key: str = "") -> list[str]:
@@ -76,13 +51,6 @@ def _list_openai_models(base_url: str, api_key: str = "") -> list[str]:
     except Exception:
         pass
     return []
-
-
-def _format_size(size_bytes: int) -> str:
-    """Format byte size to human-readable."""
-    if size_bytes >= 1_000_000_000:
-        return f"{size_bytes / 1_000_000_000:.1f}GB"
-    return f"{size_bytes / 1_000_000:.0f}MB"
 
 
 class SetupWizard:
@@ -177,7 +145,11 @@ class SetupWizard:
         for i, (key, label) in enumerate(_PROVIDERS, 1):
             self.console.print(f"   [{i}] {label}")
 
-        choice = IntPrompt.ask("   Select", default=1, choices=["1", "2", "3"])
+        choice = IntPrompt.ask(
+            "   Select",
+            default=1,
+            choices=[str(i) for i in range(1, len(_PROVIDERS) + 1)],
+        )
         provider = _PROVIDERS[choice - 1][0]
         self.console.print(f"   [green]Selected: {provider}[/]\n")
         return provider
@@ -185,28 +157,12 @@ class SetupWizard:
     def _configure_connection(self, provider: str) -> tuple[str, str]:
         self.console.print(f"[bold]2. {provider.title()} Connection[/]")
 
-        default_url = _DEFAULT_URLS.get(provider, "http://localhost:11434")
+        default_url = _DEFAULT_URLS.get(provider, "https://api.openai.com/v1")
         base_url = Prompt.ask("   Base URL", default=default_url)
 
-        # Test connection for Ollama
-        if provider == "ollama":
-            self.console.print("   Checking connection...", end=" ")
-            ok, version = _check_ollama_connection(base_url)
-            if ok:
-                self.console.print(f"[green]Connected (v{version})[/]")
-            else:
-                self.console.print("[red]Failed to connect[/]")
-                self.console.print(
-                    f"   [yellow]Make sure Ollama is running at {base_url}[/]"
-                )
-
-        # API key
-        api_key = ""
-        if provider in ("openai", "anthropic"):
-            api_key = Prompt.ask("   API Key", password=True, default="")
-        elif provider == "ollama":
-            # Ollama usually doesn't need API key
-            pass
+        # API key — OpenAI-compatible servers may not need one (omlx /
+        # local vLLM), but the prompt allows it; empty stays empty.
+        api_key = Prompt.ask("   API Key", password=True, default="")
 
         self.console.print()
         return base_url, api_key
@@ -214,17 +170,14 @@ class SetupWizard:
     def _select_model(self, provider: str, base_url: str, api_key: str) -> str:
         self.console.print("[bold]3. Select Default Model[/]")
 
-        if provider == "ollama":
-            return self._select_ollama_model(base_url)
-        elif provider == "openai":
+        if provider == "openai":
             # OpenAI-compatible (omlx, vLLM, LM Studio, OpenAI) — list via
             # /v1/models so on-prem servers show their real model ids.
             return self._select_openai_model(base_url, api_key)
-        else:
-            # Anthropic has no equivalent listing endpoint here — ask.
-            model = Prompt.ask("   Model name", default="claude-sonnet-4-20250514")
-            self.console.print()
-            return model
+        # Anthropic has no equivalent listing endpoint here — ask.
+        model = Prompt.ask("   Model name", default="claude-sonnet-4-20250514")
+        self.console.print()
+        return model
 
     def _select_openai_model(self, base_url: str, api_key: str) -> str:
         models = _list_openai_models(base_url, api_key)
@@ -247,31 +200,6 @@ class SetupWizard:
             choices=[str(i) for i in range(1, len(models) + 1)],
         )
         selected = models[choice - 1]
-        self.console.print(f"   [green]Selected: {selected}[/]\n")
-        return selected
-
-    def _select_ollama_model(self, base_url: str) -> str:
-        models = _list_ollama_models(base_url)
-        if not models:
-            self.console.print(
-                "   [yellow]No models found. Enter model name manually.[/]"
-            )
-            model = Prompt.ask("   Model name", default="qwen3:32b")
-            self.console.print()
-            return model
-
-        self.console.print("   Available models:")
-        for i, m in enumerate(models, 1):
-            name = m.get("name", "unknown")
-            size = _format_size(m.get("size", 0))
-            self.console.print(f"   [{i}] {name} ({size})")
-
-        choice = IntPrompt.ask(
-            "   Select",
-            default=1,
-            choices=[str(i) for i in range(1, len(models) + 1)],
-        )
-        selected = models[choice - 1]["name"]
         self.console.print(f"   [green]Selected: {selected}[/]\n")
         return selected
 

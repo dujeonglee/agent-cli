@@ -61,9 +61,9 @@ class TestSkillModel:
             name="s",
             description="d",
             prompt_template="Do $ARGUMENTS",
-            model="qwen3:8b",
+            model="gpt-4o",
         )
-        assert skill.model == "qwen3:8b"
+        assert skill.model == "gpt-4o"
 
     def test_context_default_none(self):
         """Skill.context defaults to None (no fork)."""
@@ -248,13 +248,13 @@ class TestSkillLoader:
             "---\n"
             "name: with-model\n"
             "description: Skill with model override\n"
-            "model: qwen3:8b\n"
+            "model: gpt-4o\n"
             "---\n\n"
             "Do $ARGUMENTS\n"
         )
         skill = _parse_skill_file(skill_file)
         assert skill is not None
-        assert skill.model == "qwen3:8b"
+        assert skill.model == "gpt-4o"
 
     def test_parse_no_model_in_frontmatter(self, tmp_path):
         """Frontmatter without model field → skill.model is None."""
@@ -638,7 +638,7 @@ class TestSkillExecution:
             name="s",
             description="d",
             prompt_template="Do $ARGUMENTS",
-            model="qwen3:8b",
+            model="gpt-4o",
         )
         with unittest.mock.patch("agent_cli.skills.executor.run_loop") as mock_run_loop:
             from agent_cli.tools.result import ToolResult as _TR
@@ -652,7 +652,7 @@ class TestSkillExecution:
                 model="original-model",
             )
             _, kwargs = mock_run_loop.call_args
-            assert kwargs["model"] == "qwen3:8b"
+            assert kwargs["model"] == "gpt-4o"
 
 
 class TestYamlOptional:

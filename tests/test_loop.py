@@ -2609,8 +2609,8 @@ class TestProviderCallKwargs:
     """Plugin-defined ``provider_call_kwargs`` reach ``provider.call``.
 
     The Protocol method exists so envelope-style plugins can flip
-    ``skip_json_format=True`` to keep Ollama from forcing ``{`` as the
-    first token. Pinning the wiring here catches the previous leak
+    ``skip_json_format=True`` to keep the provider's JSON mode from
+    forcing ``{`` as the first token. Pinning the wiring here catches the previous leak
     (Protocol method defined but never unpacked into the provider
     call) so we don't reintroduce it.
     """
@@ -2764,7 +2764,7 @@ class TestSkillStack:
 
         obs = _handle_run_skill(
             skill_input={"name": "optimize", "arguments": "./"},
-            provider_name="ollama",
+            provider_name="openai",
             base_url="http://localhost:11434",
             api_key="",
             capabilities=caps,
@@ -2785,7 +2785,7 @@ class TestSkillStack:
         # NOT be blocked by the stack check
         obs = _handle_run_skill(
             skill_input={"name": "summarize", "arguments": "./"},
-            provider_name="ollama",
+            provider_name="openai",
             base_url="http://localhost:11434",
             api_key="",
             capabilities=caps,

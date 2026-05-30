@@ -2,8 +2,8 @@
 
 Why this exists
 ---------------
-On-prem LLM servers (Ollama / vLLM) occasionally fail with transient
-``requests.ConnectionError`` (server just restarting) or
+On-prem LLM servers (vLLM, LM Studio, omlx) occasionally fail with
+transient ``requests.ConnectionError`` (server just restarting) or
 ``requests.Timeout`` (model load is slow on the first call). Retrying
 the request one or two times recovers from both without bubbling up to
 the user.
@@ -25,9 +25,7 @@ Retryable exceptions
 HTTP error responses (4xx/5xx) are NOT retried — those are raised via
 ``response.raise_for_status()`` by the caller after this function
 returns, and they represent a server decision that retrying won't
-change. Ollama's existing "400 → drop JSON Schema → retry" fallback in
-``ollama.py`` is preserved unchanged; this helper only wraps the
-underlying network call.
+change. This helper only wraps the underlying network call.
 
 Backoff
 -------
