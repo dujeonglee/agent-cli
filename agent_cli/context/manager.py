@@ -441,19 +441,23 @@ class ContextManager:
                 result.append(p)
         return result
 
-    def _evict_fifo(self) -> None:
-        """Plain FIFO drop until cache fits within the budget. Used both
-        as the ``compaction_enabled=False`` path and as the belt-and-
-        braces fallback inside ``_maybe_compact``.
+    def _evict_fifo(self, target_tokens: int | None = None) -> None:
+        """Plain FIFO drop until cache fits within ``target_tokens``. Used
+        as the ``compaction_enabled=False`` path, the belt-and-braces
+        fallback inside ``_maybe_compact``, and the FIFO stage of
+        ``force_fit``.
 
-        Uses the full budget (100%) as the drop target — same semantic
-        as the pre-compaction FIFO path. The belt-and-braces case where
-        a rebuilt cache lands in the 90-100% band is acceptable: the
-        next ``add`` that pushes it over 90% will simply re-enter
-        compaction, and compaction reliably shrinks the cache (summary
-        is capped, retained tail is half-by-tokens).
+        ``target_tokens`` defaults to the full budget
+        (``max_context_tokens``) — same semantic as the pre-compaction
+        FIFO path. ``force_fit`` passes a smaller target to shed more
+        aggressively after a server-side overflow rejection. The
+        belt-and-braces case where a rebuilt cache lands in the 90-100%
+        band is acceptable: the next ``add`` that pushes it over 90%
+        will simply re-enter compaction, and compaction reliably shrinks
+        the cache (summary is capped, retained tail is half-by-tokens).
         """
-        while self._cache_tokens > self.max_context_tokens and len(self._cache) > 1:
+        target = target_tokens if target_tokens is not None else self.max_context_tokens
+        while self._cache_tokens > target and len(self._cache) > 1:
             removed = self._cache.pop(0)
             self._cache_tokens -= _estimate_message_tokens(removed)
             # The popped message came from the cache, which mirrors
@@ -463,6 +467,83 @@ class ContextManager:
         # Persist updated offset so an interrupted run survives.
         if self._summary or self._compaction_count or self._dynamic_start_index:
             self._save_compaction_json()
+
+    def force_fit(self, target_tokens: int, actual_tokens: int | None = None) -> bool:
+        """Aggressively shrink the cache after a context-overflow rejection.
+
+        This is the reactive safety net (flow 2): the server returned a
+        400 because the prompt exceeded its context window, so we must
+        shed history before retrying. It runs ``compact`` first (least
+        information loss), then FIFO-evicts the oldest messages.
+
+        Why a dedicated method instead of trusting ``_maybe_compact``:
+        the local token estimate (``chars/4``) under-counts CJK text
+        badly, so ``_cache_tokens`` can sit well below the threshold
+        while the *real* prompt is over the limit — compaction never
+        fires. Here the server has spoken (the 400 is ground truth), so
+        we shrink regardless of what the local estimate claims.
+
+        Sizing is **ratio-based** to neutralise the estimate's
+        inaccuracy: if ``actual_tokens`` (server count) and
+        ``target_tokens`` are known, we drop the cache to
+        ``target/actual`` of its current estimated size. A consistent
+        under-count factor cancels out of that ratio, so the real prompt
+        lands near the target even though every absolute number is
+        wrong. Any residual error is corrected by the caller's bounded
+        retry loop, which re-submits and reacts to the next 400.
+
+        Forward progress is guaranteed: when ratio eviction removes
+        nothing (estimate too small to clear the target), one oldest
+        message is popped outright. The anchor (the single most recent
+        message) is always preserved.
+
+        Args:
+            target_tokens: desired post-shrink prompt size, typically
+                ``limit * 0.8`` (server limit with output headroom).
+            actual_tokens: server-reported actual prompt size, when the
+                400 message carried it. ``None`` falls back to a fixed
+                25% trim per call.
+
+        Returns:
+            True if the cache shrank (a retry is worthwhile), False if
+            only the anchor remains (caller should give up).
+        """
+        if len(self._cache) <= 1:
+            return False
+        before_len = len(self._cache)
+
+        # 1) Compact first — summarise the oldest slice if possible.
+        if self._compaction_enabled and self._compactor_callback is not None:
+            try:
+                self._compact()
+            except CompactionError as e:
+                render_compaction_progress(phase="warning", reason=str(e))
+
+        # 2) FIFO-evict the remainder if compaction didn't shrink enough.
+        if len(self._cache) > 1:
+            if actual_tokens and target_tokens and actual_tokens > target_tokens:
+                # Ratio-based: shed so the (estimate-invariant) fraction
+                # target/actual of the prompt remains.
+                keep_ratio = target_tokens / actual_tokens
+                floor = max(int(self._cache_tokens * keep_ratio), 1)
+            else:
+                # No server count: trim ~25% and let the retry converge.
+                floor = max(int(self._cache_tokens * 0.75), 1)
+            self._evict_fifo(floor)
+
+            # Guarantee forward progress: ratio eviction can be a no-op
+            # when the local estimate already sits below ``floor`` (the
+            # estimate under-counted), yet the server rejected the
+            # prompt. Pop one oldest message so the retry makes headway.
+            if len(self._cache) >= before_len and len(self._cache) > 1:
+                removed = self._cache.pop(0)
+                self._cache_tokens = max(
+                    self._cache_tokens - _estimate_message_tokens(removed), 0
+                )
+                self._dynamic_start_index += 1
+                self._save_compaction_json()
+
+        return len(self._cache) < before_len
 
     # ── Persistence ──────────────────────────────────
 

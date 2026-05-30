@@ -20,7 +20,7 @@ Agent-CLI는 on-premise LLM을 위한 모듈형 에이전트 CLI입니다. ReAct
 - **3단계 파싱 폴백**: json.loads → JSON repair → regex 추출
 - **Basic JSON Mode**: Ollama `format="json"`, OpenAI `response_format={"type":"json_object"}`, Anthropic tool calling (strict JSON Schema는 확장성 위해 미사용)
 - **Hashline 편집**: CRC32 해시 기반 정밀 파일 편집 + 퍼지 매칭
-- **컨텍스트 관리**: 토큰 budget 90% 초과 시 LLM 요약 compaction (recursive single-call), 실패/재구성 후 미충족 시 FIFO drop으로 belt-and-braces fallback; history.jsonl 영속화 + compaction.json (resume용 dynamic_start_index)
+- **컨텍스트 관리**: 토큰 budget 90% 초과 시 LLM 요약 compaction (recursive single-call), 실패/재구성 후 미충족 시 FIFO drop으로 belt-and-braces fallback (flow 1 예방); 추정이 빗나가 서버가 400(prompt too long)을 던지면 `force_fit`으로 compact→FIFO 사후 축소 후 bounded 재시도 (flow 2 반응); history.jsonl 영속화 + compaction.json (resume용 dynamic_start_index)
 - **모델 적응형**: context window, thinking budget에 따른 자동 조정
 
 ### 외부 의존성
@@ -79,7 +79,7 @@ agent_cli/
 │   └── runner.py            (95)   HookRunner (이벤트 발화, Python→Shell 순서 실행)
 ├── input_history.py         (174)  readline/gnureadline 설정 + 채팅 히스토리 영속화 (CJK 지원, paste/IME 디코드 오류 방어)
 ├── verbose.py               (27)   공용 verbose 플래그 + debug_log (providers가 loop을 역참조하지 않도록 추출)
-├── loop.py                  (~1820) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget compaction + FIFO fallback, hook, streaming, nested depth rendering, failure-grounding retry). 생성 시 `ctx.set_compactor(self._llm_compact_summarize)` + `ctx.set_recorder(self.recorder)`로 compaction 진입점을 ContextManager에 주입; `--no-compaction` / `AGENT_CLI_COMPACTION=off`면 미주입 → FIFO만 동작. **Tool dispatch safety net**: `_dispatch_tool_with_hooks` 가 invoke 단계 (`_invoke_regular` / `_invoke_delegate`) 를 try/except Exception 으로 감싸 unhandled exception 을 `ToolResult(False, error="Tool 'X' raised … retry or different approach")` 로 변환 → post-hooks + observation 정상 흐름, LLM 이 다음 turn 에서 retry 결정 가능. `KeyboardInterrupt` / `SystemExit` 는 의도적으로 통과시켜 Ctrl+C 종료 보장. 전체 traceback 은 `_debug_log` 로 보존, LLM observation 은 짧게 유지. **Unified call-depth ceiling**: `__init__` 가 `depth >= max_depth` 시 `delegate` AND `run_skill` 둘 다 tools_list 에서 제거 (대칭). `execute_skill` 이 `parent_depth + 1` 전달 → skill 체인도 depth 카운트. cycle (`skill_stack` / `agent_stack` 검사) + depth 한계 위반 시 `recovery/recursion.py` 의 actionable helper (3가지 recovery option) 로 응답. dispatch 단계 belt-and-suspenders check 가 직접 caller 도 보호. 시스템 프롬프트 `## Execution Context` 가 `depth N/M` 표시 + 한계 도달 시 명시 (KV cache: section 위치 그대로 — 한 loop 내 depth 불변이라 영향 0).
+├── loop.py                  (~1950) AgentLoop 클래스 + 에이전트 루프 (wire_format plugin 통합 — parse / system prompt / recovery builders / NO_THOUGHT 가드 / messages 버퍼·history.jsonl 저장의 assistant 표현, token-budget compaction + FIFO fallback, hook, streaming, nested depth rendering, failure-grounding retry). 생성 시 `ctx.set_compactor(self._llm_compact_summarize)` + `ctx.set_recorder(self.recorder)`로 compaction 진입점을 ContextManager에 주입; `--no-compaction` / `AGENT_CLI_COMPACTION=off`면 미주입 → FIFO만 동작. **Tool dispatch safety net**: `_dispatch_tool_with_hooks` 가 invoke 단계 (`_invoke_regular` / `_invoke_delegate`) 를 try/except Exception 으로 감싸 unhandled exception 을 `ToolResult(False, error="Tool 'X' raised … retry or different approach")` 로 변환 → post-hooks + observation 정상 흐름, LLM 이 다음 turn 에서 retry 결정 가능. `KeyboardInterrupt` / `SystemExit` 는 의도적으로 통과시켜 Ctrl+C 종료 보장. 전체 traceback 은 `_debug_log` 로 보존, LLM observation 은 짧게 유지. **Unified call-depth ceiling**: `__init__` 가 `depth >= max_depth` 시 `delegate` AND `run_skill` 둘 다 tools_list 에서 제거 (대칭). `execute_skill` 이 `parent_depth + 1` 전달 → skill 체인도 depth 카운트. cycle (`skill_stack` / `agent_stack` 검사) + depth 한계 위반 시 `recovery/recursion.py` 의 actionable helper (3가지 recovery option) 로 응답. dispatch 단계 belt-and-suspenders check 가 직접 caller 도 보호. 시스템 프롬프트 `## Execution Context` 가 `depth N/M` 표시 + 한계 도달 시 명시 (KV cache: section 위치 그대로 — 한 loop 내 depth 불변이라 영향 0).
 ├── render/                         플러그인 가능 렌더링 + 사용자 입력 시스템
 │   ├── __init__.py          (~270) 렌더러 디스패치 + load_renderer_by_name + render crash 방어 + observation success 전달
 │   ├── base.py              (~320) Renderer ABC + `ConfirmOption` dataclass. 출력 메서드 19개 (depth, capture, group, thread_status, thinking 등) + 입력 메서드 2개 (`prompt_user` 자유 입력 — optional `context` kwarg로 pre-input 안내(예: ask 도구의 질문 블록)을 전달, `confirm` 선택지+코멘트). 입력도 추상화에 포함해 web UI 같은 비-CLI renderer가 SSE+POST로 같은 인터페이스 만족할 수 있게. **`begin_delegate_task` / `end_delegate_task`** concrete no-op lifecycle 메서드 — CLI 렌더러는 그대로 무시(rich.Live가 자체 처리), WebRenderer만 override해서 thread→task_id 매핑 + SSE 마커 발사. `delegate.py::_run_parallel` 워커는 둘을 무조건 호출 → 렌더러 타입 분기 없음.
@@ -141,8 +141,8 @@ agent_cli/
 ├── context/                        컨텍스트 관리
 │   ├── __init__.py          (14)   re-export
 │   ├── token_estimator.py   (23)   토큰 추정 (chars/4)
-│   ├── overflow.py          (45)   프로바이더별 오버플로 감지
-│   ├── manager.py           (638)  ContextManager (토큰 budget 압축 + FIFO fallback + history.jsonl + 자연어 변환). 캐시가 budget의 90%를 넘으면 `_maybe_compact()`가 LLM 요약 compaction을 시도 (system anchor만 보존 → oldest 절반 evict → 단일 호출로 요약, 이전 summary가 있으면 같은 호출에 prepend하여 recursive 갱신 → `_file_extract`로 touched paths 누적 dedup → `[system][summary][file_list][retained]`로 캐시 재구성 → `compaction.json` atomic write). 요약 실패하거나 재구성된 캐시가 여전히 budget 초과면 belt-and-braces로 `_evict_fifo` (drop-to-budget) 발동 — 무한 트리거 루프 방지. `compaction_enabled=False` 또는 `AGENT_CLI_COMPACTION=off`로 끄면 기존 FIFO만 동작. Resume: `compaction.json`의 `dynamic_start_index`로 history.jsonl 후방 슬라이스만 cache 복원해 summarised tail과 중복 방지. 인스턴스마다 wire_format plugin attach (`__init__(wire_format=...)`, default fallback="react"). `get_messages()`는 system은 verbatim, user/tool branch만 자체 처리하고 assistant branch는 `wire_format.render_assistant_from_history`에 위임 — 한 세션 = 한 wire_format으로 격리. Compactor 콜백(`set_compactor`)과 `TurnRecorder`(`set_recorder`)는 `AgentLoop`가 후입식으로 주입 — unit-test 경로는 미주입 상태로 즉시 사용 가능.
+│   ├── overflow.py          (108)  프로바이더별 오버플로 감지 (`is_context_overflow` 패턴 — Anthropic/OpenAI/Ollama/omlx 커버) + `parse_overflow_amounts`로 400 메시지에서 실제 prompt 토큰·상한 추출 (omlx "N tokens exceeds max context window of M tokens" / Anthropic "N tokens > M maximum" / OpenAI 순서 역전 모두 대응). omlx 패턴은 실서버 검증 (2026-05-30)
+│   ├── manager.py           (739)  ContextManager (토큰 budget 압축 + FIFO fallback + history.jsonl + 자연어 변환). 캐시가 budget의 90%를 넘으면 `_maybe_compact()`가 LLM 요약 compaction을 시도 (system anchor만 보존 → oldest 절반 evict → 단일 호출로 요약, 이전 summary가 있으면 같은 호출에 prepend하여 recursive 갱신 → `_file_extract`로 touched paths 누적 dedup → `[system][summary][file_list][retained]`로 캐시 재구성 → `compaction.json` atomic write). 요약 실패하거나 재구성된 캐시가 여전히 budget 초과면 belt-and-braces로 `_evict_fifo(target_tokens)` (drop-to-budget) 발동 — 무한 트리거 루프 방지. **`force_fit(target, actual_tokens)`** (flow 2 반응형): 서버가 400(prompt too long)으로 거부하면 loop이 호출 — 로컬 추정(chars/4, CJK 과소)을 못 믿으므로 서버가 알려준 `actual_tokens`로 reconcile 후 compact→FIFO로 비율 축소. keep_ratio=target/actual로 줄여 추정 과소배율이 분자분모에서 상쇄(추정 절대정확도 불필요); progress 보장(매 호출 최소 1개 evict, anchor=최신 1개 보존). `actual_tokens` 없으면 ~25% trim fallback. `compaction_enabled=False` 또는 `AGENT_CLI_COMPACTION=off`로 끄면 기존 FIFO만 동작. Resume: `compaction.json`의 `dynamic_start_index`로 history.jsonl 후방 슬라이스만 cache 복원해 summarised tail과 중복 방지. 인스턴스마다 wire_format plugin attach (`__init__(wire_format=...)`, default fallback="react"). `get_messages()`는 system은 verbatim, user/tool branch만 자체 처리하고 assistant branch는 `wire_format.render_assistant_from_history`에 위임 — 한 세션 = 한 wire_format으로 격리. Compactor 콜백(`set_compactor`)과 `TurnRecorder`(`set_recorder`)는 `AgentLoop`가 후입식으로 주입 — unit-test 경로는 미주입 상태로 즉시 사용 가능.
 │   ├── _file_extract.py     (86)   `extract_file_paths(messages)` — `_PATH_TOOLS = {write_file, edit_file, read_file, code_index}` 호출과 tool result에서 `path` 추출, delegate는 `<delegate:agent_name>` placeholder로 보존, 입력 순서 dedup. compaction 시 evict 묶음에서 touched files를 끄집어내는 단일 진입점
 │   └── session.py           (~190) 세션 메타데이터 (session.jsonl) + resume용 user↔assistant 페어 추출 (recent_exchanges). System-injected user 메시지 필터는 `wire_formats.all_system_user_prefixes()` (format-agnostic 프리픽스 + 등록된 모든 plugin의 framing prefix) 단일 진입점 사용 — 새 wire format plugin 추가가 자동 반영
 │
@@ -427,7 +427,7 @@ AgentLoop.run()
     │    │
     │    ├─ _begin_iteration() → turn separator 렌더링
     │    │
-    │    ├─ _call_llm() → LLMResponse (overflow 시 compaction/FIFO refresh 후 재시도)
+    │    ├─ _call_llm() → LLMResponse (overflow 400 시 force_fit으로 compact→FIFO 축소 후 bounded 재시도 — flow 2)
     │    │
     │    └─ _handle_text_path()  ← text parsing only (native tool calling 제거)
     │         │
@@ -694,6 +694,10 @@ A5: outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
 
 #### 2-Tier: Compaction (LLM 요약) → FIFO Fallback
 
+> 두 흐름이 있다. **flow 1 (예방)** — `add` 시 budget 90% 초과면 미리 compaction.
+> **flow 2 (반응)** — 예방이 빗나가 서버가 400을 던지면 `force_fit`으로 사후 축소+재시도.
+> 아래는 flow 1; flow 2는 이어지는 박스 참조.
+
 ```
 메시지 추가 (add)
     │
@@ -723,6 +727,31 @@ LLM 호출 시:
 세션 재개 시:
     compaction.json 로드 → dynamic_start_index 유효하면 history[index:]만 forward 파싱,
     아니면 history.jsonl 뒤에서부터 budget 내 메시지 파싱 (legacy 경로)
+```
+
+**flow 2 — Reactive overflow recovery (`force_fit`)**
+
+```
+provider.call() → 예외
+    │
+    └─ is_context_overflow(err)? (overflow.py 패턴: Anthropic/OpenAI/Ollama/omlx)
+         │ yes & ctx 있음 & overflow_retries < _MAX_OVERFLOW_RETRIES(5)
+         ↓
+         parse_overflow_amounts(err) → (actual, limit)
+             omlx "N tokens exceeds max context window of M tokens" → (N, M)
+         target = (limit or budget) × 0.8
+         ctx.force_fit(target, actual_tokens=actual)
+             1. compact 시도 (enabled면)
+             2. 부족하면 _evict_fifo(floor)  ; floor = _cache_tokens × (target/actual)
+             3. progress 보장: 아무것도 안 줄면 oldest 1개 강제 pop
+         → shrank? messages 갱신 + turn-=1 + _RETRY (재요청)
+         → anchor만 남아 force_fit=False → 깔끔히 실패
+    │
+    └─ 성공 시 overflow_retries=0 리셋 (다음 turn은 fresh 예산)
+
+배경: 로컬 추정(chars/4)이 CJK를 4~8배 과소평가 → flow 1 임계 미달 → 서버 400.
+flow 2는 서버 신호(400 + 실제 토큰 수)를 ground truth로 삼아 사후 복구.
+비율 축소라 추정 절대정확도 불필요; bounded(5회)라 무한 루프 없음.
 ```
 
 - **압축 비활성화**: `--no-compaction` 또는 `AGENT_CLI_COMPACTION=off` → 플레인 FIFO만 동작 (env가 flag보다 우선; 운영자 kill switch)

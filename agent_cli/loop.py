@@ -21,7 +21,7 @@ from agent_cli.recovery.wf_recovery import (
 from agent_cli.tools.result import ToolResult
 
 from agent_cli.context.manager import ContextManager
-from agent_cli.context.overflow import is_context_overflow
+from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
 from agent_cli.prompts.system_prompt import build_system_prompt
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.compat import ModelCapabilities
@@ -66,6 +66,12 @@ from agent_cli.tools.delegate import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
 from agent_cli.wire_formats import get as _get_wire_format
+
+# Max shrink-and-retry attempts per turn when the server rejects the
+# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
+# history via ``ContextManager.force_fit``; the bound stops a runaway
+# loop when the cache cannot shrink enough or the server keeps rejecting.
+_MAX_OVERFLOW_RETRIES = 5
 
 
 class AgentLoop:
@@ -171,7 +177,12 @@ class AgentLoop:
 
         # Loop state
         self.turn = 0
-        self.overflow_retried = False
+        # Reactive context-overflow recovery (flow 2): how many times we
+        # have shrunk-and-retried for the CURRENT turn. Bounded by
+        # ``_MAX_OVERFLOW_RETRIES`` so a pathological case (the cache
+        # cannot shrink enough, or the server keeps rejecting) fails
+        # cleanly instead of looping forever.
+        self.overflow_retries = 0
         self._interrupted = False
         self._prev_sigint_handler = None
         self.graceful_interrupt = graceful_interrupt
@@ -504,15 +515,35 @@ class AgentLoop:
                 from dataclasses import replace as _replace
 
                 response = _replace(response, content=prefill + response.content)
+            # A successful call means we're no longer in overflow for this
+            # turn — reset the counter so a later turn gets a fresh budget
+            # of shrink-and-retry attempts.
+            self.overflow_retries = 0
             return response
         except Exception as e:
-            if is_context_overflow(str(e)):
-                if self.ctx and not self.overflow_retried:
-                    render_status("running", "Context overflow — refreshing...")
+            if (
+                is_context_overflow(str(e))
+                and self.ctx
+                and self.overflow_retries < _MAX_OVERFLOW_RETRIES
+            ):
+                # Reactive recovery (flow 2): the server rejected the
+                # prompt as too long. Trust its count over our local
+                # estimate, shrink the cache toward the limit, and retry.
+                actual, limit = parse_overflow_amounts(str(e))
+                budget = self.ctx.max_context_tokens
+                target = int((limit or budget) * 0.8)
+                if self.ctx.force_fit(target, actual_tokens=actual):
+                    self.overflow_retries += 1
+                    render_status(
+                        "running",
+                        f"Context overflow — shrinking and retrying "
+                        f"({self.overflow_retries}/{_MAX_OVERFLOW_RETRIES})...",
+                    )
                     self.messages = self.ctx.get_messages()
-                    self.overflow_retried = True
                     self.turn -= 1
                     return self._RETRY
+                # force_fit could not shrink further (only the anchor
+                # remains) — fall through to a clean failure.
             _debug_log(
                 f"LLM call failed: model={self.model} iter={self.turn} skill={self.skill_name} error={e}"
             )
