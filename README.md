@@ -282,7 +282,7 @@ UI 기능:
 - 컨텍스트 동기화: 오래된 turn이 LLM 컨텍스트에서 밀려나거나 compaction으로 요약되면 UI에서도 제거
 - 두 번째 탭이 접속하면 takeover 배너 + 기존 탭 자동 disconnect
 - ANSWERING 모드: `ask` 도구 호출 시 질문 텍스트가 입력창 위에 표시되어 스크롤 없이 답변
-- **Send → Stop 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 진행 중인 turn 을 turn 경계에서 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. (`@agent` delegate 실행은 현재 Stop 미지원 — 후속)
+- **Send → Stop 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 진행 중인 turn 을 turn 경계에서 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@agent`(delegate) 실행 모두 Stop 으로 중단됩니다 (delegate 는 병렬 worker 가 같은 `stop_event` 를 공유).
 
 **종료 (Ctrl+C):** 한 번의 Ctrl+C로 깨끗하게 종료됩니다. uvicorn의 lifespan shutdown 훅이 활성 SSE 연결을 정리하고, 백그라운드 worker는 `SHUTDOWN` sentinel로 깨어나 빠져나가며, 세션이 자동 저장됩니다. `agent-cli web --resume <session_id>`로 이어서 실행하면 이전 turn들이 SSE snapshot으로 재생되어 UI에 그대로 복원됩니다.
 

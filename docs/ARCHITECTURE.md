@@ -459,14 +459,17 @@ AgentLoop.run()
 - **web (Stop 버튼, worker thread)**: worker 가 turn 마다 `stop_event` 생성 →
   `run_loop(stop_event=…)` 전달 + `server.set_stop_handle()` 등록. `POST /api/stop`
   → `server.trigger_stop()` → `stop_event.set()`. worker thread 라 signal handler 는
-  skip 되고 `stop_event` 경로만 작동. `/skill` 도 `execute_skill(stop_event=…)` 로
-  전파되어 멈출 수 있으나, `@agent` 는 `tool_delegate`(별도 thread/fork) 라 현재
-  미지원 (후속).
-- **인터럽트 기록**: `_on_interrupt` 이 `{role:user, tool:"interrupt", success:False,
-  content:INTERRUPT_NOTICE}` 를 ctx 에 add → `[interrupt] …` observation 으로 렌더.
-  user-role bare 메시지가 아니라 observation 이므로 다음 실제 user 입력과 role 이
-  겹치지 않고, `recent_exchanges` 가 `tool` 필드로 자동 제외. history.jsonl 영속화.
-  (레거시 prefix `"⚡ User interrupted."` 는 옛 세션 하위호환으로 유지)
+  skip 되고 `stop_event` 경로만 작동. chat(`run_loop`)·`/skill`(→`execute_skill`)·
+  `@agent`(→`tool_delegate`→delegate worker `run_loop`, 병렬 worker 가 같은 Event
+  공유) 모두 같은 `stop_event` 가 전파되어 turn 경계에서 멈춤.
+- **인터럽트 기록 + 렌더**: `_on_interrupt` 이 `{role:user, tool:"interrupt",
+  success:False, content:INTERRUPT_NOTICE}` 를 ctx 에 add → `[interrupt] …`
+  observation 으로 렌더. user-role bare 메시지가 아니라 observation 이므로 다음 실제
+  user 입력과 role 이 겹치지 않고, `recent_exchanges` 가 `tool` 필드로 자동 제외.
+  history.jsonl 영속화. (레거시 prefix `"⚡ User interrupted."` 는 옛 세션 하위호환)
+  사용자 표시는 **`console.print` 직접 호출이 아니라 `render_step("observation", …)`**
+  로 — CLI 는 console, web 은 SSE 로 가서 web 서버 터미널에 노이즈가 새지 않음
+  (top-level 만 렌더, nested skill 인터럽트는 부모가 표시).
 
 **run 모드 Ctrl+C:** signal handler 미설치, `KeyboardInterrupt` 즉시 발생 → `try/except`로 세션 저장 후 종료
 

@@ -406,11 +406,11 @@ def try_dispatch_agent_or_skill(
 ) -> bool:
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
 
-    ``stop_event`` is threaded into the ``/skill`` path (``_dispatch_skill``
-    → ``execute_skill`` → ``run_loop``) so the web Stop button can halt a
-    skill run at a turn boundary, same as a plain chat turn. The ``@agent``
-    path runs via ``tool_delegate`` (separate worker/fork), which doesn't
-    consume the handle yet — stopping a delegated agent is a follow-up.
+    ``stop_event`` is threaded into BOTH paths so the web Stop button can
+    halt either at a turn boundary, same as a plain chat turn:
+      - ``/skill`` → ``_dispatch_skill`` → ``execute_skill`` → ``run_loop``
+      - ``@agent`` → ``_dispatch_agent`` → ``tool_delegate`` → the delegate
+        worker's ``run_loop`` (shared Event across parallel workers).
 
     Returns ``True`` when the message was handled (caller skips its
     LLM path); ``False`` when nothing matched and the caller should
@@ -451,6 +451,7 @@ def try_dispatch_agent_or_skill(
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
+            stop_event=stop_event,
         )
         if result is _AGENT_NOT_FOUND:
             output.agent_not_found(name)
@@ -517,6 +518,7 @@ def _dispatch_agent(
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,
+    stop_event=None,
 ):
     """Dispatch @agent-name query. Returns _AGENT_NOT_FOUND if agent not found."""
     from agent_cli.tools.delegate import tool_delegate
@@ -552,6 +554,7 @@ def _dispatch_agent(
         timeout=delegate_timeout,
         session=session,
         hooks_config=_parent_hooks,
+        stop_event=stop_event,
     )
 
     if not result.success and "not found" in (result.error or ""):
@@ -1604,9 +1607,9 @@ def web(
             # Fresh stop handle for this turn so the web "Stop" button
             # (POST /api/stop → server.trigger_stop) can signal the loop
             # to exit at the next turn boundary — the same ``stop_event``
-            # path Ctrl+C uses in the CLI. Cleared in ``finally`` so a
-            # stop press between turns (or during a @agent//skill
-            # dispatch, which doesn't thread the handle yet) is a no-op.
+            # path Ctrl+C uses in the CLI. Threaded into chat, /skill, and
+            # @agent (delegate) runs. Cleared in ``finally`` so a stop
+            # press between turns (no active handle) is a no-op.
             stop_event = threading.Event()
             server.set_stop_handle(stop_event)
             try:
