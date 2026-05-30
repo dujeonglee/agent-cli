@@ -1169,9 +1169,29 @@ agent_cli/
 ## 테스트
 
 ```bash
-# 전체 테스트
+# 전체 유닛 테스트 (통합 테스트는 서버 미가용 시 자동 skip)
 pytest tests/ -v
 ```
+
+### omlx 통합 테스트 (실 서버 필요)
+
+`omlx_integration` 마커가 붙은 E2E 테스트는 실제 OpenAI 호환 omlx 서버를 대상으로 run_loop·툴 사용·스킬·delegate·런타임 capability 감지를 검증합니다. 서버가 없으면 자동으로 skip되므로 `pytest tests/`는 항상 green입니다.
+
+```bash
+# 실 서버를 띄운 뒤 실행
+pytest tests/ -m omlx_integration -v
+
+# 연결/모델 override (기본: http://127.0.0.1:8000/v1, Qwen3.6-27B-MLX-8bit)
+OMLX_BASE_URL=http://192.168.0.44:8000/v1 \
+INTEGRATION_MODELS="Qwen3.6-27B-MLX-8bit" \
+  pytest tests/ -m omlx_integration -v
+```
+
+| 환경변수 | 기본값 | 설명 |
+|----------|--------|------|
+| `OMLX_BASE_URL` | `http://127.0.0.1:8000/v1` | omlx OpenAI 호환 엔드포인트 |
+| `OMLX_API_KEY` | (없음) | 필요 시 API 키 |
+| `INTEGRATION_MODELS` | `Qwen3.6-27B-MLX-8bit` | 테스트 모델 (콤마 구분, 가용 모델만 실행) |
 
 ## 환경 변수
 
