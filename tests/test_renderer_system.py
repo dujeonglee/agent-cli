@@ -1,11 +1,104 @@
 """Tests for the pluggable renderer system."""
 
+from unittest.mock import MagicMock
+
+from rich.console import Console
+
+import agent_cli.render.minimal as minimal_mod
 from agent_cli.render import (
     load_renderer_by_name,
     set_renderer,
     get_renderer,
 )
+from agent_cli.render.base import ConfirmOption
 from agent_cli.render.minimal import MinimalRenderer
+
+
+class _FakeStream:
+    """Minimal stdin/stdout stand-in with a controllable ``isatty``."""
+
+    def __init__(self, tty: bool):
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+class TestMinimalCanConfirm:
+    """``can_confirm`` gates the dangerous-shell prompt — it must reflect
+    whether a real terminal is attached (not Live/thread state, which
+    ``confirm`` itself handles)."""
+
+    def test_true_when_both_tty(self, monkeypatch):
+        r = MinimalRenderer(Console())
+        monkeypatch.setattr(minimal_mod.sys, "stdin", _FakeStream(True))
+        monkeypatch.setattr(minimal_mod.sys, "stdout", _FakeStream(True))
+        assert r.can_confirm() is True
+
+    def test_false_when_stdin_not_tty(self, monkeypatch):
+        r = MinimalRenderer(Console())
+        monkeypatch.setattr(minimal_mod.sys, "stdin", _FakeStream(False))
+        monkeypatch.setattr(minimal_mod.sys, "stdout", _FakeStream(True))
+        assert r.can_confirm() is False
+
+    def test_true_even_with_active_live(self, monkeypatch):
+        """An active Live region does NOT make ``can_confirm`` False —
+        ``confirm`` pauses the Live, so a TTY is the only precondition."""
+        r = MinimalRenderer(Console())
+        r._parallel_live = MagicMock()
+        monkeypatch.setattr(minimal_mod.sys, "stdin", _FakeStream(True))
+        monkeypatch.setattr(minimal_mod.sys, "stdout", _FakeStream(True))
+        assert r.can_confirm() is True
+
+
+class TestMinimalConfirmPausesLive:
+    """Inside a parallel-delegate Live panel the prompt would be painted
+    over; ``confirm`` must stop the Live for the read and restart it."""
+
+    def test_active_parallel_live_paused_and_resumed(self, monkeypatch):
+        r = MinimalRenderer(Console())
+        live = MagicMock()
+        r._parallel_live = live
+        monkeypatch.setattr("builtins.input", lambda prompt="": "y do it")
+
+        key, comment = r.confirm(
+            "ok? ", [ConfirmOption(key="y", label="yes")], default_key="n"
+        )
+
+        assert key == "y"
+        assert comment == "do it"
+        live.stop.assert_called_once()
+        live.start.assert_called_once()
+
+    def test_live_resumed_even_on_eof(self, monkeypatch):
+        """EOF returns the default deny, but the Live must still resume."""
+
+        def _raise(prompt=""):
+            raise EOFError
+
+        r = MinimalRenderer(Console())
+        live = MagicMock()
+        r._live = live
+        monkeypatch.setattr("builtins.input", _raise)
+
+        key, _ = r.confirm(
+            "ok? ", [ConfirmOption(key="y", label="yes")], default_key="n"
+        )
+
+        assert key == "n"
+        live.stop.assert_called_once()
+        live.start.assert_called_once()
+
+    def test_no_live_reads_directly(self, monkeypatch):
+        """No active Live (main loop / single delegate) → plain read."""
+        r = MinimalRenderer(Console())
+        monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+        key, _ = r.confirm(
+            "ok? ",
+            [ConfirmOption(key="y", label="yes"), ConfirmOption(key="n", label="no")],
+            default_key="y",
+        )
+        assert key == "n"
 
 
 class TestLoadRendererByName:

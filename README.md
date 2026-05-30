@@ -875,7 +875,7 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 - `a only inside /tmp` — 세션 allowlist 추가 + 코멘트 전달
 - 빈 응답 / 인식 안 되는 첫 토큰 → 거부 (전체 입력은 코멘트로 보존)
 
-기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. TTY 없는 환경(CI/배치)에서는 자동으로 거부 — 무인 환경에서 위험 명령이 silent 실행되는 일 없음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
+기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. 확인을 띄울 수 있는지는 **렌더러가 판단**합니다 — CLI는 터미널(TTY), 웹은 연결된 브라우저(SSE 다이얼로그, TTY 불필요). 어느 쪽으로도 물어볼 수 없는 무인 환경(TTY 없는 CI/배치 + 미접속)에서는 자동 거부 — 위험 명령이 silent 실행되는 일 없음. parallel delegate처럼 여러 작업이 동시에 도는 경우에도 확인은 **직렬화**되어 한 번에 하나만 떠서, 응답이 엉뚱한 작업으로 새지 않음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
 
 ### write_file — 파일 생성
 
