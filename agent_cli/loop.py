@@ -12,6 +12,7 @@ from agent_cli.constants import (
     DELEGATE_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OBS_SUCCESS,
+    OUTPUT_TRUNCATED_NOTICE,
 )
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.wf_recovery import (
@@ -487,12 +488,54 @@ class AgentLoop:
         if self.verbose and response.thinking:
             render_thinking(response.thinking, self.turn)
 
+        # Output-truncation guard: when the response hit the model's
+        # output-token limit (``stop_reason == "length"``), its action is
+        # incomplete — a half-written file (write_file), a truncated
+        # command (shell), or a clipped answer (complete). Do NOT dispatch
+        # it; record a notice so the model retries with a smaller unit.
+        # (continuation — resuming the cut-off output — is a follow-up.)
+        if getattr(response, "stop_reason", None) == "length":
+            result = self._on_output_truncated(llm_text)
+            self._fire_hook("OnTurnEnd")
+            return result
+
         result = self._handle_text_path(llm_text)
 
         # OnTurnEnd hook
         self._fire_hook("OnTurnEnd")
 
         return result
+
+    def _on_output_truncated(self, llm_text: str):
+        """Handle a response cut off at ``max_output_tokens``.
+
+        The (incomplete) assistant text is still recorded so the model
+        sees what it was mid-way through, paired with an observation that
+        says the action was NOT executed and to retry smaller. Returns
+        ``_CONTINUE`` so the loop gives the model another turn.
+        """
+        if not self.skill_name:
+            render_step(
+                "observation",
+                OUTPUT_TRUNCATED_NOTICE,
+                self.turn,
+                tool_name="output_truncated",
+                success=False,
+            )
+        _append_observation(
+            self.messages,
+            self.ctx,
+            self.wire_format,
+            llm_text,
+            f"Observation: {OUTPUT_TRUNCATED_NOTICE}",
+            tool_name="output_truncated",
+            success=False,
+        )
+        _debug_log(
+            f"Output truncated (stop_reason=length) at turn {self.turn}; "
+            "action not dispatched"
+        )
+        return self._CONTINUE
 
     def _call_llm(self):
         """LLM call with overflow retry and streaming. Returns response or sentinel."""
