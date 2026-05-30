@@ -521,3 +521,42 @@ class TestProtocolCompleteness:
         }
         missing = protocol_methods - impl_methods
         assert not missing, f"WebDispatchOutput missing methods: {missing}"
+
+
+class TestStopEventThreading:
+    """stop_event must reach both dispatch paths so the web Stop button
+    can halt @agent (via tool_delegate) and /skill (via execute_skill)
+    runs at a turn boundary — the plain chat run_loop is wired in the
+    worker separately."""
+
+    def test_threaded_to_dispatch_agent(self, base_state, monkeypatch):
+        import threading
+
+        captured = {}
+
+        def fake_agent(query, *args, **kwargs):
+            captured["stop_event"] = kwargs.get("stop_event")
+            return "ok"
+
+        monkeypatch.setattr("agent_cli.main._dispatch_agent", fake_agent)
+        ev = threading.Event()
+        try_dispatch_agent_or_skill(
+            "@explorer find it", _RecordingOutput(), stop_event=ev, **base_state
+        )
+        assert captured["stop_event"] is ev
+
+    def test_threaded_to_dispatch_skill(self, base_state, monkeypatch):
+        import threading
+
+        captured = {}
+
+        def fake_skill(query, *args, **kwargs):
+            captured["stop_event"] = kwargs.get("stop_event")
+            return "ok"
+
+        monkeypatch.setattr("agent_cli.main._dispatch_skill", fake_skill)
+        ev = threading.Event()
+        try_dispatch_agent_or_skill(
+            "/plan do it", _RecordingOutput(), stop_event=ev, **base_state
+        )
+        assert captured["stop_event"] is ev

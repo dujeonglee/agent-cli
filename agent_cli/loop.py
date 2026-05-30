@@ -389,9 +389,19 @@ class AgentLoop:
                     "content": INTERRUPT_NOTICE,
                 }
             )
-        from agent_cli.render import C, console
-
-        console.print(f"\n[{C['accent']}]⚡ Interrupted after turn {self.turn}.[/]")
+        # Surface through the renderer (CLI console / web SSE), not a
+        # direct console.print — the latter leaked the notice to the web
+        # server's terminal. Mirror the ready_for_review path: only the
+        # top level renders, so a nested skill interrupt doesn't double-
+        # print under its parent.
+        if not self.skill_name:
+            render_step(
+                "observation",
+                INTERRUPT_NOTICE,
+                self.turn,
+                tool_name="interrupt",
+                success=False,
+            )
         _debug_log(f"Graceful interrupt at turn {self.turn}")
         return ToolResult(False, error="Interrupted by user")
 

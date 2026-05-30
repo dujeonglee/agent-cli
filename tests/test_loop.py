@@ -1490,6 +1490,32 @@ class TestGracefulInterrupt:
         rendered = [m["content"] for m in ctx.get_messages() if m["role"] == "user"]
         assert any(c.startswith("[interrupt]") for c in rendered)
 
+    def test_interrupt_renders_via_render_step_not_console(self, caps, tmp_path):
+        """The notice goes through render_step (CLI console / web SSE),
+        not a direct console.print — the latter leaked to the web
+        server's terminal ('⚡ Interrupted after turn N')."""
+        from unittest.mock import patch
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=_complete("done"))]
+        ctx = ContextManager(session_dir=tmp_path)
+        loop = AgentLoop(
+            query="Q", provider=provider, capabilities=caps, model="m", ctx=ctx
+        )
+        loop._interrupted = True
+        with patch("agent_cli.loop.render_step") as mock_rs:
+            loop.run()
+        interrupt_renders = [
+            c
+            for c in mock_rs.call_args_list
+            if c.args
+            and c.args[0] == "observation"
+            and c.kwargs.get("tool_name") == "interrupt"
+        ]
+        assert len(interrupt_renders) == 1
+
     def test_stop_event_between_turns_reports_interrupt(self, caps, tmp_path):
         """Repro for the "Max turns (0) reached" misreport: a Ctrl+C during
         a turn sets `stop_event` but the body finishes its work (e.g. an
