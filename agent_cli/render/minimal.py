@@ -52,6 +52,27 @@ def _format_token_stats(stats: dict) -> str:
     return " | ".join(parts)
 
 
+def _colorize_diff_line(line: str) -> str:
+    """Rich-markup one plain unified-diff line by its leading character.
+
+    ``format_diff`` now emits a plain standard diff (no colour markup) so
+    the LLM observation stays clean; the colour is applied here, at the
+    terminal. Content is escaped first so a literal ``[`` in source code
+    isn't parsed as a Rich tag. Context / blank / truncation lines fall
+    through to plain (escaped) text.
+    """
+    esc = line.replace("[", "\\[")
+    if line.startswith("--- ") or line.startswith("+++ "):
+        return f"[bold]{esc}[/bold]"
+    if line.startswith("@@"):
+        return f"[cyan]{esc}[/cyan]"
+    if line.startswith("+"):
+        return f"[green]{esc}[/green]"
+    if line.startswith("-"):
+        return f"[red]{esc}[/red]"
+    return esc
+
+
 # East Asian "Ambiguous" (A) chars — `…` `—` `─` `※` `→` `《》` etc. — are
 # rendered as 2 columns in CJK-locale terminals (macOS Terminal.app and
 # iTerm2 with Korean/Japanese/Chinese locale). Counting them as 1 caused
@@ -331,19 +352,17 @@ class MinimalRenderer(Renderer):
 
         self._p(f"  {icon}{tool_label}  {status}{detail}", highlight=False)
 
-        # `write_file` / `edit_file` append a Rich-marked unified diff
-        # to the observation (see agent_cli.tools._diff.format_diff).
-        # The summary above only conveys "what tool ran"; the diff is
-        # what tells the user *what changed*. The diff is preceded by
-        # a blank line and starts with a Rich-styled `--- a/...` header
-        # — slicing from that header would split the `[bold]` open tag
-        # in half, so we anchor on the full styled prefix instead.
-        diff_marker = "[bold]--- a/"
-        diff_idx = content.find(diff_marker)
+        # `write_file` / `edit_file` append a plain unified diff to the
+        # observation (see agent_cli.tools._diff.format_diff). The summary
+        # above only conveys "what tool ran"; the diff is what tells the
+        # user *what changed*. It's preceded by a blank line and starts
+        # with a `--- a/...` header — colour is applied per line here
+        # (the diff text itself stays plain in the LLM observation).
+        diff_idx = content.find("--- a/")
         if diff_idx != -1:
             diff_block = content[diff_idx:].rstrip("\n")
             for line in diff_block.split("\n"):
-                self._p(f"     {line}", highlight=False)
+                self._p(f"     {_colorize_diff_line(line)}", highlight=False)
 
     def final(self, content: str, turn: int) -> None:
         self._p("")

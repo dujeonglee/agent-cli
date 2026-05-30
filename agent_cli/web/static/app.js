@@ -107,26 +107,35 @@
     });
   }
 
-  /** Convert the Rich markup ``write_file`` / ``edit_file`` emit in
-   * their unified-diff blocks (``[bold]…[/bold]``, ``[green]…[/green]``,
-   * etc.) into HTML spans so the diff displays with colour parity to
-   * the CLI. Input MUST already be ``escapeHtml``-ed — we trust the
-   * tag set is closed (Python side controls it) and only the literal
-   * tag names below get translated, so a stray ``[bold]`` in actual
-   * source code (which ``format_diff`` escapes as ``\[bold]``) won't
-   * be misinterpreted. The final pass undoes the ``\[`` escape. */
-  function richMarkupToHtml(escaped) {
-    const tags = ["bold", "cyan", "dim", "green", "red"];
-    let html = escaped;
-    for (const tag of tags) {
-      const re = new RegExp("\\[" + tag + "\\]([\\s\\S]*?)\\[/" + tag + "\\]", "g");
-      html = html.replace(re, '<span class="rich-' + tag + '">$1</span>');
-    }
-    // ``format_diff`` escapes ``[`` in content as ``\[`` so a literal
-    // ``[bold]`` in source code doesn't become styling. Undo after
-    // tag conversion so the escape sequence itself isn't visible.
-    html = html.replace(/\\\[/g, "[");
-    return html;
+  /** Colour a write_file/edit_file observation body. ``format_diff``
+   * now emits a PLAIN standard unified diff (no Rich markup — the LLM
+   * observation stays clean), so the colour is applied here by reading
+   * each line's leading character, mirroring the CLI's
+   * ``_colorize_diff_line``. Input MUST already be ``escapeHtml``-ed.
+   * Only the diff block (from the ``--- a/`` header onward) is coloured;
+   * preceding lines like "File saved: …" pass through untouched. */
+  function colorizeDiffBody(escaped) {
+    let inDiff = false;
+    return escaped
+      .split("\n")
+      .map(function (line) {
+        if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+          inDiff = true;
+          return '<span class="rich-bold">' + line + "</span>";
+        }
+        if (line.startsWith("@@")) {
+          inDiff = true;
+          return '<span class="rich-cyan">' + line + "</span>";
+        }
+        if (inDiff && line.startsWith("+")) {
+          return '<span class="rich-green">' + line + "</span>";
+        }
+        if (inDiff && line.startsWith("-")) {
+          return '<span class="rich-red">' + line + "</span>";
+        }
+        return line; // context / blank / non-diff line — plain
+      })
+      .join("\n");
   }
 
   /** Extract fenced code blocks (``` … ```), replacing each with a
@@ -613,7 +622,7 @@
       )
     );
     card.appendChild(
-      el("pre", ["obs-body"], richMarkupToHtml(escapeHtml(d.content || "")))
+      el("pre", ["obs-body"], colorizeDiffBody(escapeHtml(d.content || "")))
     );
     appendToTimeline(card, d.task_id);
     scrollToBottom();

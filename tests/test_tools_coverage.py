@@ -96,8 +96,8 @@ class TestWriteFile:
         result = tool_write_file({"path": str(target), "content": "a\nB\nc\n"})
         assert result.success
         # Rich-marked diff lines.
-        assert "[red]-b[/red]" in result.output
-        assert "[green]+B[/green]" in result.output
+        assert "-b" in result.output
+        assert "+B" in result.output
 
     def test_no_diff_when_content_unchanged(self, tmp_path):
         """Writing identical content → no diff section, just the save
@@ -115,8 +115,8 @@ class TestWriteFile:
         target = tmp_path / "new.txt"
         result = tool_write_file({"path": str(target), "content": "first\nsecond\n"})
         assert result.success
-        assert "[green]+first[/green]" in result.output
-        assert "[green]+second[/green]" in result.output
+        assert "+first" in result.output
+        assert "+second" in result.output
 
 
 class TestShellTool:
@@ -460,8 +460,8 @@ class TestEditFile:
         assert "Edit complete" in result.output
         assert "replaced" in f.read_text()
         # Diff is appended to the success message: line2 removed, replaced added.
-        assert "[red]-line2[/red]" in result.output
-        assert "[green]+replaced[/green]" in result.output
+        assert "-line2" in result.output
+        assert "+replaced" in result.output
 
     def test_append_operation(self, tmp_path):
         f = tmp_path / "test.py"

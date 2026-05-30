@@ -1,13 +1,19 @@
 """Tests for the unified-diff formatter shared by write_file/edit_file.
 
-`format_diff` produces a Rich-marked unified diff string. The renderer
-colors `+` lines green and `-` lines red, hunk headers cyan. Truncation
-kicks in past `MAX_DIFF_LINES` to keep the LLM observation bounded
-when an edit replaces a large file wholesale."""
+``format_diff`` produces a **plain** standard unified diff (git-diff
+text shape, no colour markup or line-number gutter) so the LLM
+observation stays clean. Colour is the renderer's job — see
+``MinimalRenderer._colorize_diff_line`` (CLI) and ``colorizeDiffBody``
+in app.js (web). Truncation kicks in past ``MAX_DIFF_LINES`` to keep the
+observation bounded when an edit replaces a large file wholesale."""
 
 from __future__ import annotations
 
-from agent_cli.tools._diff import MAX_DIFF_LINES, format_diff
+from agent_cli.tools._diff import (
+    DIFF_TRUNCATION_PREFIX,
+    MAX_DIFF_LINES,
+    format_diff,
+)
 
 
 class TestFormatDiff:
@@ -17,105 +23,57 @@ class TestFormatDiff:
     def test_empty_for_both_empty(self):
         assert format_diff("", "", "new.txt") == ""
 
-    def test_added_lines_marked_green(self):
+    def test_added_line_is_plain(self):
         out = format_diff("a\nb\n", "a\nb\nc\n", "f.txt")
-        assert "[green]+c[/green]" in out
+        assert "+c" in out
+        assert "[green]" not in out  # no Rich markup
 
-    def test_removed_lines_marked_red(self):
+    def test_removed_line_is_plain(self):
         out = format_diff("a\nb\nc\n", "a\nc\n", "f.txt")
-        assert "[red]-b[/red]" in out
+        assert "-b" in out
+        assert "[red]" not in out
 
-    def test_hunk_header_marked_cyan(self):
+    def test_hunk_header_plain(self):
         out = format_diff("a\nb\n", "a\nB\n", "f.txt")
-        assert "[cyan]@@" in out
+        assert any(line.startswith("@@") for line in out.splitlines())
+        assert "[cyan]" not in out
 
-    def test_filename_in_header(self):
-        out = format_diff("a\n", "b\n", "src/main.py")
-        assert "a/src/main.py" in out
-        assert "b/src/main.py" in out
+    def test_standard_unified_diff_shape(self):
+        out = format_diff("a\nb\n", "a\nB\n", "f.txt")
+        lines = out.splitlines()
+        assert lines[0].startswith("--- a/f.txt")
+        assert lines[1].startswith("+++ b/f.txt")
+        assert any(line.startswith("@@") for line in lines)
+        # No gutter: a context line starts with a single leading space,
+        # not a "   N    N  " number column.
+        assert any(line.startswith(" ") for line in lines)
 
     def test_creating_a_file_shows_all_added(self):
-        """Empty old → diff has no `-` lines, every new line is `+`."""
+        """Empty old → only the ``---`` header starts with ``-``; every
+        content line is ``+``."""
         out = format_diff("", "first\nsecond\n", "new.txt")
-        assert "[green]+first[/green]" in out
-        assert "[green]+second[/green]" in out
-        assert "[red]-" not in out
+        assert "+first" in out
+        assert "+second" in out
+        body = [ln for ln in out.splitlines() if not ln.startswith("---")]
+        assert not any(ln.startswith("-") for ln in body)
 
     def test_truncation_when_diff_exceeds_max(self):
-        """A wholesale rewrite of a large file should not bloat the
-        observation. Past `MAX_DIFF_LINES` the tail is replaced with
-        a single summary line stating how many lines were elided."""
         old = "\n".join(f"old{i}" for i in range(200)) + "\n"
         new = "\n".join(f"new{i}" for i in range(200)) + "\n"
         out = format_diff(old, new, "f.txt")
+        lines = out.splitlines()
+        assert len(lines) <= MAX_DIFF_LINES + 1
+        assert lines[-1].startswith(DIFF_TRUNCATION_PREFIX)
 
-        rendered_lines = out.splitlines()
-        # The truncation summary line is appended on top of the visible
-        # cap, so total lines is MAX_DIFF_LINES + 1.
-        assert len(rendered_lines) <= MAX_DIFF_LINES + 1
-        assert "diff truncated" in rendered_lines[-1]
+    def test_source_markup_left_literal(self):
+        """Plain diff: source text that looks like Rich markup is kept
+        verbatim (no ``\\[`` escaping). The renderer escapes at paint
+        time; the LLM observation sees the literal source."""
+        out = format_diff("plain", "with [bold]markup[/bold]", "f.txt")
+        assert "+with [bold]markup[/bold]" in out
+        assert "\\[" not in out
 
-    def test_rich_markup_in_source_is_escaped(self):
-        """If the file contains text that looks like Rich markup (e.g.
-        `[bold]`), the formatter must escape it so the renderer doesn't
-        consume it as styling."""
-        old = "plain text"
-        new = "with [bold]markup[/bold]"
-        out = format_diff(old, new, "f.txt")
-        # `[` should be escaped as `\[` so Rich treats it as a literal.
-        assert "\\[bold]" in out
-        # And the unescaped form must NOT appear as a paint directive.
-        assert "[bold]markup[/bold]" not in out
-
-    def test_filename_header_bold(self):
-        out = format_diff("a\n", "b\n", "f.txt")
-        assert "[bold]" in out
-
-    def test_no_trailing_newline_preserved(self):
-        """unified_diff keeps trailing newlines on its source lines.
-        We strip them so the final string doesn't have empty `[red]-[/red]`
-        artifacts from the trailing context — verify lines aren't blank."""
+    def test_no_blank_styled_artifacts(self):
         out = format_diff("a\nb\nc", "a\nB\nc", "f.txt")
         for line in out.splitlines():
-            # No purely-empty styled markers (e.g. `[red]-[/red]`).
-            assert line.strip()
-
-    def test_line_numbers_track_through_hunk(self):
-        """Each diff line gets prefixed with the OLD/NEW line numbers so
-        the user can locate the change in the file. For a single-line
-        replacement at line 3 of a 5-line file the prefixes should be:
-        line 1 (context), line 2 (context), line 3- (removed), line 3+
-        (added), line 4 (context), line 5 (context)."""
-        old = "a\nb\nc\nd\ne\n"
-        new = "a\nb\nC\nd\ne\n"
-        out = format_diff(old, new, "f.txt")
-        # Context lines show both columns: `   1    1`, `   2    2`.
-        assert "   1    1" in out
-        assert "   2    2" in out
-        # Removed line has only the OLD column populated (line 3 in old).
-        assert "   3     " in out
-        # Added line has only the NEW column populated (line 3 in new).
-        assert "        3" in out
-
-    def test_line_numbers_for_create(self):
-        """When creating a new file, all lines are `+` so only the NEW
-        column is populated and counts up from 1."""
-        out = format_diff("", "first\nsecond\nthird\n", "new.txt")
-        # NEW column should show 1, 2, 3; OLD column blank.
-        assert "        1" in out
-        assert "        2" in out
-        assert "        3" in out
-
-    def test_line_numbers_use_hunk_header_offset(self):
-        """The numbering must start from the hunk header (`@@ -A +B @@`),
-        not from line 1, so a change deep in a large file shows the
-        actual file line numbers."""
-        old = "\n".join(f"x{i}" for i in range(1, 51)) + "\n"
-        # Replace line 30 ("x30") with "X30"
-        new = old.replace("x30\n", "X30\n")
-        out = format_diff(old, new, "big.txt")
-        # The hunk should reference line 30 area in both columns.
-        assert "30" in out
-        # The prefix gutter should contain "30" lined up before the
-        # `-` and `+` markers, not "1" or "2".
-        assert "   1    1" not in out
+            assert line.strip()  # no empty lines mid-diff
