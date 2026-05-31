@@ -175,11 +175,11 @@ def _detect_runtime_capabilities(
 ) -> ModelCapabilities | None:
     """Detect model capabilities at runtime via provider API."""
     if provider == "openai":
-        return _detect_openai_compat_capabilities(base_url, model, api_key)
+        return _detect_openai_capabilities(base_url, model, api_key)
     return None
 
 
-def _detect_openai_compat_capabilities(
+def _detect_openai_capabilities(
     base_url: str, model: str, api_key: str = ""
 ) -> ModelCapabilities | None:
     """Detect capabilities for OpenAI-compatible servers (vLLM, LM Studio, mlx-lm).

@@ -11,7 +11,7 @@ from agent_cli.providers.capabilities import (
     UnsupportedModelError,
     get_capabilities,
     set_progress_callback,
-    _detect_openai_compat_capabilities,
+    _detect_openai_capabilities,
     _emit_progress,
 )
 
@@ -68,7 +68,7 @@ class TestGetCapabilities:
         assert caps == DEFAULT_CAPABILITIES
 
 
-class TestOpenAICompatRuntimeDetection:
+class TestOpenAIRuntimeDetection:
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
     def test_detects_thinking_with_context(self, mock_post, mock_get):
@@ -91,11 +91,9 @@ class TestOpenAICompatRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_compat_capabilities
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
 
-        caps = _detect_openai_compat_capabilities(
-            "http://localhost:8080/v1", "local-model"
-        )
+        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
         assert caps is not None
         assert caps.context_window == 32768
         assert caps.supports_thinking is True
@@ -121,9 +119,9 @@ class TestOpenAICompatRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_compat_capabilities
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
 
-        _detect_openai_compat_capabilities(
+        _detect_openai_capabilities(
             "http://localhost:8080/v1", "model", api_key="test-key-123"
         )
 
@@ -153,11 +151,9 @@ class TestOpenAICompatRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_compat_capabilities
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
 
-        _detect_openai_compat_capabilities(
-            "http://localhost:8080/v1", "model", api_key=""
-        )
+        _detect_openai_capabilities("http://localhost:8080/v1", "model", api_key="")
 
         get_headers = mock_get.call_args.kwargs.get("headers", {})
         assert "Authorization" not in get_headers
@@ -180,11 +176,9 @@ class TestOpenAICompatRuntimeDetection:
         probe_resp.raise_for_status.return_value = None
         mock_post.return_value = probe_resp
 
-        from agent_cli.providers.capabilities import _detect_openai_compat_capabilities
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
 
-        caps = _detect_openai_compat_capabilities(
-            "http://localhost:8080/v1", "local-model"
-        )
+        caps = _detect_openai_capabilities("http://localhost:8080/v1", "local-model")
         assert caps is not None
         assert caps.context_window == 131072  # 128K fallback
         assert caps.supports_thinking is False
@@ -195,9 +189,9 @@ class TestOpenAICompatRuntimeDetection:
         mock_get.side_effect = Exception("Connection refused")
         mock_post.side_effect = Exception("Connection refused")
 
-        from agent_cli.providers.capabilities import _detect_openai_compat_capabilities
+        from agent_cli.providers.capabilities import _detect_openai_capabilities
 
-        caps = _detect_openai_compat_capabilities("http://localhost:8080/v1", "model")
+        caps = _detect_openai_capabilities("http://localhost:8080/v1", "model")
         assert caps is None
 
     @patch("agent_cli.providers.capabilities.requests.get")
@@ -427,7 +421,7 @@ class TestModelRejectAndOutputScaling:
         probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
-        caps = _detect_openai_compat_capabilities("http://x/v1", "big")
+        caps = _detect_openai_capabilities("http://x/v1", "big")
         assert caps.max_output_tokens == 262144 // 4
 
     @patch("agent_cli.providers.capabilities.requests.get")
@@ -444,7 +438,7 @@ class TestModelRejectAndOutputScaling:
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
         with pytest.raises(UnsupportedModelError):
-            _detect_openai_compat_capabilities("http://x/v1", "tiny")
+            _detect_openai_capabilities("http://x/v1", "tiny")
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")
@@ -460,6 +454,6 @@ class TestModelRejectAndOutputScaling:
         probe.json.return_value = {"choices": [{"message": {"content": "hi"}}]}
         probe.raise_for_status.return_value = None
         mock_post.return_value = probe
-        caps = _detect_openai_compat_capabilities("http://x/v1", "edge")
+        caps = _detect_openai_capabilities("http://x/v1", "edge")
         assert caps is not None
         assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4

@@ -48,7 +48,7 @@ class TestOpenAIStreaming:
         return lines
 
     def test_streaming_accumulates_content(self):
-        from agent_cli.providers.openai_compat import OpenAICompatProvider
+        from agent_cli.providers.openai import OpenAIProvider
 
         lines = self._make_sse_lines(
             ["Hi", " there"], {"prompt_tokens": 10, "completion_tokens": 2}
@@ -56,10 +56,8 @@ class TestOpenAIStreaming:
         resp = _make_response(lines)
         collected = []
 
-        with patch(
-            "agent_cli.providers.openai_compat.requests.post", return_value=resp
-        ):
-            provider = OpenAICompatProvider("http://localhost:8000/v1", "key")
+        with patch("agent_cli.providers.openai.requests.post", return_value=resp):
+            provider = OpenAIProvider("http://localhost:8000/v1", "key")
             result = provider.call(
                 messages=[],
                 system="",
@@ -74,7 +72,7 @@ class TestOpenAIStreaming:
         assert result.usage.output_tokens == 2
 
     def test_no_on_chunk_uses_non_streaming(self):
-        from agent_cli.providers.openai_compat import OpenAICompatProvider
+        from agent_cli.providers.openai import OpenAIProvider
 
         resp = MagicMock()
         resp.json.return_value = {
@@ -84,9 +82,9 @@ class TestOpenAIStreaming:
         resp.raise_for_status.return_value = None
 
         with patch(
-            "agent_cli.providers.openai_compat.requests.post", return_value=resp
+            "agent_cli.providers.openai.requests.post", return_value=resp
         ) as mock_post:
-            provider = OpenAICompatProvider("http://localhost:8000/v1", "key")
+            provider = OpenAIProvider("http://localhost:8000/v1", "key")
             result = provider.call(
                 messages=[], system="", model="m", capabilities=_CAPS
             )
@@ -239,7 +237,7 @@ class TestLoopStreamingWiring:
 class TestTTFTMeasurement:
     def test_openai_ttft_measured(self):
         """OpenAI streaming measures TTFT and decode time client-side."""
-        from agent_cli.providers.openai_compat import OpenAICompatProvider
+        from agent_cli.providers.openai import OpenAIProvider
 
         lines = []
         data = {"choices": [{"delta": {"content": "hi"}, "finish_reason": None}]}
@@ -252,10 +250,8 @@ class TestTTFTMeasurement:
         lines.append(b"data: [DONE]")
         resp = _make_response(lines)
 
-        with patch(
-            "agent_cli.providers.openai_compat.requests.post", return_value=resp
-        ):
-            provider = OpenAICompatProvider("http://localhost:8000/v1", "key")
+        with patch("agent_cli.providers.openai.requests.post", return_value=resp):
+            provider = OpenAIProvider("http://localhost:8000/v1", "key")
             result = provider.call(
                 messages=[],
                 system="",
@@ -312,7 +308,7 @@ class TestTTFTMeasurement:
 
     def test_non_streaming_no_ttft(self):
         """Non-streaming calls should have ttft_ns=0."""
-        from agent_cli.providers.openai_compat import OpenAICompatProvider
+        from agent_cli.providers.openai import OpenAIProvider
 
         resp = MagicMock()
         resp.json.return_value = {
@@ -321,10 +317,8 @@ class TestTTFTMeasurement:
         }
         resp.raise_for_status.return_value = None
 
-        with patch(
-            "agent_cli.providers.openai_compat.requests.post", return_value=resp
-        ):
-            provider = OpenAICompatProvider("http://localhost:8000/v1", "key")
+        with patch("agent_cli.providers.openai.requests.post", return_value=resp):
+            provider = OpenAIProvider("http://localhost:8000/v1", "key")
             result = provider.call(
                 messages=[], system="", model="m", capabilities=_CAPS
             )

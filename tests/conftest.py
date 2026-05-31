@@ -116,10 +116,10 @@ def integration_model(request, omlx_available):
 
 @pytest.fixture(scope="session")
 def omlx_provider():
-    """Real OpenAICompatProvider pointed at the omlx server."""
-    from agent_cli.providers.openai_compat import OpenAICompatProvider
+    """Real OpenAIProvider pointed at the omlx server."""
+    from agent_cli.providers.openai import OpenAIProvider
 
-    return OpenAICompatProvider(OMLX_BASE_URL, OMLX_API_KEY)
+    return OpenAIProvider(OMLX_BASE_URL, OMLX_API_KEY)
 
 
 @pytest.fixture
