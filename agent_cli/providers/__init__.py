@@ -25,8 +25,8 @@ def create_provider(provider: str, base_url: str, api_key: str) -> LLMProvider:
 
         return AnthropicProvider(base_url, api_key)
     elif provider == "openai":
-        from agent_cli.providers.openai_compat import OpenAICompatProvider
+        from agent_cli.providers.openai import OpenAIProvider
 
-        return OpenAICompatProvider(base_url, api_key)
+        return OpenAIProvider(base_url, api_key)
     else:
         raise ValueError(f"Unknown provider: {provider}. Available: anthropic, openai")

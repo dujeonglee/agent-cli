@@ -8,7 +8,7 @@ from agent_cli.providers import create_provider
 from agent_cli.providers.anthropic import AnthropicProvider
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.providers.openai_compat import OpenAICompatProvider
+from agent_cli.providers.openai import OpenAIProvider
 
 
 @pytest.fixture
@@ -145,8 +145,8 @@ class TestAnthropicProvider:
         assert result.usage.cache_read_input_tokens == 0
 
 
-class TestOpenAICompatProvider:
-    @patch("agent_cli.providers.openai_compat.requests.post")
+class TestOpenAIProvider:
+    @patch("agent_cli.providers.openai.requests.post")
     def test_with_structured_output(self, mock_post, caps_structured):
         mock_post.return_value = _mock_response(
             {
@@ -160,7 +160,7 @@ class TestOpenAICompatProvider:
             }
         )
 
-        provider = OpenAICompatProvider("https://api.openai.com/v1", "test-key")
+        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -172,7 +172,7 @@ class TestOpenAICompatProvider:
         body = mock_post.call_args.kwargs["json"]
         assert body["response_format"] == {"type": "json_object"}
 
-    @patch("agent_cli.providers.openai_compat.requests.post")
+    @patch("agent_cli.providers.openai.requests.post")
     def test_without_structured_output(self, mock_post, caps_basic):
         mock_post.return_value = _mock_response(
             {
@@ -182,7 +182,7 @@ class TestOpenAICompatProvider:
             }
         )
 
-        provider = OpenAICompatProvider("http://localhost:8080/v1", "")
+        provider = OpenAIProvider("http://localhost:8080/v1", "")
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -194,7 +194,7 @@ class TestOpenAICompatProvider:
         assert "response_format" not in body
         assert result.content == "plain text"
 
-    @patch("agent_cli.providers.openai_compat.requests.post")
+    @patch("agent_cli.providers.openai.requests.post")
     def test_api_key_sets_auth_header(self, mock_post, caps_basic):
         """Non-empty API key → Authorization header present."""
         mock_post.return_value = _mock_response(
@@ -202,7 +202,7 @@ class TestOpenAICompatProvider:
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAICompatProvider("http://localhost:8080/v1", "my-key")
+        provider = OpenAIProvider("http://localhost:8080/v1", "my-key")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -212,7 +212,7 @@ class TestOpenAICompatProvider:
         headers = mock_post.call_args.kwargs["headers"]
         assert headers["Authorization"] == "Bearer my-key"
 
-    @patch("agent_cli.providers.openai_compat.requests.post")
+    @patch("agent_cli.providers.openai.requests.post")
     def test_empty_api_key_skips_auth_header(self, mock_post, caps_basic):
         """Empty API key → no Authorization header (local servers)."""
         mock_post.return_value = _mock_response(
@@ -220,7 +220,7 @@ class TestOpenAICompatProvider:
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAICompatProvider("http://localhost:8080/v1", "")
+        provider = OpenAIProvider("http://localhost:8080/v1", "")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -294,14 +294,14 @@ class TestThinkingBudget:
         assert "thinking" not in body
         assert body["max_tokens"] == 4096
 
-    @patch("agent_cli.providers.openai_compat.requests.post")
+    @patch("agent_cli.providers.openai.requests.post")
     def test_openai_reasoning_effort(self, mock_post, caps_thinking):
         mock_post.return_value = _mock_response(
             {
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
+        provider = OpenAIProvider("https://api.openai.com/v1", "key")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -311,14 +311,14 @@ class TestThinkingBudget:
         body = mock_post.call_args.kwargs["json"]
         assert body["reasoning_effort"] == "medium"
 
-    @patch("agent_cli.providers.openai_compat.requests.post")
+    @patch("agent_cli.providers.openai.requests.post")
     def test_openai_no_thinking_regression(self, mock_post, caps_no_thinking):
         mock_post.return_value = _mock_response(
             {
                 "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
             }
         )
-        provider = OpenAICompatProvider("https://api.openai.com/v1", "key")
+        provider = OpenAIProvider("https://api.openai.com/v1", "key")
         provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -336,7 +336,7 @@ class TestCreateProvider:
 
     def test_openai(self):
         p = create_provider("openai", "https://api.openai.com/v1", "key")
-        assert isinstance(p, OpenAICompatProvider)
+        assert isinstance(p, OpenAIProvider)
 
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
@@ -391,8 +391,8 @@ class TestThinkingFieldCapture:
         )
         assert result.thinking == ""
 
-    @patch("agent_cli.providers.openai_compat.requests.post")
-    def test_openai_compat_captures_reasoning_content(self, mock_post, caps_structured):
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_openai_captures_reasoning_content(self, mock_post, caps_structured):
         # vLLM convention: reasoning_content sibling to content
         mock_post.return_value = _mock_response(
             {
@@ -408,7 +408,7 @@ class TestThinkingFieldCapture:
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5},
             }
         )
-        provider = OpenAICompatProvider("http://localhost:8000/v1", "")
+        provider = OpenAIProvider("http://localhost:8000/v1", "")
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",
@@ -418,8 +418,8 @@ class TestThinkingFieldCapture:
         assert result.thinking == "Reasoning here."
         assert result.content == '{"action":"complete"}'
 
-    @patch("agent_cli.providers.openai_compat.requests.post")
-    def test_openai_compat_no_reasoning_content_returns_empty(
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_openai_no_reasoning_content_returns_empty(
         self, mock_post, caps_structured
     ):
         # Plain OpenAI Chat Completions does not expose reasoning here
@@ -434,7 +434,7 @@ class TestThinkingFieldCapture:
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5},
             }
         )
-        provider = OpenAICompatProvider("https://api.openai.com/v1", "k")
+        provider = OpenAIProvider("https://api.openai.com/v1", "k")
         result = provider.call(
             messages=[{"role": "user", "content": "hi"}],
             system="sys",

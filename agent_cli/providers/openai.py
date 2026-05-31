@@ -16,7 +16,7 @@ from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import post_with_retry
 
 
-class OpenAICompatProvider:
+class OpenAIProvider:
     """Adapter for OpenAI-compatible /v1/chat/completions API."""
 
     def __init__(self, base_url: str, api_key: str):

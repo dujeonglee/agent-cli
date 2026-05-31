@@ -270,8 +270,8 @@ class TestProviderWiring:
             assert resp.content == "ok"
             assert mock_post.call_count == 2
 
-    def test_openai_compat_retries_on_timeout(self, monkeypatch):
-        from agent_cli.providers.openai_compat import OpenAICompatProvider
+    def test_openai_retries_on_connection_error(self, monkeypatch):
+        from agent_cli.providers.openai import OpenAIProvider
         from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
@@ -290,16 +290,16 @@ class TestProviderWiring:
             "usage": {"prompt_tokens": 1, "completion_tokens": 1},
         }
         with patch(
-            "agent_cli.providers.openai_compat.requests.post",
+            "agent_cli.providers.openai.requests.post",
             side_effect=[requests.ConnectionError("refused"), good],
         ) as mock_post:
-            provider = OpenAICompatProvider("https://api.openai.com/v1", "test-key")
+            provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
 
     def test_openai_retries_on_timeout(self, monkeypatch):
-        from agent_cli.providers.openai_compat import OpenAICompatProvider
+        from agent_cli.providers.openai import OpenAIProvider
         from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
@@ -318,10 +318,10 @@ class TestProviderWiring:
             "usage": {"prompt_tokens": 1, "completion_tokens": 1},
         }
         with patch(
-            "agent_cli.providers.openai_compat.requests.post",
+            "agent_cli.providers.openai.requests.post",
             side_effect=[requests.Timeout("t1"), good],
         ) as mock_post:
-            provider = OpenAICompatProvider("https://api.openai.com/v1", "test-key")
+            provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
