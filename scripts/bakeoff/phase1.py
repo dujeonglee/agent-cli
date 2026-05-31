@@ -24,6 +24,7 @@ Phase 2 (separate file) covers the full loop including recovery.
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import time
 import urllib.error
@@ -34,23 +35,34 @@ from pathlib import Path
 
 from agent_cli import wire_formats
 from agent_cli.prompts.system_prompt import build_system_prompt
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.wire_formats.base import ParsedAction
 
 
 # ── Configuration ────────────────────────────────────────────
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
+# oMLX (OpenAI-compatible /v1) endpoint. ``BASE_URL`` is a LAN address —
+# safe to default, overridable via env. The API key is a secret, so it
+# is read from the environment only and never committed:
+#   export OMLX_API_KEY=...
+BASE_URL = os.environ.get("OMLX_BASE_URL", "http://192.168.0.44:8000/v1")
+API_KEY = os.environ.get("OMLX_API_KEY", "")
+CHAT_URL = BASE_URL.rstrip("/") + "/chat/completions"
 
+# Models served by oMLX (see ``GET /v1/models``). Override with a
+# comma-separated ``BAKEOFF_MODELS`` to scope a quick smoke run.
 MODELS = [
-    "qwen3.6:35b-a3b-bf16",
-    "qwen3.6:27b-bf16",
-    "mistral-medium-3.5:128b-q4_K_M",
+    m.strip()
+    for m in os.environ.get(
+        "BAKEOFF_MODELS",
+        "Qwen3.6-27B-MLX-8bit,Qwen3.6-35B-A3B-MLX-8bit",
+    ).split(",")
+    if m.strip()
 ]
 
 PLUGINS = ["react", "prefix_md"]
 
-N_RUNS = 5
+N_RUNS = int(os.environ.get("BAKEOFF_N_RUNS", "5"))
 
 # Capabilities for the prompt builder. Real values would come from
 # ModelCapabilities probes; for the bakeoff we use a single shape so
@@ -166,7 +178,9 @@ class CallResult:
 def call_once(model: str, plugin_name: str, task: Task) -> CallResult:
     """Make one provider call and parse the response.
 
-    Mirrors ``AgentLoop._call_llm`` for prompt / kwargs / prefill.
+    Mirrors the live ``OpenAIProvider.call`` wiring for prompt / kwargs /
+    prefill, but pins ``temperature=0.0`` so the bakeoff is deterministic
+    (the production provider leaves temperature at the server default).
     """
     plugin = wire_formats.get(plugin_name)
     system = build_system_prompt(
@@ -178,34 +192,40 @@ def call_once(model: str, plugin_name: str, task: Task) -> CallResult:
     extra = plugin.provider_call_kwargs()
     skip_json = bool(extra.get("skip_json_format"))
 
-    body: dict = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": task.query},
-        ],
-        "stream": False,
-        "options": {"temperature": 0.0},
-    }
-    if not skip_json and CAPS.supports_structured_output:
-        body["format"] = "json"
-
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": task.query},
+    ]
     prefill = plugin.prefill()
     if prefill:
-        body["messages"].append({"role": "assistant", "content": prefill})
+        messages.append({"role": "assistant", "content": prefill})
+
+    body: dict = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": CAPS.max_output_tokens,
+        "temperature": 0.0,
+        "stream": False,
+    }
+    if not skip_json and CAPS.supports_structured_output:
+        body["response_format"] = {"type": "json_object"}
+
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
 
     req = urllib.request.Request(
-        OLLAMA_URL,
+        CHAT_URL,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
 
     t0 = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=300) as r:
             payload = json.loads(r.read())
-        raw = payload["message"]["content"]
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
+        raw = payload["choices"][0]["message"]["content"]
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, KeyError) as exc:
         elapsed = time.monotonic() - t0
         return CallResult(
             raw="", parsed=ParsedAction(), elapsed_seconds=elapsed, error=str(exc)

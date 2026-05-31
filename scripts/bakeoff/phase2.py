@@ -26,13 +26,14 @@ Headline metrics:
     runs, fraction with non-empty thought / reasoning.
 
 Phase 2 does NOT execute concurrently with Phase 1 — both call
-the same Ollama instance and weight-swapping serialised guarantees
+the same oMLX instance and weight-swapping serialised guarantees
 the schedule is deterministic.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import tempfile
 import time
@@ -43,23 +44,35 @@ from typing import Any, Callable
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
-from agent_cli.providers.ollama import OllamaProvider
-from agent_cli.providers.compat import ModelCapabilities
+from agent_cli.providers import create_provider
+from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.result import ToolResult
 
 
 # ── Configuration ────────────────────────────────────────────
 
+# oMLX (OpenAI-compatible /v1) endpoint. ``BASE_URL`` is a LAN address —
+# safe to default, overridable via env. The API key is a secret, so it
+# is read from the environment only and never committed:
+#   export OMLX_API_KEY=...
+BASE_URL = os.environ.get("OMLX_BASE_URL", "http://192.168.0.44:8000/v1")
+API_KEY = os.environ.get("OMLX_API_KEY", "")
+
+# Models served by oMLX (see ``GET /v1/models``). Override with a
+# comma-separated ``BAKEOFF_MODELS`` to scope a quick smoke run.
 MODELS = [
-    "qwen3.6:35b-a3b-bf16",
-    "qwen3.6:27b-bf16",
-    "mistral-medium-3.5:128b-q4_K_M",
+    m.strip()
+    for m in os.environ.get(
+        "BAKEOFF_MODELS",
+        "Qwen3.6-27B-MLX-8bit,Qwen3.6-35B-A3B-MLX-8bit",
+    ).split(",")
+    if m.strip()
 ]
 
 PLUGINS = ["react", "prefix_md"]
 
-N_RUNS = 5
-MAX_TURNS = 10
+N_RUNS = int(os.environ.get("BAKEOFF_N_RUNS", "5"))
+MAX_TURNS = int(os.environ.get("BAKEOFF_MAX_TURNS", "10"))
 
 CAPS = ModelCapabilities(
     context_window=262144,
@@ -291,10 +304,11 @@ def call_once(
     plugin_name: str,
     task: Task,
     *,
-    base_url: str = "http://localhost:11434",
+    base_url: str = BASE_URL,
+    api_key: str = API_KEY,
 ) -> RunResult:
     """Run one (task, model, plugin) cell through the real AgentLoop."""
-    provider = OllamaProvider(base_url=base_url)
+    provider = create_provider("openai", base_url, api_key)
     with tempfile.TemporaryDirectory(prefix="bakeoff-phase2-") as tmpdir:
         ctx_dir = Path(tmpdir)
         ctx = ContextManager(
@@ -310,9 +324,9 @@ def call_once(
                 provider=provider,
                 capabilities=CAPS,
                 model=model,
-                provider_name="ollama",
+                provider_name="openai",
                 base_url=base_url,
-                api_key="",
+                api_key=api_key,
                 max_turns=MAX_TURNS,
                 ctx=ctx,
                 active_tools=list(task.active_tools),
@@ -419,7 +433,7 @@ class CellResult:
 
 
 def run_all() -> dict[tuple[str, str, str], CellResult]:
-    """Outer loop is ``model`` so Ollama doesn't swap weights every call."""
+    """Outer loop is ``model`` so oMLX doesn't swap weights every call."""
     cells: dict[tuple[str, str, str], CellResult] = {}
     total = len(MODELS) * len(PLUGINS) * len(TASKS) * N_RUNS
     done = 0
