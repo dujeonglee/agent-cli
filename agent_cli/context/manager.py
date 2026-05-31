@@ -366,30 +366,28 @@ class ContextManager:
             # loses prior context (e.g. "user originally asked for X")
             # while it's generated, only to be glued back on merge.
             # Single call with prior context wins on both axes.
-            # Convert evict_set (raw history dicts with `tool`/`thought`/
-            # `action` keys) to chat-ready `{role, content}` form via the
-            # same path ``get_messages`` uses. The callback talks to a
-            # provider that only understands role+content; without this
-            # conversion the provider receives unknown keys and may either
-            # error or send junk text. ``_to_natural_language`` is
-            # idempotent for plain user messages, so prepending the prior
-            # summary after conversion stays safe.
-            chat_ready_evict = [
-                _to_natural_language(m, self.wire_format) for m in evict_set
-            ]
+            # Render the evicted slice as a single natural-language
+            # *transcript* inside one user message — NOT a role-structured
+            # replay. assistant turns become prose (via ``_to_summary_text``)
+            # with tool args summarised (no file bodies), so the model sees
+            # "here is a transcript, summarise it" instead of a ReAct
+            # conversation whose next turn is its own — which made a small
+            # model continue the task (emit another ``write_file``) instead
+            # of summarising. Single user message = no dangling assistant
+            # turn to mimic. The callback still receives chat-ready
+            # ``{role, content}`` only.
+            transcript = "\n".join(_to_summary_text(m) for m in evict_set)
             if self._summary:
-                prior_context_msg = {
-                    "role": "user",
-                    "content": (
-                        "## Running summary of earlier conversation\n\n"
-                        f"{self._summary}\n\n"
-                        "Below are NEW messages to fold into this "
-                        "running summary. Produce one updated summary."
-                    ),
-                }
-                summarize_input = [prior_context_msg] + chat_ready_evict
+                content = (
+                    "## Running summary of earlier conversation\n\n"
+                    f"{self._summary}\n\n"
+                    "Below is a transcript of NEW messages to fold into the "
+                    "running summary. Produce one updated summary.\n\n"
+                    f"{transcript}"
+                )
             else:
-                summarize_input = chat_ready_evict
+                content = "Transcript to summarise:\n\n" + transcript
+            summarize_input = [{"role": "user", "content": content}]
 
             new_summary = self._summarize_messages(summarize_input)
             new_paths = extract_file_paths(evict_set)
@@ -779,6 +777,51 @@ def _to_natural_language(msg: dict, wire_format) -> dict:
         return {"role": "user", "content": msg.get("content", "")}
 
     return wire_format.render_assistant_from_history(msg)
+
+
+_SUMMARY_CONTENT_EXCERPT = 200  # chars of tool-result content kept per line
+
+
+def _to_summary_text(msg: dict) -> str:
+    """Render one history record as a single natural-language line for the
+    summarisation transcript.
+
+    Unlike ``_to_natural_language`` (which round-trips assistant turns back
+    to the wire shape — ReAct JSON — for resume/recovery self-reinforcement),
+    this is for the *summariser's* input: assistant turns become prose and
+    tool args are summarised (``write_file`` → path only, no file body), so
+    the model sees a transcript to summarise rather than a ReAct conversation
+    to continue. Keeping the wire shape here made a small model emit another
+    ``write_file`` action instead of a summary.
+    """
+    role = msg.get("role", "user")
+
+    if role == "user":
+        tool = msg.get("tool")
+        if not tool:
+            return f"User: {msg.get('content', '')}"
+        arg_summary = summarize_tool_args(tool, msg.get("args", {}) or {})
+        header = f"[{tool}] {arg_summary}".rstrip()
+        content = (msg.get("content", "") or "").strip()
+        if content:
+            excerpt = content[:_SUMMARY_CONTENT_EXCERPT]
+            if len(content) > _SUMMARY_CONTENT_EXCERPT:
+                excerpt += "…"
+            header += f" → {excerpt}"
+        artifact = msg.get("artifact", "")
+        if artifact:
+            header += f" → {artifact}"
+        return header
+
+    # assistant
+    if "thought" not in msg and "action" not in msg:
+        return f"Assistant: {msg.get('content', '')}"
+    thought = (msg.get("thought") or "").strip()
+    action = msg.get("action") or ""
+    arg_summary = summarize_tool_args(action, msg.get("action_input", {}) or {})
+    action_line = f"  → action: {action}({arg_summary})" if action else ""
+    head = f"Assistant: {thought}" if thought else "Assistant:"
+    return f"{head}\n{action_line}" if action_line else head
 
 
 def _convert_observation(msg: dict) -> dict:
