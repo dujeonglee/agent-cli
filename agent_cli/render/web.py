@@ -235,6 +235,8 @@ class WebRenderer(Renderer):
         tid = threading.get_ident()
         with self._lock:
             self._thread_to_task[tid] = task_id
+        # Tag this worker thread so a confirm/ask it triggers can name it.
+        self.set_thread_agent(agent or f"task #{index + 1}")
         self._emit(
             "delegate_task_start",
             {
@@ -260,6 +262,7 @@ class WebRenderer(Renderer):
         tid = threading.get_ident()
         with self._lock:
             self._thread_to_task.pop(tid, None)
+        self.set_thread_agent("")  # worker's prompt label no longer applies
         payload = {
             "task_id": task_id,
             "success": success,
@@ -431,6 +434,9 @@ class WebRenderer(Renderer):
         pass
 
     def thought(self, content: str, turn: int) -> None:
+        # Record for an interactive-prompt header (who/why behind a confirm
+        # or ask in this thread).
+        self.note_thought(content)
         # Hold until the matching action / final fires so we can emit
         # a single ``assistant_turn`` event per LLM emission.
         self._pending_thought = content
@@ -445,6 +451,7 @@ class WebRenderer(Renderer):
             self.set_thread_status(f"💭 {first_line}")
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
+        self.note_action(tool_name, tool_input)
         self._emit(
             "assistant_turn",
             {
@@ -652,6 +659,8 @@ class WebRenderer(Renderer):
         # only one ``input_required`` is outstanding at a time — otherwise
         # two concurrent delegate prompts would both block on the single
         # ``_input_queue`` and one answer could satisfy the wrong worker.
+        meta = self.prompt_meta()
+
         def _do() -> str:
             self._emit(
                 "input_required",
@@ -661,6 +670,10 @@ class WebRenderer(Renderer):
                     "multiline": multiline,
                     "continuation": continuation,
                     "context": context,
+                    # Who/why: which delegate agent is asking + its
+                    # reasoning, so the user can attribute the prompt.
+                    "agent": meta["agent"],
+                    "reasoning": meta["reasoning"],
                 },
                 persistent=False,
             )
@@ -699,6 +712,8 @@ class WebRenderer(Renderer):
         # Emit + wait run together under ``_guarded_read``'s shared lock
         # (same serialization as ``prompt_user``) so confirm and ask never
         # have two prompts outstanding on the single ``_input_queue``.
+        meta = self.prompt_meta()
+
         def _do():
             self._emit(
                 "input_required",
@@ -710,6 +725,11 @@ class WebRenderer(Renderer):
                         for o in options
                     ],
                     "default_key": default_key,
+                    # Who/why/what: which delegate agent + its reasoning +
+                    # the action it wants to run, surfaced in the dialog.
+                    "agent": meta["agent"],
+                    "reasoning": meta["reasoning"],
+                    "action": meta["action"],
                 },
                 persistent=False,
             )

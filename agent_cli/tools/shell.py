@@ -76,12 +76,19 @@ def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
     from agent_cli.render.base import ConfirmOption
 
     options = [
-        ConfirmOption(key="y", label="once (allow this command)", aliases=("yes",)),
-        ConfirmOption(key="n", label="deny", aliases=("no",)),
+        # Affirmative synonyms map to "once" so a natural yes doesn't
+        # collapse to the safe-default deny. ``allow`` maps to "always"
+        # because the prompt labels that option "always allow".
+        ConfirmOption(
+            key="y",
+            label="once (allow this command)",
+            aliases=("yes", "ok", "okay", "yep", "yeah", "sure"),
+        ),
+        ConfirmOption(key="n", label="deny", aliases=("no", "nope")),
         ConfirmOption(
             key="a",
             label=f"always allow `{keyword}` this session",
-            aliases=("always",),
+            aliases=("always", "allow"),
         ),
     ]
     # Renderer guarantees ``key`` is one of the option keys (or default

@@ -148,6 +148,68 @@ class TestInteractivePromptSerialization:
                 assert True
 
 
+class TestPromptProvenance:
+    """confirm/ask surface who (delegate agent) + why (reasoning) + what
+    (action) so the user can attribute an out-of-context prompt."""
+
+    def test_meta_empty_without_agent(self):
+        # Main agent (no delegate label) → no header; its thought/action
+        # already print inline above the prompt.
+        r = MinimalRenderer(Console())
+        r.note_thought("some reasoning")
+        r.note_action("shell", "rm x")
+        assert r._format_prompt_meta(include_action=True) == ""
+
+    def test_meta_with_agent_first_line_only(self):
+        r = MinimalRenderer(Console())
+        r.set_thread_agent("explorer")
+        r.note_thought("first line\nsecond line")
+        r.note_action("shell", "rm -rf build")
+        header = r._format_prompt_meta(include_action=True)
+        assert "explorer" in header
+        assert "first line" in header and "second line" not in header
+        assert "rm -rf build" in header
+        # ask form omits the action.
+        assert "rm -rf build" not in r._format_prompt_meta(include_action=False)
+
+    def test_confirm_prints_header_for_delegate(self, monkeypatch):
+        from io import StringIO
+
+        buf = StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=False, width=100))
+        r.set_thread_agent("explorer")
+        r.note_thought("must delete the stale build dir")
+        r.note_action("shell", "rm -rf build")
+        monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+        r.confirm("Allow? ", [ConfirmOption(key="y", label="yes")], default_key="n")
+        out = buf.getvalue()
+        assert "explorer" in out
+        assert "must delete the stale build dir" in out
+
+    def test_confirm_no_header_for_main_agent(self, monkeypatch):
+        from io import StringIO
+
+        buf = StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=False, width=100))
+        r.note_thought("main agent reasoning")  # no agent label set
+        monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+        r.confirm("Allow? ", [ConfirmOption(key="y", label="yes")], default_key="n")
+        assert "main agent reasoning" not in buf.getvalue()
+
+    def test_delegate_begin_sets_agent_end_clears(self):
+        r = MinimalRenderer(Console())
+        r.begin_delegate_task(task_id="t1", index=0, agent="explorer", task_text="x")
+        assert r.prompt_meta()["agent"] == "explorer"
+        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        assert r.prompt_meta()["agent"] == ""
+
+    def test_delegate_unnamed_falls_back_to_task_index(self):
+        r = MinimalRenderer(Console())
+        r.begin_delegate_task(task_id="t1", index=2, agent="", task_text="x")
+        assert r.prompt_meta()["agent"] == "task #3"
+        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+
+
 class TestLoadRendererByName:
     def test_load_minimal(self):
         old = get_renderer()

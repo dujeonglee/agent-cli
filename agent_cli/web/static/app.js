@@ -733,10 +733,40 @@
     if (btns) btns.remove();
   }
 
-  function renderConfirmButtons(options, defaultKey) {
+  // Provenance block (who/why/what) shown with a confirm or ask prompt so
+  // the user can tell which delegate agent is asking and about what.
+  // Returns null when there's nothing to show (e.g. main-agent prompt).
+  function buildPromptMetaEl(data, includeAction) {
+    if (!data) return null;
+    const agent = typeof data.agent === "string" ? data.agent : "";
+    const reasoning = typeof data.reasoning === "string" ? data.reasoning : "";
+    const action = typeof data.action === "string" ? data.action : "";
+    if (!agent && !reasoning && !(includeAction && action)) return null;
+    const box = el("div", ["prompt-meta"]);
+    if (agent) {
+      const a = el("div", ["prompt-meta-agent"]);
+      a.textContent = "↳ from " + agent;
+      box.appendChild(a);
+    }
+    if (reasoning) {
+      const r = el("div", ["prompt-meta-reasoning"]);
+      r.textContent = "💭 " + reasoning.split("\n")[0];
+      box.appendChild(r);
+    }
+    if (includeAction && action) {
+      const ac = el("div", ["prompt-meta-action"]);
+      ac.textContent = "⚡ " + action;
+      box.appendChild(ac);
+    }
+    return box;
+  }
+
+  function renderConfirmButtons(options, defaultKey, data) {
     clearConfirmButtons();
     const container = el("div");
     container.id = "confirm-buttons";
+    const meta = buildPromptMetaEl(data, true);
+    if (meta) container.appendChild(meta);
     options.forEach(function (opt) {
       const btn = el("button", ["confirm-btn"]);
       if (opt.key === defaultKey) btn.classList.add("default");
@@ -755,7 +785,7 @@
       $modeBadge.textContent = "CONFIRM";
       $modeBadge.classList.add("visible");
       confirmDefaultKey = data.default_key;
-      renderConfirmButtons(data.options || [], data.default_key);
+      renderConfirmButtons(data.options || [], data.default_key, data);
       $input.placeholder = "Optional comment (empty = no comment)";
     } else {
       // chat or prompt
@@ -771,6 +801,10 @@
         tag.className = "mode-tag";
         tag.textContent = "ANSWERING";
         $modeBadge.appendChild(tag);
+        // Who/why (delegate agent + reasoning), so an ask from a subagent
+        // is attributable. No-op for a main-agent ask.
+        const metaEl = buildPromptMetaEl(data, false);
+        if (metaEl) $modeBadge.appendChild(metaEl);
         const ctx = data && typeof data.context === "string" ? data.context : "";
         if (ctx) {
           const ctxEl = document.createElement("span");

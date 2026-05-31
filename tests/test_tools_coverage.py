@@ -174,7 +174,7 @@ class TestShellDangerousCommandConfirmation:
         check)."""
         from agent_cli.render import get_renderer
 
-        monkeypatch.setattr(get_renderer(), "can_prompt", lambda: True)
+        monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
 
     def test_disabled_via_env_var_runs_without_prompt(self, monkeypatch):
         """AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0 — bypass entirely."""
@@ -211,6 +211,33 @@ class TestShellDangerousCommandConfirmation:
         # Second `rm` should prompt AGAIN — y did not add to allowlist.
         from agent_cli.tools import shell as shell_mod
 
+        assert "rm" not in shell_mod._session_allowlist
+
+    def test_allow_alias_maps_to_always(self, monkeypatch):
+        """Typing "allow" (a natural affirmative) must NOT collapse to the
+        safe-default deny — it maps to "always" (the option the prompt
+        labels "always allow")."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+        from agent_cli.tools import shell as shell_mod
+
+        with patch("builtins.input", return_value="allow"):
+            tool_shell({"command": "rm /tmp/foo"})
+        assert "rm" in shell_mod._session_allowlist
+
+    def test_affirmative_alias_runs_once(self, monkeypatch):
+        """ "ok" runs the command once without allowlisting."""
+        monkeypatch.setenv("AGENT_CLI_DANGEROUS_SHELL_CONFIRM", "1")
+        self._force_tty(monkeypatch)
+
+        from unittest.mock import patch
+        from agent_cli.tools import shell as shell_mod
+
+        with patch("builtins.input", return_value="ok"):
+            result = tool_shell({"command": "rm /nonexistent/xyz"})
+        assert "exit code:" in (result.output or "") or result.success
         assert "rm" not in shell_mod._session_allowlist
 
     def test_dangerous_user_says_no_returns_denial(self, monkeypatch):
@@ -347,7 +374,7 @@ class TestShellConfirmationComments:
     def _force_tty(self, monkeypatch):
         from agent_cli.render import get_renderer
 
-        monkeypatch.setattr(get_renderer(), "can_prompt", lambda: True)
+        monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
 
     def test_ask_returns_decision_and_empty_comment(self):
         from agent_cli.tools.shell import _ask_confirmation

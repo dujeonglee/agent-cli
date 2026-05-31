@@ -333,6 +333,33 @@ footer {
 }
 .confirm-btn.default:hover { background: #1d4ed8; }
 
+/* ── Prompt provenance (who/why/what behind a confirm or ask) ── */
+.prompt-meta {
+  flex-basis: 100%;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid #c7d2fe;
+  background: #f5f6ff;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.prompt-meta-agent {
+  font-weight: 600;
+  color: #4f46e5;
+}
+.prompt-meta-reasoning { color: #4b5563; }
+.prompt-meta-action {
+  color: #374151;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+/* In the ANSWERING badge (ask), stack the meta under the tag. */
+#input-mode-badge .prompt-meta {
+  margin-top: 4px;
+}
+
 /* ── Takeover banner ────────────────────────── */
 .banner-takeover {
   position: fixed;

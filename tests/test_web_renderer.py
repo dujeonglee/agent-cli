@@ -327,6 +327,61 @@ class TestPromptUserInput:
             r.push_user_input("prompt", {"content": ""})
             t.join(timeout=2.0)
 
+    def test_prompt_user_forwards_provenance_fields(self):
+        """ask over web carries the delegate agent + reasoning so the user
+        can attribute it. Set on the worker thread (mirrors production:
+        the delegate worker registers itself and reasons on its own
+        thread before prompting)."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        def worker():
+            r.set_thread_agent("explorer")
+            r.note_thought("need the user to pick a path")
+            r.prompt_user("Your answer: ", multiline=True)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.05)
+        try:
+            event, data = conn.queue.get(timeout=1.0)
+            assert event == "input_required"
+            assert data["agent"] == "explorer"
+            assert "pick a path" in data["reasoning"]
+        finally:
+            r.push_user_input("prompt", {"content": ""})
+            t.join(timeout=2.0)
+
+    def test_confirm_forwards_provenance_fields(self):
+        """confirm over web carries agent + reasoning + the action it wants
+        to run."""
+        from agent_cli.render.base import ConfirmOption
+
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        def worker():
+            r.set_thread_agent("explorer")
+            r.note_thought("the stale build must go")
+            r.note_action("shell", "rm -rf build")
+            r.confirm("Allow?", [ConfirmOption(key="y", label="yes")], default_key="n")
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.05)
+        try:
+            event, data = conn.queue.get(timeout=1.0)
+            assert event == "input_required"
+            assert data["kind"] == "confirm"
+            assert data["agent"] == "explorer"
+            assert "stale build" in data["reasoning"]
+            assert "rm -rf build" in data["action"]
+        finally:
+            r.push_user_input("confirm", {"key": "n", "comment": ""})
+            t.join(timeout=2.0)
+
     def test_prompt_user_returns_default_on_empty(self):
         r = WebRenderer()
         result: list[str] = []

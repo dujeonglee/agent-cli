@@ -323,6 +323,8 @@ class MinimalRenderer(Renderer):
             self._p(f"     {line}", highlight=False)
 
     def thought(self, content: str, turn: int) -> None:
+        # Record for an interactive prompt header (who/why behind a confirm).
+        self.note_thought(content)
         # Update live status (first line of thought, shown in parallel progress panel)
         first_line = content.strip().split("\n", 1)[0]
         self.set_thread_status(f"💭 {first_line}")
@@ -331,6 +333,7 @@ class MinimalRenderer(Renderer):
         # No trailing blank — let the action/observation pair visually below
 
     def action(self, tool_name: str, tool_input: str, turn: int) -> None:
+        self.note_action(tool_name, tool_input)
         display = tool_input[:200] + "..." if len(tool_input) > 200 else tool_input
         self._p(f"  ⚡ {tool_name} → {display}", highlight=False, markup=False)
 
@@ -653,22 +656,40 @@ class MinimalRenderer(Renderer):
         # Reads go through ``_guarded_read`` → serialized against other
         # prompts (confirm / concurrent delegate asks) and wrapped in
         # ``_prompt_display_guard`` so an active Live panel doesn't paint
-        # over the prompt. EOF / KbInt propagate (see docstring).
+        # over the prompt. EOF / KbInt propagate (see docstring). The
+        # provenance header (who/why) prints inside the guard so it lands
+        # after the Live panel is paused.
         if multiline:
             from agent_cli.input_history import read_rich_input
 
-            value = self._guarded_read(
-                lambda: read_rich_input(prompt, continuation=continuation)
-            ).strip()
+            def _read():
+                self._emit_prompt_meta_header(include_action=False)
+                return read_rich_input(prompt, continuation=continuation)
+
+            value = self._guarded_read(_read).strip()
         else:
+
+            def _read():
+                self._emit_prompt_meta_header(include_action=False)
+                return input(prompt)
+
             try:
-                value = self._guarded_read(lambda: input(prompt)).strip()
+                value = self._guarded_read(_read).strip()
             except UnicodeDecodeError:
                 # Mirror read_rich_input's behaviour: drop the broken
                 # paste and let the caller treat it as no input. EOF /
                 # KbInt deliberately not caught — see method docstring.
                 value = ""
         return value if value else default
+
+    def _emit_prompt_meta_header(self, *, include_action: bool) -> None:
+        """Print the who/why header for a delegate-originated prompt (no-op
+        for the main agent or when there's nothing to show). ``markup=False``
+        so a bracketed agent label like ``[explorer]`` isn't parsed as Rich
+        markup."""
+        header = self._format_prompt_meta(include_action=include_action)
+        if header:
+            self.con.print(header, markup=False, highlight=False)
 
     def can_prompt(self) -> bool:
         """A CLI prompt needs a real terminal on both ends. The active
@@ -723,10 +744,17 @@ class MinimalRenderer(Renderer):
 
         The read goes through ``_guarded_read`` → serialized against other
         prompts and wrapped in ``_prompt_display_guard`` so an active Live
-        panel (parallel-delegate worker context) doesn't paint over it.
+        panel (parallel-delegate worker context) doesn't paint over it. A
+        provenance header (agent + reasoning + action) prints first for
+        delegate-originated confirms.
         """
+
+        def _read():
+            self._emit_prompt_meta_header(include_action=True)
+            return input(prompt)
+
         try:
-            raw = self._guarded_read(lambda: input(prompt)).strip()
+            raw = self._guarded_read(_read).strip()
         except (EOFError, KeyboardInterrupt):
             return (default_key, "")
         if not raw:
@@ -867,6 +895,8 @@ class MinimalRenderer(Renderer):
         # ``start_capture`` writes to ``self._captures`` under the
         # base lock; safe to call outside the panel lock.
         self.start_capture()
+        # Tag this worker thread so a confirm/ask it triggers can name it.
+        self.set_thread_agent(agent or f"task #{index + 1}")
 
     def end_delegate_task(
         self,
@@ -883,6 +913,7 @@ class MinimalRenderer(Renderer):
         clears.
         """
         captured = self.stop_capture()
+        self.set_thread_agent("")  # worker's prompt label no longer applies
         should_stop = False
         with self._parallel_lock:
             state = self._parallel_tasks.get(task_id)

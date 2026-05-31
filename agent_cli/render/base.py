@@ -56,6 +56,14 @@ class Renderer(ABC):
         self._captures: dict[int, list[str]] = {}  # thread_id → captured lines
         self._thread_status: dict[int, str] = {}  # thread_id → last status line
         self._capture_lock = threading.Lock()
+        # Per-thread prompt provenance, so an interactive confirm/ask can
+        # show WHO is asking and WHY. The loop calls thought()/action() on
+        # the same thread right before a tool triggers confirm/ask, and
+        # delegate workers register their agent label — all keyed by
+        # ``threading.get_ident()``.
+        self._thread_agent: dict[int, str] = {}  # tid → delegate label
+        self._thread_thought: dict[int, str] = {}  # tid → last reasoning
+        self._thread_action: dict[int, str] = {}  # tid → last action line
 
     # ── Depth (nesting) ──────────────────────────────
 
@@ -112,6 +120,60 @@ class Renderer(ABC):
         with self._capture_lock:
             if tid in self._captures:  # only when capturing
                 self._thread_status[tid] = status
+
+    # ── Prompt provenance (who/why behind a confirm or ask) ──
+
+    def set_thread_agent(self, label: str) -> None:
+        """Tag the current thread with a delegate label (or clear it with
+        ``""``). Surfaced by ``confirm`` / ``prompt_user`` so the user can
+        tell which agent is asking."""
+        tid = threading.get_ident()
+        if label:
+            self._thread_agent[tid] = label
+        else:
+            self._thread_agent.pop(tid, None)
+
+    def note_thought(self, content: str) -> None:
+        """Record the current thread's latest reasoning (first line kept
+        for the compact prompt header)."""
+        self._thread_thought[threading.get_ident()] = content.strip()
+
+    def note_action(self, tool_name: str, tool_input: str) -> None:
+        """Record the current thread's latest action."""
+        line = f"{tool_name} → {tool_input}" if tool_input else tool_name
+        self._thread_action[threading.get_ident()] = line
+
+    def prompt_meta(self) -> dict[str, str]:
+        """Provenance for an interactive prompt on the current thread:
+        ``agent`` (delegate label, empty for the main agent), ``reasoning``
+        (last thought), ``action`` (last action line)."""
+        tid = threading.get_ident()
+        return {
+            "agent": self._thread_agent.get(tid, ""),
+            "reasoning": self._thread_thought.get(tid, ""),
+            "action": self._thread_action.get(tid, ""),
+        }
+
+    def _format_prompt_meta(self, *, include_action: bool) -> str:
+        """One compact block naming the asking agent + its reasoning (and
+        action for confirm), or ``""`` when there's nothing to show. Used
+        by CLI renderers to print a header before the prompt.
+
+        Gated on an agent label: the main agent already prints its
+        thought/action inline right above the prompt, so a header would
+        just duplicate it. Delegate workers (whose output is captured into
+        a panel, not shown inline at prompt time) are exactly the case the
+        user can't otherwise attribute — so the header fires there."""
+        meta = self.prompt_meta()
+        if not meta["agent"]:
+            return ""
+        lines: list[str] = [f"↳ from [{meta['agent']}]"]
+        if meta["reasoning"]:
+            first = meta["reasoning"].split("\n", 1)[0]
+            lines.append(f"  💭 {first}")
+        if include_action and meta["action"]:
+            lines.append(f"  ⚡ {meta['action']}")
+        return "\n".join(lines)
 
     # ── Ask-tool announcement ────────────────────────
     #
