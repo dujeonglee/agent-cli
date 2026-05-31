@@ -220,6 +220,119 @@ class TestSummary:
                 )
 
 
+# ── 3b. Summariser input: natural-language transcript ─
+
+
+class TestSummaryTextRendering:
+    """``_to_summary_text`` renders prose (not ReAct JSON) and drops file
+    bodies — what the summariser should see, vs ``_to_natural_language``
+    which round-trips assistant turns back to the wire shape for resume."""
+
+    def test_user_message(self):
+        from agent_cli.context.manager import _to_summary_text
+
+        assert _to_summary_text({"role": "user", "content": "hi"}) == "User: hi"
+
+    def test_observation_summarises_args_drops_body(self):
+        from agent_cli.context.manager import _to_summary_text
+
+        line = _to_summary_text(
+            {
+                "role": "user",
+                "tool": "write_file",
+                "args": {"path": "a.py", "content": "B" * 5000},
+                "content": "Wrote file",
+            }
+        )
+        assert line.startswith("[write_file] a.py")
+        assert "B" * 200 not in line  # full args body not echoed
+
+    def test_assistant_action_is_prose_not_react_json(self):
+        from agent_cli.context.manager import _to_summary_text
+
+        line = _to_summary_text(
+            {
+                "role": "assistant",
+                "thought": "write the texture tests",
+                "action": "write_file",
+                "action_input": {
+                    "path": "doom/tests/test_texture.c",
+                    "content": "Z" * 8000,
+                },
+            }
+        )
+        assert line.startswith("Assistant: write the texture tests")
+        assert "write_file(doom/tests/test_texture.c)" in line
+        assert '"action"' not in line  # NOT ReAct JSON
+        assert "Z" * 200 not in line  # NO file body
+
+    def test_assistant_bare_content(self):
+        from agent_cli.context.manager import _to_summary_text
+
+        assert (
+            _to_summary_text({"role": "assistant", "content": "done"})
+            == "Assistant: done"
+        )
+
+    def test_complete_action(self):
+        from agent_cli.context.manager import _to_summary_text
+
+        line = _to_summary_text(
+            {
+                "role": "assistant",
+                "thought": "finishing up",
+                "action": "complete",
+                "action_input": {"result": "all tests pass"},
+            }
+        )
+        assert line.startswith("Assistant: finishing up")
+        assert "complete(" in line
+
+
+class TestSummaryInputIsTranscript:
+    """The summariser callback receives ONE user-role transcript message —
+    no dangling assistant turn to mimic, no ReAct JSON, no file bodies."""
+
+    def test_callback_gets_single_user_transcript(self, tmp_path):
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=120)
+        _add(ctx, {"role": "system", "content": "sys"})
+        _add(ctx, {"role": "user", "content": "build the game"})
+        _add(
+            ctx,
+            {
+                "role": "assistant",
+                "thought": "writing the file",
+                "action": "write_file",
+                "action_input": {"path": "a.py", "content": "BIGFILEBODY" * 500},
+            },
+        )
+        for _ in range(15):
+            _add(ctx, {"role": "user", "content": "x" * 30})
+
+        assert len(calls) >= 1, "compactor must have been invoked"
+        first = calls[0]
+        # Exactly one user message — no assistant turn to continue.
+        assert len(first) == 1
+        assert first[0]["role"] == "user"
+        body = first[0]["content"]
+        assert "Transcript to summarise:" in body
+        assert "write_file(a.py)" in body  # action summarised to prose
+        assert "BIGFILEBODY" not in body  # file body NOT fed to summariser
+        assert '"action_input"' not in body  # not ReAct JSON
+
+    def test_recursive_folds_prior_summary_into_transcript(self, tmp_path):
+        ctx, calls = _make_ctx(tmp_path, max_context_tokens=80)
+        _add(ctx, {"role": "system", "content": "sys"})
+        for _ in range(15):
+            _add(ctx, {"role": "user", "content": "x" * 30})
+        for _ in range(15):
+            _add(ctx, {"role": "user", "content": "y" * 30})
+        assert len(calls) >= 2
+        second = calls[1]
+        assert len(second) == 1 and second[0]["role"] == "user"
+        assert "Running summary of earlier conversation" in second[0]["content"]
+
+
 # ── 4. File list ─────────────────────────────────────
 
 
