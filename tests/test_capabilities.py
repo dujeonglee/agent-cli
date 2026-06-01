@@ -13,7 +13,16 @@ from agent_cli.providers.capabilities import (
     set_progress_callback,
     _detect_openai_capabilities,
     _emit_progress,
+    _probe_structured_output,
 )
+
+
+def _chat_resp(content: str) -> MagicMock:
+    """Build a mock /chat/completions response carrying ``content``."""
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"choices": [{"message": {"content": content}}]}
+    resp.raise_for_status.return_value = None
+    return resp
 
 
 @pytest.fixture(autouse=True)
@@ -457,3 +466,80 @@ class TestModelRejectAndOutputScaling:
         caps = _detect_openai_capabilities("http://x/v1", "edge")
         assert caps is not None
         assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4
+
+
+class TestStructuredOutputProbe:
+    """Unit tests for _probe_structured_output (json_object + json_schema)."""
+
+    HEADERS = {"Content-Type": "application/json"}
+
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_both_supported(self, mock_post):
+        """json_object returns valid JSON and strict schema conforms exactly."""
+        mock_post.side_effect = [
+            _chat_resp('{"primary_colors": ["red", "blue", "yellow"]}'),
+            _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
+        ]
+        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
+        assert (so, ss) == (True, True)
+        assert mock_post.call_count == 2
+
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_json_object_only_when_schema_not_conforming(self, mock_post):
+        """json_object works, but strict probe returns a non-conforming shape
+        (extra/wrong keys) → strict reported False."""
+        mock_post.side_effect = [
+            _chat_resp('{"anything": 1}'),
+            _chat_resp('{"primary_colors": ["red"]}'),  # wrong key → not strict
+        ]
+        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
+        assert (so, ss) == (True, False)
+
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_unsupported_when_prose_returned(self, mock_post):
+        """Server ignores response_format and answers in prose → both False,
+        and the strict probe is never attempted."""
+        mock_post.return_value = _chat_resp("The primary colors are red, blue, yellow.")
+        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
+        assert (so, ss) == (False, False)
+        assert mock_post.call_count == 1  # step B skipped
+
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_conservative_false_on_error(self, mock_post):
+        """Any transport error on the first probe → (False, False)."""
+        mock_post.side_effect = Exception("connection refused")
+        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
+        assert (so, ss) == (False, False)
+
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_strict_probe_error_keeps_json_object(self, mock_post):
+        """json_object passes, strict probe errors → (True, False)."""
+        mock_post.side_effect = [
+            _chat_resp('{"colors": ["red"]}'),
+            Exception("schema mode unsupported"),
+        ]
+        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
+        assert (so, ss) == (True, False)
+
+
+class TestDetectionWiresStructuredFlags:
+    """_detect_openai_capabilities should reflect the structured-output probe."""
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_flags_set_from_probe(self, mock_post, mock_get):
+        models = MagicMock(status_code=200)
+        models.json.return_value = {"data": [{"id": "m", "max_model_len": 32768}]}
+        models.raise_for_status.return_value = None
+        mock_get.return_value = models
+        # Sequence: thinking probe, json_object probe, json_schema probe.
+        mock_post.side_effect = [
+            _chat_resp("Hello!"),  # no <think> → thinking False
+            _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
+            _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
+        ]
+        caps = _detect_openai_capabilities("http://x/v1", "m")
+        assert caps is not None
+        assert caps.supports_structured_output is True
+        assert caps.supports_strict_schema is True
+        assert caps.supports_thinking is False

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
+import json
 import re
 
 import requests
@@ -179,6 +180,102 @@ def _detect_runtime_capabilities(
     return None
 
 
+# Prompt whose natural answer is prose, not JSON. If the server does not
+# enforce ``response_format`` it answers with markdown, which fails
+# ``json.loads`` — so a passing probe means the constraint was genuinely
+# honored, not that the model happened to emit JSON on its own.
+_STRUCTURED_PROBE_PROMPT = "List three primary colors."
+
+# Tiny, unambiguous schema for the strict probe: one required string-array
+# field, no extras allowed. A server that truly enforces strict mode emits
+# exactly ``{"colors": [...]}``; one that merely tolerates the key returns
+# a different shape and fails the conformance check below.
+_SCHEMA_PROBE = {
+    "type": "object",
+    "properties": {"colors": {"type": "array", "items": {"type": "string"}}},
+    "required": ["colors"],
+    "additionalProperties": False,
+}
+
+
+def _probe_structured_output(base: str, model: str, headers: dict) -> tuple[bool, bool]:
+    """Probe an OpenAI-compatible server for structured-output support.
+
+    Returns ``(supports_structured_output, supports_strict_schema)``.
+
+    Two requests, each judged on the *returned content* rather than a bare
+    2xx: a server that ignores ``response_format`` answers the prose prompt
+    with markdown, which fails ``json.loads`` and is correctly reported as
+    unsupported. Any error / timeout yields a conservative ``False`` so the
+    overall detection never breaks on the probe. The strict probe runs only
+    when json_object already passed.
+    """
+    url = f"{base}/chat/completions"
+
+    # Step A: json_object mode.
+    try:
+        _emit_progress(f"Probing JSON-object support ({model})")
+        r = requests.post(
+            url,
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": _STRUCTURED_PROBE_PROMPT},
+                ],
+                "max_tokens": 256,
+                "temperature": 0.0,
+                "response_format": {"type": "json_object"},
+            },
+            headers=headers,
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        r.raise_for_status()
+        content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        json.loads(content)
+    except Exception:
+        return (False, False)
+
+    # Step B: strict json_schema mode (json_object already confirmed).
+    try:
+        _emit_progress(f"Probing strict JSON-schema support ({model})")
+        r = requests.post(
+            url,
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": _STRUCTURED_PROBE_PROMPT},
+                ],
+                "max_tokens": 256,
+                "temperature": 0.0,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "primary_colors",
+                        "strict": True,
+                        "schema": _SCHEMA_PROBE,
+                    },
+                },
+            },
+            headers=headers,
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        r.raise_for_status()
+        content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        obj = json.loads(content)
+    except Exception:
+        return (True, False)
+
+    # Conformance check (no jsonschema dependency): exactly the required
+    # key, correct type. ``additionalProperties: false`` means a truly
+    # strict server returns no other keys.
+    strict_ok = (
+        isinstance(obj, dict)
+        and set(obj.keys()) == {"colors"}
+        and isinstance(obj.get("colors"), list)
+    )
+    return (True, strict_ok)
+
+
 def _detect_openai_capabilities(
     base_url: str, model: str, api_key: str = ""
 ) -> ModelCapabilities | None:
@@ -186,6 +283,7 @@ def _detect_openai_capabilities(
 
     Step 1: GET /v1/models for context window (max_model_len — vLLM, etc.)
     Step 2: Probe with simple prompt for thinking support
+    Step 3: Probe response_format for structured-output / strict-schema support
     """
     try:
         base = base_url.rstrip("/")
@@ -235,15 +333,22 @@ def _detect_openai_capabilities(
             )
         max_output = context_window // _OUTPUT_TOKEN_DIVISOR
 
+        # Step 3: Probe for structured-output support (json_object / strict
+        # json_schema). Runs only for an accepted model so a rejected one
+        # doesn't pay for extra probes.
+        supports_structured, supports_strict = _probe_structured_output(
+            base, model, headers
+        )
+
         _emit_progress(f"Detection complete for {model}")
 
         return ModelCapabilities(
             context_window=context_window,
             max_output_tokens=max_output,
-            supports_structured_output=False,
+            supports_structured_output=supports_structured,
             supports_thinking=supports_thinking,
             thinking_budget=4096 if supports_thinking else 0,
-            supports_strict_schema=False,
+            supports_strict_schema=supports_strict,
             thinking_format=thinking_format,
         )
     except UnsupportedModelError:
