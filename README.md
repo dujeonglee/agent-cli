@@ -597,6 +597,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 - 미등록 모델은 런타임 자동 감지 → `~/.agent-cli/models.json`에 저장
   - OpenAI 호환: context window를 `/v1/models`의 `max_model_len`에서 읽고, 값이 없으면 컨텍스트 오버플로 프로브로 추정. 추가로 thinking 지원 여부를 프로브.
   - Thinking 감지: 프로브 프롬프트 → `message.thinking` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동)
+  - Structured-output 감지: `response_format={"type":"json_object"}` 프로브로 `supports_structured_output`, 이어서 strict `json_schema` 프로브로 `supports_strict_schema` 판정. 산문이 자연스러운 프롬프트로 요청해 반환값이 유효 JSON(스키마 준수)일 때만 지원으로 인정(서버가 `response_format`을 무시하는 경우 오탐 방지). 프로브 실패 시 보수적으로 미지원 처리.
   - 자동 산출 규칙: `max_output = context_window // 4`. context window가 16K(`MIN_CONTEXT_WINDOW`) 미만이면 `UnsupportedModelError`로 거부.
 - 런타임 감지도 실패하면 사용자에게 대화형으로 context window, thinking 지원 여부를 질문 → `~/.agent-cli/models.json`에 저장
 - 이미 등록된 모델은 덮어쓰지 않음 (사용자 설정 보호)
