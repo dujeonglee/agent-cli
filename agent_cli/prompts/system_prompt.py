@@ -67,22 +67,50 @@ TASK_GUIDELINES = """\
 # Lives on the wire-format plugin: ``ReActFormat.format_rules()``.
 # build_system_prompt() pulls it through ``wire_format.format_rules()``.
 
+
 # ── Inline guides for tools ──────────────────────
-_HASHLINE_INLINE = """\
+def _build_edit_file_inline(wire_format) -> str:
+    """Build the edit_file inline guide.
+
+    The op-semantics / hashline / constraints prose is wire-agnostic — every
+    plugin gets the SAME explanatory text at the SAME level of detail. Only
+    the two worked examples (single + batch) pass through
+    ``wire_format.render_action_input`` so each wire shows them in its own
+    shape (react/prefix_md render the JSON action_input verbatim; a future
+    plugin whose action_input is not a JSON dict transforms here — same hook
+    delegate/read_file already use). The wire-shape rules themselves live in
+    each plugin's ``format_rules()`` — this guide stays about edit_file's tool
+    semantics.
+    """
+    rai = wire_format.render_action_input
+    ex_single = rai(
+        '{"path": "app.py", "edits": '
+        '[{"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}]}'
+    )
+    ex_batch = rai(
+        '{"path": "app.py", "edits": ['
+        '{"op": "replace", "pos": "5#aa", "end": "7#bb", '
+        '"lines": ["int hp = 100;", "return hp;"]}, '
+        '{"op": "delete", "pos": "12#cc"}, '
+        '{"op": "append", "pos": "30#ee", "lines": ["// end"]}]}'
+    )
+
+    def _indent(s: str) -> str:
+        return "\n".join("      " + ln for ln in s.split("\n"))
+
+    return f"""
 
   Hashline editing guide:
   read_file returns lines tagged as LINE#HASH:content, e.g.:
     1#VR:def hello():
     2#KT:    return "world"
-    3#ZZ:
   Use edit_file with hashline refs copied EXACTLY from read_file output.
-  - replace single line:  {"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}
-  - replace range:        {"op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}
-  - delete line:          {"op": "delete", "pos": "2#KT"}
-  - delete range:         {"op": "delete", "pos": "1#VR", "end": "3#ZZ"}
-  - insert after:         {"op": "append", "pos": "1#VR", "lines": ["    # new comment"]}
-  - insert before:        {"op": "prepend", "pos": "1#VR", "lines": ["# header"]}
-  - append to EOF:        {"op": "append", "lines": ["# end of file"]}
+  Ops: replace (pos[..end] → lines) | append / prepend (insert at pos) |
+       delete (remove pos[..end] range, no lines).
+  - single edit:
+{_indent(ex_single)}
+  - batch in one call (edits apply to ORIGINAL state, no overlaps):
+{_indent(ex_batch)}
   Constraints:
   - Read the target lines in the CURRENT turn before edit_file. Hashes
     from earlier turns drift if anything else touched the file — do not
@@ -93,17 +121,11 @@ _HASHLINE_INLINE = """\
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
   - Use write_file only for creating new files, not for editing existing ones.
-
-  Multi-edit notes:
-  - Each edit in `edits` references the ORIGINAL file state — the array
-    is NOT a sequential "apply then re-read" pipeline.
-  - Edits that overlap (same region or ref string) are rejected —
-    combine them into a single `replace` op with the final intended
-    content.
-  - If a later edit depends on the RESULT of an earlier edit (e.g.,
-    modifying a line that an earlier edit just created), use separate
-    edit_file calls with read_file between them. Observation sync is
-    how you "see" the intermediate state."""
+  - Each edit references the ORIGINAL file state — the array is NOT a
+    sequential "apply then re-read" pipeline. Overlapping edits (same region
+    or ref) are rejected; combine them into one `replace`. If a later edit
+    depends on an earlier edit's RESULT, use separate edit_file calls with
+    read_file between them (observation sync shows the intermediate state)."""
 
 
 def _build_delegate_inline(wire_format) -> str:
@@ -407,7 +429,7 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
     """
     return {
         "read_file": _build_read_file_inline(active_tools, wire_format),
-        "edit_file": _HASHLINE_INLINE,
+        "edit_file": _build_edit_file_inline(wire_format),
         "delegate": _build_delegate_inline(wire_format),
         "ask": _ASK_INLINE,
         "code_index": _build_code_index_inline(wire_format),
