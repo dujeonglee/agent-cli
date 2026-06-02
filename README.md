@@ -145,7 +145,6 @@ agent-cli run "task" -m gpt-4o-mini
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
-| `AGENT_CLI_READ_FILE_LIMIT` | — | `read_file` full-read 거부 threshold (줄 수, 기본 300). ≤0 = 비활성 |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 3 = 최초 + 재시도 2회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. |
 | `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
 
@@ -663,7 +662,6 @@ stat 모드 (메타데이터 + 앞 20줄):
 - `line_start` / `line_end`: 1-based, inclusive. 둘 다 생략하면 full read.
 - `search`: 정규식 패턴. 매칭 줄 + 주변 `context` 줄을 반환 (기본 3).
 - `stat`: 파일 크기/총 줄 수 + 앞 20줄.
-- **Full-read 가드**: mode 없이 큰 파일을 읽으면 (`AGENT_CLI_READ_FILE_LIMIT` env, 기본 300줄) 거부 응답이 와서 `line_start=1, line_end=<total>` 같은 명시적 호출을 유도합니다. `search`/`stat`/`line_start`+`line_end` 사용 시 가드 무시.
 
 ### edit_file — Hashline 편집
 

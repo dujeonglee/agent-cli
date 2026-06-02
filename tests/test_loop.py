@@ -3259,12 +3259,10 @@ class TestNoOutputTruncation:
 
     def test_large_file_not_truncated(self, caps, tmp_path):
         """A large file requested via an explicit whole-file line range
-        is returned in full, not truncated. (A bare read_file(path)
-        would be refused by the full-read guard — that's covered in
-        TestReadFileFullReadGuard. Here we're verifying the separate
-        invariant that once the caller has consciously opted in via
-        line_start=1, line_end=<total>, nothing along the pipeline
-        truncates.)"""
+        is returned in full, not truncated. (Bare read_file(path) now
+        returns the full file too — the full-read guard was removed. This
+        test pins the separate invariant that an explicit whole-file line
+        range returns in full without truncation along the pipeline.)"""
         large_content = "\n".join(f"line {i}: {'x' * 100}" for i in range(500))
         test_file = tmp_path / "large.txt"
         test_file.write_text(large_content)

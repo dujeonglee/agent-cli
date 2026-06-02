@@ -81,25 +81,6 @@ def _verify_ref(lines: list[str], ref: str) -> int:
 
 _STAT_HEAD_LINES = 20  # lines shown alongside metadata in stat mode
 _DEFAULT_SEARCH_CONTEXT = 5  # lines before/after each match
-_DEFAULT_FULL_READ_LIMIT = 300  # line-count ceiling for bare full reads
-
-
-def _full_read_limit() -> int:
-    """Line-count ceiling above which a bare full read is refused.
-
-    Env var AGENT_CLI_READ_FILE_LIMIT overrides the default. Set to 0 or
-    a negative value to disable the guard entirely (any full read
-    allowed).
-    """
-    import os
-
-    raw = os.environ.get("AGENT_CLI_READ_FILE_LIMIT")
-    if raw is None:
-        return _DEFAULT_FULL_READ_LIMIT
-    try:
-        return int(raw)
-    except ValueError:
-        return _DEFAULT_FULL_READ_LIMIT
 
 
 def format_hashlines_range(all_lines: list[str], start_idx: int, end_idx: int) -> str:
@@ -154,47 +135,6 @@ def _stat(path: str, text: str, all_lines: list[str]) -> ToolResult:
     )
 
 
-def _refuse_large_full_read(
-    path: str, text: str, all_lines: list[str], limit: int
-) -> ToolResult:
-    """Return a stat-shaped refusal when a bare read_file(path) hits a
-    file larger than the configured limit.
-
-    The refusal lists only the parameters the LLM already knows about
-    (search / line_start+line_end). There is intentionally NO dedicated
-    escape hatch: if the caller genuinely needs the whole file, the
-    refusal spells out the exact `line_start=1, line_end=<total>` call
-    that delivers it. Reusing an already-public parameter for the
-    whole-file case keeps the API surface small, and typing the total
-    line count is itself a deliberate-enough act to qualify as a
-    conscious override. See `ARCHITECTURE.md` §6.5.0.
-    """
-    total = len(all_lines)
-    size_bytes = len(text.encode("utf-8"))
-    size_label = (
-        f"{size_bytes:,} bytes"
-        if size_bytes < 10_000
-        else f"{size_bytes / 1024:.1f} KB"
-    )
-
-    head_end = min(_STAT_HEAD_LINES, total)
-    head = format_hashlines_range(all_lines, 0, head_end)
-
-    hint = (
-        f"\n\n[refused: full read of {total}-line file exceeds limit "
-        f"({limit} lines). Pick one:\n"
-        f'  - read_file(path, search="<pattern>")            ← targeted lookup\n'
-        f"  - read_file(path, line_start=N, line_end=M)      ← specific region (prefer this)\n"
-        f"  - read_file(path, line_start=1, line_end={total})      "
-        f"← the whole file if you genuinely need it\n"
-        f"First {head_end} lines shown above for context.]"
-    )
-    return ToolResult(
-        True,
-        output=f"[refused-full-read] {path}: {total} lines, {size_label}\n{head}{hint}",
-    )
-
-
 def _search(path: str, all_lines: list[str], pattern: str, context: int) -> ToolResult:
     """Return matches for pattern with surrounding context."""
     try:
@@ -233,15 +173,7 @@ def tool_read_file(args: dict) -> ToolResult:
     - stat=True: metadata + first 20 lines + guidance (metadata query, NOT a read)
     - search="pattern", context=N: grep-style matches with surrounding lines
     - line_start/line_end: partial read (1-based inclusive)
-    - no mode: full file (refused for files larger than AGENT_CLI_READ_FILE_LIMIT
-      lines — default 300; the refusal tells the caller how to request the
-      whole file explicitly via line_start=1, line_end=<total>)
-
-    There is intentionally NO dedicated full-read parameter. Specifying
-    a range covering the whole file (`line_start=1, line_end=<total>`)
-    *is* the conscious-choice path. Keeping it to one mechanism avoids
-    advertising a shortcut the LLM would reach for reflexively — see
-    ARCHITECTURE.md §6.5.0 for the full design rationale.
+    - no mode: full file
     """
 
     path = args.get("path", "")
@@ -277,16 +209,7 @@ def tool_read_file(args: dict) -> ToolResult:
                 True, output=format_hashlines_range(all_lines, start, end)
             )
 
-        # Bare full read. Guard against silently dumping huge files
-        # into the context window — refuse large files. The refusal
-        # response spells out the `line_start=1, line_end=<total>`
-        # call that delivers the whole file, so the caller retains a
-        # path to full content but has to type the total line count
-        # to get there. Limit <= 0 disables the guard.
-        limit = _full_read_limit()
-        if limit > 0 and total > limit:
-            return _refuse_large_full_read(path, text, all_lines, limit)
-
+        # Bare full read — return the whole file.
         return ToolResult(True, output=format_hashlines(text))
     except Exception as e:
         return ToolResult(False, error=f"read_file failed: {e}")
