@@ -71,7 +71,9 @@ TOOL_SCHEMAS: dict[str, ToolSchema] = {
         name="edit_file",
         description=(
             "Edit a file using hashline refs from read_file. "
-            "Ops: replace, append, prepend. lines=[] to delete."
+            "Ops: replace, append, prepend, delete. "
+            "delete removes the pos..end range and takes no lines; "
+            "replace with lines=[] also deletes (legacy form)."
         ),
         parameters={
             "type": "object",

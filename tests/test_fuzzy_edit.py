@@ -577,3 +577,117 @@ class TestEditFileFieldTypeValidation:
         # And the expected shape, so a careful model can correct
         # without re-reading every time.
         assert "5#VR" in msg or "LINE#HASH" in msg or "hashline" in msg
+
+
+class TestDeleteOp:
+    """``op=delete`` removes the pos..end range. ``lines`` is not part of
+    delete's schema, so any value it carries is ignored; the result equals
+    the legacy ``replace`` + ``lines=[]`` form."""
+
+    def _write(self, tmp_path, lines):
+        path = tmp_path / "f.c"
+        path.write_text("\n".join(lines))
+        return path
+
+    def test_delete_single_line(self, tmp_path):
+        lines = ["a", "b", "c"]
+        path = self._write(tmp_path, lines)
+        h = compute_line_hash(2, lines[1])
+        result = tool_edit_file(
+            {"path": str(path), "edits": [{"op": "delete", "pos": f"2#{h}"}]}
+        )
+        assert result.success
+        assert path.read_text() == "a\nc"
+
+    def test_delete_range(self, tmp_path):
+        lines = ["a", "b", "c", "d"]
+        path = self._write(tmp_path, lines)
+        h2 = compute_line_hash(2, lines[1])
+        h3 = compute_line_hash(3, lines[2])
+        result = tool_edit_file(
+            {
+                "path": str(path),
+                "edits": [{"op": "delete", "pos": f"2#{h2}", "end": f"3#{h3}"}],
+            }
+        )
+        assert result.success
+        assert path.read_text() == "a\nd"
+
+    def test_delete_without_pos_errors(self, tmp_path):
+        path = self._write(tmp_path, ["a", "b"])
+        result = tool_edit_file({"path": str(path), "edits": [{"op": "delete"}]})
+        assert not result.success
+        assert "pos" in result.error
+
+    def test_delete_equals_legacy_replace_empty(self, tmp_path):
+        # delete and replace+lines=[] must produce identical output.
+        lines = ["a", "b", "c"]
+        h = compute_line_hash(2, lines[1])
+        p_del = tmp_path / "del.c"
+        p_del.write_text("\n".join(lines))
+        p_rep = tmp_path / "rep.c"
+        p_rep.write_text("\n".join(lines))
+        r_del = tool_edit_file(
+            {"path": str(p_del), "edits": [{"op": "delete", "pos": f"2#{h}"}]}
+        )
+        r_rep = tool_edit_file(
+            {
+                "path": str(p_rep),
+                "edits": [{"op": "replace", "pos": f"2#{h}", "lines": []}],
+            }
+        )
+        assert r_del.success and r_rep.success
+        assert p_del.read_text() == p_rep.read_text() == "a\nc"
+
+    def test_delete_ignores_lines(self, tmp_path):
+        # lines is not in delete's schema — supplying it must not insert text.
+        lines = ["a", "b", "c"]
+        path = self._write(tmp_path, lines)
+        h = compute_line_hash(2, lines[1])
+        result = tool_edit_file(
+            {
+                "path": str(path),
+                "edits": [{"op": "delete", "pos": f"2#{h}", "lines": ["IGNORED"]}],
+            }
+        )
+        assert result.success
+        assert path.read_text() == "a\nc"
+
+    def test_op_key_order_independent(self, tmp_path):
+        # op may appear after other params — looked up by key, not position.
+        lines = ["a", "b", "c"]
+        path = self._write(tmp_path, lines)
+        h = compute_line_hash(2, lines[1])
+        result = tool_edit_file(
+            {"path": str(path), "edits": [{"pos": f"2#{h}", "op": "delete"}]}
+        )
+        assert result.success
+        assert path.read_text() == "a\nc"
+
+    def test_unknown_op_error_lists_delete(self, tmp_path):
+        path = self._write(tmp_path, ["a", "b"])
+        h = compute_line_hash(1, "a")
+        result = tool_edit_file(
+            {"path": str(path), "edits": [{"op": "destroy", "pos": f"1#{h}"}]}
+        )
+        assert not result.success
+        assert "destroy" in result.error
+        assert "delete" in result.error
+
+    def test_delete_in_batch_with_replace(self, tmp_path):
+        # Non-overlapping batch: delete line 1 + replace line 3.
+        lines = ["a", "b", "c", "d"]
+        path = self._write(tmp_path, lines)
+        h1 = compute_line_hash(1, lines[0])
+        h3 = compute_line_hash(3, lines[2])
+        result = tool_edit_file(
+            {
+                "path": str(path),
+                "edits": [
+                    {"op": "delete", "pos": f"1#{h1}"},
+                    {"op": "replace", "pos": f"3#{h3}", "lines": ["C2"]},
+                ],
+            }
+        )
+        assert result.success
+        assert path.read_text() == "b\nC2\nd"

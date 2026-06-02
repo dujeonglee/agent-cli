@@ -444,3 +444,20 @@ class TestSystemUserPrefixes:
         assert "You have called" not in prefixes
         assert "You were asked to:" not in prefixes
         assert "⚡ User interrupted." not in prefixes
+
+
+class TestDeleteOpPreserved:
+    """edit_file ``op=delete`` is a plain JSON value: the wire format must
+    preserve it verbatim (op semantics belong to the tool, not the parser).
+    No ``lines`` key, since delete's schema has none."""
+
+    def test_parse_preserves_delete_op(self):
+        plugin = ReActFormat()
+        text = (
+            '{"thought": "del line 2", "action": "edit_file", "action_input": '
+            '{"path": "x.c", "edits": [{"op": "delete", "pos": "2#ab"}]}}'
+        )
+        out = plugin.parse(text)
+        assert out.action == "edit_file"
+        assert out.action_input["edits"][0] == {"op": "delete", "pos": "2#ab"}
+        assert "lines" not in out.action_input["edits"][0]

@@ -78,7 +78,8 @@ _HASHLINE_INLINE = """\
   Use edit_file with hashline refs copied EXACTLY from read_file output.
   - replace single line:  {"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}
   - replace range:        {"op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}
-  - delete lines:         {"op": "replace", "pos": "2#KT", "lines": []}
+  - delete line:          {"op": "delete", "pos": "2#KT"}
+  - delete range:         {"op": "delete", "pos": "1#VR", "end": "3#ZZ"}
   - insert after:         {"op": "append", "pos": "1#VR", "lines": ["    # new comment"]}
   - insert before:        {"op": "prepend", "pos": "1#VR", "lines": ["# header"]}
   - append to EOF:        {"op": "append", "lines": ["# end of file"]}

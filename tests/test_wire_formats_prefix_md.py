@@ -481,3 +481,18 @@ class TestRoundTrip:
         # render_full_example uses ensure_ascii=False in the base default
         # so non-ASCII stays literal rather than \uXXXX escaped.
         assert "\\u" not in json.dumps(record["action_input"], ensure_ascii=False)
+
+
+class TestDeleteOpPreserved:
+    """edit_file ``op=delete`` survives the prefix_md Input JSON round-trip
+    verbatim — op semantics belong to the tool, and delete carries no lines."""
+
+    def test_parse_preserves_delete_op(self):
+        text = (
+            "## Thought\ndel line 2\n\n## Action\nedit_file\n\n## Input\n"
+            '{"path": "x.c", "edits": [{"op": "delete", "pos": "2#ab"}]}'
+        )
+        result = parse_prefix_md(text)
+        assert result.action == "edit_file"
+        assert result.action_input["edits"][0] == {"op": "delete", "pos": "2#ab"}
+        assert "lines" not in result.action_input["edits"][0]

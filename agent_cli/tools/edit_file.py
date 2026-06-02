@@ -210,9 +210,10 @@ def tool_edit_file(args: dict) -> ToolResult:
         op = edit.get("op", "")
         pos = edit.get("pos")
         end = edit.get("end")
-        if op not in ("replace", "append", "prepend"):
+        if op not in ("replace", "append", "prepend", "delete"):
             return ToolResult(
-                False, error=f"Unknown edit op: '{op}'. Use replace|append|prepend."
+                False,
+                error=f"Unknown edit op: '{op}'. Use replace|append|prepend|delete.",
             )
         try:
             if pos:
@@ -257,15 +258,19 @@ def tool_edit_file(args: dict) -> ToolResult:
             if new_lines is None:
                 new_lines = []
 
-            if op == "replace":
+            if op in ("replace", "delete"):
                 if not pos:
-                    return ToolResult(False, error="replace requires 'pos'.")
+                    return ToolResult(False, error=f"{op} requires 'pos'.")
+                # delete = replace the pos..end range with nothing. ``lines``
+                # is not part of delete's schema, so any value it carries is
+                # ignored (replace+lines=[] remains the legacy delete form).
+                repl = [] if op == "delete" else new_lines
                 start_idx, _ = fuzzy_verify_ref(file_lines, pos)
                 if end:
                     end_idx, _ = fuzzy_verify_ref(file_lines, end)
-                    file_lines[start_idx : end_idx + 1] = new_lines
+                    file_lines[start_idx : end_idx + 1] = repl
                 else:
-                    file_lines[start_idx : start_idx + 1] = new_lines
+                    file_lines[start_idx : start_idx + 1] = repl
 
             elif op == "append":
                 if pos:
