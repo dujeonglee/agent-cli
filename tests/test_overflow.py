@@ -65,6 +65,41 @@ class TestParseOverflowAmounts:
         # actual=10000, limit=8192 — order is reversed vs omlx/anthropic
         assert parse_overflow_amounts(msg) == (10000, 8192)
 
+    def test_vllm_contains_at_least(self):
+        # vLLM phrasing the original single-regex pattern missed entirely
+        # (the actual lead-in differs, which previously dropped the limit too).
+        msg = (
+            "This model's maximum context length is 8192 tokens. However, "
+            "your prompt contains at least 10000 input tokens."
+        )
+        assert parse_overflow_amounts(msg) == (10000, 8192)
+
+    def test_openai_classic_requested(self):
+        msg = (
+            "This model's maximum context length is 4097 tokens. However, you "
+            "requested 4500 tokens (3500 in the messages, 1000 in the completion)."
+        )
+        assert parse_overflow_amounts(msg) == (4500, 4097)
+
+    def test_limit_recovered_when_actual_phrasing_unknown(self):
+        # Independent extraction: an unrecognised actual lead-in must not
+        # cost us the limit (the probe needs only the limit; recovery treats
+        # actual as best-effort).
+        msg = (
+            "This model's maximum context length is 8192 tokens. However, the "
+            "input was far too large to process."
+        )
+        assert parse_overflow_amounts(msg) == (None, 8192)
+
+    def test_openai_multiline_message(self):
+        # limit and actual on separate lines still parse (independent search).
+        msg = (
+            "This model's maximum context length is 32768 tokens.\n"
+            "However, your messages resulted in 40000 tokens.\n"
+            "Please reduce the length."
+        )
+        assert parse_overflow_amounts(msg) == (40000, 32768)
+
     def test_overflow_without_numbers_returns_none(self):
         # Classified as overflow, but no amounts to extract.
         assert parse_overflow_amounts("context length exceeded") == (None, None)
