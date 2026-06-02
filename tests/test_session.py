@@ -37,6 +37,13 @@ class TestCreateSession:
         meta = create_session("/tmp/ws")
         assert not hasattr(meta, "workspace_hash") or meta.workspace_hash == ""
 
+    def test_default_response_format_is_react(self):
+        assert create_session().response_format == "react"
+
+    def test_response_format_stored(self):
+        meta = create_session("/tmp/ws", response_format="prefix_md")
+        assert meta.response_format == "prefix_md"
+
 
 class TestLoadSession:
     def test_load_existing(self, tmp_path):
@@ -48,6 +55,37 @@ class TestLoadSession:
 
     def test_load_nonexistent(self, tmp_path):
         assert load_session("999999999") is None
+
+    def test_response_format_round_trips(self, tmp_path):
+        meta = create_session("/tmp/ws", response_format="prefix_md")
+        save_meta(meta)
+        loaded = load_session(meta.session_id)
+        assert loaded is not None
+        assert loaded.response_format == "prefix_md"
+
+    def test_legacy_session_defaults_to_react(self, tmp_path):
+        """A session.jsonl written before the response_format field
+        existed (no such key in _meta) loads with the default 'react'."""
+        sid = "1700000000"
+        d = session_mod._SESSIONS_BASE / "sessions" / sid
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "session.jsonl").write_text(
+            json.dumps(
+                {
+                    "_meta": {
+                        "session_id": sid,
+                        "workspace": "/tmp",
+                        "updated_at": "2026-01-01 00:00:00",
+                        "query": "",
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        loaded = load_session(sid)
+        assert loaded is not None
+        assert loaded.response_format == "react"
 
 
 class TestRecentExchanges:

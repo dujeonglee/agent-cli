@@ -5,7 +5,7 @@ Conversation history is managed by ContextManager (history.jsonl).
 
 File layout:
   {project}/.agent-cli/sessions/{session_id}/
-    session.jsonl          # single-line metadata (id, workspace, updated_at, query)
+    session.jsonl          # single-line metadata (id, workspace, updated_at, query, response_format)
     history.jsonl          # conversation history (managed by ContextManager)
     skill_*/delegate_*/    # skill/delegate subdirectories
 """
@@ -29,6 +29,10 @@ class SessionMeta:
     workspace: str
     updated_at: str
     query: str = ""
+    # Wire format the session runs under. Recorded so a session's response
+    # shape is recoverable for debugging / resume. Defaults to "react" for
+    # backward compat with sessions written before this field existed.
+    response_format: str = "react"
 
 
 def get_session_dir(meta: SessionMeta) -> Path:
@@ -38,13 +42,16 @@ def get_session_dir(meta: SessionMeta) -> Path:
     return d
 
 
-def create_session(workspace: str | None = None) -> SessionMeta:
+def create_session(
+    workspace: str | None = None, response_format: str = "react"
+) -> SessionMeta:
     """Create a new session for the given workspace (defaults to CWD)."""
     ws = workspace or os.getcwd()
     return SessionMeta(
         session_id=str(int(time.time())),
         workspace=ws,
         updated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        response_format=response_format,
     )
 
 
@@ -61,6 +68,7 @@ def save_meta(meta: SessionMeta) -> None:
                 "workspace": meta.workspace,
                 "updated_at": meta.updated_at,
                 "query": meta.query,
+                "response_format": meta.response_format,
             }
         },
         ensure_ascii=False,

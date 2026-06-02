@@ -935,7 +935,7 @@ def run(
 
     from agent_cli.context.session import create_session, save_meta
 
-    session = create_session()
+    session = create_session(response_format=response_format)
     session.query = query[:100]
     save_meta(session)
     ctx = ContextManager(
@@ -1226,7 +1226,7 @@ def chat(
             return
         console.print(f"[{C['accent']}]Resuming session {resume}[/]")
     else:
-        session = create_session()
+        session = create_session(response_format=response_format)
     save_meta(session)
 
     # Auto-compute token budget from model capabilities if not specified
@@ -1556,7 +1556,7 @@ def web(
         session = load_session(resume)
         console.print(f"[{C['accent']}]Resuming session {resume}[/]")
     else:
-        session = create_session()
+        session = create_session(response_format=response_format)
     save_meta(session)
     if max_context_tokens <= 0:
         max_context_tokens = (capabilities.context_window * 7) // 10
