@@ -26,7 +26,12 @@ own line, and the only JSON island is the input dict.
 Parser policy (parse_prefix_md):
   - LAST ``## Action`` wins. Earlier ``## Action`` occurrences inside
     reasoning sub-headings are absorbed into the preceding body.
-  - FIRST ``## Thought`` wins so opening reasoning is captured.
+  - Thought is OPTIONAL (``thought_required = False``): with a
+    ``## Thought`` heading, FIRST ``## Thought`` to LAST ``## Action`` is
+    the thought; WITHOUT the heading, the free-text prose before
+    ``## Action`` is taken as the thought (the model often reasons in
+    plain prose, e.g. "I see the problem... Let me fix it."). A missing
+    thought is allowed — no NO_THOUGHT retry.
   - LAST ``## Input`` after the last ``## Action`` provides the JSON.
   - Action body must match ``^[\\w.-]+$`` (single token, first non-empty
     line). Drift to natural-language text in the Action body produces
@@ -258,7 +263,12 @@ def parse_prefix_md(text: str) -> ParsedAction:
             else ""
         )
     else:
-        thought_text = ""
+        # No ``## Thought`` heading — the model often reasons in plain
+        # prose before ``## Action`` (e.g. "I see the problem... Let me
+        # fix it."). Treat that free text as the thought so it counts as
+        # reasoning rather than being dropped. thought_required=False also
+        # allows the empty case (action straight away).
+        thought_text = text[: last_action.start()].strip()
 
     # Action body + Input section: ``## Input`` headers occurring AFTER
     # the last ``## Action``. The last such Input wins; earlier ones
@@ -340,7 +350,10 @@ class PrefixMdFormat(WireFormat):
     """
 
     name = "prefix_md"
-    thought_required = True
+    # thought is optional: a missing ``## Thought`` is allowed (no
+    # NO_THOUGHT retry), and prose reasoning before ``## Action`` is
+    # picked up as the thought by the parser.
+    thought_required = False
 
     # ─── Prompt ────────────────────────────────────────────────
 

@@ -195,14 +195,15 @@ class TestParseStrictSentinels:
         assert result.action == "shell"
 
     def test_different_heading_level_not_a_sentinel(self):
-        # ``# Thought`` (H1) and ``### Thought`` (H3) are not sentinels.
+        # ``# Thought`` (H1) is not a ``## `` sentinel, so it isn't parsed
+        # as the Thought header. With prose-as-thought, the H1 line counts
+        # as free-text reasoning before ## Action instead.
         text = (
             "# Thought\nthis is an H1, ignored\n\n## Action\nread_file\n\n## Input\n{}"
         )
         result = parse_prefix_md(text)
-        # Thought header absent (only H1 present), so thought is empty.
         assert result.parse_stage == 1
-        assert result.thought is None
+        assert result.thought == "# Thought\nthis is an H1, ignored"
         assert result.action == "read_file"
 
 
@@ -496,3 +497,39 @@ class TestDeleteOpPreserved:
         assert result.action == "edit_file"
         assert result.action_input["edits"][0] == {"op": "delete", "pos": "2#ab"}
         assert "lines" not in result.action_input["edits"][0]
+
+
+class TestThoughtOptional:
+    """thought is optional: a missing ## Thought is allowed (no NO_THOUGHT
+    retry), and free-text reasoning before ## Action is treated as the
+    thought rather than dropped."""
+
+    def test_thought_not_required(self):
+        from agent_cli.wire_formats.prefix_md import PrefixMdFormat
+
+        assert PrefixMdFormat().thought_required is False
+
+    def test_prose_before_action_is_thought(self):
+        # The DOOM pattern: model reasons in prose without ## Thought.
+        text = (
+            "I see the problem - an extra brace on line 131. Let me fix it.\n\n"
+            "## Action\nedit_file\n\n## Input\n"
+            '{"path": "x.c", "edits": [{"op": "delete", "pos": "131#ab"}]}'
+        )
+        out = parse_prefix_md(text)
+        assert out.parse_stage == 1
+        assert out.action == "edit_file"
+        assert out.thought is not None and "I see the problem" in out.thought
+
+    def test_explicit_thought_header_still_wins(self):
+        text = "## Thought\nreal thought\n\n## Action\nread_file\n\n## Input\n{}"
+        out = parse_prefix_md(text)
+        assert out.thought == "real thought"
+        assert out.action == "read_file"
+
+    def test_action_only_empty_thought_ok(self):
+        # No prose, no ## Thought — empty thought is allowed, not a failure.
+        out = parse_prefix_md("## Action\nread_file\n\n## Input\n{}")
+        assert out.action == "read_file"
+        assert out.parse_stage == 1
+        assert out.thought is None
