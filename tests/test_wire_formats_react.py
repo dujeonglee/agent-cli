@@ -236,10 +236,17 @@ class TestLifecycleDefaults:
         # it via the recovery path; the normalizer must not eat it).
         assert ReActFormat().normalize_assistant_for_messages("garbage") == "garbage"
 
-    def test_provider_call_kwargs_is_empty_dict(self):
-        # No JSON-mode disable, no other quirks. Capability-driven
-        # format=json stays active when the model claims support.
-        assert ReActFormat().provider_call_kwargs() == {}
+    def test_provider_call_kwargs_json_mode_follows_capability(self):
+        # JSON-shaped wire: request the provider's JSON mode iff the model
+        # supports structured output (the wire ⨯ capability decision).
+        class _CapsYes:
+            supports_structured_output = True
+
+        class _CapsNo:
+            supports_structured_output = False
+
+        assert ReActFormat().provider_call_kwargs(_CapsYes()) == {"json_mode": True}
+        assert ReActFormat().provider_call_kwargs(_CapsNo()) == {"json_mode": False}
 
 
 class TestSerializeAssistantForHistory:

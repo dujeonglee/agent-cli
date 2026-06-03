@@ -342,11 +342,15 @@ class TestFormatNoThoughtRetry:
 
 
 class TestProviderCallKwargs:
-    def test_skip_json_format_enabled(self):
-        # Markdown opening ``## `` conflicts with an OpenAI-compatible
-        # JSON mode which forces a ``{`` first token.
-        kwargs = PrefixMdFormat().provider_call_kwargs()
-        assert kwargs == {"skip_json_format": True}
+    def test_json_mode_always_disabled(self):
+        # Markdown opening ``## `` conflicts with an OpenAI-compatible JSON
+        # mode (forces ``{`` first token), so json_mode is False regardless
+        # of the model's structured-output capability.
+        class _CapsYes:
+            supports_structured_output = True
+
+        kwargs = PrefixMdFormat().provider_call_kwargs(_CapsYes())
+        assert kwargs == {"json_mode": False}
 
 
 # ── Lifecycle defaults (inherited from WireFormat ABC) ────

@@ -2708,7 +2708,7 @@ class TestProviderCallKwargs:
         monkeypatch.setattr(
             plugin,
             "provider_call_kwargs",
-            lambda: {"skip_json_format": True},
+            lambda capabilities: {"json_mode": False},
         )
 
         provider = _make_provider(_complete("done"))
@@ -2720,7 +2720,7 @@ class TestProviderCallKwargs:
             wire_format=plugin,
         )
         call_kwargs = provider.call.call_args_list[0].kwargs
-        assert call_kwargs.get("skip_json_format") is True
+        assert call_kwargs.get("json_mode") is False
 
 
 class TestProviderPrefill:

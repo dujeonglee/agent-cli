@@ -442,9 +442,11 @@ class PrefixMdFormat(WireFormat):
 
     # ─── Provider / lifecycle (override) ───────────────────────
 
-    def provider_call_kwargs(self) -> dict:
+    def provider_call_kwargs(self, capabilities) -> dict:
         # An OpenAI-compatible JSON mode forces the first generated token
-        # to be ``{``. PREFIX-MD opens with ``## `` so the modes
-        # conflict — request the provider hint to skip JSON mode for
-        # this plugin. Other providers ignore the unknown kwarg.
-        return {"skip_json_format": True}
+        # to be ``{``. PREFIX-MD opens with ``## `` so the modes conflict —
+        # never request JSON mode, regardless of the model's structured-
+        # output capability (forcing it makes omlx/mlx degenerate). The
+        # ``capabilities`` arg is accepted for the uniform signature but
+        # this plugin's answer is unconditional.
+        return {"json_mode": False}

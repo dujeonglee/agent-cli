@@ -166,6 +166,7 @@ class TestOpenAIProvider:
             system="sys",
             model="gpt-4o",
             capabilities=caps_structured,
+            json_mode=True,  # wire plugin decided JSON mode from capabilities
         )
 
         assert isinstance(result, LLMResponse)
@@ -195,12 +196,13 @@ class TestOpenAIProvider:
         assert result.content == "plain text"
 
     @patch("agent_cli.providers.openai.requests.post")
-    def test_skip_json_format_omits_response_format(self, mock_post, caps_structured):
-        """A wire plugin whose shape is not a JSON object (prefix_md's
-        markdown sections) sets ``skip_json_format``; the provider must NOT
-        force the server's JSON-object mode even when the model *supports*
-        structured output. Forcing JSON against a markdown-shaped prompt
-        makes omlx/mlx degenerate (the ``[2025]`` / ``[1000, 1000]`` bug)."""
+    def test_no_json_mode_omits_response_format(self, mock_post, caps_structured):
+        """When the wire plugin decides ``json_mode=False`` (prefix_md's
+        markdown shape), the provider must NOT force the server's JSON-object
+        mode even though the model *supports* structured output — the
+        provider honors the wire's decision and never re-derives it from
+        capabilities. Forcing JSON against a markdown prompt makes omlx/mlx
+        degenerate (the ``[2025]`` / ``[1000, 1000]`` bug)."""
         mock_post.return_value = _mock_response(
             {
                 "choices": [
@@ -218,7 +220,7 @@ class TestOpenAIProvider:
             system="sys",
             model="local-model",
             capabilities=caps_structured,  # supports_structured_output=True
-            skip_json_format=True,
+            json_mode=False,  # wire (markdown shape) said no JSON mode
         )
 
         body = mock_post.call_args.kwargs["json"]

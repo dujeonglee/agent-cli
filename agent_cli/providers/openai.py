@@ -45,15 +45,14 @@ class OpenAIProvider:
             "messages": msgs,
         }
 
-        # ``skip_json_format`` (set by wire plugins whose shape is NOT a JSON
-        # object — e.g. prefix_md's ``## Thought / ## Action / ## Input``
-        # markdown) must NOT get the server's JSON-object mode. Forcing JSON
-        # mode against a markdown-shaped prompt makes the model degenerate
-        # (omlx/mlx returns junk like ``[2025]`` / ``[1000, 1000]``). Honor
-        # the wire plugin's request to skip it.
-        if capabilities.supports_structured_output and not kwargs.get(
-            "skip_json_format"
-        ):
+        # JSON-object mode is requested by the wire plugin via ``json_mode``
+        # (computed in ``WireFormat.provider_call_kwargs`` from the model's
+        # capabilities — the single wire ⨯ capability decision point). The
+        # provider does NOT inspect ``capabilities`` for this; it just
+        # honors the wire's decision. Forcing JSON on a non-JSON wire
+        # (prefix_md's markdown) makes the model degenerate (the ``[2025]``
+        # / ``[1000, 1000]`` bug).
+        if kwargs.get("json_mode"):
             body["response_format"] = {"type": "json_object"}
 
         # Thinking/reasoning effort for reasoning models (o1, o3, etc.)

@@ -582,12 +582,12 @@ class AgentLoop:
             render_spinner_start(f"skill:{self.skill_name}")
         else:
             render_spinner_start()
-        # Plugin-defined provider hints (e.g. envelope formats need
-        # ``skip_json_format=True`` so the provider's JSON mode doesn't
-        # force ``{`` as the first token, which would conflict with the
-        # ``<tool_use>`` envelope opening). ReAct returns ``{}`` so the call path is
-        # byte-equivalent for the default plugin.
-        extra_call_kwargs = self.wire_format.provider_call_kwargs()
+        # Plugin-defined provider hints. The wire plugin decides them from
+        # the model's capabilities — e.g. ``json_mode``: ReAct requests it
+        # iff the model supports structured output, prefix_md never does
+        # (markdown shape). This is the single wire ⨯ capability decision
+        # point, so the provider never combines the two itself.
+        extra_call_kwargs = self.wire_format.provider_call_kwargs(self.capabilities)
 
         # Plugin-defined prefill: a string the provider sees as the start
         # of an assistant turn. Forces the model to continue from there,

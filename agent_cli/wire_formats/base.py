@@ -310,18 +310,24 @@ class WireFormat(ABC):
         """
         return raw
 
-    def provider_call_kwargs(self) -> dict:
-        """Extra kwargs to pass to ``provider.call()`` for this plugin.
+    def provider_call_kwargs(self, capabilities) -> dict:
+        """Extra kwargs for ``provider.call()``, decided from model
+        ``capabilities`` — the single place where wire-shape ⨯ capability
+        is combined (so the provider layer never has to).
 
-        Default empty dict — JSON-shaped formats keep capability-driven
-        ``format=json`` mode active. Non-JSON formats (e.g. tag-wrapped)
-        override with hints like ``{"skip_json_format": True}``.
+        Default — JSON-shaped formats (ReAct, envelope) request the
+        provider's JSON-object mode iff the model supports structured
+        output: ``{"json_mode": capabilities.supports_structured_output}``.
+        prefix_md's markdown overrides to ``{"json_mode": False}``
+        regardless of capability — forcing JSON mode on a markdown-shaped
+        prompt makes the model degenerate (the ``[2025]`` / ``[1000,1000]``
+        bug).
 
-        Keeping these as opaque dict kwargs lets plugins hook into
-        provider features without the provider layer learning per-plugin
-        details — providers ignore unknown kwargs by contract.
+        Providers treat ``json_mode`` opaquely (openai → response_format;
+        anthropic ignores it) and never inspect ``capabilities`` for this
+        decision themselves.
         """
-        return {}
+        return {"json_mode": capabilities.supports_structured_output}
 
     def prefill(self) -> str:
         """Return assistant-turn prefill string, or empty for no prefill.
