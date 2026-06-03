@@ -167,6 +167,29 @@ main#messages {
   margin: 0;
   color: #4b5563;
 }
+/* A rejected emission finalized in place (parse/validate failure). Solid
+   red border distinguishes it from the dashed in-progress stream, and the
+   reason badge names why it was rejected. */
+.card-failed {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  padding: 12px;
+  border-radius: 8px;
+}
+.card-failed .streaming {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0;
+  color: #7f1d1d;
+}
+.card-failed .fail-reason {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b91c1c;
+}
 
 /* Inline code + code blocks inside markdown-ish text */
 .card pre.code {

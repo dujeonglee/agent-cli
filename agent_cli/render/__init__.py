@@ -109,6 +109,16 @@ def render_status(state: str, message: str, turn: int = 0) -> None:
     _renderer.status(state, message, turn)
 
 
+def render_recovery(
+    raw_emission: str, intervention_message: str, reason: str, turn: int
+) -> None:
+    """A parse/validate failure: the model's emission was rejected and the
+    loop is feeding ``intervention_message`` back before retrying. Each
+    renderer decides how to delimit the failed emission, the intervention,
+    and the retry (web finalizes the stream card; CLI marks + shows them)."""
+    _renderer.recovery(raw_emission, intervention_message, reason, turn)
+
+
 def render_token_usage(stats: dict, turn: int, verbose: bool = False) -> None:
     _renderer.token_usage(stats, turn, verbose)
 

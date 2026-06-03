@@ -82,6 +82,34 @@ class TestEventDistribution:
         assert r.persistent_count == 0
 
 
+class TestRecovery:
+    """recovery() finalizes the rejected emission as its own card, then
+    shows the intervention — so the failed response, the intervention, and
+    the retry are three distinct cards (not one growing stream blob)."""
+
+    def test_recovery_emits_failed_turn_then_observation(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        r.recovery("{bad", "Observation: add an action", "no action", turn=2)
+
+        # 1. failed_turn closes the streaming card (carries raw + reason
+        #    for replay where no live stream card exists).
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "failed_turn"
+        assert data["reason"] == "no action"
+        assert data["raw"] == "{bad"
+        assert data["turn"] == 2
+        # 2. the intervention fed back, as its own observation card.
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "observation"
+        assert data["content"] == "Observation: add an action"
+        assert data["success"] is False
+        # Both persistent so a reconnecting client replays them.
+        assert r.persistent_count == 2
+
+
 # ── Connection lifecycle ───────────────────────────
 
 

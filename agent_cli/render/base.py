@@ -270,6 +270,28 @@ class Renderer(ABC):
     def error(self, content: str, turn: int) -> None:
         """Error message."""
 
+    def recovery(
+        self,
+        raw_emission: str,
+        intervention_message: str,
+        reason: str,
+        turn: int,
+    ) -> None:
+        """Recovery lifecycle: the model's emission failed to parse or
+        validate, so the loop feeds an ``intervention`` back and retries.
+
+        Default — mark the format error and surface the intervention (what
+        was fed back to the model) as its own observation, so the failed
+        emission, the intervention, and the retry each read as distinct
+        steps rather than one growing blob. The web renderer overrides this
+        to first *finalize* the live streaming card as a failed emission
+        (otherwise the next turn's stream appends to the same card).
+        ``raw_emission`` is the rejected text — already shown via
+        :meth:`raw` in verbose CLI; web uses it to close the stream card.
+        """
+        self.status("error", f"format error ({reason}) — retrying", turn)
+        self.observation(intervention_message, turn, None, success=False)
+
     @abstractmethod
     def raw(self, text: str, turn: int, verbose: bool) -> None:
         """Raw LLM response (verbose mode)."""

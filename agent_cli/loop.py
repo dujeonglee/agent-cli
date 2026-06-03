@@ -51,6 +51,7 @@ from agent_cli.render import (
     render_header,
     render_turn_sep,
     render_raw,
+    render_recovery,
     render_thinking,
     render_spinner_start,
     render_spinner_stop,
@@ -758,17 +759,13 @@ class AgentLoop:
             _debug_log(
                 f"NO_THOUGHT: action={parsed.action!r}, thought={parsed.thought!r}"
             )
-            render_status(
-                "error",
-                "Response missing thought. Retrying...",
-                self.turn,
-            )
             # ReAct-only: format_no_thought_retry lives on the plugin,
             # not in recovery/builders, because it has no meaning when
             # ``thought_required`` is False (envelope plugins).
             intervention = self.wire_format.format_no_thought_retry(
                 prior_content=llm_text
             )
+            render_recovery(llm_text, intervention.message, "no thought", self.turn)
             _append_observation(
                 self.messages,
                 self.ctx,
@@ -1041,10 +1038,10 @@ class AgentLoop:
                     )
                 # Level 1 or 2: inject Intervention, skip dispatch,
                 # let the next turn try again with the new context.
-                render_status(
-                    "error",
-                    f"Action loop detected ({tool_name}, level {loop_level}). "
-                    "Nudging model.",
+                render_recovery(
+                    llm_text,
+                    intervention.message,
+                    f"action loop ({tool_name}, level {loop_level})",
                     self.turn,
                 )
                 _append_observation(
@@ -1081,12 +1078,8 @@ class AgentLoop:
                 outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
                 avail = ", ".join(self.tools_list)
                 err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
-                render_step(
-                    "observation",
-                    err_msg,
-                    self.turn,
-                    tool_name=tool_name,
-                    success=False,
+                render_recovery(
+                    llm_text, f"Observation: {err_msg}", "unknown tool", self.turn
                 )
                 _append_observation(
                     self.messages,
@@ -1109,12 +1102,8 @@ class AgentLoop:
             if mismatched:
                 outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
                 err_msg = f"{schema_err} Fix action_input and retry."
-                render_step(
-                    "observation",
-                    err_msg,
-                    self.turn,
-                    tool_name=tool_name,
-                    success=False,
+                render_recovery(
+                    llm_text, f"Observation: {err_msg}", "schema mismatch", self.turn
                 )
                 _append_observation(
                     self.messages,
@@ -1182,25 +1171,18 @@ class AgentLoop:
             _debug_log(
                 f"No action in parsed JSON (stage={parsed.parse_stage}):\n{llm_text}"
             )
-            render_status(
-                "error",
-                "Response has no action. Retrying...",
-                self.turn,
-            )
             intervention = format_no_action_retry(
                 prior_content=llm_text, wire_format=self.wire_format
             )
+            recovery_reason = "no action"
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
-            render_status(
-                "error",
-                "Invalid JSON response. Retrying...",
-                self.turn,
-            )
             intervention = format_no_json_retry(
                 prior_content=llm_text, wire_format=self.wire_format
             )
+            recovery_reason = "invalid JSON"
+        render_recovery(llm_text, intervention.message, recovery_reason, self.turn)
         _append_observation(
             self.messages,
             self.ctx,

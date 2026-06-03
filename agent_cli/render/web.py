@@ -498,6 +498,25 @@ class WebRenderer(Renderer):
     def error(self, content: str, turn: int) -> None:
         self._emit("error", {"turn": turn, "content": content}, persistent=True)
 
+    def recovery(
+        self,
+        raw_emission: str,
+        intervention_message: str,
+        reason: str,
+        turn: int,
+    ) -> None:
+        # Finalize the live streaming card as a failed emission so the next
+        # turn's stream starts a fresh card instead of appending to the
+        # rejected one. ``raw`` is carried for replay (event_buffer), where
+        # no live streaming card exists to close.
+        self._emit(
+            "failed_turn",
+            {"turn": turn, "reason": reason, "raw": raw_emission},
+            persistent=True,
+        )
+        # The intervention we fed back to the model — its own card.
+        self.observation(intervention_message, turn, None, success=False)
+
     def raw(self, text: str, turn: int, verbose: bool) -> None:
         # verbose-only — transient debug stream.
         if verbose:

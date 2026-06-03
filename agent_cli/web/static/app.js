@@ -697,6 +697,39 @@
       streamingText = "";
     }
   }
+  // Finalize the live streaming card in place as a *failed* emission and
+  // reset the streaming slot. Unlike clearStreamingCard (which removes the
+  // card for the structured assistant_turn to replace), this keeps the
+  // rejected raw text visible and closes the card so the next turn's
+  // stream opens a fresh one — instead of appending to the failed card.
+  function finalizeStreamingAsFailed(taskId, reason, raw) {
+    function mark(card) {
+      card.classList.remove("card-streaming");
+      card.classList.add("card-failed");
+      if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
+    }
+    if (taskId && taskGroups[taskId]) {
+      const g = taskGroups[taskId];
+      if (g.streamingCard) {
+        mark(g.streamingCard);
+        g.streamingCard = null;
+        g.streamingText = "";
+      }
+      return;
+    }
+    if (streamingCard) {
+      mark(streamingCard);
+      streamingCard = null;
+      streamingText = "";
+    } else if (raw) {
+      // Replay (event_buffer): no live stream card to close — render the
+      // rejected emission as a standalone failed card.
+      const card = el("div", ["card", "card-failed"]);
+      card.appendChild(el("pre", ["streaming"], raw));
+      if (reason) card.appendChild(el("div", ["fail-reason"], "⚠ " + reason));
+      $messages.appendChild(card);
+    }
+  }
 
   // ── FIFO prune ─────────────────────────────
   function pruneOldest(drop) {
@@ -1000,6 +1033,11 @@
     const d = JSON.parse(e.data);
     clearStreamingCard(d.task_id);
     renderAssistantTurn(d);
+  });
+
+  es.addEventListener("failed_turn", function (e) {
+    const d = JSON.parse(e.data);
+    finalizeStreamingAsFailed(d.task_id, d.reason, d.raw);
   });
 
   es.addEventListener("observation", function (e) {
