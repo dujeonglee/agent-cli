@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 # ── Configuration ──────────────────────────────
@@ -228,3 +229,30 @@ def tool_fetch(args: dict) -> ToolResult:
 
     header = f"[Fetched {len(pages)} page(s), {len(full_content)} chars from {url}]\n\n"
     return ToolResult(True, output=header + full_content)
+
+
+class FetchTool(Tool):
+    name = "fetch"
+    description = (
+        "Fetch a web page and return its content as markdown. "
+        "Supports recursive fetching of same-domain links via fetch_depth parameter. "
+        "Full content returned inline; long pages are subject to the loop's "
+        "FIFO context-budget eviction like any other observation."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "fetch_url": {
+                "type": "string",
+                "description": "URL to fetch",
+            },
+            "fetch_depth": {
+                "type": "integer",
+                "description": "Recursive depth: 0 = current page only (default), 1+ = follow same-domain links",
+            },
+        },
+        "required": ["fetch_url"],
+    }
+
+    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+        return tool_fetch(args)

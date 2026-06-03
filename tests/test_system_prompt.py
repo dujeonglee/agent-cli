@@ -536,7 +536,7 @@ class TestBuildSystemPrompt:
         flow_start = prompt.index(
             "Flow: for an unknown file, if its extension is supported by"
         )
-        flow_end = prompt.index("instructions; follow them.", flow_start)
+        flow_end = prompt.index("seen the first 20 lines.", flow_start)
         flow_text = prompt[flow_start:flow_end]
         for ext in get_supported_extensions():
             assert ext in flow_text, f"{ext} missing from read_file Flow steering"

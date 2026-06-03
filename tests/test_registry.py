@@ -9,12 +9,14 @@ from agent_cli.tools.registry import (
 
 class TestValidateToolInput:
     def test_valid_read_file(self):
-        ok, err, _ = validate_tool_input("read_file", {"path": "/tmp/test.py"})
+        ok, err, _ = validate_tool_input(
+            "read_file", {"read_file_path": "/tmp/test.py"}
+        )
         assert ok is True
         assert err is None
 
     def test_valid_shell(self):
-        ok, err, _ = validate_tool_input("shell", {"command": "ls -la"})
+        ok, err, _ = validate_tool_input("shell", {"shell_command": "ls -la"})
         assert ok is True
 
     def test_missing_required(self):
@@ -37,20 +39,20 @@ class TestValidateToolInput:
         ok, err, converted = validate_tool_input("read_file", "/tmp/test.py")
         assert ok is True
         assert isinstance(converted, dict)
-        assert converted["path"] == "/tmp/test.py"
+        assert converted["read_file_path"] == "/tmp/test.py"
 
     def test_string_json_auto_convert(self):
         ok, err, converted = validate_tool_input(
-            "read_file", '{"path": "/tmp/test.py"}'
+            "read_file", '{"read_file_path": "/tmp/test.py"}'
         )
         assert ok is True
-        assert converted["path"] == "/tmp/test.py"
+        assert converted["read_file_path"] == "/tmp/test.py"
 
     def test_string_auto_convert_shell(self):
-        """String input for shell → {"command": "..."}."""
+        """String input for shell → {"shell_command": "..."}."""
         ok, err, converted = validate_tool_input("shell", "ls -la")
         assert ok is True
-        assert converted["command"] == "ls -la"
+        assert converted["shell_command"] == "ls -la"
 
     def test_string_auto_convert_write_file(self):
         """String input for write_file → {"path": "..."}."""
@@ -81,26 +83,31 @@ class TestValidateToolInput:
 
 class TestTypeValidation:
     def test_correct_types_pass(self):
-        ok, err, _ = validate_tool_input("shell", {"command": "ls", "timeout": 30})
+        ok, err, _ = validate_tool_input(
+            "shell", {"shell_command": "ls", "shell_timeout": 30}
+        )
         assert ok is True
 
     def test_string_timeout_auto_coerced(self):
         """Small model sends "30" instead of 30 — auto-coerce."""
-        inp = {"command": "ls", "timeout": "30"}
+        inp = {"shell_command": "ls", "shell_timeout": "30"}
         ok, err, _ = validate_tool_input("shell", inp)
         assert ok is True
-        assert inp["timeout"] == 30  # coerced in-place
+        assert inp["shell_timeout"] == 30  # coerced in-place
 
     def test_dict_edits_auto_coerced_to_array(self):
         """Small model sends dict instead of [dict] — auto-coerce."""
-        inp = {"path": "a.py", "edits": {"op": "replace", "pos": "1#VR"}}
+        inp = {
+            "edit_file_path": "a.py",
+            "edit_file_edits": {"op": "replace", "pos": "1#VR"},
+        }
         ok, err, _ = validate_tool_input("edit_file", inp)
         assert ok is True
-        assert isinstance(inp["edits"], list)
+        assert isinstance(inp["edit_file_edits"], list)
 
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""
-        ok, err, _ = validate_tool_input("read_file", {"path": [1, 2, 3]})
+        ok, err, _ = validate_tool_input("read_file", {"read_file_path": [1, 2, 3]})
         assert ok is False
         assert "expected string" in err
 
@@ -109,12 +116,14 @@ class TestDelegateSchema:
     def test_delegate_has_tasks_param(self):
 
         props = TOOL_SCHEMAS["delegate"].parameters["properties"]
-        assert "tasks" in props
-        assert props["tasks"]["type"] == "array"
+        assert "delegate_tasks" in props
+        assert props["delegate_tasks"]["type"] == "array"
 
     def test_delegate_tasks_is_array_of_objects(self):
 
-        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
+        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["delegate_tasks"][
+            "items"
+        ]
         assert items["type"] == "object"
         assert "task" in items["properties"]
         assert "context" in items["properties"]
@@ -122,48 +131,56 @@ class TestDelegateSchema:
 
     def test_delegate_tasks_required(self):
 
-        assert "tasks" in TOOL_SCHEMAS["delegate"].parameters["required"]
+        assert "delegate_tasks" in TOOL_SCHEMAS["delegate"].parameters["required"]
 
     def test_delegate_no_top_level_task(self):
 
         props = TOOL_SCHEMAS["delegate"].parameters["properties"]
-        assert "task" not in props  # Only inside tasks array items
+        assert "task" not in props  # Only inside delegate_tasks array items
 
     def test_delegate_schema_has_agent_field(self):
         """AG-29: TOOL_SCHEMAS["delegate"] items have agent field."""
 
-        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
+        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["delegate_tasks"][
+            "items"
+        ]
         assert "agent" in items["properties"]
         assert items["properties"]["agent"]["type"] == "string"
 
     def test_delegate_schema_agent_not_required(self):
         """AG-30: agent field is not in required list."""
 
-        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["tasks"]["items"]
+        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["delegate_tasks"][
+            "items"
+        ]
         assert "agent" not in items["required"]
 
 
 class TestEmptyStringStripping:
     def test_optional_empty_string_removed(self):
         """Empty string on optional field should be stripped before validation."""
-        action_input = {"path": "/tmp/test.py", "line_start": "", "line_end": ""}
+        action_input = {
+            "read_file_path": "/tmp/test.py",
+            "read_file_line_start": "",
+            "read_file_line_end": "",
+        }
         ok, err, _ = validate_tool_input("read_file", action_input)
         assert ok is True
-        assert "line_start" not in action_input
-        assert "line_end" not in action_input
+        assert "read_file_line_start" not in action_input
+        assert "read_file_line_end" not in action_input
 
     def test_required_empty_string_not_removed(self):
         """Empty string on required field should NOT be stripped — validation fails."""
-        ok, err, _ = validate_tool_input("read_file", {"path": ""})
-        # path="" is required and present, but it's an empty string — still valid type
+        ok, err, _ = validate_tool_input("read_file", {"read_file_path": ""})
+        # read_file_path="" is required and present, but it's an empty string
         assert ok is True  # type check passes (string), tool itself handles empty
 
     def test_non_empty_optional_kept(self):
         """Non-empty optional fields should remain untouched."""
-        action_input = {"path": "/tmp/test.py", "line_start": 10}
+        action_input = {"read_file_path": "/tmp/test.py", "read_file_line_start": 10}
         ok, err, _ = validate_tool_input("read_file", action_input)
         assert ok is True
-        assert action_input["line_start"] == 10
+        assert action_input["read_file_line_start"] == 10
 
 
 class TestStringInputAutoConversion:
@@ -187,7 +204,7 @@ class TestStringInputAutoConversion:
             "read_file", str(test_file)
         )
         assert not mismatched, err
-        assert normalized == {"path": str(test_file)}
+        assert normalized == {"read_file_path": str(test_file)}
 
         result = execute_tool("read_file", normalized)
         assert result.success
@@ -200,7 +217,7 @@ class TestStringInputAutoConversion:
 
         mismatched, err, normalized = detect_schema_mismatch("shell", "echo hello")
         assert not mismatched, err
-        assert normalized == {"command": "echo hello"}
+        assert normalized == {"shell_command": "echo hello"}
 
         result = execute_tool("shell", normalized)
         assert result.success

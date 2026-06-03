@@ -37,7 +37,7 @@ Default implementations are provided for the common cases:
   - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``.
   - ``normalize_assistant_for_messages`` — identity.
   - ``format_rules`` — delegate to the shared builder.
-  - ``render_action_input`` — identity.
+  - ``render_action_input`` — dict → JSON via ``json.dumps``.
   - ``provider_call_kwargs`` — empty dict.
   - ``prefill`` — empty string.
 
@@ -280,15 +280,18 @@ class WireFormat(ABC):
 
         return build_format_rules(self)
 
-    def render_action_input(self, action_input: str) -> str:
-        """Render an action_input string in this format's inner shape.
+    def render_action_input(self, action_input: dict) -> str:
+        """Render an action_input dict in this format's inner shape.
 
-        Default identity — both ReAct-style and tag-wrapped formats
-        nest action_input as a JSON dict, so they return the string
-        verbatim. A future plugin whose action_input is not a JSON
-        dict (e.g. XML attribute encoding) overrides this hook.
+        The wire format owns serialization. ReAct, prefix_md, and
+        tag-wrapped formats all nest action_input as a JSON object, so
+        the default serializes with ``json.dumps``. A plugin whose inner
+        shape is not JSON (e.g. XML attribute encoding, key:value lines)
+        overrides this hook. Callers (system-prompt inline guides,
+        history rendering) pass a dict and never assume JSON — the JSON
+        assumption is captured here, in one wire-owned place.
         """
-        return action_input
+        return json.dumps(action_input, ensure_ascii=False)
 
     # ─── Provider / lifecycle (default) ─────────────────────────
 
@@ -380,12 +383,12 @@ class WireFormat(ABC):
         emitted (self-reinforcement preserved across the recovery
         boundary).
 
-        ``action_input`` is JSON-serialized before passing to
-        ``render_full_example`` (which accepts a string for shape-
-        agnostic spacing decisions). Records that lack structured fields
-        — typically those that ``serialize_assistant_for_history``
-        stored as bare ``content`` because parse produced no action —
-        are returned as-is.
+        ``action_input`` is serialized via ``render_action_input`` (the
+        wire's own hook) before passing to ``render_full_example`` (which
+        accepts the already-serialized string). Records that lack
+        structured fields — typically those that
+        ``serialize_assistant_for_history`` stored as bare ``content``
+        because parse produced no action — are returned as-is.
 
         Differences from the original emission are limited to JSON
         normalization (key order, default ``json.dumps`` spacing).
@@ -394,14 +397,15 @@ class WireFormat(ABC):
         if "thought" not in record and "action" not in record:
             return {"role": "assistant", "content": record.get("content", "")}
 
-        # ``json.dumps`` handles every valid JSON value (dict, list,
-        # string, number, bool, null) and adds the correct quoting —
-        # ``str()`` would produce bare unquoted output for strings, which
-        # ReAct re-renders as malformed JSON and PREFIX-MD as an Input
-        # body that doesn't parse back as a dict. Real driver: complete
-        # action with raw-string ``action_input`` (legacy / drift).
+        # Serialize through the wire's own ``render_action_input`` hook so
+        # the JSON assumption lives in one place, not duplicated here. The
+        # default hook is ``json.dumps`` — which handles every valid JSON
+        # value (dict, list, string, number, bool, null) with correct
+        # quoting (``str()`` would emit bare strings that re-render as
+        # malformed JSON). Real driver: complete action with raw-string
+        # ``action_input`` (legacy / drift).
         action_input = record.get("action_input", {})
-        action_input_str = json.dumps(action_input, ensure_ascii=False)
+        action_input_str = self.render_action_input(action_input)
 
         return {
             "role": "assistant",

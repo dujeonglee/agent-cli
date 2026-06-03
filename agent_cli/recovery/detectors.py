@@ -20,8 +20,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent_cli.tools.registry import validate_tool_input
-
 
 class ActionLoopDetector:
     """Detect consecutive identical (action, args) emissions (failure B1).
@@ -181,7 +179,11 @@ def detect_schema_mismatch(
 
     Wraps ``tools.registry.validate_tool_input`` so the recovery layer
     has its own vocabulary entry without owning the schema knowledge.
+    Imported lazily to avoid a registry → tool-modules → recovery import
+    cycle at module-load time.
     """
+    from agent_cli.tools.registry import validate_tool_input
+
     valid, err, normalized = validate_tool_input(action, action_input)
     if valid:
         return (False, None, normalized)

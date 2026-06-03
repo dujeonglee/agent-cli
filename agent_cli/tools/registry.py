@@ -1,429 +1,98 @@
-"""Tool schema registry and input validation."""
+"""Tool registry: collects Tool instances into dispatch + schema views.
+
+Each tool now owns its own schema (``name`` / ``description`` /
+``parameters``) and ``run`` on a :class:`~agent_cli.tools.base.Tool`
+subclass. This module instantiates them once into ``TOOLS`` and derives
+the schema-facing helpers (system-prompt descriptions, input validation,
+action inference) from that single collection.
+
+``TOOL_SCHEMAS`` is a back-compat alias for ``TOOLS``: callers that used
+to read ``ToolSchema`` objects keep working because ``Tool`` instances
+expose the same ``.name`` / ``.description`` / ``.parameters`` attributes.
+"""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import json
 
-from dataclasses import dataclass
+from agent_cli.tools.base import Tool
+from agent_cli.tools.code_index import CodeIndexTool
+from agent_cli.tools.context import ReadContextTool
+from agent_cli.tools.delegate import DelegateTool
+from agent_cli.tools.edit_file import EditFileTool
+from agent_cli.tools.fetch import FetchTool
+from agent_cli.tools.read_file import ReadFileTool
+from agent_cli.tools.result import ToolResult
+from agent_cli.tools.shell import ShellTool
+from agent_cli.tools.virtual import (
+    AskTool,
+    CompleteTool,
+    ReadyForReviewTool,
+    RunSkillTool,
+)
+from agent_cli.tools.write_file import WriteFileTool
+
+# Instantiated once. Insertion order is preserved into ``TOOLS`` (dict
+# keeps order) and matches the historical ``TOOL_SCHEMAS`` ordering for
+# KV-cache stability in the system prompt.
+_ALL_TOOLS: list[Tool] = [
+    ReadFileTool(),
+    WriteFileTool(),
+    EditFileTool(),
+    ShellTool(),
+    CodeIndexTool(),
+    CompleteTool(),
+    ReadContextTool(),
+    AskTool(),
+    RunSkillTool(),
+    ReadyForReviewTool(),
+    FetchTool(),
+    DelegateTool(),
+]
+
+TOOLS: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
+
+# Back-compat alias — schema consumers (system prompt, MCP adapter, input
+# validation) read .name/.description/.parameters, which Tool instances
+# expose identically to the old ToolSchema dataclass.
+TOOL_SCHEMAS: dict[str, Tool] = TOOLS
 
 
-@dataclass
-class ToolSchema:
-    name: str
-    description: str
-    parameters: dict  # JSON Schema
+def _execute_tool(
+    tool_name: str,
+    action_input: dict,
+    *,
+    session_dir: Path | None = None,
+) -> ToolResult:
+    """Dispatch primitive — run a registered tool.
+
+    Caller contract: ``tool_name`` MUST exist in ``TOOLS``. The loop's
+    recovery layer (``detect_unknown_tool``) is the single source of
+    truth for that validation; bad names never reach this function from
+    the live loop. A ``KeyError`` on a missing name is the intended
+    failure mode. ``session_dir`` is forwarded uniformly; tools that do
+    not need it ignore the keyword.
+    """
+    return TOOLS[tool_name].run(action_input, session_dir=session_dir)
 
 
-TOOL_SCHEMAS: dict[str, ToolSchema] = {
-    "read_file": ToolSchema(
-        name="read_file",
-        description=(
-            "Read file contents. Lines are tagged as LINE#HASH:content for editing. "
-            "For unknown/large files, start with stat=true to inspect size before reading. "
-            "stat returns metadata (line count, file size) and is not a read — follow it with a full read, line_start/line_end range, or search. "
-            "Use search='keyword' to find targeted content without reading the whole file. "
-            "Use line_start/line_end for partial reads (1-based, inclusive). "
-            "Bare full reads on large files (~300+ lines) are refused with a stat-style response that lists the available recovery options — follow them."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path to read"},
-                "stat": {
-                    "type": "boolean",
-                    "description": "Metadata query only — returns line count, file size, and the first 20 lines. Not a substitute for reading: after stat, pick a real read mode (full / line_start+line_end / search).",
-                },
-                "search": {
-                    "type": "string",
-                    "description": "Regex pattern. Returns only matching lines with surrounding context. Efficient for targeted lookups.",
-                },
-                "context": {
-                    "type": "integer",
-                    "description": "Lines of context before/after each search match (default 5).",
-                },
-                "line_start": {
-                    "type": "integer",
-                    "description": "Start line number (1-based). Omit to read from beginning.",
-                },
-                "line_end": {
-                    "type": "integer",
-                    "description": "End line number (1-based, inclusive). Omit to read to end.",
-                },
-            },
-            "required": ["path"],
-        },
-    ),
-    "write_file": ToolSchema(
-        name="write_file",
-        description="Create or overwrite a file at the given path with raw content.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path to save"},
-                "content": {"type": "string", "description": "File content"},
-            },
-            "required": ["path", "content"],
-        },
-    ),
-    "edit_file": ToolSchema(
-        name="edit_file",
-        description=(
-            "Edit a file using hashline refs from read_file. "
-            "Ops: replace, append, prepend, delete. "
-            "delete removes the pos..end range and takes no lines; "
-            "replace with lines=[] also deletes (legacy form)."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path"},
-                "edits": {
-                    "type": "array",
-                    "description": "List of edit operations",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "op": {"type": "string"},
-                            "pos": {"type": "string"},
-                            "end": {"type": "string"},
-                            "lines": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["op", "pos"],
-                    },
-                },
-            },
-            "required": ["path", "edits"],
-        },
-    ),
-    "shell": ToolSchema(
-        name="shell",
-        description="Run a shell command and return stdout/stderr.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Shell command to run"},
-                "timeout": {
-                    "type": "integer",
-                    "description": "Timeout in seconds (default 30)",
-                },
-            },
-            "required": ["command"],
-        },
-    ),
-    "code_index": ToolSchema(
-        name="code_index",
-        description=(
-            "Code/markdown index queries via persistent tree-sitter SQLite store. "
-            "Modes:\n"
-            "  list      - file outline (defs + structural symbols, line ranges) [path]\n"
-            "  fetch     - single symbol body, hashline format for edit_file [path, name]\n"
-            "  lookup    - find symbol by name across the index [name, symbol_kind?]\n"
-            "  kind      - list all symbols of a kind across the index [symbol_kind]\n"
-            "  file      - all symbols in a single file (index lookup) [path]\n"
-            "  refs      - all ref sites for a name [name, ref_kind?]\n"
-            "  callers   - functions that call this one [name]\n"
-            "  callees   - functions called by this one [name]\n"
-            "  slice     - markdown LLM context: def body + optional callees/callers/"
-            "types/macros [name, ...]\n"
-            "  build     - force full rebuild (rare - lazy build handles normal cases)\n"
-            "Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. "
-            "Index at <project_root>/.agent-cli/code_index.db, lazy-built and "
-            "incrementally refreshed. For 'list'/'fetch' on paths outside the indexed "
-            "root: on-demand parse (no DB write). Other modes require the indexed root."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type": "string",
-                    "enum": [
-                        "list",
-                        "fetch",
-                        "lookup",
-                        "kind",
-                        "file",
-                        "refs",
-                        "callers",
-                        "callees",
-                        "slice",
-                        "build",
-                    ],
-                    "description": "Operation. See tool description for per-mode params.",
-                },
-                "path": {
-                    "type": "string",
-                    "description": "File path. Required for list/fetch/file.",
-                },
-                "name": {
-                    "type": "string",
-                    "description": (
-                        "Symbol name (exact, as shown by 'list'). Required for "
-                        "fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' "
-                        "also accepts the heading with marker (e.g. '## Setup')."
-                    ),
-                },
-                "symbol_kind": {
-                    "type": "string",
-                    "enum": ["function", "type", "variable", "constant", "section"],
-                    "description": (
-                        "Symbol category filter. Optional for lookup. Required for "
-                        "kind. 'section' = markdown heading."
-                    ),
-                },
-                "ref_kind": {
-                    "type": "string",
-                    "enum": ["call", "name", "type"],
-                    "description": (
-                        "Reference site category. Optional for refs. "
-                        "call = invocation; name = bare identifier mention "
-                        "(callback, pointer); type = identifier in type position."
-                    ),
-                },
-                "search": {
-                    "type": "string",
-                    "description": (
-                        "Optional regex (re.search) to filter symbol names. "
-                        "Applies to list and kind modes."
-                    ),
-                },
-                "with_callees": {
-                    "type": "boolean",
-                    "description": "slice mode: include callee bodies (transitive up to depth).",
-                },
-                "with_callers": {
-                    "type": "boolean",
-                    "description": "slice mode: include caller bodies (transitive up to depth).",
-                },
-                "with_types": {
-                    "type": "boolean",
-                    "description": "slice mode: include types/structs referenced inside target body.",
-                },
-                "with_macros": {
-                    "type": "boolean",
-                    "description": "slice mode: include function-like macros invoked inside target body.",
-                },
-                "depth": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "slice mode: transitive depth for callees/callers (default 1).",
-                },
-                "max_bytes": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "slice mode: cap output bytes (default unlimited).",
-                },
-            },
-            "required": ["mode"],
-        },
-    ),
-    "complete": ToolSchema(
-        name="complete",
-        description="Call this tool when the task is done. Provide the final result.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "result": {
-                    "type": "string",
-                    "description": "The final result or answer",
-                },
-            },
-            "required": ["result"],
-        },
-    ),
-    "read_context": ToolSchema(
-        name="read_context",
-        description="Read context from sessions. "
-        "mode='list': session list. mode='search': structured keyword search "
-        "(default current session; pass 'scope'/'sessions' to restrict). "
-        "mode='fetch': retrieve full turn(s) at given loc (use search results' "
-        "loc string verbatim; add 'range' to include adjacent turns).",
-        parameters={
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type": "string",
-                    "description": "list, search, or fetch",
-                },
-                "keyword": {
-                    "type": "string",
-                    "description": "Search keyword (required for mode=search)",
-                },
-                "scope": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "reasoning",
-                            "tool",
-                            "observation",
-                            "query",
-                        ],
-                    },
-                    "description": (
-                        "Optional field filter for mode=search. "
-                        "reasoning=assistant.thought, tool=action+input, "
-                        "observation=tool results, query=user input. "
-                        "Default: all four. Single string accepted (auto-promoted)."
-                    ),
-                },
-                "sessions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Optional session selector for mode=search. "
-                        "Default: current session only. "
-                        "Pass 'all' (single value) to search every session, "
-                        "or specific session_id(s) to scope. "
-                        "Single string accepted (auto-promoted)."
-                    ),
-                },
-                "loc": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Required for mode=fetch. Location(s) returned by "
-                        "search: '{session_id}/{rel_path}:{line_num}'. "
-                        "Single string accepted (auto-promoted). Max 10 entries."
-                    ),
-                },
-                "range": {
-                    "type": "integer",
-                    "description": (
-                        "Optional for mode=fetch. Include +/-N adjacent turns "
-                        "around each loc. Default 0 (target only). Max 5."
-                    ),
-                },
-            },
-            "required": ["mode"],
-        },
-    ),
-    "ask": ToolSchema(
-        name="ask",
-        description=(
-            "Ask the user one or more questions and WAIT for their reply. "
-            "Use ONLY when you cannot proceed without specific input from the "
-            "user — a missing requirement, an ambiguous instruction, or a "
-            "decision among alternatives you cannot resolve yourself. "
-            "DO NOT use for goodbyes, pleasantries, acknowledgements, or "
-            "checking whether your answer was satisfactory — those are "
-            "conversational closers and belong in `complete`. If you have "
-            "nothing actionable that requires user input, end the turn with "
-            "`complete`; the user can always reply if they want to continue."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "questions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of questions to ask the user",
-                },
-            },
-            "required": ["questions"],
-        },
-    ),
-    "run_skill": ToolSchema(
-        name="run_skill",
-        description="Run a registered skill by name. Use this to invoke specialized "
-        "prompt-based workflows like code review, optimization, or test generation.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Skill name (e.g. 'optimize', 'review-code', 'summarize', 'test')",
-                },
-                "arguments": {
-                    "type": "string",
-                    "description": "Arguments to pass to the skill (e.g. file path)",
-                },
-            },
-            "required": ["name"],
-        },
-    ),
-    "ready_for_review": ToolSchema(
-        name="ready_for_review",
-        description="Call this BEFORE complete to verify your work fulfills all requirements. "
-        "The system will return the original request for you to review against. "
-        "After reviewing, call complete if everything is done, or continue working if not.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "summary": {
-                    "type": "string",
-                    "description": "Brief summary of what you accomplished",
-                },
-            },
-            "required": ["summary"],
-        },
-    ),
-    "fetch": ToolSchema(
-        name="fetch",
-        description="Fetch a web page and return its content as markdown. "
-        "Supports recursive fetching of same-domain links via depth parameter. "
-        "Full content returned inline; long pages are subject to the loop's "
-        "FIFO context-budget eviction like any other observation.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL to fetch",
-                },
-                "depth": {
-                    "type": "integer",
-                    "description": "Recursive depth: 0 = current page only (default), 1+ = follow same-domain links",
-                },
-            },
-            "required": ["url"],
-        },
-    ),
-    "delegate": ToolSchema(
-        name="delegate",
-        description=(
-            "Delegate tasks to subagents. "
-            "Single task = sync, multiple tasks = parallel. "
-            "Use context mode to control what the subagent knows."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "tasks": {
-                    "type": "array",
-                    "description": "List of tasks. Single item = sync, multiple = parallel.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "task": {
-                                "type": "string",
-                                "description": "Task description for the subagent",
-                            },
-                            "context": {
-                                "type": "string",
-                                "enum": ["none", "fork"],
-                                "description": "none (independent), fork (copy conversation history)",
-                            },
-                            "tools": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Allowed tools (omit for default set)",
-                            },
-                            "agent": {
-                                "type": "string",
-                                "description": "Agent name to load role/config from .agent-cli/agents/{name}.md",
-                            },
-                        },
-                        "required": ["task"],
-                    },
-                },
-            },
-            "required": ["tasks"],
-        },
-    ),
-}
+def infer_action(action_input: Any) -> str | None:
+    """Recover a missing action name from the shape of *action_input*.
+
+    When the wire format drops the action name (parse_stage 3 — a
+    ``## Action`` header with an empty tool slot) but the input is a
+    well-formed dict, each tool's :meth:`Tool.claims` predicate votes on
+    whether the payload is its own. Returns the tool name iff **exactly
+    one** tool claims it; ``None`` on 0 or 2+ matches (ambiguous → leave
+    it to the normal NO_ACTION recovery).
+    """
+    if not isinstance(action_input, dict):
+        return None
+    hits = [name for name, tool in TOOLS.items() if tool.claims(action_input)]
+    return hits[0] if len(hits) == 1 else None
 
 
 # Tools always included in API tool list regardless of allowed_tools

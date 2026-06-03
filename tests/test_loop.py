@@ -70,7 +70,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read file",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             _complete("File contains: hello world"),
@@ -112,7 +112,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             json.dumps(
@@ -144,7 +144,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             json.dumps(
@@ -174,7 +174,7 @@ class TestRunLoopToolExecution:
                 {
                     "thought": "run pwd",
                     "action": "shell",
-                    "action_input": {"command": "pwd"},
+                    "action_input": {"shell_command": "pwd"},
                 }
             ),
             _complete("Executed command"),
@@ -229,11 +229,13 @@ class TestToolExceptionSafetyNet:
     """
 
     def _patch_tool(self, monkeypatch, name, fn):
-        """Replace a registered tool function. Restored automatically
-        by monkeypatch.setitem on teardown."""
+        """Swap a registered tool's leaf execution (``_run``) for ``fn(args)``.
+        The Tool wrapper (prefix strip + dispatch) stays intact; only the
+        innermost call swaps. Restored automatically by monkeypatch on
+        teardown."""
         from agent_cli.tools import TOOLS
 
-        monkeypatch.setitem(TOOLS, name, fn)
+        monkeypatch.setattr(TOOLS[name], "_run", lambda args, **kw: fn(args))
 
     def test_tool_typeerror_becomes_tool_result_error(self, caps, monkeypatch):
         # The exact failure mode the user hit: a tool raises TypeError
@@ -249,7 +251,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try shell",
                     "action": "shell",
-                    "action_input": {"command": "pwd"},
+                    "action_input": {"shell_command": "pwd"},
                 }
             ),
             _complete("recovered after tool crashed"),
@@ -288,7 +290,7 @@ class TestToolExceptionSafetyNet:
                     {
                         "thought": "try",
                         "action": "shell",
-                        "action_input": {"command": "pwd"},
+                        "action_input": {"shell_command": "pwd"},
                     }
                 )
             ),
@@ -325,7 +327,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"command": "x"},
+                    "action_input": {"shell_command": "x"},
                 }
             ),
             _complete("ok"),
@@ -359,7 +361,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"command": "x"},
+                    "action_input": {"shell_command": "x"},
                 }
             ),
         )
@@ -384,7 +386,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"command": "x"},
+                    "action_input": {"shell_command": "x"},
                 }
             ),
         )
@@ -414,7 +416,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"command": "x"},
+                    "action_input": {"shell_command": "x"},
                 }
             ),
             _complete("ok"),
@@ -435,6 +437,63 @@ class TestToolExceptionSafetyNet:
         # "raised X" framing applied to a non-exceptional failure.
         assert "polite error" in obs_text
         assert "raised" not in obs_text
+
+
+class TestActionInferenceCorrection:
+    """Dropped action name (parse_stage 3) recovered from action_input key
+    prefixes — dispatches the inferred tool AND rewrites the next-turn
+    prior to the corrected shape (no raw-drift mimicry)."""
+
+    def test_infers_action_and_corrects_prior(self, caps, tmp_path):
+        target = tmp_path / "x.txt"
+        target.write_text("hello body")
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "read the file",
+                    # action name dropped — only the prefixed input key
+                    "action_input": {"read_file_path": str(target)},
+                }
+            ),
+            _complete("done"),
+        )
+        result = run_loop(
+            query="read it",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        # 1. inferred read_file actually ran (file body in observation)
+        assert result.success
+        second = _messages_from_call(provider.call.call_args_list[1])
+        obs = [m for m in second if "Observation" in (m.get("content") or "")]
+        assert any("hello body" in m["content"] for m in obs)
+        # 2. assistant prior rewritten to the corrected shape (action
+        #    present), NOT the raw drift (action absent)
+        assistant = [m for m in second if m["role"] == "assistant"]
+        joined = " ".join(m.get("content", "") for m in assistant)
+        assert '"action": "read_file"' in joined
+
+    def test_ambiguous_input_not_inferred(self, caps):
+        # Two distinct tool prefixes present → ambiguous → no inference,
+        # falls through to the NO_ACTION retry, then completes.
+        provider = _make_provider(
+            json.dumps(
+                {
+                    "thought": "drift",
+                    "action_input": {"read_file_path": "a", "shell_command": "ls"},
+                }
+            ),
+            _complete("recovered"),
+        )
+        result = run_loop(
+            query="go",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+        )
+        assert result.success
+        assert result.output == "recovered"
 
 
 class TestRunLoopParseFailure:
@@ -821,7 +880,7 @@ def _shell_call(cmd: str) -> str:
         {
             "thought": "running",
             "action": "shell",
-            "action_input": {"command": cmd},
+            "action_input": {"shell_command": cmd},
         }
     )
 
@@ -1145,21 +1204,21 @@ class TestRunLoopMaxIter:
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"command": "date +%s"},
+                    "action_input": {"shell_command": "date +%s"},
                 }
             ),
             json.dumps(
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"command": "uname -s"},
+                    "action_input": {"shell_command": "uname -s"},
                 }
             ),
             json.dumps(
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"command": "whoami"},
+                    "action_input": {"shell_command": "whoami"},
                 }
             ),
         )
@@ -1184,14 +1243,14 @@ class TestToolHistoryTracking:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             json.dumps(
                 {
                     "thought": "run",
                     "action": "shell",
-                    "action_input": {"command": "whoami"},
+                    "action_input": {"shell_command": "whoami"},
                 }
             ),
             _complete("ok"),
@@ -1235,7 +1294,7 @@ class TestEchoAsFinalAnswer:
                 {
                     "thought": "search",
                     "action": "shell",
-                    "action_input": {"command": "echo hello | grep h"},
+                    "action_input": {"shell_command": "echo hello | grep h"},
                 }
             ),
             _complete("found"),
@@ -1255,7 +1314,7 @@ class TestEchoAsFinalAnswer:
                 {
                     "thought": "write",
                     "action": "shell",
-                    "action_input": {"command": "echo hello > out.txt"},
+                    "action_input": {"shell_command": "echo hello > out.txt"},
                 }
             ),
             _complete("written"),
@@ -1279,7 +1338,7 @@ class TestRepeatedCallDetection:
             {
                 "thought": "read again",
                 "action": "read_file",
-                "action_input": {"path": str(test_file)},
+                "action_input": {"read_file_path": str(test_file)},
             }
         )
         provider = _make_provider(same_call, same_call, same_call)
@@ -1305,21 +1364,21 @@ class TestRepeatedCallDetection:
                 {
                     "thought": "r1",
                     "action": "read_file",
-                    "action_input": {"path": str(f1)},
+                    "action_input": {"read_file_path": str(f1)},
                 }
             ),
             json.dumps(
                 {
                     "thought": "r2",
                     "action": "read_file",
-                    "action_input": {"path": str(f2)},
+                    "action_input": {"read_file_path": str(f2)},
                 }
             ),
             json.dumps(
                 {
                     "thought": "r3",
                     "action": "read_file",
-                    "action_input": {"path": str(f3)},
+                    "action_input": {"read_file_path": str(f3)},
                 }
             ),
             _complete("ok"),
@@ -1412,7 +1471,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             _complete("final"),
@@ -1541,7 +1600,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             # Second response is never consumed — `_should_continue` should
@@ -1716,7 +1775,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "working",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             _complete("done"),
@@ -1765,7 +1824,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading file",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             _complete("final"),
@@ -2338,7 +2397,7 @@ class TestContextContinuity:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"path": str(test_file)},
+                    "action_input": {"read_file_path": str(test_file)},
                 }
             ),
             _complete("done"),
@@ -3086,13 +3145,13 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "read_file",
-                    "action_input": {"path": "login.py"},
+                    "action_input": {"read_file_path": "login.py"},
                 },
                 {"role": "user", "tool": "read_file", "content": "Observation: ..."},
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"command": "pytest"},
+                    "action_input": {"shell_command": "pytest"},
                 },
             ]
         )
@@ -3111,7 +3170,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "read_file",
-                    "action_input": {"path": "a.py"},
+                    "action_input": {"read_file_path": "a.py"},
                 },
                 {
                     "role": "assistant",
@@ -3121,7 +3180,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"command": "ls"},
+                    "action_input": {"shell_command": "ls"},
                 },
                 {
                     "role": "assistant",
@@ -3143,7 +3202,7 @@ class TestFormatToolCallsForReview:
             {
                 "role": "assistant",
                 "action": "shell",
-                "action_input": {"command": f"echo {i}"},
+                "action_input": {"shell_command": f"echo {i}"},
             }
             for i in range(35)
         ]
@@ -3162,7 +3221,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"command": long_cmd},
+                    "action_input": {"shell_command": long_cmd},
                 }
             ]
         )
@@ -3180,8 +3239,8 @@ class TestFormatToolCallsForReview:
                     "role": "assistant",
                     "action": "edit_file",
                     "action_input": {
-                        "path": "a.py",
-                        "edits": [{"op": "replace", "lines": ["x"]}],
+                        "edit_file_path": "a.py",
+                        "edit_file_edits": [{"op": "replace", "lines": ["x"]}],
                     },
                 }
             ]
@@ -3211,7 +3270,7 @@ class TestBuildReviewObservationWithCtx:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"command": "ls"},
+                    "action_input": {"shell_command": "ls"},
                 }
             ]
         )
@@ -3243,7 +3302,7 @@ class TestBuildReviewObservationWithCtx:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"command": "ls"},
+                    "action_input": {"shell_command": "ls"},
                 }
             ]
         )
@@ -3273,9 +3332,9 @@ class TestNoOutputTruncation:
                     "thought": "read large file",
                     "action": "read_file",
                     "action_input": {
-                        "path": str(test_file),
-                        "line_start": 1,
-                        "line_end": 500,
+                        "read_file_path": str(test_file),
+                        "read_file_line_start": 1,
+                        "read_file_line_end": 500,
                     },
                 }
             ),
@@ -3490,7 +3549,10 @@ class TestOutputTruncationGuard:
                     {
                         "thought": "writing",
                         "action": "write_file",
-                        "action_input": {"path": str(target), "content": "partial"},
+                        "action_input": {
+                            "write_file_path": str(target),
+                            "write_file_content": "partial",
+                        },
                     }
                 ),
                 stop_reason="length",
@@ -3545,7 +3607,10 @@ class TestOutputTruncationGuard:
                     {
                         "thought": "writing",
                         "action": "write_file",
-                        "action_input": {"path": str(target), "content": "hello"},
+                        "action_input": {
+                            "write_file_path": str(target),
+                            "write_file_content": "hello",
+                        },
                     }
                 ),
                 stop_reason="stop",

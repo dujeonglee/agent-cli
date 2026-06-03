@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_cli.context.session import list_sessions
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 _SESSIONS_BASE = Path(".agent-cli") / "sessions"
@@ -572,3 +573,76 @@ def _render_field(label: str, value: Any) -> str:
             out.append(f"     {ln}")
         return "\n".join(out)
     return f"   {label}: {s}"
+
+
+class ReadContextTool(Tool):
+    name = "read_context"
+    description = (
+        "Read context from sessions. "
+        "read_context_mode='list': session list. read_context_mode='search': structured keyword search "
+        "(default current session; pass 'read_context_scope'/'read_context_sessions' to restrict). "
+        "read_context_mode='fetch': retrieve full turn(s) at given read_context_loc (use search results' "
+        "loc string verbatim; add 'read_context_range' to include adjacent turns)."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "read_context_mode": {
+                "type": "string",
+                "description": "list, search, or fetch",
+            },
+            "read_context_keyword": {
+                "type": "string",
+                "description": "Search keyword (required for read_context_mode=search)",
+            },
+            "read_context_scope": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "reasoning",
+                        "tool",
+                        "observation",
+                        "query",
+                    ],
+                },
+                "description": (
+                    "Optional field filter for read_context_mode=search. "
+                    "reasoning=assistant.thought, tool=action+input, "
+                    "observation=tool results, query=user input. "
+                    "Default: all four. Single string accepted (auto-promoted)."
+                ),
+            },
+            "read_context_sessions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional session selector for read_context_mode=search. "
+                    "Default: current session only. "
+                    "Pass 'all' (single value) to search every session, "
+                    "or specific session_id(s) to scope. "
+                    "Single string accepted (auto-promoted)."
+                ),
+            },
+            "read_context_loc": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Required for read_context_mode=fetch. Location(s) returned by "
+                    "search: '{session_id}/{rel_path}:{line_num}'. "
+                    "Single string accepted (auto-promoted). Max 10 entries."
+                ),
+            },
+            "read_context_range": {
+                "type": "integer",
+                "description": (
+                    "Optional for read_context_mode=fetch. Include +/-N adjacent turns "
+                    "around each loc. Default 0 (target only). Max 5."
+                ),
+            },
+        },
+        "required": ["read_context_mode"],
+    }
+
+    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+        return tool_read_context(args, session_dir=session_dir)

@@ -64,7 +64,7 @@ from agent_cli.render import (
     render_group_start,
     render_group_end,
 )
-from agent_cli.tools import TOOLS, _execute_tool
+from agent_cli.tools import TOOLS, _execute_tool, infer_action
 from agent_cli.tools.delegate import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
@@ -689,6 +689,19 @@ class AgentLoop:
         """
         parsed = self.wire_format.parse(llm_text)
 
+        # Recover a dropped action name (parse_stage 3): the action slot is
+        # empty but action_input keys are namespaced with a single tool's
+        # ``{name}_`` prefix → infer that tool. Ambiguous/none leaves it to
+        # the NO_ACTION recovery below. A successful inference is flagged so
+        # the observation step rewrites the prior + history to the corrected
+        # shape (no raw-drift mimicry) and the TurnRecorder logs it.
+        action_inferred = False
+        if not parsed.action and isinstance(parsed.action_input, dict):
+            inferred = infer_action(parsed.action_input)
+            if inferred:
+                parsed.action = inferred
+                action_inferred = True
+
         # Classify outcome early; the dispatch body may mutate this
         # dict to reflect a B1 (action loop) detection that is only
         # known after we see the chosen action.
@@ -706,7 +719,11 @@ class AgentLoop:
             initial_signal = FAILURE_NO_ACTION
         else:
             initial_signal = None
-        outcome: dict = {"failure_signal": initial_signal, "primitives": []}
+        outcome: dict = {
+            "failure_signal": initial_signal,
+            "primitives": ["action_inferred"] if action_inferred else [],
+            "action_inferred": action_inferred,
+        }
 
         try:
             return self._dispatch_text_path(llm_text, parsed, outcome)
@@ -1129,8 +1146,19 @@ class AgentLoop:
                 success=tool_result.success,
             )
 
-            # Inject observation with structured artifact
+            # Inject observation with structured artifact. On an
+            # action-name correction, rewrite the assistant prior + history
+            # to the corrected wire shape so neither the next turn nor a
+            # resume re-feeds the raw drift (mimicry-strengthening).
             obs_msg = f"Observation: {observation}"
+            corrected = None
+            if outcome.get("action_inferred"):
+                corrected = {
+                    "role": "assistant",
+                    "thought": parsed.thought or "",
+                    "action": parsed.action,
+                    "action_input": parsed.action_input,
+                }
             _append_observation(
                 self.messages,
                 self.ctx,
@@ -1140,6 +1168,7 @@ class AgentLoop:
                 tool_name=tool_name,
                 success=tool_result.success,
                 artifact=tool_result.artifact,
+                corrected_record=corrected,
             )
             return self._CONTINUE
 
@@ -1199,6 +1228,12 @@ class AgentLoop:
         single-purpose helper. See the helpers' docstrings for what
         each stage owns.
         """
+        # Wire keys are namespaced ``{tool}_{param}``. Strip to standard
+        # keys once here so delegate's direct ``tool_delegate()`` call and
+        # the hooks all see standard keys; ``_execute_tool``'s own strip is
+        # then a no-op on the already-stripped result.
+        if tool_name in TOOLS and isinstance(tool_input, dict):
+            tool_input = TOOLS[tool_name].strip_prefix(tool_input)
         _debug_log(
             f"TOOL turn={self.turn} action={tool_name} input={str(tool_input)[:200]}"
         )
@@ -2022,6 +2057,7 @@ def _append_observation(
     tool_name: str,
     success: bool,
     artifact: str = "",
+    corrected_record: dict | None = None,
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
 
@@ -2030,6 +2066,16 @@ def _append_observation(
     returns ``llm_text`` unchanged — raw IS the wire shape. Envelope
     formats may re-render so the model's own prior teaches the envelope
     instead of reinforcing whatever drift happened mid-turn.
+
+    ``corrected_record`` (set after an action-name correction, where
+    ``infer_action`` recovered a dropped action from the action_input key
+    prefixes) replaces BOTH the in-memory prior AND the history record
+    with the corrected structured form. Re-feeding the raw drift would
+    strengthen the mimicry (next turn's prior, or a resumed session's
+    restored prior, teaches "dropping the action name is fine") — the same
+    failure the NO_THOUGHT retry avoids. The correction stays traceable
+    via the TurnRecorder (``parse_stage=3`` + ``action_inferred``), so no
+    analysis signal is lost by not keeping the raw text here.
 
     For history.jsonl (via ctx.add), the wire_format plugin shapes the
     assistant record (e.g. ReAct splits ``thought / action / action_input``
@@ -2043,15 +2089,19 @@ def _append_observation(
     from a plain user chat turn, so empty-string ``tool_name`` (used
     by format-retry paths) still routes through ``observation()``.
     """
-    messages.append(
-        {
-            "role": "assistant",
-            "content": wire_format.normalize_assistant_for_messages(llm_text),
-        }
-    )
+    if corrected_record is not None:
+        prior_content = wire_format.render_assistant_from_history(corrected_record)[
+            "content"
+        ]
+        history_record = corrected_record
+    else:
+        prior_content = wire_format.normalize_assistant_for_messages(llm_text)
+        history_record = wire_format.serialize_assistant_for_history(llm_text)
+
+    messages.append({"role": "assistant", "content": prior_content})
     messages.append({"role": "user", "content": obs_msg})
     if ctx:
-        ctx.add(wire_format.serialize_assistant_for_history(llm_text))
+        ctx.add(history_record)
         obs_entry = {
             "role": "user",
             "tool": tool_name,

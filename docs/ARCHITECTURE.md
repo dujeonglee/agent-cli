@@ -58,7 +58,7 @@ agent_cli/
 ├── constants.py             (~25)  공유 상수 (timeout, observation 템플릿, INTERRUPT_NOTICE). 외부 모듈 의존 없음 — 저층 레이어. wire-format-specific 상수 (FORMAT_RULES, RETRY_HINT_*, SYSTEM_USER_PREFIXES) 는 ``wire_formats/`` 의 plugin이 소유
 ├── wire_formats/                   Wire format 플러그인 시스템 — 모델 응답 형식 추상화
 │   ├── __init__.py          (132)  Registry (`register` / `get` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react, prefix_md) 자동 등록.
-│   ├── base.py              (410)  `WireFormat` ABC + `ParsedAction` dataclass. Plugin 베이스 클래스 — abstract method (format-specific 부분만, plugin이 반드시 구현)와 concrete default (lifecycle / 식별 hook, 보통 그대로 상속) 분리. Abstract: render_full_example / format_rules_anchor / format_rules_field_specific / parse / 6개 recovery wording / system_user_prefixes. Default: format_rules = `build_format_rules(self)`, render_action_input = identity, normalize_assistant_for_messages = identity, provider_call_kwargs = `{}`, prefill = `""`, serialize_assistant_for_history = `self.parse()` + 구조화 필드 추출, render_assistant_from_history = `self.render_full_example()` 호출로 wire shape 재방출. 모듈 docstring에 assistant turn lifecycle (A → B/C, B → D) 표 포함. plugin 추가 = WireFormat 상속한 새 파일 1개, main code 0 변경.
+│   ├── base.py              (410)  `WireFormat` ABC + `ParsedAction` dataclass. Plugin 베이스 클래스 — abstract method (format-specific 부분만, plugin이 반드시 구현)와 concrete default (lifecycle / 식별 hook, 보통 그대로 상속) 분리. Abstract: render_full_example / format_rules_anchor / format_rules_field_specific / parse / 6개 recovery wording / system_user_prefixes. Default: format_rules = `build_format_rules(self)`, render_action_input = dict→JSON via json.dumps (wire가 직렬화 — 호출자는 dict만 전달, JSON 가정은 이 hook 한 곳에; render_full_example/history round-trip도 이 hook 경유), normalize_assistant_for_messages = identity, provider_call_kwargs = `{}`, prefill = `""`, serialize_assistant_for_history = `self.parse()` + 구조화 필드 추출, render_assistant_from_history = `self.render_full_example()` 호출로 wire shape 재방출. 모듈 docstring에 assistant turn lifecycle (A → B/C, B → D) 표 포함. plugin 추가 = WireFormat 상속한 새 파일 1개, main code 0 변경.
 │   ├── react.py             (655)  ReActFormat — 기본 plugin. ReAct-shape 문자열 (JSON `{thought, action, action_input}`) + recovery wording + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. WireFormat ABC 상속해 lifecycle default 사용 — format-specific 메서드만 정의. (이전 EnvelopeFormat은 2026-05-10 측정 후 폐기 — Phase 1 bakeoff에서 mistral 0% / qwen thought 9.5%로 wire-shape 결정성 약점 확인)
 │   └── prefix_md.py         (450)  PrefixMdFormat — 마크다운 H2 헤딩 wire format (`## Thought / ## Action / ## Input`). small-LLM이 XML envelope보다 자연스럽게 emit하도록 설계. parser: strict `^## X$` line-anchored 매칭, last-wins on `## Action`+`## Input` (sub-header drift 방어), action body는 단일 토큰 (`^[\w.-]+$`) 검증. **thought optional (`thought_required=False`)**: `## Thought` 헤딩 있으면 그 섹션, 없으면 `## Action` 앞 prose 를 thought 으로 간주(모델이 헤딩 없이 prose 로 추론하는 패턴 — "I see the problem... Let me fix it."); thought 없어도 허용(NO_THOUGHT retry 안 함). 4-state parse_stage (0=no Action, 1=full, 2=Action 있고 Input 깨짐, 3=Action body invalid). provider_call_kwargs override (`skip_json_format=True`) — basic JSON 모드가 `{` 강제하는데 markdown은 `## `로 시작이라 충돌. 나머지 lifecycle은 ABC default 사용.
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
@@ -101,19 +101,21 @@ agent_cli/
 │   └── openai.py            (194)  OpenAI 호환 API (function calling + reasoning_content + streaming + TTFT)
 │
 ├── tools/                          도구 시스템
-│   ├── __init__.py          (77)   TOOLS dict (실제+가상) + _execute_tool() (internal primitive)
+│   ├── __init__.py          (30)   registry re-export (TOOLS / TOOL_SCHEMAS / _execute_tool / infer_action / validate / get_descriptions) — 기존 `from agent_cli.tools import ...` 호환
+│   ├── base.py              (95)   `Tool` ABC — schema(name/description/parameters) + dispatch(`_run`) + wire-key prefix(`key_prefix`/`strip_prefix`/`add_prefix`) + `claims`(prefix 매칭). `run()`이 strip_prefix 후 `_run` 호출. 각 도구는 `name`만 정하면 prefix/strip/claims 자동 (override 0)
+│   ├── virtual.py           (115)  가상 도구 Tool 서브클래스 (complete/ask/run_skill/ready_for_review) — loop이 인터셉트, **표준 키 유지** (prefix/추론 대상 아님)
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
 │   ├── action_summary.py    (34)   tool 이름 분기 자연어 요약 헬퍼: `summarize_tool_args` (`{"tool":"<tool>","args":{...}}` → 짧은 한 줄). 두 caller: (1) `manager._to_natural_language`(observation 브랜치)가 `[<tool>] <args summary>` 헤더 합성에, (2) `manager._to_summary_text`가 **요약 경로의 assistant 액션**을 `action(<args summary>)` 산문으로 푸는 데 사용(파일 본문 대신 경로만). live/resume 경로의 assistant emission은 `wire_format.render_assistant_from_history`가 JSON round-trip (이전 `summarize_action_args`는 2026-05-15 제거).
-│   ├── registry.py          (~600) 스키마 정의, 검증 (3-tuple 리턴), inline 가이드
+│   ├── registry.py          (270)  12개 Tool 인스턴스 수집 → `TOOLS`(= `TOOL_SCHEMAS` alias), `_execute_tool`(tool.run), **`infer_action`**(action_input 키 prefix → 정확히 1개 도구가 claims 하면 복원, 0/2+는 None), `validate_tool_input`(3-tuple), `get_tool_descriptions`. tool 모듈을 import하므로 `detectors`는 `validate_tool_input`을 lazy import (순환 회피)
 │   ├── _diff.py             (68)   write_file/edit_file 공용 unified-diff 포매터 — **plain 표준 unified diff** (git diff 텍스트 형태, colour markup·gutter 없음). LLM observation 에 깨끗한 diff 가 들어가도록(=`[green]` 태그로 토큰 낭비/노이즈 없음); 색상은 렌더러가 라인 첫 char 보고 입힘 (CLI `_colorize_diff_line`, web `colorizeDiffBody`). 100줄 cap (`MAX_DIFF_LINES`) + `DIFF_TRUNCATION_PREFIX` summary
-│   ├── read_file.py         (215)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 → ToolResult
-│   ├── write_file.py        (43)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult
-│   ├── edit_file.py         (309)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff). ops: replace / append / prepend / delete (delete = pos..end 범위 제거, lines 없음 = replace+lines=[] 의 명시 형태) → ToolResult
-│   ├── shell.py             (175)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`로 비활성) → ToolResult. **프롬프트 가능 여부는 `get_renderer().can_prompt()` 로 판정** (구 `_is_tty()` 대체) — CLI는 TTY, web은 연결된 클라이언트(SSE+/api/input, TTY 불필요). 못 물어보면 hang 대신 명확한 refuse 에러. **확인 직렬화는 렌더 레이어의 공유 `interactive_lock`(RLock)** 사용 (confirm·ask 공통) — parallel delegate가 task별 워커 스레드로 돌기에 "한 번에 하나의 outstanding 프롬프트"를 보장해 응답이 물어본 워커로만 라우팅. shell은 락을 잡고 `_session_allowlist` 재확인 후 `renderer.confirm`을 호출(같은 스레드 RLock 재진입). `ask`(`_handle_ask`)도 동일 `can_prompt` 게이트 — 못 띄우면 `"(no response)"` 치환. 위험 확인 별칭: `y`(+yes/ok/okay/yep/yeah/sure), `a`(+always/**allow**), `n`(+no/nope) — 긍정 의도가 안전 기본값 deny로 오인되지 않게 확장(특히 프롬프트 라벨이 "always allow"라 `allow`→a). 출력은 잘리지 않고 그대로 LLM observation으로 전달 (이전 shell_artifact 가드는 2026-05-19 제거 — head/tail 미리보기가 중간 디버깅 정보를 silent하게 누락시키는 사례 발견, 컨텍스트 budget은 compaction/FIFO가 처리)
-│   ├── fetch.py             (230)  웹 페이지 fetch → 마크다운 변환 → ToolResult
-│   ├── delegate.py          (~770) in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event)
-│   ├── context.py           (574)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
-│   └── code_index.py        (598)  code_index 도구 — `agent_cli.code_index` 패키지의 native-tool wrapper. 10 mode dispatch (list/fetch/lookup/kind/file/refs/callers/callees/slice/build). 인덱스 root 자동 해석 (cwd 또는 가장 가까운 조상 `.agent-cli/`), lazy build + per-query incremental refresh. list/fetch는 root 바깥 path에 대해 on-demand parse fallback (DB 갱신 없음); 나머지 모드는 index-scoped (out-of-root 명시적 거부). fetch 결과는 hashline 포맷 → edit_file 직결. `post_hook(path)`는 edit_file/write_file 성공 직후 호출되어 자동 incremental refresh — 모든 예외 swallow (인덱싱 hiccup이 user-facing op 막지 않음). `_resolve_defs_path(root)`가 `<root>/.agent-cli/defconfig` 존재 시 `build(defs_path=...)`로 전달 — kernel/driver처럼 `#ifdef CONFIG_*` 가 함수 시그니처를 분기하는 코드에서 tree-sitter 파싱이 ERROR로 떨어져 정의가 누락되는 케이스를 unifdef 사전 분기 제거로 살림. 파일 부재 시 `None`이 그대로 통과해 기존 무전처리 동작 유지. 모듈 레벨 `_BUILD_LOCK` (threading.Lock) 이 `_ensure_index` / `post_hook` / `_do_build` 의 `build()` 호출을 직렬화 — 병렬 delegate worker 가 동시 진입해도 중복 빌드 없음. (atomic write 가 correctness 를 책임지고, 락은 효율 + SQLite 락 경합 회피 책임).
+│   ├── read_file.py         (257)  파일 읽기 + hashline 포맷팅 + 부분 읽기/검색/stat 모드 → ToolResult (+ ReadFileTool)
+│   ├── write_file.py        (60)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult (+ WriteFileTool)
+│   ├── edit_file.py         (344)  파일 편집 (hashline + 퍼지 매칭 + 중복 ref/range overlap 거부 + edits 필터링 + colored diff). ops: replace / append / prepend / delete (delete = pos..end 범위 제거, lines 없음 = replace+lines=[] 의 명시 형태) → ToolResult
+│   ├── shell.py             (195)  셸 명령 실행 + 위험 명령 (rm/rmdir/mv) y/n/a 확인 (decision + 선택적 코멘트, env `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`로 비활성) → ToolResult. **프롬프트 가능 여부는 `get_renderer().can_prompt()` 로 판정** (구 `_is_tty()` 대체) — CLI는 TTY, web은 연결된 클라이언트(SSE+/api/input, TTY 불필요). 못 물어보면 hang 대신 명확한 refuse 에러. **확인 직렬화는 렌더 레이어의 공유 `interactive_lock`(RLock)** 사용 (confirm·ask 공통) — parallel delegate가 task별 워커 스레드로 돌기에 "한 번에 하나의 outstanding 프롬프트"를 보장해 응답이 물어본 워커로만 라우팅. shell은 락을 잡고 `_session_allowlist` 재확인 후 `renderer.confirm`을 호출(같은 스레드 RLock 재진입). `ask`(`_handle_ask`)도 동일 `can_prompt` 게이트 — 못 띄우면 `"(no response)"` 치환. 위험 확인 별칭: `y`(+yes/ok/okay/yep/yeah/sure), `a`(+always/**allow**), `n`(+no/nope) — 긍정 의도가 안전 기본값 deny로 오인되지 않게 확장(특히 프롬프트 라벨이 "always allow"라 `allow`→a). 출력은 잘리지 않고 그대로 LLM observation으로 전달 (이전 shell_artifact 가드는 2026-05-19 제거 — head/tail 미리보기가 중간 디버깅 정보를 silent하게 누락시키는 사례 발견, 컨텍스트 budget은 compaction/FIFO가 처리)
+│   ├── fetch.py             (258)  웹 페이지 fetch → 마크다운 변환 → ToolResult (+ FetchTool)
+│   ├── delegate.py          (793)  in-process 서브에이전트 (fork/none, 병렬 + Live 상태 패널은 render.minimal `FrameClock` reuse, subdir, agent_stack, stop_event). ContextManager는 순환 회피 위해 dispatch 시점 런타임 import
+│   ├── context.py           (648)  read_context 도구 (list / search: scope+sessions 필터 / fetch: loc+range)
+│   └── code_index.py        (710)  code_index 도구 — `agent_cli.code_index` 패키지의 native-tool wrapper. 10 mode dispatch (list/fetch/lookup/kind/file/refs/callers/callees/slice/build). 인덱스 root 자동 해석 (cwd 또는 가장 가까운 조상 `.agent-cli/`), lazy build + per-query incremental refresh. list/fetch는 root 바깥 path에 대해 on-demand parse fallback (DB 갱신 없음); 나머지 모드는 index-scoped (out-of-root 명시적 거부). fetch 결과는 hashline 포맷 → edit_file 직결. `post_hook(path)`는 edit_file/write_file 성공 직후 호출되어 자동 incremental refresh — 모든 예외 swallow (인덱싱 hiccup이 user-facing op 막지 않음). `_resolve_defs_path(root)`가 `<root>/.agent-cli/defconfig` 존재 시 `build(defs_path=...)`로 전달 — kernel/driver처럼 `#ifdef CONFIG_*` 가 함수 시그니처를 분기하는 코드에서 tree-sitter 파싱이 ERROR로 떨어져 정의가 누락되는 케이스를 unifdef 사전 분기 제거로 살림. 파일 부재 시 `None`이 그대로 통과해 기존 무전처리 동작 유지. 모듈 레벨 `_BUILD_LOCK` (threading.Lock) 이 `_ensure_index` / `post_hook` / `_do_build` 의 `build()` 호출을 직렬화 — 병렬 delegate worker 가 동시 진입해도 중복 빌드 없음. (atomic write 가 correctness 를 책임지고, 락은 효율 + SQLite 락 경합 회피 책임).
 │
 ├── code_index/                     code_index 패키지 — tree-sitter SQLite 코드 인덱서 (`minish.ai/Agent-tools tsindex.py` Apache 2.0 port — NOTICE 참조). 총 ~5,000 LOC. `_sqlite.py` shim 이 stdlib `sqlite3` 우선 / 미존재(`--without-sqlite` CPython) 시 `pysqlite3-binary` 폴백 — Linux 잠금 서버에서도 무설정 동작.
 │   ├── __init__.py          (56)   public API: build / load_index / build_callgraph / cmd_slice / IndexStore / Symbol / Ref / NAME_KINDS / CODE_NAME_KINDS / REF_KINDS / SCHEMA_VERSION
@@ -147,7 +149,7 @@ agent_cli/
 │
 ├── prompts/                        프롬프트 템플릿
 │   ├── __init__.py          (1)
-│   └── system_prompt.py     (766)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide). `build_system_prompt(wire_format=…)` — Response Format 섹션은 `wire_format.format_rules()`, 스킬·에이전트 호출 예시는 `wire_format.render_full_example(thought=None, ...)`, 도구 inline 가이드의 action_input 단편은 `wire_format.render_action_input(...)`로 렌더링 (ReAct는 identity; action_input shape이 다른 미래 plugin이 swap할 수 있는 hook). 인라인 예시는 wire 셰이프로 감싸지 않음 — 와이어 셰이프 학습은 Format Rules + skill/agent 예시(각 1번)에서 일어나고, 인라인은 mode 분기 / 의미론 학습. Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools, wire_format)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `code_index` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `code_index mode='list'`로 우회 — 확장자 목록은 `code_index.languages.get_supported_extensions()` 단일 출처에서 가져와 walker 추가가 자동 전파). code_index 가이드는 per-file (list/fetch) vs index-wide (lookup/kind/file/refs/callers/callees/slice) scope 경계를 명시, on-demand parse fallback 위치도 안내. edit_file 가이드(`_build_edit_file_inline` — op 시맨틱·hashline·constraints 는 wire 공통 텍스트, single/batch 예시만 `render_action_input`으로 wire별 렌더; 기존 정적 `_HASHLINE_INLINE`을 delegate/read_file 과 같은 빌더 패턴으로 교체)는 (1) 편집 직전에 CURRENT turn에서 read 하도록 요구(code_index mode='fetch'도 fresh read로 카운트) (2) hash mismatch를 failure가 아닌 guardrail로 reframe해 모델이 panic 없이 re-read/retry 하도록 톤 조정.
+│   └── system_prompt.py     (766)  Attention 최적화 시스템 프롬프트 빌더 (Primacy/Middle/Recency, Role 상속, Context Recovery Guide). `build_system_prompt(wire_format=…)` — Response Format 섹션은 `wire_format.format_rules()`, 스킬·에이전트 호출 예시는 `wire_format.render_full_example(thought=None, ...)`, 도구 inline 가이드의 action_input 단편은 표준 키 dict로 작성되어 `wire_format.render_action_input(dict)`이 wire별 직렬화 (ReAct/prefix_md는 json.dumps; 비-JSON plugin이 swap), 도구별 `{tool}_` prefix는 `Tool.add_prefix`로 적용 — 가이드는 표준 키로 쓰고 prefix·직렬화는 단일 출처(`_rai_prefixed`)에서. 인라인 예시는 wire 셰이프로 감싸지 않음 — 와이어 셰이프 학습은 Format Rules + skill/agent 예시(각 1번)에서 일어나고, 인라인은 mode 분기 / 의미론 학습. Recency 순서: Environment → Recovery → Directives → Execution Context (passive→active, persistent→immediate; Execution Context만 동적이라 끝에 배치 → 앞 3개 KV cache 안정). Tool inline 가이드는 `_build_tool_inline_guides(active_tools, wire_format)` 가 매 호출마다 빌드 — `read_file` 가이드의 Flow 문장이 `code_index` 활성 여부에 따라 분기 (활성 시 supported 확장자 파일은 `code_index mode='list'`로 우회 — 확장자 목록은 `code_index.languages.get_supported_extensions()` 단일 출처에서 가져와 walker 추가가 자동 전파). code_index 가이드는 per-file (list/fetch) vs index-wide (lookup/kind/file/refs/callers/callees/slice) scope 경계를 명시, on-demand parse fallback 위치도 안내. edit_file 가이드(`_build_edit_file_inline` — op 시맨틱·hashline·constraints 는 wire 공통 텍스트, single/batch 예시만 `render_action_input`으로 wire별 렌더; 기존 정적 `_HASHLINE_INLINE`을 delegate/read_file 과 같은 빌더 패턴으로 교체)는 (1) 편집 직전에 CURRENT turn에서 read 하도록 요구(code_index mode='fetch'도 fresh read로 카운트) (2) hash mismatch를 failure가 아닌 guardrail로 reframe해 모델이 panic 없이 re-read/retry 하도록 톤 조정.
 │
 ├── skills/                         프롬프트 스킬 시스템
 │   ├── __init__.py          (7)    re-export
@@ -249,7 +251,7 @@ tools/shell.py      → tools/result
 tools/write_file.py → tools/result
 tools/context.py    → tools/result, context/session
 tools/delegate.py   → tools/result, context/manager, resource_loader, loop (lazy import)
-tools/registry.py   → (외부만: json, dataclasses)
+tools/registry.py   → tools/base + 12개 tool 모듈 (인스턴스 수집). detectors는 validate_tool_input을 lazy import (registry→tool→recovery 순환 회피)
 context/token_est.  → (외부만: 없음)
 context/overflow.py → context/token_estimator, providers/capabilities
 context/manager.py  → context/token_estimator, tools/action_summary, wire_formats
@@ -349,21 +351,36 @@ class ParsedAction:
     truncated: bool = False      # JSON 복구가 닫지 못한 브래킷/문자열을 보충했을 때 True
 ```
 
-### 4.4 도구 스키마 (`tools/registry.py`)
+### 4.4 도구 추상화 표면 (`tools/base.py` + `tools/registry.py`)
+
+각 도구는 `Tool` ABC 서브클래스로, 스키마(`name`/`description`/`parameters`)·dispatch(`_run`)·wire-key prefix 를 한 곳에 응집한다 (이전의 중앙 `ToolSchema` dataclass + `__init__.TOOLS` 함수 dict 를 대체).
 
 ```python
-@dataclass
-class ToolSchema:
+class Tool(ABC):
     name: str
     description: str
-    parameters: dict  # JSON Schema 형태
+    parameters: dict                      # JSON Schema
+    @property
+    def key_prefix(self) -> str: ...       # "{name}_"
+    def strip_prefix(self, args): ...      # wire → 표준 키 (run()이 dispatch 직전 적용)
+    def add_prefix(self, args): ...        # 표준 → wire (inline 가이드 예시용, strip의 역, 멱등)
+    def claims(self, action_input): ...    # 키 prefix 로 소유 판정 (action 누락 추론)
+    def run(self, args, *, session_dir=None):   # strip_prefix → _run
+    @abstractmethod
+    def _run(self, args, *, session_dir=None) -> ToolResult: ...
+```
 
-# 등록된 도구: read_file, write_file, edit_file, shell, read_context,
-#               complete, ask, run_skill, ready_for_review, fetch, code_index, delegate
-# 가상 도구 (loop에서 인터셉트, 별도 set 상수 없음 — loop.py if-cascade가 단일 진실원):
-#   complete, ask, run_skill, ready_for_review, delegate
-# _ALWAYS_INCLUDE = ("complete", "ready_for_review") — allowed_tools와 무관하게 항상 API tool 목록에 포함
-# delegate는 TOOL_SCHEMAS의 일반 항목으로 등록 (`include_delegate` 플래그로 시스템 프롬프트 노출 제어)
+**Wire-key prefix**: action_input 의 최상위 키를 `{tool}_{param}` 으로 네임스페이스한다 (`read_file_path`, `shell_command`; 중첩 키 `edits[].op` 등은 그대로). 모델이 `## Action` 의 tool 이름을 누락해도(parse_stage 3) 키 모양으로 도구를 복원할 수 있다 — loop 이 parse 직후 `registry.infer_action(action_input)` 을 호출, 각 `Tool.claims`(prefix 매칭)가 투표해 **정확히 1개**가 소유하면 그 도구로 보정(0/2+는 NO_ACTION recovery로). 보정에 성공하면 `_append_observation` 이 next-turn prior(messages)와 history record 를 **보정된 wire shape** 으로 재기록한다 — raw drift 를 prior 로 다시 먹이면 mimicry 가 강화되기 때문(다음 턴이, 또는 resume 시 복원된 prior 가 "action 이름을 빠뜨려도 된다"를 학습; NO_THOUGHT retry 가 피하는 것과 같은 실패). 보정 자체는 `TurnRecorder`(parse_stage=3 + `action_inferred` primitive)로 추적되므로 형식 실패 분석 신호는 보존된다. prefix 는 **wire 표면에만** 존재: `Tool.run()` 이 dispatch 직전 `strip_prefix` 로 표준 키로 되돌려 `tool_*` 함수·virtual 처리·validate·기존 dispatch 가 전부 표준 키를 받는다(prefix 없는 키는 no-op → 모델이 표준 키를 보내도 동작). 키 prefix 가 변별을 구조적으로 보장하므로 claims 충돌(`{content, edits}` 류)이 원천 소멸 — 각 도구는 `name` 만 정하면 prefix/strip/claims 가 자동(override 0). **실측 근거**: omlx 27B/35B 에서 prefix 키 compliance 60/60(std-leak 0) — 표준 키와 동일하게 따름.
+
+```text
+# 실제 도구 (각 모듈에 Tool 서브클래스): read_file, write_file, edit_file, shell,
+#   code_index, read_context, fetch, delegate
+# 가상 도구 (tools/virtual.py — loop이 인터셉트, 표준 키 유지, prefix/추론 대상 아님):
+#   complete, ask, run_skill, ready_for_review
+# registry.py가 12개 Tool 인스턴스를 수집 → TOOLS(= TOOL_SCHEMAS alias).
+#   인스턴스가 옛 ToolSchema와 같은 .name/.description/.parameters를 노출하므로
+#   schema 소비처(system prompt, input validation, MCP adapter)는 무변경.
+# _ALWAYS_INCLUDE = ("complete", "ready_for_review")
 ```
 
 가상 도구 인터셉트 분기는 일반 dispatch 경로(`§5.x render_step("action", ...)`)를

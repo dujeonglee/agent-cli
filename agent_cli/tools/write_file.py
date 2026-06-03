@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_cli.tools._diff import format_diff
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 
@@ -41,3 +42,19 @@ def tool_write_file(args: dict) -> ToolResult:
         return ToolResult(True, output=msg)
     except Exception as e:
         return ToolResult(False, error=f"write_file failed: {e}")
+
+
+class WriteFileTool(Tool):
+    name = "write_file"
+    description = "Create or overwrite a file at the given path with raw content."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "write_file_path": {"type": "string", "description": "File path to save"},
+            "write_file_content": {"type": "string", "description": "File content"},
+        },
+        "required": ["write_file_path", "write_file_content"],
+    }
+
+    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+        return tool_write_file(args)

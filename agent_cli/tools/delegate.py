@@ -13,13 +13,20 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent_cli.constants import DELEGATE_DEFAULT_TIMEOUT
-from agent_cli.context.manager import ContextManager
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.resource_loader import ResourceLoader
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
+
+if TYPE_CHECKING:
+    # Runtime-imported inside the dispatch path to avoid a
+    # registry → delegate → context.manager → tools.action_summary →
+    # tools import cycle (registry now imports DelegateTool at module load).
+    from agent_cli.context.manager import ContextManager
 
 # ── Agent file loading ──────────────────────────
 
@@ -412,6 +419,8 @@ def _run_single(
     # own default (react) when there's no parent.
     inherited_wire_format = parent_ctx.wire_format if parent_ctx else None
 
+    from agent_cli.context.manager import ContextManager
+
     if context_mode == "fork":
         if parent_ctx is None:
             return ToolResult(
@@ -733,3 +742,52 @@ def tool_delegate(
     else:
         # Parallel: suppress during execution, collect and display after
         return _run_parallel(task_specs=tasks, stop_event=stop_event, **common_kwargs)
+
+
+class DelegateTool(Tool):
+    name = "delegate"
+    description = (
+        "Delegate tasks to subagents. "
+        "Single task = sync, multiple tasks = parallel. "
+        "Use context mode to control what the subagent knows."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "delegate_tasks": {
+                "type": "array",
+                "description": "List of tasks. Single item = sync, multiple = parallel.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Task description for the subagent",
+                        },
+                        "context": {
+                            "type": "string",
+                            "enum": ["none", "fork"],
+                            "description": "none (independent), fork (copy conversation history)",
+                        },
+                        "tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Allowed tools (omit for default set)",
+                        },
+                        "agent": {
+                            "type": "string",
+                            "description": "Agent name to load role/config from .agent-cli/agents/{name}.md",
+                        },
+                    },
+                    "required": ["task"],
+                },
+            },
+        },
+        "required": ["delegate_tasks"],
+    }
+
+    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+        # delegate is intercepted by the loop (it needs parent context,
+        # provider, capabilities) before execute_tool — this placeholder
+        # only fires for direct/test callers.
+        return ToolResult(True, output="(delegate: intercepted by loop)")

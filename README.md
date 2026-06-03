@@ -633,6 +633,12 @@ LLM이 사용할 수 있는 도구 목록:
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
 | `ready_for_review` | 완료 직전 자가 검증 — 원본 query를 observation으로 받아 누락 점검 후 `complete` 호출 |
 
+### action_input 키 네이밍 규칙
+
+각 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `read_file_path`, `write_file_content`, `shell_command`, `edit_file_edits`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `edits[].op`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)는 표준 키를 그대로 씁니다.
+
+> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"path": ...}` → `{"read_file_path": ...}`). 표준 키로 보내도 동작하지만(prefix strip 은 no-op), 권장 형식은 prefix 입니다.
+
 ### read_file — 파일 읽기
 
 파일을 읽고 각 줄에 `LINE#HASH:content` hashline 태그를 부여합니다.

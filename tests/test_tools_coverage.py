@@ -790,30 +790,30 @@ class TestToolsRegistry:
         assert "complete" in TOOLS
         assert "ask" in TOOLS
 
-    def test_complete_lambda_with_result(self):
-        fn = TOOLS["complete"]
-        result = fn({"result": "done"})
+    def test_complete_tool_with_result(self):
+        tool = TOOLS["complete"]
+        result = tool.run({"result": "done"})
         assert result.success
         assert result.output == "done"
 
-    def test_complete_lambda_default(self):
-        fn = TOOLS["complete"]
-        result = fn({})
+    def test_complete_tool_default(self):
+        tool = TOOLS["complete"]
+        result = tool.run({})
         assert result.success
         assert (
             result.output
             == "(Completed without result — model may lack capability for this task)"
         )
 
-    def test_ask_lambda_with_question(self):
-        fn = TOOLS["ask"]
-        result = fn({"question": "what?"})
+    def test_ask_tool_with_question(self):
+        tool = TOOLS["ask"]
+        result = tool.run({"question": "what?"})
         assert result.success
         assert result.output == "what?"
 
-    def test_ask_lambda_default(self):
-        fn = TOOLS["ask"]
-        result = fn({})
+    def test_ask_tool_default(self):
+        tool = TOOLS["ask"]
+        result = tool.run({})
         assert result.success
         assert result.output == "(ask)"
 

@@ -9,6 +9,7 @@ import re
 import zlib
 from pathlib import Path
 
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 # Hashline constants: 16-char alphabet for CRC32-to-2-char hash encoding
@@ -213,3 +214,44 @@ def tool_read_file(args: dict) -> ToolResult:
         return ToolResult(True, output=format_hashlines(text))
     except Exception as e:
         return ToolResult(False, error=f"read_file failed: {e}")
+
+
+class ReadFileTool(Tool):
+    name = "read_file"
+    description = (
+        "Read file contents. Lines are tagged as LINE#HASH:content for editing. "
+        "For unknown/large files, start with read_file_stat=true to inspect size before reading. "
+        "read_file_stat returns metadata (line count, file size) and is not a read — follow it with a full read, read_file_line_start/read_file_line_end range, or read_file_search. "
+        "Use read_file_search='keyword' to find targeted content without reading the whole file. "
+        "Use read_file_line_start/read_file_line_end for partial reads (1-based, inclusive)."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "read_file_path": {"type": "string", "description": "File path to read"},
+            "read_file_stat": {
+                "type": "boolean",
+                "description": "Metadata query only — returns line count, file size, and the first 20 lines. Not a substitute for reading: after read_file_stat, pick a real read mode (full / read_file_line_start+read_file_line_end / read_file_search).",
+            },
+            "read_file_search": {
+                "type": "string",
+                "description": "Regex pattern. Returns only matching lines with surrounding context. Efficient for targeted lookups.",
+            },
+            "read_file_context": {
+                "type": "integer",
+                "description": "Lines of context before/after each read_file_search match (default 5).",
+            },
+            "read_file_line_start": {
+                "type": "integer",
+                "description": "Start line number (1-based). Omit to read from beginning.",
+            },
+            "read_file_line_end": {
+                "type": "integer",
+                "description": "End line number (1-based, inclusive). Omit to read to end.",
+            },
+        },
+        "required": ["read_file_path"],
+    }
+
+    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+        return tool_read_file(args)

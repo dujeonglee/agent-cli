@@ -21,8 +21,22 @@ import platform
 from pathlib import Path
 
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.tools.registry import get_tool_descriptions
+from agent_cli.tools.registry import TOOLS, get_tool_descriptions
 from agent_cli.wire_formats import get as _get_wire_format
+
+
+def _rai_prefixed(wire_format, tool_name: str, action_input: dict) -> str:
+    """Render an inline-guide example, with two ownerships kept where they
+    belong: the tool owns the key prefix (:meth:`Tool.add_prefix`) and the
+    wire format owns serialization (:meth:`WireFormat.render_action_input`).
+
+    Inline guides are authored as plain dicts in standard keys
+    (``{"path": ...}``). They never hand-write namespaced keys and never
+    assume JSON — both the ``{name}_`` prefix and the JSON (or non-JSON)
+    serialization are applied here from their single sources.
+    """
+    return wire_format.render_action_input(TOOLS[tool_name].add_prefix(action_input))
+
 
 # ── DIRECTIVE.md search paths ────────────────────
 _DIRECTIVE_PATHS = [
@@ -82,17 +96,32 @@ def _build_edit_file_inline(wire_format) -> str:
     each plugin's ``format_rules()`` — this guide stays about edit_file's tool
     semantics.
     """
-    rai = wire_format.render_action_input
+
+    def rai(j):
+        return _rai_prefixed(wire_format, "edit_file", j)
+
     ex_single = rai(
-        '{"path": "app.py", "edits": '
-        '[{"op": "replace", "pos": "2#KT", "lines": ["    return \\"hello\\""]}]}'
+        {
+            "path": "app.py",
+            "edits": [
+                {"op": "replace", "pos": "2#KT", "lines": ['    return "hello"']}
+            ],
+        }
     )
     ex_batch = rai(
-        '{"path": "app.py", "edits": ['
-        '{"op": "replace", "pos": "5#aa", "end": "7#bb", '
-        '"lines": ["int hp = 100;", "return hp;"]}, '
-        '{"op": "delete", "pos": "12#cc"}, '
-        '{"op": "append", "pos": "30#ee", "lines": ["// end"]}]}'
+        {
+            "path": "app.py",
+            "edits": [
+                {
+                    "op": "replace",
+                    "pos": "5#aa",
+                    "end": "7#bb",
+                    "lines": ["int hp = 100;", "return hp;"],
+                },
+                {"op": "delete", "pos": "12#cc"},
+                {"op": "append", "pos": "30#ee", "lines": ["// end"]},
+            ],
+        }
     )
 
     def _indent(s: str) -> str:
@@ -145,26 +174,46 @@ def _build_delegate_inline(wire_format) -> str:
     hook as identity (action_input is JSON in both formats today).
     """
     examples = [
-        ("Single", '{"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}'),
+        ("Single", {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}),
         (
             "With context",
-            '{"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}',
+            {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]},
         ),
         (
             "With agent",
-            '{"tasks": [{"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}]}',
+            {
+                "tasks": [
+                    {
+                        "task": "Review this code for vulnerabilities",
+                        "agent": "security-reviewer",
+                    }
+                ]
+            },
         ),
         (
             "Agent + context",
-            '{"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]}',
+            {"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]},
         ),
         (
             "Parallel (independent)",
-            '{"tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}',
+            {
+                "tasks": [
+                    {"task": "Analyze A", "context": "fork"},
+                    {"task": "Analyze B", "context": "fork"},
+                ]
+            },
         ),
         (
             "Read-only",
-            '{"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}',
+            {
+                "tasks": [
+                    {
+                        "task": "Review changes",
+                        "context": "fork",
+                        "tools": ["read_file", "shell"],
+                    }
+                ]
+            },
         ),
     ]
     # Inline tool-guide examples show only the action_input dict —
@@ -172,7 +221,7 @@ def _build_delegate_inline(wire_format) -> str:
     # header, and inlining the wire-shape envelope per example
     # anchored small models toward placeholder reasoning emissions.
     rendered = "\n".join(
-        f"  - {label}: {wire_format.render_action_input(args)}"
+        f"  - {label}: {_rai_prefixed(wire_format, 'delegate', args)}"
         for _, (label, args) in enumerate(examples, start=1)
     )
     return f"""\
@@ -218,14 +267,14 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     shape is not a JSON dict can transform here without changing the
     builder. Both current plugins return identity.
     """
-    ex_stat = wire_format.render_action_input('{"path": "app.py", "stat": true}')
-    ex_search = wire_format.render_action_input(
-        '{"path": "app.py", "search": "login", "context": 5}'
-    )
-    ex_partial = wire_format.render_action_input(
-        '{"path": "app.py", "line_start": 100, "line_end": 600}'
-    )
-    ex_full = wire_format.render_action_input('{"path": "app.py"}')
+
+    def rai(j):
+        return _rai_prefixed(wire_format, "read_file", j)
+
+    ex_stat = rai({"path": "app.py", "stat": True})
+    ex_search = rai({"path": "app.py", "search": "login", "context": 5})
+    ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
+    ex_full = rai({"path": "app.py"})
     base_modes = f"""\
 
   Pick the right mode for the question — full reads burn context budget,
@@ -255,8 +304,7 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
   code_index ({exts}), call code_index mode='list' first.
   Otherwise stat first to get its size, then pick one of modes 2–4.
   stat alone is never enough — if you stop after stat, you have only
-  seen the first 20 lines. A bare full read on a large file (~300+
-  lines) will be refused with instructions; follow them."""
+  seen the first 20 lines."""
     else:
         flow = """
   Flow: for an unknown file, stat first to get its size, then pick one
@@ -287,27 +335,34 @@ def _build_code_index_inline(wire_format) -> str:
     from agent_cli.code_index.languages import get_supported_extensions
 
     exts = ", ".join(get_supported_extensions())
-    rai = wire_format.render_action_input
 
-    list_py = rai('{"mode": "list", "path": "auth.py"}')
-    list_cpp = rai('{"mode": "list", "path": "src/foo.cpp"}')
-    list_search = rai('{"mode": "list", "path": "auth.py", "search": "login"}')
+    def rai(j):
+        return _rai_prefixed(wire_format, "code_index", j)
 
-    fetch_py = rai('{"mode": "fetch", "path": "auth.py", "name": "User.login"}')
-    fetch_md = rai('{"mode": "fetch", "path": "README.md", "name": "## Setup"}')
+    list_py = rai({"mode": "list", "path": "auth.py"})
+    list_cpp = rai({"mode": "list", "path": "src/foo.cpp"})
+    list_search = rai({"mode": "list", "path": "auth.py", "search": "login"})
 
-    lookup = rai('{"mode": "lookup", "name": "AgentLoop"}')
-    lookup_kind = rai('{"mode": "lookup", "name": "Setup", "symbol_kind": "section"}')
-    kind_all = rai('{"mode": "kind", "symbol_kind": "function"}')
-    file_q = rai('{"mode": "file", "path": "agent_cli/loop.py"}')
-    refs_q = rai('{"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}')
-    callers_q = rai('{"mode": "callers", "name": "process"}')
-    callees_q = rai('{"mode": "callees", "name": "process"}')
+    fetch_py = rai({"mode": "fetch", "path": "auth.py", "name": "User.login"})
+    fetch_md = rai({"mode": "fetch", "path": "README.md", "name": "## Setup"})
+
+    lookup = rai({"mode": "lookup", "name": "AgentLoop"})
+    lookup_kind = rai({"mode": "lookup", "name": "Setup", "symbol_kind": "section"})
+    kind_all = rai({"mode": "kind", "symbol_kind": "function"})
+    file_q = rai({"mode": "file", "path": "agent_cli/loop.py"})
+    refs_q = rai({"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"})
+    callers_q = rai({"mode": "callers", "name": "process"})
+    callees_q = rai({"mode": "callees", "name": "process"})
     slice_q = rai(
-        '{"mode": "slice", "name": "process", '
-        '"with_callees": true, "with_types": true, "depth": 2}'
+        {
+            "mode": "slice",
+            "name": "process",
+            "with_callees": True,
+            "with_types": True,
+            "depth": 2,
+        }
     )
-    build_q = rai('{"mode": "build"}')
+    build_q = rai({"mode": "build"})
 
     return f"""\
 
@@ -698,7 +753,11 @@ def build_agent_descriptions(wire_format=None) -> str:
     example = wire_format.render_full_example(
         thought=None,
         action="delegate",
-        action_input='{"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}',
+        action_input=wire_format.render_action_input(
+            TOOLS["delegate"].add_prefix(
+                {"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}
+            )
+        ),
     )
     # Indent every line so multi-line wire shapes (e.g. markdown
     # section headers) keep their structure inside the bulleted list.
@@ -744,7 +803,9 @@ def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> st
     example = wire_format.render_full_example(
         thought=None,
         action="run_skill",
-        action_input='{"name": "skill-name", "arguments": "..."}',
+        action_input=wire_format.render_action_input(
+            {"name": "skill-name", "arguments": "..."}
+        ),
     )
     indented = "\n".join(f"  {line}" for line in example.splitlines())
     lines = [

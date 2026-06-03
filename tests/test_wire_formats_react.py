@@ -177,17 +177,18 @@ class TestRenderFullExample:
 
 
 class TestRenderActionInput:
-    """Inline-guide hook. ReAct nests action_input as JSON, so this is
-    identity — the abstraction exists for future plugins whose
+    """Inline-guide hook. The wire format owns serialization: ReAct nests
+    action_input as a JSON object, so this serializes the dict via
+    ``json.dumps``. The abstraction exists for future plugins whose
     action_input is not a JSON dict (e.g. XML attribute encoding)."""
 
-    def test_identity_returns_input_verbatim(self):
-        out = ReActFormat().render_action_input('{"path": "app.py"}')
+    def test_serializes_dict_to_json(self):
+        out = ReActFormat().render_action_input({"path": "app.py"})
         assert out == '{"path": "app.py"}'
 
-    def test_identity_preserves_whitespace_and_keys(self):
+    def test_serializes_nested_dict(self):
         out = ReActFormat().render_action_input(
-            '{"a": 1, "b": [2, 3], "nested": {"k": "v"}}'
+            {"a": 1, "b": [2, 3], "nested": {"k": "v"}}
         )
         assert out == '{"a": 1, "b": [2, 3], "nested": {"k": "v"}}'
 

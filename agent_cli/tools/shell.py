@@ -6,6 +6,7 @@ import os
 import shlex
 import subprocess
 
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 
@@ -173,3 +174,22 @@ def tool_shell(args: dict) -> ToolResult:
         return ToolResult(False, error=f"Command timed out ({timeout}s)")
     except Exception as e:
         return ToolResult(False, error=f"shell failed: {e}")
+
+
+class ShellTool(Tool):
+    name = "shell"
+    description = "Run a shell command and return stdout/stderr."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "shell_command": {"type": "string", "description": "Shell command to run"},
+            "shell_timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds (default 30)",
+            },
+        },
+        "required": ["shell_command"],
+    }
+
+    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+        return tool_shell(args)

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from agent_cli.tools._diff import format_diff
+from agent_cli.tools.base import Tool
 from agent_cli.tools.read_file import _parse_ref, _verify_ref, compute_line_hash
 from agent_cli.tools.result import ToolResult
 
@@ -307,3 +308,37 @@ def tool_edit_file(args: dict) -> ToolResult:
 
     post_hook(path)
     return ToolResult(True, output=msg)
+
+
+class EditFileTool(Tool):
+    name = "edit_file"
+    description = (
+        "Edit a file using hashline refs from read_file. "
+        "Ops: replace, append, prepend, delete. "
+        "delete removes the pos..end range and takes no lines; "
+        "replace with lines=[] also deletes (legacy form)."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "edit_file_path": {"type": "string", "description": "File path"},
+            "edit_file_edits": {
+                "type": "array",
+                "description": "List of edit operations",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "op": {"type": "string"},
+                        "pos": {"type": "string"},
+                        "end": {"type": "string"},
+                        "lines": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["op", "pos"],
+                },
+            },
+        },
+        "required": ["edit_file_path", "edit_file_edits"],
+    }
+
+    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+        return tool_edit_file(args)
