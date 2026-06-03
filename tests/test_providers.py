@@ -195,6 +195,36 @@ class TestOpenAIProvider:
         assert result.content == "plain text"
 
     @patch("agent_cli.providers.openai.requests.post")
+    def test_skip_json_format_omits_response_format(self, mock_post, caps_structured):
+        """A wire plugin whose shape is not a JSON object (prefix_md's
+        markdown sections) sets ``skip_json_format``; the provider must NOT
+        force the server's JSON-object mode even when the model *supports*
+        structured output. Forcing JSON against a markdown-shaped prompt
+        makes omlx/mlx degenerate (the ``[2025]`` / ``[1000, 1000]`` bug)."""
+        mock_post.return_value = _mock_response(
+            {
+                "choices": [
+                    {
+                        "message": {"content": "## Thought\nok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+
+        provider = OpenAIProvider("http://localhost:8080/v1", "")
+        provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="local-model",
+            capabilities=caps_structured,  # supports_structured_output=True
+            skip_json_format=True,
+        )
+
+        body = mock_post.call_args.kwargs["json"]
+        assert "response_format" not in body  # honored despite structured support
+
+    @patch("agent_cli.providers.openai.requests.post")
     def test_api_key_sets_auth_header(self, mock_post, caps_basic):
         """Non-empty API key → Authorization header present."""
         mock_post.return_value = _mock_response(
