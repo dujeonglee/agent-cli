@@ -581,13 +581,13 @@ def build_system_prompt(
       - skill: parent_role (inherited from caller)
 
     ``wire_format`` (a ``WireFormat`` plugin) supplies the response-format
-    section. Omitting it falls back to the registered ``"react"`` plugin
+    section. Omitting it falls back to the default wire format (DEFAULT_WIRE_FORMAT)
     so existing callers keep their pre-plugin behavior — that backward-
     compat default also lets unit tests construct a prompt without
     threading the registry through.
     """
     if wire_format is None:
-        wire_format = _get_wire_format("react")
+        wire_format = _get_wire_format()
 
     sections: list[str] = []
 
@@ -731,11 +731,11 @@ def build_agent_descriptions(wire_format=None) -> str:
     show only the invocation envelope (the user's thought is the
     user's, not part of the doc template).
 
-    ``wire_format=None`` falls back to the registered ``"react"`` plugin
+    ``wire_format=None`` falls back to the default wire format (DEFAULT_WIRE_FORMAT)
     so test callers don't have to thread the registry through.
     """
     if wire_format is None:
-        wire_format = _get_wire_format("react")
+        wire_format = _get_wire_format()
 
     try:
         from agent_cli.tools.delegate import _agent_loader
@@ -780,11 +780,11 @@ def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> st
     Excludes skills with disable_model_invocation=True.
     If skills is None, loads from disk.
 
-    ``wire_format=None`` falls back to the registered ``"react"`` plugin
+    ``wire_format=None`` falls back to the default wire format (DEFAULT_WIRE_FORMAT)
     (same backward-compat default as ``build_agent_descriptions``).
     """
     if wire_format is None:
-        wire_format = _get_wire_format("react")
+        wire_format = _get_wire_format()
 
     if skills is None:
         try:

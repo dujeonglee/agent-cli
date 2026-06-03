@@ -184,7 +184,7 @@ agent-cli run "task description" [options]
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
 | `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
-| `--response-format` | Wire format 플러그인 이름. 빌트인: `react` (기본 — 순수 JSON `{thought, action, action_input}`), `prefix_md` (실험 — `## Thought / ## Action / ## Input` 마크다운 섹션, small-LLM이 envelope보다 자연스럽게 emit하도록 설계). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `react` |
+| `--response-format` | Wire format 플러그인 이름. 빌트인: `prefix_md` (기본 — `## Thought / ## Action / ## Input` 마크다운 섹션, small-LLM이 envelope보다 자연스럽게 emit하도록 설계), `react` (순수 JSON `{thought, action, action_input}`). 두 형식 compliance 는 omlx 27B/35B bakeoff에서 동등. `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `prefix_md` |
 
 `run` 실행 후 세션이 자동 저장됩니다. `chat --resume <id>`로 이어서 작업할 수 있습니다:
 
@@ -218,7 +218,7 @@ agent-cli chat -p openai -m gpt-4o
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
 | `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
-| `--response-format` | Wire format 플러그인 이름. 빌트인: `react` (기본 — 순수 JSON `{thought, action, action_input}`), `prefix_md` (실험 — `## Thought / ## Action / ## Input` 마크다운 섹션, small-LLM이 envelope보다 자연스럽게 emit하도록 설계). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `react` |
+| `--response-format` | Wire format 플러그인 이름. 빌트인: `prefix_md` (기본 — `## Thought / ## Action / ## Input` 마크다운 섹션, small-LLM이 envelope보다 자연스럽게 emit하도록 설계), `react` (순수 JSON `{thought, action, action_input}`). 두 형식 compliance 는 omlx 27B/35B bakeoff에서 동등. `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `prefix_md` |
 
 대화 중 명령어:
 

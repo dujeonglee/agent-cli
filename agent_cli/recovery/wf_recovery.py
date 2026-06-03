@@ -25,7 +25,7 @@ from agent_cli.wire_formats import get as _get_wire_format
 
 
 def _resolve_wire_format(wire_format):
-    """Backward-compat fallback to the registered ``"react"`` plugin.
+    """Backward-compat fallback to the default wire format (DEFAULT_WIRE_FORMAT).
 
     The recovery package's format-agnostic boundary is preserved by
     ``recovery/__init__.py`` not re-exporting this module: only callers
@@ -36,7 +36,7 @@ def _resolve_wire_format(wire_format):
     """
     if wire_format is not None:
         return wire_format
-    return _get_wire_format("react")
+    return _get_wire_format()
 
 
 def format_no_json_retry(*, prior_content: str = "", wire_format=None) -> Intervention:
@@ -48,7 +48,7 @@ def format_no_json_retry(*, prior_content: str = "", wire_format=None) -> Interv
     echoable content is available.
 
     ``wire_format`` selects which envelope wording to use. Omitting it
-    falls back to the registered ``"react"`` plugin so existing callers
+    falls back to the default wire format (DEFAULT_WIRE_FORMAT) so existing callers
     (the loop's pre-Step-6 call sites, every test in
     ``test_retry_builders``) keep their original behavior bit-for-bit.
 
@@ -82,7 +82,7 @@ def format_no_action_retry(
     """Build the Intervention when parsing succeeded but no action was provided.
 
     Same failure-grounding rationale as ``format_no_json_retry``.
-    ``wire_format`` defaults to the registered ``"react"`` plugin —
+    ``wire_format`` defaults to the default wire format (DEFAULT_WIRE_FORMAT) —
     see that builder's docstring for the rationale.
     """
     wf = _resolve_wire_format(wire_format)

@@ -109,11 +109,11 @@ class ContextManager:
         # → in-memory rendering of assistant turns when ``get_messages``
         # is called (overflow recovery, session resume). One ctx instance
         # owns one plugin instance so a single session can never mix
-        # formats. Default falls back to the registered "react" plugin
+        # formats. Default falls back to the default wire format
         # for the headless / test paths that don't yet thread the choice
         # through; mirrors the pattern in ``AgentLoop.__init__``.
         if wire_format is None:
-            wire_format = _get_wire_format("react")
+            wire_format = _get_wire_format()
         self.wire_format = wire_format
 
         self.session_dir = Path(session_dir)

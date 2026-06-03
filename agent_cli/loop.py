@@ -119,7 +119,7 @@ class AgentLoop:
         # ``agent_cli/wire_formats/`` and re-running with
         # ``--response-format <name>``.
         if wire_format is None:
-            wire_format = _get_wire_format("react")
+            wire_format = _get_wire_format()
         self.wire_format = wire_format
 
         self.query = query
@@ -1509,7 +1509,7 @@ def run_loop(
 
     ``wire_format`` accepts a registered plugin name (str) or a
     ``WireFormat`` instance directly. ``None`` falls back to the
-    "react" plugin so existing callers don't need to change.
+    default wire format so existing callers don't need to change.
     """
     if isinstance(wire_format, str):
         wire_format = _get_wire_format(wire_format)

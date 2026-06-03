@@ -20,7 +20,7 @@ from agent_cli.providers import (
     UnsupportedModelError,
 )
 from agent_cli.render import C, console, get_renderer
-from agent_cli.wire_formats import get as _get_wire_format
+from agent_cli.wire_formats import DEFAULT_WIRE_FORMAT, get as _get_wire_format
 
 app = typer.Typer(
     name="agent-cli",
@@ -888,9 +888,9 @@ def run(
         help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. Useful for measurement baseline / debugging. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
     ),
     response_format: str = typer.Option(
-        "react",
+        DEFAULT_WIRE_FORMAT,
         "--response-format",
-        help="Wire format plugin name (default: react). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name (default: prefix_md). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
@@ -1185,9 +1185,9 @@ def chat(
         help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. Useful for measurement baseline / debugging. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
     ),
     response_format: str = typer.Option(
-        "react",
+        DEFAULT_WIRE_FORMAT,
         "--response-format",
-        help="Wire format plugin name (default: react). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name (default: prefix_md). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
 ):
     """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
@@ -1459,9 +1459,9 @@ def web(
         help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
     ),
     response_format: str = typer.Option(
-        "react",
+        DEFAULT_WIRE_FORMAT,
         "--response-format",
-        help="Wire format plugin name (default: react).",
+        help="Wire format plugin name (default: prefix_md).",
     ),
     host: str = typer.Option(
         "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"

@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_cli.wire_formats import all_system_user_prefixes
+from agent_cli.wire_formats import DEFAULT_WIRE_FORMAT, all_system_user_prefixes
 
 _SESSIONS_BASE = Path(".agent-cli")
 
@@ -32,7 +32,7 @@ class SessionMeta:
     # Wire format the session runs under. Recorded so a session's response
     # shape is recoverable for debugging / resume. Defaults to "react" for
     # backward compat with sessions written before this field existed.
-    response_format: str = "react"
+    response_format: str = DEFAULT_WIRE_FORMAT
 
 
 def get_session_dir(meta: SessionMeta) -> Path:
@@ -43,7 +43,7 @@ def get_session_dir(meta: SessionMeta) -> Path:
 
 
 def create_session(
-    workspace: str | None = None, response_format: str = "react"
+    workspace: str | None = None, response_format: str = DEFAULT_WIRE_FORMAT
 ) -> SessionMeta:
     """Create a new session for the given workspace (defaults to CWD)."""
     ws = workspace or os.getcwd()

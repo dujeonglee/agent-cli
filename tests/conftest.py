@@ -18,6 +18,22 @@ import os
 import pytest
 import requests
 
+# ── Default wire format for the unit suite ────────────────
+
+
+@pytest.fixture(autouse=True)
+def _default_wire_react(monkeypatch):
+    """Pin the loop's default wire format to react across the unit suite.
+
+    Mocked-provider tests author LLM emissions as ReAct JSON, so the loop's
+    default must be react for ``run_loop()`` (without an explicit
+    ``wire_format``) to parse them — otherwise prefix_md (the production
+    default) rejects the JSON and the loop spins in recovery. Cross-wire
+    parity is covered by dedicated parametrized tests, added incrementally.
+    """
+    monkeypatch.setattr("agent_cli.wire_formats.DEFAULT_WIRE_FORMAT", "react")
+
+
 # ── omlx integration connection ───────────────────────────
 OMLX_BASE_URL = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:8000/v1")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")

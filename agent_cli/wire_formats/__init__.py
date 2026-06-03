@@ -24,6 +24,11 @@ from agent_cli.wire_formats.base import ParsedAction, WireFormat
 # ── Registry ─────────────────────────────────────
 _registry: dict[str, WireFormat] = {}
 
+# Single source of truth for the default wire format — the CLI's
+# --response-format default, the new-session default, and the get(None) /
+# unspecified-wire fallback all resolve here. Change the default in ONE place.
+DEFAULT_WIRE_FORMAT = "prefix_md"
+
 
 def register(wire_format: WireFormat) -> None:
     """Register a plugin under its ``name`` attribute.
@@ -48,13 +53,15 @@ def register(wire_format: WireFormat) -> None:
     _registry[name] = wire_format
 
 
-def get(name: str) -> WireFormat:
-    """Return the registered plugin for ``name``.
+def get(name: str | None = None) -> WireFormat:
+    """Return the registered plugin for ``name`` — or ``DEFAULT_WIRE_FORMAT``
+    when ``name`` is None/empty (the single default source).
 
     Raises ``KeyError`` with the list of available names if no plugin is
     registered under ``name`` — the list is what the CLI's ``--response-format``
     option would accept.
     """
+    name = name or DEFAULT_WIRE_FORMAT
     plugin = _registry.get(name)
     if plugin is None:
         available = ", ".join(sorted(_registry)) or "(none)"
