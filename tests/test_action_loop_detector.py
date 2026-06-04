@@ -201,23 +201,23 @@ class TestDetectSchemaMismatch:
 
     def test_valid_input_returns_no_mismatch(self):
         mismatched, err, normalized = detect_schema_mismatch(
-            "read_file", {"read_file_path": "x.py"}
+            "read_file", {"read_file_reads": [{"path": "x.py"}]}
         )
         assert mismatched is False
         assert err is None
-        assert normalized == {"read_file_path": "x.py"}
+        assert normalized == {"read_file_reads": [{"path": "x.py"}]}
 
     def test_missing_required_field(self):
         mismatched, err, _ = detect_schema_mismatch("read_file", {})
         assert mismatched is True
         assert err is not None
-        assert "path" in err  # error mentions the missing field
+        assert "read_file_reads" in err  # error mentions the missing field
 
     def test_string_input_auto_promoted_to_dict(self):
         # validate_tool_input promotes strings to {required[0]: value}
-        mismatched, err, normalized = detect_schema_mismatch("read_file", "/tmp/x.py")
+        mismatched, err, normalized = detect_schema_mismatch("shell", "echo hi")
         assert mismatched is False
-        assert normalized == {"read_file_path": "/tmp/x.py"}
+        assert normalized == {"shell_command": "echo hi"}
 
     def test_unknown_tool_treated_as_mismatch(self):
         # validate_tool_input also rejects unknown tools, so the schema

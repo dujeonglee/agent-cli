@@ -10,8 +10,8 @@ from agent_cli.tools.edit_file import (
     tool_edit_file,
 )
 from agent_cli.tools.read_file import (
+    _read_one,
     compute_line_hash,
-    tool_read_file,
 )
 from agent_cli.tools.delegate import (
     tool_delegate,
@@ -834,7 +834,7 @@ class TestReadFilePartial:
     def test_full_read(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("line1\nline2\nline3\nline4\nline5")
-        result = tool_read_file({"path": str(f)})
+        result = _read_one({"path": str(f)})
         assert result.success
         assert "1#" in result.output
         assert "5#" in result.output
@@ -842,7 +842,7 @@ class TestReadFilePartial:
     def test_line_start(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc\nddd\neee")
-        result = tool_read_file({"path": str(f), "line_start": 3})
+        result = _read_one({"path": str(f), "line_start": 3})
         assert result.success
         assert "ccc" in result.output
         assert "ddd" in result.output
@@ -852,7 +852,7 @@ class TestReadFilePartial:
     def test_line_start_and_end(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc\nddd\neee")
-        result = tool_read_file({"path": str(f), "line_start": 2, "line_end": 4})
+        result = _read_one({"path": str(f), "line_start": 2, "line_end": 4})
         assert result.success
         assert "bbb" in result.output
         assert "ddd" in result.output
@@ -862,7 +862,7 @@ class TestReadFilePartial:
     def test_line_numbers_preserved(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc\nddd\neee")
-        result = tool_read_file({"path": str(f), "line_start": 3})
+        result = _read_one({"path": str(f), "line_start": 3})
         assert result.success
         # First line in result should be line 3, not line 1
         assert result.output.startswith("3#")
@@ -871,7 +871,7 @@ class TestReadFilePartial:
         """LLMs sometimes send line_start as string."""
         f = tmp_path / "test.py"
         f.write_text("aaa\nbbb\nccc")
-        result = tool_read_file({"path": str(f), "line_start": "2"})
+        result = _read_one({"path": str(f), "line_start": "2"})
         assert result.success
         assert "bbb" in result.output
         assert "aaa" not in result.output
@@ -883,7 +883,7 @@ class TestReadFileStat:
         f = tmp_path / "big.py"
         content = "\n".join(f"line {i}" for i in range(1, 101))
         f.write_text(content)
-        result = tool_read_file({"path": str(f), "stat": True})
+        result = _read_one({"path": str(f), "stat": True})
         assert result.success
         assert "[stat]" in result.output
         assert "100 lines" in result.output
@@ -894,7 +894,7 @@ class TestReadFileStat:
         f = tmp_path / "big.py"
         content = "\n".join(f"line {i}" for i in range(1, 101))
         f.write_text(content)
-        result = tool_read_file({"path": str(f), "stat": True})
+        result = _read_one({"path": str(f), "stat": True})
         assert "1#" in result.output
         assert "20#" in result.output
         assert "21#" not in result.output  # only first 20
@@ -903,7 +903,7 @@ class TestReadFileStat:
         """stat on small file shows all lines (less than 20)."""
         f = tmp_path / "small.py"
         f.write_text("a\nb\nc")
-        result = tool_read_file({"path": str(f), "stat": True})
+        result = _read_one({"path": str(f), "stat": True})
         assert result.success
         assert "3 lines" in result.output
 
@@ -914,7 +914,7 @@ class TestReadFileStat:
         """
         f = tmp_path / "big.py"
         f.write_text("\n".join(f"line {i}" for i in range(50)))
-        result = tool_read_file({"path": str(f), "stat": True})
+        result = _read_one({"path": str(f), "stat": True})
         assert "have NOT read" in result.output or "not read" in result.output.lower()
         assert "line_start" in result.output
         assert "search" in result.output
@@ -935,7 +935,7 @@ class TestReadFileSearch:
             "    pass\n"
         )
         f.write_text(content)
-        result = tool_read_file({"path": str(f), "search": "login", "context": 1})
+        result = _read_one({"path": str(f), "search": "login", "context": 1})
         assert result.success
         assert "[search]" in result.output
         assert "1 matches" in result.output
@@ -946,21 +946,21 @@ class TestReadFileSearch:
     def test_search_no_matches(self, tmp_path):
         f = tmp_path / "app.py"
         f.write_text("def foo():\n    pass\n")
-        result = tool_read_file({"path": str(f), "search": "nonexistent"})
+        result = _read_one({"path": str(f), "search": "nonexistent"})
         assert result.success
         assert "no matches" in result.output
 
     def test_search_regex_pattern(self, tmp_path):
         f = tmp_path / "app.py"
         f.write_text("x = 1\ny = 2\nz = 3\n")
-        result = tool_read_file({"path": str(f), "search": r"^[xz]\s*="})
+        result = _read_one({"path": str(f), "search": r"^[xz]\s*="})
         assert result.success
         assert "2 matches" in result.output
 
     def test_search_invalid_regex(self, tmp_path):
         f = tmp_path / "app.py"
         f.write_text("hello\n")
-        result = tool_read_file({"path": str(f), "search": "[invalid"})
+        result = _read_one({"path": str(f), "search": "[invalid"})
         assert not result.success
         assert "Invalid search pattern" in result.error
 
@@ -970,7 +970,7 @@ class TestReadFileSearch:
         content = "\n".join(f"line {i}" for i in range(1, 21))
         # matches on line 5 and line 7, context=3 → ranges overlap → merged
         f.write_text(content.replace("line 5", "MATCH").replace("line 7", "MATCH"))
-        result = tool_read_file({"path": str(f), "search": "MATCH", "context": 3})
+        result = _read_one({"path": str(f), "search": "MATCH", "context": 3})
         assert result.success
         assert "2 matches" in result.output
         # Should have one merged range block, not two separate

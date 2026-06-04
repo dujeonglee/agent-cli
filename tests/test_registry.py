@@ -10,7 +10,7 @@ from agent_cli.tools.registry import (
 class TestValidateToolInput:
     def test_valid_read_file(self):
         ok, err, _ = validate_tool_input(
-            "read_file", {"read_file_path": "/tmp/test.py"}
+            "read_file", {"read_file_reads": [{"path": "/tmp/test.py"}]}
         )
         assert ok is True
         assert err is None
@@ -34,19 +34,12 @@ class TestValidateToolInput:
         assert ok is False
         assert "Unknown tool" in err
 
-    def test_string_auto_convert(self):
-        """Small models sometimes send string instead of dict."""
-        ok, err, converted = validate_tool_input("read_file", "/tmp/test.py")
-        assert ok is True
-        assert isinstance(converted, dict)
-        assert converted["read_file_path"] == "/tmp/test.py"
-
     def test_string_json_auto_convert(self):
         ok, err, converted = validate_tool_input(
-            "read_file", '{"read_file_path": "/tmp/test.py"}'
+            "read_file", '{"read_file_reads": [{"path": "/tmp/test.py"}]}'
         )
         assert ok is True
-        assert converted["read_file_path"] == "/tmp/test.py"
+        assert converted["read_file_reads"] == [{"path": "/tmp/test.py"}]
 
     def test_string_auto_convert_shell(self):
         """String input for shell → {"shell_command": "..."}."""
@@ -107,7 +100,7 @@ class TestTypeValidation:
 
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""
-        ok, err, _ = validate_tool_input("read_file", {"read_file_path": [1, 2, 3]})
+        ok, err, _ = validate_tool_input("shell", {"shell_command": [1, 2, 3]})
         assert ok is False
         assert "expected string" in err
 
@@ -160,27 +153,25 @@ class TestEmptyStringStripping:
     def test_optional_empty_string_removed(self):
         """Empty string on optional field should be stripped before validation."""
         action_input = {
-            "read_file_path": "/tmp/test.py",
-            "read_file_line_start": "",
-            "read_file_line_end": "",
+            "shell_command": "ls",
+            "shell_timeout": "",
         }
-        ok, err, _ = validate_tool_input("read_file", action_input)
+        ok, err, _ = validate_tool_input("shell", action_input)
         assert ok is True
-        assert "read_file_line_start" not in action_input
-        assert "read_file_line_end" not in action_input
+        assert "shell_timeout" not in action_input
 
     def test_required_empty_string_not_removed(self):
         """Empty string on required field should NOT be stripped — validation fails."""
-        ok, err, _ = validate_tool_input("read_file", {"read_file_path": ""})
-        # read_file_path="" is required and present, but it's an empty string
+        ok, err, _ = validate_tool_input("shell", {"shell_command": ""})
+        # shell_command="" is required and present, but it's an empty string
         assert ok is True  # type check passes (string), tool itself handles empty
 
     def test_non_empty_optional_kept(self):
         """Non-empty optional fields should remain untouched."""
-        action_input = {"read_file_path": "/tmp/test.py", "read_file_line_start": 10}
-        ok, err, _ = validate_tool_input("read_file", action_input)
+        action_input = {"shell_command": "ls", "shell_timeout": 30}
+        ok, err, _ = validate_tool_input("shell", action_input)
         assert ok is True
-        assert action_input["read_file_line_start"] == 10
+        assert action_input["shell_timeout"] == 30
 
 
 class TestStringInputAutoConversion:
@@ -191,24 +182,6 @@ class TestStringInputAutoConversion:
     detector boundary, then executed through the internal ``_execute_tool``
     primitive to confirm end-to-end behaviour is preserved.
     """
-
-    def test_read_file_string_input(self, tmp_path):
-        """read_file with string input is normalized to {'path': '...'}."""
-        from agent_cli.recovery.detectors import detect_schema_mismatch
-        from agent_cli.tools import _execute_tool as execute_tool
-
-        test_file = tmp_path / "hello.txt"
-        test_file.write_text("hello world")
-
-        mismatched, err, normalized = detect_schema_mismatch(
-            "read_file", str(test_file)
-        )
-        assert not mismatched, err
-        assert normalized == {"read_file_path": str(test_file)}
-
-        result = execute_tool("read_file", normalized)
-        assert result.success
-        assert "hello world" in result.output
 
     def test_shell_string_input(self):
         """shell with string input is normalized to {'command': '...'}."""

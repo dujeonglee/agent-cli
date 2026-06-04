@@ -620,7 +620,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 | 도구 | 설명 |
 |------|------|
-| `read_file` | 파일 읽기 (hashline 태그 포함, 부분 읽기 지원) |
+| `read_file` | 파일 읽기 (hashline 태그). `read_file_reads` 배열로 여러 파일/구간을 한 번에 (단일도 1개 배열) |
 | `write_file` | 파일 생성/덮어쓰기 |
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
@@ -635,39 +635,36 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### action_input 키 네이밍 규칙
 
-각 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `read_file_path`, `write_file_content`, `shell_command`, `edit_file_edits`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `edits[].op`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)는 표준 키를 그대로 씁니다.
+각 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `read_file_reads`, `write_file_content`, `shell_command`, `edit_file_edits`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `edits[].op`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)는 표준 키를 그대로 씁니다.
 
-> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"path": ...}` → `{"read_file_path": ...}`). 표준 키로 보내도 동작하지만(prefix strip 은 no-op), 권장 형식은 prefix 입니다.
+> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"command": ...}` → `{"shell_command": ...}`). 표준 키로 보내도 동작하지만(prefix strip 은 no-op), 권장 형식은 prefix 입니다. 단, 최상위 배열 키(`read_file_reads`, `edit_file_edits`, `delegate_tasks`) 안의 **중첩 키는 prefix 가 붙지 않습니다**.
 
 ### read_file — 파일 읽기
 
-파일을 읽고 각 줄에 `LINE#HASH:content` hashline 태그를 부여합니다.
+`read_file_reads` 배열로 **하나 이상의** 파일/구간을 한 번에 읽습니다. 각 item 이 파일 하나를 읽으며, 모드(부분 범위 / 검색 / stat)를 item 별로 고릅니다. 단일 파일도 1개짜리 배열로 보냅니다. 각 줄에 `LINE#HASH:content` hashline 태그가 붙습니다.
+
+단일 파일 (표준 키 표기 — 실제 wire 는 `read_file_reads`):
 
 ```json
-{"action": "read_file", "action_input": {"path": "src/main.py"}}
+{"action": "read_file", "action_input": {"reads": [{"path": "src/main.py"}]}}
 ```
 
-부분 읽기 (큰 파일에서 특정 범위만):
+여러 파일/구간 한 번에 (각 item 이 자기 모드 — 부분 범위 / 검색 / stat):
 
 ```json
-{"action": "read_file", "action_input": {"path": "src/main.py", "line_start": 100, "line_end": 200}}
+{"action": "read_file", "action_input": {"reads": [
+  {"path": "src/main.py", "line_start": 100, "line_end": 200},
+  {"path": "agent_cli/loop.py", "search": "_handle_ask", "context": 3},
+  {"path": "config.py", "stat": true}
+]}}
 ```
 
-검색 모드 (정규식 grep + 주변 컨텍스트):
-
-```json
-{"action": "read_file", "action_input": {"path": "agent_cli/loop.py", "search": "_handle_ask", "context": 3}}
-```
-
-stat 모드 (메타데이터 + 앞 20줄):
-
-```json
-{"action": "read_file", "action_input": {"path": "src/main.py", "stat": true}}
-```
-
-- `line_start` / `line_end`: 1-based, inclusive. 둘 다 생략하면 full read.
-- `search`: 정규식 패턴. 매칭 줄 + 주변 `context` 줄을 반환 (기본 3).
-- `stat`: 파일 크기/총 줄 수 + 앞 20줄.
+- 각 item 필드 (`path` 만 필수):
+  - `path`: 읽을 파일 경로.
+  - `line_start` / `line_end`: 1-based, inclusive. 둘 다 생략하면 full read.
+  - `search`: 정규식 패턴. 매칭 줄 + 주변 `context` 줄을 반환 (기본 5).
+  - `stat`: 파일 크기/총 줄 수 + 앞 20줄 (메타데이터 조회, read 아님).
+- **부분 실패**: 일부 파일을 못 읽어도 나머지는 반환되며, **전부 실패할 때만** 에러입니다. 다중 읽기는 파일별 헤더로 구분해 하나의 observation 으로 합쳐집니다.
 
 ### edit_file — Hashline 편집
 

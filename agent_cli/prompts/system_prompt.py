@@ -271,13 +271,25 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     def rai(j):
         return _rai_prefixed(wire_format, "read_file", j)
 
-    ex_stat = rai({"path": "app.py", "stat": True})
-    ex_search = rai({"path": "app.py", "search": "login", "context": 5})
-    ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
-    ex_full = rai({"path": "app.py"})
+    ex_stat = rai({"reads": [{"path": "app.py", "stat": True}]})
+    ex_search = rai({"reads": [{"path": "app.py", "search": "login", "context": 5}]})
+    ex_partial = rai(
+        {"reads": [{"path": "app.py", "line_start": 100, "line_end": 600}]}
+    )
+    ex_full = rai({"reads": [{"path": "app.py"}]})
+    ex_multi = rai(
+        {
+            "reads": [
+                {"path": "app.py", "line_start": 100, "line_end": 600},
+                {"path": "util.py", "search": "login"},
+            ]
+        }
+    )
     base_modes = f"""\
 
-  Pick the right mode for the question — full reads burn context budget,
+  read_file takes a LIST of reads (read_file_reads) — one call can read
+  many files or regions at once. For a single file, pass a one-element
+  list. Pick the right mode per read — full reads burn context budget,
   but reading too little costs turns:
 
   1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
@@ -294,6 +306,9 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
        {ex_partial}
   4. Full — the file is known-small or central to the task.
        {ex_full}
+  5. Batch — read several files/regions in one call; each item picks its
+     own mode:
+       {ex_multi}
 """
     if "code_index" in active_tools:
         from agent_cli.code_index.languages import get_supported_extensions

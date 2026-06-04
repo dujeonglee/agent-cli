@@ -167,22 +167,27 @@ def _search(path: str, all_lines: list[str], pattern: str, context: int) -> Tool
     return ToolResult(True, output="\n".join(parts))
 
 
-def tool_read_file(args: dict) -> ToolResult:
-    """Read a file with optional stat, search, or partial read modes.
+def _read_one(spec: dict) -> ToolResult:
+    """Read a single file with optional stat, search, or partial read modes.
 
-    Modes (mutually exclusive, picked by args present):
+    Modes (mutually exclusive, picked by keys present):
     - stat=True: metadata + first 20 lines + guidance (metadata query, NOT a read)
     - search="pattern", context=N: grep-style matches with surrounding lines
     - line_start/line_end: partial read (1-based inclusive)
     - no mode: full file
     """
+    if not isinstance(spec, dict):
+        return ToolResult(
+            False,
+            error=f"read_file: each read must be an object, got {type(spec).__name__}",
+        )
 
-    path = args.get("path", "")
-    line_start = args.get("line_start", 0)
-    line_end = args.get("line_end", 0)
-    stat = bool(args.get("stat", False))
-    search = args.get("search", "") or ""
-    context = args.get("context", _DEFAULT_SEARCH_CONTEXT)
+    path = spec.get("path", "")
+    line_start = spec.get("line_start", 0)
+    line_end = spec.get("line_end", 0)
+    stat = bool(spec.get("stat", False))
+    search = spec.get("search", "") or ""
+    context = spec.get("context", _DEFAULT_SEARCH_CONTEXT)
 
     # Coerce to int (LLMs sometimes send strings)
     try:
@@ -216,41 +221,108 @@ def tool_read_file(args: dict) -> ToolResult:
         return ToolResult(False, error=f"read_file failed: {e}")
 
 
+def _format_batch(reads: list, results: list[ToolResult]) -> ToolResult:
+    """Combine multiple single-file reads into one observation.
+
+    Mirrors :func:`delegate._format_parallel_results`: per-read header +
+    body (or ERROR), then a summary line. ``success`` is False only when
+    *every* read failed — a partial success stays True so the model still
+    gets whatever it could read (reads are non-destructive).
+    """
+    parts: list[str] = []
+    ok = 0
+    for i, (spec, res) in enumerate(zip(reads, results), 1):
+        path = spec.get("path", "?") if isinstance(spec, dict) else "?"
+        parts.append(f"─── [{i}] {path} ───")
+        if res.success:
+            parts.append(res.output or "(empty)")
+            ok += 1
+        else:
+            parts.append(f"ERROR: {res.error}")
+        parts.append("")
+
+    failed = len(reads) - ok
+    parts.append(f"[read_file batch: {len(reads)} reads, {ok} ok, {failed} failed]")
+    combined = "\n".join(parts)
+    if ok == 0:
+        return ToolResult(False, error=combined)
+    return ToolResult(True, output=combined)
+
+
+def tool_read_file(args: dict) -> ToolResult:
+    """Read one or more files. ``args["reads"]`` is a list of read specs,
+    each consumed by :func:`_read_one`.
+
+    A single-element list returns that read's result verbatim (no batch
+    header, so single reads are byte-identical to the old behavior);
+    multiple reads are combined by :func:`_format_batch`.
+    """
+    reads = args.get("reads")
+    if not reads or not isinstance(reads, list):
+        return ToolResult(
+            False,
+            error=(
+                "read_file requires a non-empty 'read_file_reads' list "
+                "(each item: {path, ...optional line_start/line_end/search/stat})."
+            ),
+        )
+
+    results = [_read_one(spec) for spec in reads]
+    if len(results) == 1:
+        return results[0]
+    return _format_batch(reads, results)
+
+
 class ReadFileTool(Tool):
     name = "read_file"
     description = (
-        "Read file contents. Lines are tagged as LINE#HASH:content for editing. "
-        "For unknown/large files, start with read_file_stat=true to inspect size before reading. "
-        "read_file_stat returns metadata (line count, file size) and is not a read — follow it with a full read, read_file_line_start/read_file_line_end range, or read_file_search. "
-        "Use read_file_search='keyword' to find targeted content without reading the whole file. "
-        "Use read_file_line_start/read_file_line_end for partial reads (1-based, inclusive)."
+        "Read one or more files in a single call. Provide read_file_reads as a "
+        "list; each item reads one file with an optional mode. Lines are tagged "
+        "as LINE#HASH:content for editing. For a single file, pass a one-element "
+        "list. Per-item modes: stat=true (metadata + first 20 lines, NOT a read — "
+        "follow up with a real read), search='regex' (matching regions with "
+        "context, efficient for targeted lookups), line_start/line_end (partial "
+        "read, 1-based inclusive), or none (full file)."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "read_file_path": {"type": "string", "description": "File path to read"},
-            "read_file_stat": {
-                "type": "boolean",
-                "description": "Metadata query only — returns line count, file size, and the first 20 lines. Not a substitute for reading: after read_file_stat, pick a real read mode (full / read_file_line_start+read_file_line_end / read_file_search).",
-            },
-            "read_file_search": {
-                "type": "string",
-                "description": "Regex pattern. Returns only matching lines with surrounding context. Efficient for targeted lookups.",
-            },
-            "read_file_context": {
-                "type": "integer",
-                "description": "Lines of context before/after each read_file_search match (default 5).",
-            },
-            "read_file_line_start": {
-                "type": "integer",
-                "description": "Start line number (1-based). Omit to read from beginning.",
-            },
-            "read_file_line_end": {
-                "type": "integer",
-                "description": "End line number (1-based, inclusive). Omit to read to end.",
+            "read_file_reads": {
+                "type": "array",
+                "description": (
+                    "List of reads (one or many). Each item reads one file. For a "
+                    "single file, pass a one-element list."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "File path to read"},
+                        "line_start": {
+                            "type": "integer",
+                            "description": "Start line (1-based). Omit to read from beginning.",
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "description": "End line (1-based, inclusive). Omit to read to end.",
+                        },
+                        "search": {
+                            "type": "string",
+                            "description": "Regex pattern. Returns only matching lines with surrounding context.",
+                        },
+                        "context": {
+                            "type": "integer",
+                            "description": "Lines of context before/after each search match (default 5).",
+                        },
+                        "stat": {
+                            "type": "boolean",
+                            "description": "Metadata query only — line count, size, first 20 lines. Not a read.",
+                        },
+                    },
+                    "required": ["path"],
+                },
             },
         },
-        "required": ["read_file_path"],
+        "required": ["read_file_reads"],
     }
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:

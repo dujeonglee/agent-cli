@@ -70,7 +70,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read file",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             _complete("File contains: hello world"),
@@ -112,7 +112,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             json.dumps(
@@ -144,7 +144,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             json.dumps(
@@ -452,7 +452,7 @@ class TestActionInferenceCorrection:
                 {
                     "thought": "read the file",
                     # action name dropped — only the prefixed input key
-                    "action_input": {"read_file_path": str(target)},
+                    "action_input": {"read_file_reads": [{"path": str(target)}]},
                 }
             ),
             _complete("done"),
@@ -481,7 +481,10 @@ class TestActionInferenceCorrection:
             json.dumps(
                 {
                     "thought": "drift",
-                    "action_input": {"read_file_path": "a", "shell_command": "ls"},
+                    "action_input": {
+                        "read_file_reads": [{"path": "a"}],
+                        "shell_command": "ls",
+                    },
                 }
             ),
             _complete("recovered"),
@@ -1243,7 +1246,7 @@ class TestToolHistoryTracking:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             json.dumps(
@@ -1338,7 +1341,7 @@ class TestRepeatedCallDetection:
             {
                 "thought": "read again",
                 "action": "read_file",
-                "action_input": {"read_file_path": str(test_file)},
+                "action_input": {"read_file_reads": [{"path": str(test_file)}]},
             }
         )
         provider = _make_provider(same_call, same_call, same_call)
@@ -1364,21 +1367,21 @@ class TestRepeatedCallDetection:
                 {
                     "thought": "r1",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(f1)},
+                    "action_input": {"read_file_reads": [{"path": str(f1)}]},
                 }
             ),
             json.dumps(
                 {
                     "thought": "r2",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(f2)},
+                    "action_input": {"read_file_reads": [{"path": str(f2)}]},
                 }
             ),
             json.dumps(
                 {
                     "thought": "r3",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(f3)},
+                    "action_input": {"read_file_reads": [{"path": str(f3)}]},
                 }
             ),
             _complete("ok"),
@@ -1471,7 +1474,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             _complete("final"),
@@ -1600,7 +1603,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             # Second response is never consumed — `_should_continue` should
@@ -1775,7 +1778,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "working",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             _complete("done"),
@@ -1824,7 +1827,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading file",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             _complete("final"),
@@ -2397,7 +2400,7 @@ class TestContextContinuity:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_path": str(test_file)},
+                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
                 }
             ),
             _complete("done"),
@@ -3145,7 +3148,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "read_file",
-                    "action_input": {"read_file_path": "login.py"},
+                    "action_input": {"read_file_reads": [{"path": "login.py"}]},
                 },
                 {"role": "user", "tool": "read_file", "content": "Observation: ..."},
                 {
@@ -3170,7 +3173,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "read_file",
-                    "action_input": {"read_file_path": "a.py"},
+                    "action_input": {"read_file_reads": [{"path": "a.py"}]},
                 },
                 {
                     "role": "assistant",
@@ -3332,9 +3335,13 @@ class TestNoOutputTruncation:
                     "thought": "read large file",
                     "action": "read_file",
                     "action_input": {
-                        "read_file_path": str(test_file),
-                        "read_file_line_start": 1,
-                        "read_file_line_end": 500,
+                        "read_file_reads": [
+                            {
+                                "path": str(test_file),
+                                "line_start": 1,
+                                "line_end": 500,
+                            }
+                        ],
                     },
                 }
             ),
