@@ -124,23 +124,21 @@ class TestBuildSystemPrompt:
         assert "peek" in flat.lower() or "commit to" in flat.lower()
 
     def test_ask_description_bars_conversational_use(self):
-        """Tool description for `ask` must explicitly forbid
-        conversational closures. Repro: model emitted goodbyes
+        """The `ask` guidance must steer conversational closures to
+        `complete` instead of `ask`. Repro: model emitted goodbyes
         ("see you next time!", "was that helpful?") via `ask` instead
         of `complete`, keeping the loop alive waiting for replies the
-        user had no reason to give. Intent-level checks — at least one
-        of "goodbye", "pleasantr", "satisfact", "closure" must show
-        up alongside a "DO NOT" / "do not" type prohibition."""
+        user had no reason to give. The detailed prohibition lives in
+        the inline guide (`_ASK_INLINE`); the one-line tool description
+        is kept compact to avoid duplicating it. Intent-level checks —
+        at least one conversational category is named AND it is routed
+        to `complete`."""
         import re
 
         prompt = build_system_prompt(_make_caps(), ["ask"])
         flat = re.sub(r"\s+", " ", prompt).lower()
-        # Description names what `ask` is for and what it isn't.
         assert "ask" in flat
-        # A negative — the description tells the model NOT to use ask
-        # for certain things.
-        assert "do not use" in flat or "not for" in flat or "not use" in flat
-        # And at least one of the conversational categories is named.
+        # A conversational category is named...
         assert (
             "goodbye" in flat
             or "pleasantr" in flat
@@ -148,6 +146,8 @@ class TestBuildSystemPrompt:
             or "closure" in flat
             or "closer" in flat
         )
+        # ...and routed to `complete` (the prohibition: don't ask for it).
+        assert "use `complete`" in flat or "end with `complete`" in flat
 
     def test_ask_inline_guide_contrasts_with_complete(self):
         """Inline guide for `ask` must explicitly contrast it with
