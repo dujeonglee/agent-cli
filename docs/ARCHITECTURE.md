@@ -173,7 +173,7 @@ agent_cli/
 │   ├── __init__.py          (1)
 │   ├── config.py            (108)  mcp.json 로드/병합 (프로젝트 > 유저)
 │   ├── client.py            (258)  McpClientManager (stdio/SSE 연결, 도구 호출, stderr 격리)
-│   └── adapter.py           (101)  MCP 도구 → ToolResult 래핑, TOOLS dict 등록. `build_mcp_tool_descriptions`는 `registry.render_param_value` 재사용 (native 와 동일 스키마 렌더; MCP 키는 prefix 없음)
+│   └── adapter.py           (141)  MCP 도구 → **`McpTool(Tool)`** 서브클래스로 래핑(`.run`/`.parameters` 보유 → registry validate/dispatch 를 native 와 동일 통과; bare 키라 prefix 無 — virtual tool 과 동일 메커니즘), `register_mcp_tools` → TOOLS dict 등록. `build_mcp_tool_descriptions`는 `registry.render_param_value` 재사용 (native 와 동일 스키마 렌더)
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)
