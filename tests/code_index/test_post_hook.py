@@ -22,9 +22,9 @@ from __future__ import annotations
 import pytest
 
 from agent_cli.tools.code_index import (
+    _dispatch_one,
     _resolve_index_root,
     post_hook,
-    tool_code_index,
 )
 from agent_cli.tools.edit_file import tool_edit_file
 from agent_cli.tools.read_file import compute_line_hash
@@ -42,14 +42,14 @@ def project(tmp_path, monkeypatch):
     _write(tmp_path / "mod.py", "def alpha():\n    pass\n")
     monkeypatch.chdir(tmp_path)
     # Trigger lazy build so the DB exists for subsequent hooks to find.
-    tool_code_index({"mode": "build"})
+    _dispatch_one({"mode": "build"})
     return tmp_path
 
 
 class TestEditFileTriggersRefresh:
     def test_edit_updates_index_for_changed_symbol(self, project):
         # Confirm initial state.
-        r = tool_code_index({"mode": "lookup", "name": "alpha"})
+        r = _dispatch_one({"mode": "lookup", "name": "alpha"})
         assert r.success and "alpha" in r.output
 
         # Replace the function name via edit_file.
@@ -67,10 +67,10 @@ class TestEditFileTriggersRefresh:
 
         # The post-hook should have refreshed the index — the new name
         # is now lookup-able and the old name is gone.
-        r_new = tool_code_index({"mode": "lookup", "name": "beta"})
+        r_new = _dispatch_one({"mode": "lookup", "name": "beta"})
         assert r_new.success
         assert "beta" in r_new.output
-        r_old = tool_code_index({"mode": "lookup", "name": "alpha"})
+        r_old = _dispatch_one({"mode": "lookup", "name": "alpha"})
         assert r_old.success
         assert "no symbols match" in r_old.output
 
@@ -78,7 +78,7 @@ class TestEditFileTriggersRefresh:
 class TestWriteFileTriggersRefresh:
     def test_write_new_file_picked_up_immediately(self, project):
         # The new file is not yet in the index.
-        r_before = tool_code_index({"mode": "lookup", "name": "gamma"})
+        r_before = _dispatch_one({"mode": "lookup", "name": "gamma"})
         assert r_before.success and "no symbols match" in r_before.output
 
         # Create a new file with a new symbol via write_file.
@@ -88,7 +88,7 @@ class TestWriteFileTriggersRefresh:
         assert r_write.success
 
         # Post-hook should have indexed it.
-        r_after = tool_code_index({"mode": "lookup", "name": "gamma"})
+        r_after = _dispatch_one({"mode": "lookup", "name": "gamma"})
         assert r_after.success
         assert "gamma" in r_after.output
 
@@ -98,11 +98,11 @@ class TestWriteFileTriggersRefresh:
             {"path": "mod.py", "content": "def delta():\n    return 9\n"}
         )
         assert r_write.success
-        r_lookup = tool_code_index({"mode": "lookup", "name": "delta"})
+        r_lookup = _dispatch_one({"mode": "lookup", "name": "delta"})
         assert r_lookup.success
         assert "delta" in r_lookup.output
         # alpha should be gone after the overwrite.
-        r_alpha = tool_code_index({"mode": "lookup", "name": "alpha"})
+        r_alpha = _dispatch_one({"mode": "lookup", "name": "alpha"})
         assert "no symbols match" in r_alpha.output
 
 
@@ -122,9 +122,9 @@ class TestPostHookContracts:
         _write(other / "z.py", "def z(): pass\n")
         # Should silently succeed without touching the indexed root's
         # DB. Verify by snapshotting symbol count before/after.
-        n_before = tool_code_index({"mode": "kind", "symbol_kind": "function"})
+        n_before = _dispatch_one({"mode": "kind", "symbol_kind": "function"})
         post_hook(other / "z.py")
-        n_after = tool_code_index({"mode": "kind", "symbol_kind": "function"})
+        n_after = _dispatch_one({"mode": "kind", "symbol_kind": "function"})
         assert n_before.output == n_after.output
 
     def test_failed_edit_does_not_run_hook(self, project):
@@ -143,7 +143,7 @@ class TestPostHookContracts:
         )
         assert r_edit.success is False
         # The original symbol is still discoverable.
-        r = tool_code_index({"mode": "lookup", "name": "alpha"})
+        r = _dispatch_one({"mode": "lookup", "name": "alpha"})
         assert "alpha" in r.output
 
     def test_post_hook_swallows_internal_exceptions(self, project, monkeypatch):

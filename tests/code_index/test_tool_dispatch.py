@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli.tools.code_index import tool_code_index
+from agent_cli.tools.code_index import _dispatch_one, tool_code_index
 
 
 def _write(path, content):
@@ -46,42 +46,42 @@ class TestDispatchValidation:
         assert "action_input" in r.error
 
     def test_mode_required(self):
-        r = tool_code_index({})
+        r = _dispatch_one({})
         assert r.success is False
         assert "mode" in r.error
 
     def test_unknown_mode_rejected(self):
-        r = tool_code_index({"mode": "explode"})
+        r = _dispatch_one({"mode": "explode"})
         assert r.success is False
         assert "unknown mode" in r.error
 
 
 class TestList:
     def test_list_emits_outline(self, project):
-        r = tool_code_index({"mode": "list", "path": "alpha.py"})
+        r = _dispatch_one({"mode": "list", "path": "alpha.py"})
         assert r.success
         # Both functions appear in outline form.
         assert "alpha" in r.output
         assert "helper" in r.output
 
     def test_list_requires_path(self, project):
-        r = tool_code_index({"mode": "list"})
+        r = _dispatch_one({"mode": "list"})
         assert r.success is False
         assert "path" in r.error
 
     def test_list_path_not_found(self, project):
-        r = tool_code_index({"mode": "list", "path": "missing.py"})
+        r = _dispatch_one({"mode": "list", "path": "missing.py"})
         assert r.success is False
         assert "file not found" in r.error
 
     def test_list_unsupported_extension(self, project):
         _write(project / "data.txt", "irrelevant\n")
-        r = tool_code_index({"mode": "list", "path": "data.txt"})
+        r = _dispatch_one({"mode": "list", "path": "data.txt"})
         assert r.success is False
         assert "unsupported" in r.error
 
     def test_list_search_regex(self, project):
-        r = tool_code_index({"mode": "list", "path": "alpha.py", "search": r"^help"})
+        r = _dispatch_one({"mode": "list", "path": "alpha.py", "search": r"^help"})
         assert r.success
         # Filtered to symbols whose name starts with `help`. The file
         # itself is alpha.py, so "alpha" appears in every output line
@@ -92,14 +92,14 @@ class TestList:
         assert "alpha" not in names
 
     def test_list_invalid_search_regex(self, project):
-        r = tool_code_index({"mode": "list", "path": "alpha.py", "search": "(unclosed"})
+        r = _dispatch_one({"mode": "list", "path": "alpha.py", "search": "(unclosed"})
         assert r.success is False
         assert "invalid search" in r.error
 
 
 class TestFetch:
     def test_fetch_returns_hashline_body(self, project):
-        r = tool_code_index({"mode": "fetch", "path": "alpha.py", "name": "helper"})
+        r = _dispatch_one({"mode": "fetch", "path": "alpha.py", "name": "helper"})
         assert r.success
         # Header line + hashlined body (each line tagged like `5#XY:content`).
         assert "helper" in r.output.splitlines()[0]
@@ -109,59 +109,53 @@ class TestFetch:
         assert "def helper" in body
 
     def test_fetch_requires_name(self, project):
-        r = tool_code_index({"mode": "fetch", "path": "alpha.py"})
+        r = _dispatch_one({"mode": "fetch", "path": "alpha.py"})
         assert r.success is False
         assert "name" in r.error
 
     def test_fetch_markdown_accepts_marker_form(self, project):
         # `## Setup` and `Setup` should both resolve to the same heading.
-        r1 = tool_code_index({"mode": "fetch", "path": "doc.md", "name": "## Setup"})
-        r2 = tool_code_index({"mode": "fetch", "path": "doc.md", "name": "Setup"})
+        r1 = _dispatch_one({"mode": "fetch", "path": "doc.md", "name": "## Setup"})
+        r2 = _dispatch_one({"mode": "fetch", "path": "doc.md", "name": "Setup"})
         assert r1.success and r2.success
         assert r1.output == r2.output
 
     def test_fetch_symbol_not_found(self, project):
-        r = tool_code_index(
-            {"mode": "fetch", "path": "alpha.py", "name": "nonexistent"}
-        )
+        r = _dispatch_one({"mode": "fetch", "path": "alpha.py", "name": "nonexistent"})
         assert r.success is False
         assert "symbol not found" in r.error
 
 
 class TestLookup:
     def test_lookup_finds_by_name(self, project):
-        r = tool_code_index({"mode": "lookup", "name": "helper"})
+        r = _dispatch_one({"mode": "lookup", "name": "helper"})
         assert r.success
         assert "helper" in r.output
         assert "alpha.py" in r.output
 
     def test_lookup_requires_name(self, project):
-        r = tool_code_index({"mode": "lookup"})
+        r = _dispatch_one({"mode": "lookup"})
         assert r.success is False
 
     def test_lookup_with_symbol_kind_filter(self, project):
         # `Beta` is a class → kind='type'. Filtering by 'function' should
         # not return it.
-        r_fn = tool_code_index(
+        r_fn = _dispatch_one(
             {"mode": "lookup", "name": "Beta", "symbol_kind": "function"}
         )
-        r_ty = tool_code_index(
-            {"mode": "lookup", "name": "Beta", "symbol_kind": "type"}
-        )
+        r_ty = _dispatch_one({"mode": "lookup", "name": "Beta", "symbol_kind": "type"})
         assert r_fn.success and "(no symbols match" in r_fn.output
         assert r_ty.success and "Beta" in r_ty.output
 
     def test_lookup_rejects_unknown_symbol_kind(self, project):
-        r = tool_code_index(
-            {"mode": "lookup", "name": "helper", "symbol_kind": "bogus"}
-        )
+        r = _dispatch_one({"mode": "lookup", "name": "helper", "symbol_kind": "bogus"})
         assert r.success is False
         assert "invalid symbol_kind" in r.error
 
 
 class TestKind:
     def test_kind_lists_section_symbols(self, project):
-        r = tool_code_index({"mode": "kind", "symbol_kind": "section"})
+        r = _dispatch_one({"mode": "kind", "symbol_kind": "section"})
         assert r.success
         # The markdown fixture has three headings: Top, Setup, Install.
         assert "Top" in r.output
@@ -169,14 +163,14 @@ class TestKind:
         assert "Install" in r.output
 
     def test_kind_requires_symbol_kind(self, project):
-        r = tool_code_index({"mode": "kind"})
+        r = _dispatch_one({"mode": "kind"})
         assert r.success is False
         assert "symbol_kind" in r.error
 
 
 class TestFile:
     def test_file_lists_symbols_in_file(self, project):
-        r = tool_code_index({"mode": "file", "path": "sub/beta.py"})
+        r = _dispatch_one({"mode": "file", "path": "sub/beta.py"})
         assert r.success
         assert "Beta" in r.output
         assert "run" in r.output
@@ -185,51 +179,51 @@ class TestFile:
         # Build a separate tmp dir entirely outside the indexed root.
         other = tmp_path_factory.mktemp("other_proj")
         _write(other / "x.py", "def x(): pass\n")
-        r = tool_code_index({"mode": "file", "path": str(other / "x.py")})
+        r = _dispatch_one({"mode": "file", "path": str(other / "x.py")})
         assert r.success is False
         assert "outside" in r.error
 
 
 class TestRefs:
     def test_refs_returns_call_sites(self, project):
-        r = tool_code_index({"mode": "refs", "name": "helper"})
+        r = _dispatch_one({"mode": "refs", "name": "helper"})
         assert r.success
         # `helper` is called from `alpha`.
         assert "alpha.py" in r.output
 
     def test_refs_kind_filter(self, project):
-        r = tool_code_index({"mode": "refs", "name": "helper", "ref_kind": "call"})
+        r = _dispatch_one({"mode": "refs", "name": "helper", "ref_kind": "call"})
         assert r.success
         for line in r.output.splitlines():
             assert " call " in line
 
     def test_refs_rejects_unknown_ref_kind(self, project):
-        r = tool_code_index({"mode": "refs", "name": "helper", "ref_kind": "bogus"})
+        r = _dispatch_one({"mode": "refs", "name": "helper", "ref_kind": "bogus"})
         assert r.success is False
         assert "invalid ref_kind" in r.error
 
 
 class TestCallgraph:
     def test_callers_finds_alpha_calls_helper(self, project):
-        r = tool_code_index({"mode": "callers", "name": "helper"})
+        r = _dispatch_one({"mode": "callers", "name": "helper"})
         assert r.success
         assert "alpha" in r.output
 
     def test_callees_finds_alpha_calls_helper(self, project):
-        r = tool_code_index({"mode": "callees", "name": "alpha"})
+        r = _dispatch_one({"mode": "callees", "name": "alpha"})
         assert r.success
         assert "helper" in r.output
 
     def test_callers_of_uncalled_function(self, project):
         # `run` is a method but isn't called from anywhere in the fixture.
-        r = tool_code_index({"mode": "callers", "name": "run"})
+        r = _dispatch_one({"mode": "callers", "name": "run"})
         assert r.success
         assert "no callers" in r.output
 
 
 class TestSlice:
     def test_slice_returns_markdown_blob(self, project):
-        r = tool_code_index({"mode": "slice", "name": "helper"})
+        r = _dispatch_one({"mode": "slice", "name": "helper"})
         assert r.success
         # Slice output is a markdown blob with the "Slice:" header.
         assert "# Slice:" in r.output
@@ -237,14 +231,14 @@ class TestSlice:
 
     def test_slice_no_such_symbol(self, project):
         # cmd_slice doesn't raise — it returns a "no symbol" message.
-        r = tool_code_index({"mode": "slice", "name": "ghost"})
+        r = _dispatch_one({"mode": "slice", "name": "ghost"})
         assert r.success  # not an error per cmd_slice's contract
         assert "no symbol" in r.output
 
 
 class TestBuild:
     def test_build_forces_full_rebuild(self, project):
-        r = tool_code_index({"mode": "build"})
+        r = _dispatch_one({"mode": "build"})
         assert r.success
         assert "Rebuilt index" in r.output
         # Symbol count from the fixture (3 funcs + 1 class + 1 method + 3
@@ -264,7 +258,7 @@ class TestDefconfigWiring:
     """
 
     def test_build_reports_no_defconfig_when_absent(self, project):
-        r = tool_code_index({"mode": "build"})
+        r = _dispatch_one({"mode": "build"})
         assert r.success
         assert "defconfig: (none)" in r.output
 
@@ -272,7 +266,7 @@ class TestDefconfigWiring:
         defs = project / ".agent-cli" / "defconfig"
         defs.parent.mkdir(parents=True, exist_ok=True)
         defs.write_text("#define CONFIG_EXAMPLE\n")
-        r = tool_code_index({"mode": "build"})
+        r = _dispatch_one({"mode": "build"})
         assert r.success
         assert "defconfig:" in r.output
         assert str(defs) in r.output

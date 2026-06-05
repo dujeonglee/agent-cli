@@ -311,14 +311,14 @@ class TestToolLayerSerialization:
 
     def test_parallel_tool_calls_dont_crash(self, project, monkeypatch):
         monkeypatch.chdir(project)
-        from agent_cli.tools.code_index import tool_code_index
+        from agent_cli.tools.code_index import _dispatch_one
 
         errors: list[BaseException] = []
         results: list = []
 
         def worker():
             try:
-                r = tool_code_index({"mode": "lookup", "name": "helper"})
+                r = _dispatch_one({"mode": "lookup", "name": "helper"})
                 results.append(r)
             except BaseException as e:  # noqa: BLE001
                 errors.append(e)

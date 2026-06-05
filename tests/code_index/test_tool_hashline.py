@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-from agent_cli.tools.code_index import tool_code_index
+from agent_cli.tools.code_index import _dispatch_one
 from agent_cli.tools.edit_file import tool_edit_file
 
 
@@ -36,7 +36,7 @@ _HASHLINE_RE = re.compile(r"^(\d+)#([A-Z]{2}):")
 
 class TestHashlineFormat:
     def test_fetch_body_lines_have_hashline_prefix(self, project):
-        r = tool_code_index({"mode": "fetch", "path": "mod.py", "name": "greet"})
+        r = _dispatch_one({"mode": "fetch", "path": "mod.py", "name": "greet"})
         assert r.success
         # First output line is the header (no hashline); subsequent
         # lines are the body with `LINE#HH:` prefix.
@@ -48,7 +48,7 @@ class TestHashlineFormat:
             )
 
     def test_fetch_header_carries_symbol_metadata(self, project):
-        r = tool_code_index({"mode": "fetch", "path": "mod.py", "name": "greet"})
+        r = _dispatch_one({"mode": "fetch", "path": "mod.py", "name": "greet"})
         assert r.success
         header = r.output.splitlines()[0]
         assert "greet" in header
@@ -62,7 +62,7 @@ class TestEditFileRoundTrip:
 
     def test_fetch_then_edit_replaces_line(self, project):
         # 1) Fetch the function body — hashline-formatted.
-        r_fetch = tool_code_index({"mode": "fetch", "path": "mod.py", "name": "greet"})
+        r_fetch = _dispatch_one({"mode": "fetch", "path": "mod.py", "name": "greet"})
         assert r_fetch.success
         body_lines = r_fetch.output.splitlines()[1:]
         # Pick the line containing the return; pull its hashline ref.
@@ -101,7 +101,7 @@ class TestHashlineForOnDemandFetch:
         outside = tmp_path / "outside"
         outside.mkdir()
         _write(outside / "lib.py", "def util():\n    return 7\n")
-        r = tool_code_index(
+        r = _dispatch_one(
             {"mode": "fetch", "path": str(outside / "lib.py"), "name": "util"}
         )
         assert r.success

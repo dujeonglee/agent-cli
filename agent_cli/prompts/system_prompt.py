@@ -351,8 +351,10 @@ def _build_code_index_inline(wire_format) -> str:
 
     exts = ", ".join(get_supported_extensions())
 
-    def rai(j):
-        return _rai_prefixed(wire_format, "code_index", j)
+    def rai(*items):
+        # code_index_queries 배열-only: 각 예제를 1-원소 배열로 감싼다.
+        # 여러 item 을 주면 한 배치(모드 섞기 가능)로 렌더된다.
+        return _rai_prefixed(wire_format, "code_index", {"queries": list(items)})
 
     list_py = rai({"mode": "list", "path": "auth.py"})
     list_cpp = rai({"mode": "list", "path": "src/foo.cpp"})
@@ -378,13 +380,25 @@ def _build_code_index_inline(wire_format) -> str:
         }
     )
     build_q = rai({"mode": "build"})
+    ex_batch = rai(
+        {"mode": "fetch", "path": "auth.py", "name": "User.login"},
+        {"mode": "lookup", "name": "AgentLoop"},
+    )
 
     return f"""\
 
   Persistent code/markdown index backed by a SQLite store at
   ``<project_root>/.agent-cli/code_index.db``. Lazy-built on first
   query; sha1-incremental on every call after that, so it stays fresh
-  with no manual invalidation. Ten modes:
+  with no manual invalidation.
+
+  code_index takes a LIST of queries in code_index_queries — one call can
+  run many queries at once, and modes may be mixed. For a single query,
+  pass a one-element list. Read-only (no file writes). Batch example
+  (fetch one symbol + lookup another in a single call):
+       {ex_batch}
+
+  Ten modes (each is one query item inside code_index_queries):
 
   1. mode='list' — per-file outline (one symbol per line:
      ``parent.name (kind) file:start-end``). Replaces read_file:stat

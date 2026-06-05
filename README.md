@@ -627,7 +627,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
 | `read_context` | 세션 이력 조회 (현재 세션 기본, scope/sessions 필터) |
-| `code_index` | tree-sitter 기반 SQLite 코드 인덱스. lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
+| `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용). `code_index_queries` 배열로 여러 query 를 한 번에 (모드 섞기 가능, 단일도 1개 배열). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (chat 모드 전용, 배열 지원) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
@@ -735,40 +735,58 @@ tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_
 
 `read_file`이 텍스트(line range)에 답한다면 `code_index`는 의미 단위(symbol)와 cross-file 관계(refs/callers/callees)에 답합니다.
 
-#### 10 mode 한눈에
+#### code_index_queries — 배열로 묶어 한 번에
+
+code_index 는 읽기 전용(파일 안 씀)이고, 모든 query 를 **`code_index_queries` 배열**로 받습니다. 한 호출에 여러 query 를 담을 수 있고(모드 섞기 가능), 단일 query 도 1개짜리 배열로 보냅니다.
+
+```json
+// 단일 query (표준 키 표기 — 실제 wire 는 code_index_queries)
+{"action": "code_index", "action_input": {"queries": [{"mode": "fetch", "path": "agent_cli/loop.py", "name": "AgentLoop._call_llm"}]}}
+
+// 여러 query 한 번에 (모드 섞기 — fetch + lookup + refs)
+{"action": "code_index", "action_input": {"queries": [
+  {"mode": "fetch", "path": "auth.py", "name": "User.login"},
+  {"mode": "lookup", "name": "AgentLoop"},
+  {"mode": "refs", "name": "process", "ref_kind": "call"}
+]}}
+```
+
+#### 10 mode (각 query item)
+
+아래는 각 query **item** 의 형태입니다 — 위처럼 `code_index_queries` 배열에 담아 보냅니다:
 
 ```json
 // 1. 파일 outline (read_file:stat의 구조 인지 대안)
-{"action": "code_index", "action_input": {"mode": "list", "path": "agent_cli/loop.py"}}
+{"mode": "list", "path": "agent_cli/loop.py"}
 
 // 2. 단일 심볼 body (hashline 포맷 → edit_file 직결)
-{"action": "code_index", "action_input": {"mode": "fetch", "path": "agent_cli/loop.py", "name": "AgentLoop._call_llm"}}
-{"action": "code_index", "action_input": {"mode": "fetch", "path": "README.md", "name": "## Setup"}}
+{"mode": "fetch", "path": "agent_cli/loop.py", "name": "AgentLoop._call_llm"}
+{"mode": "fetch", "path": "README.md", "name": "## Setup"}
 
 // 3. 이름으로 심볼 찾기 (인덱스 전역)
-{"action": "code_index", "action_input": {"mode": "lookup", "name": "AgentLoop"}}
-{"action": "code_index", "action_input": {"mode": "lookup", "name": "Setup", "symbol_kind": "section"}}
+{"mode": "lookup", "name": "AgentLoop"}
+{"mode": "lookup", "name": "Setup", "symbol_kind": "section"}
 
 // 4. 특정 kind 심볼 전부 (function/type/variable/constant/section)
-{"action": "code_index", "action_input": {"mode": "kind", "symbol_kind": "function"}}
+{"mode": "kind", "symbol_kind": "function"}
 
 // 5. 한 파일의 모든 심볼 (재파싱 없이 인덱스 조회)
-{"action": "code_index", "action_input": {"mode": "file", "path": "agent_cli/loop.py"}}
+{"mode": "file", "path": "agent_cli/loop.py"}
 
 // 6. 참조 사이트 (call=호출, name=콜백/포인터, type=타입 위치)
-{"action": "code_index", "action_input": {"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}}
+{"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}
 
 // 7. 누가 호출하나
-{"action": "code_index", "action_input": {"mode": "callers", "name": "process"}}
+{"mode": "callers", "name": "process"}
 
 // 8. 무엇을 호출하나
-{"action": "code_index", "action_input": {"mode": "callees", "name": "process"}}
+{"mode": "callees", "name": "process"}
 
 // 9. LLM 컨텍스트용 markdown blob (정의 + 선택적 callees/callers/types/macros)
-{"action": "code_index", "action_input": {"mode": "slice", "name": "process", "with_callees": true, "with_types": true, "depth": 2}}
+{"mode": "slice", "name": "process", "with_callees": true, "with_types": true, "depth": 2}
 
 // 10. 전체 rebuild 강제 (드묾 — 보통 lazy build + post-hook으로 충분)
-{"action": "code_index", "action_input": {"mode": "build"}}
+{"mode": "build"}
 ```
 
 #### 인덱스 root 결정 + 가지치기

@@ -575,16 +575,19 @@ _MODES = {
 # ----- entry point ----------------------------------------------------------
 
 
-def tool_code_index(action_input: dict) -> ToolResult:
-    """Dispatch a code_index query to the appropriate mode handler.
+def _dispatch_one(query: dict) -> ToolResult:
+    """Dispatch a single code_index query to its mode handler.
 
     Per-mode arg requirements are documented in the registry ToolSchema
     description; handlers enforce them and return a descriptive error
     if missing.
     """
-    if not isinstance(action_input, dict):
-        return ToolResult(False, error="action_input must be an object")
-    mode = action_input.get("mode")
+    if not isinstance(query, dict):
+        return ToolResult(
+            False,
+            error=f"each query must be an object, got {type(query).__name__}",
+        )
+    mode = query.get("mode")
     if not mode:
         return ToolResult(
             False,
@@ -596,24 +599,89 @@ def tool_code_index(action_input: dict) -> ToolResult:
             False,
             error=(f"unknown mode: {mode!r}. Valid: {sorted(_MODES.keys())}"),
         )
-    return handler(action_input)
+    return handler(query)
+
+
+def _format_batch(queries: list, results: list[ToolResult]) -> ToolResult:
+    """Combine multiple code_index query results into one observation.
+
+    Mirrors :func:`read_file._format_batch` / delegate's parallel formatter:
+    per-query header (mode + target) + body (or ERROR), then a summary.
+    ``success`` is False only when *every* query failed — a partial success
+    stays True (code_index is read-only, so partial results are still useful).
+    """
+    parts: list[str] = []
+    ok = 0
+    for i, (q, res) in enumerate(zip(queries, results), 1):
+        if isinstance(q, dict):
+            label = q.get("mode", "?")
+            target = q.get("name") or q.get("path") or ""
+            if target:
+                label = f"{label} {target}"
+        else:
+            label = "?"
+        parts.append(f"─── [{i}] {label} ───")
+        if res.success:
+            parts.append(res.output or "(empty)")
+            ok += 1
+        else:
+            parts.append(f"ERROR: {res.error}")
+        parts.append("")
+
+    failed = len(queries) - ok
+    parts.append(
+        f"[code_index batch: {len(queries)} queries, {ok} ok, {failed} failed]"
+    )
+    combined = "\n".join(parts)
+    if ok == 0:
+        return ToolResult(False, error=combined)
+    return ToolResult(True, output=combined)
+
+
+def tool_code_index(action_input: dict) -> ToolResult:
+    """Run one or more code_index queries. ``action_input["queries"]`` is a
+    list of query specs, each consumed by :func:`_dispatch_one`.
+
+    A single-element list returns that query's result verbatim (no batch
+    header); multiple queries are combined by :func:`_format_batch`.
+    Modes may be mixed within one call (code_index is read-only).
+    """
+    if not isinstance(action_input, dict):
+        return ToolResult(False, error="action_input must be an object")
+    queries = action_input.get("queries")
+    if not queries or not isinstance(queries, list):
+        return ToolResult(
+            False,
+            error=(
+                "code_index requires a non-empty 'code_index_queries' list "
+                "(each item: {mode, ...mode-specific args})."
+            ),
+        )
+
+    results = [_dispatch_one(q) for q in queries]
+    if len(results) == 1:
+        return results[0]
+    return _format_batch(queries, results)
 
 
 class CodeIndexTool(Tool):
     name = "code_index"
     description = (
-        "Code/markdown index queries via persistent tree-sitter SQLite store. "
-        "Modes:\n"
-        "  list      - file outline (defs + structural symbols, line ranges) [code_index_path]\n"
-        "  fetch     - single symbol body, hashline format for edit_file [code_index_path, code_index_name]\n"
-        "  lookup    - find symbol by name across the index [code_index_name, code_index_symbol_kind?]\n"
-        "  kind      - list all symbols of a kind across the index [code_index_symbol_kind]\n"
-        "  file      - all symbols in a single file (index lookup) [code_index_path]\n"
-        "  refs      - all ref sites for a name [code_index_name, code_index_ref_kind?]\n"
-        "  callers   - functions that call this one [code_index_name]\n"
-        "  callees   - functions called by this one [code_index_name]\n"
+        "Code/markdown index queries via persistent tree-sitter SQLite store "
+        "(read-only). Provide code_index_queries as a LIST; each item is one "
+        "query with its own mode. One call can run many queries (modes may be "
+        "mixed). For a single query, pass a one-element list.\n"
+        "Modes (per item):\n"
+        "  list      - file outline (defs + structural symbols, line ranges) [path]\n"
+        "  fetch     - single symbol body, hashline format for edit_file [path, name]\n"
+        "  lookup    - find symbol by name across the index [name, symbol_kind?]\n"
+        "  kind      - list all symbols of a kind across the index [symbol_kind]\n"
+        "  file      - all symbols in a single file (index lookup) [path]\n"
+        "  refs      - all ref sites for a name [name, ref_kind?]\n"
+        "  callers   - functions that call this one [name]\n"
+        "  callees   - functions called by this one [name]\n"
         "  slice     - markdown LLM context: def body + optional callees/callers/"
-        "types/macros [code_index_name, ...]\n"
+        "types/macros [name, ...]\n"
         "  build     - force full rebuild (rare - lazy build handles normal cases)\n"
         "Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. "
         "Index at <project_root>/.agent-cli/code_index.db, lazy-built and "
@@ -623,87 +691,106 @@ class CodeIndexTool(Tool):
     parameters = {
         "type": "object",
         "properties": {
-            "code_index_mode": {
-                "type": "string",
-                "enum": [
-                    "list",
-                    "fetch",
-                    "lookup",
-                    "kind",
-                    "file",
-                    "refs",
-                    "callers",
-                    "callees",
-                    "slice",
-                    "build",
-                ],
-                "description": "Operation. See tool description for per-mode params.",
-            },
-            "code_index_path": {
-                "type": "string",
-                "description": "File path. Required for list/fetch/file.",
-            },
-            "code_index_name": {
-                "type": "string",
+            "code_index_queries": {
+                "type": "array",
                 "description": (
-                    "Symbol name (exact, as shown by 'list'). Required for "
-                    "fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' "
-                    "also accepts the heading with marker (e.g. '## Setup')."
+                    "List of queries (one or many; modes may be mixed). For a "
+                    "single query, pass a one-element list."
                 ),
-            },
-            "code_index_symbol_kind": {
-                "type": "string",
-                "enum": ["function", "type", "variable", "constant", "section"],
-                "description": (
-                    "Symbol category filter. Optional for lookup. Required for "
-                    "kind. 'section' = markdown heading."
-                ),
-            },
-            "code_index_ref_kind": {
-                "type": "string",
-                "enum": ["call", "name", "type"],
-                "description": (
-                    "Reference site category. Optional for refs. "
-                    "call = invocation; name = bare identifier mention "
-                    "(callback, pointer); type = identifier in type position."
-                ),
-            },
-            "code_index_search": {
-                "type": "string",
-                "description": (
-                    "Optional regex (re.search) to filter symbol names. "
-                    "Applies to list and kind modes."
-                ),
-            },
-            "code_index_with_callees": {
-                "type": "boolean",
-                "description": "slice mode: include callee bodies (transitive up to depth).",
-            },
-            "code_index_with_callers": {
-                "type": "boolean",
-                "description": "slice mode: include caller bodies (transitive up to depth).",
-            },
-            "code_index_with_types": {
-                "type": "boolean",
-                "description": "slice mode: include types/structs referenced inside target body.",
-            },
-            "code_index_with_macros": {
-                "type": "boolean",
-                "description": "slice mode: include function-like macros invoked inside target body.",
-            },
-            "code_index_depth": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 5,
-                "description": "slice mode: transitive depth for callees/callers (default 1).",
-            },
-            "code_index_max_bytes": {
-                "type": "integer",
-                "minimum": 0,
-                "description": "slice mode: cap output bytes (default unlimited).",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": [
+                                "list",
+                                "fetch",
+                                "lookup",
+                                "kind",
+                                "file",
+                                "refs",
+                                "callers",
+                                "callees",
+                                "slice",
+                                "build",
+                            ],
+                            "description": "Operation. See tool description for per-mode params.",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "File path. Required for list/fetch/file.",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": (
+                                "Symbol name (exact, as shown by 'list'). Required for "
+                                "fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' "
+                                "also accepts the heading with marker (e.g. '## Setup')."
+                            ),
+                        },
+                        "symbol_kind": {
+                            "type": "string",
+                            "enum": [
+                                "function",
+                                "type",
+                                "variable",
+                                "constant",
+                                "section",
+                            ],
+                            "description": (
+                                "Symbol category filter. Optional for lookup. Required for "
+                                "kind. 'section' = markdown heading."
+                            ),
+                        },
+                        "ref_kind": {
+                            "type": "string",
+                            "enum": ["call", "name", "type"],
+                            "description": (
+                                "Reference site category. Optional for refs. "
+                                "call = invocation; name = bare identifier mention "
+                                "(callback, pointer); type = identifier in type position."
+                            ),
+                        },
+                        "search": {
+                            "type": "string",
+                            "description": (
+                                "Optional regex (re.search) to filter symbol names. "
+                                "Applies to list and kind modes."
+                            ),
+                        },
+                        "with_callees": {
+                            "type": "boolean",
+                            "description": "slice mode: include callee bodies (transitive up to depth).",
+                        },
+                        "with_callers": {
+                            "type": "boolean",
+                            "description": "slice mode: include caller bodies (transitive up to depth).",
+                        },
+                        "with_types": {
+                            "type": "boolean",
+                            "description": "slice mode: include types/structs referenced inside target body.",
+                        },
+                        "with_macros": {
+                            "type": "boolean",
+                            "description": "slice mode: include function-like macros invoked inside target body.",
+                        },
+                        "depth": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 5,
+                            "description": "slice mode: transitive depth for callees/callers (default 1).",
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "slice mode: cap output bytes (default unlimited).",
+                        },
+                    },
+                    "required": ["mode"],
+                },
             },
         },
-        "required": ["code_index_mode"],
+        "required": ["code_index_queries"],
     }
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:

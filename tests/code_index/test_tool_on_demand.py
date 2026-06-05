@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli.tools.code_index import tool_code_index
+from agent_cli.tools.code_index import _dispatch_one
 
 
 def _write(path, content):
@@ -40,13 +40,13 @@ def isolated_root(tmp_path, monkeypatch):
 class TestOnDemandList:
     def test_list_outside_root_uses_parse_fallback(self, isolated_root):
         _proj, outside = isolated_root
-        r = tool_code_index({"mode": "list", "path": str(outside / "stranger.py")})
+        r = _dispatch_one({"mode": "list", "path": str(outside / "stranger.py")})
         assert r.success
         # The symbol defined in the out-of-root file shows up.
         assert "outside_fn" in r.output
 
     def test_list_inside_root_uses_index(self, isolated_root):
-        r = tool_code_index({"mode": "list", "path": "in_root.py"})
+        r = _dispatch_one({"mode": "list", "path": "in_root.py"})
         assert r.success
         assert "in_root_fn" in r.output
 
@@ -54,7 +54,7 @@ class TestOnDemandList:
 class TestOnDemandFetch:
     def test_fetch_outside_root_returns_body(self, isolated_root):
         _proj, outside = isolated_root
-        r = tool_code_index(
+        r = _dispatch_one(
             {
                 "mode": "fetch",
                 "path": str(outside / "stranger.py"),
@@ -68,7 +68,7 @@ class TestOnDemandFetch:
 
     def test_fetch_outside_root_symbol_not_found(self, isolated_root):
         _proj, outside = isolated_root
-        r = tool_code_index(
+        r = _dispatch_one(
             {
                 "mode": "fetch",
                 "path": str(outside / "stranger.py"),
@@ -84,7 +84,7 @@ class TestOutOfRootRejected:
 
     def test_file_mode_rejects_out_of_root_path(self, isolated_root):
         _proj, outside = isolated_root
-        r = tool_code_index({"mode": "file", "path": str(outside / "stranger.py")})
+        r = _dispatch_one({"mode": "file", "path": str(outside / "stranger.py")})
         assert r.success is False
         assert "outside" in r.error
 
@@ -97,8 +97,8 @@ class TestOnDemandNoDbWrite:
     def test_out_of_root_symbol_does_not_leak_into_index(self, isolated_root):
         _proj, outside = isolated_root
         # Touch the out-of-root file via on-demand list/fetch.
-        tool_code_index({"mode": "list", "path": str(outside / "stranger.py")})
-        tool_code_index(
+        _dispatch_one({"mode": "list", "path": str(outside / "stranger.py")})
+        _dispatch_one(
             {
                 "mode": "fetch",
                 "path": str(outside / "stranger.py"),
@@ -106,6 +106,6 @@ class TestOnDemandNoDbWrite:
             }
         )
         # Now look it up through the index — should NOT be found.
-        r = tool_code_index({"mode": "lookup", "name": "outside_fn"})
+        r = _dispatch_one({"mode": "lookup", "name": "outside_fn"})
         assert r.success
         assert "no symbols" in r.output
