@@ -11,6 +11,7 @@ import re
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -547,10 +548,14 @@ def _run_parallel(
 
     def worker(index: int, spec: dict) -> None:
         # Per-task identity for renderer routing (CLI Live panel slot,
-        # Web SSE collapsible card). Including the thread id keeps it
-        # unique even if a future caller fans out the same index
-        # twice.
-        task_id = f"delegate-{index}-{threading.get_ident():x}"
+        # Web SSE collapsible card). A fresh uuid4 per worker — NOT the
+        # thread id: ``threading.get_ident()`` is recycled once a worker
+        # thread exits, so a later parallel delegate's workers could be
+        # handed the same id as an earlier call's. The web frontend's
+        # ``ensureTaskGroup`` then short-circuits on the stale entry and
+        # never draws the new cards. uuid4 guarantees cross-call
+        # uniqueness regardless of thread lifecycle.
+        task_id = f"delegate-{index}-{uuid.uuid4().hex}"
         agent = spec.get("agent", "")
         task_text = spec.get("task", "")
         renderer.begin_delegate_task(
@@ -700,7 +705,10 @@ def tool_delegate(
         # emit gets the same ``task_id`` and is routed into the
         # card. CLI's renderer treats begin/end as no-ops.
         renderer = get_renderer()
-        task_id = f"delegate-single-{threading.get_ident():x}"
+        # uuid4 (not thread id) — same rationale as the parallel worker:
+        # recycled thread idents would collide across delegate calls and
+        # suppress the frontend card. See ``worker`` above.
+        task_id = f"delegate-single-{uuid.uuid4().hex}"
         renderer.begin_delegate_task(
             task_id=task_id,
             index=0,

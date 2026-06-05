@@ -520,3 +520,63 @@ class TestToolDelegatePassesAgent:
         )
 
         assert sorted(captured_agents) == ["reviewer", "security"]
+
+    def test_parallel_task_ids_unique_across_calls(self, monkeypatch):
+        """AG-23: worker ``task_id``s stay unique across consecutive
+        parallel delegate calls.
+
+        Regression for the missing-worker-card bug: the id used to embed
+        ``threading.get_ident()``, which the OS recycles once a worker
+        thread exits — so a later call's workers could be handed an
+        earlier call's id, and the web frontend's ``ensureTaskGroup``
+        would short-circuit on the stale entry and never draw the new
+        cards. uuid4 ids are unique regardless of thread lifecycle.
+        """
+        from agent_cli.tools.delegate import _run_parallel
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        captured_ids = []
+
+        class CapturingRenderer:
+            def begin_delegate_task(self, *, task_id, index, agent, task_text):
+                captured_ids.append(task_id)
+
+            def end_delegate_task(self, **kwargs):
+                pass
+
+        monkeypatch.setattr(
+            "agent_cli.render.get_renderer", lambda: CapturingRenderer()
+        )
+
+        def mock_run_single(**kwargs):
+            return ToolResult(True, output="done")
+
+        monkeypatch.setattr("agent_cli.tools.delegate._run_single", mock_run_single)
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+        class FakeProvider:
+            pass
+
+        specs = [{"task": "A"}, {"task": "B"}]
+        # Several consecutive parallel calls: worker threads from earlier
+        # calls have exited, so their OS idents are eligible for reuse —
+        # the exact condition that produced colliding ids before.
+        for _ in range(5):
+            _run_parallel(
+                task_specs=specs,
+                provider=FakeProvider(),
+                model="test",
+                capabilities=caps,
+            )
+
+        # 5 calls x 2 workers = 10 ids, all distinct.
+        assert len(captured_ids) == 10
+        assert len(set(captured_ids)) == 10
