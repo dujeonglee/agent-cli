@@ -106,7 +106,7 @@ agent_cli/
 │   ├── virtual.py           (115)  가상 도구 Tool 서브클래스 (complete/ask/run_skill/ready_for_review) — loop이 인터셉트, **표준 키 유지** (prefix/추론 대상 아님)
 │   ├── result.py            (15)   ToolResult 데이터클래스 (success, output, error, artifact)
 │   ├── action_summary.py    (34)   tool 이름 분기 자연어 요약 헬퍼: `summarize_tool_args` (`{"tool":"<tool>","args":{...}}` → 짧은 한 줄). 두 caller: (1) `manager._to_natural_language`(observation 브랜치)가 `[<tool>] <args summary>` 헤더 합성에, (2) `manager._to_summary_text`가 **요약 경로의 assistant 액션**을 `action(<args summary>)` 산문으로 푸는 데 사용(파일 본문 대신 경로만). live/resume 경로의 assistant emission은 `wire_format.render_assistant_from_history`가 JSON round-trip (이전 `summarize_action_args`는 2026-05-15 제거).
-│   ├── registry.py          (270)  12개 Tool 인스턴스 수집 → `TOOLS`(= `TOOL_SCHEMAS` alias), `_execute_tool`(tool.run), **`infer_action`**(action_input 키 prefix → 정확히 1개 도구가 claims 하면 복원, 0/2+는 None), `validate_tool_input`(3-tuple), `get_tool_descriptions`. tool 모듈을 import하므로 `detectors`는 `validate_tool_input`을 lazy import (순환 회피)
+│   ├── registry.py          (331)  12개 Tool 인스턴스 수집 → `TOOLS`(= `TOOL_SCHEMAS` alias), `_execute_tool`(tool.run), **`infer_action`**(action_input 키 prefix → 정확히 1개 도구가 claims 하면 복원, 0/2+는 None), `validate_tool_input`(3-tuple), `get_tool_descriptions`. **`render_param_value`**(JSON-Schema property → `Input JSON` 값: type + required 마커 + 중첩 `array<object{k1, k2?, ...}>` 항목 키. MCP adapter 와 공유 — 두 도구 표면 렌더 일관). tool 모듈을 import하므로 `detectors`는 `validate_tool_input`을 lazy import (순환 회피)
 │   ├── _diff.py             (68)   write_file/edit_file 공용 unified-diff 포매터 — **plain 표준 unified diff** (git diff 텍스트 형태, colour markup·gutter 없음). LLM observation 에 깨끗한 diff 가 들어가도록(=`[green]` 태그로 토큰 낭비/노이즈 없음); 색상은 렌더러가 라인 첫 char 보고 입힘 (CLI `_colorize_diff_line`, web `colorizeDiffBody`). 100줄 cap (`MAX_DIFF_LINES`) + `DIFF_TRUNCATION_PREFIX` summary
 │   ├── read_file.py         (329)  파일 읽기 + hashline 포맷팅. `_read_one`(단일 파일: 부분/검색/stat 모드) + `tool_read_file`(`read_file_reads` 배열 순회 — 1개=단일 출력, 다중=`_format_batch`로 파일별 헤더 합성, 전부 실패 시만 success=False) → ToolResult (+ ReadFileTool, `read_file_reads` 배열-only 스키마)
 │   ├── write_file.py        (60)   파일 생성/덮어쓰기 + 변경사항 colored diff → ToolResult (+ WriteFileTool)
@@ -173,7 +173,7 @@ agent_cli/
 │   ├── __init__.py          (1)
 │   ├── config.py            (108)  mcp.json 로드/병합 (프로젝트 > 유저)
 │   ├── client.py            (258)  McpClientManager (stdio/SSE 연결, 도구 호출, stderr 격리)
-│   └── adapter.py           (95)   MCP 도구 → ToolResult 래핑, TOOLS dict 등록
+│   └── adapter.py           (101)  MCP 도구 → ToolResult 래핑, TOOLS dict 등록. `build_mcp_tool_descriptions`는 `registry.render_param_value` 재사용 (native 와 동일 스키마 렌더; MCP 키는 prefix 없음)
 
 pyproject.toml                      패키지 설정
 agent-cli.py                        하위 호환 래퍼 (4줄)

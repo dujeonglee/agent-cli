@@ -2,6 +2,7 @@
 
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
+    TOOLS,
     validate_tool_input,
     get_tool_descriptions,
 )
@@ -221,3 +222,73 @@ class TestGetToolDescriptions:
         desc = get_tool_descriptions(["shell", "complete", "ready_for_review"])
         assert desc.count("- complete:") == 1
         assert desc.count("- ready_for_review:") == 1
+
+    def test_required_fields_appear_in_descriptions(self):
+        """Every required field of every native tool must surface in the
+        rendered descriptions — the structural guard that a batch tool
+        added without an inline guide can never expose an empty schema."""
+        desc = get_tool_descriptions(list(TOOLS.keys()))
+        for name, tool in TOOLS.items():
+            for field in tool.parameters.get("required", []):
+                assert field in desc, f"required field {field!r} of {name} missing"
+                # required marker present for that field's value
+                assert "required" in desc
+
+    def test_array_of_object_item_keys_surfaced(self):
+        """Array-of-object params surface their item keys as
+        ``array<object{...}>`` so the item shape is visible without an
+        inline guide. read_file/delegate are the canonical batch tools."""
+        desc = get_tool_descriptions(["read_file", "delegate"])
+        # read_file_reads items: path/line_start/line_end/search/context/stat
+        assert "array<object{" in desc
+        assert "path" in desc and "stat?" in desc
+        # delegate_tasks items: task (required) + context?/tools?/agent?
+        assert "context?" in desc and "agent?" in desc
+
+    def test_scalar_type_preserved(self):
+        """Scalar params keep their type even when they carry a
+        description (the old flattening dropped type when description
+        existed)."""
+        desc = get_tool_descriptions(["shell"])
+        # shell_timeout is an integer with a description
+        assert "integer" in desc
+
+
+class TestRenderParamValue:
+    def test_scalar_required(self):
+        from agent_cli.tools.registry import render_param_value
+
+        out = render_param_value({"type": "string", "description": "a path"}, True)
+        assert out == "string, required — a path"
+
+    def test_scalar_optional(self):
+        from agent_cli.tools.registry import render_param_value
+
+        out = render_param_value({"type": "integer", "description": "secs"}, False)
+        assert out == "integer — secs"
+
+    def test_array_of_objects(self):
+        from agent_cli.tools.registry import render_param_value
+
+        schema = {
+            "type": "array",
+            "description": "list",
+            "items": {
+                "type": "object",
+                "properties": {"path": {}, "stat": {}},
+                "required": ["path"],
+            },
+        }
+        out = render_param_value(schema, True)
+        assert out == "array<object{path, stat?}>, required — list"
+
+    def test_array_of_scalars(self):
+        from agent_cli.tools.registry import render_param_value
+
+        schema = {"type": "array", "items": {"type": "string"}, "description": "qs"}
+        assert render_param_value(schema, True) == "array<string>, required — qs"
+
+    def test_no_description(self):
+        from agent_cli.tools.registry import render_param_value
+
+        assert render_param_value({"type": "string"}, True) == "string, required"
