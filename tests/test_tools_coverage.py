@@ -805,11 +805,17 @@ class TestToolsRegistry:
             == "(Completed without result — model may lack capability for this task)"
         )
 
-    def test_ask_tool_with_question(self):
+    def test_ask_tool_with_questions(self):
         tool = TOOLS["ask"]
-        result = tool.run({"question": "what?"})
+        result = tool.run({"questions": ["what?"]})
         assert result.success
         assert result.output == "what?"
+
+    def test_ask_tool_multiple_questions(self):
+        tool = TOOLS["ask"]
+        result = tool.run({"questions": ["a?", "b?"]})
+        assert result.success
+        assert result.output == "a?\nb?"
 
     def test_ask_tool_default(self):
         tool = TOOLS["ask"]
@@ -825,7 +831,7 @@ class TestExecuteTool:
         assert result.output == "all done"
 
     def test_execute_virtual_ask(self):
-        result = execute_tool("ask", {"question": "which file?"})
+        result = execute_tool("ask", {"questions": ["which file?"]})
         assert result.success
         assert result.output == "which file?"
 
