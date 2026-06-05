@@ -258,13 +258,6 @@ class CellResult:
         return ok / self.n
 
     @property
-    def parse_stage_distribution(self) -> dict[int, int]:
-        dist: dict[int, int] = {}
-        for r in self.runs:
-            dist[r.parsed.parse_stage] = dist.get(r.parsed.parse_stage, 0) + 1
-        return dist
-
-    @property
     def thought_present_rate(self) -> float:
         if not self.runs:
             return 0.0
@@ -303,11 +296,6 @@ class CellResult:
         if not self.runs:
             return 0.0
         return statistics.mean(r.elapsed_seconds for r in self.runs)
-
-    @property
-    def error_count(self) -> int:
-        return sum(1 for r in self.runs if r.error is not None)
-
 
 # ── Runner ───────────────────────────────────────────────────
 

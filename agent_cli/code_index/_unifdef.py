@@ -465,18 +465,6 @@ def _strip_trailing_comment(rest: str) -> str:
     return rest.strip()
 
 
-def _any_above(stack: list[dict], mode: str) -> bool:
-    """True if any ancestor frame (everything below the top of the
-    stack) is in the given mode."""
-    return any(f["mode"] == mode for f in stack[:-1])
-
-
-def _all_taken(stack: list[dict]) -> bool:
-    """True if every frame currently in the stack is TAKEN — i.e.,
-    we're in a fully-known-active region."""
-    return all(f["mode"] == _TAKEN for f in stack)
-
-
 def _any(stack: list[dict], mode: str) -> bool:
     return any(f["mode"] == mode for f in stack)
 

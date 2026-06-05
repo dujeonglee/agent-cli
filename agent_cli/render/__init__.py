@@ -222,16 +222,6 @@ def render_stream_end() -> None:
     _renderer.stream_end()
 
 
-def render_dispatch_progress(
-    label: str,
-    turn: int,
-    tool_name: str,
-    detail: str = "",
-    thought: str = "",
-) -> None:
-    _renderer.dispatch_progress(label, turn, tool_name, detail, thought)
-
-
 def load_renderer_by_name(name: str) -> None:
     """Load and activate a renderer by filename (without .py).
 

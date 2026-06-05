@@ -424,10 +424,6 @@ class CellResult:
             return 0.0
         return statistics.mean(r.elapsed_seconds for r in self.runs)
 
-    @property
-    def error_count(self) -> int:
-        return sum(1 for r in self.runs if r.error is not None)
-
 
 # ── Runner ───────────────────────────────────────────────────
 

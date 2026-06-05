@@ -77,7 +77,6 @@ class WebRenderer(Renderer):
         # final(), so the thought is held until the second call so we can
         # emit a single ``assistant_turn`` event per LLM emission.
         self._pending_thought: str | None = None
-        self._pending_turn: int | None = None
         # Counter of persistent events in the SSE replay buffer.
         self._persistent_count: int = 0
         # Optional workspace path piggybacks on the ``ready`` event so
@@ -419,7 +418,6 @@ class WebRenderer(Renderer):
         # Hold until the matching action / final fires so we can emit
         # a single ``assistant_turn`` event per LLM emission.
         self._pending_thought = content
-        self._pending_turn = turn
         # Mirror the CLI behaviour: surface the first line of the
         # thought as the worker's live status so a delegate-task card
         # header shows ``💭 reasoning…`` while the worker is still
@@ -441,7 +439,6 @@ class WebRenderer(Renderer):
             persistent=True,
         )
         self._pending_thought = None
-        self._pending_turn = None
 
     def observation(
         self,
@@ -472,7 +469,6 @@ class WebRenderer(Renderer):
             persistent=True,
         )
         self._pending_thought = None
-        self._pending_turn = None
 
     def error(self, content: str, turn: int) -> None:
         self._emit("error", {"turn": turn, "content": content}, persistent=True)
