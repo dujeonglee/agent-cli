@@ -705,6 +705,40 @@ class TestLoadDirectives:
         assert "Project rule." in result
         assert "User rule." in result
 
+    def test_scope_labels_are_positional(self, tmp_path, monkeypatch):
+        """Scope comes from list position ([project, user]), not from a
+        source-path substring match."""
+        d1 = tmp_path / "proj" / ".agent-cli"
+        d2 = tmp_path / "home" / ".agent-cli"
+        d1.mkdir(parents=True)
+        d2.mkdir(parents=True)
+        (d1 / "DIRECTIVE.md").write_text("Project rule.")
+        (d2 / "DIRECTIVE.md").write_text("User rule.")
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [d1, d2],
+        )
+        result = _load_directives()
+        assert "(scope: project)\nProject rule." in result
+        assert "(scope: user)\nUser rule." in result
+
+    def test_cwd_is_home_collapses_to_one(self, tmp_path, monkeypatch):
+        """N1: when cwd == home the project and user paths resolve to the
+        same file — it must be read once and labeled 'project', not read
+        twice or mislabeled 'user'."""
+        d = tmp_path / ".agent-cli"
+        d.mkdir()
+        (d / "DIRECTIVE.md").write_text("Shared rule.")
+        # Both entries point at the same dir (the cwd == home case).
+        monkeypatch.setattr(
+            "agent_cli.prompts.system_prompt._DIRECTIVE_PATHS",
+            [d, d],
+        )
+        result = _load_directives()
+        assert result.count("Shared rule.") == 1
+        assert "(scope: project)" in result
+        assert "(scope: user)" not in result
+
 
 class TestDelegateInlineAgent:
     """AG-27 ~ AG-28: delegate inline guide agent-field tests.

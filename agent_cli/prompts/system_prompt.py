@@ -551,14 +551,25 @@ def _load_directives() -> str:
     Uses ResourceLoader._parse_file for consistent parsing.
     Both project and user directives are included (not deduplicated by name)
     unless they have identical content.
+
+    Scope label is positional — ``_DIRECTIVE_PATHS`` is ordered
+    ``[project, user]`` — rather than inferred from the source path. When
+    the cwd IS the home directory the two entries resolve to the same file;
+    the path-dedup below keeps only the first (project) so the directive is
+    neither read twice nor mislabeled.
     """
     from agent_cli.resource_loader import ResourceLoader
 
     loaded: list[str] = []
     seen_hashes: set[int] = set()
+    seen_paths: set[Path] = set()
 
-    for search_dir in _DIRECTIVE_PATHS:
-        directive_file = search_dir / "DIRECTIVE.md"
+    for idx, search_dir in enumerate(_DIRECTIVE_PATHS):
+        directive_file = (search_dir / "DIRECTIVE.md").resolve()
+        # cwd == home → project and user paths coincide; skip the dupe.
+        if directive_file in seen_paths:
+            continue
+        seen_paths.add(directive_file)
         if not directive_file.is_file():
             continue
 
@@ -571,11 +582,7 @@ def _load_directives() -> str:
             continue
         seen_hashes.add(content_hash)
 
-        scope = (
-            "project"
-            if str(Path.cwd() / ".agent-cli") in resource.source_path
-            else "user"
-        )
+        scope = "project" if idx == 0 else "user"
         loaded.append(f"### DIRECTIVE.md (scope: {scope})\n{resource.body}")
 
     if not loaded:
