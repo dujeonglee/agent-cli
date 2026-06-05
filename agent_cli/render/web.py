@@ -23,11 +23,6 @@ the server marks the old connection closed and pushes a ``takeover`` event
 into its queue so it disconnects cleanly. The worker thread is unaware of
 client comings and goings — it just emits, the renderer fans out.
 
-FIFO sync: the renderer counts persistent message events emitted. After
-each turn the server compares this count to ``ContextManager._cache``'s
-non-system message count; any drop is broadcast as a ``prune`` event so
-the frontend trims the same prefix.
-
 Buffer / replay: ``_event_buffer`` holds every persistent event since
 session start (or since session resume on ``--resume <id>``). When a new
 client connects, the server first replays the buffer in order, then
@@ -83,8 +78,7 @@ class WebRenderer(Renderer):
         # emit a single ``assistant_turn`` event per LLM emission.
         self._pending_thought: str | None = None
         self._pending_turn: int | None = None
-        # Counter for FIFO sync — server compares to context cache size
-        # to determine prune drop count.
+        # Counter of persistent events in the SSE replay buffer.
         self._persistent_count: int = 0
         # Optional workspace path piggybacks on the ``ready`` event so
         # the frontend's top bar can show "provider · model · cwd"
@@ -373,25 +367,10 @@ class WebRenderer(Renderer):
                         tool_input = str(action_input)
                     self.action(action, tool_input, turn=0)
 
-    def prune(self, drop: int) -> None:
-        """Drop the ``drop`` oldest persistent events from the buffer and
-        notify clients so they trim the same prefix. No-op if ``drop`` is
-        zero or larger than the current buffer."""
-        if drop <= 0:
-            return
-        with self._lock:
-            if drop > len(self._event_buffer):
-                drop = len(self._event_buffer)
-            self._event_buffer = self._event_buffer[drop:]
-            self._persistent_count -= drop
-        self._emit("prune", {"drop": drop}, persistent=False)
-
     @property
     def persistent_count(self) -> int:
-        """Number of persistent events currently in the buffer.
-
-        Server uses this to compute FIFO prune deltas vs. the live
-        ``ContextManager`` cache.
+        """Number of persistent events currently in the SSE replay
+        buffer. Read by tests to assert which events land in replay.
         """
         with self._lock:
             return self._persistent_count

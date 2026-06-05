@@ -6,11 +6,10 @@ Coverage axes:
    active connection; transient events only to live connections.
 2. **Connection lifecycle** — registering takes over older connections,
    the snapshot returned to a new client matches the buffer.
-3. **Pruning** — ``prune(n)`` shrinks the buffer and notifies clients.
-4. **Assistant turn bundling** — ``thought()`` is held and emitted as
+3. **Assistant turn bundling** — ``thought()`` is held and emitted as
    part of the next ``action()`` / ``final()`` so each LLM emission
    produces exactly one persistent ``assistant_turn`` event.
-5. **Input flow** — ``prompt_user`` / ``confirm`` block until the
+4. **Input flow** — ``prompt_user`` / ``confirm`` block until the
    server pushes input. Abort raises ``EOFError`` from ``prompt_user``
    and returns the safe default from ``confirm``.
 """
@@ -202,48 +201,6 @@ class TestTokenUsage:
 
 
 # ── Prune (FIFO sync) ──────────────────────────────
-
-
-class TestPrune:
-    """``prune()`` drops oldest persistent events + emits a notice."""
-
-    def test_prune_shrinks_buffer_and_notifies(self):
-        r = WebRenderer()
-        conn = WebConnection(id="c1")
-        r.register_connection(conn)
-
-        r.final("a", turn=1)
-        r.observation("a-result", turn=1, tool_name="shell")
-        r.final("b", turn=2)
-        # Drain the queue first so we only see what prune emits next.
-        for _ in range(3):
-            conn.queue.get(timeout=0.5)
-
-        r.prune(2)
-
-        assert r.persistent_count == 1
-        event, data = conn.queue.get(timeout=0.5)
-        assert event == "prune"
-        assert data["drop"] == 2
-
-    def test_prune_zero_is_noop(self):
-        r = WebRenderer()
-        conn = WebConnection(id="c1")
-        r.register_connection(conn)
-        r.final("a", turn=1)
-        conn.queue.get(timeout=0.5)
-
-        r.prune(0)
-
-        # No extra event landed — buffer untouched.
-        assert r.persistent_count == 1
-        assert conn.queue.empty()
-
-    def test_prune_larger_than_buffer_clamps(self):
-        r = WebRenderer()
-        r.final("a", turn=1)
-        r.prune(100)
-        assert r.persistent_count == 0
 
 
 # ── Assistant turn bundling ────────────────────────

@@ -15,11 +15,6 @@ the URL with the LAN.
 Single-active-client: only one SSE connection at a time. A second
 connection takes over — the first receives a ``takeover`` event and
 disconnects cleanly. Implemented via :meth:`WebRenderer.register_connection`.
-
-FIFO sync: after every chat turn (i.e. after ``AgentLoop.run`` returns)
-the server compares the renderer's persistent event count to the
-``ContextManager`` cache size. Any drop is broadcast as a ``prune``
-event so the frontend trims the same prefix from view.
 """
 
 from __future__ import annotations
@@ -31,10 +26,8 @@ import secrets
 import socket
 import threading
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, SimpleQueue
-from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -307,26 +300,6 @@ def _handle_sh(message: str, renderer: WebRenderer) -> bool:
         success=result.returncode == 0,
     )
     return True
-
-
-@dataclass
-class WebServerConfig:
-    """Static config the FastAPI app pulls from at request time.
-
-    Most fields are CLI flags; ``token`` defaults to a fresh random
-    secret when ``None`` (``--token`` omitted).
-    """
-
-    token: str
-    # Hook fed each user chat message — the loop runner uses this to
-    # advance the AgentLoop. Returns the raw user content; the server
-    # already echoed it into the renderer's persistent buffer via
-    # ``WebRenderer.push_user_message``.
-    on_user_message: Any  # Callable[[str], None]
-    # FIFO sync helper: takes the renderer's current persistent count
-    # and returns the prune drop (0 if no eviction). Server polls this
-    # after each turn — see ``WebServer.process_chat_turn``.
-    compute_prune_drop: Any  # Callable[[int], int]
 
 
 class WebServer:
@@ -636,4 +609,4 @@ def create_app(server: WebServer) -> FastAPI:
     return app
 
 
-__all__ = ["WebServer", "WebServerConfig", "create_app"]
+__all__ = ["WebServer", "create_app"]

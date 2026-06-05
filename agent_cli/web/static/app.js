@@ -6,8 +6,6 @@
 //   3. Handle three input modes (chat / prompt / confirm) driven by
 //      ``input_required`` events from the server.
 //   4. POST the user's response back to /api/input.
-//   5. Keep the visible chat in sync with the server-side FIFO via
-//      ``prune`` events (drop the oldest N persistent cards).
 //
 // No build step, no framework — single file, ~300 LOC. Polish (markdown
 // rendering, syntax highlighting, abort button) is Phase D.
@@ -738,23 +736,6 @@
     }
   }
 
-  // ── FIFO prune ─────────────────────────────
-  function pruneOldest(drop) {
-    // Drop the N oldest persistent cards. Streaming / transient cards
-    // (card-streaming) are excluded — they re-form anyway. Matches
-    // the server's persistent_count semantics so the visible chat
-    // mirrors ContextManager's live cache.
-    const selector =
-      ".card-user, .card-assistant, .card-observation, .card-error";
-    let removed = 0;
-    while (removed < drop) {
-      const first = $messages.querySelector(selector);
-      if (!first) break;
-      first.remove();
-      removed++;
-    }
-  }
-
   // ── Takeover ───────────────────────────────
   function showTakeoverNotice() {
     const banner = el("div", ["banner-takeover"]);
@@ -1109,11 +1090,6 @@
     fetch("/api/abort?token=" + encodeURIComponent(token), {
       method: "POST",
     });
-  });
-
-  es.addEventListener("prune", function (e) {
-    const d = JSON.parse(e.data);
-    pruneOldest(d.drop);
   });
 
   es.addEventListener("input_required", function (e) {
