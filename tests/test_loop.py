@@ -666,6 +666,59 @@ class TestRunLoopObservability:
         assert rows[1]["failure_signal"] is None
         assert rows[1]["primitives_applied"] == []
 
+    def test_raw_failures_captured_when_env_enabled(self, caps, tmp_path, monkeypatch):
+        """AGENT_CLI_RECORD_RAW_FAILURES=on → 실패 턴의 raw 응답이
+        raw_failures.jsonl 에 잡힌다 (turns.jsonl 은 메타만 유지)."""
+        monkeypatch.setenv("AGENT_CLI_RECORD_RAW_FAILURES", "on")
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content="not json at all"),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+
+        path = tmp_path / "raw_failures.jsonl"
+        assert path.exists()
+        rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+        # 실패 턴(NO_JSON)만 잡힘 — recovery 성공 턴은 안 남음
+        assert len(rows) == 1
+        assert rows[0]["failure_signal"] == "NO_JSON"
+        assert rows[0]["parse_stage"] == 0
+        assert rows[0]["raw"] == "not json at all"
+
+    def test_raw_failures_off_by_default(self, caps, tmp_path, monkeypatch):
+        """env 미설정 → raw_failures.jsonl 생성 안 됨 (turns.jsonl 은 정상)."""
+        monkeypatch.delenv("AGENT_CLI_RECORD_RAW_FAILURES", raising=False)
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content="not json at all"),
+            LLMResponse(content=_complete("recovered")),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+        )
+
+        assert not (tmp_path / "raw_failures.jsonl").exists()
+        assert (tmp_path / "turns.jsonl").exists()  # turns 는 정상 기록
+
     def test_empty_response_records_no_output_signal(self, caps, tmp_path):
         """A1b: model emits empty/whitespace-only content. The label must
         be NO_OUTPUT (not NO_JSON), and primitives stay empty because

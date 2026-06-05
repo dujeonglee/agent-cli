@@ -110,6 +110,7 @@ class AgentLoop:
         mcp_manager=None,
         hook_runner=None,
         record_turns: bool = True,
+        record_raw_failures: bool | None = None,
         wire_format=None,
         compaction_enabled: bool = True,
     ):
@@ -203,9 +204,21 @@ class AgentLoop:
 
         # Observability — per-turn record. Disabled when no session
         # (headless / subagent) or when user opted out.
+        #
+        # raw_failures capture: debug-only dump of failed turns' raw
+        # response (recovery-rule analysis). Off by default; opt in via the
+        # AGENT_CLI_RECORD_RAW_FAILURES env var so every entry point
+        # (run / chat / web) is covered without a per-command CLI flag.
+        if record_raw_failures is None:
+            import os
+
+            record_raw_failures = os.environ.get(
+                "AGENT_CLI_RECORD_RAW_FAILURES", ""
+            ).strip().lower() in ("1", "true", "on", "yes")
         self.recorder = TurnRecorder(
             session_dir=(self.ctx.session_dir if self.ctx else None),
             enabled=record_turns,
+            record_raw=record_raw_failures,
         )
 
         # B1 (action loop) detector. Threshold=2 fires on the second
@@ -734,6 +747,7 @@ class AgentLoop:
                 parse_stage=parsed.parse_stage,
                 failure_signal=outcome["failure_signal"],
                 primitives_applied=outcome["primitives"],
+                raw=llm_text,
             )
 
     def _dispatch_text_path(self, llm_text: str, parsed, outcome: dict):

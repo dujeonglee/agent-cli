@@ -78,12 +78,28 @@ class TurnRecorder:
     analysis time (drop the last line if it doesn't parse).
     """
 
-    def __init__(self, session_dir: Optional[Path], enabled: bool = True):
+    def __init__(
+        self,
+        session_dir: Optional[Path],
+        enabled: bool = True,
+        record_raw: bool = False,
+    ):
         self._path: Optional[Path]
         if session_dir is None or not enabled:
             self._path = None
         else:
             self._path = Path(session_dir) / "turns.jsonl"
+        # raw_failures.jsonl — debug-only escape hatch from the
+        # metadata-only rule: the raw LLM response of *failed* turns, for
+        # recovery-rule analysis. Separate file so turns.jsonl keeps its
+        # no-prompts/no-responses guarantee. Written only when both the
+        # turns recorder is active (``_path`` set) and a failure_signal +
+        # raw text are present (see ``record``).
+        self._raw_path: Optional[Path] = (
+            Path(session_dir) / "raw_failures.jsonl"
+            if (session_dir is not None and record_raw)
+            else None
+        )
         self._seq = 0
 
     @property
@@ -97,8 +113,15 @@ class TurnRecorder:
         parse_stage: int,
         failure_signal: Optional[str] = None,
         primitives_applied: Optional[list[str]] = None,
+        raw: Optional[str] = None,
     ) -> None:
-        """Append one record to ``turns.jsonl``. No-op when disabled."""
+        """Append one record to ``turns.jsonl``. No-op when disabled.
+
+        ``raw`` is the turn's raw LLM response. It is written to
+        ``turns.jsonl`` *never* — only, when ``record_raw`` is enabled and
+        this turn carries a ``failure_signal``, to the separate
+        ``raw_failures.jsonl`` (debug capture for recovery-rule analysis).
+        """
         if self._path is None:
             return
 
@@ -121,6 +144,20 @@ class TurnRecorder:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+        # Debug-only raw capture: failed turns' raw response → separate file.
+        if self._raw_path is not None and failure_signal and raw is not None:
+            raw_rec = {
+                "seq": self._seq,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "parse_stage": parse_stage,
+                "failure_signal": failure_signal,
+                "raw": raw,
+            }
+            self._raw_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._raw_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(raw_rec, ensure_ascii=False) + "\n")
+
         self._seq += 1
 
     def record_compaction(

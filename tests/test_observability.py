@@ -188,3 +188,63 @@ class TestSchemaInvariants:
         rec = TurnRecord(seq=0, model="m", timestamp="t", parse_stage=1)
         assert rec.primitives_applied == []
         assert rec.failure_signal is None
+
+
+class TestRawFailureCapture:
+    """``record_raw=True`` dumps the raw LLM response of *failed* turns to
+    a separate ``raw_failures.jsonl`` (debug-only; turns.jsonl stays
+    metadata-only). Used to analyze how a turn drifted before strengthening
+    recovery rules.
+    """
+
+    def test_records_raw_on_failure_when_enabled(self, session_dir):
+        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
+        rec.record(
+            model="m",
+            parse_stage=0,
+            failure_signal=FAILURE_NO_JSON,
+            raw="I think we should read loop.py next.",
+        )
+        rows = _read_jsonl(session_dir / "raw_failures.jsonl")
+        assert len(rows) == 1
+        assert rows[0]["raw"] == "I think we should read loop.py next."
+        assert rows[0]["failure_signal"] == FAILURE_NO_JSON
+        assert rows[0]["parse_stage"] == 0
+        assert "seq" in rows[0] and "timestamp" in rows[0]
+
+    def test_success_turn_not_recorded_to_raw(self, session_dir):
+        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
+        rec.record(
+            model="m", parse_stage=1, failure_signal=None, raw="## Action\nread_file"
+        )
+        # failure_signal None (성공) → raw_failures 에 안 남음
+        assert _read_jsonl(session_dir / "raw_failures.jsonl") == []
+
+    def test_record_raw_off_creates_no_raw_file(self, session_dir):
+        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=False)
+        rec.record(model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON, raw="blah")
+        assert not (session_dir / "raw_failures.jsonl").exists()
+        # turns.jsonl 은 정상 기록 (raw 비활성과 무관)
+        assert len(_read_jsonl(session_dir / "turns.jsonl")) == 1
+
+    def test_raw_seq_matches_turns_seq(self, session_dir):
+        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
+        rec.record(model="m", parse_stage=1, failure_signal=None, raw="ok")  # seq 0
+        rec.record(
+            model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON, raw="bad"
+        )  # seq 1
+        raw_rows = _read_jsonl(session_dir / "raw_failures.jsonl")
+        assert len(raw_rows) == 1
+        assert raw_rows[0]["seq"] == 1  # turns.jsonl 의 seq 와 동기
+
+    def test_raw_none_not_recorded(self, session_dir):
+        # raw 를 안 줘도(None) 에러 없고 raw_failures 미기록
+        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
+        rec.record(model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON)
+        assert _read_jsonl(session_dir / "raw_failures.jsonl") == []
+
+    def test_no_session_dir_raw_is_no_op(self):
+        rec = TurnRecorder(session_dir=None, enabled=True, record_raw=True)
+        rec.record(
+            model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON, raw="x"
+        )  # must not raise
