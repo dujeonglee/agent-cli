@@ -90,6 +90,24 @@ def test_batch_same_file_multiple_ranges(sample):
     assert "line1" in r.output and "line5" in r.output
 
 
+def test_batch_mixed_modes(sample):
+    # 한 배치에 stat + search + range 모드를 섞을 수 있다 (각 item 이 독립
+    # _read_one → 자기 모드 분기). code_index 의 test_batch_mixed_modes 와 대칭.
+    r = tool_read_file(
+        {
+            "reads": [
+                {"path": str(sample), "stat": True},
+                {"path": str(sample), "search": "line3", "context": 0},
+                {"path": str(sample), "line_start": 4, "line_end": 5},
+            ]
+        }
+    )
+    assert r.success
+    assert "[stat]" in r.output  # stat 모드
+    assert "[search]" in r.output  # search 모드
+    assert "line5" in r.output  # range 모드 (line 4-5)
+
+
 def test_batch_partial_failure_is_success(tmp_path):
     # 일부 실패해도 하나라도 성공하면 success=True (전부 실패할 때만 False)
     f1 = tmp_path / "a.py"
