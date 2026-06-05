@@ -6,9 +6,11 @@ and can be executed by the agent loop like any built-in tool.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from agent_cli.mcp.client import McpClientManager
+from agent_cli.tools.registry import render_param_value
 from agent_cli.tools.result import ToolResult
 
 
@@ -78,15 +80,19 @@ def build_mcp_tool_descriptions(manager: McpClientManager) -> str:
     for tool in all_tools:
         qualified_name = f"{tool.server}.{tool.name}"
         desc = tool.description or "(no description)"
-        # Build params summary from input_schema
+        # Build params summary from input_schema. Same renderer as native
+        # tools (registry.render_param_value) so both surfaces show type +
+        # required + nested item shape identically. MCP keys are not
+        # prefixed — kept verbatim.
         params = ""
         if tool.input_schema and "properties" in tool.input_schema:
             props = tool.input_schema["properties"]
-            params_str = ", ".join(
-                f'"{k}": "{v.get("description", v.get("type", ""))}"'
-                for k, v in props.items()
+            required = set(tool.input_schema.get("required", []))
+            params_str = json.dumps(
+                {k: render_param_value(v, k in required) for k, v in props.items()},
+                ensure_ascii=False,
             )
-            params = f"  Input JSON: {{{params_str}}}"
+            params = f"  Input JSON: {params_str}"
         entry = f"- {qualified_name}: {desc}"
         if params:
             entry += f"\n{params}"

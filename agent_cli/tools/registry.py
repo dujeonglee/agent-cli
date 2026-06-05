@@ -99,6 +99,67 @@ def infer_action(action_input: Any) -> str | None:
 _ALWAYS_INCLUDE = ("complete", "ready_for_review")
 
 
+def _render_object_keys(obj_schema: dict) -> str:
+    """Render an object schema's property keys as ``object{k1, k2?, ...}``.
+
+    ``?`` suffixes keys NOT in the object's ``required`` list. Only key
+    *names* are surfaced — their per-key descriptions stay in the inline
+    guides, keeping this the authoritative compact schema and the guide
+    the owner of usage prose. An object with no declared properties falls
+    back to the bare type name.
+    """
+    props = obj_schema.get("properties", {})
+    if not props:
+        return obj_schema.get("type", "")
+    req = set(obj_schema.get("required", []))
+    keys = [k if k in req else f"{k}?" for k in props]
+    return "object{" + ", ".join(keys) + "}"
+
+
+def _render_type_spec(prop_schema: dict) -> str:
+    """Render the shape that the old flattening dropped: type + item shape.
+
+    - array of objects  → ``array<object{k1, k2?, ...}>``
+    - array of scalars  → ``array<string>`` (or bare ``array`` if unknown)
+    - object            → ``object{k1, k2?, ...}``
+    - scalar            → ``string`` / ``integer`` / ...
+    """
+    t = prop_schema.get("type", "")
+    if t == "array":
+        items = prop_schema.get("items", {})
+        inner = (
+            _render_object_keys(items)
+            if items.get("type") == "object"
+            else items.get("type", "")
+        )
+        return f"array<{inner}>" if inner else "array"
+    if t == "object":
+        return _render_object_keys(prop_schema)
+    return t
+
+
+def render_param_value(prop_schema: dict, required: bool) -> str:
+    """Render one JSON-Schema property into the prompt's ``Input JSON`` value.
+
+    Shape: ``<type-spec>[, required] — <description>``. Surfaces the
+    ``type``, the ``required`` marker, and (for arrays/objects) the nested
+    item-key shape — all three of which the previous
+    ``v.get("description", v.get("type", ""))`` flattening discarded.
+
+    Shared by :func:`get_tool_descriptions` (native tools) and the MCP
+    adapter so both tool surfaces render identically. MCP keys are not
+    prefixed; this helper operates on the property schema only and is
+    agnostic to the key namespace.
+    """
+    type_spec = _render_type_spec(prop_schema)
+    head_parts = [p for p in (type_spec, "required" if required else "") if p]
+    head = ", ".join(head_parts)
+    desc = prop_schema.get("description", "")
+    if head and desc:
+        return f"{head} — {desc}"
+    return head or desc
+
+
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,
@@ -130,11 +191,11 @@ def get_tool_descriptions(
         schema = TOOL_SCHEMAS.get(name)
         if schema is None:
             continue
+        props = schema.parameters.get("properties", {})
+        required = set(schema.parameters.get("required", []))
         params_str = json.dumps(
-            {
-                k: v.get("description", v.get("type", ""))
-                for k, v in schema.parameters.get("properties", {}).items()
-            },
+            {k: render_param_value(v, k in required) for k, v in props.items()},
+            ensure_ascii=False,
         )
         entry = f"- {name}: {schema.description}\n  Input JSON: {params_str}"
         if name in guides:
