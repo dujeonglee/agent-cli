@@ -474,6 +474,13 @@
       g.streamingCard = null;
       g.streamingText = "";
     }
+    // Release the global entry now that the task is done. The card's
+    // DOM stays in the timeline (still visible + expandable via its own
+    // header listener); only this bookkeeping reference is dropped so
+    // ``taskGroups`` doesn't grow unbounded over a long session and no
+    // stale entry lingers for a future task_id to collide with. No more
+    // worker events arrive for this task_id after ``delegate_task_end``.
+    delete taskGroups[taskId];
   }
 
   /** Append ``cardEl`` to either the main timeline or a task group's
