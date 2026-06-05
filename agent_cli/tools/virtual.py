@@ -41,16 +41,15 @@ class CompleteTool(Tool):
 
 class AskTool(Tool):
     name = "ask"
+    # Compact gate only. The full ask-vs-complete decision tree (examples,
+    # rule of thumb) lives in the inline guide ``_ASK_INLINE`` in
+    # ``prompts/system_prompt.py``, which is always rendered right after
+    # this description — keeping the prose in one place avoids the two
+    # surfaces teaching the same distinction back to back.
     description = (
         "Ask the user one or more questions and WAIT for their reply. "
-        "Use ONLY when you cannot proceed without specific input from the "
-        "user — a missing requirement, an ambiguous instruction, or a "
-        "decision among alternatives you cannot resolve yourself. "
-        "DO NOT use for goodbyes, pleasantries, acknowledgements, or "
-        "checking whether your answer was satisfactory — those are "
-        "conversational closers and belong in `complete`. If you have "
-        "nothing actionable that requires user input, end the turn with "
-        "`complete`; the user can always reply if they want to continue."
+        "Use only when you cannot proceed without specific input from the "
+        "user; otherwise end with `complete`."
     )
     parameters = {
         "type": "object",
