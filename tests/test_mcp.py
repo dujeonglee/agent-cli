@@ -169,41 +169,54 @@ class TestLoadMcpConfig:
 
 
 class TestMcpAdapter:
-    def test_wrap_mcp_tool_success(self):
+    def test_mcp_tool_run_success(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.mcp.adapter import wrap_mcp_tool
+        from agent_cli.mcp.adapter import McpTool
 
         manager = MagicMock()
         mock_result = MagicMock()
         mock_result.content = [MagicMock(text="search result")]
         manager.call_tool.return_value = mock_result
 
-        fn = wrap_mcp_tool(manager, "github", "search")
-        result = fn({"query": "test"})
+        tool = McpTool(manager, "github", "search", "Search", {})
+        result = tool.run({"query": "test"})
 
         assert result.success
         assert "search result" in result.output
         manager.call_tool.assert_called_once_with("github", "search", {"query": "test"})
 
-    def test_wrap_mcp_tool_failure(self):
+    def test_mcp_tool_run_failure(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.mcp.adapter import wrap_mcp_tool
+        from agent_cli.mcp.adapter import McpTool
 
         manager = MagicMock()
         manager.call_tool.side_effect = ConnectionError("server down")
 
-        fn = wrap_mcp_tool(manager, "github", "search")
-        result = fn({"query": "test"})
+        tool = McpTool(manager, "github", "search", "Search", {})
+        result = tool.run({"query": "test"})
 
         assert not result.success
         assert "server down" in result.error
 
+    def test_mcp_tool_is_prefixless(self):
+        """MCP keys are bare (like virtual tools): strip_prefix is a no-op
+        and claims stays False so MCP never hijacks infer_action."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.mcp.adapter import McpTool
+
+        tool = McpTool(MagicMock(), "github", "search", "Search", {})
+        # bare key passes through unchanged
+        assert tool.strip_prefix({"query": "x"}) == {"query": "x"}
+        # bare-key payload is not claimed
+        assert tool.claims({"query": "x"}) is False
+
     def test_register_mcp_tools(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.mcp.adapter import register_mcp_tools
+        from agent_cli.mcp.adapter import McpTool, register_mcp_tools
         from agent_cli.mcp.client import McpToolInfo
 
         manager = MagicMock()
@@ -225,7 +238,60 @@ class TestMcpAdapter:
         tools = register_mcp_tools(manager)
         assert "github.list_issues" in tools
         assert "github.create_pr" in tools
-        assert callable(tools["github.list_issues"])
+        # Tool instances, not bare callables — registry contract (.run/.parameters)
+        assert isinstance(tools["github.list_issues"], McpTool)
+        assert hasattr(tools["github.list_issues"], "run")
+        assert hasattr(tools["github.list_issues"], "parameters")
+
+    def test_mcp_dispatch_through_registry(self):
+        """Regression for the Tool-ABC migration gap (423608e): MCP tools
+        merged into TOOLS must flow through the SAME validate + dispatch
+        path as native tools without crashing. Previously they were bare
+        functions and ``validate_tool_input``/``_execute_tool`` raised
+        AttributeError ('function' has no attribute 'parameters'/'run')."""
+        from unittest.mock import MagicMock
+
+        from agent_cli.mcp.adapter import register_mcp_tools
+        from agent_cli.mcp.client import McpToolInfo
+        from agent_cli.tools.registry import (
+            TOOLS,
+            _execute_tool,
+            validate_tool_input,
+        )
+
+        manager = MagicMock()
+        res = MagicMock()
+        res.content = [MagicMock(text="ok")]
+        manager.call_tool.return_value = res
+        manager.list_tools.return_value = [
+            McpToolInfo(
+                server="gh",
+                name="search",
+                description="Search",
+                input_schema={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            ),
+        ]
+
+        registered = register_mcp_tools(manager)
+        TOOLS.update(registered)  # exactly what main.py does
+        try:
+            # validation path (recovery A5 detector wraps this)
+            ok, err, conv = validate_tool_input("gh.search", {"query": "x"})
+            assert ok, err
+            # missing required field is reported, not crashed
+            bad_ok, bad_err, _ = validate_tool_input("gh.search", {})
+            assert not bad_ok
+            assert "query" in bad_err
+            # dispatch path (loop._invoke_regular → _execute_tool)
+            result = _execute_tool("gh.search", {"query": "x"})
+            assert result.success
+            assert "ok" in result.output
+        finally:
+            del TOOLS["gh.search"]
 
     def test_build_mcp_tool_descriptions(self):
         from unittest.mock import MagicMock

@@ -1,36 +1,68 @@
-"""MCP tool adapter — wraps MCP tools as agent-cli ToolResult functions.
+"""MCP tool adapter — wraps MCP tools as :class:`~agent_cli.tools.base.Tool`
+instances.
 
-Registers MCP tools into TOOLS dict so they appear in Available Tools
-and can be executed by the agent loop like any built-in tool.
+Registers MCP tools into the ``TOOLS`` dict so they appear in Available
+Tools and are dispatched by the agent loop like any built-in tool. Since
+the Tool-ABC refactor (423608e) the registry expects every ``TOOLS`` value
+to be a ``Tool`` subclass — it reads ``.parameters`` for input validation
+(``validate_tool_input``) and calls ``.run()`` for dispatch
+(``_execute_tool``). MCP tools are therefore ``Tool`` subclasses too, not
+bare callables, so they flow through the exact same validation/dispatch
+path with no special-casing.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from agent_cli.mcp.client import McpClientManager
+from agent_cli.tools.base import Tool
 from agent_cli.tools.registry import render_param_value
 from agent_cli.tools.result import ToolResult
 
 
-def wrap_mcp_tool(manager: McpClientManager, server: str, tool_name: str) -> callable:
-    """Create a tool function that calls an MCP tool and returns ToolResult.
+class McpTool(Tool):
+    """A connected MCP tool exposed as an agent-cli :class:`Tool`.
 
-    The returned function has signature: (args: dict) -> ToolResult
-    Compatible with agent-cli's TOOLS dict.
+    ``name`` is the qualified ``{server}.{tool}`` so it never collides with
+    a native tool. ``parameters`` is the server-advertised JSON Schema, so
+    the registry validates MCP input the same way it validates native
+    tools. ``_run`` forwards the (prefix-stripped) args to the MCP server.
+
+    Wire keys: MCP is prefix-less. Servers advertise bare schema keys
+    (``query``), so the model emits them bare — the same shape virtual
+    tools (``complete`` / ``ask``) use. The base ``key_prefix`` (``{name}_``)
+    is therefore a no-op here: bare keys don't carry it, so ``strip_prefix``
+    passes them through unchanged and ``claims`` stays False (MCP never
+    participates in ``infer_action`` dropped-name recovery). No prefix is
+    added or expected — same mechanism as virtual tools.
     """
 
-    def _tool_fn(args: dict) -> ToolResult:
-        try:
-            result = manager.call_tool(server, tool_name, args)
-            # Extract text from MCP result
-            output = _extract_mcp_result(result)
-            return ToolResult(True, output=output)
-        except Exception as e:
-            return ToolResult(False, error=f"MCP {server}.{tool_name} failed: {e}")
+    def __init__(
+        self,
+        manager: McpClientManager,
+        server: str,
+        tool_name: str,
+        description: str,
+        parameters: dict,
+    ) -> None:
+        self.name = f"{server}.{tool_name}"
+        self.description = description or "(no description)"
+        self.parameters = parameters or {"type": "object", "properties": {}}
+        self._manager = manager
+        self._server = server
+        self._tool_name = tool_name
 
-    return _tool_fn
+    def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
+        # session_dir is accepted for the uniform Tool.run signature; MCP
+        # dispatch is location-independent and ignores it.
+        try:
+            result = self._manager.call_tool(self._server, self._tool_name, args)
+            return ToolResult(True, output=_extract_mcp_result(result))
+        except Exception as e:
+            return ToolResult(False, error=f"MCP {self.name} failed: {e}")
 
 
 def _extract_mcp_result(result: Any) -> str:
@@ -55,15 +87,23 @@ def _extract_mcp_result(result: Any) -> str:
 
 def register_mcp_tools(
     manager: McpClientManager,
-) -> dict[str, callable]:
-    """Register all connected MCP tools as agent-cli tool functions.
+) -> dict[str, Tool]:
+    """Register all connected MCP tools as :class:`McpTool` instances.
 
-    Returns dict of {"{server}.{tool}": function} ready to merge into TOOLS.
+    Returns dict of ``{"{server}.{tool}": McpTool}`` ready to merge into
+    ``TOOLS``. Values are ``Tool`` subclasses (not bare callables) so they
+    satisfy the registry's ``.parameters`` / ``.run()`` contract.
     """
-    tools = {}
+    tools: dict[str, Tool] = {}
     for tool_info in manager.list_tools():
         qualified_name = f"{tool_info.server}.{tool_info.name}"
-        tools[qualified_name] = wrap_mcp_tool(manager, tool_info.server, tool_info.name)
+        tools[qualified_name] = McpTool(
+            manager,
+            tool_info.server,
+            tool_info.name,
+            tool_info.description,
+            tool_info.input_schema,
+        )
     return tools
 
 
