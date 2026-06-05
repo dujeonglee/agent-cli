@@ -65,7 +65,14 @@ class AskTool(Tool):
     }
 
     def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
-        return ToolResult(True, output=args.get("question", "(ask)"))
+        # Placeholder for direct/test callers — the loop intercepts `ask`
+        # before dispatch. Return the salient field (the `questions` list,
+        # matching the schema) joined into one block; sibling virtual tools
+        # do the same with their own salient field.
+        questions = args.get("questions") or []
+        if isinstance(questions, str):
+            questions = [questions]
+        return ToolResult(True, output="\n".join(str(q) for q in questions) or "(ask)")
 
 
 class RunSkillTool(Tool):
