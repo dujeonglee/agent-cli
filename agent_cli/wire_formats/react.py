@@ -229,26 +229,35 @@ def _normalize_action_input(result: ParsedAction, data: dict) -> None:
        action_input. Reserved keys (_REACT_RESERVED) are filtered out so
        protocol fields or meta keys can't poison tool input.
 
+       Layer 2 runs even when ``action`` is absent: a dropped action name
+       with bundled siblings (``{"shell_command":"ls"}``) must still
+       surface action_input so the loop's ``infer_action`` can recover the
+       tool (wire-key prefix → tool) under ``action_required=False`` — the
+       parser-side half of the preservation invariant, symmetric with
+       prefix_md recovering a trailing Input dict without an action header.
+
     Precedence rule: if action_input is already present and truthy, use
     it verbatim and ignore any siblings. Empty dicts and None both
     trigger the layer logic.
     """
-    if not result.action or result.action_input:
+    if result.action_input:
         return
 
-    # Layer 1: virtual tool alias mapping.
-    spec = _VIRTUAL_TOOL_PAYLOAD_HOIST.get(result.action)
-    if spec is not None:
-        target_key, candidates = spec
-        for key in candidates:
-            if key in data:
-                result.action_input = {target_key: data[key]}
-                return
-        # Known virtual tool with no alias match — leave action_input
-        # None rather than bundling stray siblings as payload.
-        return
+    # Layer 1: virtual tool alias mapping — action-specific, so only when
+    # an action name is present.
+    if result.action:
+        spec = _VIRTUAL_TOOL_PAYLOAD_HOIST.get(result.action)
+        if spec is not None:
+            target_key, candidates = spec
+            for key in candidates:
+                if key in data:
+                    result.action_input = {target_key: data[key]}
+                    return
+            # Known virtual tool with no alias match — leave action_input
+            # None rather than bundling stray siblings as payload.
+            return
 
-    # Layer 2: real tool / unknown action sibling bundling.
+    # Layer 2: real tool / unknown / dropped action sibling bundling.
     extras = {k: v for k, v in data.items() if k not in _REACT_RESERVED}
     if extras:
         result.action_input = extras
@@ -275,9 +284,20 @@ _FORMAT_RULES_ANCHOR = (
     "text, no `observation` field (it is injected by the system):"
 )
 
-_FORMAT_RULES_FIELD_SPECIFIC = (
-    "1. `thought` MUST state purpose (what you want to achieve) and reason (why this action). Do not leave it empty.\n"
-    '2. `action_input` MUST match the tool\'s input schema. For `complete`, `result` is a plain text string — write the answer directly. Do NOT wrap it in another JSON envelope like `{"result": "{\\"result\\": ...}"}`.'
+# Split into per-field clauses so Rule 1 (thought) can be gated on
+# ``thought_required`` via ``WireFormat._gated_rule``. Rule 2 is the
+# action_input contract — not an action-presence obligation — so
+# ``action_required`` has no clause to soften here (react expresses the
+# action requirement through the JSON-envelope anchor, not a numbered rule).
+# The composed string is byte-identical to the previous single constant.
+_THOUGHT_RULE = (
+    "`thought` MUST state purpose (what you want to achieve) and reason "
+    "(why this action). Do not leave it empty."
+)
+_ACTION_INPUT_RULE = (
+    "`action_input` MUST match the tool's input schema. For `complete`, "
+    "`result` is a plain text string — write the answer directly. Do NOT "
+    'wrap it in another JSON envelope like `{"result": "{\\"result\\": ...}"}`.'
 )
 
 
@@ -372,7 +392,15 @@ class ReActFormat(WireFormat):
     """
 
     name = "react"
-    thought_required = True
+    # Both fields optional, unified with prefix_md: a missing thought or a
+    # dropped action no longer forces a retry by themselves. A dropped
+    # action is recovered via infer_action on the preserved action_input
+    # (the parser keeps non-reserved siblings bundled even without an
+    # action — see _normalize_action_input). NO_THOUGHT / NO_ACTION
+    # recovery still fires for any plugin that sets these True (tested via
+    # a synthetic plugin so the True paths stay covered).
+    thought_required = False
+    action_required = False
 
     # ─── Prompt ────────────────────────────────────────────────
 
@@ -380,7 +408,12 @@ class ReActFormat(WireFormat):
         return _FORMAT_RULES_ANCHOR
 
     def format_rules_field_specific(self) -> str:
-        return _FORMAT_RULES_FIELD_SPECIFIC
+        # Rule 1 (thought) gated on thought_required; currently resolves to
+        # the strong wording (no soft variant) so the section is unchanged.
+        return (
+            f"1. {self._gated_rule(self.thought_required, _THOUGHT_RULE)}\n"
+            f"2. {_ACTION_INPUT_RULE}"
+        )
 
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         # ReAct shape: a single JSON object. ``thought=None`` (skill /

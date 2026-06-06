@@ -71,10 +71,17 @@ _FORMAT_RULES_ANCHOR = (
     "`## Input` — each header on its own line, exact spelling:"
 )
 
-_FORMAT_RULES_FIELD_SPECIFIC = (
-    "1. The body of `## Thought` MUST state purpose (what you want to achieve)\n"
-    "   and reason (why this specific action). Do not leave it empty.\n"
-    "2. The body of `## Action` MUST be a single tool name on its own line;\n"
+# Split into per-field clauses so the strength can be gated on
+# ``thought_required`` / ``action_required`` via ``WireFormat._gated_rule``
+# (see format_rules_field_specific). The composed string is byte-identical
+# to the previous single constant; the gating hook is wired but inert until
+# a ``soft`` variant is supplied.
+_THOUGHT_RULE = (
+    "The body of `## Thought` MUST state purpose (what you want to achieve)\n"
+    "   and reason (why this specific action). Do not leave it empty."
+)
+_ACTION_RULE = (
+    "The body of `## Action` MUST be a single tool name on its own line;\n"
     "   `## Input` MUST contain a JSON dict matching the tool's input schema."
 )
 
@@ -219,6 +226,26 @@ def _find_last_json_block(text: str) -> tuple[int, int] | None:
     return last
 
 
+# Strip section sentinels so leftover text can serve as a thought when an
+# action header is absent (the recovered-input path below).
+_ANY_HEADER = re.compile(r"^## (?:Thought|Action|Input)$", re.MULTILINE)
+
+
+def _extract_json_dict(text: str) -> dict | None:
+    """Last balanced ``{...}`` in ``text`` → dict, or ``None`` if absent,
+    unparseable, or not a JSON object. Shared by the happy path and the
+    dropped-action recovery paths so action_input extraction lives in one
+    place (the preservation invariant in ``WireFormat.parse``)."""
+    block = _find_last_json_block(text)
+    if block is None:
+        return None
+    try:
+        parsed = json.loads(text[block[0] : block[1]])
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def parse_prefix_md(text: str) -> ParsedAction:
     """Parse a PREFIX-MD emission into a :class:`ParsedAction`.
 
@@ -228,14 +255,19 @@ def parse_prefix_md(text: str) -> ParsedAction:
     reasoning sub-headings are absorbed into preceding bodies.
 
     parse_stage policy:
-      0 — no ``## Action`` header found in the text.
+      0 — no action recoverable: no valid ``## Action`` body AND no
+          trailing ``action_input`` JSON to fall back on.
       1 — ``## Action`` body is a valid tool name + ``## Input`` JSON
           parses cleanly (full happy path).
       2 — ``## Action`` body is a valid tool name, ``## Input`` JSON
           missing or unparseable (loop sees ``action`` present and
           ``action_input=None`` → schema-mismatch / no-input recovery).
-      3 — ``## Action`` header present but body is not a valid tool
-          name (loop sees ``action=None`` → NO_ACTION intervention).
+      3 — action slot empty/invalid OR ``## Action`` header absent, BUT a
+          trailing ``action_input`` JSON was recovered. ``action=None``,
+          ``action_input`` preserved → the loop infers the tool
+          (``action_required=False``) or echoes it in the NO_ACTION
+          intervention (``action_required=True``). Preserves the
+          dropped-action recovery the wire-key prefix was built for.
 
     Never raises on malformed input — always returns a ``ParsedAction``.
     """
@@ -245,7 +277,18 @@ def parse_prefix_md(text: str) -> ParsedAction:
 
     action_matches = list(_ACTION_HEADER.finditer(text))
     if not action_matches:
-        return result  # parse_stage stays 0
+        # No ``## Action`` header at all. Still recover a trailing
+        # action_input (## Input section or bare trailing dict) so the loop
+        # can infer the tool / echo it — parity with react, which has no
+        # header concept. Leftover non-JSON text becomes the thought.
+        action_input = _extract_json_dict(text)
+        if action_input is not None:
+            block = _find_last_json_block(text)
+            head = _ANY_HEADER.sub("", text[: block[0]]).strip() if block else ""
+            result.thought = head or None
+            result.action_input = action_input
+            result.parse_stage = 3
+        return result  # parse_stage stays 0 if nothing recoverable
 
     last_action = action_matches[-1]
 
@@ -298,40 +341,24 @@ def parse_prefix_md(text: str) -> ParsedAction:
             break
 
     if not first_line or not _ACTION_NAME.match(first_line):
-        # ``## Action`` header present but body not a valid action
-        # name — NO_ACTION path. Thought is preserved so recovery can
-        # echo it back.
+        # ``## Action`` header present but body empty/invalid. Preserve the
+        # Input JSON so the loop can infer the tool (action_required=False)
+        # or echo it in the NO_ACTION intervention (action_required=True).
+        # Thought is preserved either way.
         result.thought = thought_text or None
+        result.action_input = _extract_json_dict(input_text)
         result.parse_stage = 3
         return result
 
     action = first_line
-
-    # Parse Input JSON.
-    action_input: dict | None = None
-    if input_text:
-        block = _find_last_json_block(input_text)
-        if block is not None:
-            json_start, json_end = block
-            try:
-                parsed = json.loads(input_text[json_start:json_end])
-                if isinstance(parsed, dict):
-                    action_input = parsed
-            except (json.JSONDecodeError, ValueError):
-                # Fail fast — Input JSON broken. action remains valid;
-                # downstream recovery handles the missing input via
-                # schema-mismatch / no-input intervention.
-                pass
+    action_input = _extract_json_dict(input_text)
 
     result.thought = thought_text or None
     result.action = action
     result.action_input = action_input
-
-    if action_input is not None:
-        result.parse_stage = 1
-    else:
-        # Action attribute present, JSON missing or unparseable.
-        result.parse_stage = 2
+    # Action valid: stage 1 if Input JSON parsed, else 2 (missing/broken
+    # input → schema-mismatch / no-input recovery downstream).
+    result.parse_stage = 1 if action_input is not None else 2
 
     return result
 
@@ -354,6 +381,11 @@ class PrefixMdFormat(WireFormat):
     # NO_THOUGHT retry), and prose reasoning before ``## Action`` is
     # picked up as the thought by the parser.
     thought_required = False
+    # action is optional: a dropped/empty ``## Action`` is recovered by the
+    # loop via ``infer_action`` on the preserved action_input (wire-key
+    # prefix → tool). The parser keeps action_input populated in that case
+    # (parse_stage 3); only an unrecoverable emission becomes NO_ACTION.
+    action_required = False
 
     # ─── Prompt ────────────────────────────────────────────────
 
@@ -361,7 +393,13 @@ class PrefixMdFormat(WireFormat):
         return _FORMAT_RULES_ANCHOR
 
     def format_rules_field_specific(self) -> str:
-        return _FORMAT_RULES_FIELD_SPECIFIC
+        # Rule 1 gated on thought_required, Rule 2 on action_required. Both
+        # currently resolve to the strong wording (no soft variant), so the
+        # section is unchanged; the flags select the clause when softened.
+        return (
+            f"1. {self._gated_rule(self.thought_required, _THOUGHT_RULE)}\n"
+            f"2. {self._gated_rule(self.action_required, _ACTION_RULE)}"
+        )
 
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         # ``thought=None`` (skill / agent invocation example) substitutes

@@ -120,11 +120,26 @@ class WireFormat(ABC):
     the registry. Convention: lowercase, ``[a-z0-9_-]``."""
 
     thought_required: bool = True
-    """Whether the wire format treats ``thought`` as a mandatory schema
-    field. ReAct sets True (the recovery layer fires NO_THOUGHT when an
-    action is emitted without a thought field). Wire formats where the
-    thought is preceding free text outside a structured field set False —
-    its absence is valid, not a drift signal."""
+    """Whether a missing ``thought`` triggers recovery vs. is tolerated.
+
+    True: the recovery layer fires NO_THOUGHT when an action is emitted
+    without a thought — the loop asks the model to re-emit with reasoning.
+    False: the thought slot is optional and its absence is valid, not a
+    drift signal (e.g. wire formats where the thought is preceding free
+    text outside a structured field). Mirror of :attr:`action_required`."""
+
+    action_required: bool = True
+    """Whether a missing ``action`` triggers recovery vs. inference.
+
+    True (default, conservative): an emission whose ``action`` slot is
+    empty/invalid goes straight to NO_ACTION recovery — the loop asks the
+    model to re-emit with an action. False: the loop first tries
+    ``infer_action`` on the preserved ``action_input`` (wire-key prefix →
+    tool) and only falls back to NO_ACTION recovery when inference is
+    ambiguous/empty. Plugins whose ``action_input`` keys are namespaced —
+    so a dropped action name is unambiguously recoverable — set False.
+    Mirror of :attr:`thought_required`. Either flag's recovery path
+    depends on the parser preserving ``action_input`` (see :meth:`parse`)."""
 
     # ─── Prompt (abstract) ──────────────────────────────────────
 
@@ -193,6 +208,17 @@ class WireFormat(ABC):
         ``parse_stage = 0`` instead. The loop's recovery path expects
         every emission to round-trip through this method, including
         garbage that needs an intervention.
+
+        Preservation invariant (both flags' recovery paths depend on it):
+        when the ``action`` slot is empty or invalid but an
+        ``action_input`` was still identified, the parser MUST keep it in
+        ``action_input`` rather than dropping it. ``infer_action`` (for
+        ``action_required=False``) and the NO_ACTION recovery echo (for
+        ``action_required=True``) both read it — dropping it here is what
+        regressed prefix_md's dropped-action recovery. ``parse_stage``
+        should be > 0 whenever an ``action_input`` was recovered this way,
+        so the loop treats the emission as parsed (the exact value stays
+        observability-only — see :class:`ParsedAction`).
         """
 
     # ─── Recovery wording (abstract) ────────────────────────────
@@ -264,6 +290,20 @@ class WireFormat(ABC):
         """
 
     # ─── Prompt (default) ───────────────────────────────────────
+
+    @staticmethod
+    def _gated_rule(required: bool, strong: str, soft: str | None = None) -> str:
+        """Pick a Format-Rules clause by a required-flag — the hook that lets
+        ``thought_required`` / ``action_required`` weaken (or drop) a field's
+        rule once an optional phrasing is validated.
+
+        When ``required`` is True, or no ``soft`` variant is supplied, the
+        strong obligation is used. Today every caller omits ``soft``, so the
+        prompt is byte-for-byte unchanged whatever the flags say; supplying a
+        ``soft`` string (or ``""`` to drop the line) is the single edit needed
+        to soften a field's rule later, with no parser/loop change. Symmetric
+        with how the flags already gate the *recovery* side in the loop."""
+        return soft if (not required and soft is not None) else strong
 
     def format_rules(self) -> str:
         """Compose the ``## Response Format`` section via shared builder.

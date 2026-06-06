@@ -709,8 +709,20 @@ class AgentLoop:
         # the NO_ACTION recovery below. A successful inference is flagged so
         # the observation step rewrites the prior + history to the corrected
         # shape (no raw-drift mimicry) and the TurnRecorder logs it.
+        #
+        # Gated on ``action_required``: when the wire format requires an
+        # explicit action (action_required=True), a dropped action is a
+        # drift to be corrected by the model, so we skip inference and fall
+        # through to the NO_ACTION recovery below. When False (the namespaced
+        # formats — prefix_md, react), the action is recoverable from the
+        # preserved action_input, so we infer it. Mirror of how
+        # ``thought_required`` gates the NO_THOUGHT recovery.
         action_inferred = False
-        if not parsed.action and isinstance(parsed.action_input, dict):
+        if (
+            not parsed.action
+            and not self.wire_format.action_required
+            and isinstance(parsed.action_input, dict)
+        ):
             inferred = infer_action(parsed.action_input)
             if inferred:
                 parsed.action = inferred

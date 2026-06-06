@@ -37,13 +37,16 @@ class TestRegistration:
     def test_react_satisfies_protocol(self):
         assert isinstance(ReActFormat(), WireFormatProtocol)
 
-    def test_name_and_thought_required_attributes(self):
+    def test_name_and_field_required_flags(self):
         plugin = ReActFormat()
         assert plugin.name == "react"
-        # ReAct schema has thought as a required field — the
-        # NO_THOUGHT recovery path depends on this flag (Step 6 hooks
-        # it up).
-        assert plugin.thought_required is True
+        # Unified with prefix_md: both thought and action are optional on
+        # react now. A missing thought no longer fires NO_THOUGHT, and a
+        # dropped action is recovered via infer_action on the preserved
+        # action_input. The True-flag recovery paths are covered against a
+        # synthetic plugin in test_dropped_field_recovery.
+        assert plugin.thought_required is False
+        assert plugin.action_required is False
 
 
 # ─── Recovery reminder content ──────────────────────
