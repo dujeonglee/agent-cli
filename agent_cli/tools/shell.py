@@ -191,5 +191,8 @@ class ShellTool(Tool):
         "required": ["shell_command"],
     }
 
+    def summary_arg(self, action_input: dict) -> str:
+        return (self.strip_prefix(action_input).get("command") or "")[:60]
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_shell(args)

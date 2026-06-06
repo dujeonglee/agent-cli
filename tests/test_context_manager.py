@@ -289,15 +289,18 @@ class TestNaturalLanguageConversion:
         assert parsed["action_input"]["arguments"] == "src/"
 
     def test_observation_read_file(self, wf):
+        # Tool-result records carry NO args (history.jsonl stores only
+        # {role, tool, success, content}); the header is just ``[tool]`` and
+        # the body is the result content. The old ``args: {path}`` here was a
+        # shape that never occurs — it masked the wire-key-prefix regression.
         msg = {
             "role": "user",
             "tool": "read_file",
-            "args": {"path": "src/auth.py"},
             "content": "import hashlib\nclass AuthManager:\n    pass",
         }
         result = _to_natural_language(msg, wf)
         assert result["role"] == "user"
-        assert "[read_file] src/auth.py" in result["content"]
+        assert "[read_file]" in result["content"]
         assert "import hashlib" in result["content"]
 
     def test_observation_with_artifact(self, wf):
@@ -317,7 +320,6 @@ class TestNaturalLanguageConversion:
         msg = {
             "role": "user",
             "tool": "shell",
-            "args": {"command": "pytest tests/ -v"},
             "content": "12 passed, 1 failed",
         }
         result = _to_natural_language(msg, wf)
@@ -416,7 +418,7 @@ class TestGetMessagesIntegration:
                 "role": "assistant",
                 "thought": "현재 구조를 파악하기 위해 auth.py를 읽겠다",
                 "action": "read_file",
-                "action_input": {"path": "src/auth.py"},
+                "action_input": {"read_file_reads": [{"path": "src/auth.py"}]},
             },
         )
         _add(
@@ -424,7 +426,6 @@ class TestGetMessagesIntegration:
             {
                 "role": "user",
                 "tool": "read_file",
-                "args": {"path": "src/auth.py"},
                 "content": "class AuthManager:\n    pass",
             },
         )
@@ -444,9 +445,13 @@ class TestGetMessagesIntegration:
         # Assistant turns round-trip back to the JSON wire shape.
         parsed_call = json.loads(msgs[1]["content"])
         assert parsed_call["action"] == "read_file"
-        assert parsed_call["action_input"] == {"path": "src/auth.py"}
-        # Observation stays in natural-language ``[tool] args`` header form.
-        assert "[read_file] src/auth.py" in msgs[2]["content"]
+        assert parsed_call["action_input"] == {
+            "read_file_reads": [{"path": "src/auth.py"}]
+        }
+        # Observation stays in natural-language ``[tool]`` header form; the
+        # tool-result record carries no args, so no path label here.
+        assert "[read_file]" in msgs[2]["content"]
+        assert "class AuthManager" in msgs[2]["content"]
         # complete uses the same JSON wire shape.
         parsed_complete = json.loads(msgs[3]["content"])
         assert parsed_complete["action"] == "complete"

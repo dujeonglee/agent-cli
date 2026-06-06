@@ -344,5 +344,8 @@ class EditFileTool(Tool):
         p = self.strip_prefix(action_input).get("path")
         return [p] if isinstance(p, str) and p else []
 
+    def summary_arg(self, action_input: dict) -> str:
+        return self.strip_prefix(action_input).get("path", "")
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_edit_file(args)

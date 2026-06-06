@@ -333,5 +333,13 @@ class ReadFileTool(Tool):
             if isinstance(r, dict) and isinstance(r.get("path"), str)
         ]
 
+    def summary_arg(self, action_input: dict) -> str:
+        paths = [
+            r["path"]
+            for r in (self.strip_prefix(action_input).get("reads") or [])
+            if isinstance(r, dict) and r.get("path")
+        ]
+        return paths[0] if len(paths) == 1 else (f"{len(paths)} files" if paths else "")
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_read_file(args)

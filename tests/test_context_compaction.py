@@ -186,7 +186,6 @@ class TestSummary:
             {
                 "role": "user",
                 "tool": "write_file",
-                "args": {"path": "a.py"},
                 "content": "ok",
             },
         )
@@ -196,7 +195,7 @@ class TestSummary:
                 "role": "assistant",
                 "thought": "I will read it",
                 "action": "read_file",
-                "action_input": {"path": "a.py"},
+                "action_input": {"read_file_reads": [{"path": "a.py"}]},
             },
         )
         # Pad to force compaction.
@@ -233,19 +232,25 @@ class TestSummaryTextRendering:
 
         assert _to_summary_text({"role": "user", "content": "hi"}) == "User: hi"
 
-    def test_observation_summarises_args_drops_body(self):
+    def test_observation_drops_body_keeps_header(self):
         from agent_cli.context.manager import _to_summary_text
 
+        # A tool-result record carries NO args (history.jsonl stores only
+        # {role, tool, success, content}). The file label comes from the
+        # assistant ACTION record, not the observation. The previous version
+        # invented an ``args: {path, content}`` key on the observation and
+        # asserted the path appeared here — a shape that never occurs, which
+        # is exactly what masked the prefix regression. The observation shows
+        # only the tool header plus the (truncated) result content.
         line = _to_summary_text(
             {
                 "role": "user",
                 "tool": "write_file",
-                "args": {"path": "a.py", "content": "B" * 5000},
-                "content": "Wrote file",
+                "content": "File saved: a.py (12 bytes)",
             }
         )
-        assert line.startswith("[write_file] a.py")
-        assert "B" * 200 not in line  # full args body not echoed
+        assert line.startswith("[write_file]")
+        assert "File saved: a.py" in line
 
     def test_assistant_action_is_prose_not_react_json(self):
         from agent_cli.context.manager import _to_summary_text
@@ -256,8 +261,8 @@ class TestSummaryTextRendering:
                 "thought": "write the texture tests",
                 "action": "write_file",
                 "action_input": {
-                    "path": "doom/tests/test_texture.c",
-                    "content": "Z" * 8000,
+                    "write_file_path": "doom/tests/test_texture.c",
+                    "write_file_content": "Z" * 8000,
                 },
             }
         )
@@ -288,6 +293,25 @@ class TestSummaryTextRendering:
         assert line.startswith("Assistant: finishing up")
         assert "complete(" in line
 
+    def test_summary_arg_uses_real_serialized_shape(self):
+        """Guard the exact gap that masked this bug: the action label must be
+        derived from what ``serialize_assistant_for_history`` actually produces
+        (wire-key prefix), not a hand-written ``{path}``. The old
+        ``summarize_tool_args`` read a bare ``args.get("path")`` and so
+        returned "" for every real record — yet the fake-shape tests passed.
+        Mirror of ``TestFileExtractHelper.test_uses_real_serialized_shape``.
+        """
+        from agent_cli import wire_formats
+        from agent_cli.context.manager import _to_summary_text
+
+        plugin = wire_formats.get("prefix_md")
+        rec = plugin.serialize_assistant_for_history(
+            "## Thought\nwrite it\n## Action\nwrite_file\n"
+            '## Input\n{"write_file_path": "r.c", "write_file_content": "y"}'
+        )
+        line = _to_summary_text(rec)
+        assert "write_file(r.c)" in line
+
 
 class TestSummaryInputIsTranscript:
     """The summariser callback receives ONE user-role transcript message —
@@ -303,7 +327,10 @@ class TestSummaryInputIsTranscript:
                 "role": "assistant",
                 "thought": "writing the file",
                 "action": "write_file",
-                "action_input": {"path": "a.py", "content": "BIGFILEBODY" * 500},
+                "action_input": {
+                    "write_file_path": "a.py",
+                    "write_file_content": "BIGFILEBODY" * 500,
+                },
             },
         )
         for _ in range(15):

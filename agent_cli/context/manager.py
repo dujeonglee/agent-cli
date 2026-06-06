@@ -41,7 +41,6 @@ from typing import Callable, Optional
 from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.render import render_compaction_progress
-from agent_cli.tools.action_summary import summarize_tool_args
 from agent_cli.wire_formats import get as _get_wire_format
 
 
@@ -800,8 +799,7 @@ def _to_summary_text(msg: dict) -> str:
         tool = msg.get("tool")
         if not tool:
             return f"User: {msg.get('content', '')}"
-        arg_summary = summarize_tool_args(tool, msg.get("args", {}) or {})
-        header = f"[{tool}] {arg_summary}".rstrip()
+        header = f"[{tool}]"
         content = (msg.get("content", "") or "").strip()
         if content:
             excerpt = content[:_SUMMARY_CONTENT_EXCERPT]
@@ -818,7 +816,15 @@ def _to_summary_text(msg: dict) -> str:
         return f"Assistant: {msg.get('content', '')}"
     thought = (msg.get("thought") or "").strip()
     action = msg.get("action") or ""
-    arg_summary = summarize_tool_args(action, msg.get("action_input", {}) or {})
+    # Delegate the per-action label to the tool itself (sibling of
+    # touched_paths): each tool reads its OWN prefixed/array action_input
+    # shape. A bare ``args.get("path")`` here silently returned "" for every
+    # wire-key-prefixed record. Lazy import avoids the module-load cycle
+    # (registry → context-tool → context.manager).
+    from agent_cli.tools.registry import TOOLS
+
+    tool = TOOLS.get(action)
+    arg_summary = tool.summary_arg(msg.get("action_input") or {}) if tool else ""
     action_line = f"  → action: {action}({arg_summary})" if action else ""
     head = f"Assistant: {thought}" if thought else "Assistant:"
     return f"{head}\n{action_line}" if action_line else head
@@ -829,15 +835,10 @@ def _convert_observation(msg: dict) -> dict:
     tool = msg.get("tool", "")
     content = msg.get("content", "")
     artifact = msg.get("artifact", "")
-    args = msg.get("args", {})
 
-    if isinstance(args, dict) and args:
-        arg_summary = summarize_tool_args(tool, args)
-        header = f"[{tool}] {arg_summary}"
-    else:
-        header = f"[{tool}]"
-
-    parts = [header]
+    # Tool-result records carry no args (history.jsonl stores only
+    # {role, tool, success, content}), so there is nothing to label here.
+    parts = [f"[{tool}]"]
     if content:
         parts.append(content)
     if artifact:

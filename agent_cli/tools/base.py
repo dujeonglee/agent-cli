@@ -101,6 +101,20 @@ class Tool(ABC):
         """
         return []
 
+    def summary_arg(self, action_input: dict) -> str:
+        """Short label for this action in the compaction transcript /
+        observation header (e.g. ``write_file(src/x.c)``).
+
+        Default: the first non-empty string value (after ``strip_prefix``),
+        capped at 60 chars. Tools with a salient field (path / command /
+        agent) override to pick it deterministically. Sibling of
+        :meth:`touched_paths` — both read the tool's OWN action_input shape.
+        """
+        for v in self.strip_prefix(action_input).values():
+            if isinstance(v, str) and v:
+                return v[:60]
+        return ""
+
     @abstractmethod
     def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
         """Execute the tool with standard (un-prefixed) keys."""

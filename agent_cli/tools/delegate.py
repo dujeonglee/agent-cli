@@ -25,7 +25,7 @@ from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
     # Runtime-imported inside the dispatch path to avoid a
-    # registry → delegate → context.manager → tools.action_summary →
+    # registry → delegate → context.manager → tools.registry →
     # tools import cycle (registry now imports DelegateTool at module load).
     from agent_cli.context.manager import ContextManager
 
@@ -804,6 +804,10 @@ class DelegateTool(Tool):
             for t in tasks
             if isinstance(t, dict) and isinstance(t.get("agent"), str) and t["agent"]
         ]
+
+    def summary_arg(self, action_input: dict) -> str:
+        tasks = self.strip_prefix(action_input).get("tasks") or []
+        return tasks[0].get("agent", "") if tasks and isinstance(tasks[0], dict) else ""
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         # delegate is intercepted by the loop (it needs parent context,

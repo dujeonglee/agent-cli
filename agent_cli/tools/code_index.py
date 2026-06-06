@@ -801,5 +801,12 @@ class CodeIndexTool(Tool):
             if isinstance(q, dict) and isinstance(q.get("path"), str)
         ]
 
+    def summary_arg(self, action_input: dict) -> str:
+        queries = self.strip_prefix(action_input).get("queries") or []
+        if queries and isinstance(queries[0], dict):
+            q = queries[0]
+            return f"{q.get('mode', '')} {q.get('path', '')}".strip()
+        return ""
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_code_index(args)
