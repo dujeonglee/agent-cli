@@ -793,5 +793,13 @@ class CodeIndexTool(Tool):
         "required": ["code_index_queries"],
     }
 
+    def touched_paths(self, action_input: dict) -> list[str]:
+        queries = self.strip_prefix(action_input).get("queries") or []
+        return [
+            q["path"]
+            for q in queries
+            if isinstance(q, dict) and isinstance(q.get("path"), str)
+        ]
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_code_index(args)

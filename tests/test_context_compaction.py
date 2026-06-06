@@ -343,10 +343,9 @@ class TestFileList:
         _add(
             ctx,
             {
-                "role": "user",
-                "tool": "write_file",
-                "args": {"path": "a.py"},
-                "content": "written",
+                "role": "assistant",
+                "action": "write_file",
+                "action_input": {"write_file_path": "a.py", "write_file_content": "x"},
             },
         )
         # Add padding to force compaction.
@@ -361,10 +360,9 @@ class TestFileList:
         ctx._cache = [
             {"role": "system", "content": "sys"},
             {
-                "role": "user",
-                "tool": "write_file",
-                "args": {"path": "a.py"},
-                "content": "...",
+                "role": "assistant",
+                "action": "write_file",
+                "action_input": {"write_file_path": "a.py", "write_file_content": "x"},
             },
         ]
         ctx._cache_tokens = 1000
@@ -373,72 +371,123 @@ class TestFileList:
 
 
 class TestFileExtractHelper:
-    """Direct tests for ``_file_extract.extract_file_paths``."""
+    """Direct tests for ``_file_extract.extract_file_paths``.
 
-    def test_extracts_from_tool_result(self):
+    These use the REAL assistant-record shape that ``ContextManager._cache``
+    holds (and persists to history.jsonl): wire-key prefix on action_input
+    keys (``write_file_path``) plus array-only tools (``read_file_reads``,
+    ``code_index_queries``). The previous version used a hand-invented
+    ``{role: user, tool, args: {path}}`` shape that NEVER occurs — real tool
+    results are ``{role, tool, success, content}`` with no ``args``, and
+    assistant actions carry prefixed/array keys. So it passed while extract
+    silently returned [] for every real record (file_list stayed empty across
+    all compactions). ``test_uses_real_serialized_shape`` pins extract to the
+    actual ``serialize_assistant_for_history`` output to keep this honest.
+    """
+
+    def test_write_file_prefix_key(self):
         msgs = [
             {
-                "role": "user",
-                "tool": "write_file",
-                "args": {"path": "foo.py"},
-                "content": "ok",
-            },
-            {
-                "role": "user",
-                "tool": "read_file",
-                "args": {"path": "bar.py"},
-                "content": "...",
-            },
+                "role": "assistant",
+                "action": "write_file",
+                "action_input": {
+                    "write_file_path": "foo.c",
+                    "write_file_content": "...",
+                },
+            }
         ]
-        assert extract_file_paths(msgs) == ["foo.py", "bar.py"]
+        assert extract_file_paths(msgs) == ["foo.c"]
 
-    def test_extracts_from_assistant_action(self):
+    def test_edit_file_prefix_key(self):
+        msgs = [
+            {
+                "role": "assistant",
+                "action": "edit_file",
+                "action_input": {
+                    "edit_file_path": "bar.c",
+                    "edit_file_edits": [{"op": "replace", "pos": "1#VR"}],
+                },
+            }
+        ]
+        assert extract_file_paths(msgs) == ["bar.c"]
+
+    def test_read_file_array(self):
+        # read_file is array-only (read_file_reads); path lives in each item.
+        msgs = [
+            {
+                "role": "assistant",
+                "action": "read_file",
+                "action_input": {"read_file_reads": [{"path": "a.c"}, {"path": "b.c"}]},
+            }
+        ]
+        assert extract_file_paths(msgs) == ["a.c", "b.c"]
+
+    def test_code_index_array_path_modes_only(self):
+        # code_index queries: fetch/list carry path; lookup does not → skipped.
         msgs = [
             {
                 "role": "assistant",
                 "action": "code_index",
-                "action_input": {"mode": "list", "path": "x.py"},
-            },
+                "action_input": {
+                    "code_index_queries": [
+                        {"mode": "fetch", "path": "x.c", "name": "foo"},
+                        {"mode": "lookup", "name": "bar"},
+                    ]
+                },
+            }
         ]
-        assert extract_file_paths(msgs) == ["x.py"]
+        assert extract_file_paths(msgs) == ["x.c"]
 
-    def test_skips_shell_commands(self):
+    def test_skips_shell(self):
         msgs = [
             {
-                "role": "user",
-                "tool": "shell",
-                "args": {"command": "rm foo.py"},
-                "content": "ok",
-            },
+                "role": "assistant",
+                "action": "shell",
+                "action_input": {"shell_command": "rm foo.c"},
+            }
         ]
         assert extract_file_paths(msgs) == []
 
-    def test_delegate_records_agent_placeholder(self):
+    def test_delegate_array_prefix(self):
         msgs = [
             {
                 "role": "assistant",
                 "action": "delegate",
-                "action_input": {"tasks": [{"agent": "explorer", "task": "find X"}]},
-            },
+                "action_input": {
+                    "delegate_tasks": [{"agent": "explorer", "task": "find X"}]
+                },
+            }
         ]
         assert extract_file_paths(msgs) == ["<delegate:explorer>"]
 
-    def test_dedup(self):
+    def test_dedup_across_records(self):
         msgs = [
             {
-                "role": "user",
-                "tool": "read_file",
-                "args": {"path": "a.py"},
-                "content": "",
+                "role": "assistant",
+                "action": "read_file",
+                "action_input": {"read_file_reads": [{"path": "a.c"}]},
             },
             {
-                "role": "user",
-                "tool": "read_file",
-                "args": {"path": "a.py"},
-                "content": "",
+                "role": "assistant",
+                "action": "write_file",
+                "action_input": {"write_file_path": "a.c", "write_file_content": "x"},
             },
         ]
-        assert extract_file_paths(msgs) == ["a.py"]
+        assert extract_file_paths(msgs) == ["a.c"]
+
+    def test_uses_real_serialized_shape(self):
+        """Guard the exact gap that caused this bug: extract must work on what
+        ``serialize_assistant_for_history`` actually produces — not a
+        hand-written dict. If serialization changes, this test moves with it."""
+        from agent_cli import wire_formats
+
+        plugin = wire_formats.get("prefix_md")
+        rec = plugin.serialize_assistant_for_history(
+            "## Thought\nwrite it\n## Action\nwrite_file\n"
+            '## Input\n{"write_file_path": "r.c", "write_file_content": "y"}'
+        )
+        assert rec["action"] == "write_file"
+        assert extract_file_paths([rec]) == ["r.c"]
 
 
 # ── 5. get_messages prepend ──────────────────────────

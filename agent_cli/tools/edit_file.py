@@ -340,5 +340,9 @@ class EditFileTool(Tool):
         "required": ["edit_file_path", "edit_file_edits"],
     }
 
+    def touched_paths(self, action_input: dict) -> list[str]:
+        p = self.strip_prefix(action_input).get("path")
+        return [p] if isinstance(p, str) and p else []
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_edit_file(args)

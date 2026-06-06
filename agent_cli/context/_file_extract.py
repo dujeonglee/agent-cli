@@ -1,19 +1,24 @@
-"""File path extraction from evicted messages.
+"""File path extraction from evicted messages (compaction file-list).
 
-Scans a list of cache messages and returns the file paths touched by
-known tool invocations. Used by :class:`ContextManager._compact` to
-build the accumulated file list surfaced in the system prompt.
+Scans evicted *assistant* records and returns the file-list entries each
+tool touched, by delegating to :meth:`agent_cli.tools.base.Tool.touched_paths`.
+Keeping the path/array/prefix schema knowledge in each tool (next to its
+own ``parameters``) means a tool changing its input shape — e.g. read_file
+moving to the ``read_file_reads`` array — updates extraction automatically,
+without this module knowing the per-tool key layout.
 
-Scope decision (RFC §5 FR-CC-5):
-  - Only tools whose schema has an explicit ``path`` field are read.
-  - Shell commands are *skipped* — extracting paths from ``rm -rf``
-    or ``cat foo`` via regex has too many false positives. A separate
-    pre-hook redirect (mapping ``cat`` → ``read_file`` etc.) is the
-    follow-up PR that addresses shell coverage cleanly.
-  - ``delegate`` records a ``<delegate:agent>`` placeholder so the
-    LLM knows a subagent was invoked, without pretending we tracked
-    the subagent's own file actions (those live in a different
-    session directory).
+Used by :class:`ContextManager._compact` to build the accumulated file list
+surfaced in the system prompt.
+
+Scope:
+  - Only the *assistant action* side carries ``action_input`` (the path
+    source). Tool-result entries are ``{role, tool, success, content}`` with
+    no args/path, so they contribute nothing.
+  - Shell is skipped naturally (``ShellTool.touched_paths`` returns []).
+    Regex-extracting paths from ``rm -rf`` / ``cat foo`` has too many false
+    positives; a pre-hook redirect is the cleaner follow-up.
+  - ``delegate`` contributes ``<delegate:agent>`` markers (no real file path)
+    so the file list still reflects "a subagent was spawned".
 """
 
 from __future__ import annotations
@@ -21,66 +26,36 @@ from __future__ import annotations
 from typing import Any
 
 
-_PATH_TOOLS: frozenset[str] = frozenset(
-    {"write_file", "edit_file", "read_file", "code_index"}
-)
-
-
 def extract_file_paths(messages: list[dict[str, Any]]) -> list[str]:
-    """Return de-duplicated, insertion-ordered paths from ``messages``.
+    """Return de-duplicated, insertion-ordered file-list entries from
+    ``messages`` (cache records as stored by ``ContextManager.add``).
 
-    Two record shapes contribute paths (matching how
-    :class:`ContextManager` stores tool flow):
-
-      Tool result entry (``role=user``):
-          ``{"role": "user", "tool": "<name>", "args": {...}, "content": "..."}``
-          Path source: ``args["path"]``.
-
-      Assistant action entry (``role=assistant``):
-          ``{"role": "assistant", "action": "<name>",
-             "action_input": {...}}``
-          Path source: ``action_input["path"]``.
-
-    ``delegate`` is special: its ``tasks`` array carries ``agent``
-    names, not paths. We append ``<delegate:agent_name>`` markers so
-    the file list section still reflects "a subagent was spawned to
-    work on this" — useful for the LLM to recall the topology of
-    earlier work even when the subagent's own touched files are out
-    of reach.
+    Each assistant record's ``action`` selects the owning ``Tool``; its
+    ``action_input`` is passed to :meth:`Tool.touched_paths`, which knows
+    that tool's own key shape (prefixed ``write_file_path``, arrays like
+    ``read_file_reads[].path`` / ``code_index_queries[].path``, or the
+    ``delegate_tasks[].agent`` markers). Tools without paths return [].
     """
+    # Lazy import: ``registry`` pulls in tools that transitively import
+    # ``context.manager``, which imports THIS module — a module-load cycle.
+    # Importing inside the function defers it to call time, after all modules
+    # are loaded (same pattern as recovery.detectors / tools.delegate).
+    from agent_cli.tools.registry import TOOLS
+
     paths: list[str] = []
     seen: set[str] = set()
 
-    def _add(p: str) -> None:
-        if p and p not in seen:
-            seen.add(p)
-            paths.append(p)
-
     for msg in messages:
-        # Tool result side
-        tool = msg.get("tool")
-        if isinstance(tool, str) and tool in _PATH_TOOLS:
-            args = msg.get("args") or {}
-            if isinstance(args, dict):
-                path = args.get("path")
-                if isinstance(path, str):
-                    _add(path)
-
-        # Assistant action side
         action = msg.get("action")
-        if isinstance(action, str):
-            action_input = msg.get("action_input") or {}
-            if action in _PATH_TOOLS and isinstance(action_input, dict):
-                path = action_input.get("path")
-                if isinstance(path, str):
-                    _add(path)
-            elif action == "delegate" and isinstance(action_input, dict):
-                tasks = action_input.get("tasks") or []
-                if isinstance(tasks, list):
-                    for t in tasks:
-                        if isinstance(t, dict):
-                            agent = t.get("agent")
-                            if isinstance(agent, str) and agent:
-                                _add(f"<delegate:{agent}>")
+        if not isinstance(action, str):
+            continue
+        tool = TOOLS.get(action)
+        action_input = msg.get("action_input")
+        if tool is None or not isinstance(action_input, dict):
+            continue
+        for entry in tool.touched_paths(action_input):
+            if entry and entry not in seen:
+                seen.add(entry)
+                paths.append(entry)
 
     return paths

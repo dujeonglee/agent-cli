@@ -794,6 +794,17 @@ class DelegateTool(Tool):
         "required": ["delegate_tasks"],
     }
 
+    def touched_paths(self, action_input: dict) -> list[str]:
+        # delegate has no file paths — record a ``<delegate:agent>`` marker
+        # per task so the compaction file-list still reflects "a subagent was
+        # spawned" (the subagent's own files live in a different session).
+        tasks = self.strip_prefix(action_input).get("tasks") or []
+        return [
+            f"<delegate:{t['agent']}>"
+            for t in tasks
+            if isinstance(t, dict) and isinstance(t.get("agent"), str) and t["agent"]
+        ]
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         # delegate is intercepted by the loop (it needs parent context,
         # provider, capabilities) before execute_tool — this placeholder

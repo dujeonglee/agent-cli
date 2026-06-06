@@ -90,6 +90,17 @@ class Tool(ABC):
         forwarded uniformly; tools that do not need it ignore it."""
         return self._run(self.strip_prefix(args), session_dir=session_dir)
 
+    def touched_paths(self, action_input: dict) -> list[str]:
+        """File-list entries this action contributes during compaction.
+
+        Default: none. Path-handling tools override to pull paths out of
+        their OWN action_input shape (prefixed keys, arrays) — keeping that
+        schema knowledge in the tool itself, not duplicated in the
+        compaction extractor (:func:`context._file_extract`). Overrides
+        should use :meth:`strip_prefix` so they read standard keys.
+        """
+        return []
+
     @abstractmethod
     def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
         """Execute the tool with standard (un-prefixed) keys."""

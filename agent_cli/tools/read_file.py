@@ -325,5 +325,13 @@ class ReadFileTool(Tool):
         "required": ["read_file_reads"],
     }
 
+    def touched_paths(self, action_input: dict) -> list[str]:
+        reads = self.strip_prefix(action_input).get("reads") or []
+        return [
+            r["path"]
+            for r in reads
+            if isinstance(r, dict) and isinstance(r.get("path"), str)
+        ]
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_read_file(args)
