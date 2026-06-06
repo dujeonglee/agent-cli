@@ -70,7 +70,6 @@ class TestTurnRecorderEnabled:
         rows = _read_jsonl(session_dir / "turns.jsonl")
         assert len(rows) == 1
         row = rows[0]
-        assert row["seq"] == 0
         assert row["model"] == "qwen3.5"
         assert row["parse_stage"] == 1
         assert row["failure_signal"] is None
@@ -95,13 +94,6 @@ class TestTurnRecorderEnabled:
             "constrain_format_json",
         ]
 
-    def test_seq_is_monotonic(self, session_dir):
-        recorder = TurnRecorder(session_dir=session_dir, enabled=True)
-        for _ in range(4):
-            recorder.record(model="m", parse_stage=1)
-        rows = _read_jsonl(session_dir / "turns.jsonl")
-        assert [r["seq"] for r in rows] == [0, 1, 2, 3]
-
     def test_appends_across_record_calls(self, session_dir):
         """Each record() call must add exactly one line — no buffering,
         no batched flush. This is the contract crash-tolerance relies on."""
@@ -114,17 +106,20 @@ class TestTurnRecorderEnabled:
         assert len(rows1) == 1
         assert len(rows2) == 2
 
-    def test_two_recorders_share_path_but_not_seq(self, session_dir):
-        """Independent TurnRecorder instances each maintain their own
-        seq counter. Crossing instances within one session would be a
-        bug at the call-site — recorder is owned by AgentLoop."""
+    def test_records_accumulate_across_recorder_instances(self, session_dir):
+        """A fresh TurnRecorder per run_loop call (web spawns one per user
+        message) appends to the SAME session turns.jsonl — rows accumulate
+        across instances. There is no per-row counter: row ordering and the
+        turns↔raw_failures join are by timestamp, not seq (seq was removed —
+        it was run-local and collided across run_loop invocations)."""
         a = TurnRecorder(session_dir=session_dir, enabled=True)
         b = TurnRecorder(session_dir=session_dir, enabled=True)
         a.record(model="m", parse_stage=1)
         b.record(model="m", parse_stage=1)
         rows = _read_jsonl(session_dir / "turns.jsonl")
-        # Both wrote seq=0 because each instance counts independently
-        assert [r["seq"] for r in rows] == [0, 0]
+        assert len(rows) == 2
+        assert all("seq" not in r for r in rows)
+        assert all("timestamp" in r for r in rows)
 
     def test_record_recreates_session_dir_if_removed(self, session_dir):
         """Same parallel-delegate cleanup race that hits
@@ -169,7 +164,6 @@ class TestSchemaInvariants:
         rows = _read_jsonl(session_dir / "turns.jsonl")
         # Exactly the expected keys, nothing else
         assert set(rows[0].keys()) == {
-            "seq",
             "model",
             "timestamp",
             "parse_stage",
@@ -185,7 +179,7 @@ class TestSchemaInvariants:
         assert FAILURE_NO_ACTION == "NO_ACTION"
 
     def test_dataclass_default_primitives_is_empty_list(self):
-        rec = TurnRecord(seq=0, model="m", timestamp="t", parse_stage=1)
+        rec = TurnRecord(model="m", timestamp="t", parse_stage=1)
         assert rec.primitives_applied == []
         assert rec.failure_signal is None
 
@@ -210,7 +204,7 @@ class TestRawFailureCapture:
         assert rows[0]["raw"] == "I think we should read loop.py next."
         assert rows[0]["failure_signal"] == FAILURE_NO_JSON
         assert rows[0]["parse_stage"] == 0
-        assert "seq" in rows[0] and "timestamp" in rows[0]
+        assert "timestamp" in rows[0]
 
     def test_success_turn_not_recorded_to_raw(self, session_dir):
         rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
@@ -227,15 +221,22 @@ class TestRawFailureCapture:
         # turns.jsonl 은 정상 기록 (raw 비활성과 무관)
         assert len(_read_jsonl(session_dir / "turns.jsonl")) == 1
 
-    def test_raw_seq_matches_turns_seq(self, session_dir):
+    def test_raw_timestamp_matches_turns_timestamp(self, session_dir):
+        # The failed turn's raw_failures.jsonl row shares the EXACT timestamp
+        # of its turns.jsonl row — the join key between the two logs (seq used
+        # to do this but was run-local and collided). Both rows take the
+        # timestamp from a single now() call inside record().
         rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
-        rec.record(model="m", parse_stage=1, failure_signal=None, raw="ok")  # seq 0
+        rec.record(model="m", parse_stage=1, failure_signal=None, raw="ok")  # success
         rec.record(
             model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON, raw="bad"
-        )  # seq 1
+        )  # failure
+        turns = _read_jsonl(session_dir / "turns.jsonl")
         raw_rows = _read_jsonl(session_dir / "raw_failures.jsonl")
         assert len(raw_rows) == 1
-        assert raw_rows[0]["seq"] == 1  # turns.jsonl 의 seq 와 동기
+        # raw row joins to the failure turn (2nd) by identical timestamp
+        assert raw_rows[0]["timestamp"] == turns[1]["timestamp"]
+        assert "seq" not in raw_rows[0] and "seq" not in turns[0]
 
     def test_raw_none_not_recorded(self, session_dir):
         # raw 를 안 줘도(None) 에러 없고 raw_failures 미기록

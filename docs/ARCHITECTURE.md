@@ -67,7 +67,7 @@ agent_cli/
 │   ├── wf_recovery.py       (~110) WF-aware Intervention factory — `format_no_json_retry` (A1a), `format_no_action_retry` (A3). plugin의 framing/reminder/static fallback 사용. WF 의존이 한 파일에 모여 audit 용이. ReAct-only NO_THOUGHT recovery는 `ReActFormat.format_no_thought_retry` 메서드 (plugin = boundary)
 │   ├── detectors.py         (~250) 감지기 모음. stateful: `ActionLoopDetector` (B1, turn 간 (action, args) 추적). stateless: `detect_unknown_tool` (A4), `detect_schema_mismatch` (A5, `validate_tool_input` wrap), `detect_nested_envelope` (A6, complete 결과의 이중 래핑 감지 — 관찰 전용), `detect_thought_missing` (A7, action 있고 thought 없음 — mimicry-strengthening loop trigger; loop이 `wire_format.thought_required` 가드 후 호출. `complete` 액션은 제외 — 최종 답이라 next-turn 의무 없음, Phase 2 bakeoff 2026-05-18에서 27b prefix_md complete_direct 5/5 recovery loop 해소 측정).
 │   ├── intervention.py      (~30)  `Intervention` dataclass — primitive 합성 결과 (message + 적용된 primitive 이름)
-│   ├── observability.py     (~205) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(seq, model, parse_stage, failure_signal, primitives_applied). FAILURE_* 라벨 8종 (NO_JSON / NO_OUTPUT / NO_ACTION / NO_THOUGHT / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP). 디버그 시 `record_raw=True`(env `AGENT_CLI_RECORD_RAW_FAILURES`)면 실패 턴의 raw LLM 응답을 별도 `raw_failures.jsonl`에 캡처 (turns.jsonl 의 메타-only 계약은 불변)
+│   ├── observability.py     (~205) `TurnRecorder` — 세션별 `turns.jsonl` 추가-only writer; `TurnRecord` 스키마(model, timestamp, parse_stage, failure_signal, primitives_applied — timestamp 가 row 정렬·`raw_failures.jsonl` join 키; 구 `seq` 는 run-local 충돌로 제거). FAILURE_* 라벨 8종 (NO_JSON / NO_OUTPUT / NO_ACTION / NO_THOUGHT / UNKNOWN_TOOL / SCHEMA_MISMATCH / NESTED_ENVELOPE / ACTION_LOOP). 디버그 시 `record_raw=True`(env `AGENT_CLI_RECORD_RAW_FAILURES`)면 실패 턴의 raw LLM 응답을 별도 `raw_failures.jsonl`에 캡처 (turns.jsonl 의 메타-only 계약은 불변)
 │   └── primitives.py        (~109) format-agnostic 회복 primitive (`echo_prior_output`, `probe_progress`, `restate_task`) — provider/모델/채널/wire format 이름 모름. ReAct-shape constraint reminders는 ``ReActFormat`` 가 소유
 ├── default_models.json             패키지 기본 모델 정의 (6개 모델)
 ├── hooks/                          Hook 시스템 (Python + Shell 라이프사이클 훅)
@@ -648,9 +648,8 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 `format_no_*_retry`는 단순 문자열이 아니라 `Intervention` (message + primitives 이름) 을 반환합니다. `_handle_text_path`는 try/finally로 매 턴 한 번씩 `TurnRecorder.record()`를 호출 — 성공/실패/예외 모든 경로에서 정확히 한 줄이 기록됩니다.
 
 **스키마 (`TurnRecord`, `{session_dir}/turns.jsonl` 한 줄당 한 row):**
-- `seq` — 세션 내 모노토닉 (0, 1, 2, ...)
 - `model` — 어떤 모델이 응답했는지 (분석 시 그룹 키)
-- `timestamp` — ISO 8601 UTC
+- `timestamp` — ISO 8601 UTC. row 정렬 + `raw_failures.jsonl` 과의 join 키. (이전엔 `seq` 가 있었으나 제거 — TurnRecorder 인스턴스별 카운터라 web 이 run_loop 마다 새 recorder 를 만들면 세션 중간에 0 으로 리셋·충돌. 정렬/매칭은 append 순서 + timestamp 로.)
 - `parse_stage` — 0(실패), 1(json.loads), 2(json_repair), 3(regex)
 - `failure_signal` — `"NO_JSON"` / `"NO_OUTPUT"` / `"NO_ACTION"` / `"NO_THOUGHT"` / `"UNKNOWN_TOOL"` / `"SCHEMA_MISMATCH"` / `"NESTED_ENVELOPE"` / `"ACTION_LOOP"` / `null`
 - `primitives_applied` — 합성된 primitive 이름 list (실패 retry 시에만 채워짐)
@@ -661,7 +660,7 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 - `ctx is not None` (in-process subagent 의 일부 헬퍼 경로에선 ctx 미주입 → 비활성)
 - `record_turns=True` (CLI: `--record-turns/--no-record-turns`, 기본 켜짐)
 
-**raw_failures 캡처 (디버그 한정):** `AGENT_CLI_RECORD_RAW_FAILURES=on` (env only — CLI 플래그 없이 run/chat/web 모든 진입점 일괄, `AgentLoop.__init__`가 env fallback) 이면 **실패 턴**(`failure_signal≠null`)의 raw LLM 응답을 별도 `{session_dir}/raw_failures.jsonl` 에 기록 (`{seq, timestamp, parse_stage, failure_signal, raw}`, seq는 turns.jsonl과 동기). 기본 off. turns.jsonl의 메타-only 계약은 유지 — raw는 이 분리된 파일에만. 복구 규칙 강화 전 "어떤 형태로 드리프트했나"(마크다운/코드펜스/부분 JSON 등)를 보기 위한 분석용. intervention(재시도 요청)은 이미 history.jsonl의 observation entry에 남으므로 여기엔 raw 응답만.
+**raw_failures 캡처 (디버그 한정):** `AGENT_CLI_RECORD_RAW_FAILURES=on` (env only — CLI 플래그 없이 run/chat/web 모든 진입점 일괄, `AgentLoop.__init__`가 env fallback) 이면 **실패 턴**(`failure_signal≠null`)의 raw LLM 응답을 별도 `{session_dir}/raw_failures.jsonl` 에 기록 (`{timestamp, parse_stage, failure_signal, raw}`). **timestamp 는 같은 턴의 turns.jsonl row 와 정확히 동일** — `record()` 가 now() 를 1회만 호출해 양쪽에 공유하므로 두 로그를 timestamp 로 join 할 수 있다 (이 join 키가 이전 `seq` 를 대체). 기본 off. turns.jsonl의 메타-only 계약은 유지 — raw는 이 분리된 파일에만. 복구 규칙 강화 전 "어떤 형태로 드리프트했나"(마크다운/코드펜스/부분 JSON 등)를 보기 위한 분석용. intervention(재시도 요청)은 이미 history.jsonl의 observation entry에 남으므로 여기엔 raw 응답만.
 
 **활용:** Step 3·4의 playbook 튜닝 데이터 누적이 주 목적. 분석은 별도 스크립트 (`jq`로도 충분). 자세한 설계는 `docs/robust-harness/DESIGN.md` §3.3.
 

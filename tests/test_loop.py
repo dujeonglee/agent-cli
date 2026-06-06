@@ -849,7 +849,8 @@ class TestRunLoopObservability:
 
         rows = self._read_turns(tmp_path)
         assert len(rows) >= 3
-        assert [r["seq"] for r in rows[:3]] == [0, 1, 2]
+        # seq removed (was run-local); rows are ordered by append + timestamp.
+        assert all("timestamp" in r and "seq" not in r for r in rows[:3])
 
     def test_opt_out_writes_no_file(self, caps, tmp_path):
         from agent_cli.context.manager import ContextManager

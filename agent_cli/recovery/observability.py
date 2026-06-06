@@ -46,9 +46,13 @@ FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
 class TurnRecord:
     """One row in the per-turn observability log.
 
-    ``seq`` is monotonic within a session and is the natural ordering for
-    walking records. ``failure_signal`` is None on a successful turn;
-    ``primitives_applied`` is empty when no recovery happened.
+    Rows are ordered by append (file order) and carry a ``timestamp`` — the
+    natural ordering for walking records and the join key to the matching
+    ``raw_failures.jsonl`` row. (A per-row ``seq`` was removed: it counted
+    per TurnRecorder instance, and web spawns a fresh recorder per run_loop
+    call, so seq reset mid-session and collided.) ``failure_signal`` is None
+    on a successful turn; ``primitives_applied`` is empty when no recovery
+    happened.
 
     Recovery rate is *not* stored on the record — it's derived at analysis
     time by walking forward from a failed turn until the next non-failed
@@ -56,7 +60,6 @@ class TurnRecord:
     field avoids retrospective writes.
     """
 
-    seq: int
     model: str
     timestamp: str  # ISO 8601 UTC
     parse_stage: int  # 0=fail, 1=json.loads, 2=json_repair, 3=regex
@@ -100,7 +103,6 @@ class TurnRecorder:
             if (session_dir is not None and record_raw)
             else None
         )
-        self._seq = 0
 
     @property
     def enabled(self) -> bool:
@@ -125,10 +127,14 @@ class TurnRecorder:
         if self._path is None:
             return
 
+        # Single timestamp shared by both files so a failed turn's
+        # turns.jsonl row and its raw_failures.jsonl row carry the SAME
+        # value — the join key between the two logs (seq used to do this
+        # but was run-local and collided across run_loop invocations).
+        ts = datetime.now(timezone.utc).isoformat()
         rec = TurnRecord(
-            seq=self._seq,
             model=model,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=ts,
             parse_stage=parse_stage,
             failure_signal=failure_signal,
             primitives_applied=list(primitives_applied) if primitives_applied else [],
@@ -148,8 +154,7 @@ class TurnRecorder:
         # Debug-only raw capture: failed turns' raw response → separate file.
         if self._raw_path is not None and failure_signal and raw is not None:
             raw_rec = {
-                "seq": self._seq,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": ts,
                 "parse_stage": parse_stage,
                 "failure_signal": failure_signal,
                 "raw": raw,
@@ -157,8 +162,6 @@ class TurnRecorder:
             self._raw_path.parent.mkdir(parents=True, exist_ok=True)
             with self._raw_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(raw_rec, ensure_ascii=False) + "\n")
-
-        self._seq += 1
 
     def record_compaction(
         self,
@@ -189,7 +192,6 @@ class TurnRecorder:
 
         rec = {
             "event": "compaction",
-            "seq": self._seq,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "tokens_before": tokens_before,
             "tokens_after": tokens_after,
@@ -202,4 +204,3 @@ class TurnRecorder:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
-        self._seq += 1
