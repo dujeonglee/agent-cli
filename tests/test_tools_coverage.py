@@ -87,36 +87,44 @@ class TestWriteFile:
         assert not result.success
         assert result.error
 
-    def test_diff_appended_when_overwriting(self, tmp_path):
-        """Overwriting an existing file → output includes a unified
-        diff with `+` / `-` lines so the user (and the LLM) can see
-        what actually changed."""
+    def test_hashline_on_overwrite(self, tmp_path):
+        """Overwriting → output is the written content in hashline format
+        (LINE#HASH:content) so the LLM can edit_file the file it just
+        wrote WITHOUT a separate read_file. diff markers are gone."""
         target = tmp_path / "code.py"
         target.write_text("a\nb\nc\n")
         result = tool_write_file({"path": str(target), "content": "a\nB\nc\n"})
         assert result.success
-        # Rich-marked diff lines.
-        assert "-b" in result.output
-        assert "+B" in result.output
+        assert "1#" in result.output  # hashline tag present
+        assert "B" in result.output  # new content shown
+        # diff section removed (replaced by hashlines)
+        assert "@@" not in result.output
+        assert "-b" not in result.output
 
-    def test_no_diff_when_content_unchanged(self, tmp_path):
-        """Writing identical content → no diff section, just the save
-        confirmation. Avoids cluttering the observation with a
-        "no changes" placeholder."""
+    def test_hashline_when_unchanged(self, tmp_path):
+        """Identical content still returns hashlines (they are edit refs),
+        not a bare save confirmation."""
         target = tmp_path / "same.txt"
         target.write_text("hello\n")
         result = tool_write_file({"path": str(target), "content": "hello\n"})
         assert result.success
-        assert "@@" not in result.output  # no diff hunk header
+        assert "1#" in result.output and "hello" in result.output
 
-    def test_diff_for_new_file_shows_all_added(self, tmp_path):
-        """Creating a new file → diff renders every line as `+` since
-        the prior content is empty."""
+    def test_hashline_on_new_file(self, tmp_path):
+        """Creating a file → every line tagged with a hashline so the LLM
+        can edit it immediately."""
         target = tmp_path / "new.txt"
         result = tool_write_file({"path": str(target), "content": "first\nsecond\n"})
         assert result.success
-        assert "+first" in result.output
-        assert "+second" in result.output
+        assert "1#" in result.output and "first" in result.output
+        assert "2#" in result.output and "second" in result.output
+
+    def test_output_hints_edit_without_reread(self, tmp_path):
+        """The output tells the LLM it can edit_file directly with these
+        hashlines (no re-read), so write→edit becomes the natural flow."""
+        target = tmp_path / "x.txt"
+        result = tool_write_file({"path": str(target), "content": "hi\n"})
+        assert "edit_file" in result.output
 
 
 class TestShellTool:

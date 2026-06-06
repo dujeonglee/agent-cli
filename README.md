@@ -621,7 +621,7 @@ LLM이 사용할 수 있는 도구 목록:
 | 도구 | 설명 |
 |------|------|
 | `read_file` | 파일 읽기 (hashline 태그). `read_file_reads` 배열로 여러 파일/구간을 한 번에 (단일도 1개 배열) |
-| `write_file` | 파일 생성/덮어쓰기 |
+| `write_file` | 파일 생성/덮어쓰기. 작성 content 를 hashline 으로 반환 (read_file 없이 edit_file 직결) |
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
@@ -684,7 +684,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 해시 불일치 시 퍼지 매칭으로 자동 보정합니다 (공백/따옴표/대시 정규화).
 
-`edit_file` / `write_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). 사용자도 시각적으로 확인 가능하고, LLM 도 자가 검증에 활용 가능.
+`edit_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). `write_file` 성공 시엔 작성한 content 가 **hashline(LINE#HASH:content)** 포맷으로 반환되어, `read_file` 없이 방금 쓴 파일을 바로 `edit_file` 로 수정할 수 있습니다 (write→edit 직결 — 작은 변경 시 전체 재작성 대신 부분 edit 유도).
 
 ### complete — 작업 완료
 
@@ -903,7 +903,7 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 
 ### write_file — 파일 생성
 
-새 파일을 생성하거나 기존 파일을 덮어씁니다. 기존 파일 수정은 `edit_file` 권장.
+새 파일을 생성하거나 기존 파일을 덮어씁니다. 작성한 content 는 hashline 포맷으로 반환되어 `read_file` 없이 바로 `edit_file` 수정이 가능합니다 — 기존 파일의 작은 변경은 전체 재작성 대신 `edit_file` 권장.
 
 ```json
 {"action": "write_file", "action_input": {"path": "output.txt", "content": "hello world"}}

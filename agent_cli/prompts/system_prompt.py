@@ -143,9 +143,12 @@ def _build_edit_file_inline(wire_format) -> str:
   Constraints:
   - Read the target lines in the CURRENT turn before edit_file. Hashes
     from earlier turns drift if anything else touched the file — do not
-    reuse them. (code_index mode='fetch' counts as a fresh read; its
-    output is already hashline-formatted and pipes straight into
-    edit_file.)
+    reuse them. (Both code_index mode='fetch' AND write_file count as a
+    fresh read — their output is already hashline-formatted and pipes
+    straight into edit_file. So right after you write_file a file, you
+    can edit_file it with the returned hashlines — no read_file needed.
+    For a small change to an existing file, that beats rewriting the
+    whole file with write_file.)
   - A hash mismatch is not a failure — it is a guardrail signaling the
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
