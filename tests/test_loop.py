@@ -662,8 +662,37 @@ class TestRunLoopObservability:
             "echo_prior_output",
             "constrain_format_json",
         ]
-        # Second row: recovery (success, no primitives)
-        assert rows[1]["failure_signal"] is None
+
+    def test_degenerate_emission_labeled(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.wire_formats import get
+
+        # Empty wire blocks repeated (## Thought/## Action with no body) =
+        # format runaway. The turn must be LABELED degenerate; recovery then
+        # re-prompts and the model completes. (Real runs break this mid-stream
+        # via degeneration_check; the mock provider returns the full text so
+        # this exercises the loop's labeling branch.)
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("prefix_md"))
+        degen = "## Thought\n\n## Action\n\n## Thought\n\n## Action\n\n## Input\n{}"
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=degen),
+            LLMResponse(
+                content="## Thought\ndone\n## Action\ncomplete\n## Input\n"
+                '{"result":"ok"}'
+            ),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+            wire_format="prefix_md",
+        )
+        rows = self._read_turns(tmp_path)
+        assert rows[0]["failure_signal"] == "DEGENERATE"
         assert rows[1]["primitives_applied"] == []
 
     def test_raw_failures_captured_when_env_enabled(self, caps, tmp_path, monkeypatch):

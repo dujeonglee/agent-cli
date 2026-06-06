@@ -345,12 +345,48 @@ class TestProviderCallKwargs:
     def test_json_mode_always_disabled(self):
         # Markdown opening ``## `` conflicts with an OpenAI-compatible JSON
         # mode (forces ``{`` first token), so json_mode is False regardless
-        # of the model's structured-output capability.
+        # of the model's structured-output capability. (No stop sequence —
+        # format-runaway is caught by streaming degeneration_check instead,
+        # which sees the *repetition* a single stop string cannot.)
         class _CapsYes:
             supports_structured_output = True
 
         kwargs = PrefixMdFormat().provider_call_kwargs(_CapsYes())
         assert kwargs == {"json_mode": False}
+
+
+class TestDegenerationDetection:
+    """``is_degenerate`` flags a format runaway — ≥2 EMPTY wire blocks (a
+    header with no body, followed by another header). Normal turns have body
+    between headers; a single empty/omitted thought is allowed (thought is
+    optional). The streaming path breaks early on this; the loop labels the
+    turn FAILURE_DEGENERATE."""
+
+    def test_empty_thought_action_repeat_is_degenerate(self):
+        # ## Thought ## Action ## Thought ## Action (all empty)
+        text = "## Thought\n\n## Action\n\n## Thought\n\n## Action\n\n"
+        assert PrefixMdFormat().is_degenerate(text) is True
+
+    def test_repeated_empty_action_is_degenerate(self):
+        # ## Thought ## Action ## Action ## Action (the second observed shape)
+        text = "## Thought\n## Action\n## Action\n## Action"
+        assert PrefixMdFormat().is_degenerate(text) is True
+
+    def test_empty_blocks_with_blank_input_is_degenerate(self):
+        text = "## Thought\n\n## Action\n\n## Input\n\n## Thought\n\n## Action\n\n"
+        assert PrefixMdFormat().is_degenerate(text) is True
+
+    def test_normal_full_block_not_degenerate(self):
+        text = '## Thought\nrebuild\n## Action\nshell\n## Input\n{"shell_command":"ls"}'
+        assert PrefixMdFormat().is_degenerate(text) is False
+
+    def test_single_empty_thought_allowed(self):
+        # thought is optional → one empty Thought→Action is NOT a runaway
+        text = '## Thought\n## Action\nshell\n## Input\n{"shell_command":"ls"}'
+        assert PrefixMdFormat().is_degenerate(text) is False
+
+    def test_no_headers_not_degenerate(self):
+        assert PrefixMdFormat().is_degenerate("just some prose, no headers") is False
 
 
 # ── Lifecycle defaults (inherited from WireFormat ABC) ────

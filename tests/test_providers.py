@@ -174,6 +174,60 @@ class TestOpenAIProvider:
         assert body["response_format"] == {"type": "json_object"}
 
     @patch("agent_cli.providers.openai.requests.post")
+    def test_degeneration_check_breaks_stream(self, mock_post, caps_structured):
+        # As the streamed text accumulates into a runaway, degeneration_check
+        # returns True mid-stream → the provider closes the stream and never
+        # reads the trailing chunks (token/latency saving). The truncated
+        # content is returned with stop_reason="degenerate_runaway".
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"## Thought\\n## Action\\n"}}]}',
+            b'data: {"choices":[{"delta":{"content":"## Thought\\n## Action\\n"}}]}',
+            b'data: {"choices":[{"delta":{"content":"NEVER_READ"}}]}',
+            b"data: [DONE]",
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+
+        chunks: list[str] = []
+        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=chunks.append,
+            degeneration_check=lambda t: t.count("## Action") >= 2,
+        )
+        assert "NEVER_READ" not in result.content  # later chunk never read
+        assert result.stop_reason == "degenerate_runaway"
+        r.close.assert_called_once()
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_no_degeneration_check_consumes_full_stream(
+        self, mock_post, caps_structured
+    ):
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"## Thought\\nx\\n"}}]}',
+            b'data: {"choices":[{"delta":{"content":"## Action\\nshell"}}]}',
+            b"data: [DONE]",
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=lambda c: None,
+        )
+        assert "## Action\nshell" in result.content
+
+    @patch("agent_cli.providers.openai.requests.post")
     def test_without_structured_output(self, mock_post, caps_basic):
         mock_post.return_value = _mock_response(
             {

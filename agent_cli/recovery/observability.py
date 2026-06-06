@@ -40,6 +40,7 @@ FAILURE_NESTED_ENVELOPE = (
     "NESTED_ENVELOPE"  # A6: complete result wraps another envelope
 )
 FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
+FAILURE_DEGENERATE = "DEGENERATE"  # A8: emission repeated the wire shape (e.g. multiple ## Thought/## Action blocks in one response) — format runaway. Observed (label + raw capture); the dispatch still proceeds on the parsed action. stop sequences (wire provider_call_kwargs) are the primary guard.
 
 
 @dataclass(frozen=True)

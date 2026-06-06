@@ -221,6 +221,21 @@ class WireFormat(ABC):
         observability-only — see :class:`ParsedAction`).
         """
 
+    def is_degenerate(self, text: str) -> bool:
+        """Whether *text* is a format runaway: the model repeated the wire
+        shape instead of emitting one turn (e.g. several ``## Thought`` /
+        ``## Action`` blocks in a single prefix_md response). The loop uses
+        this purely to LABEL the turn (``FAILURE_DEGENERATE``) and capture
+        the raw — dispatch still proceeds on the parsed action. Prevention
+        is the wire's stop sequence (see :meth:`provider_call_kwargs`).
+
+        Default False — a wire shape with no observed runaway pattern (e.g.
+        react under json_object mode) opts out. Shapes that can run away
+        override with a cheap structural check (header count, etc.).
+        Mirror of how stop sequences are wire-specific: both the guard
+        (stop) and the observation (this) live on the plugin."""
+        return False
+
     # ─── Recovery wording (abstract) ────────────────────────────
 
     @abstractmethod

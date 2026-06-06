@@ -37,6 +37,7 @@ from agent_cli.recovery.detectors import (
 )
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
+    FAILURE_DEGENERATE,
     FAILURE_NESTED_ENVELOPE,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
@@ -623,6 +624,7 @@ class AgentLoop:
                 model=self.model,
                 capabilities=self.capabilities,
                 on_chunk=on_chunk,
+                degeneration_check=self.wire_format.is_degenerate,
                 **extra_call_kwargs,
             )
             # Stitch the prefill back onto the response so downstream
@@ -741,6 +743,16 @@ class AgentLoop:
                 initial_signal = FAILURE_NO_OUTPUT
             else:
                 initial_signal = FAILURE_NO_JSON
+        elif self.wire_format.is_degenerate(llm_text):
+            # Format runaway — the emission repeated the wire shape (empty
+            # blocks). The streaming path usually breaks this early
+            # (degeneration_check passed to provider.call); whatever text
+            # arrives is labeled here for measurement + raw capture. Checked
+            # BEFORE NO_ACTION because a runaway's trailing block is typically
+            # empty (action invalid), and degenerate is the more specific
+            # cause — the dispatch below still falls through to NO_ACTION
+            # recovery when the action is unusable.
+            initial_signal = FAILURE_DEGENERATE
         elif not parsed.action:
             initial_signal = FAILURE_NO_ACTION
         else:

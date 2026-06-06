@@ -157,6 +157,20 @@ _THINKING_PATTERN = re.compile(
 # a sentence (e.g. "the ## Action of saving" mid-line is ignored).
 _THOUGHT_HEADER = re.compile(r"^## Thought$", re.MULTILINE)
 _ACTION_HEADER = re.compile(r"^## Action$", re.MULTILINE)
+
+# Format-runaway signature: a section header (## Thought / ## Action /
+# ## Input) whose body is EMPTY — followed by only whitespace/blank lines
+# and then ANOTHER header. ≥2 such empty blocks = the model looped the wire
+# shape instead of emitting one turn (observed after observation errors such
+# as a failed sed: e.g. ``## Thought ## Action ## Thought ## Action`` or
+# ``## Thought ## Action ## Action ## Action``). The leading header is
+# matched via lookahead so consecutive empties (## Action ## Action
+# ## Action) are ALL counted, not just every other one. A normal turn has
+# body text between headers (0 matches); a single omitted/empty thought
+# yields just 1 (allowed — thought is optional).
+_DEGEN_RUNAWAY = re.compile(
+    r"## (?:Thought|Action|Input)(?=\s*## (?:Thought|Action|Input))"
+)
 _INPUT_HEADER = re.compile(r"^## Input$", re.MULTILINE)
 
 # Valid action body: a single token of word chars, dots, hyphens.
@@ -488,3 +502,10 @@ class PrefixMdFormat(WireFormat):
         # ``capabilities`` arg is accepted for the uniform signature but
         # this plugin's answer is unconditional.
         return {"json_mode": False}
+
+    def is_degenerate(self, text: str) -> bool:
+        # ≥2 empty section blocks (a header with no body, followed by another
+        # header) — see ``_DEGEN_RUNAWAY``. The streaming path checks this on
+        # the accumulating text to break early; the loop checks the final
+        # emission to label it FAILURE_DEGENERATE.
+        return len(_DEGEN_RUNAWAY.findall(text)) >= 2

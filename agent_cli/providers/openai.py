@@ -76,7 +76,7 @@ class OpenAIProvider:
                 stream=True,
             )
             r.raise_for_status()
-            return self._handle_stream(r, on_chunk)
+            return self._handle_stream(r, on_chunk, kwargs.get("degeneration_check"))
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -84,8 +84,15 @@ class OpenAIProvider:
         r.raise_for_status()
         return self._parse_response(r.json())
 
-    def _handle_stream(self, r, on_chunk) -> LLMResponse:
-        """Process SSE streaming response."""
+    def _handle_stream(self, r, on_chunk, degeneration_check=None) -> LLMResponse:
+        """Process SSE streaming response.
+
+        ``degeneration_check`` (optional): a predicate on the accumulated
+        text. When it returns True the stream is closed early — the model has
+        started looping the wire shape (format runaway) and the rest is just
+        repetition, so generating to max_tokens would waste tokens/latency.
+        The truncated text is still parsed/recorded downstream.
+        """
         import time
 
         content = ""
@@ -134,6 +141,17 @@ class OpenAIProvider:
                     t_first = time.perf_counter_ns()
                 content += chunk
                 on_chunk(chunk)
+                # Early-stop format runaway. Gate on '#' so the predicate
+                # (regex) only runs when a new header could have arrived,
+                # keeping this O(headers) not O(chunks).
+                if (
+                    degeneration_check is not None
+                    and "#" in chunk
+                    and degeneration_check(content)
+                ):
+                    stop_reason = "degenerate_runaway"
+                    r.close()
+                    break
 
             finish = choices[0].get("finish_reason")
             if finish:
