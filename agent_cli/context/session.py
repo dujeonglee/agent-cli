@@ -5,7 +5,7 @@ Conversation history is managed by ContextManager (history.jsonl).
 
 File layout:
   {project}/.agent-cli/sessions/{session_id}/
-    session.jsonl          # single-line metadata (id, workspace, updated_at, query, response_format)
+    session.jsonl          # single-line metadata (id, workspace, updated_at, response_format)
     history.jsonl          # conversation history (managed by ContextManager)
     skill_*/delegate_*/    # skill/delegate subdirectories
 """
@@ -28,10 +28,9 @@ class SessionMeta:
     session_id: str
     workspace: str
     updated_at: str
-    query: str = ""
     # Wire format the session runs under. Recorded so a session's response
-    # shape is recoverable for debugging / resume. Defaults to "react" for
-    # backward compat with sessions written before this field existed.
+    # shape is recoverable for debugging / resume. Defaults to
+    # DEFAULT_WIRE_FORMAT for sessions written before this field existed.
     response_format: str = DEFAULT_WIRE_FORMAT
 
 
@@ -67,7 +66,6 @@ def save_meta(meta: SessionMeta) -> None:
                 "session_id": meta.session_id,
                 "workspace": meta.workspace,
                 "updated_at": meta.updated_at,
-                "query": meta.query,
                 "response_format": meta.response_format,
             }
         },
@@ -197,3 +195,17 @@ def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
         pairs.append((pending, "(no completion)"))
 
     return pairs[-n:] if n > 0 else pairs
+
+
+def session_summary(meta: SessionMeta) -> tuple[str, str]:
+    """``(last_user_request, last_result)`` for a session, read from its
+    history.jsonl — the replacement for the removed ``query`` meta field.
+
+    ``last_result`` is the last ``complete`` action's result, or
+    "(no completion)" for a run still open / interrupted. Returns
+    ``("", "")`` when the session has no history yet. Reads the file path
+    directly (no mkdir side-effect, unlike ``get_session_dir``).
+    """
+    hp = _SESSIONS_BASE / "sessions" / meta.session_id / "history.jsonl"
+    pairs = recent_exchanges(hp, n=1)
+    return pairs[-1] if pairs else ("", "")

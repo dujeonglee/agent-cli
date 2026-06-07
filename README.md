@@ -322,9 +322,21 @@ agent-cli sessions --workspace /path/to/project
 agent-cli chat -p openai -m gpt-4o --resume <session_id>
 ```
 
+각 세션은 id·시각과 함께 **마지막 사용자 요청(↳)** 과 **마지막 결과(→)** 를 한눈에 보여줍니다 (아직 끝나지 않은 run 은 `→ (in progress)`). 이 요약은 세션의 `history.jsonl` 에서 마지막 user↔complete 페어를 읽어 만듭니다 (별도의 `query` 메타 필드는 제거됨).
+
+```text
+Sessions for /path/to/project:
+
+  1774752167 2026-06-04 10:31:02
+      ↳ Analyze the project structure
+      → src/, tests/, docs/ 3개 최상위 디렉토리로 구성된…
+```
+
 | 옵션 | 설명 | 기본값 |
 |------|------|--------|
 | `-w, --workspace` | 워크스페이스 경로 필터 | 현재 디렉토리 |
+
+**`--resume` 없이 시작할 때:** `chat` / `web` 을 `--resume` 없이 인터랙티브하게 실행하면, 가장 최근 세션을 위 포맷으로 보여주고 `Resume it? [y/N]` 를 묻습니다. `y` 면 그 세션을 이어가고, 그 외(Enter 포함)는 새 세션으로 시작합니다 (안전한 기본값). 파이프/비대화 환경(stdin 이 TTY 아님)에서는 묻지 않고 항상 새 세션입니다.
 
 LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 조회할 수 있습니다 (구조화 키워드 검색, 필드별 필터 지원).
 

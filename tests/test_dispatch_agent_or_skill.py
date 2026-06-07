@@ -231,50 +231,44 @@ class TestDispatcherBranches:
 
 
 class TestSessionPersistence:
-    """Successful dispatches must persist ``session.query`` so a
-    crash-resume reflects the last user intent; failed dispatches must
-    NOT update it (so the prior valid query stays on record)."""
+    """Successful dispatches must call ``save_meta`` (refresh the session's
+    updated_at); failed dispatches must NOT. (The old per-dispatch
+    ``session.query`` write was removed — last user intent now comes from
+    history via ``session_summary``.)"""
 
-    def test_successful_agent_dispatch_saves_session_query(
+    def test_successful_agent_dispatch_saves_session(
         self, base_state, monkeypatch, tmp_path
     ):
         from agent_cli.context.session import SessionMeta
 
-        session = SessionMeta(
-            session_id="s1", workspace="/tmp", updated_at="now", query="prev"
-        )
+        session = SessionMeta(session_id="s1", workspace="/tmp", updated_at="now")
         base_state["session"] = session
         save_calls: list = []
         monkeypatch.setattr(
             "agent_cli.context.session.save_meta",
-            lambda s: save_calls.append(s.query),
+            lambda s: save_calls.append(s.session_id),
         )
         monkeypatch.setattr("agent_cli.main._dispatch_agent", lambda *a, **k: "ok")
         try_dispatch_agent_or_skill(
             "@explorer find X", _RecordingOutput(), **base_state
         )
-        # Query truncated to 100 chars; whole short message preserved.
-        assert session.query == "@explorer find X"
-        assert save_calls == ["@explorer find X"]
+        assert save_calls == ["s1"]
 
-    def test_not_found_does_not_save_session_query(self, base_state, monkeypatch):
+    def test_not_found_does_not_save_session(self, base_state, monkeypatch):
         from agent_cli.context.session import SessionMeta
 
-        session = SessionMeta(
-            session_id="s1", workspace="/tmp", updated_at="now", query="prev"
-        )
+        session = SessionMeta(session_id="s1", workspace="/tmp", updated_at="now")
         base_state["session"] = session
         save_calls: list = []
         monkeypatch.setattr(
             "agent_cli.context.session.save_meta",
-            lambda s: save_calls.append(s.query),
+            lambda s: save_calls.append(s.session_id),
         )
         monkeypatch.setattr(
             "agent_cli.main._dispatch_agent",
             lambda *a, **k: _AGENT_NOT_FOUND,
         )
         try_dispatch_agent_or_skill("@ghost task", _RecordingOutput(), **base_state)
-        assert session.query == "prev"
         assert save_calls == []
 
 

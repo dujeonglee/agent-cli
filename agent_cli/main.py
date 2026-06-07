@@ -466,8 +466,7 @@ def try_dispatch_agent_or_skill(
             output.agent_not_found(name)
             return True
         if session is not None:
-            session.query = message[:100]
-            save_meta(session)
+            save_meta(session)  # refresh updated_at (query field removed)
         output.agent_result(result)
         return True
 
@@ -504,8 +503,7 @@ def try_dispatch_agent_or_skill(
             output.skill_not_found(cmd_name)
             return True
         if session is not None:
-            session.query = message[:100]
-            save_meta(session)
+            save_meta(session)  # refresh updated_at (query field removed)
         output.skill_result(cmd_name, result)
         return True
 
@@ -936,7 +934,6 @@ def run(
     from agent_cli.context.session import create_session, save_meta
 
     session = create_session(response_format=response_format)
-    session.query = query[:100]
     save_meta(session)
     ctx = ContextManager(
         session_dir=Path(".agent-cli") / "sessions" / session.session_id,
@@ -1065,11 +1062,61 @@ def sessions(
 
     console.print(f"\n[{C['accent']}]Sessions for {ws}:[/]\n")
     for s in session_list:
-        query_preview = f"  {s.query}" if s.query else ""
-        console.print(
-            f"  [{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}{query_preview}[/]"
-        )
+        _print_session(s)
     console.print()
+
+
+def _truncate(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+def _print_session(s, indent: str = "  ") -> None:
+    """Print one session's summary block — id/time + last user request +
+    last result (or 'in progress'). Shared by the ``sessions`` command and
+    the resume prompt so both show the same format. ``session_summary`` reads
+    the last user↔complete pair from history (the old ``query`` field is gone).
+    """
+    from agent_cli.context.session import session_summary
+
+    console.print(
+        f"{indent}[{C['accent']}]{s.session_id}[/] [{C['muted']}]{s.updated_at}[/]"
+    )
+    user, result = session_summary(s)
+    if user:
+        console.print(f"{indent}    [{C['muted']}]↳ {_truncate(user, 80)}[/]")
+    if result == "(no completion)":
+        console.print(f"{indent}    [{C['muted']}]→ (in progress)[/]")
+    elif result:
+        console.print(f"{indent}    [{C['final']}]→ {_truncate(result, 80)}[/]")
+
+
+def _maybe_resume_recent(workspace: str, response_format: str, prompt_fn) -> tuple:
+    """No ``--resume`` given: offer the most recent session (shown in the same
+    format as the ``sessions`` command) and ask [y/N]. 'y' resumes it; anything
+    else (incl. Enter) starts a new session.
+
+    ``prompt_fn`` is the y/N reader — ``input`` on a TTY, ``None`` when
+    non-interactive (pipes / cron), in which case we never prompt and always
+    start new. Returns ``(SessionMeta, is_resume)``.
+    """
+    from agent_cli.context.session import (
+        create_session,
+        list_sessions,
+        load_session,
+    )
+
+    if prompt_fn is not None:
+        recent = list_sessions(workspace)
+        if recent:
+            last = recent[-1]  # list_sessions sorts by id (timestamp) ascending
+            console.print(f"\n[{C['muted']}]Most recent session:[/]")
+            _print_session(last)
+            if prompt_fn("\nResume it? [y/N] ").strip().lower() == "y":
+                resumed = load_session(last.session_id)
+                if resumed is not None:
+                    return resumed, True
+    return create_session(response_format=response_format), False
 
 
 def _read_user_input(prompt: str) -> str:
@@ -1094,12 +1141,6 @@ def _print_recent_exchanges(history_path, n: int = 10) -> None:
     pairs = recent_exchanges(history_path, n=n)
     if not pairs:
         return
-
-    def _truncate(text: str, limit: int) -> str:
-        text = text.strip()
-        if len(text) <= limit:
-            return text
-        return text[:limit].rstrip() + "…"
 
     console.print(
         f"\n[{C['muted']}]── Last {len(pairs)} exchange(s) ──[/]",
@@ -1193,7 +1234,6 @@ def chat(
     """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
     _apply_style(style)
     from agent_cli.context.session import (
-        create_session,
         finalize_session,
         load_session,
         save_meta,
@@ -1219,14 +1259,23 @@ def chat(
         TOOLS.update(mcp_tools)
 
     # Session setup
+    import sys
+
     if resume:
         session = load_session(resume)
         if not session:
             console.print(f"[{C['error']}]Session '{resume}' not found.[/]")
             return
         console.print(f"[{C['accent']}]Resuming session {resume}[/]")
+        is_resume = True
     else:
-        session = create_session(response_format=response_format)
+        # No --resume: offer the most recent session ([y/N]) or start new.
+        prompt_fn = input if sys.stdin.isatty() else None
+        session, is_resume = _maybe_resume_recent(
+            os.getcwd(), response_format, prompt_fn
+        )
+        if is_resume:
+            console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
     save_meta(session)
 
     # Auto-compute token budget from model capabilities if not specified
@@ -1240,11 +1289,11 @@ def chat(
     ctx = ContextManager(
         session_dir=Path(".agent-cli") / "sessions" / session.session_id,
         max_context_tokens=max_context_tokens,
-        resume=bool(resume),
+        resume=is_resume,
         wire_format=wire_format_plugin,
     )
 
-    if resume:
+    if is_resume:
         _print_recent_exchanges(ctx.history_path)
 
     console.print()
@@ -1367,7 +1416,6 @@ def chat(
             ):
                 continue
 
-        session.query = query[:100]
         save_meta(session)
 
         from agent_cli.hooks import load_hooks as _load_hooks
@@ -1543,27 +1591,35 @@ def web(
 
     # 2. Session + ContextManager.
     from agent_cli.context.session import (
-        create_session,
         finalize_session,
         get_session_dir,
         load_session,
         save_meta,
     )
 
+    import sys
+
     if resume:
         # Pre-check above guarantees this exists; re-load to materialise
         # the SessionMeta (workspace etc.) for the renderer/context.
         session = load_session(resume)
         console.print(f"[{C['accent']}]Resuming session {resume}[/]")
+        is_resume = True
     else:
-        session = create_session(response_format=response_format)
+        # No --resume: offer the most recent session ([y/N]) or start new.
+        prompt_fn = input if sys.stdin.isatty() else None
+        session, is_resume = _maybe_resume_recent(
+            os.getcwd(), response_format, prompt_fn
+        )
+        if is_resume:
+            console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
     save_meta(session)
     if max_context_tokens <= 0:
         max_context_tokens = (capabilities.context_window * 7) // 10
     ctx = ContextManager(
         get_session_dir(session),
         max_context_tokens=max_context_tokens,
-        resume=bool(resume),
+        resume=is_resume,
         wire_format=wire_format_plugin,
     )
 
@@ -1584,7 +1640,7 @@ def web(
     # cache (already populated by ``ContextManager(..., resume=True)``)
     # and re-emits the same event sequence the live loop would have
     # produced — see :meth:`WebRenderer.replay_from_history`.
-    if resume:
+    if is_resume:
         renderer.replay_from_history(ctx)
 
     from agent_cli.web.server import WebDispatchOutput, handle_slash_command

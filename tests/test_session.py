@@ -77,7 +77,6 @@ class TestLoadSession:
                         "session_id": sid,
                         "workspace": "/tmp",
                         "updated_at": "2026-01-01 00:00:00",
-                        "query": "",
                     }
                 }
             )
@@ -343,3 +342,75 @@ class TestRecentExchanges:
             ],
         )
         assert recent_exchanges(path) == [("real Q", "real A")]
+
+
+class TestSessionSummary:
+    """``session_summary`` replaces the removed ``query`` meta field — it
+    reads the LAST user request + result from the session's history."""
+
+    def _write_history(self, meta, lines):
+        d = session_mod._SESSIONS_BASE / "sessions" / meta.session_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "history.jsonl").write_text(
+            "\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8"
+        )
+
+    def test_last_user_and_complete(self):
+        from agent_cli.context.session import session_summary
+
+        meta = create_session("/tmp/ws")
+        self._write_history(
+            meta,
+            [
+                {"role": "user", "content": "first task"},
+                {
+                    "role": "assistant",
+                    "action": "complete",
+                    "action_input": {"result": "first done"},
+                },
+                {"role": "user", "content": "build the game"},
+                {
+                    "role": "assistant",
+                    "action": "complete",
+                    "action_input": {"result": "game built"},
+                },
+            ],
+        )
+        # last pair, not first
+        assert session_summary(meta) == ("build the game", "game built")
+
+    def test_in_progress_run_marked(self):
+        from agent_cli.context.session import session_summary
+
+        meta = create_session("/tmp/ws")
+        self._write_history(meta, [{"role": "user", "content": "do X"}])
+        user, result = session_summary(meta)
+        assert user == "do X"
+        assert result == "(no completion)"
+
+    def test_no_history_returns_empty(self):
+        from agent_cli.context.session import session_summary
+
+        meta = create_session("/tmp/ws")  # no history.jsonl written
+        assert session_summary(meta) == ("", "")
+
+
+class TestQueryFieldRemoved:
+    """The legacy ``query`` meta field is gone — session_summary replaces it.
+    Pin its absence so it isn't accidentally reintroduced (and so a stray
+    write doesn't silently bloat session.jsonl)."""
+
+    def test_save_meta_writes_no_query_key(self):
+        meta = create_session("/tmp/ws")
+        save_meta(meta)
+        path = (
+            session_mod._SESSIONS_BASE / "sessions" / meta.session_id / "session.jsonl"
+        )
+        data = json.loads(path.read_text())
+        assert "query" not in data["_meta"]
+
+    def test_session_meta_has_no_query_field(self):
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(create_session("/tmp/ws"))}
+        assert "query" not in fields
