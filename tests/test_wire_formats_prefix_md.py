@@ -389,6 +389,44 @@ class TestDegenerationDetection:
         assert PrefixMdFormat().is_degenerate("just some prose, no headers") is False
 
 
+class TestThoughtSanitize:
+    """``sanitize_thought`` strips stray ## section headers the model leaked
+    into its reasoning, so they aren't re-injected into the next-turn prior
+    (self-reinforcement → mimicry → runaway — the root cause). Inline mentions
+    are kept (not line-anchored exact headers)."""
+
+    def test_trailing_sentinel_stripped(self):
+        out = PrefixMdFormat().sanitize_thought("rebuild it.\n\n## Thought")
+        assert out == "rebuild it."
+
+    def test_middle_sentinels_stripped(self):
+        assert (
+            PrefixMdFormat().sanitize_thought("a\n## Action\n## Thought\nb") == "a\nb"
+        )
+
+    def test_inline_mention_kept(self):
+        t = "the ## Thought section explains the flow"
+        assert PrefixMdFormat().sanitize_thought(t) == t
+
+    def test_none_passthrough(self):
+        assert PrefixMdFormat().sanitize_thought(None) is None
+
+    def test_parse_applies_sanitize(self):
+        raw = "## Thought\nreasoning\n\n## Thought\n## Action\nshell\n## Input\n{}"
+        parsed = PrefixMdFormat().parse(raw)
+        assert "## Thought" not in (parsed.thought or "")
+        assert parsed.action == "shell"
+
+    def test_prior_has_no_duplicate_sentinel(self):
+        # End-to-end: a thought ending in ## Thought must NOT yield a duplicate
+        # ## Thought in the re-injected prior (the mimicry trigger).
+        raw = "## Thought\nreasoning\n\n## Thought\n## Action\nshell\n## Input\n{}"
+        fmt = PrefixMdFormat()
+        rec = fmt.serialize_assistant_for_history(raw)
+        prior = fmt.render_assistant_from_history(rec)["content"]
+        assert prior.count("## Thought") == 1
+
+
 # ── Lifecycle defaults (inherited from WireFormat ABC) ────
 
 

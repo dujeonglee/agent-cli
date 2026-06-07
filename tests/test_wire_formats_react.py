@@ -48,6 +48,12 @@ class TestRegistration:
         assert plugin.thought_required is False
         assert plugin.action_required is False
 
+    def test_sanitize_thought_is_noop(self):
+        # react thought is a JSON string (escaped) — no ## sentinels to strip,
+        # so the base default identity is inherited unchanged.
+        t = "reasoning that literally contains ## Thought and ## Action"
+        assert ReActFormat().sanitize_thought(t) == t
+
 
 # ─── Recovery reminder content ──────────────────────
 

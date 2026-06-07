@@ -435,7 +435,22 @@ class PrefixMdFormat(WireFormat):
     # ─── Parsing ───────────────────────────────────────────────
 
     def parse(self, llm_text: str) -> ParsedAction:
-        return parse_prefix_md(llm_text)
+        result = parse_prefix_md(llm_text)
+        result.thought = self.sanitize_thought(result.thought)
+        return result
+
+    def sanitize_thought(self, thought: str | None) -> str | None:
+        # Drop stray section-header lines the model leaked into its reasoning
+        # (## Thought / ## Action / ## Input each on its own line). Inline
+        # mentions ("the ## Thought section ...") are kept — they aren't
+        # line-anchored exact headers. Prevents the prior-mimicry → runaway
+        # loop (see WireFormat.sanitize_thought).
+        if not thought:
+            return thought
+        cleaned = "\n".join(
+            ln for ln in thought.split("\n") if not _ANY_HEADER.match(ln)
+        ).strip()
+        return cleaned or None
 
     # ─── Recovery ──────────────────────────────────────────────
 

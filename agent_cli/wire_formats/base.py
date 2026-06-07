@@ -223,18 +223,32 @@ class WireFormat(ABC):
 
     def is_degenerate(self, text: str) -> bool:
         """Whether *text* is a format runaway: the model repeated the wire
-        shape instead of emitting one turn (e.g. several ``## Thought`` /
-        ``## Action`` blocks in a single prefix_md response). The loop uses
-        this purely to LABEL the turn (``FAILURE_DEGENERATE``) and capture
-        the raw — dispatch still proceeds on the parsed action. Prevention
-        is the wire's stop sequence (see :meth:`provider_call_kwargs`).
+        shape instead of emitting one turn (e.g. several empty ``## Thought``
+        / ``## Action`` blocks in a single prefix_md response). Two uses: the
+        loop passes it to ``provider.call(degeneration_check=...)`` to break
+        the stream early, and labels the final emission ``FAILURE_DEGENERATE``.
 
         Default False — a wire shape with no observed runaway pattern (e.g.
         react under json_object mode) opts out. Shapes that can run away
-        override with a cheap structural check (header count, etc.).
-        Mirror of how stop sequences are wire-specific: both the guard
-        (stop) and the observation (this) live on the plugin."""
+        override with a cheap structural check (header count, etc.)."""
         return False
+
+    def sanitize_thought(self, thought: str | None) -> str | None:
+        """Strip wire-shape sentinels the model leaked into its thought text,
+        so they are not re-injected into the next-turn prior. A thought ending
+        in a stray ``## Thought`` would render back as ``## Thought … ##
+        Thought`` in the prior, teaching the model (self-reinforcement) that
+        repeating the shape is fine — the root cause of format runaway. Applied
+        by ``parse`` to ``ParsedAction.thought``, which flows into serialize →
+        history → prior and the on-screen render, so one place covers all.
+
+        Default identity: a wire whose thought cannot carry its own sentinels
+        (react: thought is a JSON string, escaped) opts out. prefix_md
+        overrides to drop stray ``##`` header lines. (``action`` / ``action_
+        input`` need no cleaning — an invalid action token is already rejected,
+        and action_input is JSON-escaped so its content can't form a line-start
+        sentinel.)"""
+        return thought
 
     # ─── Recovery wording (abstract) ────────────────────────────
 
