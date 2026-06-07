@@ -7,18 +7,12 @@ swappable so new format experiments live in their own module and can be
 added or removed without touching the loop, prompts, or recovery
 primitives.
 
-Lifecycle per assistant turn — four data forms with different consumers::
+Lifecycle per assistant turn — all priors are rebuilt from one stored record::
 
     (A) Emit        consumer: model (produces)
        │            shape:    plugin wire shape, raw string
        │
-       ├── normalize_assistant_for_messages(raw) ─────────────┐
-       │                                                       ▼
-       │                                                  (C) Feed live
-       │                                                  consumer: LLM (next turn)
-       │                                                  shape:    plugin wire shape
-       │
-       └── serialize_assistant_for_history(raw)
+       └── serialize_assistant_for_history(raw)   ← save-time sanitize
                                   ▼
                             (B) Store
                             consumer: history.jsonl reader / analysis
@@ -26,16 +20,23 @@ Lifecycle per assistant turn — four data forms with different consumers::
                                   │
                                   └── render_assistant_from_history(record)
                                                               ▼
-                                                        (D) Feed 복원
-                                                        consumer: LLM after overflow / resume
+                                                        (C) Feed
+                                                        consumer: LLM — live next-turn
+                                                          prior AND overflow/resume restore
                                                         shape:    plugin wire shape (≈ A)
+
+The live prior and the resume prior are the SAME transition (B → render → C):
+the next-turn prior is always rebuilt from the stored record, never the raw
+emission. A wire sentinel the model leaked mid-turn is sanitized once at save
+time (B), so it can't ride back into the prior and re-teach a runaway shape.
 
 Each transition is owned by the plugin via a method on this base class.
 Default implementations are provided for the common cases:
 
-  - ``serialize_assistant_for_history`` — parse + structured-field extraction.
-  - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``.
-  - ``normalize_assistant_for_messages`` — identity.
+  - ``serialize_assistant_for_history`` — parse + structured-field extraction;
+    sanitizes at save time (``sanitize_thought`` on thought + bare content).
+  - ``render_assistant_from_history`` — re-emit via ``self.render_full_example``;
+    builds the next-turn prior (live AND resume).
   - ``format_rules`` — delegate to the shared builder.
   - ``render_action_input`` — dict → JSON via ``json.dumps``.
   - ``provider_call_kwargs`` — empty dict.
@@ -239,8 +240,11 @@ class WireFormat(ABC):
         in a stray ``## Thought`` would render back as ``## Thought … ##
         Thought`` in the prior, teaching the model (self-reinforcement) that
         repeating the shape is fine — the root cause of format runaway. Applied
-        by ``parse`` to ``ParsedAction.thought``, which flows into serialize →
-        history → prior and the on-screen render, so one place covers all.
+        at save time in two spots: ``parse`` cleans ``ParsedAction.thought``
+        (structured turns), and ``serialize_assistant_for_history`` cleans the
+        bare-content fallback (fully-degenerate turns with no valid action).
+        Both feed history → prior (render) → on-screen, so cleaning once at
+        save covers every consumer.
 
         Default identity: a wire whose thought cannot carry its own sentinels
         (react: thought is a JSON string, escaped) opts out. prefix_md
@@ -364,21 +368,6 @@ class WireFormat(ABC):
 
     # ─── Provider / lifecycle (default) ─────────────────────────
 
-    def normalize_assistant_for_messages(self, raw: str) -> str:
-        """Rewrite a model emission for the in-memory ``messages`` buffer.
-
-        Default identity — raw IS the wire shape and leaving it in the
-        buffer reinforces the model's prior (the model's own prior teaches
-        the format we want it to keep emitting). Plugins where ``raw``
-        may drift from the canonical wire shape mid-conversation override
-        to re-render.
-
-        Pure function — does not touch ``history.jsonl``. The lossless
-        principle is preserved by recording raw text on disk; this
-        method affects only the in-memory next-turn prior.
-        """
-        return raw
-
     def provider_call_kwargs(self, capabilities) -> dict:
         """Extra kwargs for ``provider.call()``, decided from model
         ``capabilities`` — the single place where wire-shape ⨯ capability
@@ -432,6 +421,15 @@ class WireFormat(ABC):
         when parse produced no action so corrupt emissions still survive
         in the log for postmortem.
 
+        Both branches are sanitized at this single save-time point (the ABI
+        contract): the structured ``thought`` is cleaned inside ``parse``,
+        and the bare ``content`` fallback is passed through
+        :meth:`sanitize_thought` here. This is what keeps a wire sentinel the
+        model leaked from riding back into the next-turn prior (which is built
+        by ``render`` from this record) and re-teaching the runaway shape.
+        The unsanitized raw is still kept in ``raw_failures.jsonl`` for failed
+        turns, so no postmortem fidelity is lost.
+
         Routing parse through this default also means the live-dispatch
         parser and the history-write parser share the same 3-stage
         fallback — including JSON repair — so a recoverable emission
@@ -447,7 +445,16 @@ class WireFormat(ABC):
                     parsed.action_input if parsed.action_input is not None else {}
                 ),
             }
-        return {"role": "assistant", "content": raw_text}
+        # ``or ""`` (NOT ``or raw_text``): if sanitize empties the content
+        # (a fully-degenerate emission that was nothing but sentinel lines),
+        # the prior must be blank — falling back to raw would re-inject the
+        # exact sentinels we are trying to strip. Bare content that is real
+        # prose (e.g. broken-JSON NO_JSON turns with no ## headers) is left
+        # intact because sanitize returns it unchanged.
+        return {
+            "role": "assistant",
+            "content": self.sanitize_thought(raw_text) or "",
+        }
 
     def render_assistant_from_history(self, record: dict) -> dict:
         """Convert a history.jsonl assistant record into a message dict.

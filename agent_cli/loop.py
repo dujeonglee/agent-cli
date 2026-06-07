@@ -2081,25 +2081,27 @@ def _append_observation(
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
 
-    For the in-memory messages list (sent to LLM), the wire_format plugin
-    decides what the assistant turn looks like as next-turn prior. ReAct
-    returns ``llm_text`` unchanged — raw IS the wire shape. Envelope
-    formats may re-render so the model's own prior teaches the envelope
-    instead of reinforcing whatever drift happened mid-turn.
+    The next-turn prior (the in-memory ``messages`` assistant turn) is
+    ALWAYS the rendered history record — ``render_assistant_from_history``
+    of either the corrected record or the serialized one. Because the
+    record is sanitized at save time (``serialize_assistant_for_history``
+    cleans both the structured thought and the bare-content fallback via
+    ``sanitize_thought``), the prior never carries a wire sentinel the model
+    leaked mid-turn. Re-feeding such drift would strengthen mimicry (next
+    turn's prior, or a resumed session's restored prior, teaches "repeating
+    the shape / dropping the action is fine") — the format-runaway root
+    cause, and the same class of failure the NO_THOUGHT retry avoids. This
+    unifies the live prior with the resume prior (both go through render) and
+    with the action-inferred correction, which already rendered its record.
 
     ``corrected_record`` (set after an action-name correction, where
     ``infer_action`` recovered a dropped action from the action_input key
-    prefixes) replaces BOTH the in-memory prior AND the history record
-    with the corrected structured form. Re-feeding the raw drift would
-    strengthen the mimicry (next turn's prior, or a resumed session's
-    restored prior, teaches "dropping the action name is fine") — the same
-    failure the NO_THOUGHT retry avoids. The correction stays traceable
-    via the TurnRecorder (``parse_stage=3`` + ``action_inferred``), so no
-    analysis signal is lost by not keeping the raw text here.
+    prefixes) supplies the structured record directly instead of re-parsing
+    the raw. The correction stays traceable via the TurnRecorder
+    (``parse_stage=3`` + ``action_inferred``).
 
-    For history.jsonl (via ctx.add), the wire_format plugin shapes the
-    assistant record (e.g. ReAct splits ``thought / action / action_input``
-    into top-level fields) so the on-disk history retains structured form.
+    For history.jsonl (via ctx.add), the same record is stored, so the
+    on-disk history retains structured form.
 
     The observation entry stores ``tool`` (the tool that ran, or an
     empty string for format-retry interventions) and ``success`` (so
@@ -2110,13 +2112,10 @@ def _append_observation(
     by format-retry paths) still routes through ``observation()``.
     """
     if corrected_record is not None:
-        prior_content = wire_format.render_assistant_from_history(corrected_record)[
-            "content"
-        ]
         history_record = corrected_record
     else:
-        prior_content = wire_format.normalize_assistant_for_messages(llm_text)
         history_record = wire_format.serialize_assistant_for_history(llm_text)
+    prior_content = wire_format.render_assistant_from_history(history_record)["content"]
 
     messages.append({"role": "assistant", "content": prior_content})
     messages.append({"role": "user", "content": obs_msg})

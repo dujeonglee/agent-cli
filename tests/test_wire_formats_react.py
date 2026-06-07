@@ -11,9 +11,9 @@ behavior. Tests here verify three things:
 2. **Boundary correctness**: ``parse()`` returns ``ParsedAction`` with
    the same fields the underlying ``parse_react`` produced — the
    adapter doesn't lose information.
-3. **Lifecycle defaults**: ``prefill``, ``normalize_assistant_for_messages``,
-   and ``provider_call_kwargs`` return ReAct's no-op defaults so
-   provider behavior stays identical to the pre-plugin path.
+3. **Lifecycle defaults**: ``prefill``, ``provider_call_kwargs``, and
+   ``sanitize_thought`` return ReAct's no-op defaults so provider behavior
+   stays identical to the pre-plugin path.
 
 Auto-registration is verified through ``agent_cli.wire_formats.get("react")``.
 """
@@ -237,13 +237,6 @@ class TestLifecycleDefaults:
         # Empty string → loop does NOT append a trailing assistant
         # message; provider call shape is identical to pre-plugin.
         assert ReActFormat().prefill() == ""
-
-    def test_normalize_assistant_for_messages_is_identity(self):
-        raw = '{"action": "read_file"}'
-        assert ReActFormat().normalize_assistant_for_messages(raw) == raw
-        # Non-JSON garbage also passes through (loop eventually echoes
-        # it via the recovery path; the normalizer must not eat it).
-        assert ReActFormat().normalize_assistant_for_messages("garbage") == "garbage"
 
     def test_provider_call_kwargs_json_mode_follows_capability(self):
         # JSON-shaped wire: request the provider's JSON mode iff the model

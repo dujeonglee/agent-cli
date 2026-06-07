@@ -2599,8 +2599,8 @@ class TestAppendObservationHelpers:
             def serialize_assistant_for_history(self, raw_text):
                 return {"role": "assistant", "marker": "from_plugin", "raw": raw_text}
 
-            def normalize_assistant_for_messages(self, raw):
-                return raw
+            def render_assistant_from_history(self, record):
+                return {"role": "assistant", "content": record["raw"]}
 
         messages: list[dict] = []
         _append_observation(
@@ -2625,14 +2625,15 @@ class TestAppendObservationHelpers:
             "content": "OBS",
         }
 
-    def test_append_observation_routes_messages_through_wire_format(self):
-        """The in-memory messages buffer's assistant content goes through
-        wire_format.normalize_assistant_for_messages.
+    def test_append_observation_builds_prior_via_render(self):
+        """The next-turn prior (the in-memory messages assistant turn) is built
+        by ``render_assistant_from_history`` of the serialized record — NOT the
+        raw emission. Rebuilding from the (save-time sanitized) record is what
+        keeps a leaked wire sentinel out of the prior (mimicry → runaway
+        prevention) and unifies the live prior with the resume prior.
 
-        Pinning this contract catches any future regression that bypasses
-        the plugin — the legacy code wrote ``llm_text`` raw, which is
-        equivalent to identity for ReAct but breaks envelope formats that
-        rely on re-rendering the prior to suppress drift.
+        Pins against any regression that re-feeds raw llm_text into the prior
+        (the removed normalize_assistant_for_messages=identity path).
         """
         from agent_cli.loop import _append_observation
 
@@ -2640,8 +2641,11 @@ class TestAppendObservationHelpers:
             def serialize_assistant_for_history(self, raw_text):
                 return {"role": "assistant", "content": raw_text}
 
-            def normalize_assistant_for_messages(self, raw):
-                return f"<rewrapped>{raw}</rewrapped>"
+            def render_assistant_from_history(self, record):
+                return {
+                    "role": "assistant",
+                    "content": f"<rendered>{record['content']}</rendered>",
+                }
 
         messages: list[dict] = []
         _append_observation(
@@ -2655,7 +2659,7 @@ class TestAppendObservationHelpers:
         )
         assert messages[0] == {
             "role": "assistant",
-            "content": "<rewrapped>LLM_TEXT</rewrapped>",
+            "content": "<rendered>LLM_TEXT</rendered>",
         }
         assert messages[1] == {"role": "user", "content": "OBS"}
 
@@ -2676,8 +2680,8 @@ class TestAppendObservationHelpers:
             def serialize_assistant_for_history(self, raw):
                 return {"role": "assistant", "content": raw}
 
-            def normalize_assistant_for_messages(self, raw):
-                return raw
+            def render_assistant_from_history(self, record):
+                return {"role": "assistant", "content": record["content"]}
 
         _append_observation(
             [],
@@ -2713,8 +2717,8 @@ class TestAppendObservationHelpers:
             def serialize_assistant_for_history(self, raw):
                 return {"role": "assistant", "content": raw}
 
-            def normalize_assistant_for_messages(self, raw):
-                return raw
+            def render_assistant_from_history(self, record):
+                return {"role": "assistant", "content": record["content"]}
 
         _append_observation(
             [],
@@ -2745,8 +2749,8 @@ class TestAppendObservationHelpers:
             def serialize_assistant_for_history(self, raw):
                 return {"role": "assistant", "content": raw}
 
-            def normalize_assistant_for_messages(self, raw):
-                return raw
+            def render_assistant_from_history(self, record):
+                return {"role": "assistant", "content": record["content"]}
 
         _append_observation(
             [],

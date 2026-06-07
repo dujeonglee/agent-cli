@@ -8,8 +8,8 @@ the plugin system promises.
 
 Inherits from :class:`agent_cli.wire_formats.base.WireFormat` ABC. The
 history pipeline defaults (``serialize_assistant_for_history`` /
-``render_assistant_from_history``), identity hooks
-(``normalize_assistant_for_messages``, ``render_action_input``), and
+``render_assistant_from_history`` — which also build the next-turn prior),
+identity hooks (``render_action_input``, ``sanitize_thought``), and
 provider/lifecycle hooks (``prefill``, ``provider_call_kwargs``,
 ``format_rules``) all come from the base — ReAct only specifies what
 makes its wire shape unique.
@@ -381,10 +381,11 @@ class ReActFormat(WireFormat):
     Inherits the history pipeline defaults from ``WireFormat``:
     ``serialize_assistant_for_history`` runs ``parse_react`` and stores
     structured fields; ``render_assistant_from_history`` re-emits those
-    fields through ``render_full_example`` (JSON wire shape). Identity
-    defaults for ``normalize_assistant_for_messages``, ``prefill``,
-    ``provider_call_kwargs``, and ``render_action_input`` also apply —
-    ReAct doesn't need overrides for any of them.
+    fields through ``render_full_example`` (JSON wire shape) — this is also
+    how the next-turn prior is built. Identity defaults for ``prefill``,
+    ``provider_call_kwargs``, ``render_action_input``, and
+    ``sanitize_thought`` also apply (react's thought is a JSON string, so
+    there are no ``##`` sentinels to strip) — ReAct overrides none of them.
 
     The class has no constructor parameters: registration is a single
     ``register(ReActFormat())`` call at module import time (see

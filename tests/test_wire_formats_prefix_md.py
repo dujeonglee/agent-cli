@@ -426,6 +426,28 @@ class TestThoughtSanitize:
         prior = fmt.render_assistant_from_history(rec)["content"]
         assert prior.count("## Thought") == 1
 
+    def test_fully_degenerate_bare_content_blanked_in_prior(self):
+        # Full degeneration (action invalid → BARE content): serialize must
+        # sanitize at save time so the prior (render of that record) carries
+        # NO sentinel — the all-sentinel raw must NOT ride back in (the `or ""`
+        # fallback, not `or raw_text`). This is the bare-content half of the
+        # mimicry fix that `sanitize_thought` (parse/structured) alone missed.
+        fmt = PrefixMdFormat()
+        raw = "## Thought\n\n## Action\n\n## Thought\n\n## Action"
+        rec = fmt.serialize_assistant_for_history(raw)
+        assert "action" not in rec  # parse failed → bare content fallback
+        prior = fmt.render_assistant_from_history(rec)["content"]
+        assert not fmt.is_degenerate(prior)
+        assert "## Action" not in prior  # raw not re-injected
+
+    def test_bare_content_without_headers_preserved(self):
+        # Bare content that is real prose (no ## headers, e.g. a NO_JSON turn)
+        # is left intact by sanitize — only stray sentinels are stripped.
+        fmt = PrefixMdFormat()
+        raw = "I think the answer is 42 but I forgot the wire format"
+        rec = fmt.serialize_assistant_for_history(raw)
+        assert rec.get("content") == raw
+
 
 # ── Lifecycle defaults (inherited from WireFormat ABC) ────
 
