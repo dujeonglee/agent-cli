@@ -468,6 +468,13 @@ class AgentLoop:
             return False
         return self.max_turns <= 0 or self.turn < self.max_turns
 
+    def _interrupt_check(self) -> bool:
+        """Zero-arg predicate the provider polls per chunk to break a
+        mid-generation stream (Ctrl+C / web stop). Both surfaces signal
+        through ``stop_event``; the streaming loop — which owns the HTTP
+        response and runs on the reading thread — closes it itself."""
+        return bool(self.stop_event and self.stop_event.is_set())
+
     def _begin_turn(self) -> None:
         """Render turn separator."""
         render_turn_sep(self.turn)
@@ -483,6 +490,17 @@ class AgentLoop:
             return response  # ToolResult (LLM failure)
         if response == self._RETRY:
             return self._CONTINUE
+
+        # User interrupted mid-generation (Ctrl+C / web stop): the provider
+        # broke the stream. The partial text was streamed to the UI but never
+        # added to ctx, so discard it — route straight to the interrupt
+        # handler (records the interrupt notice, not the partial) instead of
+        # parsing/dispatching a half-written action. A stream that COMPLETED
+        # before the interrupt was noticed has no "interrupted" stop_reason and
+        # flows normally; the turn-boundary check then stops the next turn
+        # (graceful "finish current step" for already-done generation).
+        if getattr(response, "stop_reason", None) == "interrupted":
+            return self._on_interrupt()
 
         llm_text = response.content
 
@@ -625,6 +643,7 @@ class AgentLoop:
                 capabilities=self.capabilities,
                 on_chunk=on_chunk,
                 degeneration_check=self.wire_format.is_degenerate,
+                interrupt_check=self._interrupt_check,
                 **extra_call_kwargs,
             )
             # Stitch the prefill back onto the response so downstream

@@ -144,6 +144,43 @@ class TestAnthropicProvider:
         assert result.usage.cache_creation_input_tokens == 0
         assert result.usage.cache_read_input_tokens == 0
 
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_interrupt_check_breaks_stream(self, mock_post, caps_structured):
+        # Parity with the openai provider: a user interrupt mid-generation
+        # closes the Anthropic SSE stream, returns the partial with
+        # stop_reason="interrupted", and skips the trailing text delta.
+        sse = [
+            b'data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial "}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"answer"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"NEVER_READ"}}',
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+
+        calls = {"n": 0}
+
+        def interrupt_check():
+            calls["n"] += 1
+            return calls["n"] >= 2
+
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_structured,
+            on_chunk=lambda c: None,
+            interrupt_check=interrupt_check,
+        )
+        assert result.stop_reason == "interrupted"
+        assert result.content == "partial answer"
+        assert "NEVER_READ" not in result.content
+        r.close.assert_called_once()
+
 
 class TestOpenAIProvider:
     @patch("agent_cli.providers.openai.requests.post")
@@ -226,6 +263,71 @@ class TestOpenAIProvider:
             on_chunk=lambda c: None,
         )
         assert "## Action\nshell" in result.content
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_interrupt_check_breaks_stream(self, mock_post, caps_structured):
+        # User interrupt (Ctrl+C / web stop) mid-generation: interrupt_check
+        # flips True after the 2nd chunk → the provider closes the stream and
+        # never reads the trailing chunk. The chunk during which the interrupt
+        # is noticed is kept (already streamed to the UI); only later chunks
+        # are skipped. Content has NO '#', proving the interrupt poll is not
+        # gated on the degeneration '#' fast-path — it runs every chunk.
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"partial "}}]}',
+            b'data: {"choices":[{"delta":{"content":"answer"}}]}',
+            b'data: {"choices":[{"delta":{"content":"NEVER_READ"}}]}',
+            b"data: [DONE]",
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+
+        calls = {"n": 0}
+
+        def interrupt_check():
+            # Not interrupted on the first chunk, interrupted by the second.
+            calls["n"] += 1
+            return calls["n"] >= 2
+
+        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=lambda c: None,
+            interrupt_check=interrupt_check,
+        )
+        assert result.stop_reason == "interrupted"
+        assert result.content == "partial answer"
+        assert "NEVER_READ" not in result.content
+        r.close.assert_called_once()
+
+    @patch("agent_cli.providers.openai.requests.post")
+    def test_no_interrupt_consumes_full_stream(self, mock_post, caps_structured):
+        # interrupt_check that never fires → stream consumed fully, no close,
+        # normal stop_reason from the server (not "interrupted").
+        sse = [
+            b'data: {"choices":[{"delta":{"content":"hello "}}]}',
+            b'data: {"choices":[{"delta":{"content":"world"},"finish_reason":"stop"}]}',
+            b"data: [DONE]",
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="m",
+            capabilities=caps_structured,
+            on_chunk=lambda c: None,
+            interrupt_check=lambda: False,
+        )
+        assert result.content == "hello world"
+        assert result.stop_reason != "interrupted"
 
     @patch("agent_cli.providers.openai.requests.post")
     def test_without_structured_output(self, mock_post, caps_basic):

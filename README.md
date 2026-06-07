@@ -237,7 +237,7 @@ agent-cli chat -p openai -m gpt-4o
 
 입력 히스토리: `~/.agent-cli/chat_history`에 자동 저장됩니다. 화살표 키(위/아래)로 이전 입력을 탐색하고, 좌/우 화살표와 readline 단축키(Ctrl+A/E/W/K)로 줄 편집이 가능합니다.
 
-**Graceful Interrupt (Ctrl+C):** 에이전트 실행 중 Ctrl+C를 누르면 현재 스텝이 완료된 후 안전하게 멈춥니다. 중첩된 skill/delegate에도 즉시 전파됩니다. 대화 기록(history.jsonl)이 보존되어 다음 입력에서 바로 이어갈 수 있습니다. 즉시 종료하려면 Ctrl+C를 두 번 누르세요.
+**Graceful Interrupt (Ctrl+C):** 에이전트 실행 중 Ctrl+C를 누르면 안전하게 멈춥니다. **LLM 생성(스트리밍) 도중이면 즉시 스트림을 끊고** 그 미완성 응답은 폐기합니다 (아직 대화 기록에 들어가기 전이라 안전) — 파싱·도구 실행 없이 바로 중단됩니다. 이미 생성이 끝나 **도구가 실행 중이면** 부작용 보호를 위해 그 스텝은 끝까지 마친 뒤 멈춥니다. 중첩된 skill/delegate에도 즉시 전파됩니다 (모두 같은 `stop_event`를 공유 — 병렬 delegate worker는 각자 자기 스레드에서 자기 스트림을 닫습니다). 대화 기록(history.jsonl)이 보존되어 다음 입력에서 바로 이어갈 수 있습니다. 즉시 종료하려면 Ctrl+C를 두 번 누르세요.
 
 ```bash
 # 에이전트가 잘못된 방향으로 갈 때:
@@ -279,7 +279,7 @@ UI 기능:
 - 두 번째 탭이 접속하면 takeover 배너 + 기존 탭 자동 disconnect
 - ANSWERING 모드: `ask` 도구 호출 시 질문 텍스트가 입력창 위에 표시되어 스크롤 없이 답변
 - **토큰 현황 표시**: 상단 info bar 옆에 `ctx 5.2K/256K (2%) · ↑5.2K ↓320 · Σ↓1.8K` 형태로 매 turn 갱신 — 현재 context 사용률(%), 이번 turn 의 in/out, 세션 누적 output. 새로고침 후에도 유지(SSE snapshot). CLI(`chat`/`run`)도 동일 정보를 매 turn 한 줄로 표시(`in: … | out: … | ctx: … | Σout: …`). `usage.input_tokens`(서버 실측)를 받아 `renderer.token_usage` 로 추상화 → CLI/web 공통
-- **Send → Stop → Stopping… 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 즉시 **Stopping…**(비활성)으로 바뀌어 중복 클릭을 막고, 진행 중인 turn 을 turn 경계에서 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). turn 이 끝나면 다시 Send 로 복귀. 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@agent`(delegate) 실행 모두 Stop 으로 중단됩니다 (delegate 는 병렬 worker 가 같은 `stop_event` 를 공유).
+- **Send → Stop → Stopping… 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 즉시 **Stopping…**(비활성)으로 바뀌어 중복 클릭을 막고, 진행 중인 turn 을 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). LLM 생성 도중이면 스트림을 즉시 끊고 미완성 응답을 폐기하며, 도구 실행 중이면 그 스텝을 마친 뒤 멈춥니다. turn 이 끝나면 다시 Send 로 복귀. 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@agent`(delegate) 실행 모두 Stop 으로 중단됩니다 (delegate 는 병렬 worker 가 같은 `stop_event` 를 공유).
 
 **종료 (Ctrl+C):** 한 번의 Ctrl+C로 깨끗하게 종료됩니다. uvicorn의 lifespan shutdown 훅이 활성 SSE 연결을 정리하고, 백그라운드 worker는 `SHUTDOWN` sentinel로 깨어나 빠져나가며, 세션이 자동 저장됩니다. `agent-cli web --resume <session_id>`로 이어서 실행하면 이전 turn들이 SSE snapshot으로 재생되어 UI에 그대로 복원됩니다.
 

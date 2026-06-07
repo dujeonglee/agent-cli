@@ -76,7 +76,12 @@ class OpenAIProvider:
                 stream=True,
             )
             r.raise_for_status()
-            return self._handle_stream(r, on_chunk, kwargs.get("degeneration_check"))
+            return self._handle_stream(
+                r,
+                on_chunk,
+                kwargs.get("degeneration_check"),
+                kwargs.get("interrupt_check"),
+            )
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -84,7 +89,9 @@ class OpenAIProvider:
         r.raise_for_status()
         return self._parse_response(r.json())
 
-    def _handle_stream(self, r, on_chunk, degeneration_check=None) -> LLMResponse:
+    def _handle_stream(
+        self, r, on_chunk, degeneration_check=None, interrupt_check=None
+    ) -> LLMResponse:
         """Process SSE streaming response.
 
         ``degeneration_check`` (optional): a predicate on the accumulated
@@ -92,6 +99,17 @@ class OpenAIProvider:
         started looping the wire shape (format runaway) and the rest is just
         repetition, so generating to max_tokens would waste tokens/latency.
         The truncated text is still parsed/recorded downstream.
+
+        ``interrupt_check`` (optional): a zero-arg predicate polled once per
+        content chunk. When it returns True the user interrupted (Ctrl+C /
+        web stop) mid-generation, so the stream is closed and the partial is
+        returned with ``stop_reason="interrupted"``. The close happens here —
+        on the thread that owns ``r`` and between reads — which is why the
+        interrupt is signalled via a flag the loop sets rather than the loop
+        closing ``r`` from the signal handler / another thread (reentrant /
+        cross-thread close of a socket mid-read is unsafe). Unlike the
+        degeneration partial, the loop DISCARDS this text (the user is
+        redirecting) — it is not parsed or recorded.
         """
         import time
 
@@ -141,6 +159,13 @@ class OpenAIProvider:
                     t_first = time.perf_counter_ns()
                 content += chunk
                 on_chunk(chunk)
+                # User interrupt (Ctrl+C / web stop) — poll every chunk for
+                # immediate response. Cheap (a flag read), so no gating. The
+                # partial is discarded by the loop, not parsed.
+                if interrupt_check is not None and interrupt_check():
+                    stop_reason = "interrupted"
+                    r.close()
+                    break
                 # Early-stop format runaway. Gate on '#' so the predicate
                 # (regex) only runs when a new header could have arrived,
                 # keeping this O(headers) not O(chunks).

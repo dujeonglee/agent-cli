@@ -1635,6 +1635,85 @@ class TestGracefulInterrupt:
         rendered = [m["content"] for m in ctx.get_messages() if m["role"] == "user"]
         assert any(c.startswith("[interrupt]") for c in rendered)
 
+    def test_interrupt_check_passed_to_provider(self, caps, tmp_path):
+        """The loop hands the provider a zero-arg ``interrupt_check`` so the
+        streaming path can break mid-generation; it reflects ``stop_event``."""
+        from agent_cli.loop import AgentLoop
+        from agent_cli.context.manager import ContextManager
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=_complete("done"))]
+        ctx = ContextManager(session_dir=tmp_path)
+        loop = AgentLoop(
+            query="Q", provider=provider, capabilities=caps, model="m", ctx=ctx
+        )
+        loop.run()
+
+        check = provider.call.call_args.kwargs["interrupt_check"]
+        assert callable(check)
+        assert check() is False  # stop_event not set
+        loop.stop_event.set()
+        assert check() is True  # now it reflects the interrupt
+
+    def test_interrupt_check_shared_with_nested_loop(self, caps):
+        """Skills and delegates run as nested AgentLoops built with the
+        parent's stop_event (loop.py passes stop_event=self.stop_event to
+        _handle_run_skill and tool_delegate). One interrupt therefore breaks
+        in-flight generation in children too — including each parallel
+        delegate worker, which closes its OWN stream on its OWN thread (the
+        reason the close happens on the owning thread, not the signal
+        handler). Here the child shares the parent's event, so setting it
+        flips both _interrupt_check predicates."""
+        from agent_cli.loop import AgentLoop
+
+        parent = AgentLoop(
+            query="Q", provider=MagicMock(), capabilities=caps, model="m"
+        )
+        child = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=caps,
+            model="m",
+            stop_event=parent.stop_event,
+        )
+        assert parent._interrupt_check() is False
+        assert child._interrupt_check() is False
+        parent.stop_event.set()
+        assert parent._interrupt_check() is True
+        assert child._interrupt_check() is True  # one Ctrl+C reaches the child
+
+    def test_interrupt_midstream_discards_partial(self, caps, tmp_path):
+        """A stream broken mid-generation (provider returns
+        ``stop_reason='interrupted'``) is DISCARDED, not parsed/dispatched.
+        Even though the partial here is a well-formed ``complete`` action, the
+        loop routes to the interrupt handler instead of completing, and no
+        assistant turn is recorded — only the interrupt notice. (Without the
+        discard branch this would parse+dispatch as a successful complete.)"""
+        from agent_cli.loop import AgentLoop
+        from agent_cli.context.manager import ContextManager
+
+        partial = _complete("SHOULD_NOT_COMPLETE")
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=partial, stop_reason="interrupted")
+        ]
+        ctx = ContextManager(session_dir=tmp_path)
+        loop = AgentLoop(
+            query="Q", provider=provider, capabilities=caps, model="m", ctx=ctx
+        )
+        result = loop.run()
+
+        # Ended via interrupt, not the discarded complete.
+        assert not result.success
+        assert result.error == "Interrupted by user"
+        assert provider.call.call_count == 1
+
+        raw = ctx.get_raw_messages()
+        # Interrupt notice recorded...
+        assert [m for m in raw if m.get("tool") == "interrupt"]
+        # ...but the partial never entered ctx as an assistant turn.
+        assert [m for m in raw if m.get("role") == "assistant"] == []
+
     def test_interrupt_renders_via_render_step_not_console(self, caps, tmp_path):
         """The notice goes through render_step (CLI console / web SSE),
         not a direct console.print — the latter leaked to the web

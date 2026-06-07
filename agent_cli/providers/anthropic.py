@@ -76,7 +76,7 @@ class AnthropicProvider:
                 stream=True,
             )
             r.raise_for_status()
-            return self._handle_stream(r, on_chunk)
+            return self._handle_stream(r, on_chunk, kwargs.get("interrupt_check"))
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -84,8 +84,15 @@ class AnthropicProvider:
         r.raise_for_status()
         return self._parse_response(r.json())
 
-    def _handle_stream(self, r, on_chunk) -> LLMResponse:
-        """Process Anthropic SSE streaming response."""
+    def _handle_stream(self, r, on_chunk, interrupt_check=None) -> LLMResponse:
+        """Process Anthropic SSE streaming response.
+
+        ``interrupt_check`` (optional): a zero-arg predicate polled once per
+        text chunk. True means the user interrupted (Ctrl+C / web stop)
+        mid-generation, so the stream is closed and the partial returned with
+        ``stop_reason="interrupted"`` — the loop discards it (see the openai
+        provider's ``_handle_stream`` for the rationale on closing here rather
+        than from the signal handler / another thread)."""
         import time
 
         content = ""
@@ -130,6 +137,10 @@ class AnthropicProvider:
                                 t_first = time.perf_counter_ns()
                             content += chunk
                             on_chunk(chunk)
+                            if interrupt_check is not None and interrupt_check():
+                                stop_reason = "interrupted"
+                                r.close()
+                                break
                     elif delta_type == "thinking_delta":
                         # Extended-thinking deltas: accumulate but do
                         # not stream to on_chunk — thinking is internal
