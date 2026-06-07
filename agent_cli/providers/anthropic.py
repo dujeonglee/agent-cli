@@ -76,7 +76,12 @@ class AnthropicProvider:
                 stream=True,
             )
             r.raise_for_status()
-            return self._handle_stream(r, on_chunk, kwargs.get("interrupt_check"))
+            return self._handle_stream(
+                r,
+                on_chunk,
+                kwargs.get("degeneration_check"),
+                kwargs.get("interrupt_check"),
+            )
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -84,8 +89,18 @@ class AnthropicProvider:
         r.raise_for_status()
         return self._parse_response(r.json())
 
-    def _handle_stream(self, r, on_chunk, interrupt_check=None) -> LLMResponse:
+    def _handle_stream(
+        self, r, on_chunk, degeneration_check=None, interrupt_check=None
+    ) -> LLMResponse:
         """Process Anthropic SSE streaming response.
+
+        ``degeneration_check`` (optional): a predicate on the accumulated text
+        (= the wire format's ``is_degenerate``, so provider-independent). When
+        it returns True the model has started looping the wire shape (format
+        runaway); the stream is closed early and the truncated text returned
+        with ``stop_reason="degenerate_runaway"`` for the loop to label/recover.
+        Mirrors the openai provider so the early-break optimization is uniform
+        across providers (the loop hands both the same predicate).
 
         ``interrupt_check`` (optional): a zero-arg predicate polled once per
         text chunk. True means the user interrupted (Ctrl+C / web stop)
@@ -137,8 +152,22 @@ class AnthropicProvider:
                                 t_first = time.perf_counter_ns()
                             content += chunk
                             on_chunk(chunk)
+                            # User interrupt — poll every chunk (cheap flag
+                            # read). Partial discarded by the loop, not parsed.
                             if interrupt_check is not None and interrupt_check():
                                 stop_reason = "interrupted"
+                                r.close()
+                                break
+                            # Early-stop format runaway. Gate on '#' so the
+                            # predicate (regex) only runs when a new header
+                            # could have arrived — O(headers) not O(chunks),
+                            # same as the openai provider.
+                            if (
+                                degeneration_check is not None
+                                and "#" in chunk
+                                and degeneration_check(content)
+                            ):
+                                stop_reason = "degenerate_runaway"
                                 r.close()
                                 break
                     elif delta_type == "thinking_delta":

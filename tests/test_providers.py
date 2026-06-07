@@ -181,6 +181,37 @@ class TestAnthropicProvider:
         assert "NEVER_READ" not in result.content
         r.close.assert_called_once()
 
+    @patch("agent_cli.providers.anthropic.requests.post")
+    def test_degeneration_check_breaks_stream(self, mock_post, caps_structured):
+        # Parity with the openai provider: the early-break optimization is the
+        # wire format's is_degenerate predicate, which is provider-independent.
+        # As the streamed text accumulates into a runaway it returns True
+        # mid-stream → the Anthropic stream closes, the trailing chunk is never
+        # read, and the truncated content carries stop_reason="degenerate_runaway".
+        sse = [
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"## Thought\\n## Action\\n"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"## Thought\\n## Action\\n"}}',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"NEVER_READ"}}',
+            b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+        ]
+        r = MagicMock()
+        r.iter_lines.return_value = iter(sse)
+        r.raise_for_status.return_value = None
+        mock_post.return_value = r
+
+        provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
+        result = provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            system="sys",
+            model="claude-sonnet-4-20250514",
+            capabilities=caps_structured,
+            on_chunk=lambda c: None,
+            degeneration_check=lambda t: t.count("## Action") >= 2,
+        )
+        assert result.stop_reason == "degenerate_runaway"
+        assert "NEVER_READ" not in result.content
+        r.close.assert_called_once()
+
 
 class TestOpenAIProvider:
     @patch("agent_cli.providers.openai.requests.post")
