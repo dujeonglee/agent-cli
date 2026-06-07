@@ -1,5 +1,6 @@
 """Tests for provider adapters (mocked HTTP)."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,7 @@ from agent_cli.providers import create_provider
 from agent_cli.providers.anthropic import AnthropicProvider
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.providers.http import interruptible_lines
 from agent_cli.providers.openai import OpenAIProvider
 
 
@@ -147,12 +149,13 @@ class TestAnthropicProvider:
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_interrupt_check_breaks_stream(self, mock_post, caps_structured):
         # Parity with the openai provider: a user interrupt mid-generation
-        # closes the Anthropic SSE stream, returns the partial with
-        # stop_reason="interrupted", and skips the trailing text delta.
+        # closes the Anthropic SSE stream and skips the rest. The flag goes True
+        # once the first text delta has been received (driven off on_chunk, so
+        # independent of reader-thread timing), so the trailing delta is never
+        # read.
         sse = [
             b'data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}',
             b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial "}}',
-            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"answer"}}',
             b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"NEVER_READ"}}',
             b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
         ]
@@ -161,11 +164,7 @@ class TestAnthropicProvider:
         r.raise_for_status.return_value = None
         mock_post.return_value = r
 
-        calls = {"n": 0}
-
-        def interrupt_check():
-            calls["n"] += 1
-            return calls["n"] >= 2
+        seen: list[str] = []
 
         provider = AnthropicProvider("https://api.anthropic.com/v1", "k")
         result = provider.call(
@@ -173,11 +172,11 @@ class TestAnthropicProvider:
             system="sys",
             model="claude-sonnet-4-20250514",
             capabilities=caps_structured,
-            on_chunk=lambda c: None,
-            interrupt_check=interrupt_check,
+            on_chunk=seen.append,
+            interrupt_check=lambda: len(seen) >= 1,
         )
         assert result.stop_reason == "interrupted"
-        assert result.content == "partial answer"
+        assert result.content == "partial "
         assert "NEVER_READ" not in result.content
         r.close.assert_called_once()
 
@@ -297,15 +296,13 @@ class TestOpenAIProvider:
 
     @patch("agent_cli.providers.openai.requests.post")
     def test_interrupt_check_breaks_stream(self, mock_post, caps_structured):
-        # User interrupt (Ctrl+C / web stop) mid-generation: interrupt_check
-        # flips True after the 2nd chunk → the provider closes the stream and
-        # never reads the trailing chunk. The chunk during which the interrupt
-        # is noticed is kept (already streamed to the UI); only later chunks
-        # are skipped. Content has NO '#', proving the interrupt poll is not
-        # gated on the degeneration '#' fast-path — it runs every chunk.
+        # User interrupt (Ctrl+C / web stop) mid-generation. interruptible_lines
+        # polls interrupt_check before fetching each SSE line; here the flag goes
+        # True once the first chunk has been received (driven off on_chunk, so
+        # the assertion is independent of reader-thread timing), so the trailing
+        # line is never read. (Content has NO '#', so this isn't degeneration.)
         sse = [
             b'data: {"choices":[{"delta":{"content":"partial "}}]}',
-            b'data: {"choices":[{"delta":{"content":"answer"}}]}',
             b'data: {"choices":[{"delta":{"content":"NEVER_READ"}}]}',
             b"data: [DONE]",
         ]
@@ -314,12 +311,7 @@ class TestOpenAIProvider:
         r.raise_for_status.return_value = None
         mock_post.return_value = r
 
-        calls = {"n": 0}
-
-        def interrupt_check():
-            # Not interrupted on the first chunk, interrupted by the second.
-            calls["n"] += 1
-            return calls["n"] >= 2
+        seen: list[str] = []
 
         provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
         result = provider.call(
@@ -327,11 +319,11 @@ class TestOpenAIProvider:
             system="sys",
             model="m",
             capabilities=caps_structured,
-            on_chunk=lambda c: None,
-            interrupt_check=interrupt_check,
+            on_chunk=seen.append,
+            interrupt_check=lambda: len(seen) >= 1,
         )
         assert result.stop_reason == "interrupted"
-        assert result.content == "partial answer"
+        assert result.content == "partial "
         assert "NEVER_READ" not in result.content
         r.close.assert_called_once()
 
@@ -661,3 +653,78 @@ class TestThinkingFieldCapture:
             capabilities=caps_structured,
         )
         assert result.thinking == ""
+
+
+class TestInterruptibleLines:
+    """`interruptible_lines` keeps a streaming read interruptible even during
+    no-data gaps (TTFT, between-token stalls) by running the blocking
+    `iter_lines()` in a reader thread and polling `interrupt_check` while the
+    queue is empty."""
+
+    class _FakeResp:
+        """Minimal streaming response. `iter_lines` blocks on `gate` before the
+        first line (simulating a TTFT stall) when one is provided."""
+
+        def __init__(self, lines, gate=None, raise_after=None):
+            self._lines = lines
+            self._gate = gate
+            self._raise_after = raise_after
+            self.closed = False
+
+        def iter_lines(self):
+            if self._gate is not None:
+                # Block until released (by close() or test) — the TTFT window.
+                self._gate.wait(2.0)
+            for i, ln in enumerate(self._lines):
+                if self.closed:
+                    return
+                yield ln
+                if self._raise_after is not None and i == self._raise_after:
+                    raise ConnectionError("boom")
+
+        def close(self):
+            self.closed = True
+            if self._gate is not None:
+                self._gate.set()
+
+    def test_no_check_is_passthrough(self):
+        """Without interrupt_check: plain iteration, no thread."""
+        r = self._FakeResp([b"a", b"b"])
+        assert list(interruptible_lines(r, None)) == [b"a", b"b"]
+
+    def test_yields_all_when_never_interrupted(self):
+        r = self._FakeResp([b"a", b"b", b"c"])
+        out = list(interruptible_lines(r, lambda: False, poll_interval=0.01))
+        assert out == [b"a", b"b", b"c"]
+
+    def test_breaks_during_ttft_stall_before_first_line(self):
+        """The reader blocks before any line arrives; an interrupt during that
+        stall is caught on a poll, the response is closed, and nothing is
+        yielded — the case a per-chunk check could never reach."""
+        gate = threading.Event()
+        r = self._FakeResp([b"late"], gate=gate)
+        calls = {"n": 0}
+
+        def interrupt_check():
+            # False on the first poll, True on the next — exercising the
+            # empty-queue poll path (no line ever arrived).
+            calls["n"] += 1
+            return calls["n"] >= 2
+
+        out = list(interruptible_lines(r, interrupt_check, poll_interval=0.01))
+        assert out == []
+        assert r.closed is True
+
+    def test_interrupt_before_first_poll_yields_nothing(self):
+        """Flag already set when entering: returns immediately, closes."""
+        r = self._FakeResp([b"a", b"b"])
+        out = list(interruptible_lines(r, lambda: True, poll_interval=0.01))
+        assert out == []
+        assert r.closed is True
+
+    def test_propagates_stream_error(self):
+        """A genuine error from iter_lines surfaces to the caller (not
+        swallowed) — only our own close()-on-interrupt is silent."""
+        r = self._FakeResp([b"a"], raise_after=0)
+        with pytest.raises(ConnectionError):
+            list(interruptible_lines(r, lambda: False, poll_interval=0.01))

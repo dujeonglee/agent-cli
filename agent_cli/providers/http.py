@@ -46,8 +46,10 @@ Config (env)
 from __future__ import annotations
 
 import os
+import queue
+import threading
 import time
-from typing import Callable
+from typing import Callable, Iterator
 
 import requests
 
@@ -56,6 +58,14 @@ from agent_cli.verbose import debug_log
 
 _DEFAULT_ATTEMPTS = 3
 _DEFAULT_DELAY = 1.0
+
+# Poll cadence for interrupt during a no-data stream gap (TTFT, between-token
+# stalls). Sub-second so a user interrupt feels immediate; not so tight it
+# busy-loops.
+_INTERRUPT_POLL_SECONDS = 0.2
+
+# Sentinel marking the reader thread has finished (normally or via error).
+_STREAM_DONE = object()
 
 # Timeout subsumes ConnectTimeout and ReadTimeout. ConnectionError covers
 # TCP-level failures (refused, reset) before any HTTP status arrives.
@@ -143,3 +153,62 @@ def post_with_retry(
     debug_log(f"[retry] exhausted {attempts} attempts on {url}: {last_exc}")
     assert last_exc is not None
     raise last_exc
+
+
+def interruptible_lines(
+    r: requests.Response,
+    interrupt_check: Callable[[], bool] | None = None,
+    poll_interval: float = _INTERRUPT_POLL_SECONDS,
+) -> Iterator[bytes]:
+    """Yield SSE lines from a streaming response, but stay interruptible even
+    when no data is arriving.
+
+    ``r.iter_lines()`` blocks waiting for the next byte, so polling a flag
+    "per chunk" never fires during a no-data gap — most importantly the TTFT
+    window before the first generated token (a large prompt can stall here for
+    seconds). Setting a socket read timeout doesn't help: ``requests`` treats a
+    read timeout as terminal and the stream can't be resumed.
+
+    So the blocking read runs in a daemon reader thread that pushes lines to a
+    queue; this generator polls the queue with ``poll_interval`` and checks
+    ``interrupt_check`` on each empty poll (and once up front). On interrupt it
+    closes ``r`` — which unblocks the reader's ``recv`` from the side that owns
+    the read — and stops yielding; the caller detects the interrupt by
+    re-checking ``interrupt_check()`` after the loop (the flag is still set).
+
+    Without ``interrupt_check`` this is a plain pass-through over
+    ``iter_lines()`` (no thread). Genuine stream errors raised by
+    ``iter_lines`` are propagated; the error caused by our own ``r.close()`` on
+    interrupt is not (we return first).
+    """
+    if interrupt_check is None:
+        yield from r.iter_lines()
+        return
+
+    q: queue.Queue = queue.Queue()
+    err: list[BaseException] = []
+
+    def _reader() -> None:
+        try:
+            for line in r.iter_lines():
+                q.put(line)
+        except BaseException as e:  # incl. the error from our own r.close()
+            err.append(e)
+        finally:
+            q.put(_STREAM_DONE)
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    while True:
+        if interrupt_check():
+            r.close()  # abort the reader's blocked recv
+            return
+        try:
+            item = q.get(timeout=poll_interval)
+        except queue.Empty:
+            continue
+        if item is _STREAM_DONE:
+            if err:
+                raise err[0]
+            return
+        yield item

@@ -10,7 +10,7 @@ from agent_cli.constants import LLM_API_TIMEOUT
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.providers.http import post_with_retry
+from agent_cli.providers.http import interruptible_lines, post_with_retry
 
 
 class AnthropicProvider:
@@ -102,12 +102,12 @@ class AnthropicProvider:
         Mirrors the openai provider so the early-break optimization is uniform
         across providers (the loop hands both the same predicate).
 
-        ``interrupt_check`` (optional): a zero-arg predicate polled once per
-        text chunk. True means the user interrupted (Ctrl+C / web stop)
-        mid-generation, so the stream is closed and the partial returned with
-        ``stop_reason="interrupted"`` — the loop discards it (see the openai
-        provider's ``_handle_stream`` for the rationale on closing here rather
-        than from the signal handler / another thread)."""
+        ``interrupt_check`` (optional): a zero-arg predicate for user interrupt
+        (Ctrl+C / web stop). The line read goes through ``interruptible_lines``,
+        which polls this during no-data gaps — including the TTFT window before
+        the first token — so the interrupt isn't stuck behind a blocking read.
+        When it fires the stream is closed and the partial returned with
+        ``stop_reason="interrupted"`` — the loop discards it (not parsed)."""
         import time
 
         content = ""
@@ -120,7 +120,10 @@ class AnthropicProvider:
         t0 = time.perf_counter_ns()
         t_first = 0
 
-        for line in r.iter_lines():
+        # interruptible_lines polls interrupt_check during no-data gaps (TTFT,
+        # stalls) so a user interrupt breaks even before the first token; the
+        # interrupt is detected by re-checking interrupt_check() after the loop.
+        for line in interruptible_lines(r, interrupt_check):
             if not line:
                 continue
             line_str = line.decode("utf-8") if isinstance(line, bytes) else line
@@ -152,12 +155,6 @@ class AnthropicProvider:
                                 t_first = time.perf_counter_ns()
                             content += chunk
                             on_chunk(chunk)
-                            # User interrupt — poll every chunk (cheap flag
-                            # read). Partial discarded by the loop, not parsed.
-                            if interrupt_check is not None and interrupt_check():
-                                stop_reason = "interrupted"
-                                r.close()
-                                break
                             # Early-stop format runaway. Gate on '#' so the
                             # predicate (regex) only runs when a new header
                             # could have arrived — O(headers) not O(chunks),
@@ -180,6 +177,11 @@ class AnthropicProvider:
                     stop_reason = data.get("delta", {}).get("stop_reason")
                     usage = data.get("usage", {})
                     output_tokens = usage.get("output_tokens", output_tokens)
+
+        # Reader stopped early because the user interrupted; flag still set, so
+        # label the (discarded) partial accordingly.
+        if interrupt_check is not None and interrupt_check():
+            stop_reason = "interrupted"
 
         t_end = time.perf_counter_ns()
         ttft_ns = (t_first - t0) if t_first else 0

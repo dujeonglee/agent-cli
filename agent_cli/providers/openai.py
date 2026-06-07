@@ -13,7 +13,7 @@ from agent_cli.constants import LLM_API_TIMEOUT
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.providers.http import post_with_retry
+from agent_cli.providers.http import interruptible_lines, post_with_retry
 
 
 class OpenAIProvider:
@@ -100,16 +100,13 @@ class OpenAIProvider:
         repetition, so generating to max_tokens would waste tokens/latency.
         The truncated text is still parsed/recorded downstream.
 
-        ``interrupt_check`` (optional): a zero-arg predicate polled once per
-        content chunk. When it returns True the user interrupted (Ctrl+C /
-        web stop) mid-generation, so the stream is closed and the partial is
-        returned with ``stop_reason="interrupted"``. The close happens here —
-        on the thread that owns ``r`` and between reads — which is why the
-        interrupt is signalled via a flag the loop sets rather than the loop
-        closing ``r`` from the signal handler / another thread (reentrant /
-        cross-thread close of a socket mid-read is unsafe). Unlike the
-        degeneration partial, the loop DISCARDS this text (the user is
-        redirecting) — it is not parsed or recorded.
+        ``interrupt_check`` (optional): a zero-arg predicate for user interrupt
+        (Ctrl+C / web stop). The line read goes through ``interruptible_lines``,
+        which polls this during no-data gaps — including the TTFT window before
+        the first token — so the interrupt isn't stuck behind a blocking read.
+        When it fires the stream is closed and the partial returned with
+        ``stop_reason="interrupted"``; unlike the degeneration partial, the
+        loop DISCARDS this text (the user is redirecting) — not parsed/recorded.
         """
         import time
 
@@ -120,7 +117,13 @@ class OpenAIProvider:
         t0 = time.perf_counter_ns()
         t_first = 0
 
-        for line in r.iter_lines():
+        # interruptible_lines runs the blocking read in a reader thread and
+        # polls interrupt_check during no-data gaps (TTFT, stalls), so a user
+        # interrupt breaks even before the first token. Per-line is the SSE
+        # equivalent of per-chunk, so no separate in-loop interrupt check is
+        # needed; the interrupt is detected by re-checking interrupt_check()
+        # after the loop (the partial is discarded by the loop, not parsed).
+        for line in interruptible_lines(r, interrupt_check):
             if not line:
                 continue
             line_str = line.decode("utf-8") if isinstance(line, bytes) else line
@@ -159,13 +162,6 @@ class OpenAIProvider:
                     t_first = time.perf_counter_ns()
                 content += chunk
                 on_chunk(chunk)
-                # User interrupt (Ctrl+C / web stop) — poll every chunk for
-                # immediate response. Cheap (a flag read), so no gating. The
-                # partial is discarded by the loop, not parsed.
-                if interrupt_check is not None and interrupt_check():
-                    stop_reason = "interrupted"
-                    r.close()
-                    break
                 # Early-stop format runaway. Gate on '#' so the predicate
                 # (regex) only runs when a new header could have arrived,
                 # keeping this O(headers) not O(chunks).
@@ -181,6 +177,11 @@ class OpenAIProvider:
             finish = choices[0].get("finish_reason")
             if finish:
                 stop_reason = finish
+
+        # The reader thread stopped early because the user interrupted; the
+        # flag is still set, so label the (discarded) partial accordingly.
+        if interrupt_check is not None and interrupt_check():
+            stop_reason = "interrupted"
 
         t_end = time.perf_counter_ns()
         ttft_ns = (t_first - t0) if t_first else 0
