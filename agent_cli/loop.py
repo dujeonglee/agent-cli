@@ -722,10 +722,10 @@ class AgentLoop:
         primitives) before returning, and the trailing finally writes
         the record.
         """
-        parsed = self.wire_format.parse(llm_text)
+        turn = self.wire_format.parse_turn(llm_text)
 
-        # Recover a dropped action name (parse_stage 3): the action slot is
-        # empty but action_input keys are namespaced with a single tool's
+        # Recover dropped action names (parse_stage 3): an op's action slot is
+        # empty but its action_input keys are namespaced with a single tool's
         # ``{name}_`` prefix → infer that tool. Ambiguous/none leaves it to
         # the NO_ACTION recovery below. A successful inference is flagged so
         # the observation step rewrites the prior + history to the corrected
@@ -739,20 +739,18 @@ class AgentLoop:
         # preserved action_input, so we infer it. Mirror of how
         # ``thought_required`` gates the NO_THOUGHT recovery.
         action_inferred = False
-        if (
-            not parsed.action
-            and not self.wire_format.action_required
-            and isinstance(parsed.action_input, dict)
-        ):
-            inferred = infer_action(parsed.action_input)
-            if inferred:
-                parsed.action = inferred
-                action_inferred = True
+        if not self.wire_format.action_required:
+            for op in turn.ops:
+                if not op.action and isinstance(op.action_input, dict):
+                    inferred = infer_action(op.action_input)
+                    if inferred:
+                        op.action = inferred
+                        action_inferred = True
 
         # Classify outcome early; the dispatch body may mutate this
         # dict to reflect a B1 (action loop) detection that is only
         # known after we see the chosen action.
-        if parsed.parse_stage == 0:
+        if turn.parse_stage == 0:
             # Split A1 into two sub-modes — empty/whitespace-only output
             # vs non-empty content that drifted from JSON. The recovery
             # path is identical (RETRY_HINT_NO_JSON fallback in both),
@@ -772,7 +770,12 @@ class AgentLoop:
             # cause — the dispatch below still falls through to NO_ACTION
             # recovery when the action is unusable.
             initial_signal = FAILURE_DEGENERATE
-        elif not parsed.action:
+        elif turn.terminal:
+            # A multi-op format's thought-only completion turn — a valid
+            # ending, not a missing action. Single-action formats never set
+            # this (they complete via a `complete` op).
+            initial_signal = None
+        elif not any(op.action for op in turn.ops):
             initial_signal = FAILURE_NO_ACTION
         else:
             initial_signal = None
@@ -783,24 +786,27 @@ class AgentLoop:
         }
 
         try:
-            return self._dispatch_text_path(llm_text, parsed, outcome)
+            return self._dispatch_turn(llm_text, turn, outcome)
         finally:
             self.recorder.record(
                 model=self.model,
-                parse_stage=parsed.parse_stage,
+                parse_stage=turn.parse_stage,
                 failure_signal=outcome["failure_signal"],
                 primitives_applied=outcome["primitives"],
                 raw=llm_text,
             )
 
-    def _dispatch_text_path(self, llm_text: str, parsed, outcome: dict):
-        """Body of the text-parsing path. Returns a ToolResult or a sentinel.
+    def _dispatch_turn(self, llm_text: str, turn, outcome: dict):
+        """Turn-level dispatch: guards, then the ops in array order.
 
-        ``outcome`` is a mutable dict owned by the caller. Branches
-        that fire an Intervention update ``outcome["failure_signal"]``
-        and/or ``outcome["primitives"]`` before returning so the
-        caller's ``finally`` block records what happened.
+        ``turn`` is a ``ParsedTurn``. Single-action formats produce 0 or 1
+        ops (the default ``parse_turn`` wrapper), so for them this reproduces
+        the pre-multi-op behaviour exactly. ``outcome`` is a mutable dict
+        owned by the caller (``_handle_text_path``); branches that fire an
+        Intervention update it before returning so the trailing finally
+        records what happened.
         """
+        first_action = next((op.action for op in turn.ops if op.action), None)
 
         # A7 NO_THOUGHT — action present but thought missing. Retry
         # before dispatch so the omission does not enter the transcript
@@ -808,14 +814,12 @@ class AgentLoop:
         # the raw response is mirrored back on the next turn and
         # crowds out the system prompt's Format Rule 1).
         if self.wire_format.thought_required and detect_thought_missing(
-            parsed.thought, parsed.action
+            turn.thought, first_action
         ):
             # ``thought_required`` is False on plugins where the thought
             # is preceding free text rather than a schema field — for
             # those, missing thought is not a drift signal.
-            _debug_log(
-                f"NO_THOUGHT: action={parsed.action!r}, thought={parsed.thought!r}"
-            )
+            _debug_log(f"NO_THOUGHT: action={first_action!r}, thought={turn.thought!r}")
             # ReAct-only: format_no_thought_retry lives on the plugin,
             # not in recovery/builders, because it has no meaning when
             # ``thought_required`` is False (envelope plugins).
@@ -838,30 +842,77 @@ class AgentLoop:
             return self._CONTINUE
 
         # 6. Thought
-        if parsed.thought:
-            render_step("thought", parsed.thought, self.turn)
+        if turn.thought:
+            render_step("thought", turn.thought, self.turn)
 
+        # Terminal turn (multi-op formats): a thought-only emission means the
+        # task is done — the thought is the final answer. Single-action
+        # formats never set this (they complete via a `complete` op).
+        # NOTE: skeleton — the ready_for_review termination gate lands with
+        # the multi-op plugin step.
+        if turn.terminal:
+            return self._finish_terminal_turn(turn)
+
+        # No usable ops at all (parse failure / no action recovered) —
+        # straight to recovery.
+        if not turn.ops:
+            return self._recover_unparsed(llm_text, turn, outcome)
+
+        # Dispatch ops in array order. Single-action formats have exactly
+        # one op. NOTE: every per-op branch currently returns (one op per
+        # turn); N-op accumulation + combined observation lands next step.
+        for op in turn.ops:
+            return self._dispatch_op(llm_text, turn, op, outcome)
+        return self._CONTINUE  # unreachable; keeps the type checker honest
+
+    def _finish_terminal_turn(self, turn):
+        """Finish on a thought-only terminal turn — the thought is the answer.
+
+        Skeleton for the multi-op path (single-action formats never produce
+        ``terminal=True``); the ready_for_review termination gate replaces
+        this in the plugin step.
+        """
+        answer = (turn.thought or "").strip() or "(done)"
+        if self.ctx:
+            self.ctx.add(
+                {
+                    "role": "assistant",
+                    "thought": turn.thought or "",
+                    "action": "complete",
+                    "action_input": {"result": answer},
+                }
+            )
+        render_step("complete", answer, self.turn)
+        return ToolResult(True, output=answer)
+
+    def _dispatch_op(self, llm_text: str, turn, op, outcome: dict):
+        """Dispatch ONE op of a turn. Returns a ToolResult or a sentinel.
+
+        Carries the pre-multi-op per-action body unchanged: special actions
+        (complete / ask / run_skill / ready_for_review), then B1/A4/A5 guards
+        and tool execution, then the no-action fall-through recovery.
+        """
         # 7. Complete tool (text parsing path)
-        _debug_log(f"PARSED iter={self.turn} action={parsed.action}")
-        if parsed.action == "complete":
-            if isinstance(parsed.action_input, dict):
-                raw = parsed.action_input.get("result")
+        _debug_log(f"PARSED iter={self.turn} action={op.action}")
+        if op.action == "complete":
+            if isinstance(op.action_input, dict):
+                raw = op.action_input.get("result")
                 answer = (
                     str(raw)
                     if raw
                     else "(Completed without result — model may lack capability for this task)"
                 )
-            elif isinstance(parsed.action_input, str):
-                raw = parsed.action_input
+            elif isinstance(op.action_input, str):
+                raw = op.action_input
                 answer = (
-                    parsed.action_input
+                    op.action_input
                     or "(Completed without result — model may lack capability for this task)"
                 )
             else:
                 raw = None
                 answer = (
-                    str(parsed.action_input)
-                    if parsed.action_input
+                    str(op.action_input)
+                    if op.action_input
                     else "(Completed without result — model may lack capability for this task)"
                 )
 
@@ -869,7 +920,7 @@ class AgentLoop:
             # observability AND we unwrap one level so the user-facing
             # answer doesn't carry a literal ``{"result": "..."}`` prefix.
             # Single-level only (recursive nesting indicates a different
-            # bug worth surfacing). ``raw`` may be from ``parsed.action_
+            # bug worth surfacing). ``raw`` may be from ``op.action_
             # input`` (dict path) or the input itself (str path); both
             # surface as the same artifact, so we re-derive ``answer``
             # from the unwrapped value.
@@ -883,7 +934,7 @@ class AgentLoop:
                 self.ctx.add(
                     {
                         "role": "assistant",
-                        "thought": parsed.thought or "",
+                        "thought": turn.thought or "",
                         "action": "complete",
                         "action_input": {"result": answer},
                     }
@@ -893,13 +944,13 @@ class AgentLoop:
             return ToolResult(True, output=answer)
 
         # 9. Detect echo-as-final-answer (common small model pattern)
-        echo_answer = _try_echo_as_final(parsed.action, parsed.action_input)
+        echo_answer = _try_echo_as_final(op.action, op.action_input)
         if echo_answer:
             if self.ctx:
                 self.ctx.add(
                     {
                         "role": "assistant",
-                        "thought": parsed.thought or "",
+                        "thought": turn.thought or "",
                         "action": "complete",
                         "action_input": {"result": echo_answer},
                     }
@@ -909,8 +960,8 @@ class AgentLoop:
             return ToolResult(True, output=echo_answer)
 
         # 10. Ask tool -- prompt user for input (text parsing path)
-        if parsed.action == "ask":
-            questions = _extract_questions(parsed.action_input)
+        if op.action == "ask":
+            questions = _extract_questions(op.action_input)
             if questions:
                 # Emit the action step so out-of-band renderers (web)
                 # replace their streaming card with a structured
@@ -923,9 +974,9 @@ class AgentLoop:
                     "",
                     self.turn,
                     tool_name="ask",
-                    tool_input=json.dumps(parsed.action_input, ensure_ascii=False)
-                    if isinstance(parsed.action_input, dict)
-                    else str(parsed.action_input),
+                    tool_input=json.dumps(op.action_input, ensure_ascii=False)
+                    if isinstance(op.action_input, dict)
+                    else str(op.action_input),
                 )
                 user_response = _handle_ask(questions)
                 obs_msg = f"Observation: User responded:\n{user_response}"
@@ -941,10 +992,8 @@ class AgentLoop:
                 return self._CONTINUE
 
         # 10b. run_skill -- intercept at loop level (text parsing path)
-        if parsed.action == "run_skill":
-            skill_input = (
-                parsed.action_input if isinstance(parsed.action_input, dict) else {}
-            )
+        if op.action == "run_skill":
+            skill_input = op.action_input if isinstance(op.action_input, dict) else {}
             # Same reason as ``ask`` above — close out the streaming
             # card before the (often long-running) skill subprocess
             # starts emitting its own events.
@@ -996,10 +1045,10 @@ class AgentLoop:
             return self._CONTINUE
 
         # 10c. ready_for_review -- return original query for self-check (text path)
-        if parsed.action == "ready_for_review":
+        if op.action == "ready_for_review":
             summary = ""
-            if isinstance(parsed.action_input, dict):
-                summary = parsed.action_input.get("summary", "")
+            if isinstance(op.action_input, dict):
+                summary = op.action_input.get("summary", "")
             # Same streaming-card concern as ``ask`` / ``run_skill``.
             # Skill-mode skips the observation render below, so we
             # only emit the action step at top level too — keeps the
@@ -1010,9 +1059,9 @@ class AgentLoop:
                     "",
                     self.turn,
                     tool_name="ready_for_review",
-                    tool_input=json.dumps(parsed.action_input, ensure_ascii=False)
-                    if isinstance(parsed.action_input, dict)
-                    else str(parsed.action_input or {}),
+                    tool_input=json.dumps(op.action_input, ensure_ascii=False)
+                    if isinstance(op.action_input, dict)
+                    else str(op.action_input or {}),
                 )
             obs = _build_review_observation(self.query, summary, ctx=self.ctx)
             if not self.skill_name:
@@ -1036,14 +1085,14 @@ class AgentLoop:
             return self._CONTINUE
 
         # 11. Tool execution (text parsing path)
-        if parsed.action:
-            tool_name = parsed.action
-            tool_input = parsed.action_input or {}
+        if op.action:
+            tool_name = op.action
+            tool_input = op.action_input or {}
 
             # Truncation guard: if JSON was repaired (truncated response),
             # strip the last element from edit_file's lines arrays
             truncation_warning = ""
-            if parsed.truncated and tool_name == "edit_file":
+            if op.truncated and tool_name == "edit_file":
                 tool_input, truncation_warning = _sanitize_truncated_edit(tool_input)
 
             # B1 (action loop) detection — observe BEFORE dispatch so a
@@ -1201,9 +1250,9 @@ class AgentLoop:
             if outcome.get("action_inferred"):
                 corrected = {
                     "role": "assistant",
-                    "thought": parsed.thought or "",
-                    "action": parsed.action,
-                    "action_input": parsed.action_input,
+                    "thought": turn.thought or "",
+                    "action": op.action,
+                    "action_input": op.action_input,
                 }
             _append_observation(
                 self.messages,
@@ -1218,15 +1267,21 @@ class AgentLoop:
             )
             return self._CONTINUE
 
-        # 12. Missing action or parse failure -- retry with appropriate hint.
-        # Echo the model's failed output back as failure grounding (content
-        # shows structural drift: YAML-style keys, function-call syntax,
-        # bare prose). Thinking-channel echo is excluded from v1 — see
-        # docs/robust-harness/DESIGN.md §2.2.
-        if parsed.parse_stage > 0:
-            # JSON parsed OK but no action -- LLM forgot to include action
+        # No usable action on this op — fall through to recovery.
+        return self._recover_unparsed(llm_text, turn, outcome)
+
+    def _recover_unparsed(self, llm_text: str, turn, outcome: dict):
+        """Missing action or parse failure — retry with the appropriate hint.
+
+        Echoes the model's failed output back as failure grounding (content
+        shows structural drift: YAML-style keys, function-call syntax,
+        bare prose). Thinking-channel echo is excluded from v1 — see
+        docs/robust-harness/DESIGN.md §2.2.
+        """
+        if turn.parse_stage > 0:
+            # Parsed OK but no action -- LLM forgot to include the action
             _debug_log(
-                f"No action in parsed JSON (stage={parsed.parse_stage}):\n{llm_text}"
+                f"No action in parsed JSON (stage={turn.parse_stage}):\n{llm_text}"
             )
             intervention = format_no_action_retry(
                 prior_content=llm_text, wire_format=self.wire_format
@@ -1234,7 +1289,7 @@ class AgentLoop:
             recovery_reason = "no action"
         else:
             # JSON parse failed entirely
-            _debug_log(f"JSON parse failed (stage={parsed.parse_stage}):\n{llm_text}")
+            _debug_log(f"JSON parse failed (stage={turn.parse_stage}):\n{llm_text}")
             intervention = format_no_json_retry(
                 prior_content=llm_text, wire_format=self.wire_format
             )
@@ -1258,7 +1313,7 @@ class AgentLoop:
     def _dispatch_tool_with_hooks(self, tool_name: str, tool_input):
         """Orchestrator: pre-hooks → invoke → guards → post-hooks → record.
 
-        Preconditions (enforced by ``_dispatch_text_path``):
+        Preconditions (enforced by ``_dispatch_op``):
             - ``tool_name`` is a valid name in ``self.tools_list`` (A4
               already checked).
             - ``tool_input`` matches the tool's schema (A5 already checked).
@@ -1462,7 +1517,7 @@ class AgentLoop:
     def _invoke_regular(self, tool_name: str, tool_input) -> ToolResult:
         """Dispatch a non-delegate tool via the registry.
 
-        Recovery layer (A4/A5 detectors in ``_dispatch_text_path``) has
+        Recovery layer (A4/A5 detectors in ``_dispatch_op``) has
         already validated tool_name + action_input. The leaf primitive
         ``_execute_tool`` trusts that contract and would raise KeyError
         on a missing name.
