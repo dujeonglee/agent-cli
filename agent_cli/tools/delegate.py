@@ -809,6 +809,17 @@ class DelegateTool(Tool):
         tasks = self.strip_prefix(action_input).get("tasks") or []
         return tasks[0].get("agent", "") if tasks and isinstance(tasks[0], dict) else ""
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        # Multi-op formats emit one task per op ({"task", "context"?, ...});
+        # wrap it into the canonical one-element tasks batch (several delegate
+        # ops in a turn = parallel). Already-batch input passes through.
+        if not isinstance(flat, dict):
+            return flat
+        std = self.strip_prefix(flat)
+        if "tasks" in std:
+            return self.add_prefix(flat)
+        return {f"{self.name}_tasks": [std]}
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         # delegate is intercepted by the loop (it needs parent context,
         # provider, capabilities) before execute_tool — this placeholder

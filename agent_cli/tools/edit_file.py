@@ -347,5 +347,20 @@ class EditFileTool(Tool):
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        # Multi-op formats emit one edit per op ({"path", "op", "pos",
+        # "end"?, "lines"?}); wrap the edit fields into a one-element edits
+        # batch alongside the path. Already-batch input passes through.
+        if not isinstance(flat, dict):
+            return flat
+        std = self.strip_prefix(flat)
+        if "edits" in std:
+            return self.add_prefix(flat)
+        edit = {k: v for k, v in std.items() if k != "path"}
+        wrapped: dict = {f"{self.name}_path": std.get("path")}
+        if edit:
+            wrapped[f"{self.name}_edits"] = [edit]
+        return wrapped
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_edit_file(args)

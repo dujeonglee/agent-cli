@@ -808,5 +808,16 @@ class CodeIndexTool(Tool):
             return f"{q.get('mode', '')} {q.get('path', '')}".strip()
         return ""
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        # Multi-op formats emit one query per op ({"mode", ...}); wrap it into
+        # the canonical one-element queries batch. Already-batch input passes
+        # through.
+        if not isinstance(flat, dict):
+            return flat
+        std = self.strip_prefix(flat)
+        if "queries" in std:
+            return self.add_prefix(flat)
+        return {f"{self.name}_queries": [std]}
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_code_index(args)

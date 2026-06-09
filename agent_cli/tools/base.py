@@ -90,6 +90,26 @@ class Tool(ABC):
         forwarded uniformly; tools that do not need it ignore it."""
         return self._run(self.strip_prefix(args), session_dir=session_dir)
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        """Convert a multi-op format's flat single-target op into this tool's
+        canonical (wire-key-prefixed) input.
+
+        Multi-op formats emit ONE target per op with plain standard keys
+        (``{"path": "x"}``) — the turn's op array is the batch mechanism, so
+        their ops never carry the per-tool batch wrapper. Batch-shaped tools
+        override this to re-wrap (``{"read_file_reads": [{"path": "x"}]}``)
+        so the existing validate → strip → run pipeline applies unchanged.
+
+        Default: prefix the keys (no structural change) — right for tools
+        whose canonical input is already flat (shell, write_file, ask, ...).
+        Overrides must be tolerant of an already-canonical input (idempotent)
+        so a model that emits the batch shape anyway still works. Only called
+        on the multi-op dispatch path; single-action formats bypass it.
+        """
+        if not isinstance(flat, dict):
+            return flat
+        return self.add_prefix(flat)
+
     def touched_paths(self, action_input: dict) -> list[str]:
         """File-list entries this action contributes during compaction.
 

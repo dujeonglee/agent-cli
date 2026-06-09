@@ -341,5 +341,16 @@ class ReadFileTool(Tool):
         ]
         return paths[0] if len(paths) == 1 else (f"{len(paths)} files" if paths else "")
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        # Multi-op formats emit one file per op ({"path": ..., mode keys});
+        # wrap it into the canonical one-element reads batch. Already-batch
+        # input (a model emitting `reads` anyway) passes through.
+        if not isinstance(flat, dict):
+            return flat
+        std = self.strip_prefix(flat)
+        if "reads" in std:
+            return self.add_prefix(flat)
+        return {f"{self.name}_reads": [std]}
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_read_file(args)

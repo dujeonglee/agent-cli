@@ -858,12 +858,65 @@ class AgentLoop:
         if not turn.ops:
             return self._recover_unparsed(llm_text, turn, outcome)
 
-        # Dispatch ops in array order. Single-action formats have exactly
-        # one op. NOTE: every per-op branch currently returns (one op per
-        # turn); N-op accumulation + combined observation lands next step.
+        # Dispatch ops in array order (sequential — observations append in
+        # order). Single-action formats have exactly ONE op and take the
+        # legacy path (accumulate=None → _dispatch_op appends its own
+        # observation and returns, byte-identical to pre-multi-op).
+        #
+        # N ops (multi-op formats): regular tool ops execute and ACCUMULATE
+        # into one combined observation (run-all; any-fail ⇒ the combined
+        # observation is marked failed so the model retries the failed op).
+        # A turn-ending branch (complete / ask / run_skill / ready_for_review
+        # / guard intervention / recovery) flushes whatever already ran first
+        # so executed work isn't lost, then returns.
+        if len(turn.ops) == 1:
+            return self._dispatch_op(llm_text, turn, turn.ops[0], outcome)
+
+        results: list[dict] = []
         for op in turn.ops:
-            return self._dispatch_op(llm_text, turn, op, outcome)
-        return self._CONTINUE  # unreachable; keeps the type checker honest
+            # Turn-ending special actions: flush accumulated results BEFORE
+            # the branch runs so its observation lands after the work done
+            # so far (chronological order for the model).
+            if op.action in ("complete", "ask", "run_skill", "ready_for_review"):
+                self._flush_op_results(llm_text, results)
+                results = []
+                return self._dispatch_op(llm_text, turn, op, outcome)
+            r = self._dispatch_op(llm_text, turn, op, outcome, accumulate=results)
+            if r is not None:
+                # Guard/recovery fired inside the op (B1/A4/A5/no-action):
+                # its intervention observation is already appended; flush the
+                # accumulated work after it (rare mid-array edge — order is
+                # intervention-first, results still preserved).
+                self._flush_op_results(llm_text, results)
+                return r
+        self._flush_op_results(llm_text, results)
+        return self._CONTINUE
+
+    def _flush_op_results(self, llm_text: str, results: list[dict]) -> None:
+        """Append ONE combined observation for accumulated op results.
+
+        Per-op header lines (``[i/N] tool — OK/FAILED``) frame each op's
+        output; turn success = all ops succeeded (any-fail ⇒ failed so the
+        model retries the failed op next turn). No-op when nothing ran.
+        """
+        if not results:
+            return
+        n = len(results)
+        parts = []
+        for i, r in enumerate(results, start=1):
+            status = "OK" if r["success"] else "FAILED"
+            parts.append(f"[{i}/{n}] {r['tool_name']} — {status}\n{r['observation']}")
+        combined = "\n\n".join(parts)
+        all_ok = all(r["success"] for r in results)
+        _append_observation(
+            self.messages,
+            self.ctx,
+            self.wire_format,
+            llm_text,
+            f"Observation: {combined}",
+            tool_name="+".join(r["tool_name"] for r in results),
+            success=all_ok,
+        )
 
     def _finish_terminal_turn(self, turn):
         """Finish on a thought-only terminal turn — the thought is the answer.
@@ -885,12 +938,18 @@ class AgentLoop:
         render_step("complete", answer, self.turn)
         return ToolResult(True, output=answer)
 
-    def _dispatch_op(self, llm_text: str, turn, op, outcome: dict):
+    def _dispatch_op(self, llm_text: str, turn, op, outcome: dict, accumulate=None):
         """Dispatch ONE op of a turn. Returns a ToolResult or a sentinel.
 
         Carries the pre-multi-op per-action body unchanged: special actions
         (complete / ask / run_skill / ready_for_review), then B1/A4/A5 guards
         and tool execution, then the no-action fall-through recovery.
+
+        ``accumulate`` (multi-op N-op path only): a list to collect this op's
+        execution record into instead of appending its own observation —
+        the caller combines all records into one observation. Returns
+        ``None`` in that case ("executed, keep going"); every other branch
+        returns a ToolResult/sentinel as before.
         """
         # 7. Complete tool (text parsing path)
         _debug_log(f"PARSED iter={self.turn} action={op.action}")
@@ -1089,6 +1148,18 @@ class AgentLoop:
             tool_name = op.action
             tool_input = op.action_input or {}
 
+            # Multi-op formats emit flat single-target ops (one file / edit /
+            # query / task per op); the tool re-wraps that into its canonical
+            # prefixed input so the validate → strip → run pipeline below is
+            # unchanged. Single-action formats bypass this (their input is
+            # already canonical).
+            if (
+                getattr(self.wire_format, "multi_op", False)
+                and tool_name in TOOLS
+                and isinstance(tool_input, dict)
+            ):
+                tool_input = TOOLS[tool_name].wrap_single_op(tool_input)
+
             # Truncation guard: if JSON was repaired (truncated response),
             # strip the last element from edit_file's lines arrays
             truncation_warning = ""
@@ -1240,6 +1311,20 @@ class AgentLoop:
                 tool_name=tool_name,
                 success=tool_result.success,
             )
+
+            # N-op accumulate mode: record the execution for the caller's
+            # combined observation instead of appending one here. (Per-op
+            # corrected-record rewrite is a multi-op-serialization concern —
+            # handled with the multi-op plugin's history step, not here.)
+            if accumulate is not None:
+                accumulate.append(
+                    {
+                        "tool_name": tool_name,
+                        "observation": observation,
+                        "success": tool_result.success,
+                    }
+                )
+                return None
 
             # Inject observation with structured artifact. On an
             # action-name correction, rewrite the assistant prior + history
