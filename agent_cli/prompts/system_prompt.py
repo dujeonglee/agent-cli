@@ -100,32 +100,70 @@ def _build_edit_file_inline(wire_format) -> str:
     def rai(j):
         return _rai_prefixed(wire_format, "edit_file", j)
 
-    ex_single = rai(
-        {
-            "path": "app.py",
-            "edits": [
-                {"op": "replace", "pos": "2#KT", "lines": ['    return "hello"']}
-            ],
-        }
-    )
-    ex_batch = rai(
-        {
-            "path": "app.py",
-            "edits": [
-                {
-                    "op": "replace",
-                    "pos": "5#aa",
-                    "end": "7#bb",
-                    "lines": ["int hp = 100;", "return hp;"],
-                },
-                {"op": "delete", "pos": "12#cc"},
-                {"op": "append", "pos": "30#ee", "lines": ["// end"]},
-            ],
-        }
-    )
-
     def _indent(s: str) -> str:
         return "\n".join("      " + ln for ln in s.split("\n"))
+
+    if getattr(wire_format, "multi_op", False):
+        # Multi-op formats: one edit per op — the turn's op array replaces the
+        # per-tool `edits` batch (DESIGN §4.2: hashline refs are content-
+        # addressed, so sequential ops survive line shifts; the batch was a
+        # single-action-era optimization). A single edit's `lines` array stays
+        # (irreducible).
+        ex_single = rai(
+            {
+                "path": "app.py",
+                "op": "replace",
+                "pos": "2#KT",
+                "lines": ['    return "hello"'],
+            }
+        )
+        examples = f"""\
+  - one edit per op:
+{_indent(ex_single)}
+  - several edits to one file → several edit_file ops in the same turn
+    (non-overlapping regions; refs resolve by hash, so they survive line
+    shifts from earlier ops). If a later edit depends on an earlier
+    edit's RESULT, emit only the first now and re-read next turn."""
+    else:
+        ex_single = rai(
+            {
+                "path": "app.py",
+                "edits": [
+                    {"op": "replace", "pos": "2#KT", "lines": ['    return "hello"']}
+                ],
+            }
+        )
+        ex_batch = rai(
+            {
+                "path": "app.py",
+                "edits": [
+                    {
+                        "op": "replace",
+                        "pos": "5#aa",
+                        "end": "7#bb",
+                        "lines": ["int hp = 100;", "return hp;"],
+                    },
+                    {"op": "delete", "pos": "12#cc"},
+                    {"op": "append", "pos": "30#ee", "lines": ["// end"]},
+                ],
+            }
+        )
+        examples = f"""\
+  - single edit:
+{_indent(ex_single)}
+  - batch in one call (edits apply to ORIGINAL state, no overlaps):
+{_indent(ex_batch)}"""
+
+    batch_constraint = (
+        ""
+        if getattr(wire_format, "multi_op", False)
+        else """
+  - Each edit references the ORIGINAL file state — the array is NOT a
+    sequential "apply then re-read" pipeline. Overlapping edits (same region
+    or ref) are rejected; combine them into one `replace`. If a later edit
+    depends on an earlier edit's RESULT, use separate edit_file calls with
+    read_file between them (observation sync shows the intermediate state)."""
+    )
 
     return f"""
 
@@ -136,10 +174,7 @@ def _build_edit_file_inline(wire_format) -> str:
   Use edit_file with hashline refs copied EXACTLY from read_file output.
   Ops: replace (pos[..end] → lines) | append / prepend (insert at pos) |
        delete (remove pos[..end] range, no lines).
-  - single edit:
-{_indent(ex_single)}
-  - batch in one call (edits apply to ORIGINAL state, no overlaps):
-{_indent(ex_batch)}
+{examples}
   Constraints:
   - Read the target lines in the CURRENT turn before edit_file. Hashes
     from earlier turns drift if anything else touched the file — do not
@@ -152,12 +187,8 @@ def _build_edit_file_inline(wire_format) -> str:
   - A hash mismatch is not a failure — it is a guardrail signaling the
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
-  - Use write_file only for creating new files, not for editing existing ones.
-  - Each edit references the ORIGINAL file state — the array is NOT a
-    sequential "apply then re-read" pipeline. Overlapping edits (same region
-    or ref) are rejected; combine them into one `replace`. If a later edit
-    depends on an earlier edit's RESULT, use separate edit_file calls with
-    read_file between them (observation sync shows the intermediate state)."""
+  - Use write_file only for creating new files, not for editing existing ones.\
+{batch_constraint}"""
 
 
 def _build_delegate_inline(wire_format) -> str:
@@ -176,49 +207,94 @@ def _build_delegate_inline(wire_format) -> str:
     touching this builder. ReAct and envelope both implement that
     hook as identity (action_input is JSON in both formats today).
     """
-    examples = [
-        ("Single", {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}),
-        (
-            "With context",
-            {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]},
-        ),
-        (
-            "With agent",
-            {
-                "tasks": [
-                    {
-                        "task": "Review this code for vulnerabilities",
-                        "agent": "security-reviewer",
-                    }
-                ]
-            },
-        ),
-        (
-            "Agent + context",
-            {"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]},
-        ),
-        (
-            "Parallel (independent)",
-            {
-                "tasks": [
-                    {"task": "Analyze A", "context": "fork"},
-                    {"task": "Analyze B", "context": "fork"},
-                ]
-            },
-        ),
-        (
-            "Read-only",
-            {
-                "tasks": [
-                    {
-                        "task": "Review changes",
-                        "context": "fork",
-                        "tools": ["read_file", "shell"],
-                    }
-                ]
-            },
-        ),
-    ]
+    if getattr(wire_format, "multi_op", False):
+        # Multi-op formats: one task per op — the turn's op array replaces the
+        # per-tool `tasks` batch; several delegate ops in one turn = parallel.
+        examples = [
+            ("Single", {"task": "Read /tmp/data.csv and count rows"}),
+            ("With context", {"task": "Fix the bug we found", "context": "fork"}),
+            (
+                "With agent",
+                {
+                    "task": "Review this code for vulnerabilities",
+                    "agent": "security-reviewer",
+                },
+            ),
+            (
+                "Read-only",
+                {
+                    "task": "Review changes",
+                    "context": "fork",
+                    "tools": ["read_file", "shell"],
+                },
+            ),
+        ]
+        intro = (
+            "  Each delegate op runs ONE subagent task. Several delegate ops "
+            "in the\n  same turn run in PARALLEL — emit several only when the "
+            "tasks are\n  independent."
+        )
+        dependency = (
+            "  - If task B depends on task A's result, emit only A now; "
+            "use its\n    result next turn."
+        )
+    else:
+        examples = [
+            ("Single", {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}),
+            (
+                "With context",
+                {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]},
+            ),
+            (
+                "With agent",
+                {
+                    "tasks": [
+                        {
+                            "task": "Review this code for vulnerabilities",
+                            "agent": "security-reviewer",
+                        }
+                    ]
+                },
+            ),
+            (
+                "Agent + context",
+                {
+                    "tasks": [
+                        {"task": "Fix the bug", "agent": "fixer", "context": "fork"}
+                    ]
+                },
+            ),
+            (
+                "Parallel (independent)",
+                {
+                    "tasks": [
+                        {"task": "Analyze A", "context": "fork"},
+                        {"task": "Analyze B", "context": "fork"},
+                    ]
+                },
+            ),
+            (
+                "Read-only",
+                {
+                    "tasks": [
+                        {
+                            "task": "Review changes",
+                            "context": "fork",
+                            "tools": ["read_file", "shell"],
+                        }
+                    ]
+                },
+            ),
+        ]
+        intro = (
+            '  Always use the "tasks" array format. '
+            "Single item = sync, multiple = parallel."
+        )
+        dependency = (
+            "  - Multiple tasks run in PARALLEL. If task B depends on task "
+            "A's result,\n    call delegate twice: first A, then use A's "
+            "result to call B."
+        )
     # Inline tool-guide examples show only the action_input dict —
     # the surrounding tool name (delegate) is already in the guide
     # header, and inlining the wire-shape envelope per example
@@ -229,7 +305,7 @@ def _build_delegate_inline(wire_format) -> str:
     )
     return f"""\
 
-  Always use the "tasks" array format. Single item = sync, multiple = parallel.
+{intro}
   Context modes per task:
   - "none" (default): subagent starts with no context. Task must be self-contained.
   - "fork": subagent receives a copy of the current conversation history.
@@ -237,8 +313,7 @@ def _build_delegate_inline(wire_format) -> str:
   - "agent": optionally specify a predefined agent from .agent-cli/agents/{{name}}.md.
     The agent file defines the subagent's role/principles and can set allowed-tools/model.
   Constraints:
-  - Multiple tasks run in PARALLEL. If task B depends on task A's result,
-    call delegate twice: first A, then use A's result to call B.
+{dependency}
   Examples:
 {rendered}\""""
 
@@ -274,27 +349,53 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     def rai(j):
         return _rai_prefixed(wire_format, "read_file", j)
 
-    ex_stat = rai({"reads": [{"path": "app.py", "stat": True}]})
-    ex_search = rai({"reads": [{"path": "app.py", "search": "login", "context": 5}]})
-    ex_partial = rai(
-        {"reads": [{"path": "app.py", "line_start": 100, "line_end": 600}]}
-    )
-    ex_full = rai({"reads": [{"path": "app.py"}]})
-    ex_multi = rai(
-        {
-            "reads": [
-                {"path": "app.py", "line_start": 100, "line_end": 600},
-                {"path": "util.py", "search": "login"},
-            ]
-        }
-    )
-    base_modes = f"""\
+    if getattr(wire_format, "multi_op", False):
+        # Multi-op formats: one file per op — the turn's op array IS the batch
+        # mechanism, so the per-tool batch list and its prose are dropped
+        # (DESIGN §4.1/§4.2: nesting a batch array inside the op array is what
+        # broke 27B). Examples are item-level, rendered through the wire's
+        # render_action_input so they appear in its flat op shape.
+        ex_stat = rai({"path": "app.py", "stat": True})
+        ex_search = rai({"path": "app.py", "search": "login", "context": 5})
+        ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
+        ex_full = rai({"path": "app.py"})
+        intro = """\
+
+  Each read_file op reads ONE file. Pick the right mode — full reads
+  burn context budget, but reading too little costs turns:
+"""
+        batch_mode = ""
+    else:
+        ex_stat = rai({"reads": [{"path": "app.py", "stat": True}]})
+        ex_search = rai(
+            {"reads": [{"path": "app.py", "search": "login", "context": 5}]}
+        )
+        ex_partial = rai(
+            {"reads": [{"path": "app.py", "line_start": 100, "line_end": 600}]}
+        )
+        ex_full = rai({"reads": [{"path": "app.py"}]})
+        ex_multi = rai(
+            {
+                "reads": [
+                    {"path": "app.py", "line_start": 100, "line_end": 600},
+                    {"path": "util.py", "search": "login"},
+                ]
+            }
+        )
+        intro = """\
 
   read_file takes a LIST of reads (read_file_reads) — one call can read
   many files or regions at once. For a single file, pass a one-element
   list. Pick the right mode per read — full reads burn context budget,
   but reading too little costs turns:
-
+"""
+        batch_mode = f"""\
+  5. Batch — read several files/regions in one call; each item picks its
+     own mode:
+       {ex_multi}
+"""
+    base_modes = f"""\
+{intro}
   1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
      count + size + the first 20 lines so you can pick a real read mode.
        {ex_stat}
@@ -309,10 +410,7 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
        {ex_partial}
   4. Full — the file is known-small or central to the task.
        {ex_full}
-  5. Batch — read several files/regions in one call; each item picks its
-     own mode:
-       {ex_multi}
-"""
+{batch_mode}"""
     if "code_index" in active_tools:
         from agent_cli.code_index.languages import get_supported_extensions
 
@@ -354,9 +452,15 @@ def _build_code_index_inline(wire_format) -> str:
 
     exts = ", ".join(get_supported_extensions())
 
+    multi_op = getattr(wire_format, "multi_op", False)
+
     def rai(*items):
         # code_index_queries 배열-only: 각 예제를 1-원소 배열로 감싼다.
         # 여러 item 을 주면 한 배치(모드 섞기 가능)로 렌더된다.
+        # multi-op formats: one query per op — no queries wrapper (the turn's
+        # op array replaces the per-tool batch), so render the item directly.
+        if multi_op:
+            return _rai_prefixed(wire_format, "code_index", items[0])
         return _rai_prefixed(wire_format, "code_index", {"queries": list(items)})
 
     list_py = rai({"mode": "list", "path": "auth.py"})
@@ -383,10 +487,25 @@ def _build_code_index_inline(wire_format) -> str:
         }
     )
     build_q = rai({"mode": "build"})
-    ex_batch = rai(
-        {"mode": "fetch", "path": "auth.py", "name": "User.login"},
-        {"mode": "lookup", "name": "AgentLoop"},
-    )
+
+    if multi_op:
+        batch_para = """\
+  Each code_index op runs ONE query. Read-only (no file writes). To run
+  several queries (modes may be mixed), emit several code_index ops in
+  the same turn."""
+        modes_header = "Ten modes (each op is one query):"
+    else:
+        ex_batch = rai(
+            {"mode": "fetch", "path": "auth.py", "name": "User.login"},
+            {"mode": "lookup", "name": "AgentLoop"},
+        )
+        batch_para = f"""\
+  code_index takes a LIST of queries in code_index_queries — one call can
+  run many queries at once, and modes may be mixed. For a single query,
+  pass a one-element list. Read-only (no file writes). Batch example
+  (fetch one symbol + lookup another in a single call):
+       {ex_batch}"""
+        modes_header = "Ten modes (each is one query item inside code_index_queries):"
 
     return f"""\
 
@@ -395,13 +514,9 @@ def _build_code_index_inline(wire_format) -> str:
   query; sha1-incremental on every call after that, so it stays fresh
   with no manual invalidation.
 
-  code_index takes a LIST of queries in code_index_queries — one call can
-  run many queries at once, and modes may be mixed. For a single query,
-  pass a one-element list. Read-only (no file writes). Batch example
-  (fetch one symbol + lookup another in a single call):
-       {ex_batch}
+{batch_para}
 
-  Ten modes (each is one query item inside code_index_queries):
+  {modes_header}
 
   1. mode='list' — per-file outline (one symbol per line:
      ``parent.name (kind) file:start-end``). Replaces read_file:stat
@@ -501,6 +616,34 @@ _ASK_INLINE = """\
   conversation would still flow, it's not a real question — use
   `complete`."""
 
+# Variant for formats that do NOT expose `complete` (they finish with a
+# thought-only terminal turn instead) — same intent guidance, ending phrased
+# as "finish" rather than a tool call.
+_ASK_INLINE_NO_COMPLETE = """\
+
+  `ask` vs finishing — pick by intent, not tone:
+  - `ask`: you GENUINELY cannot proceed without information from the
+    user. A real question with real alternatives where you don't know
+    the right answer. "Which of these two paths should I take?",
+    "What's the production database name?", "Should I overwrite this
+    file or keep both?".
+  - finish (a thought-only turn): every other ending. Task done, user
+    said goodbye, user said thanks, user gave a casual reply, you
+    finished your answer and have nothing else to do. The conversation
+    does NOT need a question to continue — the user can simply reply
+    at the next prompt if they want more.
+
+  Common mistakes that keep the loop alive when it should end:
+  - "Was that helpful?" / "Anything else?" / "Let me know if you have
+    questions" — these are pleasantries, not questions. Just finish.
+  - "Goodbye!" / "See you next time!" / "👋" — closing remarks. Finish.
+  - Restating the user's last message back as a question
+    ("So you want X?") when their meaning was already clear. Answer
+    and finish.
+
+  Rule of thumb: if your "question" could be a statement and the
+  conversation would still flow, it's not a real question — finish."""
+
 
 def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str, str]:
     """Build the tool→inline-guide map for the given active tools.
@@ -509,16 +652,22 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
     active (steering line gets added in that case), so the map cannot
     be a static module-level dict — it's rebuilt per call.
 
-    ``edit_file`` and ``ask`` guides have no top-level call examples —
-    edit_file's dict literals are inner ``edits[i]`` items (not full
-    calls) and ask carries no examples — so those guides remain
-    plugin-agnostic constants.
+    ``edit_file``'s guide has no top-level call examples — its dict
+    literals are inner ``edits[i]`` items (not full calls). ``ask``'s
+    guide carries no examples either, but it references `complete`, so
+    formats that don't expose `complete` get the variant phrased around
+    finishing instead.
     """
+    ask = (
+        _ASK_INLINE
+        if getattr(wire_format, "exposes_complete", True)
+        else _ASK_INLINE_NO_COMPLETE
+    )
     return {
         "read_file": _build_read_file_inline(active_tools, wire_format),
         "edit_file": _build_edit_file_inline(wire_format),
         "delegate": _build_delegate_inline(wire_format),
-        "ask": _ASK_INLINE,
+        "ask": ask,
         "code_index": _build_code_index_inline(wire_format),
     }
 
@@ -531,6 +680,7 @@ def _build_tools_section(active_tools: list[str], wire_format) -> str:
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(active_tools, wire_format),
+        wire_format=wire_format,
     )
     return f"## Available Tools\n{tool_block}"
 

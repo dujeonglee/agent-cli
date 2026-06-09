@@ -185,6 +185,27 @@ class WireFormat(ABC):
     Mirror of :attr:`thought_required`. Either flag's recovery path
     depends on the parser preserving ``action_input`` (see :meth:`parse`)."""
 
+    multi_op: bool = False
+    """Whether the format expresses several tool ops in one turn.
+
+    False (default — react / prefix_md): one action per turn; per-tool batch
+    fields (``read_file_reads`` etc.) let one turn touch several targets. The
+    prompt shows wire-key-prefixed params and the tools' batch prose.
+
+    True (multi-op formats): the turn carries an array of ops, so per-tool
+    batch is redundant. The prompt layer renders tool params with the prefix
+    stripped (the format's flat ``{action, params}`` convention) and drops the
+    batch-specific guide prose; the "one op per target" instruction lives once
+    in :meth:`format_rules`. See docs/inputs-array-schema/DESIGN.md §5."""
+
+    exposes_complete: bool = True
+    """Whether ``complete`` is offered to the model as a tool.
+
+    True (default): ``complete`` appears in the Available Tools listing — the
+    model finishes by calling it. False: ``complete`` is withheld (the format
+    signals completion another way, e.g. a thought-only terminal turn), so the
+    prompt layer omits it from the always-included tools."""
+
     # ─── Prompt (abstract) ──────────────────────────────────────
 
     @abstractmethod

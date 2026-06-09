@@ -24,14 +24,125 @@ would be churn for no behavior change.
 
 import pytest
 
+from pathlib import Path
+
 from agent_cli.prompts.system_prompt import (
     _build_context_recovery,
     _build_delegate_inline,
     _build_environment_section,
+    _build_tools_section,
     _load_directives,
     build_system_prompt,
 )
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.wire_formats import get as _get_wire_format
+
+_SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
+# Fixed tool set for the snapshot — deterministic (no CWD / directives / env).
+_SNAPSHOT_TOOLS = ["read_file", "shell", "code_index", "edit_file", "delegate", "ask"]
+
+
+class TestToolsSectionSnapshot:
+    """Regression guard for the format-aware-prompt refactor (DESIGN §5): the
+    single-action formats (react / prefix_md) must render the Available Tools
+    section BYTE-IDENTICALLY through the change. ``_build_tools_section`` is
+    deterministic (unlike the full prompt, which carries CWD / directives), so
+    it snapshots cleanly. Regenerate with::
+
+        python -c "from agent_cli import wire_formats as w; \
+from agent_cli.prompts.system_prompt import _build_tools_section as b; \
+[open(f'tests/snapshots/tools_section_{n}.txt','w').write( \
+b(['read_file','shell','code_index','edit_file','delegate','ask'], w.get(n))) \
+for n in ('react','prefix_md')]"
+    """
+
+    @pytest.mark.parametrize("name", ["react", "prefix_md"])
+    def test_tools_section_matches_snapshot(self, name):
+        expected = (_SNAPSHOT_DIR / f"tools_section_{name}.txt").read_text(
+            encoding="utf-8"
+        )
+        actual = _build_tools_section(_SNAPSHOT_TOOLS, _get_wire_format(name))
+        assert actual == expected, (
+            f"{name} Available Tools section changed — if intentional, "
+            "regenerate the snapshot (see class docstring)."
+        )
+
+
+class _MultiOpFormat:
+    """Minimal stand-in for a multi-op wire format (md_array-style): flat
+    ``{action, plain params}`` ops, no per-tool batch, no `complete` tool.
+    Duck-typed — the prompt layer only reads ``multi_op`` /
+    ``exposes_complete`` and calls ``render_action_input``."""
+
+    multi_op = True
+    exposes_complete = False
+
+    def render_action_input(self, action_input: dict) -> str:
+        import json as _json
+
+        from agent_cli.tools.registry import TOOLS
+
+        for n in sorted(TOOLS, key=len, reverse=True):
+            pfx = n + "_"
+            if action_input and all(k.startswith(pfx) for k in action_input):
+                flat = {k[len(pfx) :]: v for k, v in action_input.items()}
+                return _json.dumps({"action": n, **flat}, ensure_ascii=False)
+        return _json.dumps(action_input, ensure_ascii=False)
+
+
+class TestMultiOpPromptBranches:
+    """The multi-op / no-complete prompt rendering (DESIGN §5): per-tool batch
+    prose is dropped (the op array IS the batch — nesting a batch array inside
+    the op array is what broke 27B), param keys lose their wire prefix (flat
+    op convention), and `complete` is withheld. Single-action formats are
+    byte-guarded by the snapshot test above."""
+
+    @pytest.fixture
+    def section(self):
+        return _build_tools_section(_SNAPSHOT_TOOLS, _MultiOpFormat())
+
+    def test_complete_not_listed(self, section):
+        assert "- complete:" not in section
+        # ready_for_review stays, with its `complete` reference rephrased
+        assert "- ready_for_review:" in section
+        assert "BEFORE complete" not in section
+
+    def test_param_keys_unprefixed(self, section):
+        assert "read_file_reads" not in section
+        assert "shell_command" not in section
+        assert "code_index_queries" not in section
+        assert "delegate_tasks" not in section
+
+    def test_read_file_single_target_no_batch(self, section):
+        assert "Each read_file op reads ONE file" in section
+        assert "5. Batch" not in section
+        assert "takes a LIST of reads" not in section
+        assert '{"action": "read_file", "path": "app.py", "stat": true}' in section
+
+    def test_edit_file_one_edit_per_op(self, section):
+        assert "one edit per op" in section
+        assert "batch in one call" not in section
+        # the batch-array constraint bullet is dropped
+        assert "the array is NOT a" not in section
+
+    def test_code_index_one_query_per_op(self, section):
+        assert "Each code_index op runs ONE query" in section
+        assert "takes a LIST of queries" not in section
+
+    def test_delegate_one_task_per_op(self, section):
+        assert "Each delegate op runs ONE subagent task" in section
+        assert 'Always use the "tasks" array format' not in section
+
+    def test_ask_guide_uses_no_complete_variant(self, section):
+        assert "`ask` vs finishing" in section
+        assert "`ask` vs `complete`" not in section
+
+    def test_default_formats_keep_batch_and_complete(self):
+        # Sanity inverse: a singular format still renders batch + complete.
+        section = _build_tools_section(_SNAPSHOT_TOOLS, _get_wire_format("react"))
+        assert "- complete:" in section
+        assert "read_file_reads" in section
+        assert "5. Batch" in section
 
 
 def _make_caps(ctx_window: int = 32768) -> ModelCapabilities:

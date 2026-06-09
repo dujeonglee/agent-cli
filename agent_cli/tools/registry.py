@@ -160,23 +160,43 @@ def render_param_value(prop_schema: dict, required: bool) -> str:
     return head or desc
 
 
+def _strip_own_prefix(name: str, text: str) -> str:
+    """Strip a tool's own wire-key prefix (``{name}_``) from text — used for
+    multi-op formats whose convention is flat ``{action, plain-keys}`` rather
+    than ``{name}_param``. Only the tool's own prefix is touched (so the bare
+    tool name, e.g. ``read_file``, is preserved)."""
+    return text.replace(f"{name}_", "")
+
+
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,
+    wire_format=None,
 ) -> str:
     """Generate tool description text for system prompt.
 
     Args:
         tool_names: Filter to specific tools. None = all tools.
         inline_guides: Map of tool name → extra guide text to append.
+        wire_format: the active ``WireFormat``. When it is multi-op, each
+            tool's own wire-key prefix is stripped from its description and
+            param keys (flat ``{action, params}`` convention); when it does not
+            expose ``complete``, that tool is omitted from the always-included
+            set. ``None`` keeps the default (prefixed, ``complete`` shown).
 
     Tools are ordered: always-present first (KV cache stable),
     conditional (edit_file, delegate) last.
     """
     guides = inline_guides or {}
+    multi_op = bool(getattr(wire_format, "multi_op", False))
+    exposes_complete = getattr(wire_format, "exposes_complete", True)
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
-    # Always include essential tools in descriptions
+    # Always include essential tools — except `complete` when the format does
+    # not expose it (it completes another way, e.g. a thought-only terminal).
     for t in _ALWAYS_INCLUDE:
+        if t == "complete" and not exposes_complete:
+            names = [n for n in names if n != "complete"]
+            continue
         if t not in names:
             names = [*names, t]
 
@@ -193,11 +213,27 @@ def get_tool_descriptions(
             continue
         props = schema.parameters.get("properties", {})
         required = set(schema.parameters.get("required", []))
-        params_str = json.dumps(
-            {k: render_param_value(v, k in required) for k, v in props.items()},
-            ensure_ascii=False,
+        params = {
+            (_strip_own_prefix(name, k) if multi_op else k): render_param_value(
+                v, k in required
+            )
+            for k, v in props.items()
+        }
+        params_str = json.dumps(params, ensure_ascii=False)
+        description = (
+            _strip_own_prefix(name, schema.description)
+            if multi_op
+            else schema.description
         )
-        entry = f"- {name}: {schema.description}\n  Input JSON: {params_str}"
+        if not exposes_complete:
+            # ready_for_review's description sequences itself before
+            # `complete`; without that tool the reference would teach a
+            # nonexistent call, so rephrase the ending neutrally.
+            description = description.replace(
+                "Call this BEFORE complete to verify",
+                "When you believe the task is done, call this to verify",
+            )
+        entry = f"- {name}: {description}\n  Input JSON: {params_str}"
         if name in guides:
             entry += guides[name]
         lines.append(entry)
