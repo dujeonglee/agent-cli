@@ -19,7 +19,7 @@ module is imported (see ``agent_cli/wire_formats/react.py``).
 
 from __future__ import annotations
 
-from agent_cli.wire_formats.base import ParsedAction, WireFormat
+from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 # ── Registry ─────────────────────────────────────
 _registry: dict[str, WireFormat] = {}
@@ -114,6 +114,8 @@ def all_system_user_prefixes() -> tuple[str, ...]:
 
 __all__ = [
     "ParsedAction",
+    "ParsedTurn",
+    "Op",
     "WireFormat",
     "register",
     "get",

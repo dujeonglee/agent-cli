@@ -16,7 +16,9 @@ from __future__ import annotations
 import pytest
 
 from agent_cli.wire_formats import (
+    Op,
     ParsedAction,
+    ParsedTurn,
     WireFormat,
     get,
     list_names,
@@ -112,6 +114,96 @@ class _MockFormat(WireFormatProtocol):
 
     def system_user_prefixes(self) -> tuple[str, ...]:
         return ("Mock parse fail.", "Mock no action.")
+
+
+class _ConfigurableFormat(_MockFormat):
+    """Mock whose ``parse()`` returns a preset ParsedAction, to exercise the
+    default ``parse_turn()`` wrapper's mapping in isolation."""
+
+    name = "_configurable_for_tests"
+
+    def __init__(self, pa: ParsedAction):
+        self._pa = pa
+
+    def parse(self, llm_text: str) -> ParsedAction:
+        return self._pa
+
+
+class TestParseTurnDefaultWrapper:
+    """``WireFormat.parse_turn`` defaults to wrapping a plugin's singular
+    ``parse()`` into a ``ParsedTurn`` — so single-action formats need no
+    change and the loop's one-op iteration reproduces today's behaviour.
+    A multi-op format opts in only by overriding ``parse_turn``."""
+
+    def test_normal_action_yields_one_op(self):
+        pa = ParsedAction(
+            thought="t",
+            action="read_file",
+            action_input={"path": "x"},
+            raw="raw",
+            parse_stage=1,
+            thinking="th",
+        )
+        turn = _ConfigurableFormat(pa).parse_turn("raw")
+        assert isinstance(turn, ParsedTurn)
+        assert turn.terminal is False
+        assert len(turn.ops) == 1
+        assert isinstance(turn.ops[0], Op)
+        assert turn.ops[0].action == "read_file"
+        assert turn.ops[0].action_input == {"path": "x"}
+        # turn-level metadata carried through verbatim
+        assert turn.thought == "t"
+        assert turn.raw == "raw"
+        assert turn.parse_stage == 1
+        assert turn.thinking == "th"
+
+    def test_dropped_action_preserves_input_as_op(self):
+        # prefix_md parse_stage-3: no action name, but action_input recovered.
+        # The wrapper MUST keep an Op so the loop's per-op infer_action / echo
+        # can still recover it (the parse preservation invariant).
+        pa = ParsedAction(
+            action=None,
+            action_input={"read_file_reads": [{"path": "a"}]},
+            parse_stage=3,
+        )
+        turn = _ConfigurableFormat(pa).parse_turn("raw")
+        assert len(turn.ops) == 1
+        assert turn.ops[0].action is None
+        assert turn.ops[0].action_input == {"read_file_reads": [{"path": "a"}]}
+        assert turn.parse_stage == 3
+
+    def test_total_failure_yields_no_ops(self):
+        # parse_stage 0, no action, no input → a real parse failure → zero ops.
+        turn = _ConfigurableFormat(ParsedAction(parse_stage=0)).parse_turn("garbage")
+        assert turn.ops == []
+        assert turn.terminal is False
+        assert turn.parse_stage == 0
+
+    def test_truncated_flag_carried_to_op(self):
+        pa = ParsedAction(
+            action="edit_file", action_input={"x": 1}, parse_stage=1, truncated=True
+        )
+        turn = _ConfigurableFormat(pa).parse_turn("raw")
+        assert turn.ops[0].truncated is True
+
+    def test_real_formats_never_terminal_and_match_parse(self):
+        # For react / prefix_md the one-op turn equals what parse() dispatches,
+        # and `terminal` is always False (they complete via a `complete` op).
+        for name in ("react", "prefix_md"):
+            wf = get(name)
+            text = wf.render_full_example(
+                thought="reason",
+                action="shell",
+                action_input=wf.render_action_input({"command": "ls"}),
+            )
+            pa = wf.parse(text)
+            turn = wf.parse_turn(text)
+            assert turn.terminal is False
+            assert len(turn.ops) == 1
+            assert turn.ops[0].action == pa.action
+            assert turn.ops[0].action_input == pa.action_input
+            assert turn.thought == pa.thought
+            assert turn.parse_stage == pa.parse_stage
 
 
 class TestABCConformance:

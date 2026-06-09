@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -93,6 +93,49 @@ class ParsedAction:
     parse_stage: int = 0
     thinking: str | None = None
     truncated: bool = False
+
+
+@dataclass
+class Op:
+    """One tool invocation within a turn — the per-op unit of a ``ParsedTurn``.
+
+    Mirrors the action-carrying fields of :class:`ParsedAction`. A
+    single-action wire format (react / prefix_md) yields a turn with exactly
+    one ``Op``; a multi-op format yields several.
+    """
+
+    action: str | None = None
+    action_input: dict | str | None = None
+    truncated: bool = False
+
+
+@dataclass
+class ParsedTurn:
+    """Turn-level parse result — the loop boundary that supersedes the
+    singular :class:`ParsedAction`.
+
+    Carries the turn's reasoning plus an ORDERED list of ops to dispatch.
+    A single-action format produces ``ops`` of length 0 (parse failure) or 1;
+    a multi-op format produces several. ``terminal`` marks a completion turn
+    that carries no ops (e.g. a thought-only "done" emission) — single-action
+    formats never set it (they complete via a ``complete`` op), so it is
+    ``False`` for them and the loop's behaviour is unchanged.
+
+    The default :meth:`WireFormat.parse_turn` wraps a plugin's existing
+    :meth:`WireFormat.parse` into this shape, so a plugin opts into multi-op
+    only by overriding ``parse_turn``; ``parse`` (and the history round-trip
+    built on it) is untouched.
+
+    Field semantics mirror :class:`ParsedAction`: ``thought`` / ``raw`` /
+    ``parse_stage`` (0 = parse failed) / ``thinking`` carry the same meaning.
+    """
+
+    thought: str | None = None
+    ops: list[Op] = field(default_factory=list)
+    terminal: bool = False
+    raw: str = ""
+    parse_stage: int = 0
+    thinking: str | None = None
 
 
 class WireFormat(ABC):
@@ -221,6 +264,40 @@ class WireFormat(ABC):
         so the loop treats the emission as parsed (the exact value stays
         observability-only — see :class:`ParsedAction`).
         """
+
+    def parse_turn(self, llm_text: str) -> ParsedTurn:
+        """Parse one emission into a turn-level :class:`ParsedTurn` — the
+        loop's dispatch boundary.
+
+        Default: wrap :meth:`parse`. A single-action format yields a turn with
+        one ``Op`` (or zero ops on parse failure / no action); ``terminal`` is
+        always ``False`` (it completes via a ``complete`` op, not a thought-only
+        turn). So single-action plugins need not override this, and the loop's
+        one-op iteration reproduces today's behaviour exactly.
+
+        A multi-op format overrides this to return several ops, or
+        ``terminal=True`` for a no-op completion turn. ``parse`` (and the
+        history round-trip built on it) is left untouched either way.
+        """
+        pa = self.parse(llm_text)
+        # Preserve the parse invariant: keep a single Op whenever there is an
+        # action OR a recovered action_input (the prefix_md dropped-action /
+        # parse_stage-3 case), so the loop's per-op infer_action / NO_ACTION
+        # echo can still recover it. Only a total parse failure (no action,
+        # no input) yields zero ops.
+        ops = (
+            [Op(pa.action, pa.action_input, pa.truncated)]
+            if (pa.action is not None or pa.action_input is not None)
+            else []
+        )
+        return ParsedTurn(
+            thought=pa.thought,
+            ops=ops,
+            terminal=False,
+            raw=pa.raw,
+            parse_stage=pa.parse_stage,
+            thinking=pa.thinking,
+        )
 
     def is_degenerate(self, text: str) -> bool:
         """Whether *text* is a format runaway: the model repeated the wire
