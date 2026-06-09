@@ -156,6 +156,16 @@ def _turn(thought="t", ops=None, terminal=False) -> str:
     return json.dumps({"thought": thought, "ops": ops or [], "terminal": terminal})
 
 
+def _finish(thought="done"):
+    """Termination-gate sequence (DESIGN §4.4): the FIRST thought-only
+    terminal fires ready_for_review (an observation comes back), the SECOND
+    truly ends the loop."""
+    return [
+        _turn(thought=thought, terminal=True),
+        _turn(thought=thought, terminal=True),
+    ]
+
+
 def _run(responses, tmp_path, max_turns=5):
     from agent_cli.context.manager import ContextManager
     from agent_cli.loop import AgentLoop
@@ -192,7 +202,7 @@ class TestMultiOpDispatch:
                         {"action": "read_file", "path": str(f2)},
                     ]
                 ),
-                _turn(thought="done", terminal=True),
+                *_finish(),
             ],
             tmp_path,
         )
@@ -223,7 +233,7 @@ class TestMultiOpDispatch:
                         {"action": "read_file", "path": str(tmp_path / "missing.txt")},
                     ]
                 ),
-                _turn(thought="done", terminal=True),
+                *_finish(),
             ],
             tmp_path,
         )
@@ -246,7 +256,7 @@ class TestMultiOpDispatch:
         result, ctx, _ = _run(
             [
                 _turn(ops=[{"action": "read_file", "path": str(f1)}]),
-                _turn(thought="done", terminal=True),
+                *_finish(),
             ],
             tmp_path,
         )
@@ -258,13 +268,23 @@ class TestMultiOpDispatch:
         ]
         assert obs and "alpha" in obs[0]["content"]
 
-    def test_terminal_thought_is_answer(self, tmp_path):
-        result, _, provider = _run(
-            [_turn(thought="모든 작업 완료했습니다", terminal=True)], tmp_path
+    def test_terminal_gate_reviews_then_ends(self, tmp_path):
+        # DESIGN §4.4 termination gate: the FIRST thought-only terminal fires
+        # ready_for_review (original task re-injected as an observation —
+        # false-terminate mitigation); the SECOND truly ends, thought=answer.
+        result, ctx, provider = _run(
+            _finish(thought="모든 작업 완료했습니다"), tmp_path
         )
         assert result.success
         assert result.output == "모든 작업 완료했습니다"
-        assert provider.call.call_count == 1
+        assert provider.call.call_count == 2  # terminal → review → terminal
+        review_obs = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and m.get("tool") == "ready_for_review"
+        ]
+        assert len(review_obs) == 1
+        assert "Q" in review_obs[0]["content"]  # original task came back
 
     def test_turn_ending_op_flushes_accumulated_first(self, tmp_path):
         # [read op, ask op]: the read executes and must be flushed as an
@@ -295,10 +315,34 @@ class TestMultiOpDispatch:
 
     def test_no_ops_goes_to_recovery(self, tmp_path):
         # A non-terminal turn with zero ops = the model said nothing usable →
-        # recovery hint, then the next turn terminates.
+        # recovery hint, then the gate sequence finishes the run.
         result, ctx, provider = _run(
-            ["{not json at all", _turn(thought="done", terminal=True)],
+            ["{not json at all", *_finish()],
             tmp_path,
         )
         assert result.success
-        assert provider.call.call_count == 2
+        # bad turn → recovery, terminal → review, terminal → end
+        assert provider.call.call_count == 3
+
+    def test_gate_fires_once_per_run(self, tmp_path):
+        # terminal → review → work ops → terminal: the gate already fired, so
+        # the second terminal ends immediately (no second review).
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        result, ctx, provider = _run(
+            [
+                _turn(thought="finished?", terminal=True),
+                _turn(ops=[{"action": "read_file", "path": str(f1)}]),
+                _turn(thought="now done", terminal=True),
+            ],
+            tmp_path,
+        )
+        assert result.success
+        assert result.output == "now done"
+        assert provider.call.call_count == 3
+        review_obs = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and m.get("tool") == "ready_for_review"
+        ]
+        assert len(review_obs) == 1  # gate fired exactly once

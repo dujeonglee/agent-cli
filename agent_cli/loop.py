@@ -194,6 +194,10 @@ class AgentLoop:
         # sees a running session total alongside the per-turn numbers.
         self._total_output_tokens = 0
         self._interrupted = False
+        # Multi-op termination gate (DESIGN §4.4): set after the first
+        # thought-only terminal turn fires ready_for_review; the next
+        # terminal turn truly ends. One gate per run.
+        self._terminal_reviewed = False
         self._prev_sigint_handler = None
         self.graceful_interrupt = graceful_interrupt
         self.recent_tool_history: list[dict] = []
@@ -921,11 +925,38 @@ class AgentLoop:
     def _finish_terminal_turn(self, turn):
         """Finish on a thought-only terminal turn — the thought is the answer.
 
-        Skeleton for the multi-op path (single-action formats never produce
-        ``terminal=True``); the ready_for_review termination gate replaces
-        this in the plugin step.
+        Termination GATE (multi-op formats; DESIGN §4.4): the FIRST terminal
+        turn does not end the loop — it fires ``ready_for_review`` (the
+        original task + checklist come back as an observation) so the model
+        gets one chance to notice unfinished work. This is the measured
+        false-terminate mitigation (a thought-only emission while work
+        remained, ~10% on one ambiguous task). Any terminal turn after the
+        review truly ends; if the review surfaces missing work, the model
+        emits ops instead and the flag simply stays set (one gate per run).
+        Single-action formats never produce ``terminal=True``.
         """
         answer = (turn.thought or "").strip() or "(done)"
+        if not self._terminal_reviewed:
+            self._terminal_reviewed = True
+            obs = _build_review_observation(self.query, answer, ctx=self.ctx)
+            if not self.skill_name:
+                render_step(
+                    "observation",
+                    obs,
+                    self.turn,
+                    tool_name="ready_for_review",
+                    success=True,
+                )
+            _append_observation(
+                self.messages,
+                self.ctx,
+                self.wire_format,
+                turn.raw,
+                f"Observation: {obs}",
+                tool_name="ready_for_review",
+                success=True,
+            )
+            return self._CONTINUE
         if self.ctx:
             self.ctx.add(
                 {

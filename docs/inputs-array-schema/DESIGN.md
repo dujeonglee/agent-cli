@@ -200,29 +200,39 @@ real implementation must make the guide layer format-aware.
 
 ---
 
-## 6. Loop surgery (unproven)
+## 6. Loop surgery — IMPLEMENTED (unit-tested; Phase-2 bakeoff pending)
 
-The format is a plugin; the loop is where the single-action invariant lives.
+Landed across four commits (decisions: unified dispatcher / rfr gate /
+sequential + run-all + any-fail / Tool ABC hook):
 
-- **`ParsedTurn`** replaces the singular `ParsedAction` on this path:
-  `{thought, ops: list[dict], terminal: bool}`. Existing react/prefix_md keep
-  the singular path.
-- **Dispatch**: iterate ops in array order, `tool.run` each. Sequential by
-  default (observations append in order); parallelising independent ops is a
-  later optimisation (delegate's parallel machinery is the precedent).
-- **Observation synthesis**: N ops → one combined observation with per-op
-  OK/FAIL headers (reuse `delegate._format_parallel_results`). One observation
-  per turn preserved (history/turns schema unchanged).
-- **Partial failure**: run all ops, report per-op; turn `success` = any-fail ⇒
-  fail (so the model retries the failed op).
-- **Recovery detectors** (singular-premised) generalise to the op-set;
-  NO_ACTION becomes "no ops and not a clean terminal".
-- **Terminal gate**: thought-only → `ready_for_review` → second thought-only
-  ends (false-terminate mitigation, §4.4).
-- **Tool-guide layer** made format-aware (§5).
+- **Step 1** — `Op` + `ParsedTurn` dataclasses and the concrete
+  `WireFormat.parse_turn()` default wrapper (additive, inert).
+- **Step 2** — format-aware prompt layer: `multi_op` / `exposes_complete`
+  flags; `get_tool_descriptions(wire_format=)` strips each tool's own prefix
+  and withholds `complete`; the four inline guides render single-target
+  (no-batch) variants; ask-guide no-complete variant. Single-action formats
+  byte-guarded by snapshots (`tests/snapshots/tools_section_*.txt`).
+- **Step 3a** — unified turn dispatch: the loop parses via `parse_turn` and
+  dispatches `_dispatch_turn` → `_dispatch_op` (per-op body unchanged) →
+  `_recover_unparsed`. Single-action formats = exactly one op, behaviour
+  preserved (full suite green).
+- **Step 3b** — N-op execution: `Tool.wrap_single_op` (flat op → canonical
+  prefixed input; batch tools override, idempotent), sequential run-all,
+  `_flush_op_results` combined observation (`[i/N] tool — OK/FAILED`,
+  any-fail ⇒ failed), turn-ending ops flush accumulated work first.
+- **Step 3c** — `md_array` plugin (registered, experimental) with lenient
+  terminal parsing (§4.3) and multi-op history records
+  (`{thought, ops:[…]}` / `{thought, terminal}`, round-trip via overridden
+  serialize/render); the `ready_for_review` termination gate
+  (`_terminal_reviewed`, once per run) in `_finish_terminal_turn`.
+- **B1 loop detector**: kept per-op `observe` (NOT an op-set signature) — with
+  threshold 3, a duplicated op inside one turn doesn't fire, while the same
+  (action, args) three times in a row (across turn boundaries or not) does.
+  Simpler than the op-set idea and semantically right.
 
-Invariants preserved: history.jsonl / turns.jsonl schema, the additive-plugin
-boundary (react/prefix_md unchanged, new shape behind `--response-format`).
+Invariants held: turns.jsonl schema unchanged; react/prefix_md byte-identical
+prompts + full-suite green; the new shape is opt-in behind
+`--response-format md_array`.
 
 ---
 
