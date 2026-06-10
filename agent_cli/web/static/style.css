@@ -568,6 +568,12 @@ footer {
 }
 #inspector.open { transform: translateX(0); }
 
+/* Header / budget / search are fixed-height chrome — never compress them
+   when the viewport is short; only the sections list scrolls. */
+.insp-head,
+.insp-budget,
+#insp-search { flex: 0 0 auto; }
+
 .insp-head { display: flex; align-items: baseline; gap: 10px; }
 .insp-title { font-weight: 650; font-size: 15px; letter-spacing: .2px; }
 .insp-meta {
@@ -609,7 +615,11 @@ footer {
 #insp-search:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(129,140,248,.18); }
 
 .insp-sections {
-  flex: 1;
+  flex: 1 1 auto;
+  /* min-height:0 is required for a flex child to become a scroll container —
+     without it the default min-height:auto lets the list grow to its content
+     height, pushing past the drawer instead of scrolling inside it. */
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -617,6 +627,9 @@ footer {
   padding-bottom: 8px;
 }
 .insp-sec {
+  /* Never shrink cards in the flex column — on a short viewport flexbox would
+     otherwise compress collapsed cards until their summary text is clipped. */
+  flex: 0 0 auto;
   border: 1px solid #e8ecf2;
   border-radius: 10px;
   background: #fff;
@@ -661,7 +674,9 @@ footer {
   word-break: break-word;
   color: #334155;
   background: #fafbfd;
-  max-height: 420px;
+  /* Cap an expanded body to the smaller of 420px / half the viewport so one
+     long section can't dominate a short window — the outer list still scrolls. */
+  max-height: min(420px, 50vh);
   overflow-y: auto;
 }
 .insp-empty { color: #9ca3af; font-size: 13px; text-align: center; margin-top: 40px; }
