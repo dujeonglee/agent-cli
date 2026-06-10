@@ -1,8 +1,6 @@
 """md_array wire format — markdown envelope + flat action-array (multi-op).
 
-The shape (validated by the single-turn bakeoffs in
-docs/inputs-array-schema/DESIGN.md §3; experimental until the Phase-2
-full-loop bakeoff passes):
+The shape (DESIGN §3; multi-op validated by single-turn bakeoffs):
 
     ## Thought
     read auth.py and list src/
@@ -18,13 +16,16 @@ full-loop bakeoff passes):
   ONE target per op (no per-tool batch — nesting a batch array inside the op
   array is what broke the 27B model, DESIGN §3 Exp 4/5). A bare object is
   accepted as a one-op array (the model's natural form for one op).
-- Terminal = thought-only (``## Action`` omitted), parsed leniently
-  (DESIGN §4.3): an empty / ``None``-marker action body, a bare
-  result-bearing object, and header-less plain text all read as completion.
-  The thought is the final answer.
-- ``complete`` is NOT exposed (``exposes_complete=False``); the loop still
-  honors a complete op the model invents (lenient). ``ready_for_review``
-  stays an op-callable tool and gates termination (loop-side).
+- Termination = an explicit ``complete`` op (``exposes_complete=True``), the
+  proven prefix_md/react model. md_array originally ended thought-only
+  (``## Action`` omitted) with a loop-side ready_for_review gate, but that
+  produced a recurring class of finish bugs (false-terminate, NO_JSON
+  finishing-transitions, empty ``[]``, a review-instruction mismatch that lost
+  the deliverable — DESIGN Exp 8). Reviving ``complete`` fixes the class at the
+  origin and lets the lenient-terminal parsing + the gate be removed. A
+  thought-only / actionless turn is now a NO_ACTION nudge (call ``complete`` or
+  emit ops), never a silent completion. ``ready_for_review`` reverts to a
+  model-invoked pre-complete check (parity with prefix_md/react).
 """
 
 from __future__ import annotations
@@ -51,12 +52,9 @@ _DEGEN_RUNAWAY = re.compile(
 )
 
 # Stray `## Input` header inside the ## Action body — the models' prefix_md
-# prior resurfaces exactly when they mean "no action / done" (Phase-2: the
-# dominant failure was `## Action\n\n## Input\n{}` looping NO_ACTION recovery).
+# prior resurfaces (Phase-2). Stripped so a body that was ONLY that residue
+# parses cleanly (→ NO_ACTION nudge, not a spurious NO_JSON).
 _INPUT_RESIDUE = re.compile(r"^\s*##\s*Input\s*$", re.MULTILINE)
-
-# "No action" markers the model writes instead of omitting the section.
-_NONE_MARKERS = ("none", "n/a", "null", "nothing")
 
 _FORMAT_RULES = """\
 ## Response Format
@@ -87,10 +85,11 @@ Rules:
 3. Each op acts on ONE target. To read N files, emit N separate
    {"action": "read_file", "path": ...} ops in the SAME turn. NEVER put a
    list of items inside a single op (no nested arrays).
-4. When the task is DONE and nothing remains to run, OMIT the `## Action`
-   section entirely. A `## Thought`-only response means the task is
-   complete, and your thought is the final answer.
-5. As long as work remains, you MUST include `## Action`.
+4. When the task is DONE, end with a `complete` op carrying your final
+   answer: {"action": "complete", "result": "<your final answer>"}.
+   Always finish this way — do NOT just stop or omit `## Action`.
+5. Every turn must include a `## Action` with at least one op (work, or
+   `complete` to finish).
 6. If an observation shows an error, fix parameters and retry.
 7. Respond in the user's language.
 
@@ -103,9 +102,12 @@ three files; none depends on another's output, so read them together.
 ## Action
 [{"action": "read_file", "path": "src/auth.py"}, {"action": "read_file", "path": "src/session.py"}, {"action": "read_file", "path": "src/routes/login.py"}]
 
-Done (no action):
+Finishing the task:
 ## Thought
-The login() function is implemented and tests pass."""
+The login() function is implemented and the tests pass.
+
+## Action
+[{"action": "complete", "result": "Implemented login() in src/auth.py; all tests pass."}]"""
 
 
 def _extract_first_json(body: str):
@@ -167,13 +169,14 @@ def _split_sections(text: str) -> tuple[str | None, str | None, bool]:
 
 
 class MdArrayFormat(WireFormat):
-    """Markdown envelope + flat action-array (multi-op, thought-only終)."""
+    """Markdown envelope + flat action-array (multi-op, complete-terminated)."""
 
     name = "md_array"
     thought_required = False
     action_required = False
     multi_op = True
-    exposes_complete = False
+    # exposes_complete inherits the default True: completion is an explicit
+    # `complete` op (the proven prefix_md/react model), not thought-only.
 
     # ─── Provider hints ─────────────────────────────────────────
 
@@ -182,8 +185,7 @@ class MdArrayFormat(WireFormat):
         # which makes the markdown envelope (`## ` headers) impossible — the
         # model is then locked into bare JSON and every turn misparses.
         # Phase-2 bakeoff caught exactly this: the base default leaked
-        # json_mode=True and 100% of turns degraded to header-less JSON that
-        # the lenient terminal mistook for completion.
+        # json_mode=True and 100% of turns degraded to header-less JSON.
         return {"json_mode": False}
 
     # ─── Prompt ─────────────────────────────────────────────────
@@ -193,8 +195,8 @@ class MdArrayFormat(WireFormat):
 
     def format_rules_anchor(self) -> str:
         return (
-            "Respond with `## Thought` and — while work remains — a "
-            "`## Action` JSON array of ops."
+            "Respond with `## Thought` and a `## Action` JSON array of ops "
+            "(finish with a `complete` op)."
         )
 
     def format_rules_field_specific(self) -> str:
@@ -238,21 +240,23 @@ class MdArrayFormat(WireFormat):
         thought, body, has_action = _split_sections(llm_text)
         clean_thought = self.sanitize_thought(thought)
 
-        def turn(ops, terminal, stage=1):
-            return ParsedTurn(
-                thought=clean_thought,
-                ops=ops,
-                terminal=terminal,
-                raw=llm_text,
-                parse_stage=stage,
-            )
+        def _ops(items) -> list:
+            return [
+                Op(
+                    action=(
+                        it.get("action") if isinstance(it.get("action"), str) else None
+                    ),
+                    action_input={k: v for k, v in it.items() if k != "action"},
+                )
+                for it in items
+            ]
 
         if not has_action or not body:
             # Header-less bare JSON that carries tool ops: the model dropped
             # the envelope (drift) but its intent is clearly WORK — read it as
-            # ops, never as a terminal answer. (Phase-2 caught the inverse
-            # failure: header-less op JSON swallowed as "completion" made every
-            # metric look perfect while no tool ever ran.)
+            # ops. (Phase-2 caught the inverse failure: header-less op JSON
+            # once swallowed as "completion" made every metric look perfect
+            # while no tool ever ran.)
             if not has_action and (llm_text.strip()[:1] in ("[", "{")):
                 bare = _extract_first_json(llm_text.strip())
                 bare_items = (
@@ -261,34 +265,26 @@ class MdArrayFormat(WireFormat):
                     else ([bare] if isinstance(bare, dict) else [])
                 )
                 if any("action" in it for it in bare_items):
-                    ops = [
-                        Op(
-                            action=(
-                                it.get("action")
-                                if isinstance(it.get("action"), str)
-                                else None
-                            ),
-                            action_input={k: v for k, v in it.items() if k != "action"},
-                        )
-                        for it in bare_items
-                    ]
                     return ParsedTurn(
-                        thought=None, ops=ops, raw=llm_text, parse_stage=2
+                        thought=None, ops=_ops(bare_items), raw=llm_text, parse_stage=2
                     )
-            # Thought-only (or empty ## Action): terminal — IF there is any
-            # text at all. A blank emission is a parse failure (NO_OUTPUT).
+            # No `## Action` (thought-only) or an empty one: a valid markdown
+            # parse with no op. NOT a completion — completion is an explicit
+            # `complete` op. 0 ops → the loop's NO_ACTION recovery nudges the
+            # model to call `complete` or emit work. A truly blank emission is
+            # a parse failure (NO_OUTPUT / NO_JSON, stage 0).
             if clean_thought and clean_thought.strip():
-                return turn([], True)
+                return ParsedTurn(
+                    thought=clean_thought, ops=[], raw=llm_text, parse_stage=1
+                )
             return ParsedTurn(raw=llm_text, parse_stage=0)
-        if body.lower().rstrip(".").strip() in _NONE_MARKERS:
-            return turn([], True)
         # prefix_md-residue tolerance: strip stray `## Input` header lines the
-        # model appends when it means "no action" (its prefix_md prior). An
-        # ## Action body that was ONLY that residue is a terminal turn.
+        # model appends (its prefix_md prior) so a body that was ONLY residue
+        # parses cleanly to 0 ops (→ NO_ACTION nudge), not a spurious NO_JSON.
         body = _INPUT_RESIDUE.sub("", body).strip()
         if not body:
             return (
-                turn([], True)
+                ParsedTurn(thought=clean_thought, ops=[], raw=llm_text, parse_stage=1)
                 if clean_thought
                 else ParsedTurn(raw=llm_text, parse_stage=0)
             )
@@ -298,39 +294,20 @@ class MdArrayFormat(WireFormat):
             return ParsedTurn(thought=clean_thought, raw=llm_text, parse_stage=0)
         arr = parsed if isinstance(parsed, list) else [parsed]  # bare obj = 1 op
         items = [x for x in arr if isinstance(x, dict)]
-        if not items:
-            # An explicitly empty array `## Action\n[]` (valid JSON, zero ops)
-            # with a thought is a completion attempt — the model's "nothing
-            # left to run, I'm done" shape, same family as `{}` / `[{}]` below.
-            # Seen right after ready_for_review: "Decision: complete" + `[]`,
-            # which otherwise loops on format recovery. A NON-empty payload
-            # with no dict ops (e.g. `[1,2,3]`) is malformed → parse failure.
-            if not arr and clean_thought:
-                return turn([], True)
-            return ParsedTurn(thought=clean_thought, raw=llm_text, parse_stage=0)
-        # Empty ops (`{}` / `[{}]` — typically the `## Input\n{}` residue):
-        # nothing to run = a completion attempt, not a missing action. Items
-        # that DO carry input but no action stay ops (NO_ACTION recovery).
-        if clean_thought and all(not it for it in items):
-            return turn([], True)
-        # Lenient terminal: one result-bearing object with no `action` is a
-        # completion attempt — answer = its result (DESIGN §4.3).
-        if len(items) == 1 and "action" not in items[0] and "result" in items[0]:
-            result = items[0].get("result")
-            answer = str(result) if result else clean_thought
+        # No usable ops: an empty array `[]`, an empty op `{}`/`[{}]`, or a
+        # non-dict payload. With a thought this is a valid 0-op turn (NO_ACTION
+        # nudge to call `complete`); blank → parse failure. Items that DO carry
+        # input but no action stay ops (NO_ACTION recovery / infer).
+        if not items or all(not it for it in items):
             return ParsedTurn(
-                thought=answer, ops=[], terminal=True, raw=llm_text, parse_stage=1
+                thought=clean_thought,
+                ops=[],
+                raw=llm_text,
+                parse_stage=1 if clean_thought else 0,
             )
-        ops = [
-            Op(
-                action=(
-                    it.get("action") if isinstance(it.get("action"), str) else None
-                ),
-                action_input={k: v for k, v in it.items() if k != "action"},
-            )
-            for it in items
-        ]
-        return turn(ops, False)
+        return ParsedTurn(
+            thought=clean_thought, ops=_ops(items), raw=llm_text, parse_stage=1
+        )
 
     def parse(self, llm_text: str) -> ParsedAction:
         """Singular projection of :meth:`parse_turn` (first op).
@@ -364,12 +341,6 @@ class MdArrayFormat(WireFormat):
 
     def serialize_assistant_for_history(self, raw_text: str) -> dict:
         turn = self.parse_turn(raw_text)
-        if turn.terminal:
-            return {
-                "role": "assistant",
-                "thought": turn.thought or "",
-                "terminal": True,
-            }
         if turn.ops:
             return {
                 "role": "assistant",
@@ -385,11 +356,6 @@ class MdArrayFormat(WireFormat):
         }
 
     def render_assistant_from_history(self, record: dict) -> dict:
-        if record.get("terminal"):
-            return {
-                "role": "assistant",
-                "content": f"## Thought\n{record.get('thought', '')}",
-            }
         ops = record.get("ops")
         if isinstance(ops, list) and ops:
             rendered = json.dumps(
@@ -415,18 +381,19 @@ class MdArrayFormat(WireFormat):
     def constraint_reminder_call(self) -> str:
         return (
             "Respond with `## Thought` and a `## Action` JSON array of "
-            '{"action": ..., params} ops (or `## Thought` only when done).'
+            '{"action": ..., params} ops. To finish, use a `complete` op: '
+            '{"action": "complete", "result": "<final answer>"}.'
         )
 
     def constraint_reminder_action_required(self) -> str:
-        # The DONE clause matters: Phase-2 showed the dominant NO_ACTION loop
-        # was the model trying to FINISH (empty `## Action` + stray
-        # `## Input {}`) while this reminder kept demanding an action.
+        # The DONE clause matters: a finishing model that emits no runnable op
+        # must be pointed at `complete` (not left demanding generic "an
+        # action"), or it loops trying to stop.
         return (
             'Each `## Action` element must include an "action" field naming '
-            "one tool from Available Tools. If the task is DONE and nothing "
-            "remains to run, OMIT the `## Action` section entirely — a "
-            "`## Thought`-only response finishes the task."
+            "one tool from Available Tools. If the task is DONE, emit a "
+            '`complete` op: {"action": "complete", "result": "<final answer>"} '
+            "— do not stop without it."
         )
 
     def failure_framing_parse_fail(self) -> str:

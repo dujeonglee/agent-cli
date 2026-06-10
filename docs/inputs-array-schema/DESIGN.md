@@ -242,6 +242,25 @@ non-empty non-dict payload (`[1,2,3]`) stays a parse failure. This is the same
 class as the recurring "이제 ~하겠습니다" NO_JSON finishing-transition (isolated,
 1-turn recovery, no cascade) — the empty-array variant is now clean.
 
+**Termination model reverted to `complete` (DESIGN Exp 8 conclusion).** Each of
+the above finish bugs — false-terminate (the ~10% that needed the gate), the
+NO_JSON finishing-transitions, the empty `[]`, and the review-instruction
+mismatch that emitted a result-less `complete` and lost the deliverable — traces
+to ONE origin: thought-only termination is ambiguous, and the loop kept patching
+its symptoms (the ready_for_review gate, lenient-terminal special cases, an
+empty-array tolerance). `complete` is the proven prefix_md/react completion verb
+(99-turn validated, an explicit `result` field). So md_array reverts to it:
+`exposes_complete=True`, completion is a `{"action":"complete","result":...}`
+op, and a thought-only / 0-op turn is a NO_ACTION nudge (call `complete` or emit
+ops) — never a silent completion. This let the whole thought-only apparatus be
+removed: the loop's `_finish_terminal_turn` + `_terminal_reviewed` gate, and the
+parser's lenient-terminal branches. md_array is now "prefix_md's termination +
+markdown multi-op array". `ready_for_review` reverts to a model-invoked
+pre-complete check (parity with the single-action formats); the review
+instructions ("call complete") are correct again, so the deliverable is no
+longer lost. The B multi-op nudge is orthogonal to termination and is retained.
+Re-validate completion reliability + multi-op adoption on the next live run.
+
 ### Established vs not
 
 Established (greedy + temp 0.7, single-turn): the model emits the markdown

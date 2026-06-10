@@ -1,10 +1,11 @@
-"""md_array wire format — parser, lenient terminal, history round-trip.
+"""md_array wire format — parser, completion (`complete` op), history round-trip.
 
-The shapes asserted here mirror what the omlx bakeoffs measured
-(docs/inputs-array-schema/DESIGN.md §3): flat multi-op arrays parse at 100%,
-and every "completion reach" the models actually emitted (omitted/empty
-``## Action``, a ``None`` marker, a bare result object, header-less plain
-text) reads as a terminal turn.
+Flat multi-op arrays parse at 100% (the shape the omlx bakeoffs measured,
+DESIGN §3). Completion is an explicit `complete` op — the proven
+prefix_md/react model, revived after thought-only termination produced a
+recurring class of finish bugs (DESIGN Exp 8). A thought-only / empty / no-op
+emission is therefore NOT a completion: it parses to 0 ops so the loop nudges
+the model (NO_ACTION) to call `complete` or emit work.
 """
 
 from __future__ import annotations
@@ -28,9 +29,13 @@ def _wire(thought: str, action_body: str | None) -> str:
 
 
 class TestFlags:
-    def test_multi_op_and_no_complete(self):
+    def test_multi_op_and_complete_exposed(self):
+        # Completion is an explicit `complete` op (proven prefix_md/react
+        # model), NOT thought-only — exposes_complete reverted to True
+        # (DESIGN Exp 8: thought-only termination caused a recurring class of
+        # finish bugs, fixed at the origin by reviving complete).
         assert WF.multi_op is True
-        assert WF.exposes_complete is False
+        assert WF.exposes_complete is True
         assert WF.thought_required is False
         assert WF.action_required is False
 
@@ -97,104 +102,85 @@ class TestParseTurnWork:
         assert not t.terminal
 
 
-class TestParseTurnTerminal:
-    def test_thought_only(self):
+class TestCompletionAndNoAction:
+    """md_array completes via an explicit `complete` op (DESIGN Exp 8) — NOT
+    thought-only. A thought-only / empty / no-op emission is therefore NOT a
+    completion: it parses to 0 ops so the loop's NO_ACTION recovery nudges the
+    model to call `complete` or emit work. ``terminal`` is never set."""
+
+    def test_complete_is_an_op_not_a_terminal_flag(self):
+        t = WF.parse_turn(_wire("done", '[{"action": "complete", "result": "ok"}]'))
+        assert not t.terminal
+        assert len(t.ops) == 1
+        assert t.ops[0].action == "complete"
+        assert t.ops[0].action_input == {"result": "ok"}
+
+    def test_thought_only_is_no_action_not_terminal(self):
         t = WF.parse_turn("## Thought\nAll done — tests pass.")
-        assert t.terminal and not t.ops
+        assert not t.terminal
+        assert t.ops == []
         assert t.thought == "All done — tests pass."
+        assert t.parse_stage == 1  # valid parse, just no op → NO_ACTION nudge
 
-    def test_empty_action_section(self):
+    def test_empty_action_section_is_no_action(self):
         t = WF.parse_turn(_wire("done", ""))
-        assert t.terminal
+        assert not t.terminal and t.ops == []
 
-    def test_none_marker(self):
-        for marker in ("None.", "none", "N/A", "nothing"):
-            assert WF.parse_turn(_wire("done", marker)).terminal
-
-    def test_bare_result_object(self):
-        t = WF.parse_turn(_wire("d", '{"result": "all finished"}'))
-        assert t.terminal
-        assert t.thought == "all finished"  # answer = the result
-
-    def test_plain_text_no_headers(self):
+    def test_plain_text_no_headers_is_no_action(self):
         t = WF.parse_turn("Hello! How can I help?")
-        assert t.terminal
+        assert not t.terminal and t.ops == []
         assert t.thought == "Hello! How can I help?"
 
-    def test_bare_op_json_is_work_not_terminal(self):
-        # Phase-2 regression: header-less op JSON (the model dropped the
-        # envelope) must be read as WORK ops — swallowing it as a terminal
-        # answer made completed=100% while no tool ever ran.
+    def test_bare_op_json_is_work(self):
+        # Header-less op JSON (envelope dropped) is read as WORK ops.
         t = WF.parse_turn('[{"action": "read_file", "path": "src/auth.py"}]')
         assert not t.terminal
         assert [(o.action, o.action_input) for o in t.ops] == [
             ("read_file", {"path": "src/auth.py"})
         ]
         bare_obj = WF.parse_turn('{"action": "shell", "command": "ls"}')
-        assert not bare_obj.terminal
         assert bare_obj.ops[0].action == "shell"
 
-    def test_bare_json_without_action_still_terminal(self):
-        # A bare {"result": ...} (no action key) stays a completion attempt.
-        t = WF.parse_turn('{"result": "all done"}')
-        assert t.terminal
-
-    def test_input_residue_tail_is_terminal(self):
-        # Phase-2 dominant loop: the model FINISHING with its prefix_md prior
-        # leaking through — empty ## Action + stray `## Input` + `{}`. That
-        # is a completion attempt, not a missing action (it looped NO_ACTION
-        # recovery 10-13x per run before this tolerance).
+    def test_input_residue_stripped_to_no_action(self):
+        # prefix_md prior leak (`## Action\n\n## Input\n{}`): stripped to 0 ops
+        # → NO_ACTION nudge (no longer mistaken for completion).
         t = WF.parse_turn(
             "## Thought\nAll done, reporting.\n\n## Action\n\n\n## Input\n{}"
         )
-        assert t.terminal
+        assert not t.terminal and t.ops == []
         assert t.thought == "All done, reporting."
 
-    def test_input_residue_without_json_is_terminal(self):
-        t = WF.parse_turn("## Thought\ndone\n\n## Action\n\n## Input\n")
-        assert t.terminal
+    def test_empty_containers_are_no_action(self):
+        for body in ("{}", "[{}]", "[]"):
+            t = WF.parse_turn(_wire("done", body))
+            assert not t.terminal and t.ops == [], body
+            assert t.parse_stage == 1, body  # thought present → NO_ACTION nudge
 
-    def test_empty_object_op_is_terminal(self):
-        # `## Action\n{}` — nothing to run = completion attempt.
-        t = WF.parse_turn(_wire("done", "{}"))
-        assert t.terminal
-        t2 = WF.parse_turn(_wire("done", "[{}]"))
-        assert t2.terminal
+    def test_no_op_without_thought_is_parse_failure(self):
+        # No thought + empty container → nothing usable at all → stage 0.
+        assert WF.parse_turn("## Action\n[]").parse_stage == 0
 
-    def test_empty_array_is_terminal(self):
-        # `## Action\n[]` — an explicitly empty op array = "nothing left to
-        # run, I'm done". Same family as {} / [{}]. Live regression: after
-        # ready_for_review the 27B emitted "Decision: complete" + `## Action\n[]`
-        # and looped on format recovery because `[]` fell through to NO_JSON.
-        t = WF.parse_turn(_wire("Decision: complete", "[]"))
-        assert t.terminal and not t.ops
-        assert t.parse_stage == 1
-
-    def test_empty_array_without_thought_is_not_terminal(self):
-        # No thought + `[]` is an empty emission, not a completion attempt.
-        t = WF.parse_turn("## Action\n[]")
-        assert not t.terminal
-        assert t.parse_stage == 0
-
-    def test_nonempty_nondict_array_is_parse_failure(self):
-        # `[1,2,3]` is malformed (no dict ops) — must NOT be swallowed as a
-        # terminal just because it has no runnable ops.
+    def test_nonempty_nondict_array_yields_no_ops(self):
+        # `[1,2,3]` has no dict ops — same "no usable op" family as []/{}: with
+        # a thought it's a NO_ACTION nudge (stage 1), never runnable ops.
         t = WF.parse_turn(_wire("x", "[1, 2, 3]"))
-        assert not t.terminal
-        assert t.parse_stage == 0
+        assert not t.terminal and t.ops == []
+        # without a thought there is nothing usable at all → parse failure
+        assert WF.parse_turn("## Action\n[1, 2, 3]").parse_stage == 0
 
     def test_actionless_op_with_real_input_stays_op(self):
         # An op that DOES carry input but dropped its action is work intent —
-        # it must stay an op (NO_ACTION recovery), not become terminal.
+        # it stays an op (NO_ACTION recovery / infer), not dropped.
         t = WF.parse_turn(_wire("read it", '[{"path": "a.py"}]'))
         assert not t.terminal
         assert t.ops[0].action is None
         assert t.ops[0].action_input == {"path": "a.py"}
 
-    def test_no_action_reminder_mentions_omit_when_done(self):
-        # The recovery wording must offer the DONE exit, or a finishing model
-        # loops against "add an action" forever (Phase-2 pattern).
-        assert "OMIT" in WF.constraint_reminder_action_required()
+    def test_action_required_reminder_points_to_complete(self):
+        # The recovery wording must point a finishing model at `complete`,
+        # not the old "OMIT ## Action" thought-only exit.
+        r = WF.constraint_reminder_action_required()
+        assert "complete" in r and "OMIT" not in r
 
     def test_blank_emission_is_no_output(self):
         t = WF.parse_turn("   \n  ")
@@ -222,11 +208,25 @@ class TestHistoryRoundTrip:
             ("shell", {"command": "ls"}),
         ]
 
-    def test_terminal_record_round_trips(self):
-        rec = WF.serialize_assistant_for_history("## Thought\nfinished")
-        assert rec == {"role": "assistant", "thought": "finished", "terminal": True}
+    def test_complete_op_record_round_trips(self):
+        # Completion is a normal `complete` op now (no terminal record).
+        raw = _wire("finished", '[{"action": "complete", "result": "all green"}]')
+        rec = WF.serialize_assistant_for_history(raw)
+        assert rec["ops"] == [
+            {"action": "complete", "action_input": {"result": "all green"}}
+        ]
         rendered = WF.render_assistant_from_history(rec)
-        assert WF.parse_turn(rendered["content"]).terminal
+        t = WF.parse_turn(rendered["content"])
+        assert not t.terminal
+        assert t.ops[0].action == "complete"
+        assert t.ops[0].action_input == {"result": "all green"}
+
+    def test_thought_only_record_is_content_fallback(self):
+        # A 0-op (thought-only) emission has no ops → stored as sanitized
+        # content (not a terminal record, which no longer exists).
+        rec = WF.serialize_assistant_for_history("## Thought\nfinished")
+        assert "terminal" not in rec
+        assert rec.get("content") is not None or rec.get("ops") == []
 
     def test_garbage_falls_back_to_sanitized_content(self):
         rec = WF.serialize_assistant_for_history("## Thought\n\n## Action\n[{broken")
@@ -280,8 +280,9 @@ class TestFormatRulesBatchSteering:
     def test_example_models_multifile_read_batch(self):
         # The dominant missed-batch pattern was consecutive single read_file
         # turns, so the worked example shows several read_file ops at once.
-        body = WF.format_rules().split("## Action")[-1]
-        assert body.count('"action": "read_file"') >= 3
+        # (format_rules now has two `## Action` examples — the batch one and a
+        # `complete` finish one; assert the batch op count over the whole text.)
+        assert WF.format_rules().count('"action": "read_file"') >= 3
         # and it parses as a real multi-op turn
         from agent_cli.wire_formats import get as _get
 
@@ -331,7 +332,7 @@ class TestEndToEnd:
             supports_strict_schema=False,
         )
 
-    def test_two_ops_then_gated_finish(self, tmp_path):
+    def test_two_ops_then_complete_finish(self, tmp_path):
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import AgentLoop
 
@@ -347,8 +348,11 @@ class TestEndToEnd:
                     ]
                 ),
             ),
-            "## Thought\n다 끝났습니다",
-            "## Thought\n다 끝났습니다",
+            # Completion is now an explicit `complete` op — the result field
+            # carries the deliverable (no thought-only terminal, no gate).
+            _wire(
+                "다 끝났습니다", '[{"action": "complete", "result": "다 끝났습니다"}]'
+            ),
         ]
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=r) for r in responses]
@@ -377,10 +381,29 @@ class TestEndToEnd:
         # multi-op assistant record persisted with the op list
         op_records = [m for m in raw if m.get("role") == "assistant" and m.get("ops")]
         assert op_records and op_records[0]["ops"][0]["action"] == "read_file"
-        # gate: exactly one ready_for_review observation
-        reviews = [
-            m
-            for m in raw
-            if m.get("role") == "user" and m.get("tool") == "ready_for_review"
+
+    def test_thought_only_nudges_then_completes(self, tmp_path):
+        # A thought-only emission is NOT a completion — it gets a NO_ACTION
+        # nudge; the model then calls `complete` to actually finish.
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
+
+        responses = [
+            "## Thought\nI think I'm done.",  # thought-only → NO_ACTION nudge
+            _wire("done", '[{"action": "complete", "result": "finished"}]'),
         ]
-        assert len(reviews) == 1
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
+        ctx = ContextManager(session_dir=tmp_path)
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=self._caps(),
+            model="m",
+            ctx=ctx,
+            max_turns=6,
+            wire_format=WF,
+        )
+        result = loop.run()
+        assert result.success
+        assert result.output == "finished"
