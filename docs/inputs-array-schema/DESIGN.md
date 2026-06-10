@@ -124,6 +124,27 @@ Residual after no-batch (terminal only, not batch-related): the model still
 reaches for a result-bearing completion — `## Action\nNone.` (35B) and `## Action
 \n{"result":…}` (27B). Handled by lenient terminal parsing (§4.3).
 
+### Exp 6 — Phase-2 full-loop bakeoff (real AgentLoop, mocked tools)
+
+Real `run_loop` end-to-end (recovery, gate, multi-turn), N=3, max_turns=10,
+both models, 7 tasks; baselines react 95.2% / prefix_md 90.5% completed.
+
+- **Round 1: FAILED** (83.3% completed, 6.3 iters, 0.79 pf/run, 2.64 rec/run).
+  Two bugs found and fixed: (a) the base `provider_call_kwargs` default leaked
+  `json_mode=True` → markdown envelope impossible, every turn bare JSON, which
+  the lenient terminal swallowed as completion (metrics looked perfect while
+  no tool ran) — provider-path-only bug the proto bakeoff could not see;
+  (b) the dominant honest failure: models FINISHING with the prefix_md prior
+  leaking (`## Action`(empty) + `## Input\n{}`) → empty op labeled NO_ACTION →
+  recovery demanded an action → 10-13 loop turns per run.
+- **Round 2 (after §4.3 residue tolerance + a DONE exit in the NO_ACTION
+  reminder): PASSED — 95.2% completed** (= react, > prefix_md), 4.5 iters,
+  0.48 pf/run, 1.02 rec/run. The only incomplete cell (27B edit task, 33%)
+  matches react (33%) and beats prefix_md (0%) on a task all formats fail in
+  the mock environment (static read output makes verify-loops).
+- Residual friction: pf/rec still above baselines (sporadic drift outside the
+  finish phase); +1 iter is partly the structural ready_for_review gate cost.
+
 ### Established vs not
 
 Established (greedy + temp 0.7, single-turn): the model emits the markdown
