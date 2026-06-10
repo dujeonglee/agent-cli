@@ -157,6 +157,17 @@ class MdArrayFormat(WireFormat):
     multi_op = True
     exposes_complete = False
 
+    # ─── Provider hints ─────────────────────────────────────────
+
+    def provider_call_kwargs(self, capabilities=None) -> dict:
+        # Same rationale as prefix_md: JSON-object mode forces a leading `{`,
+        # which makes the markdown envelope (`## ` headers) impossible — the
+        # model is then locked into bare JSON and every turn misparses.
+        # Phase-2 bakeoff caught exactly this: the base default leaked
+        # json_mode=True and 100% of turns degraded to header-less JSON that
+        # the lenient terminal mistook for completion.
+        return {"json_mode": False}
+
     # ─── Prompt ─────────────────────────────────────────────────
 
     def format_rules(self) -> str:
@@ -219,6 +230,33 @@ class MdArrayFormat(WireFormat):
             )
 
         if not has_action or not body:
+            # Header-less bare JSON that carries tool ops: the model dropped
+            # the envelope (drift) but its intent is clearly WORK — read it as
+            # ops, never as a terminal answer. (Phase-2 caught the inverse
+            # failure: header-less op JSON swallowed as "completion" made every
+            # metric look perfect while no tool ever ran.)
+            if not has_action and (llm_text.strip()[:1] in ("[", "{")):
+                bare = _extract_first_json(llm_text.strip())
+                bare_items = (
+                    [x for x in bare if isinstance(x, dict)]
+                    if isinstance(bare, list)
+                    else ([bare] if isinstance(bare, dict) else [])
+                )
+                if any("action" in it for it in bare_items):
+                    ops = [
+                        Op(
+                            action=(
+                                it.get("action")
+                                if isinstance(it.get("action"), str)
+                                else None
+                            ),
+                            action_input={k: v for k, v in it.items() if k != "action"},
+                        )
+                        for it in bare_items
+                    ]
+                    return ParsedTurn(
+                        thought=None, ops=ops, raw=llm_text, parse_stage=2
+                    )
             # Thought-only (or empty ## Action): terminal — IF there is any
             # text at all. A blank emission is a parse failure (NO_OUTPUT).
             if clean_thought and clean_thought.strip():

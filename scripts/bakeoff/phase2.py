@@ -69,7 +69,11 @@ MODELS = [
     if m.strip()
 ]
 
-PLUGINS = ["react", "prefix_md"]
+PLUGINS = [
+    p.strip()
+    for p in os.environ.get("BAKEOFF_PLUGINS", "react,prefix_md,md_array").split(",")
+    if p.strip()
+]
 
 N_RUNS = int(os.environ.get("BAKEOFF_N_RUNS", "5"))
 MAX_TURNS = int(os.environ.get("BAKEOFF_MAX_TURNS", "10"))
@@ -158,63 +162,82 @@ TASKS: list[Task] = [
 # ── Mock tools ───────────────────────────────────────────────
 
 
-def _make_mock_tool(name: str) -> Callable[[dict | str], ToolResult]:
-    """Return a stub for ``name`` that produces a generic success
+_MOCK_OUTPUTS = {
+    # Hashline-tagged like the real read_file so the model can build
+    # edit_file refs from it (LINE#HASH:content).
+    "read_file": (
+        "1#VR:def hash_password(password: str) -> str:\n"
+        "2#KT:    return md5(password.encode()).hexdigest()\n"
+    ),
+    "write_file": "wrote 42 bytes",
+    "edit_file": "applied 1 edit (1 region replaced)",
+    "shell": "(mock shell output)\nexit_code=0",
+    "read_symbols": "hash_password (function) :1-2",
+    "read_context": "(mock context)",
+    "code_index": "hash_password (function) src/auth.py:1-2",
+    "fetch": "(mock fetch: 200 OK, 1234 bytes)",
+    # Virtual tools (delegate / run_skill) are intercepted by the
+    # loop before TOOLS lookup, so the entries below are only used
+    # when the loop's interception path is bypassed.
+    "delegate": "(mock delegate: subagent reported '...')",
+    "run_skill": "(mock run_skill: skill reported '...')",
+}
+
+
+def _make_mock_run(name: str) -> Callable[..., ToolResult]:
+    """Return a ``Tool._run`` replacement producing a generic success
     observation so the loop can advance without touching the real fs.
 
     Stubs deliberately return short, predictable text — the model's
     handling of the observation is what we measure, not the depth of
     the simulated tool result.
     """
-    fakes = {
-        "read_file": (
-            "1\tdef hash_password(password: str) -> str:\n"
-            "2\t    return md5(password.encode()).hexdigest()\n"
-        ),
-        "write_file": "wrote 42 bytes",
-        "edit_file": "applied 1 edit (1 region replaced)",
-        "shell": "(mock shell output)\nexit_code=0",
-        "read_symbols": "hash_password (function) :1-2",
-        "read_context": "(mock context)",
-        "fetch": "(mock fetch: 200 OK, 1234 bytes)",
-        # Virtual tools (delegate / run_skill) are intercepted by the
-        # loop before TOOLS lookup, so the entries below are only used
-        # when the loop's interception path is bypassed.
-        "delegate": "(mock delegate: subagent reported '...')",
-        "run_skill": "(mock run_skill: skill reported '...')",
-    }
 
-    def _tool(args: dict | str) -> ToolResult:  # noqa: ARG001
-        return ToolResult(success=True, output=fakes.get(name, f"(mock {name} ok)"))
+    def _run(args, *, session_dir=None):  # noqa: ARG001 — Tool._run signature
+        return ToolResult(
+            success=True, output=_MOCK_OUTPUTS.get(name, f"(mock {name} ok)")
+        )
 
-    return _tool
+    return _run
 
 
 def install_mock_tools() -> dict[str, Any]:
-    """Replace every entry in ``agent_cli.tools.TOOLS`` with a stub.
+    """Patch each Tool INSTANCE's ``_run`` with a stub.
 
-    Virtual tools (complete, ready_for_review, ask) are kept real so
-    the loop's intercept logic still recognises completion. Returns
-    the original mapping so callers can restore it.
+    Patching the instances (not the ``TOOLS`` dict) keeps every consumer on
+    the same objects — the loop's import-time ``TOOLS`` binding,
+    ``registry._execute_tool``, and the multi-op path's
+    ``TOOLS[name].wrap_single_op`` all see the real schema / prefix / wrap
+    surface, while only the execution is faked. (The previous dict-swap
+    stopped working when tools became ``Tool`` instances: the loop binds
+    ``TOOLS`` at import time, so a module-attribute swap never reached it.)
+
+    Virtual tools (complete, ready_for_review, ask) are intercepted by the
+    loop before any TOOLS lookup, so they need no patch. Returns the
+    original ``_run`` callables so callers can restore them.
     """
-    import agent_cli.tools as tools_module
+    from agent_cli.tools.registry import TOOLS
 
-    original = dict(tools_module.TOOLS)
     keep_real = {"complete", "ready_for_review", "ask"}
-    new_tools: dict[str, Any] = {}
-    for name, func in original.items():
-        if name in keep_real:
-            new_tools[name] = func
-        else:
-            new_tools[name] = _make_mock_tool(name)
-    tools_module.TOOLS = new_tools
-    return original
+    originals: dict[str, Any] = {}
+    for name, tool in TOOLS.items():
+        if name in keep_real or not hasattr(tool, "_run"):
+            continue
+        originals[name] = tool._run
+        tool._run = _make_mock_run(name)
+    return originals
 
 
-def restore_tools(original: dict[str, Any]) -> None:
-    import agent_cli.tools as tools_module
+def restore_tools(originals: dict[str, Any]) -> None:
+    from agent_cli.tools.registry import TOOLS
 
-    tools_module.TOOLS = original
+    for name, fn in originals.items():
+        # The patch set an instance attribute shadowing the class method;
+        # remove it so the class implementation is visible again.
+        try:
+            del TOOLS[name].__dict__["_run"]
+        except KeyError:
+            TOOLS[name]._run = fn
 
 
 # ── Per-run measurement ──────────────────────────────────────

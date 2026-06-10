@@ -34,6 +34,20 @@ class TestFlags:
         assert WF.thought_required is False
         assert WF.action_required is False
 
+    def test_json_mode_always_off(self):
+        # Phase-2 regression: the base default leaked json_mode=True
+        # (supports_structured_output), which forces a leading `{` and makes
+        # the markdown envelope impossible — every turn degraded to bare JSON.
+        caps = ModelCapabilities(
+            context_window=1,
+            max_output_tokens=1,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        assert WF.provider_call_kwargs(caps) == {"json_mode": False}
+
     def test_registered(self):
         from agent_cli.wire_formats import list_names
 
@@ -106,6 +120,24 @@ class TestParseTurnTerminal:
         t = WF.parse_turn("Hello! How can I help?")
         assert t.terminal
         assert t.thought == "Hello! How can I help?"
+
+    def test_bare_op_json_is_work_not_terminal(self):
+        # Phase-2 regression: header-less op JSON (the model dropped the
+        # envelope) must be read as WORK ops — swallowing it as a terminal
+        # answer made completed=100% while no tool ever ran.
+        t = WF.parse_turn('[{"action": "read_file", "path": "src/auth.py"}]')
+        assert not t.terminal
+        assert [(o.action, o.action_input) for o in t.ops] == [
+            ("read_file", {"path": "src/auth.py"})
+        ]
+        bare_obj = WF.parse_turn('{"action": "shell", "command": "ls"}')
+        assert not bare_obj.terminal
+        assert bare_obj.ops[0].action == "shell"
+
+    def test_bare_json_without_action_still_terminal(self):
+        # A bare {"result": ...} (no action key) stays a completion attempt.
+        t = WF.parse_turn('{"result": "all done"}')
+        assert t.terminal
 
     def test_blank_emission_is_no_output(self):
         t = WF.parse_turn("   \n  ")
