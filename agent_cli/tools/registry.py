@@ -168,6 +168,65 @@ def _strip_own_prefix(name: str, text: str) -> str:
     return text.replace(f"{name}_", "")
 
 
+def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
+    """Render a batch tool's params as its FLAT single-op shape for multi-op
+    formats.
+
+    A batch tool's schema declares its native (batch) interface: a single
+    array param (``read_file_reads``, ``code_index_queries``,
+    ``delegate_tasks``) whose items are the per-call shape, sometimes beside a
+    scalar (``edit_file_path``). Under a multi-op format one op IS one item,
+    so the prompt must advertise the item fields at the top level — NOT the
+    array wrapper. This unwraps the array param into its item-object
+    properties and keeps scalars (prefix-stripped), exactly mirroring
+    :meth:`Tool.wrap_single_op`'s flat→batch mapping. The item schema already
+    lives in ``items.properties``, so no per-tool declaration is needed.
+
+    Not doing this is what let the 27B copy the advertised ``reads`` array and
+    emit the old ``read_file_reads`` wrapper under md_array (DESIGN Exp 8).
+    """
+    out: dict[str, str] = {}
+    for k, v in props.items():
+        items = v.get("items") if v.get("type") == "array" else None
+        if isinstance(items, dict) and items.get("properties"):
+            item_required = set(items.get("required", []))
+            for ik, iv in items["properties"].items():
+                out[ik] = render_param_value(iv, ik in item_required)
+        else:
+            out[_strip_own_prefix(name, k)] = render_param_value(v, k in required)
+    return out
+
+
+# Batch-framing sentences to drop from a tool's description under multi-op
+# formats (one op = one item, so "pass a list" / "in a single call" guidance
+# is wrong). Keyed by tool name; applied AFTER the wire-prefix strip, so the
+# match text uses the stripped param names (``reads``, not ``read_file_reads``).
+# ``TestMultiOpToolDescriptions`` asserts no batch phrasing survives, so a
+# description edit that outdates a key fails loudly instead of silently
+# leaking the old shape.
+_MULTI_OP_DESC_REWRITES = {
+    "read_file": [
+        (
+            "Read one or more files in a single call. Provide reads as a list; "
+            "each item reads one file with an optional mode. ",
+            "Read a file. ",
+        ),
+        ("For a single file, pass a one-element list. ", ""),
+        ("Per-item modes:", "Modes:"),
+    ],
+    "code_index": [
+        (
+            "Provide queries as a LIST; each item is one query with its own "
+            "mode. One call can run many queries (modes may be mixed). For a "
+            "single query, pass a one-element list.",
+            "Each op runs one query.",
+        ),
+        ("index queries via", "index query via"),
+        ("Modes (per item):", "Modes:"),
+    ],
+}
+
+
 def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,
@@ -213,18 +272,17 @@ def get_tool_descriptions(
             continue
         props = schema.parameters.get("properties", {})
         required = set(schema.parameters.get("required", []))
-        params = {
-            (_strip_own_prefix(name, k) if multi_op else k): render_param_value(
-                v, k in required
-            )
-            for k, v in props.items()
-        }
+        if multi_op:
+            params = _multi_op_flat_params(name, props, required)
+        else:
+            params = {k: render_param_value(v, k in required) for k, v in props.items()}
         params_str = json.dumps(params, ensure_ascii=False)
-        description = (
-            _strip_own_prefix(name, schema.description)
-            if multi_op
-            else schema.description
-        )
+        if multi_op:
+            description = _strip_own_prefix(name, schema.description)
+            for old, new in _MULTI_OP_DESC_REWRITES.get(name, []):
+                description = description.replace(old, new)
+        else:
+            description = schema.description
         if not exposes_complete:
             # ready_for_review's description sequences itself before
             # `complete`; without that tool the reference would teach a

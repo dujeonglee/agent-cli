@@ -199,6 +199,27 @@ opportunity (e.g. "read these 3 files, report which defines X") to measure the
 uptake delta, plus the real-world multi-op rate from turns.jsonl. Regression
 signal = a rise in nested-array or dependent-batch parse failures.
 
+**Root-cause fix (live debugging of the Exp-8 ship).** On the next session the
+27B emitted `{"read_file_reads": [{"path": ...}]}` — the OLD batch-wrapper key —
+under md_array. It silently recovered (the `read_file_` prefix lets infer_action
+restore action=read_file, and read_file accepts the batch array), so it was not
+a hard failure, but it was the wrong shape. The cause was not history/prior
+contamination (0 occurrences) nor a prompt leak in the inline guide (clean) — it
+was the **tool's Input-JSON schema**: under multi-op, `get_tool_descriptions`
+stripped the wire prefix but still advertised the batch array param
+(`reads: array<object{...}>`) and batch prose ("Provide reads as a list"). The
+model faithfully copied the advertised shape. Exp 8 fixed the inline guide but
+missed the schema render — a guide/schema contradiction (tech debt).
+
+Fix: `_multi_op_flat_params` unwraps the batch array param to its item fields
+(generic — the item schema already exists; mirrors `wrap_single_op`), and
+`_MULTI_OP_DESC_REWRITES` neutralizes the batch prose for read_file/code_index.
+Now the advertised shape == the flat op the model should emit. A targeted guard
+line in read_file's guide ("do NOT use a `read_file_reads` wrapper") is kept as
+belt-and-suspenders. Lesson: when a wire format changes the op shape, the TOOL
+SCHEMA render is part of the prompt surface — fixing only the inline guide
+leaves the authoritative (copied) shape wrong.
+
 ### Established vs not
 
 Established (greedy + temp 0.7, single-turn): the model emits the markdown

@@ -364,8 +364,10 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
   Each read_file op reads ONE file. Reading several files? Emit one
   read_file op per file in the SAME turn (separate array elements — never
   a list inside one op); independent reads belong together and save turns.
-  Pick the right mode per op — full reads burn context budget, but reading
-  too little costs turns:
+  Do NOT wrap reads in a `read_file_reads` key (or any plural wrapper) —
+  that is the old batch shape; every op is a flat {"action": "read_file",
+  "path": ...} element. Pick the right mode per op — full reads burn
+  context budget, but reading too little costs turns:
 """
         batch_mode = ""
     else:

@@ -109,7 +109,14 @@ class TestMultiOpPromptBranches:
         assert "BEFORE complete" not in section
 
     def test_param_keys_unprefixed(self, section):
-        assert "read_file_reads" not in section
+        # No prefixed batch key is presented as a USABLE param. read_file_reads
+        # is the one exception: the B-guard names it precisely to FORBID it
+        # (the 27B-hallucinated wrapper, Exp 8) — assert it appears only in a
+        # negative ("Do NOT wrap ... read_file_reads") context, never as a
+        # usable parameter.
+        flat = " ".join(section.split())
+        assert "Do NOT wrap reads in a `read_file_reads` key" in flat
+        assert flat.count("read_file_reads") == 1  # only the guard mention
         assert "shell_command" not in section
         assert "code_index_queries" not in section
         assert "delegate_tasks" not in section
@@ -128,6 +135,16 @@ class TestMultiOpPromptBranches:
         assert "never\n  a list inside one op" in section or (
             "never a list inside one op" in " ".join(section.split())
         )
+
+    def test_read_file_guide_guards_against_wrapper_key(self, section):
+        # B-guard (DESIGN §6, Exp 8): 27B hallucinated the old `read_file_reads`
+        # batch-wrapper key under md_array (recovered via the read_file_ prefix,
+        # but the wrong shape). The guide must name and forbid that exact key,
+        # at its origin (read_file), and point to the flat op shape.
+        flat = " ".join(section.split())
+        assert "read_file_reads" in section
+        assert "old batch shape" in flat
+        assert 'flat {"action": "read_file", "path": ...} element' in flat
 
     def test_edit_file_one_edit_per_op(self, section):
         assert "one edit per op" in section
@@ -160,6 +177,43 @@ class TestMultiOpPromptBranches:
         assert "- complete:" in section
         assert "read_file_reads" in section
         assert "5. Batch" in section
+
+    # ── Root fix (DESIGN Exp 8): the tool Input-JSON schema, not just the
+    # inline guide, must advertise the FLAT single-op shape under multi-op.
+    # The batch array param is unwrapped to its item fields; batch prose is
+    # neutralized. (This is the schema the 27B copied into `read_file_reads`.)
+
+    def test_read_file_input_json_is_flat_not_batch(self, section):
+        flat = " ".join(section.split())
+        # item fields surfaced at top level …
+        assert '"path": "string, required' in flat
+        assert '"stat":' in flat and '"search":' in flat
+        # … and the batch array wrapper param is gone (both prefixed + bare)
+        assert '"reads":' not in flat
+        assert '"read_file_reads":' not in flat
+        # batch-framing prose neutralized
+        for phrase in ("one or more files", "as a list", "one-element list"):
+            assert phrase not in flat
+
+    def test_code_index_input_json_is_flat_not_batch(self, section):
+        flat = " ".join(section.split())
+        assert '"mode": "string, required' in flat
+        assert '"queries":' not in flat
+        assert '"code_index_queries":' not in flat
+        assert "Each op runs one query." in flat
+        assert "Provide queries as a LIST" not in flat
+
+    def test_edit_file_input_json_flat_merges_scalar_and_item(self, section):
+        flat = " ".join(section.split())
+        # scalar param kept + edit-item fields surfaced (matches wrap_single_op)
+        assert '"path": "string, required' in flat
+        assert '"op": "string, required' in flat and '"pos":' in flat
+        assert '"edits":' not in flat and '"edit_file_edits":' not in flat
+
+    def test_delegate_input_json_is_flat_not_batch(self, section):
+        flat = " ".join(section.split())
+        assert '"task": "string, required' in flat
+        assert '"tasks":' not in flat and '"delegate_tasks":' not in flat
 
 
 class TestBuildSystemPromptSections:
