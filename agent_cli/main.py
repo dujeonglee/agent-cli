@@ -888,7 +888,7 @@ def run(
     response_format: str = typer.Option(
         DEFAULT_WIRE_FORMAT,
         "--response-format",
-        help="Wire format plugin name (default: prefix_md). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name (default: md_array — markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-ins: prefix_md, react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
@@ -1228,7 +1228,7 @@ def chat(
     response_format: str = typer.Option(
         DEFAULT_WIRE_FORMAT,
         "--response-format",
-        help="Wire format plugin name (default: prefix_md). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name (default: md_array — markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-ins: prefix_md, react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
 ):
     """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
@@ -1509,7 +1509,7 @@ def web(
     response_format: str = typer.Option(
         DEFAULT_WIRE_FORMAT,
         "--response-format",
-        help="Wire format plugin name (default: prefix_md).",
+        help="Wire format plugin name (default: md_array).",
     ),
     host: str = typer.Option(
         "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"

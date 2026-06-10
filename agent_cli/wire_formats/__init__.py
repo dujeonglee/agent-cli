@@ -27,7 +27,14 @@ _registry: dict[str, WireFormat] = {}
 # Single source of truth for the default wire format — the CLI's
 # --response-format default, the new-session default, and the get(None) /
 # unspecified-wire fallback all resolve here. Change the default in ONE place.
-DEFAULT_WIRE_FORMAT = "prefix_md"
+#
+# md_array (2026-06-11): promoted from experimental after Phase-2 (95.2% =
+# react) + real-world validation (DOOM web, 150 turns, 0.7% format-failure =
+# prefix_md parity). It is a functional superset of prefix_md (single-op plus
+# multi-op). prefix_md is kept as a registered choice (NOT deprecated) — a
+# proven fallback for one more cycle. Multi-op uptake is still low (~0.7% of
+# op-turns); the next lever is prompting for spontaneous batching.
+DEFAULT_WIRE_FORMAT = "md_array"
 
 
 def register(wire_format: WireFormat) -> None:

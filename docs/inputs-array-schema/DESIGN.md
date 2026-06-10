@@ -159,9 +159,17 @@ requests, tool mix edit 41 / shell 40 / read 36 / write 26):
 - **Multi-op uptake is the honest gap**: 1 of 142 op-turns used a multi-op
   array (3 ops, ~2 turns saved). The format permits it; the model rarely
   reaches for it unprompted (the workload is also inherently sequential —
-  write→test→fix). Verdict: stability is at parity, but the multi-op payoff
-  is unrealized — **default switch deferred**; next lever is prompting for
-  spontaneous batching of independent ops, then revisit.
+  write→test→fix). Verdict: stability is at parity, multi-op payoff still
+  unrealized.
+
+  **Decision (2026-06-11) — switch to default, no deprecation.** Promoted
+  md_array to `DEFAULT_WIRE_FORMAT` on the parity evidence (a functional
+  superset of prefix_md: every prefix_md turn is a 1-op md_array turn, plus
+  multi-op is available the moment uptake improves). prefix_md is kept as a
+  registered, selectable fallback — explicitly NOT deprecated this cycle, so
+  there is an escape hatch if the new default regresses in wider use. The
+  remaining work (raise multi-op uptake via prompting; revisit the rfr-gate
+  +1-iter cost) is now default-path improvement, not a gate on adoption.
 
 ### Established vs not
 
@@ -259,7 +267,7 @@ sequential + run-all + any-fail / Tool ABC hook):
   prefixed input; batch tools override, idempotent), sequential run-all,
   `_flush_op_results` combined observation (`[i/N] tool — OK/FAILED`,
   any-fail ⇒ failed), turn-ending ops flush accumulated work first.
-- **Step 3c** — `md_array` plugin (registered, experimental) with lenient
+- **Step 3c** — `md_array` plugin (registered; default since 2026-06-11) with lenient
   terminal parsing (§4.3) and multi-op history records
   (`{thought, ops:[…]}` / `{thought, terminal}`, round-trip via overridden
   serialize/render); the `ready_for_review` termination gate
@@ -270,8 +278,8 @@ sequential + run-all + any-fail / Tool ABC hook):
   Simpler than the op-set idea and semantically right.
 
 Invariants held: turns.jsonl schema unchanged; react/prefix_md byte-identical
-prompts + full-suite green; the new shape is opt-in behind
-`--response-format md_array`.
+prompts + full-suite green. Shipped opt-in behind `--response-format md_array`;
+promoted to `DEFAULT_WIRE_FORMAT` on 2026-06-11 (prefix_md kept as fallback).
 
 ---
 
