@@ -141,6 +141,29 @@ class TestCompletionAndNoAction:
         bare_obj = WF.parse_turn('{"action": "shell", "command": "ls"}')
         assert bare_obj.ops[0].action == "shell"
 
+    def test_headerless_complete_after_prose_is_not_lost(self):
+        # Live (delegate explorer, DESIGN Exp 8): a FINISHING model wrote its
+        # reasoning then appended `[{"action":"complete","result":<full
+        # analysis>}]` with NO `## Action` header. The header-less recovery
+        # only fired when the text STARTED with a bracket, so the complete op —
+        # carrying the entire deliverable in `result` — was discarded (→
+        # NO_ACTION → empty result). Now the op array is extracted even after
+        # prose.
+        raw = (
+            "모든 파일을 읽었으므로 분석을 완료하겠습니다.\n\n"
+            '[{"action": "complete", "result": "# Full analysis report ..."}]'
+        )
+        t = WF.parse_turn(raw)
+        assert len(t.ops) == 1
+        assert t.ops[0].action == "complete"
+        assert t.ops[0].action_input["result"].startswith("# Full analysis")
+
+    def test_prose_with_stray_bracket_no_action_falls_through(self):
+        # A stray non-op bracket in prose must NOT be mistaken for ops — it
+        # falls through to the NO_ACTION nudge (no spurious op).
+        t = WF.parse_turn("the array [1, 2, 3] is sorted; done.")
+        assert t.ops == []
+
     def test_input_residue_stripped_to_no_action(self):
         # prefix_md prior leak (`## Action\n\n## Input\n{}`): stripped to 0 ops
         # → NO_ACTION nudge (no longer mistaken for completion).

@@ -252,12 +252,15 @@ class MdArrayFormat(WireFormat):
             ]
 
         if not has_action or not body:
-            # Header-less bare JSON that carries tool ops: the model dropped
-            # the envelope (drift) but its intent is clearly WORK — read it as
-            # ops. (Phase-2 caught the inverse failure: header-less op JSON
-            # once swallowed as "completion" made every metric look perfect
-            # while no tool ever ran.)
-            if not has_action and (llm_text.strip()[:1] in ("[", "{")):
+            # Header-less op JSON: the model dropped the `## Action` envelope
+            # but emitted a JSON op array. Read it as ops — even when prose
+            # precedes the array (a FINISHING model often writes its reasoning
+            # then appends `[{"action":"complete","result":<full answer>}]`
+            # with no header; the deliverable lives in `result` and must not be
+            # discarded). Extract the first JSON anywhere in the text, not only
+            # at position 0. The `any("action")` guard means a stray bracket in
+            # prose (`[1,2,3]`) falls through to the NO_ACTION nudge.
+            if not has_action:
                 bare = _extract_first_json(llm_text.strip())
                 bare_items = (
                     [x for x in bare if isinstance(x, dict)]

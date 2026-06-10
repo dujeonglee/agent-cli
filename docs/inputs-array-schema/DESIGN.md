@@ -259,7 +259,16 @@ markdown multi-op array". `ready_for_review` reverts to a model-invoked
 pre-complete check (parity with the single-action formats); the review
 instructions ("call complete") are correct again, so the deliverable is no
 longer lost. The B multi-op nudge is orthogonal to termination and is retained.
-Re-validate completion reliability + multi-op adoption on the next live run.
+
+Header-less complete (live, delegate explorer): a finishing model wrote its
+reasoning then appended `[{"action":"complete","result":<full analysis>}]` with
+NO `## Action` header. The header-less recovery only fired when the emission
+STARTED with a bracket, so the complete op — carrying the entire deliverable in
+`result` — was discarded (→ NO_ACTION → empty result, the run ended on a bare
+`✓`). Fixed: extract the op array anywhere in a header-less emission, not only
+at position 0 (the `any("action")` guard keeps a stray prose bracket from
+becoming a spurious op). Re-validate completion reliability + multi-op adoption
+on the next live run.
 
 ### Established vs not
 
