@@ -145,6 +145,24 @@ both models, 7 tasks; baselines react 95.2% / prefix_md 90.5% completed.
 - Residual friction: pf/rec still above baselines (sporadic drift outside the
   finish phase); +1 iter is partly the structural ready_for_review gate cost.
 
+### Exp 7 — Real-world session (DOOM build, web, 27B)
+
+One real working session (`--response-format md_array`, 150 turns, 2 user
+requests, tool mix edit 41 / shell 40 / read 36 / write 26):
+
+- **Format failures: 1 (NO_JSON, 0.7%)** — recovered next turn; plus one
+  ACTION_LOOP (B1 behavioral guard, recovered next turn). No cascades, no
+  degeneration across 150 accumulated multi-turn priors. On par with the
+  prefix_md real-world baseline (99 turns, 1 failure, 1.0%).
+- Termination: one thought-only terminal + the ready_for_review gate fired
+  exactly once. Multi-op history records and combined observations behaved.
+- **Multi-op uptake is the honest gap**: 1 of 142 op-turns used a multi-op
+  array (3 ops, ~2 turns saved). The format permits it; the model rarely
+  reaches for it unprompted (the workload is also inherently sequential —
+  write→test→fix). Verdict: stability is at parity, but the multi-op payoff
+  is unrealized — **default switch deferred**; next lever is prompting for
+  spontaneous batching of independent ops, then revisit.
+
 ### Established vs not
 
 Established (greedy + temp 0.7, single-turn): the model emits the markdown
