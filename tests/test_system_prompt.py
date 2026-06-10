@@ -109,14 +109,11 @@ class TestMultiOpPromptBranches:
         assert "BEFORE complete" not in section
 
     def test_param_keys_unprefixed(self, section):
-        # No prefixed batch key is presented as a USABLE param. read_file_reads
-        # is the one exception: the B-guard names it precisely to FORBID it
-        # (the 27B-hallucinated wrapper, Exp 8) — assert it appears only in a
-        # negative ("Do NOT wrap ... read_file_reads") context, never as a
-        # usable parameter.
-        flat = " ".join(section.split())
-        assert "Do NOT wrap reads in a `read_file_reads` key" in flat
-        assert flat.count("read_file_reads") == 1  # only the guard mention
+        # No prefixed batch key appears at all under multi-op — not as a param
+        # and not in prose. (An earlier B-guard line that NAMED read_file_reads
+        # to forbid it was removed: on the 27B the negative mention primed the
+        # very token it forbade — "don't think of an elephant" — Exp 8 live.)
+        assert "read_file_reads" not in section
         assert "shell_command" not in section
         assert "code_index_queries" not in section
         assert "delegate_tasks" not in section
@@ -135,16 +132,6 @@ class TestMultiOpPromptBranches:
         assert "never\n  a list inside one op" in section or (
             "never a list inside one op" in " ".join(section.split())
         )
-
-    def test_read_file_guide_guards_against_wrapper_key(self, section):
-        # B-guard (DESIGN §6, Exp 8): 27B hallucinated the old `read_file_reads`
-        # batch-wrapper key under md_array (recovered via the read_file_ prefix,
-        # but the wrong shape). The guide must name and forbid that exact key,
-        # at its origin (read_file), and point to the flat op shape.
-        flat = " ".join(section.split())
-        assert "read_file_reads" in section
-        assert "old batch shape" in flat
-        assert 'flat {"action": "read_file", "path": ...} element' in flat
 
     def test_edit_file_one_edit_per_op(self, section):
         assert "one edit per op" in section

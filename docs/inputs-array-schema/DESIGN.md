@@ -214,11 +214,24 @@ missed the schema render — a guide/schema contradiction (tech debt).
 Fix: `_multi_op_flat_params` unwraps the batch array param to its item fields
 (generic — the item schema already exists; mirrors `wrap_single_op`), and
 `_MULTI_OP_DESC_REWRITES` neutralizes the batch prose for read_file/code_index.
-Now the advertised shape == the flat op the model should emit. A targeted guard
-line in read_file's guide ("do NOT use a `read_file_reads` wrapper") is kept as
-belt-and-suspenders. Lesson: when a wire format changes the op shape, the TOOL
-SCHEMA render is part of the prompt surface — fixing only the inline guide
-leaves the authoritative (copied) shape wrong.
+Now the advertised shape == the flat op the model should emit. Lesson: when a
+wire format changes the op shape, the TOOL SCHEMA render is part of the prompt
+surface — fixing only the inline guide leaves the authoritative (copied) shape
+wrong.
+
+**Guard line removed (live, same debugging).** A first attempt added a guard to
+read_file's guide ("do NOT use a `read_file_reads` wrapper"). On the fixed
+prompt the 27B STILL emitted `read_file_reads` — and the Prompt Inspector showed
+the only place that token now appeared was the guard itself. The negative
+mention primed the very token it forbade ("don't think of an elephant"); small
+models drop the negation and latch onto the salient token. Removed it; the clean
+flat schema + flat examples carry the shape without naming the anti-pattern. The
+residual emission is a model prior (it occurred pre-guard too) and is benign: it
+recovers via the `read_file_` prefix (infer_action → read_file, which accepts the
+batch array), so the file is still read. Not chased to zero — prompt-pressuring a
+model prior is whack-a-mole, and the recovery is clean. Meanwhile the B nudge
+landed hard on the fixed prompt: multi-op adoption jumped from 0.6% to ~100% of
+early op-turns (read_file ×6/×7/×8 batches), 0 regressions.
 
 ### Established vs not
 
