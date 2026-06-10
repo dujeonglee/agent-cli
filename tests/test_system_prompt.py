@@ -120,6 +120,15 @@ class TestMultiOpPromptBranches:
         assert "takes a LIST of reads" not in section
         assert '{"action": "read_file", "path": "app.py", "stat": true}' in section
 
+    def test_read_file_guide_nudges_same_turn_batch(self, section):
+        # B (DESIGN §6): read_file is the dominant missed-batch tool, so its
+        # multi-op guide must steer several reads into ONE turn — with the
+        # no-nesting guardrail right where batching is suggested.
+        assert "SAME turn" in section
+        assert "never\n  a list inside one op" in section or (
+            "never a list inside one op" in " ".join(section.split())
+        )
+
     def test_edit_file_one_edit_per_op(self, section):
         assert "one edit per op" in section
         assert "batch in one call" not in section
@@ -129,6 +138,13 @@ class TestMultiOpPromptBranches:
     def test_code_index_one_query_per_op(self, section):
         assert "Each code_index op runs ONE query" in section
         assert "takes a LIST of queries" not in section
+
+    def test_code_index_guide_nudges_same_turn_batch(self, section):
+        # Regression guard: code_index's multi-op guide already nudges
+        # same-turn batching — keep it (B leaves it as-is).
+        assert "in\n  the same turn" in section or (
+            "in the same turn" in " ".join(section.split())
+        )
 
     def test_delegate_one_task_per_op(self, section):
         assert "Each delegate op runs ONE subagent task" in section

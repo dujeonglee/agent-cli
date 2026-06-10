@@ -171,6 +171,34 @@ requests, tool mix edit 41 / shell 40 / read 36 / write 26):
   remaining work (raise multi-op uptake via prompting; revisit the rfr-gate
   +1-iter cost) is now default-path improvement, not a gate on adoption.
 
+### Exp 8 — Multi-op uptake nudge (2026-06-11, prompting)
+
+Grounding: the DOOM session (156 op-turns) had **23 runs of consecutive
+read-only single-op turns** (lengths 2–5), an upper bound of ~38 turns (24%)
+that could have been one multi-op turn each. Low uptake is therefore not
+"correct sequential behavior" — there is real batchable opportunity the model
+isn't taking. (Upper bound: the heuristic counts read_file/code_index/shell
+runs; some shell steps are genuinely dependent, so the true figure is lower —
+but length-4/5 read_file runs are textbook independent reads.)
+
+Intervention (approach **B** — static steering, no loop-level nudge):
+- `format_rules` gains an active decision heuristic ("before you emit, look at
+  everything you intend to do; independent ops go in THIS turn") plus a worked
+  3-op independent-read example (models the dominant missed pattern). The two
+  guardrails are kept at equal weight so the nudge can't regress into the two
+  known failure modes: dependent-batch (a later op needs an earlier result —
+  all ops in a turn run before any observation) and nested arrays (broke 27B,
+  §3). Rule 3 now says "N separate ops in the SAME turn".
+- read_file's inline guide (the dominant single-op tool) gains a same-turn
+  batch hint with the no-nesting guardrail inline; code_index already had one.
+- Scope: read-only tools only. edit_file/write_file/shell are not nudged per
+  tool (dependency is common there); the general heuristic covers them.
+
+Measurement (pending live run): a Phase-2 task with genuine independent-op
+opportunity (e.g. "read these 3 files, report which defines X") to measure the
+uptake delta, plus the real-world multi-op rate from turns.jsonl. Regression
+signal = a rise in nested-array or dependent-batch parse failures.
+
 ### Established vs not
 
 Established (greedy + temp 0.7, single-turn): the model emits the markdown

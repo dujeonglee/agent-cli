@@ -361,8 +361,11 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
         ex_full = rai({"path": "app.py"})
         intro = """\
 
-  Each read_file op reads ONE file. Pick the right mode — full reads
-  burn context budget, but reading too little costs turns:
+  Each read_file op reads ONE file. Reading several files? Emit one
+  read_file op per file in the SAME turn (separate array elements — never
+  a list inside one op); independent reads belong together and save turns.
+  Pick the right mode per op — full reads burn context budget, but reading
+  too little costs turns:
 """
         batch_mode = ""
     else:

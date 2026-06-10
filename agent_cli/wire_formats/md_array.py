@@ -71,16 +71,22 @@ Respond in TWO markdown sections:
 
 Each array element is one tool call: {"action": "<tool name>", <its
 parameters>}. Use the parameter names shown in each tool's guide above
-(plain, no prefix). For several INDEPENDENT operations in one turn, add
-multiple elements. If a later op depends on an earlier op's result, emit
-only the first now — its observation comes next turn.
+(plain, no prefix).
+
+Batch independent work into ONE turn. Before you emit, look at everything
+you intend to do: every operation that does NOT need another's output goes
+in THIS turn as a separate array element. Reading three files, or a read
+plus an unrelated search, is ONE turn — not three; batching saves turns and
+context budget. Split into separate turns ONLY when a later step needs an
+earlier step's result (then emit just the first now — its observation
+arrives next turn).
 
 Rules:
 1. Always include a `## Thought`.
 2. Each `## Action` element must have an "action" naming one tool.
 3. Each op acts on ONE target. To read N files, emit N separate
-   {"action": "read_file", "path": ...} ops. NEVER put a list of items
-   inside a single op (no nested arrays).
+   {"action": "read_file", "path": ...} ops in the SAME turn. NEVER put a
+   list of items inside a single op (no nested arrays).
 4. When the task is DONE and nothing remains to run, OMIT the `## Action`
    section entirely. A `## Thought`-only response means the task is
    complete, and your thought is the final answer.
@@ -88,12 +94,14 @@ Rules:
 6. If an observation shows an error, fix parameters and retry.
 7. Respond in the user's language.
 
-Several independent operations:
+Several independent operations in one turn (read three files at once —
+they don't depend on each other):
 ## Thought
-Read auth.py and list src/.
+To see how auth, session, and the login route fit together I need all
+three files; none depends on another's output, so read them together.
 
 ## Action
-[{"action": "read_file", "path": "src/auth.py"}, {"action": "shell", "command": "ls src/"}]
+[{"action": "read_file", "path": "src/auth.py"}, {"action": "read_file", "path": "src/session.py"}, {"action": "read_file", "path": "src/routes/login.py"}]
 
 Done (no action):
 ## Thought

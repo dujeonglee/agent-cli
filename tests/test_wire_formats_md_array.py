@@ -229,6 +229,50 @@ class TestSanitizeAndDegenerate:
         assert WF.is_degenerate(_wire("x", '[{"action": "shell"}]')) is False
 
 
+class TestFormatRulesBatchSteering:
+    """Multi-op uptake nudge (DESIGN §6, B): the format rules must actively
+    steer the model to batch INDEPENDENT ops into one turn — and must keep
+    the two guardrails that stop this from causing regressions:
+      (1) dependent ops split across turns (a later op needs an earlier
+          result; all ops in a turn run before any observation), and
+      (2) no nested arrays inside one op (nesting broke 27B, DESIGN §3).
+    Losing either guardrail is the failure mode this nudge risks, so both
+    are asserted alongside the steering."""
+
+    # Whitespace-normalized so assertions survive the prose line-wrapping.
+    rules = " ".join(WF.format_rules().split())
+    low = rules.lower()
+
+    def test_steers_batching_independent_ops(self):
+        assert "batch independent work into one turn" in self.low
+        # the active decision cue, not just a passive "you may add elements"
+        assert "goes in this turn as a separate array element" in self.low
+
+    def test_keeps_dependent_split_guardrail(self):
+        assert "only when a later step needs an earlier step's result" in self.low
+
+    def test_keeps_no_nesting_guardrail(self):
+        assert "no nested arrays" in self.low
+        assert "never put a list of items inside a single op" in self.low
+
+    def test_example_models_multifile_read_batch(self):
+        # The dominant missed-batch pattern was consecutive single read_file
+        # turns, so the worked example shows several read_file ops at once.
+        body = WF.format_rules().split("## Action")[-1]
+        assert body.count('"action": "read_file"') >= 3
+        # and it parses as a real multi-op turn
+        from agent_cli.wire_formats import get as _get
+
+        ex = (
+            "## Thought\nx\n\n## Action\n"
+            '[{"action": "read_file", "path": "a.py"}, '
+            '{"action": "read_file", "path": "b.py"}, '
+            '{"action": "read_file", "path": "c.py"}]'
+        )
+        t = _get("md_array").parse_turn(ex)
+        assert len(t.ops) == 3 and all(o.action == "read_file" for o in t.ops)
+
+
 class TestRenderHelpers:
     def test_render_action_input_flattens_prefixed(self):
         out = WF.render_action_input({"read_file_path": "a.py", "read_file_stat": True})
