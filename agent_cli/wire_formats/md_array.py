@@ -39,11 +39,21 @@ _ACTION_RE = re.compile(r"^##\s*Action\s*$", re.MULTILINE)
 
 # Lone wire-sentinel lines leaked into a thought (same self-reinforcement
 # risk as prefix_md: raw riding back into the prior re-teaches the runaway).
-_SENTINEL_LINE = re.compile(r"^\s*##\s*(?:Thought|Action)\s*$", re.MULTILINE)
+# ``Input`` is included although it is not part of THIS format — it is the
+# models' prefix_md prior leaking through (observed in Phase-2).
+_SENTINEL_LINE = re.compile(r"^\s*##\s*(?:Thought|Action|Input)\s*$", re.MULTILINE)
 
 # Format runaway: an empty envelope section immediately followed by another
-# header (mirrors prefix_md's _DEGEN_RUNAWAY, two-header variant).
-_DEGEN_RUNAWAY = re.compile(r"##\s*(?:Thought|Action)(?=\s*##\s*(?:Thought|Action))")
+# header (mirrors prefix_md's _DEGEN_RUNAWAY; Input included for the same
+# prior-leak reason as _SENTINEL_LINE).
+_DEGEN_RUNAWAY = re.compile(
+    r"##\s*(?:Thought|Action|Input)(?=\s*##\s*(?:Thought|Action|Input))"
+)
+
+# Stray `## Input` header inside the ## Action body — the models' prefix_md
+# prior resurfaces exactly when they mean "no action / done" (Phase-2: the
+# dominant failure was `## Action\n\n## Input\n{}` looping NO_ACTION recovery).
+_INPUT_RESIDUE = re.compile(r"^\s*##\s*Input\s*$", re.MULTILINE)
 
 # "No action" markers the model writes instead of omitting the section.
 _NONE_MARKERS = ("none", "n/a", "null", "nothing")
@@ -264,6 +274,16 @@ class MdArrayFormat(WireFormat):
             return ParsedTurn(raw=llm_text, parse_stage=0)
         if body.lower().rstrip(".").strip() in _NONE_MARKERS:
             return turn([], True)
+        # prefix_md-residue tolerance: strip stray `## Input` header lines the
+        # model appends when it means "no action" (its prefix_md prior). An
+        # ## Action body that was ONLY that residue is a terminal turn.
+        body = _INPUT_RESIDUE.sub("", body).strip()
+        if not body:
+            return (
+                turn([], True)
+                if clean_thought
+                else ParsedTurn(raw=llm_text, parse_stage=0)
+            )
 
         parsed = _extract_first_json(body)
         if parsed is None:
@@ -272,6 +292,11 @@ class MdArrayFormat(WireFormat):
         items = [x for x in arr if isinstance(x, dict)]
         if not items:
             return ParsedTurn(thought=clean_thought, raw=llm_text, parse_stage=0)
+        # Empty ops (`{}` / `[{}]` — typically the `## Input\n{}` residue):
+        # nothing to run = a completion attempt, not a missing action. Items
+        # that DO carry input but no action stay ops (NO_ACTION recovery).
+        if clean_thought and all(not it for it in items):
+            return turn([], True)
         # Lenient terminal: one result-bearing object with no `action` is a
         # completion attempt — answer = its result (DESIGN §4.3).
         if len(items) == 1 and "action" not in items[0] and "result" in items[0]:
@@ -378,9 +403,14 @@ class MdArrayFormat(WireFormat):
         )
 
     def constraint_reminder_action_required(self) -> str:
+        # The DONE clause matters: Phase-2 showed the dominant NO_ACTION loop
+        # was the model trying to FINISH (empty `## Action` + stray
+        # `## Input {}`) while this reminder kept demanding an action.
         return (
             'Each `## Action` element must include an "action" field naming '
-            "one tool from Available Tools."
+            "one tool from Available Tools. If the task is DONE and nothing "
+            "remains to run, OMIT the `## Action` section entirely — a "
+            "`## Thought`-only response finishes the task."
         )
 
     def failure_framing_parse_fail(self) -> str:

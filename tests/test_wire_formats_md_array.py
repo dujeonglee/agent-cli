@@ -139,6 +139,41 @@ class TestParseTurnTerminal:
         t = WF.parse_turn('{"result": "all done"}')
         assert t.terminal
 
+    def test_input_residue_tail_is_terminal(self):
+        # Phase-2 dominant loop: the model FINISHING with its prefix_md prior
+        # leaking through — empty ## Action + stray `## Input` + `{}`. That
+        # is a completion attempt, not a missing action (it looped NO_ACTION
+        # recovery 10-13x per run before this tolerance).
+        t = WF.parse_turn(
+            "## Thought\nAll done, reporting.\n\n## Action\n\n\n## Input\n{}"
+        )
+        assert t.terminal
+        assert t.thought == "All done, reporting."
+
+    def test_input_residue_without_json_is_terminal(self):
+        t = WF.parse_turn("## Thought\ndone\n\n## Action\n\n## Input\n")
+        assert t.terminal
+
+    def test_empty_object_op_is_terminal(self):
+        # `## Action\n{}` — nothing to run = completion attempt.
+        t = WF.parse_turn(_wire("done", "{}"))
+        assert t.terminal
+        t2 = WF.parse_turn(_wire("done", "[{}]"))
+        assert t2.terminal
+
+    def test_actionless_op_with_real_input_stays_op(self):
+        # An op that DOES carry input but dropped its action is work intent —
+        # it must stay an op (NO_ACTION recovery), not become terminal.
+        t = WF.parse_turn(_wire("read it", '[{"path": "a.py"}]'))
+        assert not t.terminal
+        assert t.ops[0].action is None
+        assert t.ops[0].action_input == {"path": "a.py"}
+
+    def test_no_action_reminder_mentions_omit_when_done(self):
+        # The recovery wording must offer the DONE exit, or a finishing model
+        # loops against "add an action" forever (Phase-2 pattern).
+        assert "OMIT" in WF.constraint_reminder_action_required()
+
     def test_blank_emission_is_no_output(self):
         t = WF.parse_turn("   \n  ")
         assert t.parse_stage == 0
