@@ -299,6 +299,14 @@ class MdArrayFormat(WireFormat):
         arr = parsed if isinstance(parsed, list) else [parsed]  # bare obj = 1 op
         items = [x for x in arr if isinstance(x, dict)]
         if not items:
+            # An explicitly empty array `## Action\n[]` (valid JSON, zero ops)
+            # with a thought is a completion attempt — the model's "nothing
+            # left to run, I'm done" shape, same family as `{}` / `[{}]` below.
+            # Seen right after ready_for_review: "Decision: complete" + `[]`,
+            # which otherwise loops on format recovery. A NON-empty payload
+            # with no dict ops (e.g. `[1,2,3]`) is malformed → parse failure.
+            if not arr and clean_thought:
+                return turn([], True)
             return ParsedTurn(thought=clean_thought, raw=llm_text, parse_stage=0)
         # Empty ops (`{}` / `[{}]` — typically the `## Input\n{}` residue):
         # nothing to run = a completion attempt, not a missing action. Items

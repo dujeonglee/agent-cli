@@ -161,6 +161,28 @@ class TestParseTurnTerminal:
         t2 = WF.parse_turn(_wire("done", "[{}]"))
         assert t2.terminal
 
+    def test_empty_array_is_terminal(self):
+        # `## Action\n[]` — an explicitly empty op array = "nothing left to
+        # run, I'm done". Same family as {} / [{}]. Live regression: after
+        # ready_for_review the 27B emitted "Decision: complete" + `## Action\n[]`
+        # and looped on format recovery because `[]` fell through to NO_JSON.
+        t = WF.parse_turn(_wire("Decision: complete", "[]"))
+        assert t.terminal and not t.ops
+        assert t.parse_stage == 1
+
+    def test_empty_array_without_thought_is_not_terminal(self):
+        # No thought + `[]` is an empty emission, not a completion attempt.
+        t = WF.parse_turn("## Action\n[]")
+        assert not t.terminal
+        assert t.parse_stage == 0
+
+    def test_nonempty_nondict_array_is_parse_failure(self):
+        # `[1,2,3]` is malformed (no dict ops) — must NOT be swallowed as a
+        # terminal just because it has no runnable ops.
+        t = WF.parse_turn(_wire("x", "[1, 2, 3]"))
+        assert not t.terminal
+        assert t.parse_stage == 0
+
     def test_actionless_op_with_real_input_stays_op(self):
         # An op that DOES carry input but dropped its action is work intent —
         # it must stay an op (NO_ACTION recovery), not become terminal.

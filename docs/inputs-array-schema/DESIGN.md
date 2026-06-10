@@ -233,6 +233,15 @@ model prior is whack-a-mole, and the recovery is clean. Meanwhile the B nudge
 landed hard on the fixed prompt: multi-op adoption jumped from 0.6% to ~100% of
 early op-turns (read_file ×6/×7/×8 batches), 0 regressions.
 
+**Empty-array terminal gap (same live session).** After `ready_for_review`
+the 27B emitted "Decision: complete" + `## Action\n[]` — an explicitly empty
+op array — and looped on format recovery: the lenient terminal handled `{}` and
+`[{}]` but `[]` fell through to NO_JSON (valid JSON, zero dict ops). Fixed:
+`[]` with a thought is a completion attempt (same family as `{}`/`[{}]`), while a
+non-empty non-dict payload (`[1,2,3]`) stays a parse failure. This is the same
+class as the recurring "이제 ~하겠습니다" NO_JSON finishing-transition (isolated,
+1-turn recovery, no cascade) — the empty-array variant is now clean.
+
 ### Established vs not
 
 Established (greedy + temp 0.7, single-turn): the model emits the markdown
