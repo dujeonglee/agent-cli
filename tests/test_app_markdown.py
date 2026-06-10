@@ -44,14 +44,16 @@ def _extract_iife_body() -> str:
     for testing.
     """
     src = _APP_JS.read_text(encoding="utf-8")
-    # Match the outermost IIFE wrapper. We keep it lenient: opening is
-    # ``(function () {`` (optional whitespace, optional ``"use strict";``),
-    # closing is ``})();`` at end-of-file (with possible trailing
-    # whitespace).
+    # Match the FIRST IIFE (the chat client, which owns the markdown
+    # helpers) and cut at ITS closer — the first ``})();`` after the
+    # opener. app.js now contains additional sibling IIFEs (e.g. the
+    # Prompt Inspector) that touch the DOM at load time; taking the
+    # last closer would pull them into the Node harness, which has no
+    # ``document``.
     m = re.search(r"\(function \(\) \{\s*(?:\"use strict\";)?\s*", src)
     assert m, "could not find IIFE opener in app.js"
     start = m.end()
-    end = src.rfind("})();")
+    end = src.find("})();", start)
     assert end > start, "could not find IIFE closer in app.js"
     return src[start:end]
 

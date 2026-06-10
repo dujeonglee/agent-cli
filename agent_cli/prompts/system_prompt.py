@@ -743,7 +743,7 @@ def _load_directives() -> str:
     return "## Directives\n\n" + "\n\n".join(loaded)
 
 
-def build_system_prompt(
+def build_system_prompt_sections(
     capabilities: ModelCapabilities,
     active_tools: list[str],
     skill_stack: list[str] | None = None,
@@ -756,8 +756,13 @@ def build_system_prompt(
     wire_format=None,
     depth: int = 0,
     max_depth: int = 0,
-) -> str:
-    """Build a system prompt adapted to model capabilities and active tools.
+) -> list[tuple[str, str]]:
+    """Build the system prompt as an ordered list of ``(name, text)`` sections.
+
+    The single assembly point — :func:`build_system_prompt` joins these
+    verbatim, and the web Prompt Inspector renders them per-section (a name
+    per section beats re-parsing the joined string, whose section BODIES are
+    full of ``##`` headings — tool guides, format-rules examples).
 
     Section order is optimized for LLM attention patterns:
       Primacy  — identity and behavioral principles (strong attention)
@@ -778,22 +783,24 @@ def build_system_prompt(
     if wire_format is None:
         wire_format = _get_wire_format()
 
-    sections: list[str] = []
+    sections: list[tuple[str, str]] = []
 
     # ── Primacy: identity + principles ──
     # Role: delegate's agent_role or skill's parent_role replaces default
     if agent_role:
-        sections.append(f"## Role\n{agent_role}")
+        sections.append(("Role", f"## Role\n{agent_role}"))
     elif parent_role:
-        sections.append(f"## Role\n{parent_role}")
+        sections.append(("Role", f"## Role\n{parent_role}"))
     else:
-        sections.append(ROLE_PROMPT)
-    sections.append(CONTEXT_DISCIPLINE)
-    sections.append(TASK_GUIDELINES)
-    sections.append(wire_format.format_rules())
+        sections.append(("Role", ROLE_PROMPT))
+    sections.append(("Context Discipline", CONTEXT_DISCIPLINE))
+    sections.append(("Task Guidelines", TASK_GUIDELINES))
+    sections.append(("Response Format", wire_format.format_rules()))
 
     # ── Middle: reference material ──
-    sections.append(_build_tools_section(active_tools, wire_format))
+    sections.append(
+        ("Available Tools", _build_tools_section(active_tools, wire_format))
+    )
 
     # MCP tools (if manager provided)
     if mcp_manager:
@@ -801,27 +808,27 @@ def build_system_prompt(
 
         mcp_desc = build_mcp_tool_descriptions(mcp_manager)
         if mcp_desc:
-            sections.append(f"## MCP Tools\n{mcp_desc}")
+            sections.append(("MCP Tools", f"## MCP Tools\n{mcp_desc}"))
 
     skill_desc = build_skill_descriptions(wire_format=wire_format)
     if skill_desc:
-        sections.append(skill_desc)
+        sections.append(("Skills", skill_desc))
 
     if "delegate" in active_tools:
         agent_desc = build_agent_descriptions(wire_format=wire_format)
         if agent_desc:
-            sections.append(agent_desc)
+            sections.append(("Agents", agent_desc))
 
     # ── Recency: passive reference → active rules → immediate constraint ──
-    sections.append(_build_environment_section())
+    sections.append(("Environment", _build_environment_section()))
 
     # Context Recovery Guide (replaces session_id + git context)
     if session_dir:
-        sections.append(_build_context_recovery(session_dir))
+        sections.append(("Context Recovery", _build_context_recovery(session_dir)))
 
     directives = _load_directives()
     if directives:
-        sections.append(directives)
+        sections.append(("Directives", directives))
 
     # Execution context: tell LLM where it is in the call stack.
     # Last because it's the only Recency section that mutates within a
@@ -829,9 +836,45 @@ def build_system_prompt(
     # KV-cache-friendly prefix.
     exec_ctx = _build_execution_context(skill_stack, agent_stack, depth, max_depth)
     if exec_ctx:
-        sections.append(exec_ctx)
+        sections.append(("Execution Context", exec_ctx))
 
-    return "\n\n".join(sections)
+    return sections
+
+
+def build_system_prompt(
+    capabilities: ModelCapabilities,
+    active_tools: list[str],
+    skill_stack: list[str] | None = None,
+    agent_stack: list[str] | None = None,
+    session_id: str = "",
+    agent_role: str = "",
+    parent_role: str = "",
+    session_dir: str = "",
+    mcp_manager=None,
+    wire_format=None,
+    depth: int = 0,
+    max_depth: int = 0,
+) -> str:
+    """Joined form of :func:`build_system_prompt_sections` — see there for
+    the section order / role-selection contract. Byte-identical to the
+    pre-sections implementation (the sections are joined verbatim)."""
+    return "\n\n".join(
+        text
+        for _, text in build_system_prompt_sections(
+            capabilities,
+            active_tools,
+            skill_stack=skill_stack,
+            agent_stack=agent_stack,
+            session_id=session_id,
+            agent_role=agent_role,
+            parent_role=parent_role,
+            session_dir=session_dir,
+            mcp_manager=mcp_manager,
+            wire_format=wire_format,
+            depth=depth,
+            max_depth=max_depth,
+        )
+    )
 
 
 def _build_execution_context(

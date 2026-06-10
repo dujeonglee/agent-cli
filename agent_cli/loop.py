@@ -24,7 +24,7 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.prompts.system_prompt import build_system_prompt
+from agent_cli.prompts.system_prompt import build_system_prompt_sections
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.recovery.detectors import (
@@ -49,6 +49,7 @@ from agent_cli.recovery.observability import (
 )
 from agent_cli.render import (
     render_context_dump,
+    render_system_prompt_snapshot,
     render_header,
     render_turn_sep,
     render_raw,
@@ -202,6 +203,11 @@ class AgentLoop:
         self.graceful_interrupt = graceful_interrupt
         self.recent_tool_history: list[dict] = []
         self.messages: list[dict] = []
+        # Named system-prompt sections — single source of truth for
+        # ``self.system`` (always derived via join) and the web Prompt
+        # Inspector snapshot. Populated by _setup; updated by
+        # _apply_system_sections.
+        self._system_sections: list[tuple[str, str]] = []
         self.system = ""
         # Sentinels: distinct from None (failure) and str (answer)
         self._CONTINUE = object()  # keep looping
@@ -315,18 +321,35 @@ class AgentLoop:
         )
 
     def _apply_system_sections(self, hook_ctx) -> None:
-        """Apply dynamic system prompt sections from hook context."""
+        """Apply dynamic system prompt sections from hook context.
+
+        ``self._system_sections`` is the single source of truth;
+        ``self.system`` is always derived by joining it — so the inspector
+        view and the string the LLM receives cannot drift. Re-applying
+        replaces the previous hook sections (idempotent across turns). The
+        ``<!-- HOOK_SECTIONS -->`` marker keeps the joined string identical
+        to the historical format (and signals "dynamic from here" to a
+        reader); it rides on the first hook section's text.
+        """
         if not hook_ctx or not hook_ctx.system_sections:
             return
-        # Rebuild system prompt with dynamic sections appended
-        sections_text = "\n\n".join(
-            f"## {title}\n{content}"
+        # Callers that set ``self.system`` directly (tests, embedders) without
+        # going through _setup get a single seeded section so the
+        # single-source invariant still holds.
+        if not self._system_sections and self.system:
+            self._system_sections = [("Base", self.system)]
+        static = [s for s in self._system_sections if not s[0].startswith("Hook: ")]
+        hook_sections = [
+            (f"Hook: {title}", f"## {title}\n{content}")
             for title, content in hook_ctx.system_sections.items()
+        ]
+        first_name, first_text = hook_sections[0]
+        hook_sections[0] = (
+            first_name,
+            f"<!-- HOOK_SECTIONS -->\n{first_text}",
         )
-        # Strip any previously appended dynamic sections (delimited by marker)
-        marker = "\n\n<!-- HOOK_SECTIONS -->\n"
-        base = self.system.split(marker)[0]
-        self.system = f"{base}{marker}{sections_text}"
+        self._system_sections = static + hook_sections
+        self.system = "\n\n".join(t for _, t in self._system_sections)
 
     def run(self):
         """Main entry point. Returns ToolResult."""
@@ -434,11 +457,14 @@ class AgentLoop:
         """Initialize system prompt and messages."""
         _set_debug_verbose(self.verbose)
 
-        # Build system prompt with session_dir for Context Recovery Guide
+        # Build system prompt with session_dir for Context Recovery Guide.
+        # Built as named sections — the joined string is what the LLM gets
+        # (byte-identical to the old single-string build), and the section
+        # list feeds the web Prompt Inspector via the renderer snapshot.
         session_dir = ""
         if self.ctx:
             session_dir = str(self.ctx.session_dir)
-        self.system = build_system_prompt(
+        self._system_sections = build_system_prompt_sections(
             capabilities=self.capabilities,
             active_tools=self.tools_list,
             skill_stack=self.skill_stack,
@@ -450,6 +476,7 @@ class AgentLoop:
             depth=self.depth,
             max_depth=self.max_depth,
         )
+        self.system = "\n\n".join(t for _, t in self._system_sections)
 
         render_header(
             self.provider_name,
@@ -618,6 +645,11 @@ class AgentLoop:
             render_spinner_start(f"skill:{self.skill_name}")
         else:
             render_spinner_start()
+        # Prompt Inspector snapshot: what THIS call's system prompt looks
+        # like, as named sections. No-op for CLI renderers (store-only on
+        # web), so per-turn cost is negligible.
+        render_system_prompt_snapshot(self._system_sections, self.turn)
+
         # Plugin-defined provider hints. The wire plugin decides them from
         # the model's capabilities — e.g. ``json_mode``: ReAct requests it
         # iff the model supports structured output, prefix_md never does

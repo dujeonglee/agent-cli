@@ -84,6 +84,11 @@ class WebRenderer(Renderer):
         # without the LLM needing to volunteer the path. Empty string
         # = field omitted from the event entirely.
         self._workspace = workspace
+        # Latest system-prompt snapshot for the Prompt Inspector
+        # (``GET /api/debug/prompt``). Slot semantics like ``_latest_ready``:
+        # only the most recent LLM call's prompt is kept (the inspector is
+        # an on-demand view, not a history).
+        self._prompt_snapshot: dict[str, Any] | None = None
         # Session-info "ready" event lives in its own slot — NOT in
         # ``_event_buffer`` — so two semantics stay clean:
         # (1) new SSE connections always see the latest ready in
@@ -586,6 +591,39 @@ class WebRenderer(Renderer):
         with self._lock:
             self._latest_worker_state = ("worker_state", payload)
         self._emit("worker_state", payload, persistent=False)
+
+    def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
+        """Keep the latest system-prompt snapshot for the Prompt Inspector.
+
+        Store-only (no SSE emission — the prompt is ~16KB and the inspector
+        fetches on demand via ``GET /api/debug/prompt``). Token figures are
+        the same chars/4 estimate the context manager budgets with.
+        """
+        from agent_cli.context.token_estimator import estimate_tokens
+
+        snapshot = {
+            "turn": turn,
+            "total_chars": sum(len(t) for _, t in sections)
+            + 2 * max(0, len(sections) - 1),
+            "est_tokens": sum(estimate_tokens(t) for _, t in sections),
+            "sections": [
+                {
+                    "name": name,
+                    "text": text,
+                    "chars": len(text),
+                    "est_tokens": estimate_tokens(text),
+                }
+                for name, text in sections
+            ],
+        }
+        with self._lock:
+            self._prompt_snapshot = snapshot
+
+    def prompt_snapshot(self) -> dict[str, Any] | None:
+        """Latest system-prompt snapshot (or None before the first LLM
+        call). Public read surface for the server's debug endpoint."""
+        with self._lock:
+            return self._prompt_snapshot
 
     def dispatch_progress(
         self,

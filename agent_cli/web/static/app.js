@@ -1127,3 +1127,133 @@
     es.close();
   });
 })();
+
+// ── Prompt Inspector ─────────────────────────
+// Independent IIFE: fetches /api/debug/prompt on open, renders the system
+// prompt as a token-budget bar + per-section accordions. Store-only on the
+// server side, so opening the drawer is the only thing that costs a request.
+(function () {
+  "use strict";
+
+  const token = new URLSearchParams(window.location.search).get("token");
+  const $btn = document.getElementById("inspector-btn");
+  const $drawer = document.getElementById("inspector");
+  const $backdrop = document.getElementById("inspector-backdrop");
+  const $meta = document.getElementById("insp-meta");
+  const $budget = document.getElementById("insp-budget");
+  const $search = document.getElementById("insp-search");
+  const $sections = document.getElementById("insp-sections");
+  if (!$btn || !$drawer || !token) return;
+
+  // Distinct, stable hues per section index (works on the light theme).
+  const PALETTE = [
+    "#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444",
+    "#8b5cf6", "#14b8a6", "#f97316", "#ec4899", "#64748b",
+    "#84cc16", "#06b6d4",
+  ];
+
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function fmtTok(n) {
+    return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
+  }
+
+  let lastData = null;
+
+  function render(data) {
+    lastData = data;
+    if (!data.ok) {
+      $meta.textContent = "";
+      $budget.innerHTML = "";
+      $sections.innerHTML =
+        '<div class="insp-empty">No LLM call yet — send a message first.</div>';
+      return;
+    }
+    $meta.textContent =
+      "turn " + data.turn + " · " + fmtTok(data.est_tokens) + " tok · " +
+      (data.total_chars / 1024).toFixed(1) + " KB · " +
+      data.sections.length + " sections";
+
+    const total = Math.max(1, data.est_tokens);
+    $budget.innerHTML = data.sections
+      .map(function (s, i) {
+        const pct = (100 * s.est_tokens) / total;
+        return (
+          '<span style="width:' + Math.max(0.6, pct) + "%;background:" +
+          PALETTE[i % PALETTE.length] + '" title="' + esc(s.name) + " — " +
+          fmtTok(s.est_tokens) + " tok (" + pct.toFixed(1) + '%)"></span>'
+        );
+      })
+      .join("");
+
+    $sections.innerHTML = data.sections
+      .map(function (s, i) {
+        const pct = ((100 * s.est_tokens) / total).toFixed(1);
+        return (
+          '<details class="insp-sec" data-name="' + esc(s.name.toLowerCase()) + '">' +
+          "<summary>" +
+          '<span class="insp-dot" style="background:' +
+          PALETTE[i % PALETTE.length] + '"></span>' +
+          '<span class="insp-name">' + esc(s.name) + "</span>" +
+          '<span class="insp-tok">' + fmtTok(s.est_tokens) + " tok</span>" +
+          '<span class="insp-pct">' + pct + "%</span>" +
+          "</summary>" +
+          '<pre class="insp-body">' + esc(s.text) + "</pre>" +
+          "</details>"
+        );
+      })
+      .join("");
+    applyFilter();
+  }
+
+  function applyFilter() {
+    const q = $search.value.trim().toLowerCase();
+    $drawer.querySelectorAll(".insp-sec").forEach(function (el) {
+      if (!q) {
+        el.hidden = false;
+        return;
+      }
+      const name = el.getAttribute("data-name") || "";
+      const body = el.querySelector(".insp-body").textContent.toLowerCase();
+      const hit = name.includes(q) || body.includes(q);
+      el.hidden = !hit;
+      if (hit && body.includes(q) && q.length >= 2) el.open = true;
+    });
+  }
+
+  function open() {
+    $backdrop.hidden = false;
+    requestAnimationFrame(function () {
+      $backdrop.classList.add("open");
+      $drawer.classList.add("open");
+    });
+    $drawer.setAttribute("aria-hidden", "false");
+    fetch("/api/debug/prompt?token=" + encodeURIComponent(token))
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () {
+        $sections.innerHTML =
+          '<div class="insp-empty">Failed to load prompt snapshot.</div>';
+      });
+  }
+
+  function close() {
+    $backdrop.classList.remove("open");
+    $drawer.classList.remove("open");
+    $drawer.setAttribute("aria-hidden", "true");
+    setTimeout(function () { $backdrop.hidden = true; }, 260);
+  }
+
+  $btn.addEventListener("click", function () {
+    if ($drawer.classList.contains("open")) close();
+    else open();
+  });
+  document.getElementById("insp-close").addEventListener("click", close);
+  $backdrop.addEventListener("click", close);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && $drawer.classList.contains("open")) close();
+  });
+  $search.addEventListener("input", applyFilter);
+})();

@@ -10,9 +10,23 @@
   <header>
     <span id="info">connecting…</span>
     <span id="token-usage" title="token usage"></span>
+    <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
     <span id="conn-status" title="connection status">●</span>
   </header>
   <main id="messages"></main>
+
+  <!-- Prompt Inspector drawer -->
+  <div id="inspector-backdrop" hidden></div>
+  <aside id="inspector" aria-hidden="true">
+    <div class="insp-head">
+      <div class="insp-title">⚡ Prompt Inspector</div>
+      <div id="insp-meta" class="insp-meta"></div>
+      <button id="insp-close" type="button" title="Close">✕</button>
+    </div>
+    <div id="insp-budget" class="insp-budget" title="per-section token share"></div>
+    <input id="insp-search" type="search" placeholder="Filter sections…" autocomplete="off">
+    <div id="insp-sections" class="insp-sections"></div>
+  </aside>
   <footer>
     <div id="input-mode-badge"></div>
     <div id="input-area">

@@ -800,3 +800,53 @@ class TestStreamGenerator:
 import asyncio  # noqa: E402
 
 from agent_cli.render.web import WebConnection  # noqa: E402
+
+
+# ── Prompt Inspector (GET /api/debug/prompt) ───────
+
+
+class TestDebugPromptEndpoint:
+    """The Prompt Inspector reads the renderer's latest system-prompt
+    snapshot. Flow: loop → render_system_prompt_snapshot → WebRenderer
+    (store-only slot) → token-authenticated GET. The payload must carry
+    per-section names + size figures so the UI never re-parses the joined
+    prompt string (whose section bodies are full of `##` headings)."""
+
+    def test_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/debug/prompt").status_code == 422  # missing param
+        r = client.get("/api/debug/prompt?token=wrong")
+        assert r.status_code == 401
+
+    def test_before_first_call_reports_unavailable(self, server_and_client):
+        _, _, client = server_and_client
+        r = client.get("/api/debug/prompt?token=testtoken")
+        assert r.status_code == 200
+        assert r.json()["ok"] is False
+
+    def test_snapshot_round_trips_with_sizes(self, server_and_client):
+        _, renderer, client = server_and_client
+        sections = [
+            ("Role", "## Role\nYou are an agent."),
+            ("Available Tools", "- read_file: ...\n  Input JSON: {...}"),
+        ]
+        renderer.note_system_prompt(sections, turn=7)
+        body = client.get("/api/debug/prompt?token=testtoken").json()
+        assert body["ok"] is True
+        assert body["turn"] == 7
+        names = [s["name"] for s in body["sections"]]
+        assert names == ["Role", "Available Tools"]
+        for s in body["sections"]:
+            assert s["chars"] == len(s["text"])
+            assert s["est_tokens"] > 0
+        # totals are consistent with the per-section figures + join overhead
+        assert body["total_chars"] == sum(s["chars"] for s in body["sections"]) + 2
+        assert body["est_tokens"] == sum(s["est_tokens"] for s in body["sections"])
+
+    def test_latest_snapshot_wins(self, server_and_client):
+        _, renderer, client = server_and_client
+        renderer.note_system_prompt([("Role", "old")], turn=1)
+        renderer.note_system_prompt([("Role", "new")], turn=2)
+        body = client.get("/api/debug/prompt?token=testtoken").json()
+        assert body["turn"] == 2
+        assert body["sections"][0]["text"] == "new"

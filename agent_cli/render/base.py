@@ -143,6 +143,13 @@ class Renderer(ABC):
         line = f"{tool_name} → {tool_input}" if tool_input else tool_name
         self._thread_action[threading.get_ident()] = line
 
+    def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
+        """Record the system prompt (as named sections) sent to the LLM this
+        turn. Concrete no-op — the CLI renderer has no use for it; the web
+        renderer overrides to keep the latest snapshot for the Prompt
+        Inspector (`GET /api/debug/prompt`). Called once per LLM call, so an
+        override must be cheap (store, don't render)."""
+
     def prompt_meta(self) -> dict[str, str]:
         """Provenance for an interactive prompt on the current thread:
         ``agent`` (delegate label, empty for the main agent), ``reasoning``

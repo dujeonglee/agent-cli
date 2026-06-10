@@ -534,6 +534,18 @@ def create_app(server: WebServer) -> FastAPI:
         """Unauthenticated liveness probe."""
         return {"status": "ok"}
 
+    @app.get("/api/debug/prompt")
+    async def debug_prompt(token: str = Query(...)):
+        """Prompt Inspector data: the latest LLM call's system prompt as
+        named sections with size figures. Token-authenticated; fetched on
+        demand when the inspector drawer opens (the ~16KB payload is never
+        pushed over SSE). 404-shape (ok=False) before the first LLM call."""
+        server._require_token(token)
+        snapshot = server.renderer.prompt_snapshot()
+        if snapshot is None:
+            return {"ok": False, "reason": "no LLM call yet"}
+        return {"ok": True, **snapshot}
+
     @app.get("/api/stream")
     async def stream(token: str = Query(...)):
         """SSE event stream. Token-authenticated, takeover-aware."""

@@ -33,6 +33,7 @@ from agent_cli.prompts.system_prompt import (
     _build_tools_section,
     _load_directives,
     build_system_prompt,
+    build_system_prompt_sections,
 )
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.wire_formats import get as _get_wire_format
@@ -143,6 +144,75 @@ class TestMultiOpPromptBranches:
         assert "- complete:" in section
         assert "read_file_reads" in section
         assert "5. Batch" in section
+
+
+class TestBuildSystemPromptSections:
+    """``build_system_prompt_sections`` is the single assembly point — the
+    joined form MUST be byte-identical to ``build_system_prompt`` (the web
+    Prompt Inspector renders the same sections the LLM receives, no drift),
+    and the (name, text) structure is what the inspector keys on."""
+
+    def test_join_is_byte_identical_to_build(self):
+        kwargs = dict(
+            capabilities=_make_caps(),
+            active_tools=["read_file", "shell", "edit_file", "delegate"],
+            session_dir="/tmp/sess",
+            skill_stack=["s1"],
+            depth=1,
+            max_depth=3,
+        )
+        sections = build_system_prompt_sections(**kwargs)
+        assert "\n\n".join(t for _, t in sections) == build_system_prompt(**kwargs)
+
+    def test_section_names_present_and_ordered(self):
+        sections = build_system_prompt_sections(
+            _make_caps(), ["read_file", "shell", "delegate"], session_dir="/tmp/s"
+        )
+        names = [n for n, _ in sections]
+        # Primacy → Middle → Recency ordering of the always-present sections
+        core = [
+            "Role",
+            "Context Discipline",
+            "Task Guidelines",
+            "Response Format",
+            "Available Tools",
+            "Environment",
+        ]
+        positions = [names.index(c) for c in core]
+        assert positions == sorted(positions)
+        assert "Context Recovery" in names  # session_dir given
+        assert "Agents" in names  # delegate active
+        assert (
+            names.index("Execution Context") == len(names) - 1
+            if ("Execution Context" in names)
+            else True
+        )
+
+    def test_names_unique(self):
+        sections = build_system_prompt_sections(
+            _make_caps(), ["read_file", "shell", "delegate"], session_dir="/tmp/s"
+        )
+        names = [n for n, _ in sections]
+        assert len(names) == len(set(names))
+
+    def test_conditional_sections_absent_when_not_applicable(self):
+        sections = build_system_prompt_sections(_make_caps(), ["shell"])
+        names = [n for n, _ in sections]
+        assert "Context Recovery" not in names  # no session_dir
+        assert "Agents" not in names  # no delegate
+        assert "MCP Tools" not in names  # no mcp_manager
+
+    def test_agent_role_replaces_role_section(self):
+        sections = build_system_prompt_sections(
+            _make_caps(), ["shell"], agent_role="You are a security reviewer."
+        )
+        role_texts = [t for n, t in sections if n == "Role"]
+        assert len(role_texts) == 1
+        assert "security reviewer" in role_texts[0]
+
+    def test_every_section_text_nonempty(self):
+        sections = build_system_prompt_sections(_make_caps(), ["shell"])
+        assert all(t.strip() for _, t in sections)
 
 
 def _make_caps(ctx_window: int = 32768) -> ModelCapabilities:
@@ -1002,3 +1072,82 @@ class TestRecencySectionOrder:
             pos = prompt.find(section)
             if pos >= 0:
                 assert pos < exec_pos
+
+
+class TestSystemSectionsSingleSource:
+    """The loop's ``_system_sections`` is the single source of truth and
+    ``self.system`` is always derived by joining it — the Prompt Inspector
+    shows exactly what the LLM receives (no drift), including after hook
+    sections are applied/replaced."""
+
+    def _loop(self):
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="Q", provider=MagicMock(), capabilities=_make_caps(), model="m"
+        )
+        loop._setup()
+        return loop
+
+    def test_system_equals_joined_sections_after_setup(self):
+        loop = self._loop()
+        assert loop.system == "\n\n".join(t for _, t in loop._system_sections)
+        assert [n for n, _ in loop._system_sections][0] == "Role"
+
+    def test_hook_sections_keep_invariant_and_marker(self):
+        loop = self._loop()
+
+        class Ctx:
+            system_sections = {"Sprint Goals": "Ship the inspector."}
+
+        loop._apply_system_sections(Ctx())
+        assert loop.system == "\n\n".join(t for _, t in loop._system_sections)
+        assert "<!-- HOOK_SECTIONS -->" in loop.system
+        assert "## Sprint Goals\nShip the inspector." in loop.system
+        names = [n for n, _ in loop._system_sections]
+        assert "Hook: Sprint Goals" in names
+
+    def test_hook_reapply_replaces_not_accumulates(self):
+        loop = self._loop()
+
+        class A:
+            system_sections = {"One": "1"}
+
+        class B:
+            system_sections = {"Two": "2"}
+
+        loop._apply_system_sections(A())
+        loop._apply_system_sections(B())
+        names = [n for n, _ in loop._system_sections]
+        assert "Hook: Two" in names and "Hook: One" not in names
+        assert loop.system.count("<!-- HOOK_SECTIONS -->") == 1
+
+    def test_snapshot_sent_to_renderer_each_call(self):
+        from unittest.mock import MagicMock, patch
+
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.base import LLMResponse
+
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content='{"thought":"t","action":"complete","action_input":{"result":"ok"}}'
+            )
+        ]
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=_make_caps(),
+            model="m",
+            wire_format=__import__("agent_cli.wire_formats", fromlist=["get"]).get(
+                "react"
+            ),
+        )
+        with patch("agent_cli.loop.render_system_prompt_snapshot") as snap:
+            loop.run()
+        assert snap.called
+        sections, turn = snap.call_args.args
+        assert sections == loop._system_sections
+        assert isinstance(turn, int)
