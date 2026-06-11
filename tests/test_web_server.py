@@ -49,6 +49,14 @@ def server_and_client():
     return server, renderer, client
 
 
+def _controller(renderer, conn_id="ctrl"):
+    """Register a connection as the controller and return its id — input is
+    gated to the controller (first-come-keeps-control), so input tests need
+    one and must send ``conn_id``."""
+    renderer.register_connection(WebConnection(id=conn_id))
+    return conn_id
+
+
 # SSE streaming is tested at the async-generator level — calling
 # ``server.stream_events(conn).__anext__()`` directly. The HTTP wire
 # format (``event: …\ndata: …\n\n``) is sse-starlette's responsibility
@@ -378,9 +386,10 @@ class TestAuth:
 class TestInputEndpoint:
     def test_chat_message_echoes_to_renderer_and_queue(self, server_and_client):
         server, renderer, client = server_and_client
+        cid = _controller(renderer)
         resp = client.post(
             "/api/input?token=testtoken",
-            json={"kind": "chat", "content": "hello"},
+            json={"kind": "chat", "content": "hello", "conn_id": cid},
         )
         assert resp.status_code == 200
         # Echoed as persistent ``user_message`` event for replay.
@@ -391,6 +400,7 @@ class TestInputEndpoint:
 
     def test_prompt_response_goes_to_renderer_input_queue(self, server_and_client):
         _, renderer, client = server_and_client
+        cid = _controller(renderer)
         result: list[str] = []
 
         def worker():
@@ -402,7 +412,7 @@ class TestInputEndpoint:
 
         resp = client.post(
             "/api/input?token=testtoken",
-            json={"kind": "prompt", "content": "answer text"},
+            json={"kind": "prompt", "content": "answer text", "conn_id": cid},
         )
         assert resp.status_code == 200
 
@@ -432,7 +442,7 @@ class TestInputEndpoint:
 
         client.post(
             "/api/input?token=testtoken",
-            json={"kind": "prompt", "content": "my answer"},
+            json={"kind": "prompt", "content": "my answer", "conn_id": "c1"},
         )
         t.join(timeout=2.0)
 
@@ -454,6 +464,7 @@ class TestInputEndpoint:
         from agent_cli.render.base import ConfirmOption
 
         _, renderer, client = server_and_client
+        cid = _controller(renderer)
         result: list[tuple[str, str]] = []
 
         def worker():
@@ -474,18 +485,31 @@ class TestInputEndpoint:
 
         client.post(
             "/api/input?token=testtoken",
-            json={"kind": "confirm", "key": "y", "comment": "go ahead"},
+            json={"kind": "confirm", "key": "y", "comment": "go ahead", "conn_id": cid},
         )
         t.join(timeout=2.0)
         assert result == [("y", "go ahead")]
 
     def test_unknown_kind_is_400(self, server_and_client):
-        _, _, client = server_and_client
+        _, renderer, client = server_and_client
+        cid = _controller(renderer)
         resp = client.post(
             "/api/input?token=testtoken",
-            json={"kind": "bogus", "content": "x"},
+            json={"kind": "bogus", "content": "x", "conn_id": cid},
         )
         assert resp.status_code == 400
+
+    def test_non_controller_input_is_403(self, server_and_client):
+        # An observer (or missing/forged conn_id) cannot send input.
+        _, renderer, client = server_and_client
+        _controller(renderer, "ctrl")
+        renderer.register_connection(WebConnection(id="obs"))  # observer
+        for conn_id in ("obs", "nope", None):
+            resp = client.post(
+                "/api/input?token=testtoken",
+                json={"kind": "chat", "content": "x", "conn_id": conn_id},
+            )
+            assert resp.status_code == 403, conn_id
 
     def test_invalid_json_is_400(self, server_and_client):
         _, _, client = server_and_client
@@ -495,6 +519,71 @@ class TestInputEndpoint:
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 400
+
+
+class TestControlEndpoints:
+    """POST /api/request-control + /api/respond-control — the handoff flow."""
+
+    def _has_event(self, conn, name, n=5):
+        for _ in range(n):
+            try:
+                ev, _data = conn.queue.get(timeout=0.5)
+            except Exception:
+                return False
+            if ev == name:
+                return True
+        return False
+
+    def test_request_then_grant_transfers_control(self, server_and_client):
+        _, renderer, client = server_and_client
+        a = WebConnection(id="a")
+        renderer.register_connection(a)  # controller
+        renderer.register_connection(WebConnection(id="b"))  # observer
+
+        assert (
+            client.post(
+                "/api/request-control?token=testtoken", json={"conn_id": "b"}
+            ).status_code
+            == 200
+        )
+        assert self._has_event(a, "control_request")  # controller notified
+        assert (
+            client.post(
+                "/api/respond-control?token=testtoken",
+                json={"conn_id": "a", "requester_id": "b", "grant": True},
+            ).status_code
+            == 200
+        )
+        assert renderer.is_controller("b")
+
+    def test_respond_from_non_controller_is_403(self, server_and_client):
+        _, renderer, client = server_and_client
+        renderer.register_connection(WebConnection(id="a"))  # controller
+        renderer.register_connection(WebConnection(id="b"))  # observer
+        # b (observer) forges a grant → 403, control unchanged.
+        resp = client.post(
+            "/api/respond-control?token=testtoken",
+            json={"conn_id": "b", "requester_id": "b", "grant": True},
+        )
+        assert resp.status_code == 403
+        assert renderer.is_controller("a")
+
+    def test_request_control_requires_conn_id(self, server_and_client):
+        _, _, client = server_and_client
+        resp = client.post("/api/request-control?token=testtoken", json={})
+        assert resp.status_code == 400
+
+    def test_control_endpoints_require_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert (
+            client.post(
+                "/api/request-control?token=nope", json={"conn_id": "x"}
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post("/api/respond-control?token=nope", json={}).status_code == 401
+        )
 
 
 class TestWebResumeCli:
@@ -692,6 +781,8 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
+            # First yielded event is the connection's role (identity).
+            assert (await self._next(gen))["event"] == "role"
             event_dict = await self._next(gen)
             assert event_dict["event"] == "assistant_turn"
             data = json.loads(event_dict["data"])
@@ -712,6 +803,7 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
+            assert (await self._next(gen))["event"] == "role"  # identity first
             first = await self._next(gen)
             second = await self._next(gen)
             third = await self._next(gen)
@@ -728,6 +820,8 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
+            assert (await self._next(gen))["event"] == "role"  # drain snapshot
+
             # Emit a moment after starting to consume so the live loop
             # (not the snapshot replay) carries the event.
             async def emit_after():
@@ -744,28 +838,27 @@ class TestStreamGenerator:
         finally:
             await gen.aclose()
 
-    async def test_takeover_ends_generator(self):
+    async def test_second_connection_does_not_end_first(self):
+        # No takeover: a second connection joins as an observer and the first
+        # generator keeps running + receiving events.
         renderer = WebRenderer()
         server = WebServer(renderer, token="t")
 
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
-            # Start consuming so the connection is registered.
-            consume_task = asyncio.create_task(self._next(gen, timeout=2.0))
-            # Give the generator a chance to register before takeover.
-            await asyncio.sleep(0.05)
+            role = await self._next(gen)  # registers c1 as controller
+            assert role["event"] == "role"
+            assert json.loads(role["data"])["role"] == "controller"
 
-            # Trigger takeover by registering a fresh connection.
+            # A fresh connection joins — must NOT end this generator.
             renderer.register_connection(WebConnection(id="c2"))
 
-            event_dict = await consume_task
-            assert event_dict["event"] == "takeover"
-
-            # The generator should now be exhausted (it broke out of
-            # the loop after yielding ``takeover``).
-            with pytest.raises(StopAsyncIteration):
-                await self._next(gen, timeout=1.0)
+            # c1 still receives a subsequent live emit.
+            renderer.final("still here", turn=1)
+            ev = await self._next(gen, timeout=2.0)
+            assert ev["event"] == "assistant_turn"
+            assert json.loads(ev["data"])["final"] == "still here"
         finally:
             await gen.aclose()
 
@@ -778,15 +871,14 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
-            consume_task = asyncio.create_task(self._next(gen, timeout=2.0))
-            await asyncio.sleep(0.05)
+            assert (await self._next(gen))["event"] == "role"  # drain snapshot
 
             # Push a real event AND then immediately unregister so
             # the generator sees one event followed by the sentinel.
             renderer.final("byebye", turn=1)
             renderer.unregister_connection(conn)
 
-            event_dict = await consume_task
+            event_dict = await self._next(gen, timeout=2.0)
             assert event_dict["event"] == "assistant_turn"
 
             with pytest.raises(StopAsyncIteration):

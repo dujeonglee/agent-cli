@@ -260,7 +260,7 @@ agent-cli web [-p openai] [-m model] [--port N] [--token <hex>]
 agent-cli web --resume <session_id>    # 이전 세션 이어서 시작
 ```
 
-agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토큰 생성(또는 `--token` 지정), takeover 정책(새 연결이 기존 종료), 컨텍스트 윈도우와 동기화된 메시지 표시. 시작 시 토큰 포함 URL이 출력되고 (선택적으로) 브라우저 자동 오픈.
+agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토큰 생성(또는 `--token` 지정). **다중 뷰어 + first-come-keeps-control**: 모든 탭이 스트림을 보지만(read-only) 입력은 **첫 연결(controller)만** 가능. 이후 탭은 "권한 요청" 버튼 → controller가 승인/거부 팝업으로 제어권 이양. controller가 떠나면 가장 오래된 observer에 자동 승계. 시작 시 토큰 포함 URL이 출력되고 (선택적으로) 브라우저 자동 오픈.
 
 | 옵션 | 설명 | 기본값 |
 |---|---|---|
@@ -276,7 +276,7 @@ UI 기능:
 - 도구 호출(action) / 결과(observation) 인라인 카드, ✓/✗ 상태 표시
 - 실시간 스트리밍 (점선 카드로 토큰 누적 → 최종 카드로 교체)
 - 컨텍스트 동기화: 오래된 turn이 LLM 컨텍스트에서 밀려나거나 compaction으로 요약되면 UI에서도 제거
-- 두 번째 탭이 접속하면 takeover 배너 + 기존 탭 자동 disconnect
+- 두 번째 탭이 접속하면 read-only observer + "권한 요청" 버튼 (controller 승인 시 제어권 이양)
 - ANSWERING 모드: `ask` 도구 호출 시 질문 텍스트가 입력창 위에 표시되어 스크롤 없이 답변
 - **토큰 현황 표시**: 상단 info bar 옆에 `ctx 5.2K/256K (2%) · ↑5.2K ↓320 · Σ↓1.8K` 형태로 매 turn 갱신 — 현재 context 사용률(%), 이번 turn 의 in/out, 세션 누적 output. 새로고침 후에도 유지(SSE snapshot). CLI(`chat`/`run`)도 동일 정보를 매 turn 한 줄로 표시(`in: … | out: … | ctx: … | Σout: …`). `usage.input_tokens`(서버 실측)를 받아 `renderer.token_usage` 로 추상화 → CLI/web 공통
 - **Send → Stop → Stopping… 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 즉시 **Stopping…**(비활성)으로 바뀌어 중복 클릭을 막고, 진행 중인 turn 을 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). LLM 생성 도중이면 스트림을 즉시 끊고 미완성 응답을 폐기하며, 도구 실행 중이면 그 스텝을 마친 뒤 멈춥니다. turn 이 끝나면 다시 Send 로 복귀. 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@agent`(delegate) 실행 모두 Stop 으로 중단됩니다 (delegate 는 병렬 worker 가 같은 `stop_event` 를 공유).
