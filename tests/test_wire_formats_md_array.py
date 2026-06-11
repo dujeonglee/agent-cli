@@ -103,77 +103,86 @@ class TestParseTurnWork:
 
 
 class TestAnonymousObjectRepair:
-    """The 27B, batching ops with large params, emits the params as an ANONYMOUS
-    nested object: `{"action": X, {params}}` — invalid JSON → the whole turn was
-    NO_JSON and nothing ran (live session 1781208482, 5/6 failures). The parser
-    unwraps it (`{"action": X, params}`) and marks the turn parse_stage 2
-    (drift-recovered). DESIGN Exp 8."""
+    """Batching ops with large params, the model wraps each op's params in an
+    ANONYMOUS nested object — invalid JSON → the whole turn was NO_JSON and
+    nothing ran. Two shapes seen (DESIGN Exp 8), consistent within an emission:
+      A. `{"action": X, {params}}`  (anon AND op close — session 1781208482, 27B)
+      B. `{"action": X, {params}`   (one `}` reused — session 1781210802, 35B)
+    `_extract_op_json` tries both and keeps whichever parses; a recovered turn
+    is parse_stage 2 (drift)."""
 
-    def test_repair_function_unwraps(self):
-        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
-
-        raw = '[{"action": "write_file", {"path": "p", "content": "c"}}]'
-        fixed = _repair_anonymous_op_objects(raw)
-        assert json.loads(fixed) == [
-            {"action": "write_file", "path": "p", "content": "c"}
-        ]
-
-    def test_repair_is_string_safe_with_braces_in_content(self):
-        # C code in `content` has its own {}/"/escapes — must not break matching.
-        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
-
-        raw = (
-            '[{"action": "write_file", '
-            '{"path": "x.c", "content": "int main(){ return \\"}\\"; }"}}]'
+    def test_pattern_A_balanced_braces_recovers(self):
+        # {"action": X, {params}}  → both anon and op close.
+        t = WF.parse_turn(
+            _wire("x", '[{"action": "write_file", {"path": "a.c", "content": "x"}}]')
         )
-        parsed = json.loads(_repair_anonymous_op_objects(raw))
-        assert parsed[0]["action"] == "write_file"
-        assert parsed[0]["content"] == 'int main(){ return "}"; }'
-
-    def test_repair_leaves_valid_json_unchanged(self):
-        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
-
-        # array elements (`[{op}, {op}]`) and legit values must be untouched.
-        valid = (
-            '[{"action": "read_file", "path": "a"}, '
-            '{"action": "shell", "command": "ls"}]'
-        )
-        assert _repair_anonymous_op_objects(valid) == valid
-
-    def test_header_body_malformed_recovers_stage2(self):
-        raw = _wire(
-            "write files",
-            '[{"action": "write_file", {"path": "a.c", "content": "x"}}]',
-        )
-        t = WF.parse_turn(raw)
         assert t.parse_stage == 2
-        assert len(t.ops) == 1
-        assert t.ops[0].action == "write_file"
+        assert len(t.ops) == 1 and t.ops[0].action == "write_file"
         assert t.ops[0].action_input == {"path": "a.c", "content": "x"}
 
+    def test_pattern_B_single_brace_recovers(self):
+        # {"action": X, {params}  → the model reuses the anon `}` as the op `}`,
+        # so the array has N unbalanced `{`. This is the 35B live failure.
+        t = WF.parse_turn(
+            _wire(
+                "two files",
+                '[{"action": "write_file", {"path": "a"}, '
+                '{"action": "write_file", {"path": "b"}]',
+            )
+        )
+        assert t.parse_stage == 2
+        assert [o.action for o in t.ops] == ["write_file", "write_file"]
+        assert [o.action_input["path"] for o in t.ops] == ["a", "b"]
+
+    def test_pattern_B_mixed_with_valid_op(self):
+        # Live shape: a valid op (shell) followed by malformed write_file ops.
+        t = WF.parse_turn(
+            _wire(
+                "setup",
+                '[{"action": "shell", "command": "mkdir src"}, '
+                '{"action": "write_file", {"path": "a.c", "content": "x"}]',
+            )
+        )
+        assert [o.action for o in t.ops] == ["shell", "write_file"]
+        assert t.ops[1].action_input == {"path": "a.c", "content": "x"}
+
+    def test_string_safe_with_braces_in_content(self):
+        # C code in `content` has its own {}/"/escapes — must not break matching
+        # (both A and B). Use pattern B (the worse, real one).
+        raw = _wire(
+            "c file",
+            '[{"action": "write_file", '
+            '{"path": "x.c", "content": "int main(){ return \\"}\\"; }"}]',
+        )
+        t = WF.parse_turn(raw)
+        assert len(t.ops) == 1
+        assert t.ops[0].action_input["content"] == 'int main(){ return "}"; }'
+
     def test_headerless_prose_then_malformed_recovers(self):
-        # The live shape: reasoning prose, then a header-less malformed op array.
+        # reasoning prose, then a header-less malformed op array (pattern B).
         raw = (
             "Good, creating the headers in a batch.\n\n"
-            '[{"action": "write_file", {"path": "i_video.h", "content": "#ifndef X"}}]'
+            '[{"action": "write_file", {"path": "i_video.h", "content": "#ifndef X"}]'
         )
         t = WF.parse_turn(raw)
         assert len(t.ops) == 1 and t.ops[0].action == "write_file"
         assert t.parse_stage == 2
 
-    def test_multiple_malformed_ops_all_recover(self):
-        raw = _wire(
-            "two files",
-            '[{"action": "write_file", {"path": "a"}}, '
-            '{"action": "write_file", {"path": "b"}}]',
-        )
-        t = WF.parse_turn(raw)
-        assert [o.action for o in t.ops] == ["write_file", "write_file"]
-        assert [o.action_input["path"] for o in t.ops] == ["a", "b"]
+    def test_valid_json_unchanged_and_stage1(self):
+        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
 
-    def test_valid_turn_stays_stage1(self):
-        t = WF.parse_turn(_wire("x", '[{"action": "shell", "command": "ls"}]'))
-        assert t.parse_stage == 1  # no repair → not flagged as drift
+        valid = '[{"action": "read_file", "path": "a"}, {"action": "shell", "command": "ls"}]'
+        # both variants leave valid JSON untouched
+        assert _repair_anonymous_op_objects(valid, drop_close=True) == valid
+        assert _repair_anonymous_op_objects(valid, drop_close=False) == valid
+        # and a valid turn is not flagged as a drift recovery
+        assert WF.parse_turn(_wire("x", valid)).parse_stage == 1
+
+    def test_unrecoverable_garbage_stays_parse_failure(self):
+        # Genuinely broken JSON (not the anon-object shape) must not be
+        # force-"recovered" into bogus ops.
+        t = WF.parse_turn(_wire("x", '[{"action": "shell", "command": }]'))
+        assert t.parse_stage == 0 and t.ops == []
 
 
 class TestCompletionAndNoAction:

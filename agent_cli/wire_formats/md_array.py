@@ -148,21 +148,29 @@ def _extract_first_json(body: str):
     return None
 
 
-def _repair_anonymous_op_objects(text: str) -> str:
-    """Unwrap an anonymous nested object emitted in object-KEY position:
-    ``{"action": X, {params}}`` → ``{"action": X, params}``.
+def _repair_anonymous_op_objects(text: str, *, drop_close: bool) -> str:
+    """Remove the spurious ``{`` the model inserts in object-KEY position when
+    it wraps an op's params in an anonymous nested object (DESIGN Exp 8). Two
+    shapes are seen, and the model is consistent within one emission:
 
-    The malformed multi-op shape the 27B produces when batching ops with large
-    params (DESIGN Exp 8): it wraps the params in an UNNAMED object after the
-    action, which is invalid JSON, so the whole turn fails NO_JSON and nothing
-    runs. This drops that object's braces so its keys merge into the op.
+      A. ``{"action": X, {params}}``  (anon AND op both close — 27B)
+      B. ``{"action": X, {params}``   (one ``}`` — the model reuses the anon
+         close AS the op close — 35B; the array then has N unbalanced ``{``)
 
-    Context- and string-aware single pass: a ``{`` is unwrapped ONLY where an
-    object key is expected (object start, or right after a comma at object
-    level). A ``{`` after ``:`` (a legitimate nested value) or inside an array
-    (``[{op}, {op}]`` element) is left untouched, and braces inside string
-    literals (e.g. C code in a ``content`` value) never affect matching. No-op
-    when the pattern is absent."""
+    The repair removes the spurious ``{`` either way. ``drop_close`` switches
+    the two:
+      - ``True``  → variant A: the anon ``{`` opens a frame whose matching
+        ``}`` is ALSO dropped, leaving the op's own ``}`` (``{X, params}``).
+      - ``False`` → variant B: the anon ``{`` opens NO frame, so the single
+        ``}`` that follows closes the op (``{X, params}``).
+    The caller tries both and keeps whichever parses (``_extract_op_json``).
+
+    Context- and string-aware single pass: only a ``{`` where an object key is
+    expected (object start / right after a comma at object level) is treated as
+    the bug; a ``{`` after ``:`` (a legit nested value) or inside an array
+    element is left alone, and braces inside string literals (C code in a
+    ``content`` value) never affect matching. No-op when the pattern is absent.
+    """
     out: list[str] = []
     frames: list[dict] = []  # {"type": "obj"|"arr", "expect_key": bool, "drop": bool}
     in_str = escape = False
@@ -184,8 +192,12 @@ def _repair_anonymous_op_objects(text: str) -> str:
         elif ch == "{":
             top = frames[-1] if frames else None
             if top and top["type"] == "obj" and top["expect_key"]:
-                # anonymous object in key position → drop its braces (unwrap)
-                frames.append({"type": "obj", "expect_key": True, "drop": True})
+                # spurious anonymous-object open in key position → drop it.
+                if drop_close:
+                    # variant A: track it so its matching `}` is dropped too.
+                    frames.append({"type": "obj", "expect_key": True, "drop": True})
+                # variant B: push nothing — the op frame keeps absorbing the
+                # params and its own `}` (the next one) closes it.
             else:
                 frames.append({"type": "obj", "expect_key": True, "drop": False})
                 out.append(ch)
@@ -221,16 +233,18 @@ def _extract_op_json(text: str):
     """``_extract_first_json`` with an anonymous-nested-object repair fallback.
 
     Returns ``(parsed, repaired)`` — ``repaired`` is True iff the strict parse
-    failed but unwrapping ``{"action": X, {params}}`` → ``{"action": X, params}``
-    recovered it (the turn is then a drift-recovery, parse_stage 2)."""
+    failed but the unwrap repair recovered it (parse_stage 2). Tries both op
+    shapes — ``{"action":X, {params}}`` (A) and ``{"action":X, {params}`` (B) —
+    and keeps whichever parses."""
     parsed = _extract_first_json(text)
     if parsed is not None:
         return parsed, False
-    fixed = _repair_anonymous_op_objects(text)
-    if fixed != text:
-        parsed = _extract_first_json(fixed)
-        if parsed is not None:
-            return parsed, True
+    for drop_close in (True, False):
+        fixed = _repair_anonymous_op_objects(text, drop_close=drop_close)
+        if fixed != text:
+            parsed = _extract_first_json(fixed)
+            if parsed is not None:
+                return parsed, True
     return None, False
 
 
