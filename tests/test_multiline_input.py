@@ -1,7 +1,7 @@
 """Tests for multiline input support.
 
-Covers both the shared reader (`input_history.read_rich_input`) and its
-thin wrappers (`main._read_user_input`, `loop._handle_ask`).
+Covers the shared reader (`input_history.read_rich_input`), the renderer's
+multiline `prompt_user`, and the ask wrapper (`loop._handle_ask`).
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from agent_cli.render import get_renderer
 from agent_cli.render.minimal import MinimalRenderer
 
 
@@ -24,44 +25,34 @@ def _force_can_prompt(monkeypatch):
 class TestReadUserInput:
     def test_single_line(self):
         """Normal single line input works as before."""
-        from agent_cli.main import _read_user_input
-
         with patch("builtins.input", return_value="hello"):
             with patch("select.select", return_value=([], [], [])):
-                result = _read_user_input("You: ")
+                result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == "hello"
 
     def test_empty_input(self):
         """Empty input returns empty string."""
-        from agent_cli.main import _read_user_input
-
         with patch("builtins.input", return_value="  "):
-            result = _read_user_input("You: ")
+            result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == ""
 
     def test_explicit_multiline(self):
         """Triple-quote delimited multiline input."""
-        from agent_cli.main import _read_user_input
-
         inputs = iter(['"""', "line one", "line two", '"""'])
         with patch("builtins.input", side_effect=inputs):
-            result = _read_user_input("You: ")
+            result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == "line one\nline two"
 
     def test_explicit_multiline_with_empty_lines(self):
         """Triple-quote multiline preserves empty lines."""
-        from agent_cli.main import _read_user_input
-
         inputs = iter(['"""', "first", "", "third", '"""'])
         with patch("builtins.input", side_effect=inputs):
-            result = _read_user_input("You: ")
+            result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == "first\n\nthird"
 
     def test_paste_detection(self):
         """Paste detection reads buffered lines from stdin."""
         import io
-
-        from agent_cli.main import _read_user_input
 
         fake_stdin = io.StringIO("second line\nthird line\n")
 
@@ -71,17 +62,15 @@ class TestReadUserInput:
         with patch("builtins.input", return_value="first line"):
             with patch("select.select", side_effect=select_results):
                 with patch("sys.stdin", fake_stdin):
-                    result = _read_user_input("You: ")
+                    result = get_renderer().prompt_user("You: ", multiline=True)
 
         assert result == "first line\nsecond line\nthird line"
 
     def test_paste_detection_not_supported(self):
         """Falls back to single line if select raises."""
-        from agent_cli.main import _read_user_input
-
         with patch("builtins.input", return_value="single"):
             with patch("select.select", side_effect=OSError("not supported")):
-                result = _read_user_input("You: ")
+                result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == "single"
 
 
@@ -194,14 +183,13 @@ class TestReadRichInputDecodeError:
         assert "A: " in result
         assert "Q: 원하는 입력을 알려주세요" in result
 
-    def test_main_repl_input_survives_decode_error(self):
-        """Same guarantee for the main REPL wrapper."""
+    def test_renderer_prompt_input_survives_decode_error(self):
+        """Same guarantee through the renderer's multiline prompt_user."""
         from agent_cli import input_history as ih
-        from agent_cli.main import _read_user_input
 
         ih._decode_warning_shown = False
         with patch("builtins.input", side_effect=self._decode_err()):
-            result = _read_user_input("You: ")
+            result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == ""
 
 

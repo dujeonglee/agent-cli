@@ -853,7 +853,7 @@ class TestFrameClock:
 
 
 class TestPromptUser:
-    """``Renderer.prompt_user`` — chat REPL / setup wizard / ask tool
+    """``Renderer.prompt_user`` — setup wizard / ask tool
     all route through here so a web renderer can satisfy the same API
     via form submission instead of stdin."""
 
@@ -874,7 +874,7 @@ class TestPromptUser:
 
     def test_single_line_eof_propagates(self, monkeypatch):
         # EOF / Ctrl+C propagate so the caller can pick a policy
-        # (chat REPL: end session; setup wizard: abort; ask tool:
+        # (setup wizard: abort; ask tool:
         # catch + substitute fallback).
         import pytest
 

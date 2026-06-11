@@ -640,10 +640,10 @@ class MinimalRenderer(Renderer):
         single ``input()`` call for one-line prompts.
 
         ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
-        different consumers want different policy (chat REPL ends the
-        session, setup wizard aborts back to caller, ask tool
-        substitutes ``"(no response)"``), so the renderer doesn't
-        impose one. Empty input → ``default`` substitution.
+        different consumers want different policy (the setup wizard
+        aborts back to caller, the ask tool substitutes
+        ``"(no response)"``), so the renderer doesn't impose one. Empty
+        input → ``default`` substitution.
 
         Decode errors get swallowed by ``read_rich_input`` (one-shot
         warning + empty) so the user can retype without aborting.

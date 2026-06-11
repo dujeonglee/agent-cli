@@ -1,7 +1,7 @@
 """Tests for the shared ``@<agent>`` / ``/<skill>`` dispatcher.
 
 The dispatcher (``agent_cli.main.try_dispatch_agent_or_skill``) is
-called by BOTH the CLI chat REPL and the web worker thread; the only
+called by BOTH ``run`` and the web worker thread; the only
 difference is the ``DispatchOutput`` adapter each surface passes in.
 This file pins the contract:
 
@@ -15,7 +15,7 @@ This file pins the contract:
      chat round-trip.
 
 These are deliberately strict so a future "I'll just inline this one
-small case" change to either chat REPL or web worker can't drift the
+small case" change to either ``run`` or the web worker can't drift the
 surfaces apart silently.
 """
 
@@ -104,7 +104,7 @@ class TestDispatcherBranches:
     def test_any_at_without_task_lists_agents(self, message, base_state, monkeypatch):
         """``@``, ``@agents``, and ``@<x>`` with no task all trigger
         the agent listing. CLI parity: typing ``@`` to discover what's
-        available is a documented UX pattern (chat REPL help text)."""
+        available is a documented UX pattern."""
         monkeypatch.setattr(
             "agent_cli.main._collect_agent_names", lambda: ["alpha", "beta"]
         )
@@ -276,7 +276,7 @@ class TestSessionPersistence:
 
 
 class TestConsoleDispatchOutput:
-    """The CLI chat REPL is the only consumer; behaviour must match
+    """The CLI (``run``) dispatch is the consumer; behaviour must match
     the pre-refactor output exactly so users notice nothing changed."""
 
     def _capture(self, fn) -> str:

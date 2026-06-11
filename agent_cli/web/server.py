@@ -131,8 +131,8 @@ def handle_slash_command(message: str, renderer: WebRenderer, ctx=None) -> bool:
 
     ``@<agent>`` / ``/<skill>`` (including the ``@agents`` /
     ``/skills`` listings and not-found errors) are routed through
-    :func:`agent_cli.main.try_dispatch_agent_or_skill` so chat REPL
-    and web share one prefix-dispatcher with a thin output adapter
+    :func:`agent_cli.main.try_dispatch_agent_or_skill` so the web worker
+    and ``run`` share one prefix-dispatcher with a thin output adapter
     per surface — see ``WebDispatchOutput`` below.
     """
     if message == "/help":

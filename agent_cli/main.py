@@ -1,4 +1,4 @@
-"""CLI entry point: run and chat commands."""
+"""CLI entry point: run (single-shot) and web (interactive browser) commands."""
 
 from __future__ import annotations
 
@@ -27,15 +27,15 @@ app = typer.Typer(
     help="AI agent CLI with ReAct pattern. Supports OpenAI-compatible "
     "(OpenAI, vLLM, omlx, LM Studio) and Anthropic.\n\n"
     "Run 'agent-cli setup' to configure.\n"
-    "Run 'agent-cli chat' for interactive mode.\n"
     "Run 'agent-cli run <task>' for single-shot execution.\n"
+    "Run 'agent-cli web' for the interactive browser UI.\n"
     "Run 'agent-cli sessions' to list previous sessions.",
     add_completion=False,
 )
 
 
 def _run_shell_inline(cmd: str) -> None:
-    """Run a shell command and print output directly. Shared by run and chat."""
+    """Run a shell command and print output directly. Shared by run and web."""
     console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
     try:
         result = subprocess.run(
@@ -143,109 +143,6 @@ def _setup_mcp():
     return manager, mcp_tools
 
 
-def _handle_mcp_command(query: str, mcp_manager) -> None:
-    """Handle /mcp CLI commands."""
-    parts = query.split()
-    subcmd = parts[1] if len(parts) > 1 else ""
-
-    if not mcp_manager:
-        console.print(f"[{C['muted']}]No MCP servers configured.[/]")
-        console.print(
-            f"[{C['muted']}]Add servers to .agent-cli/mcp.json or ~/.agent-cli/mcp.json[/]"
-        )
-        return
-
-    if not subcmd:
-        # Status: show all servers
-        connected = mcp_manager.connected_servers
-        if not connected:
-            console.print(f"[{C['muted']}]No MCP servers connected.[/]")
-            return
-        console.print(f"\n[{C['accent']}]MCP servers:[/]")
-        for name in connected:
-            tool_count = len(mcp_manager.list_tools(name))
-            console.print(f"  [green]●[/] {name} ({tool_count} tools)")
-        console.print()
-        return
-
-    server = parts[2] if len(parts) > 2 else ""
-
-    if subcmd == "tools":
-        if not server:
-            # List all tools from all servers
-            tools = mcp_manager.list_tools()
-        else:
-            tools = mcp_manager.list_tools(server)
-        if not tools:
-            console.print(f"[{C['muted']}]No tools found.[/]")
-            return
-        console.print(f"\n[{C['accent']}]MCP tools:[/]")
-        for t in tools:
-            desc = f" — {t.description}" if t.description else ""
-            console.print(f"  {t.server}.{t.name}{desc}")
-        console.print()
-        return
-
-    if subcmd == "resources":
-        if not server:
-            console.print(f"[{C['error']}]Usage: /mcp resources <server>[/]")
-            return
-        resources = mcp_manager.list_resources(server)
-        if not resources:
-            console.print(f"[{C['muted']}]No resources found for '{server}'.[/]")
-            return
-        console.print(f"\n[{C['accent']}]MCP resources ({server}):[/]")
-        for r in resources:
-            desc = f" — {r.description}" if r.description else ""
-            console.print(f"  {r.uri}{desc}")
-        console.print()
-        return
-
-    if subcmd == "connect":
-        if not server:
-            console.print(f"[{C['error']}]Usage: /mcp connect <server>[/]")
-            return
-        from agent_cli.mcp.config import load_mcp_config
-
-        configs = load_mcp_config()
-        if server not in configs:
-            console.print(f"[{C['error']}]Server '{server}' not in mcp.json[/]")
-            return
-        results = mcp_manager.connect_all({server: configs[server]})
-        status = results.get(server, "unknown")
-        if status == "connected":
-            from agent_cli.mcp.adapter import register_mcp_tools
-            from agent_cli.tools import TOOLS
-
-            new_tools = register_mcp_tools(mcp_manager)
-            TOOLS.update(new_tools)
-            tool_count = len(mcp_manager.list_tools(server))
-            console.print(f"  [green]●[/] {server}: connected ({tool_count} tools)")
-        else:
-            console.print(f"  [red]●[/] {server}: {status}")
-        return
-
-    if subcmd == "disconnect":
-        if not server:
-            console.print(f"[{C['error']}]Usage: /mcp disconnect <server>[/]")
-            return
-        # Remove tools from TOOLS dict
-        from agent_cli.tools import TOOLS
-
-        prefix = f"{server}."
-        to_remove = [k for k in TOOLS if k.startswith(prefix)]
-        for k in to_remove:
-            del TOOLS[k]
-        mcp_manager.disconnect(server)
-        console.print(f"  [{C['muted']}]{server}: disconnected[/]")
-        return
-
-    console.print(
-        f"[{C['error']}]Unknown /mcp command: {subcmd}[/]\n"
-        f"[{C['muted']}]Usage: /mcp [tools|resources|connect|disconnect] [server][/]"
-    )
-
-
 def _apply_style(style: str | None) -> None:
     """Apply renderer style if specified."""
     if style:
@@ -266,7 +163,7 @@ _AGENT_NOT_FOUND = object()
 
 
 # ────────────────────────────────────────────────────────────
-# Shared ``@<agent>`` / ``/<skill>`` dispatch (chat REPL + web)
+# Shared ``@<agent>`` / ``/<skill>`` dispatch (web worker + run)
 # ────────────────────────────────────────────────────────────
 
 # Why a Protocol-based dispatcher instead of two parallel branches:
@@ -286,7 +183,7 @@ class DispatchOutput:
     All methods are called from the dispatcher — implementors decide
     how to surface each branch (coloured print, SSE event, log line).
     Methods MUST NOT raise; failures should degrade to silence so a
-    broken adapter cannot wedge the chat loop.
+    broken adapter cannot wedge the dispatch loop.
     """
 
     def list_agents(self, names: list[str]) -> None:
@@ -374,9 +271,9 @@ class _ConsoleDispatchOutput(DispatchOutput):
 def _collect_agent_names() -> list[str]:
     """Sorted, deduped list of agent names from the delegate search paths.
 
-    Lifted from the chat REPL's inline listing block so both surfaces
-    walk the same paths and apply the same dedup rule (first hit wins
-    by ``_AGENT_SEARCH_PATHS`` order).
+    A single listing helper so every surface (web worker, run) walks the
+    same paths and applies the same dedup rule (first hit wins by
+    ``_AGENT_SEARCH_PATHS`` order).
     """
     from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS
 
@@ -416,32 +313,30 @@ def try_dispatch_agent_or_skill(
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
 
     ``stop_event`` is threaded into BOTH paths so the web Stop button can
-    halt either at a turn boundary, same as a plain chat turn:
+    halt either at a turn boundary, same as a plain conversation turn:
       - ``/skill`` → ``_dispatch_skill`` → ``execute_skill`` → ``run_loop``
       - ``@agent`` → ``_dispatch_agent`` → ``tool_delegate`` → the delegate
         worker's ``run_loop`` (shared Event across parallel workers).
 
     Returns ``True`` when the message was handled (caller skips its
     LLM path); ``False`` when nothing matched and the caller should
-    treat ``message`` as a normal chat turn.
+    treat ``message`` as a normal conversation turn.
 
     Listings (``@``, ``@agents``, ``@<name>`` with no task,
     ``/skills``) and errors (unknown agent, unknown skill) are
     surfaced through ``output`` — same code path as a successful
     invocation, just a different rendering. Unknown commands do NOT
     fall through to the LLM: a typo shouldn't accidentally trigger a
-    chat round-trip with the LLM, which is the chat REPL's contract
-    and the web UI now matches.
+    round-trip with the LLM (the web UI's dispatch contract).
     """
     from agent_cli.context.session import save_meta
 
     if message.startswith("@"):
         parts = message.split(maxsplit=1)
         name = parts[0][1:]
-        # CLI parity: any ``@<x>`` with no task — including unknown
-        # agent names — triggers a listing rather than an error.
-        # Typing ``@`` to discover what's available is a documented
-        # UX pattern in the chat REPL help text.
+        # Any ``@<x>`` with no task — including unknown agent names —
+        # triggers a listing rather than an error. Typing ``@`` to
+        # discover what's available is a documented UX pattern.
         if not name or name == "agents" or len(parts) < 2:
             output.list_agents(_collect_agent_names())
             return True
@@ -1033,7 +928,7 @@ def _finalize_run(session, ctx, mcp_manager=None) -> None:
     finalize_session(session, ctx)
     console.print(
         f"[{C['muted']}]Session {session.session_id} saved. "
-        f"Resume with: agent-cli chat --resume {session.session_id}[/]"
+        f"Resume with: agent-cli web --resume {session.session_id}[/]"
     )
 
 
@@ -1051,7 +946,7 @@ def sessions(
         None, "--workspace", "-w", help="Filter by workspace path"
     ),
 ):
-    """List previous chat sessions. Use with 'chat --resume <id>' to continue."""
+    """List previous sessions. Use with 'web --resume <id>' to continue."""
     from agent_cli.context.session import list_sessions as _list_sessions
 
     ws = workspace or os.getcwd()
@@ -1117,352 +1012,6 @@ def _maybe_resume_recent(workspace: str, response_format: str, prompt_fn) -> tup
                 if resumed is not None:
                     return resumed, True
     return create_session(response_format=response_format), False
-
-
-def _read_user_input(prompt: str) -> str:
-    """REPL wrapper over the active renderer's input method.
-
-    Going through the renderer means a web renderer can satisfy the
-    same call by streaming the prompt to the browser and waiting on
-    a form submission, with no change to the chat loop here.
-    """
-    return get_renderer().prompt_user(prompt, multiline=True)
-
-
-def _print_recent_exchanges(history_path, n: int = 10) -> None:
-    """On resume, print the last `n` user↔assistant pairs so the user
-    can pick up where they left off without scrolling the session log.
-
-    Tool calls and observations are collapsed away by `recent_exchanges`
-    — only the user's actual queries and the assistant's final answers
-    are shown."""
-    from agent_cli.context.session import recent_exchanges
-
-    pairs = recent_exchanges(history_path, n=n)
-    if not pairs:
-        return
-
-    console.print(
-        f"\n[{C['muted']}]── Last {len(pairs)} exchange(s) ──[/]",
-        highlight=False,
-    )
-    for user_q, asst_a in pairs:
-        console.print(f"[{C['accent']}]You:[/] {_truncate(user_q, 200)}")
-        console.print(
-            f"[{C['final']}]Assistant:[/] {_truncate(asst_a, 400)}\n",
-            highlight=False,
-        )
-
-
-@app.command()
-def chat(
-    provider: Optional[str] = typer.Option(
-        None,
-        "--provider",
-        "-p",
-        help="LLM provider: openai | anthropic (default: openai)",
-    ),
-    model: Optional[str] = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="Model ID (uses provider default if not specified)",
-    ),
-    base_url: Optional[str] = typer.Option(
-        None,
-        "--base-url",
-        help="API base URL (uses provider default if not specified)",
-    ),
-    api_key: Optional[str] = typer.Option(
-        None,
-        "--api-key",
-        help="API key (auto-detects from environment if not specified)",
-    ),
-    max_turns: int = typer.Option(
-        0,
-        "--max-turns",
-        "-n",
-        help="Maximum iterations per turn (0 = unlimited)",
-    ),
-    max_context_tokens: int = typer.Option(
-        0,
-        "--max-context-tokens",
-        help="Max tokens in context window (0 = auto from model)",
-    ),
-    max_depth: int = typer.Option(
-        2,
-        "--max-depth",
-        help="Maximum subagent nesting depth",
-    ),
-    delegate_timeout: int = typer.Option(
-        300,
-        "--delegate-timeout",
-        help="Timeout in seconds for subagent delegation",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Show raw LLM response",
-    ),
-    resume: Optional[str] = typer.Option(
-        None,
-        "--resume",
-        help="Resume a previous session by ID",
-    ),
-    style: Optional[str] = typer.Option(
-        None,
-        "--style",
-        help="Renderer style: minimal (default) or custom renderer name",
-    ),
-    record_turns: bool = typer.Option(
-        True,
-        "--record-turns/--no-record-turns",
-        help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
-    ),
-    no_compaction: bool = typer.Option(
-        False,
-        "--no-compaction",
-        help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. Useful for measurement baseline / debugging. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
-    ),
-    response_format: str = typer.Option(
-        DEFAULT_WIRE_FORMAT,
-        "--response-format",
-        help="Wire format plugin name (default: md_array — markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-ins: prefix_md, react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
-    ),
-):
-    """Interactive multi-turn chat with context management, skills, and session persistence. Type /help inside for commands."""
-    _apply_style(style)
-    from agent_cli.context.session import (
-        finalize_session,
-        load_session,
-        save_meta,
-    )
-
-    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
-        _setup_provider(provider, model, base_url, api_key)
-    )
-
-    # Resolve --response-format up front so an unknown name fails before
-    # the user enters anything; same shape as the ``run`` command.
-    try:
-        wire_format_plugin = _get_wire_format(response_format)
-    except KeyError as exc:
-        console.print(f"[{C['error']}]{exc}[/]")
-        raise typer.Exit(2) from exc
-
-    # MCP servers
-    mcp_manager, mcp_tools = _setup_mcp()
-    if mcp_tools:
-        from agent_cli.tools import TOOLS
-
-        TOOLS.update(mcp_tools)
-
-    # Session setup
-    import sys
-
-    if resume:
-        session = load_session(resume)
-        if not session:
-            console.print(f"[{C['error']}]Session '{resume}' not found.[/]")
-            return
-        console.print(f"[{C['accent']}]Resuming session {resume}[/]")
-        is_resume = True
-    else:
-        # No --resume: offer the most recent session ([y/N]) or start new.
-        prompt_fn = input if sys.stdin.isatty() else None
-        session, is_resume = _maybe_resume_recent(
-            os.getcwd(), response_format, prompt_fn
-        )
-        if is_resume:
-            console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
-    save_meta(session)
-
-    # Auto-compute token budget from model capabilities if not specified
-    if max_context_tokens <= 0:
-        from agent_cli.context.manager import compute_token_budget
-
-        max_context_tokens = compute_token_budget(
-            capabilities.context_window, capabilities.max_output_tokens
-        )
-
-    ctx = ContextManager(
-        session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-        max_context_tokens=max_context_tokens,
-        resume=is_resume,
-        wire_format=wire_format_plugin,
-    )
-
-    if is_resume:
-        _print_recent_exchanges(ctx.history_path)
-
-    console.print()
-    console.print(
-        f"  ● chat mode  "
-        f"[{C['muted']}]{provider} · {resolved_model} · "
-        f"ctx={capabilities.context_window:,}  /quit to exit[/]",
-        highlight=False,
-    )
-    console.print()
-
-    from agent_cli.input_history import make_prompt, setup as _setup_input_history
-
-    _setup_input_history()
-    _prompt = make_prompt("You:")
-
-    while True:
-        try:
-            query = _read_user_input(_prompt)
-        except (EOFError, KeyboardInterrupt):
-            console.print(f"\n[{C['muted']}]Session ended.[/]")
-            break
-
-        if not query:
-            continue
-
-        if query in ("/quit", "/exit"):
-            console.print(f"[{C['muted']}]Session ended.[/]")
-            break
-
-        if query in ("/help", "/?"):
-            console.print(f"\n[{C['accent']}]Chat commands:[/]")
-            console.print("  /help               Show this help")
-            console.print("  /quit, /exit        End session")
-            console.print("  /clear              Reset context")
-            console.print("  /sh <cmd>           Run shell command")
-            console.print(
-                "  /compact            Compact context now (summarise oldest half)"
-            )
-            console.print("  /skills             List available skills")
-            console.print("  /<skill> <args>     Run a skill")
-            console.print("  @agents             List available agents")
-            console.print("  @<agent> <task>     Delegate task to an agent")
-            console.print("  /ctx_window         Dump context window (debug)")
-            console.print("  /mcp                MCP server status")
-            console.print("  /mcp tools <srv>    List MCP server tools")
-            console.print("  /mcp resources <srv> List MCP server resources")
-            console.print()
-            continue
-
-        if query == "/clear":
-            ctx = ContextManager(
-                session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-                max_context_tokens=max_context_tokens,
-                wire_format=wire_format_plugin,
-            )
-            console.print(f"[{C['accent']}]Context cleared.[/]")
-            continue
-
-        if query.startswith("/sh "):
-            cmd = query[4:].strip()
-            if cmd:
-                _run_shell_inline(cmd)
-            continue
-
-        if query == "/compact" or query.startswith("/compact "):
-            before, after = ctx.compact_now()
-            if after < before:
-                console.print(
-                    f"[{C['muted']}]Compacted: {before:,} → {after:,} tokens.[/]"
-                )
-            else:
-                console.print(
-                    f"[{C['muted']}]Nothing to compact "
-                    f"({before:,} / {ctx.max_context_tokens:,} tokens).[/]"
-                )
-            continue
-
-        if query == "/ctx_window":
-            msgs = ctx.get_messages()
-            console.print(
-                f"[{C['muted']}]── context window dump ({len(msgs)} messages, "
-                f"{ctx.get_estimated_tokens():,} / {ctx.max_context_tokens:,} tokens) ──[/]"
-            )
-            for i, m in enumerate(msgs):
-                role = m["role"]
-                content = m.get("content", "")
-                console.print(f"[{C['accent']}][{i}] {role}[/]")
-                console.print(content, markup=False)
-                console.print()
-            tokens = ctx.get_estimated_tokens()
-            console.print(f"[{C['muted']}]── estimated {tokens} tokens ──[/]")
-            continue
-
-        if query == "/mcp" or query.startswith("/mcp "):
-            _handle_mcp_command(query, mcp_manager)
-            continue
-
-        # Shared ``@<agent>`` / ``/<skill>`` dispatcher — covers
-        # listings (``@``, ``@agents``, ``@<x>`` no task, ``/skills``),
-        # invocations, and not-found errors. Web mode uses the same
-        # function with a different ``DispatchOutput`` adapter.
-        if query.startswith("@") or query.startswith("/"):
-            if try_dispatch_agent_or_skill(
-                query,
-                _ConsoleDispatchOutput(),
-                llm_provider=llm_provider,
-                capabilities=capabilities,
-                resolved_model=resolved_model,
-                provider=provider,
-                resolved_url=resolved_url,
-                resolved_key=resolved_key,
-                max_turns=max_turns,
-                verbose=verbose,
-                max_depth=max_depth,
-                delegate_timeout=delegate_timeout,
-                ctx=ctx,
-                session=session,
-                graceful_interrupt=True,
-            ):
-                continue
-
-        save_meta(session)
-
-        from agent_cli.hooks import load_hooks as _load_hooks
-
-        _disk_hooks = _load_hooks() or None
-        loop_result = run_loop(
-            query=query,
-            provider=llm_provider,
-            capabilities=capabilities,
-            model=resolved_model,
-            provider_name=provider,
-            base_url=resolved_url,
-            api_key=resolved_key,
-            max_turns=max_turns,
-            verbose=verbose,
-            ctx=ctx,
-            max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
-            session=session,
-            graceful_interrupt=True,
-            mcp_manager=mcp_manager,
-            hooks_config=_disk_hooks,
-            record_turns=record_turns,
-            wire_format=wire_format_plugin,
-            compaction_enabled=not no_compaction,
-        )
-        result = loop_result.output if loop_result.success else None
-
-        if result is None:
-            console.print(
-                f"\n[{C['accent']}]Loop stopped without final answer. "
-                f"You can:[/]\n"
-                f"  - Rephrase or continue the query\n"
-                f"  - /clear to reset context\n"
-                f"  - /quit to exit"
-            )
-
-    # Cleanup
-    from agent_cli.render import render_spinner_stop
-
-    render_spinner_stop()
-
-    if mcp_manager:
-        mcp_manager.disconnect_all()
-    console.print(f"[{C['muted']}]Saving session...[/]")
-    finalize_session(session, ctx)
-    console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
 
 
 @app.command()
@@ -1578,7 +1127,7 @@ def web(
 
     from agent_cli.render import set_renderer
 
-    # 1. Resolve provider + capabilities (reuse chat helper).
+    # 1. Resolve provider + capabilities (shared provider-setup helper).
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
         _setup_provider(provider, model, base_url, api_key, quiet=True)
     )
@@ -1649,13 +1198,13 @@ def web(
         """Pop chat messages and drive AgentLoop in a background thread.
 
         Each ``run_loop`` invocation reuses the same ``ctx``, so history
-        accumulates across messages exactly like the CLI chat REPL.
-        Dispatch order matches the chat REPL surface:
+        accumulates across messages — the web UI is the interactive,
+        multi-turn surface. Dispatch order per message:
           1. ``handle_slash_command`` — web-specific stateless cmds
              (``/help``, ``/sh``)
-          2. ``try_dispatch_agent_or_skill`` — shared with chat REPL,
+          2. ``try_dispatch_agent_or_skill`` — shared with ``run``,
              covers ``@``/``/`` listings + invocations + not-found
-          3. Otherwise the message is a chat turn → ``run_loop``.
+          3. Otherwise the message is a conversation turn → ``run_loop``.
         """
         web_output = WebDispatchOutput(renderer)
         while True:

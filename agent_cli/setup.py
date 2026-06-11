@@ -250,7 +250,7 @@ class SetupWizard:
             Panel(
                 "[green]Ready![/] Try:\n"
                 '  agent-cli run "List files in current directory"\n'
-                "  agent-cli chat\n"
+                "  agent-cli web   [dim](interactive browser UI)[/]\n"
                 "  agent-cli setup  [dim](to reconfigure)[/]",
                 title="Setup Complete",
             )

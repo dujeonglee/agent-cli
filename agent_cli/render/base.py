@@ -387,9 +387,9 @@ class Renderer(ABC):
         """Read free-form text input from the user.
 
         ``EOFError`` / ``KeyboardInterrupt`` propagate to the caller —
-        different consumers want different policy (chat REPL ends the
-        session, setup wizard aborts, ask tool substitutes a
-        fallback). ``default`` covers only the empty-submission case.
+        different consumers want different policy (the setup wizard
+        aborts, the ask tool substitutes a fallback). ``default`` covers
+        only the empty-submission case.
 
         Args:
             prompt: Prompt string shown to the user.
@@ -398,9 +398,9 @@ class Renderer(ABC):
                 pattern (``"  Size [4096]: "``) without inspecting
                 emptiness afterwards. NOT a fallback for EOF / Ctrl+C.
             multiline: ``True`` enables multi-line submission (triple-
-                quote blocks, paste detection) — chat REPL and the
-                ``ask`` tool answer use this. ``False`` reads a single
-                line — setup wizard prompts use this.
+                quote blocks, paste detection) — the ``ask`` tool answer
+                uses this. ``False`` reads a single line — setup wizard
+                prompts use this.
             continuation: Prompt prefix shown for subsequent lines of
                 a multi-line block. Ignored when ``multiline=False``.
             context: Optional pre-input announcement (e.g. the ``ask``

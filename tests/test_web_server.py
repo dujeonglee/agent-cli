@@ -247,7 +247,7 @@ class TestHandleSlashCommand:
         """``handle_slash_command`` is the web's stateless layer — owns
         ``/help`` and ``/sh`` only. Everything else (``@<agent>``,
         ``/<skill>``, listings, not-found) is routed through
-        ``try_dispatch_agent_or_skill`` so chat REPL and web share a
+        ``try_dispatch_agent_or_skill`` so ``run`` and web share a
         single dispatcher. Test pins the surface boundary so a future
         refactor that re-adds duplicate listing logic here fails loudly.
         """

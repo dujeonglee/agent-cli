@@ -1,4 +1,5 @@
-"""Readline-based input history for chat REPL.
+"""Readline-based input history for interactive terminal prompts (the
+``ask`` tool's questions and the setup wizard).
 
 Enables arrow key navigation, persistent history across sessions,
 and standard readline editing shortcuts (Ctrl+A/E/W/K).

@@ -106,8 +106,8 @@ class WebRenderer(Renderer):
         #     their replay snapshot (prepended below in
         #     ``register_connection``) — fixes the "connecting…"
         #     stuck state when a client opens the page before the
-        #     first chat turn.
-        # (2) chat REPL re-enters AgentLoop on every user message,
+        #     first turn.
+        # (2) the web worker re-enters AgentLoop on every user message,
         #     calling header() again. A slot avoids the buffer
         #     accumulating one ready per turn.
         self._latest_ready: tuple[str, dict[str, Any]] | None = None
@@ -749,7 +749,7 @@ class WebRenderer(Renderer):
 
         ``EOFError`` is raised if ``push_abort()`` was signalled while
         waiting — gives the same propagation semantics as the CLI
-        renderer so chat REPL teardown logic stays consistent.
+        renderer so interactive teardown logic stays consistent.
 
         ``context`` (e.g. the ``ask`` tool's question block) is
         forwarded as a separate field so the frontend can attach it
