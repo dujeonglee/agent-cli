@@ -9,11 +9,21 @@ import json
 
 import requests
 
-from agent_cli.constants import LLM_API_TIMEOUT
+from agent_cli.constants import (
+    LLM_API_TIMEOUT,
+    LLM_READ_TIMEOUT,
+    LLM_STREAM_TIMEOUT,
+    STREAM_MAX_RECONNECTS,
+)
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.providers.http import interruptible_lines, post_with_retry
+from agent_cli.providers.http import (
+    StreamIdleTimeout,
+    interruptible_lines,
+    make_stream_patient,
+    post_with_retry,
+)
 
 
 class OpenAIProvider:
@@ -67,21 +77,40 @@ class OpenAIProvider:
         if on_chunk:
             body["stream"] = True
             body["stream_options"] = {"include_usage": True}
-            r = post_with_retry(
-                requests.post,
-                url,
-                headers=headers,
-                json=body,
-                timeout=LLM_API_TIMEOUT,
-                stream=True,
-            )
-            r.raise_for_status()
-            return self._handle_stream(
-                r,
-                on_chunk,
-                kwargs.get("degeneration_check"),
-                kwargs.get("interrupt_check"),
-            )
+            # Stream timeout is (connect 30s, read 30s) — the short read bounds
+            # the header wait + interrupt-during-header. After post() returns we
+            # relax the socket to patient (LLM_READ_TIMEOUT) so body reads aren't
+            # killed at 30s; the poll-loop idle detector handles body stalls and
+            # raises StreamIdleTimeout after ~10min of silence, which we
+            # reconnect + re-send (up to STREAM_MAX_RECONNECTS).
+            for attempt in range(STREAM_MAX_RECONNECTS + 1):
+                r = post_with_retry(
+                    requests.post,
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=LLM_STREAM_TIMEOUT,
+                    stream=True,
+                )
+                r.raise_for_status()
+                make_stream_patient(r, LLM_READ_TIMEOUT)
+                try:
+                    return self._handle_stream(
+                        r,
+                        on_chunk,
+                        kwargs.get("degeneration_check"),
+                        kwargs.get("interrupt_check"),
+                    )
+                except StreamIdleTimeout:
+                    if attempt >= STREAM_MAX_RECONNECTS:
+                        raise
+                    from agent_cli.render import render_status
+
+                    render_status(
+                        "running",
+                        "스트림 무응답 — 재연결 후 재전송 "
+                        f"({attempt + 1}/{STREAM_MAX_RECONNECTS})",
+                    )
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -123,7 +152,29 @@ class OpenAIProvider:
         # equivalent of per-chunk, so no separate in-loop interrupt check is
         # needed; the interrupt is detected by re-checking interrupt_check()
         # after the loop (the partial is discarded by the loop, not parsed).
-        for line in interruptible_lines(r, interrupt_check):
+        #
+        # Idle handling: every STREAM_IDLE_THRESHOLD seconds with no token
+        # renders a "still waiting" notice (on_idle); after STREAM_IDLE_MAX_TICKS
+        # of silence interruptible_lines raises StreamIdleTimeout for call() to
+        # reconnect. The counter resets when a token arrives.
+        from agent_cli.constants import STREAM_IDLE_MAX_TICKS, STREAM_IDLE_THRESHOLD
+
+        def _on_idle(tick: int, seconds: float) -> None:
+            from agent_cli.render import render_status
+
+            render_status(
+                "running",
+                f"응답 대기 중 — 토큰 없음 {int(seconds)}s "
+                f"({tick}/{STREAM_IDLE_MAX_TICKS}, {STREAM_IDLE_MAX_TICKS * STREAM_IDLE_THRESHOLD // 60}분 후 재연결)",
+            )
+
+        for line in interruptible_lines(
+            r,
+            interrupt_check,
+            idle_threshold=STREAM_IDLE_THRESHOLD,
+            max_idle_ticks=STREAM_IDLE_MAX_TICKS,
+            on_idle=_on_idle,
+        ):
             if not line:
                 continue
             line_str = line.decode("utf-8") if isinstance(line, bytes) else line

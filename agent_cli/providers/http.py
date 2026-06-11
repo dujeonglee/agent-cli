@@ -10,12 +10,16 @@ the user.
 
 Scope: pre-stream only
 ----------------------
-We retry only exceptions raised by ``requests.post()`` itself — that is,
-errors that fire *before* the server starts streaming. Once
-``requests.post(stream=True)`` returns a Response, any error while
-consuming chunks is out of scope: the caller already has partial output
-and retransmitting the whole request would duplicate chunks the LLM
-has already spoken.
+``post_with_retry`` retries only exceptions raised by ``requests.post()``
+itself — errors that fire *before* the server starts streaming. Once
+``requests.post(stream=True)`` returns a Response, an error while consuming
+chunks is out of this helper's scope.
+
+The streaming path adds ONE deliberate re-send for a different failure: a
+stream that goes SILENT (``StreamIdleTimeout`` from :func:`interruptible_lines`
+after ~10min of no tokens). There the partial is DISCARDED and the whole
+request re-sent (the generation restarts — there is no server-side resume), so
+no chunks are duplicated. That reconnect loop lives in the provider, not here.
 
 Retryable exceptions
 --------------------
@@ -66,6 +70,43 @@ _INTERRUPT_POLL_SECONDS = 0.2
 
 # Sentinel marking the reader thread has finished (normally or via error).
 _STREAM_DONE = object()
+
+
+def make_stream_patient(r: requests.Response, read_timeout: float) -> None:
+    """After a streaming ``post()`` returns (headers received), relax the socket
+    read timeout to ``read_timeout`` so BODY reads block patiently.
+
+    The streaming post uses a short read timeout (e.g. 30s) only to bound the
+    header wait. A single requests timeout governs both the header read AND
+    every body read (verified: a 5s post timeout makes ``iter_lines`` raise at
+    5s on a body stall), so without this the 30s would also kill a slow-but-alive
+    generation. We reach into the urllib3 socket and re-set its timeout once
+    headers are in hand; the poll-loop idle detector then owns body stalls.
+
+    Best-effort: the socket is a urllib3 private attribute, so on any drift we
+    leave the timeout as-is (the short post timeout becomes the body backstop —
+    stalls then fail fast instead of patiently, never a 20min hang)."""
+    try:
+        r.raw._connection.sock.settimeout(read_timeout)  # type: ignore[attr-defined]
+    except Exception as e:  # pragma: no cover - urllib3 internals drift
+        debug_log(
+            f"[stream] could not relax socket timeout ({type(e).__name__}); "
+            "body reads keep the post read timeout"
+        )
+
+
+class StreamIdleTimeout(Exception):
+    """A streaming response went silent for too long (no token for
+    ``idle_threshold * max_idle_ticks`` seconds). Raised by
+    :func:`interruptible_lines` AFTER closing the response, so the caller can
+    reconnect + re-send the request (the generation is restarted — there is no
+    server-side resume). Distinct from ``requests.Timeout`` so the caller's
+    reconnect loop can tell a stall apart from a connect failure."""
+
+    def __init__(self, idle_seconds: float):
+        self.idle_seconds = idle_seconds
+        super().__init__(f"stream idle for {idle_seconds:.0f}s")
+
 
 # Timeout subsumes ConnectTimeout and ReadTimeout. ConnectionError covers
 # TCP-level failures (refused, reset) before any HTTP status arrives.
@@ -159,9 +200,12 @@ def interruptible_lines(
     r: requests.Response,
     interrupt_check: Callable[[], bool] | None = None,
     poll_interval: float = _INTERRUPT_POLL_SECONDS,
+    idle_threshold: float | None = None,
+    max_idle_ticks: int | None = None,
+    on_idle: Callable[[int, float], None] | None = None,
 ) -> Iterator[bytes]:
     """Yield SSE lines from a streaming response, but stay interruptible even
-    when no data is arriving.
+    when no data is arriving, and surface / bound a stalled stream.
 
     ``r.iter_lines()`` blocks waiting for the next byte, so polling a flag
     "per chunk" never fires during a no-data gap — most importantly the TTFT
@@ -170,18 +214,26 @@ def interruptible_lines(
     read timeout as terminal and the stream can't be resumed.
 
     So the blocking read runs in a daemon reader thread that pushes lines to a
-    queue; this generator polls the queue with ``poll_interval`` and checks
-    ``interrupt_check`` on each empty poll (and once up front). On interrupt it
-    closes ``r`` — which unblocks the reader's ``recv`` from the side that owns
-    the read — and stops yielding; the caller detects the interrupt by
-    re-checking ``interrupt_check()`` after the loop (the flag is still set).
+    queue; this generator polls the queue with ``poll_interval`` and, on each
+    empty poll, (1) checks ``interrupt_check`` — on interrupt it closes ``r``
+    (unblocking the reader's ``recv``) and stops yielding; the caller detects it
+    by re-checking ``interrupt_check()`` after the loop — and (2) measures idle
+    time. Because the reader stays blocked (no socket read timeout) the
+    connection survives across idle gaps, so we can keep waiting.
 
-    Without ``interrupt_check`` this is a plain pass-through over
-    ``iter_lines()`` (no thread). Genuine stream errors raised by
-    ``iter_lines`` are propagated; the error caused by our own ``r.close()`` on
-    interrupt is not (we return first).
+    Idle handling (when ``idle_threshold`` is set): every ``idle_threshold``
+    seconds of NO data fires ``on_idle(tick, seconds)`` (a UI "still waiting"
+    notice); the counter resets the moment a line arrives. After
+    ``max_idle_ticks`` consecutive idle intervals the response is closed and
+    :class:`StreamIdleTimeout` is raised so the caller can reconnect + re-send.
+    Interrupt takes precedence over idle (checked first each poll).
+
+    Without ``interrupt_check`` or ``idle_threshold`` this is a plain
+    pass-through over ``iter_lines()`` (no thread). Genuine stream errors raised
+    by ``iter_lines`` are propagated; the error caused by our own ``r.close()``
+    (interrupt or idle-timeout) is not (we return / raise first).
     """
-    if interrupt_check is None:
+    if interrupt_check is None and idle_threshold is None:
         yield from r.iter_lines()
         return
 
@@ -199,14 +251,28 @@ def interruptible_lines(
 
     threading.Thread(target=_reader, daemon=True).start()
 
+    last_data = time.monotonic()
+    idle_ticks = 0
     while True:
-        if interrupt_check():
+        if interrupt_check is not None and interrupt_check():
             r.close()  # abort the reader's blocked recv
             return
         try:
             item = q.get(timeout=poll_interval)
         except queue.Empty:
+            if idle_threshold is not None:
+                idle = time.monotonic() - last_data
+                if idle >= idle_threshold * (idle_ticks + 1):
+                    idle_ticks += 1
+                    if on_idle is not None:
+                        on_idle(idle_ticks, idle)
+                    if max_idle_ticks is not None and idle_ticks >= max_idle_ticks:
+                        r.close()
+                        raise StreamIdleTimeout(idle)
             continue
+        # A line arrived → the stream is alive; reset the idle window.
+        last_data = time.monotonic()
+        idle_ticks = 0
         if item is _STREAM_DONE:
             if err:
                 raise err[0]
