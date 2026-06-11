@@ -233,6 +233,22 @@ model prior is whack-a-mole, and the recovery is clean. Meanwhile the B nudge
 landed hard on the fixed prompt: multi-op adoption jumped from 0.6% to ~100% of
 early op-turns (read_file ×6/×7/×8 batches), 0 regressions.
 
+**Where the invented key actually came from (resolved).** `read_file_reads` is a
+name we coined — the 27B can't recall it from training, and it is NOT in the
+md_array prompt (0 occurrences) nor in any session's history (so not
+self-reinforcement). The model CONSTRUCTS it: the prompt puts the tool name
+`read_file` next to the plural noun "reads" repeatedly (the batching guidance —
+"Each read_file op reads ONE file", "independent reads belong together", "full
+reads burn context budget"), and the model composes `read_file` + `reads` →
+`read_file_reads`. We coined the same string by the same obvious logic (tool name
++ plural param), so it converges — invention, not memorization. This explains why
+the flat-schema fix didn't stop it (the seed is the WORD "reads", not the schema)
+and why the guard made it worse (it added the exact token). Mitigation: reword the
+md_array read_file guide to drop "reads" as a plural noun next to the tool name
+("op targets ONE file", "independent files belong together", "a full file read")
+— the steering is unchanged, the seed is gone. react/prefix_md keep
+`read_file_reads` (their genuine wire key; single-action batching needs it).
+
 **Empty-array terminal gap (same live session).** After `ready_for_review`
 the 27B emitted "Decision: complete" + `## Action\n[]` — an explicitly empty
 op array — and looped on format recovery: the lenient terminal handled `{}` and

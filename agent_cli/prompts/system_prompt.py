@@ -359,13 +359,18 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
         ex_search = rai({"path": "app.py", "search": "login", "context": 5})
         ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
         ex_full = rai({"path": "app.py"})
+        # Wording note (DESIGN Exp 8): avoid the plural noun "reads" next to
+        # the tool name "read_file" — the 27B composed `read_file` + `reads`
+        # into the invented wire key `read_file_reads` (which the md_array
+        # prompt never shows). "op", "file(s)" and the verb "read" carry the
+        # same meaning without seeding that token.
         intro = """\
 
-  Each read_file op reads ONE file. Reading several files? Emit one
+  Each read_file op targets ONE file. To read several files, emit one
   read_file op per file in the SAME turn (separate array elements — never
-  a list inside one op); independent reads belong together and save turns.
-  Pick the right mode per op — full reads burn context budget, but reading
-  too little costs turns:
+  a list inside one op); independent files belong together in one turn and
+  save turns. Pick the right mode per op — a full file read burns context
+  budget, but reading too little costs turns:
 """
         batch_mode = ""
     else:

@@ -119,19 +119,28 @@ class TestMultiOpPromptBranches:
         assert "delegate_tasks" not in section
 
     def test_read_file_single_target_no_batch(self, section):
-        assert "Each read_file op reads ONE file" in section
+        assert "Each read_file op targets ONE file" in section
         assert "5. Batch" not in section
         assert "takes a LIST of reads" not in section
         assert '{"action": "read_file", "path": "app.py", "stat": true}' in section
 
     def test_read_file_guide_nudges_same_turn_batch(self, section):
         # B (DESIGN §6): read_file is the dominant missed-batch tool, so its
-        # multi-op guide must steer several reads into ONE turn — with the
+        # multi-op guide must steer several files into ONE turn — with the
         # no-nesting guardrail right where batching is suggested.
         assert "SAME turn" in section
         assert "never\n  a list inside one op" in section or (
             "never a list inside one op" in " ".join(section.split())
         )
+
+    def test_read_file_guide_avoids_reads_plural_seed(self, section):
+        # DESIGN Exp 8: the 27B composed `read_file` + the plural noun "reads"
+        # into the invented key `read_file_reads`. The md_array read_file guide
+        # must not put "reads" as a plural noun next to the tool name — guard
+        # the specific phrasings that were the seed.
+        assert "independent reads" not in section
+        assert "full reads" not in section
+        assert "read_file op reads" not in section
 
     def test_edit_file_one_edit_per_op(self, section):
         assert "one edit per op" in section
