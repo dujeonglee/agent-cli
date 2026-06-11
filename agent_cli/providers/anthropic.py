@@ -10,7 +10,11 @@ from agent_cli.constants import LLM_API_TIMEOUT
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.providers.http import interruptible_lines, post_with_retry
+from agent_cli.providers.http import (
+    interruptible_lines,
+    post_with_retry,
+    raise_for_status_with_body,
+)
 
 
 class AnthropicProvider:
@@ -75,7 +79,7 @@ class AnthropicProvider:
                 timeout=LLM_API_TIMEOUT,
                 stream=True,
             )
-            r.raise_for_status()
+            raise_for_status_with_body(r)
             return self._handle_stream(
                 r,
                 on_chunk,
@@ -86,7 +90,7 @@ class AnthropicProvider:
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
         )
-        r.raise_for_status()
+        raise_for_status_with_body(r)
         return self._parse_response(r.json())
 
     def _handle_stream(

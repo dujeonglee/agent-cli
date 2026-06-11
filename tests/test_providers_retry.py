@@ -333,3 +333,57 @@ class TestProviderWiring:
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
+
+
+class TestRaiseForStatusWithBody:
+    """``raise_for_status_with_body`` includes the response BODY so the loop's
+    context-overflow recovery can recognise an omlx 400 — the body names the
+    limit (`...exceeds max context window of N tokens`), but requests' bare
+    message drops it, so the recoverable 400 hard-fails (the iter=37 symptom)."""
+
+    def _resp(self, status, body, reason="Bad Request"):
+        # The helper wraps ``raise_for_status()``, so the mock drives it via
+        # that (a 200 returns None; a 4xx raises the bare requests message).
+        r = MagicMock()
+        r.status_code = status
+        r.url = "http://127.0.0.1:8000/v1/chat/completions"
+        r.text = body
+        if status >= 400:
+            r.raise_for_status.side_effect = requests.HTTPError(
+                f"{status} Client Error: {reason} for url: {r.url}"
+            )
+        else:
+            r.raise_for_status.return_value = None
+        return r
+
+    def test_ok_does_not_raise(self):
+        http_mod.raise_for_status_with_body(self._resp(200, ""))  # no exception
+
+    def test_400_message_includes_body_and_is_recognised_as_overflow(self):
+        from agent_cli.context.overflow import is_context_overflow
+
+        body = (
+            '{"error": "Prompt 270000 tokens exceeds max context window of '
+            '262144 tokens"}'
+        )
+        with pytest.raises(requests.HTTPError) as ei:
+            http_mod.raise_for_status_with_body(self._resp(400, body))
+        msg = str(ei.value)
+        assert "exceeds max context window" in msg
+        # the loop's reactive recovery keys on exactly this — without the body
+        # it returned False and the 400 surfaced as a hard failure.
+        assert is_context_overflow(msg) is True
+
+    def test_400_without_body_falls_back_to_standard(self):
+        r = self._resp(400, "")
+        r.raise_for_status.side_effect = requests.HTTPError("400 Client Error")
+        with pytest.raises(requests.HTTPError):
+            http_mod.raise_for_status_with_body(r)
+
+    def test_body_is_truncated(self):
+        with pytest.raises(requests.HTTPError) as ei:
+            http_mod.raise_for_status_with_body(
+                self._resp(400, "x" * 5000), max_body=100
+            )
+        assert "x" * 100 in str(ei.value)
+        assert "x" * 200 not in str(ei.value)  # capped

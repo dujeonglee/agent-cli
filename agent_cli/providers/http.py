@@ -72,6 +72,33 @@ _INTERRUPT_POLL_SECONDS = 0.2
 _STREAM_DONE = object()
 
 
+def raise_for_status_with_body(r: requests.Response, max_body: int = 1000) -> None:
+    """Like ``r.raise_for_status()`` but the raised ``HTTPError`` message INCLUDES
+    the response body.
+
+    ``requests.raise_for_status()`` produces a body-less message
+    (``"400 Client Error: Bad Request for url: ..."``), which drops the very
+    text the runtime needs: on a context-overflow 400, omlx/mlx-lm name the
+    limit in the BODY (``"...tokens exceeds max context window of N tokens"``).
+    The loop's reactive recovery checks ``is_context_overflow(str(error))`` to
+    shrink-and-retry — with the body dropped it never recognises the overflow
+    and a recoverable 400 hard-fails instead. Including the body restores that
+    path.
+
+    Wraps ``raise_for_status()`` (rather than inspecting ``status_code``) so the
+    success path is untouched — for a streaming 200 we never read ``r.text``
+    (which would consume the stream); ``r.text`` is read ONLY in the error
+    branch, where the server has already sent a complete error body, not a
+    stream."""
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        body = (r.text or "").strip()
+        if not body:
+            raise
+        raise requests.HTTPError(f"{e}: {body[:max_body]}", response=r) from e
+
+
 def make_stream_patient(r: requests.Response, read_timeout: float) -> None:
     """After a streaming ``post()`` returns (headers received), relax the socket
     read timeout to ``read_timeout`` so BODY reads block patiently.

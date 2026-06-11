@@ -20,6 +20,7 @@ from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
     StreamIdleTimeout,
+    raise_for_status_with_body,
     interruptible_lines,
     make_stream_patient,
     post_with_retry,
@@ -92,7 +93,7 @@ class OpenAIProvider:
                     timeout=LLM_STREAM_TIMEOUT,
                     stream=True,
                 )
-                r.raise_for_status()
+                raise_for_status_with_body(r)
                 make_stream_patient(r, LLM_READ_TIMEOUT)
                 try:
                     return self._handle_stream(
@@ -115,7 +116,7 @@ class OpenAIProvider:
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
         )
-        r.raise_for_status()
+        raise_for_status_with_body(r)
         return self._parse_response(r.json())
 
     def _handle_stream(
