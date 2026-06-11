@@ -91,7 +91,10 @@ class TestRetryOnConnectionError:
 
 
 class TestExhaustion:
-    def test_all_attempts_fail_raises_last(self):
+    # Pin attempts=3 so these exercise the exhaustion MECHANISM independent of
+    # the default (10) — the default is covered separately below.
+    def test_all_attempts_fail_raises_last(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
         post_fn = MagicMock(
             side_effect=[
                 requests.Timeout("t1"),
@@ -103,7 +106,8 @@ class TestExhaustion:
             post_with_retry(post_fn, "http://x/llm")
         assert post_fn.call_count == 3
 
-    def test_mixed_exceptions_still_raises_last(self):
+    def test_mixed_exceptions_still_raises_last(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
         post_fn = MagicMock(
             side_effect=[
                 requests.ConnectionError("c1"),
@@ -164,7 +168,9 @@ class TestEnvOverrides:
         )
         result = post_with_retry(post_fn, "http://x/llm")
         assert result.status_code == 200
-        assert post_fn.call_count == 3  # default is 3
+        # Invalid value → falls back to default (10), which is ≥ 3, so the
+        # call succeeds on the 3rd attempt here.
+        assert post_fn.call_count == 3
 
     def test_delay_env_var_honored(self, monkeypatch):
         monkeypatch.setenv("AGENT_CLI_LLM_RETRY_DELAY", "0.25")
@@ -199,7 +205,8 @@ class TestSleepBehavior:
         post_with_retry(post_fn, "http://x/llm")
         assert http_mod.time.sleep.call_count == 0
 
-    def test_no_sleep_after_final_exhausted_attempt(self):
+    def test_no_sleep_after_final_exhausted_attempt(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
         post_fn = MagicMock(
             side_effect=[
                 requests.Timeout("t1"),
@@ -222,7 +229,8 @@ class TestUserVisibility:
         states = [call.args[0] for call in mock_status.call_args_list]
         assert "running" in states
 
-    def test_render_status_error_on_exhaustion(self):
+    def test_render_status_error_on_exhaustion(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
         post_fn = MagicMock(
             side_effect=[
                 requests.Timeout("t1"),

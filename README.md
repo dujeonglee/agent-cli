@@ -145,7 +145,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
-| `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 3 = 최초 + 재시도 2회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. |
+| `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. 요청 timeout은 `(connect 30초, read 1200초)` 튜플(`LLM_API_TIMEOUT`) — 서버가 죽어 **연결**이 안 되면 30초에 빨리 실패하고 재시도; 연결된 뒤엔 헤더+토큰을 20분까지 인내(느린 cold 27B의 긴 TTFT를 죽이지 않음). 연결됐지만 stall된 스트림은 read(20분)까지 대기 후 실패. |
 | `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
 
 ## 모델 권장 사양

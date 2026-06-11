@@ -38,7 +38,7 @@ of a long wait so the pause has little effect but no harm.
 Config (env)
 ------------
 - ``AGENT_CLI_LLM_RETRY_ATTEMPTS``: total attempts including the first
-  (default 3). Values below 1 are clamped to 1 so the call isn't
+  (default 10). Values below 1 are clamped to 1 so the call isn't
   silently dropped.
 - ``AGENT_CLI_LLM_RETRY_DELAY``: seconds between attempts (default 1.0).
 """
@@ -56,7 +56,7 @@ import requests
 from agent_cli.verbose import debug_log
 
 
-_DEFAULT_ATTEMPTS = 3
+_DEFAULT_ATTEMPTS = 10
 _DEFAULT_DELAY = 1.0
 
 # Poll cadence for interrupt during a no-data stream gap (TTFT, between-token

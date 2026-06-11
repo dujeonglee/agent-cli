@@ -1116,8 +1116,9 @@ Thinking 블록 처리 플로우:
 **백오프:** 고정 1초 (지수 아님). on-prem 단일 사용자 전제라 rate-limit / thundering-herd 대책이 필요 없고, `ConnectionError` 직후 서버 부팅 마무리에만 약간의 헤드룸을 주면 충분. `Timeout`은 이미 긴 대기였으므로 추가 대기 효과는 작지만 해롭지도 않음.
 
 **설정:**
-- `AGENT_CLI_LLM_RETRY_ATTEMPTS` (기본 3, 최초 포함 총 시도 횟수; 0/음수는 1로 clamp)
+- `AGENT_CLI_LLM_RETRY_ATTEMPTS` (기본 10, 최초 포함 총 시도 횟수; 0/음수는 1로 clamp)
 - `AGENT_CLI_LLM_RETRY_DELAY` (기본 1.0초)
+- `LLM_API_TIMEOUT` = requests `(connect, read)` 튜플 = `(30, 1200)`초. connect(30)는 TCP 연결 — DOWN 서버를 빨리 실패(ConnectTimeout → 재시도 대상). read(1200=20분)는 바이트 간 idle — requests가 헤더 대기를 read에 포함하므로 TTFT도 이 값이 상한(느린 cold 27B 보호). 스트리밍 본문 read는 `post_with_retry` 밖(interruptible_lines 리더 스레드)이라 read timeout 발생 시 재시도 없이 실패로 surface.
 
 **가시성:** 재시도 시 `render_status("running", ...)` 한 줄로 사용자에게 표시(예: `LLM request failed (Timeout) — retrying (2/3)`). spinner는 계속 돌아감. 모두 실패하면 `render_status("error", ...)` 후 마지막 예외를 그대로 raise. verbose 모드에서는 `agent_cli.verbose.debug_log`로 stderr에도 한 줄 남김.
 

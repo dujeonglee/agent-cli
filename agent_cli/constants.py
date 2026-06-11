@@ -2,7 +2,18 @@
 
 # ── Timeout values (seconds) ──────────────────
 SHELL_COMMAND_TIMEOUT = 30
-LLM_API_TIMEOUT = 1200
+# LLM request timeout as a requests ``(connect, read)`` tuple:
+#   - connect (30s): TCP/TLS connection establishment. Short so a DOWN /
+#     unreachable server fails fast instead of blocking — ConnectTimeout is
+#     retried up to AGENT_CLI_LLM_RETRY_ATTEMPTS times (default 10).
+#   - read (1200s = 20min): time between bytes once connected. NOTE: requests
+#     folds the HEADER wait into the read timeout (not connect), so this also
+#     bounds time-to-first-token. Generous so a slow cold 27B (large prompt =
+#     long TTFT) is NOT killed mid-generation. A connected-but-stalled stream
+#     still waits up to read before failing.
+LLM_CONNECT_TIMEOUT = 30
+LLM_READ_TIMEOUT = 1200
+LLM_API_TIMEOUT = (LLM_CONNECT_TIMEOUT, LLM_READ_TIMEOUT)
 DELEGATE_DEFAULT_TIMEOUT = 300
 # First-run capability detection probes (thinking support, JSON-format
 # tolerance, context-window overflow). All run once per model and may
