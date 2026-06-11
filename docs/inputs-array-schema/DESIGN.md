@@ -286,6 +286,26 @@ at position 0 (the `any("action")` guard keeps a stray prose bracket from
 becoming a spurious op). Re-validate completion reliability + multi-op adoption
 on the next live run.
 
+Anonymous-object op JSON (live, session 1781208482 — 28.6% turn failure, 5/6
+NO_JSON). Building a 37-file project, the 27B batched all the `write_file` ops
+into one ~85KB turn but emitted each op as `{"action":"write_file", {params}}` —
+the params as an UNNAMED nested object instead of inline, which is invalid JSON,
+so the whole turn parsed to nothing and no file was written. (The 85KB array was
+NOT truncated — it closed with `}]`; it was purely malformed. The model then
+misdiagnosed it as "context window overwhelmed" and retried the same shape.)
+Fixed: `_repair_anonymous_op_objects` unwraps `{"action":X, {params}}` →
+`{"action":X, params}` and `_extract_op_json` retries the strict parse with it,
+marking the turn parse_stage 2 (drift-recovered). The repair is context- and
+string-aware (a single pass with a `{`/`[` container stack + string-literal
+tracking): only a `{` where an object KEY is expected (object start / after a
+comma at object level) is unwrapped — a `{` after `:` (a legit nested value) or
+inside an array (`[{op}, {op}]`) is left alone, and braces inside a `content`
+string (C code) never affect matching. Scope is exactly this pattern — NOT a
+general JSON repair (avoids over-recovery). Both the header-less and the
+`## Action`-body parse paths route through it. Open: the over-batching itself
+(all files in one turn) is the trigger; a `write_file`-specific "a few per turn"
+nudge is the complementary lever if the repair alone doesn't settle it.
+
 ### Established vs not
 
 Established (greedy + temp 0.7, single-turn): the model emits the markdown

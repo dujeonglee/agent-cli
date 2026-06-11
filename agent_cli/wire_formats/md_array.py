@@ -148,6 +148,92 @@ def _extract_first_json(body: str):
     return None
 
 
+def _repair_anonymous_op_objects(text: str) -> str:
+    """Unwrap an anonymous nested object emitted in object-KEY position:
+    ``{"action": X, {params}}`` → ``{"action": X, params}``.
+
+    The malformed multi-op shape the 27B produces when batching ops with large
+    params (DESIGN Exp 8): it wraps the params in an UNNAMED object after the
+    action, which is invalid JSON, so the whole turn fails NO_JSON and nothing
+    runs. This drops that object's braces so its keys merge into the op.
+
+    Context- and string-aware single pass: a ``{`` is unwrapped ONLY where an
+    object key is expected (object start, or right after a comma at object
+    level). A ``{`` after ``:`` (a legitimate nested value) or inside an array
+    (``[{op}, {op}]`` element) is left untouched, and braces inside string
+    literals (e.g. C code in a ``content`` value) never affect matching. No-op
+    when the pattern is absent."""
+    out: list[str] = []
+    frames: list[dict] = []  # {"type": "obj"|"arr", "expect_key": bool, "drop": bool}
+    in_str = escape = False
+    for ch in text:
+        if in_str:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            if frames and frames[-1]["type"] == "obj":
+                frames[-1]["expect_key"] = False  # the key/value string starts
+            out.append(ch)
+        elif ch == "{":
+            top = frames[-1] if frames else None
+            if top and top["type"] == "obj" and top["expect_key"]:
+                # anonymous object in key position → drop its braces (unwrap)
+                frames.append({"type": "obj", "expect_key": True, "drop": True})
+            else:
+                frames.append({"type": "obj", "expect_key": True, "drop": False})
+                out.append(ch)
+        elif ch == "}":
+            top = frames.pop() if frames else {"drop": False}
+            if not top.get("drop"):
+                out.append(ch)
+            if frames and frames[-1]["type"] == "obj":
+                frames[-1]["expect_key"] = False
+        elif ch == "[":
+            frames.append({"type": "arr", "expect_key": False, "drop": False})
+            out.append(ch)
+        elif ch == "]":
+            if frames:
+                frames.pop()
+            if frames and frames[-1]["type"] == "obj":
+                frames[-1]["expect_key"] = False
+            out.append(ch)
+        elif ch == ":":
+            if frames and frames[-1]["type"] == "obj":
+                frames[-1]["expect_key"] = False
+            out.append(ch)
+        elif ch == ",":
+            if frames and frames[-1]["type"] == "obj":
+                frames[-1]["expect_key"] = True
+            out.append(ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _extract_op_json(text: str):
+    """``_extract_first_json`` with an anonymous-nested-object repair fallback.
+
+    Returns ``(parsed, repaired)`` — ``repaired`` is True iff the strict parse
+    failed but unwrapping ``{"action": X, {params}}`` → ``{"action": X, params}``
+    recovered it (the turn is then a drift-recovery, parse_stage 2)."""
+    parsed = _extract_first_json(text)
+    if parsed is not None:
+        return parsed, False
+    fixed = _repair_anonymous_op_objects(text)
+    if fixed != text:
+        parsed = _extract_first_json(fixed)
+        if parsed is not None:
+            return parsed, True
+    return None, False
+
+
 def _split_sections(text: str) -> tuple[str | None, str | None, bool]:
     """Return ``(thought, action_body, has_action_header)``.
 
@@ -261,7 +347,9 @@ class MdArrayFormat(WireFormat):
             # at position 0. The `any("action")` guard means a stray bracket in
             # prose (`[1,2,3]`) falls through to the NO_ACTION nudge.
             if not has_action:
-                bare = _extract_first_json(llm_text.strip())
+                # (repair fallback covers the malformed `{"action":X, {params}}`
+                # shape the model emits header-less too — DESIGN Exp 8.)
+                bare, _ = _extract_op_json(llm_text.strip())
                 bare_items = (
                     [x for x in bare if isinstance(x, dict)]
                     if isinstance(bare, list)
@@ -292,7 +380,10 @@ class MdArrayFormat(WireFormat):
                 else ParsedTurn(raw=llm_text, parse_stage=0)
             )
 
-        parsed = _extract_first_json(body)
+        # Strict parse, then the anonymous-nested-object repair (DESIGN Exp 8):
+        # `{"action":X, {params}}` → `{"action":X, params}`. A repaired turn is
+        # a drift-recovery (parse_stage 2) for observability.
+        parsed, repaired = _extract_op_json(body)
         if parsed is None:
             return ParsedTurn(thought=clean_thought, raw=llm_text, parse_stage=0)
         arr = parsed if isinstance(parsed, list) else [parsed]  # bare obj = 1 op
@@ -309,7 +400,10 @@ class MdArrayFormat(WireFormat):
                 parse_stage=1 if clean_thought else 0,
             )
         return ParsedTurn(
-            thought=clean_thought, ops=_ops(items), raw=llm_text, parse_stage=1
+            thought=clean_thought,
+            ops=_ops(items),
+            raw=llm_text,
+            parse_stage=2 if repaired else 1,
         )
 
     def parse(self, llm_text: str) -> ParsedAction:

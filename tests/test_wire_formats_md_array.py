@@ -102,6 +102,80 @@ class TestParseTurnWork:
         assert not t.terminal
 
 
+class TestAnonymousObjectRepair:
+    """The 27B, batching ops with large params, emits the params as an ANONYMOUS
+    nested object: `{"action": X, {params}}` — invalid JSON → the whole turn was
+    NO_JSON and nothing ran (live session 1781208482, 5/6 failures). The parser
+    unwraps it (`{"action": X, params}`) and marks the turn parse_stage 2
+    (drift-recovered). DESIGN Exp 8."""
+
+    def test_repair_function_unwraps(self):
+        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
+
+        raw = '[{"action": "write_file", {"path": "p", "content": "c"}}]'
+        fixed = _repair_anonymous_op_objects(raw)
+        assert json.loads(fixed) == [
+            {"action": "write_file", "path": "p", "content": "c"}
+        ]
+
+    def test_repair_is_string_safe_with_braces_in_content(self):
+        # C code in `content` has its own {}/"/escapes — must not break matching.
+        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
+
+        raw = (
+            '[{"action": "write_file", '
+            '{"path": "x.c", "content": "int main(){ return \\"}\\"; }"}}]'
+        )
+        parsed = json.loads(_repair_anonymous_op_objects(raw))
+        assert parsed[0]["action"] == "write_file"
+        assert parsed[0]["content"] == 'int main(){ return "}"; }'
+
+    def test_repair_leaves_valid_json_unchanged(self):
+        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
+
+        # array elements (`[{op}, {op}]`) and legit values must be untouched.
+        valid = (
+            '[{"action": "read_file", "path": "a"}, '
+            '{"action": "shell", "command": "ls"}]'
+        )
+        assert _repair_anonymous_op_objects(valid) == valid
+
+    def test_header_body_malformed_recovers_stage2(self):
+        raw = _wire(
+            "write files",
+            '[{"action": "write_file", {"path": "a.c", "content": "x"}}]',
+        )
+        t = WF.parse_turn(raw)
+        assert t.parse_stage == 2
+        assert len(t.ops) == 1
+        assert t.ops[0].action == "write_file"
+        assert t.ops[0].action_input == {"path": "a.c", "content": "x"}
+
+    def test_headerless_prose_then_malformed_recovers(self):
+        # The live shape: reasoning prose, then a header-less malformed op array.
+        raw = (
+            "Good, creating the headers in a batch.\n\n"
+            '[{"action": "write_file", {"path": "i_video.h", "content": "#ifndef X"}}]'
+        )
+        t = WF.parse_turn(raw)
+        assert len(t.ops) == 1 and t.ops[0].action == "write_file"
+        assert t.parse_stage == 2
+
+    def test_multiple_malformed_ops_all_recover(self):
+        raw = _wire(
+            "two files",
+            '[{"action": "write_file", {"path": "a"}}, '
+            '{"action": "write_file", {"path": "b"}}]',
+        )
+        t = WF.parse_turn(raw)
+        assert [o.action for o in t.ops] == ["write_file", "write_file"]
+        assert [o.action_input["path"] for o in t.ops] == ["a", "b"]
+
+    def test_valid_turn_stays_stage1(self):
+        t = WF.parse_turn(_wire("x", '[{"action": "shell", "command": "ls"}]'))
+        assert t.parse_stage == 1  # no repair → not flagged as drift
+
+
 class TestCompletionAndNoAction:
     """md_array completes via an explicit `complete` op (DESIGN Exp 8) — NOT
     thought-only. A thought-only / empty / no-op emission is therefore NOT a
