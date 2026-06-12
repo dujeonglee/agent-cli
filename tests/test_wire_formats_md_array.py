@@ -185,6 +185,90 @@ class TestAnonymousObjectRepair:
         assert t.parse_stage == 0 and t.ops == []
 
 
+class TestLiteralControlCharRepair:
+    """The model writes a big multi-line `result`/`content` blob with REAL
+    newlines (and tabs) instead of `\\n` escapes — invalid strict JSON
+    ("Invalid control character"), so the whole turn was flagged invalid JSON
+    and nothing ran. The shape is impossible to see in a terminal/echo (a real
+    newline and `\\n` render identically). `_extract_op_json` re-parses
+    leniently (``json.loads(strict=False)``) as a final fallback, recovering
+    the turn at parse_stage 2 (a drift recovery — the signal that the JSON was
+    non-strict is kept). Reproduced live: session 1781213377 `complete` op."""
+
+    def test_complete_with_literal_newlines_recovers(self):
+        # The live case: a `complete` whose result is a markdown blob with real
+        # line breaks. (The `\n` in this Python literal ARE real newlines.)
+        result = "## Done\n\n1. build ok\n2. tests pass\n8. ESC exit"
+        t = WF.parse_turn(
+            _wire("done", '[{"action": "complete", "result": "' + result + '"}]')
+        )
+        assert t.parse_stage == 2
+        assert len(t.ops) == 1 and t.ops[0].action == "complete"
+        # The newlines are preserved verbatim in the recovered value.
+        assert t.ops[0].action_input["result"] == result
+
+    def test_write_file_content_with_literal_newlines_recovers(self):
+        content = "#include <stdio.h>\n\nint main(){\n    return 0;\n}"
+        t = WF.parse_turn(
+            _wire(
+                "write",
+                '[{"action": "write_file", "path": "a.c", "content": "'
+                + content
+                + '"}]',
+            )
+        )
+        assert t.parse_stage == 2
+        assert t.ops[0].action_input["content"] == content
+
+    def test_headerless_complete_with_literal_newlines_recovers(self):
+        # FINISHING model: prose then a header-less complete array with real
+        # newlines in the result.
+        raw = (
+            "All criteria met, finishing.\n\n"
+            '[{"action": "complete", "result": "line A\nline B"}]'
+        )
+        t = WF.parse_turn(raw)
+        assert t.parse_stage == 2
+        assert t.ops[0].action == "complete"
+        assert t.ops[0].action_input["result"] == "line A\nline B"
+
+    def test_literal_tab_in_string_recovers(self):
+        # Tabs are control chars too (0x09) — same strict rejection.
+        t = WF.parse_turn(
+            _wire("x", '[{"action": "write_file", "path": "m", "content": "a\tb"}]')
+        )
+        assert t.parse_stage == 2
+        assert t.ops[0].action_input["content"] == "a\tb"
+
+    def test_multi_op_with_one_literal_newline_op_recovers(self):
+        # A clean op + an op carrying literal newlines: the whole array is
+        # invalid strict JSON, lenient reparse recovers BOTH ops.
+        t = WF.parse_turn(
+            _wire(
+                "two",
+                '[{"action": "shell", "command": "ls"}, '
+                '{"action": "write_file", "path": "a", "content": "x\ny"}]',
+            )
+        )
+        assert t.parse_stage == 2
+        assert [o.action for o in t.ops] == ["shell", "write_file"]
+        assert t.ops[1].action_input["content"] == "x\ny"
+
+    def test_escaped_newlines_stay_stage1_no_regression(self):
+        # Properly ESCAPED \n (the correct form) must still parse clean at
+        # stage 1 — the lenient path is a fallback, never the primary.
+        body = json.dumps([{"action": "complete", "result": "a\nb\nc"}])
+        t = WF.parse_turn(_wire("ok", body))
+        assert t.parse_stage == 1
+        assert t.ops[0].action_input["result"] == "a\nb\nc"
+
+    def test_lenient_does_not_rescue_truly_broken_json(self):
+        # strict=False only relaxes control chars — a missing value is still
+        # broken and must stay a parse failure (no bogus op).
+        t = WF.parse_turn(_wire("x", '[{"action": "shell", "command": }]'))
+        assert t.parse_stage == 0 and t.ops == []
+
+
 class TestCompletionAndNoAction:
     """md_array completes via an explicit `complete` op (DESIGN Exp 8) — NOT
     thought-only. A thought-only / empty / no-op emission is therefore NOT a

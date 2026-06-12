@@ -110,8 +110,14 @@ The login() function is implemented and the tests pass.
 [{"action": "complete", "result": "Implemented login() in src/auth.py; all tests pass."}]"""
 
 
-def _extract_first_json(body: str):
-    """Parse the first balanced ``[...]`` or ``{...}`` from body, or None."""
+def _extract_first_json(body: str, *, strict: bool = True):
+    """Parse the first balanced ``[...]`` or ``{...}`` from body, or None.
+
+    ``strict`` is forwarded to ``json.loads``: with ``strict=False`` the parser
+    accepts literal control characters (raw newlines/tabs) inside string values
+    — a leniency :func:`_extract_op_json` uses as a last-resort repair (see
+    there). The balanced-brace scan itself is unaffected (it already tracks
+    strings), so only the final ``json.loads`` behaviour changes."""
     if body.startswith("```"):
         body = body.split("\n", 1)[1] if "\n" in body else body
         if body.rfind("```") > 0:
@@ -142,7 +148,7 @@ def _extract_first_json(body: str):
             depth -= 1
             if depth == 0:
                 try:
-                    return json.loads(body[start : i + 1])
+                    return json.loads(body[start : i + 1], strict=strict)
                 except json.JSONDecodeError:
                     return None
     return None
@@ -245,6 +251,17 @@ def _extract_op_json(text: str):
             parsed = _extract_first_json(fixed)
             if parsed is not None:
                 return parsed, True
+    # Last resort: the model emitted literal control chars (raw newlines/tabs)
+    # inside a string value — common in big `result`/`content` markdown blobs
+    # written without `\n` escaping — which strict json.loads rejects
+    # ("Invalid control character"). Re-parse leniently; a recovery, so
+    # repaired=True keeps parse_stage 2 as the signal that JSON was non-strict.
+    # Note: strict=False ONLY relaxes control chars — genuinely broken JSON
+    # (missing value, bad brace) still returns None, so this never force-parses
+    # garbage into bogus ops.
+    parsed = _extract_first_json(text, strict=False)
+    if parsed is not None:
+        return parsed, True
     return None, False
 
 
