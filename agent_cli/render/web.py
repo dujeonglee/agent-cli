@@ -44,6 +44,12 @@ from typing import Any
 
 from agent_cli.render.base import ConfirmOption, Renderer
 
+# Prompt Inspector scope key for the main loop's system prompt. Delegate
+# sub-agents are keyed by their ``task_id``; the empty string is the main
+# loop (which has no task_id). Kept a constant so the renderer, server, and
+# tests agree on the sentinel.
+_MAIN_SCOPE = ""
+
 
 @dataclass
 class WebConnection:
@@ -95,11 +101,21 @@ class WebRenderer(Renderer):
         # without the LLM needing to volunteer the path. Empty string
         # = field omitted from the event entirely.
         self._workspace = workspace
-        # Latest system-prompt snapshot for the Prompt Inspector
-        # (``GET /api/debug/prompt``). Slot semantics like ``_latest_ready``:
-        # only the most recent LLM call's prompt is kept (the inspector is
-        # an on-demand view, not a history).
-        self._prompt_snapshot: dict[str, Any] | None = None
+        # Per-scope system-prompt snapshots for the Prompt Inspector
+        # (``GET /api/debug/prompt``). Keyed by scope: ``_MAIN_SCOPE`` ("")
+        # is the main loop, a ``task_id`` is a delegate sub-agent — resolved
+        # from the CALLING thread via ``_thread_to_task`` (the same map
+        # ``_emit`` uses), so ``note_system_prompt`` needs no extra context
+        # threaded down from the loop. Slot-per-scope semantics like
+        # ``_latest_ready``: only the most recent LLM call's prompt per scope
+        # is kept (an on-demand view, not a history). Sub-agent snapshots
+        # persist after the agent finishes so its prompt stays inspectable
+        # post-mortem; the frontend drops one via ``DELETE``.
+        self._prompt_snapshots: dict[str, dict[str, Any]] = {}
+        # Scope-label metadata (task_id → {"agent", "index"}) captured at
+        # ``begin_delegate_task`` so the inspector chip row can name each
+        # sub-agent ("explorer·1") without re-deriving it from the timeline.
+        self._prompt_scope_labels: dict[str, dict[str, Any]] = {}
         # Session-info "ready" event lives in its own slot — NOT in
         # ``_event_buffer`` — so two semantics stay clean:
         # (1) new SSE connections always see the latest ready in
@@ -303,6 +319,9 @@ class WebRenderer(Renderer):
         tid = threading.get_ident()
         with self._lock:
             self._thread_to_task[tid] = task_id
+            # Remember the chip-row label for this scope; the snapshot itself
+            # arrives later (first LLM call) keyed by the same task_id.
+            self._prompt_scope_labels[task_id] = {"agent": agent, "index": index}
         # Tag this worker thread so a confirm/ask it triggers can name it.
         self.set_thread_agent(agent or f"task #{index + 1}")
         self._emit(
@@ -665,12 +684,19 @@ class WebRenderer(Renderer):
     def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
         """Keep the latest system-prompt snapshot for the Prompt Inspector.
 
+        The scope is resolved from the CALLING thread: a delegate worker's
+        snapshot lands under its ``task_id`` (the same ``_thread_to_task``
+        routing ``_emit`` uses), the main loop under ``_MAIN_SCOPE``. So each
+        agent's prompt is inspectable separately without the loop passing any
+        identity down.
+
         Store-only (no SSE emission — the prompt is ~16KB and the inspector
         fetches on demand via ``GET /api/debug/prompt``). Token figures are
         the same chars/4 estimate the context manager budgets with.
         """
         from agent_cli.context.token_estimator import estimate_tokens
 
+        scope = self._thread_to_task.get(threading.get_ident()) or _MAIN_SCOPE
         snapshot = {
             "turn": turn,
             "total_chars": sum(len(t) for _, t in sections)
@@ -687,13 +713,53 @@ class WebRenderer(Renderer):
             ],
         }
         with self._lock:
-            self._prompt_snapshot = snapshot
+            self._prompt_snapshots[scope] = snapshot
 
-    def prompt_snapshot(self) -> dict[str, Any] | None:
-        """Latest system-prompt snapshot (or None before the first LLM
-        call). Public read surface for the server's debug endpoint."""
+    def prompt_snapshot(self, scope: str = _MAIN_SCOPE) -> dict[str, Any] | None:
+        """Latest system-prompt snapshot for ``scope`` (``_MAIN_SCOPE`` = main
+        loop, a ``task_id`` = a delegate sub-agent), or None if that scope has
+        no captured prompt yet. Public read surface for the debug endpoint."""
         with self._lock:
-            return self._prompt_snapshot
+            return self._prompt_snapshots.get(scope)
+
+    def prompt_scopes(self) -> list[dict[str, Any]]:
+        """Scopes that currently have a captured prompt, for the inspector
+        chip row. Main first (if present), then sub-agents in capture order.
+        Each entry: ``{id, label, turn, est_tokens, main}``."""
+        out: list[dict[str, Any]] = []
+        with self._lock:
+            for scope, snap in self._prompt_snapshots.items():
+                is_main = scope == _MAIN_SCOPE
+                if is_main:
+                    label = "Main"
+                else:
+                    meta = self._prompt_scope_labels.get(scope, {})
+                    agent = meta.get("agent") or "agent"
+                    idx = meta.get("index")
+                    label = f"{agent}·{idx + 1}" if isinstance(idx, int) else agent
+                out.append(
+                    {
+                        "id": scope,
+                        "label": label,
+                        "turn": snap.get("turn"),
+                        "est_tokens": snap.get("est_tokens"),
+                        "main": is_main,
+                    }
+                )
+        # Main pinned first; stable sort keeps sub-agents in insertion order.
+        out.sort(key=lambda s: 0 if s["main"] else 1)
+        return out
+
+    def delete_prompt_scope(self, scope: str) -> bool:
+        """Drop a sub-agent's prompt snapshot (inspector ✕ button). Main is
+        not deletable — it regenerates every turn and is the default view.
+        Returns True if a snapshot was actually removed."""
+        if scope == _MAIN_SCOPE:
+            return False
+        with self._lock:
+            removed = self._prompt_snapshots.pop(scope, None) is not None
+            self._prompt_scope_labels.pop(scope, None)
+        return removed
 
     def dispatch_progress(
         self,

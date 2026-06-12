@@ -1059,6 +1059,9 @@
   es.addEventListener("delegate_task_start", function (e) {
     const d = JSON.parse(e.data);
     ensureTaskGroup(d.task_id, d.index, d.agent || "", d.task_text || "");
+    // Nudge the Prompt Inspector (separate IIFE) to refresh its scope chips
+    // if it's open, so a new sub-agent's chip appears live.
+    window.dispatchEvent(new CustomEvent("agent-cli:scopes-changed"));
   });
 
   es.addEventListener("delegate_task_status", function (e) {
@@ -1246,10 +1249,20 @@
   const $drawer = document.getElementById("inspector");
   const $backdrop = document.getElementById("inspector-backdrop");
   const $meta = document.getElementById("insp-meta");
+  const $scopes = document.getElementById("insp-scopes");
   const $budget = document.getElementById("insp-budget");
   const $search = document.getElementById("insp-search");
   const $sections = document.getElementById("insp-sections");
   if (!$btn || !$drawer || !token) return;
+
+  // Which system-prompt scope the drawer is showing: "" = main loop, a
+  // task_id = a delegate sub-agent. Clicking a chip switches scope; the ⚡
+  // button always re-opens on whatever was last selected.
+  let activeScope = "";
+
+  function qtoken() {
+    return "token=" + encodeURIComponent(token);
+  }
 
   // Distinct, stable hues per section index (works on the light theme).
   const PALETTE = [
@@ -1329,14 +1342,56 @@
     });
   }
 
-  function open() {
-    $backdrop.hidden = false;
-    requestAnimationFrame(function () {
-      $backdrop.classList.add("open");
-      $drawer.classList.add("open");
+  // ── Scope chip row (Main + delegate sub-agents) ──
+  function renderChips(scopes) {
+    // Always offer Main even if it has no snapshot yet, so the user has a
+    // stable home; agent chips only appear once that agent has a captured
+    // prompt (the server omits scope-less agents).
+    let hasMain = false;
+    const chips = scopes.map(function (s) {
+      if (s.id === "") hasMain = true;
+      const active = s.id === activeScope ? " active" : "";
+      const del = s.main
+        ? ""
+        : '<button class="insp-chip-del" type="button" title="Remove this agent\'s snapshot" data-del="' +
+          esc(s.id) + '">✕</button>';
+      return (
+        '<span class="insp-chip' + active + '" data-scope="' + esc(s.id) + '">' +
+        '<span class="insp-chip-label">' + esc(s.label) + "</span>" +
+        (s.est_tokens
+          ? '<span class="insp-chip-tok">' + fmtTok(s.est_tokens) + "</span>"
+          : "") +
+        del + "</span>"
+      );
     });
-    $drawer.setAttribute("aria-hidden", "false");
-    fetch("/api/debug/prompt?token=" + encodeURIComponent(token))
+    if (!hasMain) {
+      const active = activeScope === "" ? " active" : "";
+      chips.unshift(
+        '<span class="insp-chip' + active + '" data-scope=""><span class="insp-chip-label">Main</span></span>'
+      );
+    }
+    $scopes.innerHTML = chips.join("");
+    // If the active scope vanished (e.g. deleted elsewhere), fall back to Main.
+    if (
+      activeScope !== "" &&
+      !scopes.some(function (s) { return s.id === activeScope; })
+    ) {
+      activeScope = "";
+    }
+  }
+
+  function loadScopes() {
+    return fetch("/api/debug/prompt/scopes?" + qtoken())
+      .then(function (r) { return r.json(); })
+      .then(function (d) { renderChips((d && d.scopes) || []); })
+      .catch(function () { renderChips([]); });
+  }
+
+  function loadPrompt() {
+    const q = activeScope
+      ? "?" + qtoken() + "&task_id=" + encodeURIComponent(activeScope)
+      : "?" + qtoken();
+    return fetch("/api/debug/prompt" + q)
       .then(function (r) { return r.json(); })
       .then(render)
       .catch(function () {
@@ -1344,6 +1399,59 @@
           '<div class="insp-empty">Failed to load prompt snapshot.</div>';
       });
   }
+
+  function selectScope(id) {
+    if (id === activeScope) return;
+    activeScope = id;
+    // Re-paint active state immediately for snappy feedback, then refetch.
+    $scopes.querySelectorAll(".insp-chip").forEach(function (el) {
+      el.classList.toggle("active", el.getAttribute("data-scope") === id);
+    });
+    loadPrompt();
+  }
+
+  function deleteScope(id) {
+    fetch(
+      "/api/debug/prompt?" + qtoken() + "&task_id=" + encodeURIComponent(id),
+      { method: "DELETE" }
+    )
+      .then(function () {
+        if (id === activeScope) activeScope = "";
+        return loadScopes();
+      })
+      .then(function () {
+        if (id === activeScope || activeScope === "") loadPrompt();
+      })
+      .catch(function () {});
+  }
+
+  $scopes.addEventListener("click", function (e) {
+    const del = e.target.closest(".insp-chip-del");
+    if (del) {
+      e.stopPropagation();
+      deleteScope(del.getAttribute("data-del"));
+      return;
+    }
+    const chip = e.target.closest(".insp-chip");
+    if (chip) selectScope(chip.getAttribute("data-scope"));
+  });
+
+  function open() {
+    $backdrop.hidden = false;
+    requestAnimationFrame(function () {
+      $backdrop.classList.add("open");
+      $drawer.classList.add("open");
+    });
+    $drawer.setAttribute("aria-hidden", "false");
+    loadScopes().then(loadPrompt);
+  }
+
+  // Live chip refresh: when a delegate sub-agent spins up while the drawer is
+  // open, surface its chip without forcing a reopen (the main timeline IIFE
+  // dispatches this on ``delegate_task_start``).
+  window.addEventListener("agent-cli:scopes-changed", function () {
+    if ($drawer.classList.contains("open")) loadScopes();
+  });
 
   function close() {
     $backdrop.classList.remove("open");

@@ -537,16 +537,34 @@ def create_app(server: WebServer) -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/api/debug/prompt")
-    async def debug_prompt(token: str = Query(...)):
-        """Prompt Inspector data: the latest LLM call's system prompt as
-        named sections with size figures. Token-authenticated; fetched on
-        demand when the inspector drawer opens (the ~16KB payload is never
-        pushed over SSE). 404-shape (ok=False) before the first LLM call."""
+    async def debug_prompt(token: str = Query(...), task_id: str = Query("")):
+        """Prompt Inspector data for a scope: the latest LLM call's system
+        prompt as named sections with size figures. ``task_id`` selects a
+        delegate sub-agent's prompt; empty (default) is the main loop. Token-
+        authenticated; fetched on demand when the inspector drawer opens (the
+        ~16KB payload is never pushed over SSE). ``ok=False`` before that
+        scope's first LLM call."""
         server._require_token(token)
-        snapshot = server.renderer.prompt_snapshot()
+        snapshot = server.renderer.prompt_snapshot(task_id)
         if snapshot is None:
-            return {"ok": False, "reason": "no LLM call yet"}
-        return {"ok": True, **snapshot}
+            reason = "no LLM call yet for this agent" if task_id else "no LLM call yet"
+            return {"ok": False, "reason": reason}
+        return {"ok": True, "task_id": task_id, **snapshot}
+
+    @app.get("/api/debug/prompt/scopes")
+    async def debug_prompt_scopes(token: str = Query(...)):
+        """Scopes that currently have a captured system prompt — the main loop
+        plus any delegate sub-agents — for the inspector's scope chip row."""
+        server._require_token(token)
+        return {"ok": True, "scopes": server.renderer.prompt_scopes()}
+
+    @app.delete("/api/debug/prompt")
+    async def debug_prompt_delete(token: str = Query(...), task_id: str = Query(...)):
+        """Drop a sub-agent's captured prompt (inspector ✕ button). Main is
+        not deletable (it regenerates every turn)."""
+        server._require_token(token)
+        removed = server.renderer.delete_prompt_scope(task_id)
+        return {"ok": True, "removed": removed}
 
     @app.get("/api/stream")
     async def stream(token: str = Query(...)):

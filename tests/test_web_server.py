@@ -942,3 +942,110 @@ class TestDebugPromptEndpoint:
         body = client.get("/api/debug/prompt?token=testtoken").json()
         assert body["turn"] == 2
         assert body["sections"][0]["text"] == "new"
+
+
+def _note_agent_scope(renderer, *, task_id, index, agent, sections, turn):
+    """Populate an agent-scoped snapshot via the real thread→task routing
+    (a delegate worker captures its prompt on its own thread)."""
+
+    def worker():
+        renderer.begin_delegate_task(
+            task_id=task_id, index=index, agent=agent, task_text="t"
+        )
+        renderer.note_system_prompt(sections, turn=turn)
+
+    th = threading.Thread(target=worker)
+    th.start()
+    th.join(timeout=2.0)
+
+
+class TestDebugPromptScopedEndpoints:
+    """The inspector can target a delegate sub-agent via ``?task_id=`` and
+    list/delete scopes. Main (no task_id) and each agent are isolated; agent
+    snapshots persist post-mortem; main is not deletable."""
+
+    def test_task_id_selects_agent_scope(self, server_and_client):
+        _, renderer, client = server_and_client
+        renderer.note_system_prompt([("Role", "main role")], turn=1)
+        _note_agent_scope(
+            renderer,
+            task_id="task-A",
+            index=0,
+            agent="explorer",
+            sections=[("Role", "explorer role")],
+            turn=2,
+        )
+        # No task_id → main.
+        main = client.get("/api/debug/prompt?token=testtoken").json()
+        assert main["ok"] is True
+        assert main["sections"][0]["text"] == "main role"
+        # task_id → that agent.
+        agent = client.get("/api/debug/prompt?token=testtoken&task_id=task-A").json()
+        assert agent["ok"] is True
+        assert agent["task_id"] == "task-A"
+        assert agent["sections"][0]["text"] == "explorer role"
+
+    def test_unknown_agent_scope_reports_agent_specific_reason(self, server_and_client):
+        _, _, client = server_and_client
+        body = client.get("/api/debug/prompt?token=testtoken&task_id=ghost").json()
+        assert body["ok"] is False
+        assert "agent" in body["reason"]
+
+    def test_scopes_lists_main_and_agents(self, server_and_client):
+        _, renderer, client = server_and_client
+        renderer.note_system_prompt([("Role", "main")], turn=1)
+        _note_agent_scope(
+            renderer,
+            task_id="task-A",
+            index=0,
+            agent="explorer",
+            sections=[("Role", "A")],
+            turn=1,
+        )
+        body = client.get("/api/debug/prompt/scopes?token=testtoken").json()
+        assert body["ok"] is True
+        ids = [s["id"] for s in body["scopes"]]
+        assert ids[0] == ""  # main pinned first
+        labels = {s["id"]: s["label"] for s in body["scopes"]}
+        assert labels[""] == "Main"
+        assert labels["task-A"] == "explorer·1"
+
+    def test_scopes_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert (
+            client.get("/api/debug/prompt/scopes").status_code == 422
+        )  # missing param
+        assert client.get("/api/debug/prompt/scopes?token=wrong").status_code == 401
+
+    def test_delete_drops_agent_scope(self, server_and_client):
+        _, renderer, client = server_and_client
+        _note_agent_scope(
+            renderer,
+            task_id="task-A",
+            index=0,
+            agent="explorer",
+            sections=[("Role", "A")],
+            turn=1,
+        )
+        r = client.delete("/api/debug/prompt?token=testtoken&task_id=task-A")
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "removed": True}
+        # Gone afterwards.
+        gone = client.get("/api/debug/prompt?token=testtoken&task_id=task-A").json()
+        assert gone["ok"] is False
+
+    def test_delete_main_is_rejected_noop(self, server_and_client):
+        _, renderer, client = server_and_client
+        renderer.note_system_prompt([("Role", "main")], turn=1)
+        r = client.delete("/api/debug/prompt?token=testtoken&task_id=")
+        assert r.json()["removed"] is False
+        # Main still present.
+        assert client.get("/api/debug/prompt?token=testtoken").json()["ok"] is True
+
+    def test_delete_requires_token_and_task_id(self, server_and_client):
+        _, _, client = server_and_client
+        # Missing token AND task_id → 422 (both are required query params).
+        assert client.delete("/api/debug/prompt").status_code == 422
+        assert (
+            client.delete("/api/debug/prompt?token=wrong&task_id=x").status_code == 401
+        )

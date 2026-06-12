@@ -1271,3 +1271,161 @@ class TestWorkerLoopIntegration:
 
         # Latest state should still be idle.
         assert r._latest_worker_state == ("worker_state", {"busy": False})
+
+
+# ── Prompt Inspector per-agent scopes ──────────────
+
+
+def _note_in_delegate_scope(r, *, task_id, index, agent, sections, turn):
+    """Capture a system-prompt snapshot AS a delegate worker would: run
+    ``begin_delegate_task`` + ``note_system_prompt`` on a fresh thread so the
+    renderer's thread→task routing resolves the scope to ``task_id`` (exactly
+    the path a parallel-delegate worker takes)."""
+
+    def worker():
+        r.begin_delegate_task(task_id=task_id, index=index, agent=agent, task_text="t")
+        r.note_system_prompt(sections, turn=turn)
+
+    th = threading.Thread(target=worker)
+    th.start()
+    th.join(timeout=2.0)
+
+
+class TestPromptInspectorScopes:
+    """``note_system_prompt`` is scoped by the calling thread: the main loop
+    lands under ``_MAIN_SCOPE``, each delegate worker under its ``task_id``
+    (resolved from ``_thread_to_task``). So the inspector can show each
+    agent's prompt separately, and sub-agent prompts survive the agent
+    finishing (post-mortem inspection)."""
+
+    def test_main_thread_snapshot_is_main_scope(self):
+        r = WebRenderer()
+        r.note_system_prompt([("Role", "main role")], turn=3)
+        snap = r.prompt_snapshot()  # default = main scope
+        assert snap is not None
+        assert snap["turn"] == 3
+        assert snap["sections"][0]["text"] == "main role"
+
+    def test_delegate_thread_snapshot_keyed_by_task_id(self):
+        r = WebRenderer()
+        _note_in_delegate_scope(
+            r,
+            task_id="task-A",
+            index=0,
+            agent="explorer",
+            sections=[("Role", "explorer role")],
+            turn=1,
+        )
+        # Agent scope holds the agent's prompt...
+        agent_snap = r.prompt_snapshot("task-A")
+        assert agent_snap is not None
+        assert agent_snap["sections"][0]["text"] == "explorer role"
+        # ...and the main scope is untouched (no main LLM call happened).
+        assert r.prompt_snapshot() is None
+
+    def test_scopes_are_isolated_main_vs_agents(self):
+        r = WebRenderer()
+        r.note_system_prompt([("Role", "main")], turn=5)
+        _note_in_delegate_scope(
+            r,
+            task_id="task-A",
+            index=0,
+            agent="explorer",
+            sections=[("Role", "A")],
+            turn=1,
+        )
+        _note_in_delegate_scope(
+            r,
+            task_id="task-B",
+            index=1,
+            agent="coder",
+            sections=[("Role", "B")],
+            turn=1,
+        )
+        assert r.prompt_snapshot()["sections"][0]["text"] == "main"
+        assert r.prompt_snapshot("task-A")["sections"][0]["text"] == "A"
+        assert r.prompt_snapshot("task-B")["sections"][0]["text"] == "B"
+
+    def test_scopes_lists_main_first_then_agents_with_labels(self):
+        r = WebRenderer()
+        _note_in_delegate_scope(
+            r,
+            task_id="task-A",
+            index=0,
+            agent="explorer",
+            sections=[("Role", "A")],
+            turn=2,
+        )
+        r.note_system_prompt([("Role", "main")], turn=9)
+        _note_in_delegate_scope(
+            r,
+            task_id="task-B",
+            index=1,
+            agent="coder",
+            sections=[("Role", "B")],
+            turn=4,
+        )
+        scopes = r.prompt_scopes()
+        # Main pinned first regardless of capture order.
+        assert scopes[0]["id"] == ""
+        assert scopes[0]["label"] == "Main"
+        assert scopes[0]["main"] is True
+        rest = {s["id"]: s for s in scopes[1:]}
+        assert rest["task-A"]["label"] == "explorer·1"  # index+1, 1-based
+        assert rest["task-B"]["label"] == "coder·2"
+        assert rest["task-A"]["turn"] == 2
+        assert all(s["main"] is False for s in scopes[1:])
+
+    def test_scopes_excludes_agents_without_a_captured_prompt(self):
+        # delegate_task_start registers a label, but no LLM call yet → no chip.
+        r = WebRenderer()
+
+        def worker():
+            r.begin_delegate_task(
+                task_id="task-A", index=0, agent="explorer", task_text="t"
+            )
+
+        th = threading.Thread(target=worker)
+        th.start()
+        th.join(timeout=2.0)
+        assert r.prompt_scopes() == []
+
+    def test_delete_drops_agent_scope(self):
+        r = WebRenderer()
+        _note_in_delegate_scope(
+            r,
+            task_id="task-A",
+            index=0,
+            agent="explorer",
+            sections=[("Role", "A")],
+            turn=1,
+        )
+        assert r.delete_prompt_scope("task-A") is True
+        assert r.prompt_snapshot("task-A") is None
+        assert r.prompt_scopes() == []
+        # Idempotent: deleting again is a no-op False.
+        assert r.delete_prompt_scope("task-A") is False
+
+    def test_main_scope_is_not_deletable(self):
+        r = WebRenderer()
+        r.note_system_prompt([("Role", "main")], turn=1)
+        assert r.delete_prompt_scope("") is False
+        assert r.prompt_snapshot() is not None
+
+    def test_agent_snapshot_survives_task_end(self):
+        r = WebRenderer()
+
+        def worker():
+            r.begin_delegate_task(
+                task_id="task-A", index=0, agent="explorer", task_text="t"
+            )
+            r.note_system_prompt([("Role", "A")], turn=1)
+            r.end_delegate_task(task_id="task-A", success=True, duration_s=0.1)
+
+        th = threading.Thread(target=worker)
+        th.start()
+        th.join(timeout=2.0)
+        # The agent finished, but its prompt stays inspectable post-mortem.
+        assert r.prompt_snapshot("task-A") is not None
+        labels = {s["id"]: s["label"] for s in r.prompt_scopes()}
+        assert labels.get("task-A") == "explorer·1"
