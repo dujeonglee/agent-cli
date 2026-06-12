@@ -600,6 +600,114 @@ class TestRunLoopParseFailure:
         assert result.output == "recovered"
 
 
+class TestActionRenderShowsRawEmission:
+    """The action card must show the model's ACTUAL emission, not the
+    dispatch-canonical form. Under md_array the model emits a flat `{path}`
+    read op; `wrap_single_op` re-wraps it to `{read_file_reads:[...]}` so the
+    validate→strip→run pipeline is unchanged — but the render must keep showing
+    `{path}` (matching history.jsonl / resume-replay), else the UI
+    misrepresents what the model wrote (the `read_file_reads` confusion)."""
+
+    def _capture_render(self, monkeypatch):
+        import agent_cli.loop as loop_mod
+
+        recorded: list[dict] = []
+        real = loop_mod.render_step
+
+        def fake(step_type, content, turn, **kwargs):
+            recorded.append(
+                {
+                    "type": step_type,
+                    "content": content,
+                    "tool_name": kwargs.get("tool_name"),
+                    "tool_input": kwargs.get("tool_input"),
+                    "success": kwargs.get("success", True),
+                }
+            )
+            real(step_type, content, turn, **kwargs)
+
+        monkeypatch.setattr("agent_cli.loop.render_step", fake)
+        return recorded
+
+    def test_read_file_card_shows_flat_path_not_wrapped_batch(
+        self, caps, monkeypatch, tmp_path
+    ):
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.wire_formats import get
+
+        target = tmp_path / "f.txt"
+        target.write_text("hello world\n")
+        recorded = self._capture_render(monkeypatch)
+
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="## Thought\nread it\n\n## Action\n"
+                f'[{{"action": "read_file", "path": "{target}"}}]'
+            ),
+            LLMResponse(
+                content="## Thought\ndone\n\n## Action\n"
+                '[{"action": "complete", "result": "ok"}]'
+            ),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+            wire_format="md_array",
+        )
+
+        action_inputs = [
+            r["tool_input"]
+            for r in recorded
+            if r["type"] == "action" and r["tool_name"] == "read_file"
+        ]
+        assert action_inputs, "no read_file action was rendered"
+        rendered = action_inputs[0]
+        # The card shows the model's flat emission — NOT the wrapped batch form.
+        assert "read_file_reads" not in rendered
+        assert json.loads(rendered) == {"path": str(target)}
+
+    def test_dispatch_still_runs_via_wrapped_form(self, caps, monkeypatch, tmp_path):
+        # Regression guard: changing only the RENDER input must not disturb
+        # dispatch — the read still executes (wrap→strip→run) and returns the
+        # file body. We assert the observation carries the file content.
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.wire_formats import get
+
+        target = tmp_path / "f.txt"
+        target.write_text("UNIQUE_MARKER_LINE\n")
+        recorded = self._capture_render(monkeypatch)
+
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="## Thought\nread it\n\n## Action\n"
+                f'[{{"action": "read_file", "path": "{target}"}}]'
+            ),
+            LLMResponse(
+                content="## Thought\ndone\n\n## Action\n"
+                '[{"action": "complete", "result": "ok"}]'
+            ),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+            wire_format="md_array",
+        )
+        observations = [r["content"] for r in recorded if r["type"] == "observation"]
+        assert any("UNIQUE_MARKER_LINE" in (o or "") for o in observations)
+
+
 class TestRunLoopObservability:
     """End-to-end checks that TurnRecord JSONL is written correctly.
 

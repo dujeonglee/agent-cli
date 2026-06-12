@@ -1235,14 +1235,23 @@ class AgentLoop:
                 self.turn -= 1  # Don't count loop nudges as user-facing turns
                 return self._CONTINUE
 
+            # Render the model's ACTUAL emission, not the dispatch-canonical
+            # form. `wrap_single_op` above re-wrapped the flat op into the
+            # tool's prefixed/batch shape (e.g. read_file `{path}` →
+            # `{read_file_reads:[...]}`) so the validate→strip→run pipeline is
+            # unchanged — but showing THAT misrepresents what the model wrote
+            # and diverges from history.jsonl / resume-replay (which store the
+            # raw op). The dispatch keeps `tool_input` (wrapped); only the card
+            # shows `op.action_input` (pre-wrap).
+            display_input = op.action_input if op.action_input is not None else {}
             render_step(
                 "action",
                 "",
                 self.turn,
                 tool_name=tool_name,
-                tool_input=json.dumps(tool_input, ensure_ascii=False)
-                if isinstance(tool_input, dict)
-                else str(tool_input),
+                tool_input=json.dumps(display_input, ensure_ascii=False)
+                if isinstance(display_input, dict)
+                else str(display_input),
             )
 
             # A4 (Unknown tool) — pre-dispatch detection. Skips _dispatch_tool_with_hooks
