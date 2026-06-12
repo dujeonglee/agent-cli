@@ -57,6 +57,41 @@ class TestStage2JsonRepair:
         assert result.action == "read_file"
 
 
+class TestStage2LiteralControlChars:
+    """The model writes a big `action_input` string (content/result blob) with
+    REAL newlines/tabs instead of `\\n` escapes — invalid strict JSON. Without
+    the lenient (strict=False) stage-2 retry this fell to the stage-3 regex,
+    which returns action_input as an unusable raw STRING. Now it recovers as a
+    proper dict at stage 2 (reproduced: same class as md_array 1781213377)."""
+
+    def test_literal_newlines_in_action_input_recovers_as_dict(self):
+        # The `\n` in this Python literal are REAL newline bytes.
+        text = (
+            '{"thought": "write", "action": "write_file", '
+            '"action_input": {"path": "a.c", "content": "line1\nline2\nline3"}}'
+        )
+        result = parse_react(text)
+        assert result.parse_stage == 2
+        assert result.action == "write_file"
+        assert result.action_input == {"path": "a.c", "content": "line1\nline2\nline3"}
+
+    def test_literal_tab_recovers(self):
+        text = (
+            '{"thought": "t", "action": "shell", "action_input": {"command": "a\tb"}}'
+        )
+        result = parse_react(text)
+        assert result.parse_stage == 2
+        assert result.action_input == {"command": "a\tb"}
+
+    def test_clean_escaped_json_stays_stage1(self):
+        # Properly escaped \n must still parse clean at stage 1 (lenient path
+        # is a fallback, never the primary).
+        text = '{"thought": "t", "action": "complete", "action_input": {"result": "a\\nb"}}'
+        result = parse_react(text)
+        assert result.parse_stage == 1
+        assert result.action_input == {"result": "a\nb"}
+
+
 class TestStage3Regex:
     def test_extremely_broken_json(self):
         text = 'blah "thought": "I am thinking", blah "action": "shell"'

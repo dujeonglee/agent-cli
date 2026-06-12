@@ -96,7 +96,19 @@ def parse_react(text: str) -> ParsedAction:
         result.parse_stage = 1
         return result
 
-    # Stage 2: JSON repair
+    # Stage 2a: lenient parse — the model wrote literal control characters
+    # (raw newlines/tabs) inside a string value (big `content`/`result`
+    # blobs written without `\n` escaping), which strict json.loads rejects
+    # ("Invalid control character"). Re-parse with strict=False; a recovery,
+    # so parse_stage 2. Without this the action_input falls to the stage-3
+    # regex as a raw string (unusable by the tool).
+    data = _try_json_parse(text, strict=False)
+    if data is not None:
+        _populate_from_dict(result, data)
+        result.parse_stage = 2
+        return result
+
+    # Stage 2b: JSON repair
     data, was_truncated = repair_json(text)
     if data is not None:
         _populate_from_dict(result, data)
@@ -114,12 +126,14 @@ def parse_react(text: str) -> ParsedAction:
     return result
 
 
-def _try_json_parse(text: str) -> dict | None:
-    """Stage 1: Try direct JSON parse."""
+def _try_json_parse(text: str, *, strict: bool = True) -> dict | None:
+    """Direct JSON parse. ``strict`` is forwarded to ``json.loads`` — with
+    ``strict=False`` literal control characters inside string values are
+    accepted (the lenient stage-2 recovery; see :func:`parse_react`)."""
     stripped = strip_markdown_fences(text)
 
     try:
-        data = json.loads(stripped)
+        data = json.loads(stripped, strict=strict)
         if isinstance(data, dict):
             return data
     except (json.JSONDecodeError, ValueError):
@@ -129,7 +143,7 @@ def _try_json_parse(text: str) -> dict | None:
     extracted = _extract_json_block(stripped)
     if extracted != stripped:
         try:
-            data = json.loads(extracted)
+            data = json.loads(extracted, strict=strict)
             if isinstance(data, dict):
                 return data
         except (json.JSONDecodeError, ValueError):

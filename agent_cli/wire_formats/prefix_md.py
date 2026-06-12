@@ -253,10 +253,19 @@ def _extract_json_dict(text: str) -> dict | None:
     block = _find_last_json_block(text)
     if block is None:
         return None
+    snippet = text[block[0] : block[1]]
     try:
-        parsed = json.loads(text[block[0] : block[1]])
+        parsed = json.loads(snippet)
     except (json.JSONDecodeError, ValueError):
-        return None
+        # Lenient retry: the model wrote literal control characters (raw
+        # newlines/tabs) inside a string value (big content blobs written
+        # without `\n` escaping), which strict json.loads rejects. strict=False
+        # accepts them; without this the happy path drops action_input to None
+        # (parse_stage 2 → spurious no-input recovery).
+        try:
+            parsed = json.loads(snippet, strict=False)
+        except (json.JSONDecodeError, ValueError):
+            return None
     return parsed if isinstance(parsed, dict) else None
 
 

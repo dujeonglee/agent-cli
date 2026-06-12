@@ -174,6 +174,48 @@ class TestParseFailureModes:
         assert result.action_input is None
 
 
+class TestLiteralControlCharsInInput:
+    """The model writes a big ``## Input`` string (content blob) with REAL
+    newlines/tabs instead of `\\n` escapes — invalid strict JSON. Without the
+    lenient (strict=False) retry the happy path dropped action_input to None
+    (parse_stage 2 → spurious no-input recovery). Now it recovers as a proper
+    dict (reproduced: same class as md_array 1781213377)."""
+
+    def test_literal_newlines_in_input_recover_as_dict(self):
+        # The `\n` in this literal are REAL newline bytes inside the JSON value.
+        text = (
+            "## Thought\nwrite the file\n"
+            "\n"
+            "## Action\n"
+            "write_file\n"
+            "\n"
+            "## Input\n"
+            '{"path": "a.c", "content": "#include <stdio.h>\nint main(){\n  return 0;\n}"}'
+        )
+        result = parse_prefix_md(text)
+        assert result.parse_stage == 1
+        assert result.action == "write_file"
+        assert result.action_input == {
+            "path": "a.c",
+            "content": "#include <stdio.h>\nint main(){\n  return 0;\n}",
+        }
+
+    def test_literal_tab_in_input_recovers(self):
+        text = '## Thought\nt\n\n## Action\nshell\n\n## Input\n{"command": "a\tb"}'
+        result = parse_prefix_md(text)
+        assert result.parse_stage == 1
+        assert result.action_input == {"command": "a\tb"}
+
+    def test_clean_escaped_input_stays_stage1(self):
+        # Properly escaped \n still parses clean — no regression.
+        text = (
+            '## Thought\nt\n\n## Action\nwrite_file\n\n## Input\n{"content": "a\\nb"}'
+        )
+        result = parse_prefix_md(text)
+        assert result.parse_stage == 1
+        assert result.action_input == {"content": "a\nb"}
+
+
 class TestParseStrictSentinels:
     """The headers are matched strictly — variants don't trigger
     section breaks."""
