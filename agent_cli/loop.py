@@ -756,12 +756,19 @@ class AgentLoop:
         """
         turn = self.wire_format.parse_turn(llm_text)
 
-        # Recover dropped action names (parse_stage 3): an op's action slot is
-        # empty but its action_input keys are namespaced with a single tool's
-        # ``{name}_`` prefix → infer that tool. Ambiguous/none leaves it to
-        # the NO_ACTION recovery below. A successful inference is flagged so
-        # the observation step rewrites the prior + history to the corrected
-        # shape (no raw-drift mimicry) and the TurnRecorder logs it.
+        # Recover dropped action names (parse_stage 3) — the dropped-action
+        # recovery SEAM: an op's action slot is empty but its action_input
+        # survived (parse-preservation invariant), so ``infer_action`` tries to
+        # resolve the tool from the input shape. A successful inference is
+        # flagged so the observation step rewrites the prior + history to the
+        # corrected shape (no raw-drift mimicry) and the TurnRecorder logs it.
+        #
+        # As of consolidation Step 3 every builtin tool is flat-native, so the
+        # current prefix-based resolver returns None for builtin payloads (this
+        # hook + infer_action stay live for a FUTURE prefixed tool/format; a
+        # flat action-less payload like ``{path}`` is ambiguous → NO_ACTION,
+        # the documented extension point for a future schema-based resolver).
+        # Ambiguous/none leaves it to the NO_ACTION recovery below.
         #
         # Gated on ``action_required``: when the wire format requires an
         # explicit action (action_required=True), a dropped action is a

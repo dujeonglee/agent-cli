@@ -80,7 +80,8 @@ def _execute_tool(
 
 
 def infer_action(action_input: Any) -> str | None:
-    """Recover a missing action name from the shape of *action_input*.
+    """Recover a missing action name from the shape of *action_input* — the
+    resolver behind the loop's dropped-action recovery SEAM.
 
     When the wire format drops the action name (parse_stage 3 — a
     ``## Action`` header with an empty tool slot) but the input is a
@@ -88,6 +89,18 @@ def infer_action(action_input: Any) -> str | None:
     whether the payload is its own. Returns the tool name iff **exactly
     one** tool claims it; ``None`` on 0 or 2+ matches (ambiguous → leave
     it to the normal NO_ACTION recovery).
+
+    Current resolver = wire-key prefix matching (``{tool}_param`` → tool). As
+    of consolidation Step 3 ALL builtin tools are flat-native (no prefix), so
+    `claims` is False for every builtin → this returns ``None`` for builtin
+    payloads. It is NOT dead: it is the wired stub for the dropped-action
+    recovery seam, and stays live for a FUTURE wire-key-prefixed tool/format.
+    The user's target case — a FLAT action-less payload (``{path}`` with no
+    action) — is intentionally NOT resolved here (flat keys are ambiguous
+    across tools); it falls to NO_ACTION today and is the documented extension
+    point where a future schema-based resolver would plug into this same seam.
+    The real foundation is the parse-preservation invariant (action_input
+    survives a dropped action) — see WireFormat.parse / parse_turn.
     """
     if not isinstance(action_input, dict):
         return None

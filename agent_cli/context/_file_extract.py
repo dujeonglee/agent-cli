@@ -2,10 +2,10 @@
 
 Scans evicted *assistant* records and returns the file-list entries each
 tool touched, by delegating to :meth:`agent_cli.tools.base.Tool.touched_paths`.
-Keeping the path/array/prefix schema knowledge in each tool (next to its
-own ``parameters``) means a tool changing its input shape — e.g. read_file
-moving to the ``read_file_reads`` array — updates extraction automatically,
-without this module knowing the per-tool key layout.
+Keeping the path-key schema knowledge in each tool (next to its own
+``parameters``) means a tool changing its input shape — e.g. read_file's
+flat-native conversion to ``{path}`` (consolidation Step 3) — updates
+extraction automatically, without this module knowing the per-tool key layout.
 
 Used by :class:`ContextManager._compact` to build the accumulated file list
 surfaced in the system prompt.
@@ -32,9 +32,10 @@ def extract_file_paths(messages: list[dict[str, Any]]) -> list[str]:
 
     Each assistant record's ``action`` selects the owning ``Tool``; its
     ``action_input`` is passed to :meth:`Tool.touched_paths`, which knows
-    that tool's own key shape (prefixed ``write_file_path``, arrays like
-    ``read_file_reads[].path`` / ``code_index_queries[].path``, or the
-    ``delegate_tasks[].agent`` markers). Tools without paths return [].
+    that tool's own key shape. All builtin tools are flat-native (Step 3):
+    ``{path}`` (read_file / write_file / edit_file / code_index), or the
+    ``{agent}`` ``<delegate:agent>`` marker for delegate. Tools without paths
+    return [].
     """
     # Lazy import: ``registry`` pulls in tools that transitively import
     # ``context.manager``, which imports THIS module — a module-load cycle.

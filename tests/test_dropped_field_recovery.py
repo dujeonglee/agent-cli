@@ -209,15 +209,21 @@ class TestActionRequiredGate:
         assert not target.exists()  # not auto-dispatched
 
     def test_infer_machinery_preserved_for_prefixed_input(self):
-        # Step 3 keeps the claims/infer_action machinery (latent): it still
-        # recovers a tool from a wire-key-prefixed payload — the path a FUTURE
-        # prefixed tool/format would use. Shipped tools are flat, so no current
-        # format emits these keys, but the capability is intact (not deleted).
+        # The authoritative pin for the dropped-action recovery SEAM. After
+        # ALL builtin tools went flat-native (Step 3) the seam was DELIBERATELY
+        # kept, not removed (Step 4 decision — extensibility for a future
+        # prefixed tool/format; MCP is prefix-less so it never used it anyway):
+        # claims/infer_action still recover a tool from a wire-key-prefixed
+        # payload. No shipped format emits these keys, but the capability is
+        # intact (latent stub), so this is the one place that exercises it.
         assert (
             infer_action({"write_file_path": "x", "write_file_content": "y"})
             == "write_file"
         )
-        # A flat payload is ambiguous (many tools have `path`) → not inferred.
+        # The user's target case — a FLAT action-less payload — is ambiguous
+        # (many tools have `path`) → not inferred → NO_ACTION. This is the
+        # documented extension point where a future schema-based resolver would
+        # plug into the same seam.
         assert infer_action({"path": "x"}) is None
 
     def test_true_skips_infer_and_recovers(self, caps, tmp_path):

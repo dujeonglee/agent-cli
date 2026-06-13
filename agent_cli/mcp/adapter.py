@@ -55,6 +55,14 @@ class McpTool(Tool):
         self._server = server
         self._tool_name = tool_name
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        # MCP is prefix-less (bare schema keys), so a multi-op flat op IS the
+        # canonical input — identity, like the flat-native builtin tools. The
+        # base default (add_prefix) would namespace the bare keys
+        # (``{query}`` → ``{srv.tool_query}``) and the prefixed schema-less
+        # input would then fail validate. Override to identity.
+        return flat
+
     def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
         # session_dir is accepted for the uniform Tool.run signature; MCP
         # dispatch is location-independent and ignores it.

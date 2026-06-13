@@ -261,8 +261,8 @@ class TestSummaryTextRendering:
                 "thought": "write the texture tests",
                 "action": "write_file",
                 "action_input": {
-                    "write_file_path": "doom/tests/test_texture.c",
-                    "write_file_content": "Z" * 8000,
+                    "path": "doom/tests/test_texture.c",
+                    "content": "Z" * 8000,
                 },
             }
         )
@@ -307,7 +307,7 @@ class TestSummaryTextRendering:
         plugin = wire_formats.get("react")
         rec = plugin.serialize_assistant_for_history(
             '{"thought": "write it", "action": "write_file", '
-            '"action_input": {"write_file_path": "r.c", "write_file_content": "y"}}'
+            '"action_input": {"path": "r.c", "content": "y"}}'
         )
         line = _to_summary_text(rec)
         assert "write_file(r.c)" in line
@@ -348,8 +348,8 @@ class TestSummaryInputIsTranscript:
                 "thought": "writing the file",
                 "action": "write_file",
                 "action_input": {
-                    "write_file_path": "a.py",
-                    "write_file_content": "BIGFILEBODY" * 500,
+                    "path": "a.py",
+                    "content": "BIGFILEBODY" * 500,
                 },
             },
         )
@@ -392,7 +392,7 @@ class TestFileList:
             {
                 "role": "assistant",
                 "action": "write_file",
-                "action_input": {"write_file_path": "a.py", "write_file_content": "x"},
+                "action_input": {"path": "a.py", "content": "x"},
             },
         )
         # Add padding to force compaction.
@@ -409,7 +409,7 @@ class TestFileList:
             {
                 "role": "assistant",
                 "action": "write_file",
-                "action_input": {"write_file_path": "a.py", "write_file_content": "x"},
+                "action_input": {"path": "a.py", "content": "x"},
             },
         ]
         ctx._cache_tokens = 1000
@@ -421,16 +421,17 @@ class TestFileExtractHelper:
     """Direct tests for ``_file_extract.extract_file_paths``.
 
     These use the REAL assistant-record shape that ``ContextManager._cache``
-    holds (and persists to history.jsonl): wire-key prefix on action_input
-    keys (``write_file_path``) and the flat single-file ``{path}`` of
-    flat-native read_file (Step 3), plus array-only batch tools
-    (``code_index_queries``). The previous version used a hand-invented
-    ``{role: user, tool, args: {path}}`` shape that NEVER occurs — real tool
-    results are ``{role, tool, success, content}`` with no ``args``, and
-    assistant actions carry prefixed/array keys. So it passed while extract
-    silently returned [] for every real record (file_list stayed empty across
-    all compactions). ``test_uses_real_serialized_shape`` pins extract to the
-    actual ``serialize_assistant_for_history`` output to keep this honest.
+    holds (and persists to history.jsonl): all builtin tools are flat-native
+    (consolidation Step 3), so action_input carries plain keys —
+    ``{path, content}`` (write_file), ``{path, ...}`` (read_file/edit_file),
+    ``{mode, path}`` (code_index), ``{agent, task}`` (delegate). The previous
+    version used a hand-invented ``{role: user, tool, args: {path}}`` shape
+    that NEVER occurs — real tool results are ``{role, tool, success, content}``
+    with no ``args``, and assistant actions carry the tool's own keys. So it
+    passed while extract silently returned [] for every real record (file_list
+    stayed empty across all compactions). ``test_uses_real_serialized_shape``
+    pins extract to the actual ``serialize_assistant_for_history`` output to
+    keep this honest.
     """
 
     def test_write_file_flat_key(self):
@@ -515,7 +516,7 @@ class TestFileExtractHelper:
             {
                 "role": "assistant",
                 "action": "write_file",
-                "action_input": {"write_file_path": "a.c", "write_file_content": "x"},
+                "action_input": {"path": "a.c", "content": "x"},
             },
         ]
         assert extract_file_paths(msgs) == ["a.c"]
@@ -529,7 +530,7 @@ class TestFileExtractHelper:
         plugin = wire_formats.get("react")
         rec = plugin.serialize_assistant_for_history(
             '{"thought": "write it", "action": "write_file", '
-            '"action_input": {"write_file_path": "r.c", "write_file_content": "y"}}'
+            '"action_input": {"path": "r.c", "content": "y"}}'
         )
         assert rec["ops"][0]["action"] == "write_file"
         assert extract_file_paths([rec]) == ["r.c"]

@@ -85,11 +85,16 @@ class Tool(ABC):
         return {(k if k.startswith(p) else p + k): v for k, v in args.items()}
 
     def claims(self, action_input: dict) -> bool:
-        """Whether *action_input* belongs to this tool by key shape, used
-        to recover a missing action name (parse_stage 3). True iff any
-        top-level key carries this tool's prefix. ``registry.infer_action``
-        selects a tool only when exactly one claims, so the prefix
-        namespace keeps claims mutually exclusive by construction.
+        """Whether *action_input* belongs to this tool by key shape — the
+        per-tool vote behind ``registry.infer_action`` (dropped-action recovery
+        seam, parse_stage 3). True iff any top-level key carries this tool's
+        prefix; ``infer_action`` selects a tool only when exactly one claims, so
+        the prefix namespace keeps claims mutually exclusive by construction.
+
+        As of consolidation Step 3 every builtin tool is flat-native (no
+        prefix), so this is False for all builtin payloads — the seam is latent,
+        kept live for a FUTURE wire-key-prefixed tool/format (see
+        ``infer_action``). MCP tools are prefix-less by design and never claim.
         """
         if not isinstance(action_input, dict):
             return False
