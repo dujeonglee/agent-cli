@@ -50,7 +50,7 @@ def main():
 
     # official harness report (written by run_evaluation as
     # <model_name>.<run_id>.json in cwd, or a results dir)
-    reports = list(Path(".").glob("*.json")) + list(out.glob("*report*.json"))
+    reports = list(out.glob("*.json")) + list(Path(".").glob("*.json"))
     report = None
     for p in reports:
         try:

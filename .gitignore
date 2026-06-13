@@ -32,3 +32,4 @@ OptimizationSummary.md
 bench/.venv/
 bench/.cache/
 bench/runs/
+logs/
