@@ -154,9 +154,7 @@ class TestCrossWireParity:
         assert len(rt.ops) == len(mt.ops) == 1
         assert rt.ops[0].action is None and mt.ops[0].action is None
         assert (
-            rt.ops[0].action_input
-            == mt.ops[0].action_input
-            == {"shell_command": "ls"}
+            rt.ops[0].action_input == mt.ops[0].action_input == {"shell_command": "ls"}
         )
         assert (
             infer_action(rt.ops[0].action_input)
@@ -182,18 +180,19 @@ class TestCrossWireParity:
 
 
 class TestActionRequiredGate:
-    def test_false_infers_and_dispatches(self, caps, tmp_path):
-        # action dropped but inferable; action_required=False (react) → the
-        # loop infers write_file and runs it (the file gets created).
+    def test_false_flat_dropped_action_falls_to_no_action(self, caps, tmp_path):
+        # Step 3 (flat-native): a dropped action with FLAT input cannot be
+        # inferred — many tools share `path`, so claims is ambiguous (None).
+        # So even with action_required=False the loop falls to NO_ACTION
+        # recovery rather than auto-dispatching. (The infer MACHINERY is kept,
+        # latent — see test_infer_machinery_preserved_for_prefixed_input — but
+        # no shipped format emits the prefixed keys it needs.)
         target = tmp_path / "made.txt"
         provider = _make_provider(
             json.dumps(
                 {
                     "thought": "x",
-                    "action_input": {
-                        "write_file_path": str(target),
-                        "write_file_content": "data",
-                    },
+                    "action_input": {"path": str(target), "content": "data"},
                 }
             ),
             _complete("done"),
@@ -206,7 +205,20 @@ class TestActionRequiredGate:
             wire_format=ReActFormat(),
         )
         assert result.success
-        assert target.exists()  # inferred write_file ran
+        assert provider.call.call_count == 2  # NO_ACTION retry (infer can't help)
+        assert not target.exists()  # not auto-dispatched
+
+    def test_infer_machinery_preserved_for_prefixed_input(self):
+        # Step 3 keeps the claims/infer_action machinery (latent): it still
+        # recovers a tool from a wire-key-prefixed payload — the path a FUTURE
+        # prefixed tool/format would use. Shipped tools are flat, so no current
+        # format emits these keys, but the capability is intact (not deleted).
+        assert (
+            infer_action({"write_file_path": "x", "write_file_content": "y"})
+            == "write_file"
+        )
+        # A flat payload is ambiguous (many tools have `path`) → not inferred.
+        assert infer_action({"path": "x"}) is None
 
     def test_true_skips_infer_and_recovers(self, caps, tmp_path):
         # Same input, action_required=True → inference skipped, NO_ACTION
@@ -217,8 +229,8 @@ class TestActionRequiredGate:
                 {
                     "thought": "x",
                     "action_input": {
-                        "write_file_path": str(target),
-                        "write_file_content": "data",
+                        "path": str(target),
+                        "content": "data",
                     },
                 }
             ),
@@ -246,8 +258,8 @@ class TestThoughtRequiredGate:
                 {
                     "action": "write_file",
                     "action_input": {
-                        "write_file_path": str(target),
-                        "write_file_content": "data",
+                        "path": str(target),
+                        "content": "data",
                     },
                 }
             ),
@@ -272,8 +284,8 @@ class TestThoughtRequiredGate:
                 {
                     "action": "write_file",
                     "action_input": {
-                        "write_file_path": str(target),
-                        "write_file_content": "data",
+                        "path": str(target),
+                        "content": "data",
                     },
                 }
             ),

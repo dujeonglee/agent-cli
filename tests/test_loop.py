@@ -3839,8 +3839,8 @@ class TestOutputTruncationGuard:
                         "thought": "writing",
                         "action": "write_file",
                         "action_input": {
-                            "write_file_path": str(target),
-                            "write_file_content": "partial",
+                            "path": str(target),
+                            "content": "partial",
                         },
                     }
                 ),
@@ -3897,8 +3897,8 @@ class TestOutputTruncationGuard:
                         "thought": "writing",
                         "action": "write_file",
                         "action_input": {
-                            "write_file_path": str(target),
-                            "write_file_content": "hello",
+                            "path": str(target),
+                            "content": "hello",
                         },
                     }
                 ),

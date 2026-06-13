@@ -54,14 +54,23 @@ class WriteFileTool(Tool):
         "read, prefer edit_file with the returned hashline refs rather than "
         "rewriting the whole file."
     )
+    # Flat-native (consolidation roadmap Step 3): the schema is the plain
+    # single-target shape — no `write_file_` wire-key prefix. `wrap_single_op`
+    # is identity (no canonical re-wrap), so the flat op dispatches straight
+    # through. `key_prefix` is left at its default; strip_prefix is then a
+    # no-op on these unprefixed keys, and `claims` correctly returns False for
+    # a flat `{path}` (no `write_file_` key) so it stays out of infer_action.
     parameters = {
         "type": "object",
         "properties": {
-            "write_file_path": {"type": "string", "description": "File path to save"},
-            "write_file_content": {"type": "string", "description": "File content"},
+            "path": {"type": "string", "description": "File path to save"},
+            "content": {"type": "string", "description": "File content"},
         },
-        "required": ["write_file_path", "write_file_content"],
+        "required": ["path", "content"],
     }
+
+    def wrap_single_op(self, flat: dict) -> dict:
+        return flat
 
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")

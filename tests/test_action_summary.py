@@ -21,10 +21,8 @@ def _sa(tool: str, action_input: dict) -> str:
 
 class TestToolSummaryArg:
     def test_write_file_path(self):
-        assert (
-            _sa("write_file", {"write_file_path": "out.txt", "write_file_content": "x"})
-            == "out.txt"
-        )
+        # Flat-native (Step 3): write_file takes flat {path, content}.
+        assert _sa("write_file", {"path": "out.txt", "content": "x"}) == "out.txt"
 
     def test_edit_file_path(self):
         assert (

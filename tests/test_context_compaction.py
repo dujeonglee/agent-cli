@@ -432,15 +432,13 @@ class TestFileExtractHelper:
     actual ``serialize_assistant_for_history`` output to keep this honest.
     """
 
-    def test_write_file_prefix_key(self):
+    def test_write_file_flat_key(self):
+        # Flat-native (Step 3): write_file action_input is flat {path, content}.
         msgs = [
             {
                 "role": "assistant",
                 "action": "write_file",
-                "action_input": {
-                    "write_file_path": "foo.c",
-                    "write_file_content": "...",
-                },
+                "action_input": {"path": "foo.c", "content": "..."},
             }
         ]
         assert extract_file_paths(msgs) == ["foo.c"]
