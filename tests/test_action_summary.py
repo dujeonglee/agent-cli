@@ -2,9 +2,9 @@
 the compaction transcript (``_to_summary_text``) and observation headers.
 
 Uses the REAL ``action_input`` shape each tool receives. Flat-native tools
-(write_file, read_file — Step 3) take plain ``{path, ...}``; the remaining
-batch tools still use prefixed arrays (``edit_file_edits``,
-``read``-style ``code_index_queries``, ``delegate_tasks``). The previous
+(write_file, read_file, edit_file — Step 3) take plain ``{path, ...}``; the
+remaining batch tools still use prefixed arrays (``code_index_queries``,
+``delegate_tasks``). The previous
 version tested ``summarize_tool_args`` with a hand-invented bare-key shape
 for batch tools that never occurred in history.jsonl, so it passed while the
 function returned "" for every real record, masking the prefix regression.
@@ -27,9 +27,9 @@ class TestToolSummaryArg:
         assert _sa("write_file", {"path": "out.txt", "content": "x"}) == "out.txt"
 
     def test_edit_file_path(self):
-        assert (
-            _sa("edit_file", {"edit_file_path": "a.py", "edit_file_edits": []})
-            == "a.py"
+        # Flat-native (Step 3): edit_file takes flat {path, op, pos, ...}.
+        assert _sa("edit_file", {"path": "a.py", "op": "replace", "pos": "1#AA"}) == (
+            "a.py"
         )
 
     def test_read_file_flat_path(self):

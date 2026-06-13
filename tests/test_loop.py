@@ -444,50 +444,41 @@ class TestActionInferenceCorrection:
     prefixes — dispatches the inferred tool AND rewrites the next-turn
     prior to the corrected shape (no raw-drift mimicry).
 
-    Exercised here with edit_file, which is still a wire-key-prefixed batch
-    tool (``edit_file_edits``). The flat-native tools (read_file/write_file,
+    Exercised here with shell, which is still a wire-key-prefixed tool
+    (``shell_command``). The flat-native tools (read_file/write_file/edit_file,
     Step 3) carry no prefix, so a dropped action with flat input is ambiguous
     and falls to NO_ACTION instead (see test_dropped_field_recovery). When the
-    remaining batch tools go flat, this end-to-end infer path becomes fully
+    remaining prefixed tools go flat, this end-to-end infer path becomes fully
     latent — pinned only by the unit test in test_dropped_field_recovery."""
 
-    def test_infers_action_and_corrects_prior(self, caps, tmp_path):
-        from agent_cli.tools.read_file import format_hashlines
-
-        target = tmp_path / "x.txt"
-        target.write_text("hello body\n")
-        ref = format_hashlines("hello body\n").split("\n")[0].split(":", 1)[0]
+    def test_infers_action_and_corrects_prior(self, caps):
         provider = _make_provider(
             json.dumps(
                 {
-                    "thought": "edit the file",
-                    # action name dropped — only the prefixed input keys, so
-                    # infer_action recovers "edit_file" from the edit_file_ prefix
-                    "action_input": {
-                        "edit_file_path": str(target),
-                        "edit_file_edits": [
-                            {"op": "replace", "pos": ref, "lines": ["EDITED LINE"]}
-                        ],
-                    },
+                    "thought": "run a command",
+                    # action name dropped — only the prefixed input key, so
+                    # infer_action recovers "shell" from the shell_ prefix
+                    "action_input": {"shell_command": "echo INFER_MARKER"},
                 }
             ),
             _complete("done"),
         )
         result = run_loop(
-            query="edit it",
+            query="run it",
             provider=provider,
             capabilities=caps,
             model="test-model",
         )
-        # 1. inferred edit_file actually ran (the edit landed in the file)
+        # 1. inferred shell actually ran (command output in the observation)
         assert result.success
-        assert "EDITED LINE" in target.read_text()
+        second = _messages_from_call(provider.call.call_args_list[1])
+        obs = [m for m in second if "Observation" in (m.get("content") or "")]
+        assert any("INFER_MARKER" in m["content"] for m in obs)
         # 2. assistant prior rewritten to the corrected shape (action
         #    present), NOT the raw drift (action absent)
-        second = _messages_from_call(provider.call.call_args_list[1])
         assistant = [m for m in second if m["role"] == "assistant"]
         joined = " ".join(m.get("content", "") for m in assistant)
-        assert '"action": "edit_file"' in joined
+        assert '"action": "shell"' in joined
 
     def test_ambiguous_input_not_inferred(self, caps):
         # Two distinct tool prefixes present → ambiguous → no inference,
@@ -497,7 +488,7 @@ class TestActionInferenceCorrection:
                 {
                     "thought": "drift",
                     "action_input": {
-                        "edit_file_edits": [{"op": "append", "pos": "1#AB"}],
+                        "code_index_queries": [{"mode": "list"}],
                         "shell_command": "ls",
                     },
                 }
@@ -3541,14 +3532,16 @@ class TestFormatToolCallsForReview:
                     "role": "assistant",
                     "action": "edit_file",
                     "action_input": {
-                        "edit_file_path": "a.py",
-                        "edit_file_edits": [{"op": "replace", "lines": ["x"]}],
+                        "path": "a.py",
+                        "op": "replace",
+                        "pos": "1#AB",
+                        "lines": ["x"],
                     },
                 }
             ]
         )
         out = _format_tool_calls_for_review(ctx)
-        assert "edits=<list>" in out
+        assert "lines=<list>" in out
 
     def test_get_raw_messages_failure_returns_empty(self):
         """Helper must not raise if ctx.get_raw_messages() blows up."""

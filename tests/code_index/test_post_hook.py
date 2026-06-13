@@ -58,9 +58,9 @@ class TestEditFileTriggersRefresh:
         r_edit = tool_edit_file(
             {
                 "path": "mod.py",
-                "edits": [
-                    {"op": "replace", "pos": f"1#{h1}", "lines": ["def beta():"]}
-                ],
+                "op": "replace",
+                "pos": f"1#{h1}",
+                "lines": ["def beta():"],
             }
         )
         assert r_edit.success, r_edit.error
@@ -134,11 +134,11 @@ class TestPostHookContracts:
         r_edit = tool_edit_file(
             {
                 "path": "mod.py",
-                "edits": [
-                    # `AA` is not the real hash for line 1; edit_file
-                    # rejects the call before mutating the file.
-                    {"op": "replace", "pos": "1#AA", "lines": ["def beta():"]}
-                ],
+                # `AA` is not the real hash for line 1; edit_file
+                # rejects the call before mutating the file.
+                "op": "replace",
+                "pos": "1#AA",
+                "lines": ["def beta():"],
             }
         )
         assert r_edit.success is False

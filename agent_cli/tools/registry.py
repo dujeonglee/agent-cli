@@ -173,9 +173,8 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
     formats.
 
     A batch tool's schema declares its native (batch) interface: a single
-    array param (``read_file_reads``, ``code_index_queries``,
-    ``delegate_tasks``) whose items are the per-call shape, sometimes beside a
-    scalar (``edit_file_path``). Under a multi-op format one op IS one item,
+    array param (``code_index_queries``, ``delegate_tasks``) whose items are
+    the per-call shape. Under a multi-op format one op IS one item,
     so the prompt must advertise the item fields at the top level — NOT the
     array wrapper. This unwraps the array param into its item-object
     properties and keeps scalars (prefix-stripped), exactly mirroring

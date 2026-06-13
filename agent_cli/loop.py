@@ -2200,35 +2200,23 @@ def _try_echo_as_final(tool_name: str, tool_input) -> str | None:
 
 
 def _sanitize_truncated_edit(tool_input: dict) -> tuple[dict, str]:
-    """Strip the last line from the last edit when response was truncated.
+    """Strip the last (likely incomplete) line from a truncated edit_file op.
 
-    Returns (sanitized_input, warning_message).
+    edit_file is flat-native (consolidation Step 3) — one op = one edit. When
+    the response was cut off mid-emission the final ``lines`` element is
+    probably a partial line, so drop it and warn the model to re-read and
+    finish the edit. Returns (sanitized_input, warning_message).
     """
-    edits = tool_input.get("edits", [])
-    if not edits:
+    lines = tool_input.get("lines")
+    if not lines:
         return tool_input, ""
 
-    total = len(edits)
-    last_edit = edits[-1]
-    lines = last_edit.get("lines", [])
-
-    if lines:
-        last_edit = {**last_edit, "lines": lines[:-1]}
-        edits = edits[:-1] + [last_edit]
-        tool_input = {**tool_input, "edits": edits}
-
-        # If the last edit has no lines left, drop the entire edit
-        if not last_edit["lines"] and last_edit.get("op") == "replace":
-            edits = edits[:-1]
-            tool_input = {**tool_input, "edits": edits}
-
-    applied = len(tool_input.get("edits", []))
+    sanitized = {**tool_input, "lines": lines[:-1]}
     warning = (
-        f"[warn] Response was truncated. "
-        f"Applied {applied} of {total} edits (last line dropped). "
-        f"Re-read the file to verify and complete remaining edits."
+        "[warn] Response was truncated — the last (incomplete) line of this "
+        "edit was dropped. Re-read the file to verify and complete the edit."
     )
-    return tool_input, warning
+    return sanitized, warning
 
 
 def _normalize_input(tool_input) -> str:

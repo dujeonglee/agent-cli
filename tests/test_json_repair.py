@@ -115,47 +115,40 @@ class TestTruncationDetection:
 
 
 class TestSanitizeTruncatedEdit:
+    """edit_file is flat-native (Step 3): one op = one edit, so truncation
+    handling drops the last (incomplete) element of the op's ``lines``."""
+
     def test_drops_last_line(self):
-        """Last line of last edit is dropped when truncated."""
         from agent_cli.loop import _sanitize_truncated_edit
 
         tool_input = {
             "path": "f.py",
-            "edits": [
-                {"op": "replace", "pos": "1#HN", "lines": ["good1", "good2", "trunc"]},
-            ],
+            "op": "replace",
+            "pos": "1#HN",
+            "lines": ["good1", "good2", "trunc"],
         }
         sanitized, warning = _sanitize_truncated_edit(tool_input)
-        assert sanitized["edits"][0]["lines"] == ["good1", "good2"]
+        assert sanitized["lines"] == ["good1", "good2"]
         assert "truncated" in warning.lower()
 
-    def test_drops_empty_edit(self):
-        """If dropping last line leaves edit with no lines, drop the edit."""
+    def test_no_lines_is_noop(self):
+        # delete carries no `lines` — nothing to strip, no warning.
+        from agent_cli.loop import _sanitize_truncated_edit
+
+        tool_input = {"path": "f.py", "op": "delete", "pos": "1#HN"}
+        sanitized, warning = _sanitize_truncated_edit(tool_input)
+        assert sanitized == tool_input
+        assert warning == ""
+
+    def test_single_line_drops_to_empty(self):
         from agent_cli.loop import _sanitize_truncated_edit
 
         tool_input = {
             "path": "f.py",
-            "edits": [
-                {"op": "replace", "pos": "1#HN", "lines": ["good"]},
-                {"op": "replace", "pos": "5#KV", "lines": ["truncated"]},
-            ],
+            "op": "replace",
+            "pos": "1#HN",
+            "lines": ["trunc"],
         }
         sanitized, warning = _sanitize_truncated_edit(tool_input)
-        assert len(sanitized["edits"]) == 1
-        assert "1 of 2" in warning
-
-    def test_reports_applied_count(self):
-        """Warning reports how many edits were applied."""
-        from agent_cli.loop import _sanitize_truncated_edit
-
-        tool_input = {
-            "path": "f.py",
-            "edits": [
-                {"op": "replace", "pos": "1#HN", "lines": ["a", "b"]},
-                {"op": "replace", "pos": "5#KV", "lines": ["c", "trunc"]},
-            ],
-        }
-        sanitized, warning = _sanitize_truncated_edit(tool_input)
-        assert len(sanitized["edits"]) == 2
-        assert sanitized["edits"][1]["lines"] == ["c"]
-        assert "2 of 2" in warning
+        assert sanitized["lines"] == []
+        assert "truncated" in warning.lower()

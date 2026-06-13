@@ -71,15 +71,14 @@ class TestEditFileRoundTrip:
         assert m
         ref = f"{m.group(1)}#{m.group(2)}"
 
-        # 2) Use edit_file to replace that exact line. The edit_file
-        # API consumes ``edits: [{op, pos, lines}]`` per
-        # tests/test_tools_coverage.py.
+        # 2) Use edit_file to replace that exact line. edit_file is
+        # flat-native — one op = one edit ({path, op, pos, lines}).
         r_edit = tool_edit_file(
             {
                 "path": "mod.py",
-                "edits": [
-                    {"op": "replace", "pos": ref, "lines": ["    return name.upper()"]}
-                ],
+                "op": "replace",
+                "pos": ref,
+                "lines": ["    return name.upper()"],
             }
         )
         assert r_edit.success, r_edit.error

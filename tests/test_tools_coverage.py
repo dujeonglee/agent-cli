@@ -488,10 +488,7 @@ class TestEditFile:
         lines = f.read_text().split("\n")
         h2 = compute_line_hash(2, lines[1])
         result = tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [{"op": "replace", "pos": f"2#{h2}", "lines": ["replaced"]}],
-            }
+            {"path": str(f), "op": "replace", "pos": f"2#{h2}", "lines": ["replaced"]}
         )
         assert result.success
         assert "Edit complete" in result.output
@@ -506,13 +503,9 @@ class TestEditFile:
         lines = f.read_text().split("\n")
         h1 = compute_line_hash(1, lines[0])
         tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [{"op": "append", "pos": f"1#{h1}", "lines": ["inserted"]}],
-            }
+            {"path": str(f), "op": "append", "pos": f"1#{h1}", "lines": ["inserted"]}
         )
-        content = f.read_text()
-        assert "inserted" in content
+        assert "inserted" in f.read_text()
 
     def test_prepend_operation(self, tmp_path):
         f = tmp_path / "test.py"
@@ -520,22 +513,14 @@ class TestEditFile:
         lines = f.read_text().split("\n")
         h1 = compute_line_hash(1, lines[0])
         tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [{"op": "prepend", "pos": f"1#{h1}", "lines": ["header"]}],
-            }
+            {"path": str(f), "op": "prepend", "pos": f"1#{h1}", "lines": ["header"]}
         )
         assert f.read_text().startswith("header")
 
     def test_append_to_eof(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("line1\n")
-        tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [{"op": "append", "lines": ["# end"]}],
-            }
-        )
+        tool_edit_file({"path": str(f), "op": "append", "lines": ["# end"]})
         assert "# end" in f.read_text()
 
     def test_delete_line(self, tmp_path):
@@ -543,32 +528,23 @@ class TestEditFile:
         f.write_text("keep\ndelete_me\nkeep2\n")
         lines = f.read_text().split("\n")
         h2 = compute_line_hash(2, lines[1])
-        tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [{"op": "replace", "pos": f"2#{h2}", "lines": []}],
-            }
-        )
+        tool_edit_file({"path": str(f), "op": "replace", "pos": f"2#{h2}", "lines": []})
         content = f.read_text()
         assert "delete_me" not in content
         assert "keep" in content
 
-    def test_no_edits_error(self, tmp_path):
+    def test_missing_op_error(self, tmp_path):
+        # Flat-native: no `edits` list — a missing op is an unknown-op error.
         f = tmp_path / "test.py"
         f.write_text("hello\n")
-        result = tool_edit_file({"path": str(f), "edits": []})
+        result = tool_edit_file({"path": str(f)})
         assert not result.success
-        assert "No edits" in result.error
+        assert "Unknown edit op" in result.error
 
     def test_unknown_op_error(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("hello\n")
-        result = tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [{"op": "invalid", "pos": "1#ZZ"}],
-            }
-        )
+        result = tool_edit_file({"path": str(f), "op": "invalid", "pos": "1#ZZ"})
         assert not result.success
         assert "Unknown edit op" in result.error
 
@@ -576,7 +552,9 @@ class TestEditFile:
         result = tool_edit_file(
             {
                 "path": "/nonexistent/file.py",
-                "edits": [{"op": "replace", "pos": "1#ZZ", "lines": []}],
+                "op": "replace",
+                "pos": "1#ZZ",
+                "lines": [],
             }
         )
         assert not result.success
@@ -591,14 +569,10 @@ class TestEditFile:
         tool_edit_file(
             {
                 "path": str(f),
-                "edits": [
-                    {
-                        "op": "replace",
-                        "pos": f"2#{h2}",
-                        "end": f"3#{h3}",
-                        "lines": ["X"],
-                    }
-                ],
+                "op": "replace",
+                "pos": f"2#{h2}",
+                "end": f"3#{h3}",
+                "lines": ["X"],
             }
         )
         content = f.read_text()
@@ -613,43 +587,11 @@ class TestEditFile:
         lines = f.read_text().split("\n")
         h1 = compute_line_hash(1, lines[0])
         tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [{"op": "replace", "pos": f"1#{h1}", "lines": "new1\nnew2"}],
-            }
+            {"path": str(f), "op": "replace", "pos": f"1#{h1}", "lines": "new1\nnew2"}
         )
         content = f.read_text()
         assert "new1" in content
         assert "new2" in content
-
-    def test_non_dict_edits_filtered(self, tmp_path):
-        """LLM sometimes sends [{"op": ...}, 1, 2, 3] — non-dicts should be filtered."""
-        f = tmp_path / "test.py"
-        f.write_text("old_line\n")
-        lines = f.read_text().split("\n")
-        h1 = compute_line_hash(1, lines[0])
-        result = tool_edit_file(
-            {
-                "path": str(f),
-                "edits": [
-                    {"op": "replace", "pos": f"1#{h1}", "lines": ["new_line"]},
-                    1,
-                    2,
-                    3,
-                ],
-            }
-        )
-        assert result.success
-        assert "Edit complete" in result.output
-        assert "new_line" in f.read_text()
-
-    def test_all_non_dict_edits_error(self, tmp_path):
-        """If all edits are non-dict, should raise error."""
-        f = tmp_path / "test.py"
-        f.write_text("hello\n")
-        result = tool_edit_file({"path": str(f), "edits": [1, 2, "bad"]})
-        assert not result.success
-        assert "No valid edit" in result.error
 
 
 class TestDelegateResult:

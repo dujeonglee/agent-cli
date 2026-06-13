@@ -18,10 +18,10 @@ def _normalize_for_fuzzy(text: str) -> str:
     text = re.sub(r" {2,}", " ", text)
     text = text.strip()
     # Quotes: smart quotes to straight
-    text = text.replace("\u2018", "'").replace("\u2019", "'")
-    text = text.replace("\u201c", '"').replace("\u201d", '"')
+    text = text.replace("‘", "'").replace("’", "'")
+    text = text.replace("“", '"').replace("”", '"')
     # Dashes: em/en/minus to hyphen
-    text = text.replace("\u2014", "-").replace("\u2013", "-").replace("\u2212", "-")
+    text = text.replace("—", "-").replace("–", "-").replace("−", "-")
     return text
 
 
@@ -52,92 +52,59 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         if norm_hash == expected_hash:
             return line_num - 1, True
 
-        # Hash mismatch even after normalization. Two possible causes:
-        # (1) external mutation — file changed since the last read_file,
-        #     fix is to re-read and retry;
-        # (2) same-call mutation — in a multi-edit call, an earlier edit
-        #     mutated the lines this later ref points at, fix is to
-        #     combine overlapping edits into a single 'replace' op.
-        # The message covers both so the caller can diagnose.
+        # Hash mismatch even after normalization — the file changed since the
+        # last read_file (external write, or an earlier edit_file op this turn
+        # shifted/rewrote this line). Re-read to get fresh hashline tags.
         raise RuntimeError(
             f"Hash mismatch at line {line_num}: ref '{ref}' does not match "
             f"current content. Re-read the file with read_file to get fresh "
-            f"hashline tags, then retry. If this is a multi-edit call, verify "
-            f"that no earlier edit mutates lines your later refs target — "
-            f"combine overlapping edits into a single 'replace' operation."
+            f"hashline tags, then retry."
         )
-
-
-def _edit_range(edit: dict) -> tuple[int, int] | None:
-    """Return the [start_line, end_line] range this edit touches, or
-    None if there is no ref to compare against (e.g., append-to-EOF
-    with no pos). Used for overlap detection only — the line numbers
-    are extracted from refs syntactically and do not verify hashes.
-
-    For replace ops, the range is inclusive [pos_line, end_line] (or
-    [pos_line, pos_line] when end is omitted). For append/prepend
-    insertion points we use [pos_line, pos_line] — the edit depends
-    on that line's existence and siblings at that position, so any
-    other edit touching the same line is a conflict.
-    """
-    pos = edit.get("pos")
-    if not pos:
-        return None
-    try:
-        start_line, _ = _parse_ref(pos)
-    except RuntimeError:
-        # Malformed ref — pre-validate will catch it with a proper
-        # error later; skip it for overlap purposes.
-        return None
-    end = edit.get("end")
-    if end:
-        try:
-            end_line, _ = _parse_ref(end)
-            return (start_line, max(start_line, end_line))
-        except RuntimeError:
-            return (start_line, start_line)
-    return (start_line, start_line)
 
 
 def tool_edit_file(args: dict) -> ToolResult:
-    """Apply hashline-based edits to a file with fuzzy matching support."""
+    """Apply a single hashline-based edit to a file (fuzzy matching support).
 
+    Flat-native (consolidation roadmap Step 3): one op = one edit. Several
+    edits to one file are emitted as several edit_file ops in the same turn —
+    hashline refs are content-addressed, so a later op's ref still resolves
+    (via fuzzy match) after an earlier op shifts line numbers.
+    """
     path = args.get("path", "")
-    edits = args.get("edits", [])
-    if not edits:
-        return ToolResult(False, error="No edits provided.")
+    op = args.get("op", "")
+    pos = args.get("pos")
+    end = args.get("end")
+    new_lines = args.get("lines")
 
-    # Filter out non-dict items in edits (LLM sometimes inserts ints or strings)
-    edits = [e for e in edits if isinstance(e, dict)]
-    if not edits:
+    if op not in ("replace", "append", "prepend", "delete"):
         return ToolResult(
             False,
-            error="No valid edit operations found (each edit must be a JSON object).",
+            error=f"Unknown edit op: '{op}'. Use replace|append|prepend|delete.",
         )
 
-    # Field-type pre-validation. ``pos`` / ``end`` MUST be hashline
-    # strings like ``"5#VR"`` — but smaller models sometimes emit
-    # them as bare integers (``pos: 5``) or null-wrapped values
-    # (``pos: [null]``). Without this guard those propagate into
-    # ``_parse_ref`` → ``re.match`` and raise a raw ``TypeError`` from
-    # ``re.py`` that escapes the worker thread, killing the loop
-    # instead of surfacing an Observation the LLM can recover from.
-    # Catch the bad shape here and return a clear retry message.
-    for i, edit in enumerate(edits):
-        for field in ("pos", "end"):
-            v = edit.get(field)
-            if v is None:
-                continue
-            if not isinstance(v, str):
-                return ToolResult(
-                    False,
-                    error=(
-                        f"edit #{i + 1}: '{field}' must be a hashline "
-                        f"string like '5#VR', got {type(v).__name__} "
-                        f"({v!r}). Re-read the file with read_file to "
-                        f"get fresh hashline tags, then retry."
-                    ),
-                )
+    # ``pos`` / ``end`` MUST be hashline strings like ``"5#VR"`` — but smaller
+    # models sometimes emit them as bare integers (``pos: 5``) or null-wrapped
+    # values. Without this guard those propagate into ``_parse_ref`` →
+    # ``re.match`` and raise a raw ``TypeError`` from ``re.py`` that escapes the
+    # worker thread, killing the loop instead of surfacing a recoverable
+    # Observation. Catch the bad shape here and return a clear retry message.
+    for field, v in (("pos", pos), ("end", end)):
+        if v is None:
+            continue
+        if not isinstance(v, str):
+            return ToolResult(
+                False,
+                error=(
+                    f"'{field}' must be a hashline string like '5#VR', got "
+                    f"{type(v).__name__} ({v!r}). Re-read the file with "
+                    f"read_file to get fresh hashline tags, then retry."
+                ),
+            )
+
+    if isinstance(new_lines, str):
+        new_lines = new_lines.split("\n")
+    if new_lines is None:
+        new_lines = []
 
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -148,144 +115,43 @@ def tool_edit_file(args: dict) -> ToolResult:
     file_lines = text.split("\n")
     fuzzy_warnings: list[str] = []
 
-    # Ambiguity checks — two complementary layers:
-    #
-    # Layer 1: shared ref string across edits. When the same hashline
-    # ref appears in multiple edits (same pos twice, or pos in one
-    # edit equals end/pos in another), the first edit's mutation
-    # invalidates the shared ref for later edits. A ref that is both
-    # pos and end of the SAME edit (degenerate single-line range) is
-    # fine and not flagged.
-    ref_sources: dict[str, set[int]] = {}
-    for i, edit in enumerate(edits):
-        for ref in (edit.get("pos"), edit.get("end")):
-            if not ref:
-                continue
-            ref_sources.setdefault(ref, set()).add(i)
-    duplicates = sorted(r for r, idxs in ref_sources.items() if len(idxs) > 1)
-    if duplicates:
-        refs_str = ", ".join(f"'{r}'" for r in duplicates)
-        return ToolResult(
-            False,
-            error=(
-                f"Ambiguous edit: reference(s) {refs_str} appear in multiple "
-                f"edits of this call. Earlier edits mutate the file and "
-                f"invalidate the hash for later edits that target the same "
-                f"line. Combine overlapping edits into a single 'replace' "
-                f"operation with the final intended content."
-            ),
-        )
-
-    # Layer 2: overlapping line-number ranges with *different* ref
-    # strings. Layer 1 matches on ref string equality; if two edits
-    # target the same line via different hashes (pathological), or
-    # their replace-ranges span overlapping regions with distinct
-    # endpoint refs, Layer 1 misses them and they'd only surface as
-    # a cryptic apply-time hash mismatch. Compute each edit's
-    # effective line range and reject on any pairwise intersection.
-    edit_ranges: list[tuple[int, tuple[int, int]]] = []
-    for i, edit in enumerate(edits):
-        r = _edit_range(edit)
-        if r is not None:
-            edit_ranges.append((i, r))
-    for a_i in range(len(edit_ranges)):
-        idx_a, (a_start, a_end) = edit_ranges[a_i]
-        for b_i in range(a_i + 1, len(edit_ranges)):
-            idx_b, (b_start, b_end) = edit_ranges[b_i]
-            if a_start <= b_end and b_start <= a_end:
-                return ToolResult(
-                    False,
-                    error=(
-                        f"Ambiguous edit: edit #{idx_a + 1} "
-                        f"(lines {a_start}-{a_end}) and edit #{idx_b + 1} "
-                        f"(lines {b_start}-{b_end}) touch overlapping line "
-                        f"regions. Combine overlapping edits into a single "
-                        f"'replace' operation with the final intended "
-                        f"content, or split dependent changes into separate "
-                        f"edit_file calls with read_file between them."
-                    ),
-                )
-
-    # Pre-validate all refs before mutating
-    for edit in edits:
-        op = edit.get("op", "")
-        pos = edit.get("pos")
-        end = edit.get("end")
-        if op not in ("replace", "append", "prepend", "delete"):
-            return ToolResult(
-                False,
-                error=f"Unknown edit op: '{op}'. Use replace|append|prepend|delete.",
+    def _resolve(ref: str) -> int:
+        idx, was_fuzzy = fuzzy_verify_ref(file_lines, ref)
+        if was_fuzzy:
+            fuzzy_warnings.append(
+                f"[warn] Fuzzy match used for ref '{ref}' — hash mismatch tolerated"
             )
-        try:
-            if pos:
-                _, was_fuzzy = fuzzy_verify_ref(file_lines, pos)
-                if was_fuzzy:
-                    fuzzy_warnings.append(
-                        f"[warn] Fuzzy match used for ref '{pos}' — hash mismatch tolerated"
-                    )
-            if end:
-                _, was_fuzzy = fuzzy_verify_ref(file_lines, end)
-                if was_fuzzy:
-                    fuzzy_warnings.append(
-                        f"[warn] Fuzzy match used for ref '{end}' — hash mismatch tolerated"
-                    )
-        except RuntimeError as e:
-            return ToolResult(False, error=str(e))
+        return idx
 
-    # Sort edits bottom-up so earlier splices don't shift later indices
-    def _sort_key(edit):
-        pos = edit.get("pos")
-        if pos:
-            n, _ = _parse_ref(pos)
-            return -n
-        return 0
-
-    sorted_edits = sorted(edits, key=_sort_key)
-
-    # Apply each edit against the mutating file_lines. The ambiguity
-    # check above catches the common multi-edit interaction patterns
-    # up-front, but `fuzzy_verify_ref` can still raise for genuine
-    # edge cases (e.g. overlapping ranges that don't share a ref
-    # string). Wrap the apply loop so those surface as a clean
-    # ToolResult error instead of an unhandled exception.
+    # Resolve all refs BEFORE mutating so a bad ref fails without a partial
+    # write. ``delete`` = replace the pos..end range with nothing; ``lines`` is
+    # not part of delete's schema (replace+lines=[] remains the legacy delete
+    # form).
     try:
-        for edit in sorted_edits:
-            op = edit["op"]
-            pos = edit.get("pos")
-            end = edit.get("end")
-            new_lines = edit.get("lines")
-            if isinstance(new_lines, str):
-                new_lines = new_lines.split("\n")
-            if new_lines is None:
-                new_lines = []
+        if op in ("replace", "delete"):
+            if not pos:
+                return ToolResult(False, error=f"{op} requires 'pos'.")
+            repl = [] if op == "delete" else new_lines
+            start_idx = _resolve(pos)
+            if end:
+                end_idx = _resolve(end)
+                file_lines[start_idx : end_idx + 1] = repl
+            else:
+                file_lines[start_idx : start_idx + 1] = repl
 
-            if op in ("replace", "delete"):
-                if not pos:
-                    return ToolResult(False, error=f"{op} requires 'pos'.")
-                # delete = replace the pos..end range with nothing. ``lines``
-                # is not part of delete's schema, so any value it carries is
-                # ignored (replace+lines=[] remains the legacy delete form).
-                repl = [] if op == "delete" else new_lines
-                start_idx, _ = fuzzy_verify_ref(file_lines, pos)
-                if end:
-                    end_idx, _ = fuzzy_verify_ref(file_lines, end)
-                    file_lines[start_idx : end_idx + 1] = repl
-                else:
-                    file_lines[start_idx : start_idx + 1] = repl
+        elif op == "append":
+            if pos:
+                idx = _resolve(pos)
+                file_lines[idx + 1 : idx + 1] = new_lines
+            else:
+                file_lines.extend(new_lines)
 
-            elif op == "append":
-                if pos:
-                    idx, _ = fuzzy_verify_ref(file_lines, pos)
-                    file_lines[idx + 1 : idx + 1] = new_lines
-                else:
-                    file_lines.extend(new_lines)
-
-            elif op == "prepend":
-                if pos:
-                    idx, _ = fuzzy_verify_ref(file_lines, pos)
-                    file_lines[idx:idx] = new_lines
-                else:
-                    file_lines[0:0] = new_lines
+        elif op == "prepend":
+            if pos:
+                idx = _resolve(pos)
+                file_lines[idx:idx] = new_lines
+            else:
+                file_lines[0:0] = new_lines
     except RuntimeError as e:
         return ToolResult(False, error=f"edit_file apply failed: {e}")
 
@@ -313,32 +179,45 @@ def tool_edit_file(args: dict) -> ToolResult:
 class EditFileTool(Tool):
     name = "edit_file"
     description = (
-        "Edit a file using hashline refs from read_file. "
+        "Edit a file using a hashline ref from read_file. "
         "Ops: replace, append, prepend, delete. "
         "delete removes the pos..end range and takes no lines; "
         "replace with lines=[] also deletes (legacy form)."
     )
+    # Flat-native (consolidation roadmap Step 3): the schema is the plain
+    # single-edit shape — no `edit_file_` wire-key prefix and no `edits` batch
+    # array. One op applies one edit; several edits to one file are several
+    # edit_file ops in a turn (hashline refs are content-addressed, so they
+    # survive line shifts from earlier ops). `wrap_single_op` is identity;
+    # `key_prefix` is left at its default so strip_prefix is a no-op on these
+    # flat keys and `claims` returns False for a flat `{path}`.
     parameters = {
         "type": "object",
         "properties": {
-            "edit_file_path": {"type": "string", "description": "File path"},
-            "edit_file_edits": {
+            "path": {"type": "string", "description": "File path"},
+            "op": {
+                "type": "string",
+                "description": "replace | append | prepend | delete",
+            },
+            "pos": {
+                "type": "string",
+                "description": "Hashline ref (e.g. '5#VR') of the target line",
+            },
+            "end": {
+                "type": "string",
+                "description": "Hashline ref ending an inclusive range (replace/delete)",
+            },
+            "lines": {
                 "type": "array",
-                "description": "List of edit operations",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "op": {"type": "string"},
-                        "pos": {"type": "string"},
-                        "end": {"type": "string"},
-                        "lines": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["op", "pos"],
-                },
+                "items": {"type": "string"},
+                "description": "Replacement / inserted lines",
             },
         },
-        "required": ["edit_file_path", "edit_file_edits"],
+        "required": ["path", "op", "pos"],
     }
+
+    def wrap_single_op(self, flat: dict) -> dict:
+        return flat
 
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")
@@ -346,21 +225,6 @@ class EditFileTool(Tool):
 
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        # Multi-op formats emit one edit per op ({"path", "op", "pos",
-        # "end"?, "lines"?}); wrap the edit fields into a one-element edits
-        # batch alongside the path. Already-batch input passes through.
-        if not isinstance(flat, dict):
-            return flat
-        std = self.strip_prefix(flat)
-        if "edits" in std:
-            return self.add_prefix(flat)
-        edit = {k: v for k, v in std.items() if k != "path"}
-        wrapped: dict = {f"{self.name}_path": std.get("path")}
-        if edit:
-            wrapped[f"{self.name}_edits"] = [edit]
-        return wrapped
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_edit_file(args)

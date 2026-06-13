@@ -88,13 +88,12 @@ def _build_edit_file_inline(wire_format) -> str:
 
     The op-semantics / hashline / constraints prose is wire-agnostic — every
     plugin gets the SAME explanatory text at the SAME level of detail. Only
-    the two worked examples (single + batch) pass through
-    ``wire_format.render_action_input`` so each wire shows them in its own
-    shape (react renders the JSON action_input verbatim; a future
-    plugin whose action_input is not a JSON dict transforms here — same hook
-    delegate/read_file already use). The wire-shape rules themselves live in
-    each plugin's ``format_rules()`` — this guide stays about edit_file's tool
-    semantics.
+    the worked example passes through ``wire_format.render_action_input`` so
+    each wire shows it in its own shape (react renders the JSON action_input
+    verbatim; a future plugin whose action_input is not a JSON dict transforms
+    here — same hook delegate/read_file already use). The wire-shape rules
+    themselves live in each plugin's ``format_rules()`` — this guide stays
+    about edit_file's tool semantics.
     """
 
     def rai(j):
@@ -103,80 +102,41 @@ def _build_edit_file_inline(wire_format) -> str:
     def _indent(s: str) -> str:
         return "\n".join("      " + ln for ln in s.split("\n"))
 
+    # edit_file is flat-native (consolidation Step 3): one op = one edit, no
+    # `edits` batch array (nesting a batch array inside the op array is what
+    # broke 27B — DESIGN Exp 8). The worked example is the flat single-edit
+    # shape; a single edit's `lines` array stays (irreducible).
+    ex_single = rai(
+        {
+            "path": "app.py",
+            "op": "replace",
+            "pos": "2#KT",
+            "lines": ['    return "hello"'],
+        }
+    )
     if getattr(wire_format, "multi_op", False):
-        # Multi-op formats: one edit per op — the turn's op array replaces the
-        # per-tool `edits` batch (DESIGN §4.2: hashline refs are content-
-        # addressed, so sequential ops survive line shifts; the batch was a
-        # single-action-era optimization). A single edit's `lines` array stays
-        # (irreducible).
-        ex_single = rai(
-            {
-                "path": "app.py",
-                "op": "replace",
-                "pos": "2#KT",
-                "lines": ['    return "hello"'],
-            }
-        )
         examples = f"""\
   - one edit per op:
-{_indent(ex_single)}
-  - several edits to one file → several edit_file ops in the same turn
-    (non-overlapping regions; refs resolve by hash, so they survive line
-    shifts from earlier ops). If a later edit depends on an earlier
-    edit's RESULT, emit only the first now and re-read next turn."""
+{_indent(ex_single)}"""
+        # Honest same-file guidance: a ref is a line-number + hash from your
+        # last read; it does NOT track lines shifted by an earlier op. So
+        # several edits to the SAME file must span turns (re-read between),
+        # NOT several ops in one turn. Different files in separate ops is fine.
+        same_file = """
+  - SEVERAL edits to the SAME file → do them across separate turns, NOT as
+    several edit_file ops in one turn. Each ref is anchored to a line number
+    + hash from your last read; once one op rewrites the file the later ops'
+    refs go stale (they do NOT follow shifted lines). Re-read the region
+    between edits — the observation shows the new state. Editing DIFFERENT
+    files in separate ops in the same turn is fine — they don't interact."""
     else:
-        ex_single = rai(
-            {
-                "path": "app.py",
-                "edits": [
-                    {"op": "replace", "pos": "2#KT", "lines": ['    return "hello"']}
-                ],
-            }
-        )
-        ex_batch = rai(
-            {
-                "path": "app.py",
-                "edits": [
-                    {
-                        "op": "replace",
-                        "pos": "5#aa",
-                        "end": "7#bb",
-                        "lines": ["int hp = 100;", "return hp;"],
-                    },
-                    {"op": "delete", "pos": "12#cc"},
-                    {"op": "append", "pos": "30#ee", "lines": ["// end"]},
-                ],
-            }
-        )
         examples = f"""\
-  - single edit:
-{_indent(ex_single)}
-  - batch in one call (edits apply to ORIGINAL state, no overlaps):
-{_indent(ex_batch)}"""
-
-    batch_constraint = (
-        # Multi-op: each edit_file op carries ONE edit (the per-tool `edits`
-        # array is unwrapped — nesting a batch array inside the op array is
-        # what broke 27B). So SEVERAL edits to the SAME file must go across
-        # turns, NOT as several edit_file ops in one turn: every op's hashes
-        # reference the ORIGINAL file state, so after the first op rewrites
-        # the lines the later ops mismatch.
-        """
-  - Each edit_file op applies ONE edit, referencing the file's ORIGINAL
-    state (the hashes from your last read). To make SEVERAL edits to the
-    SAME file, do them across separate turns — re-read the region between
-    edits (the observation shows the new state). Do NOT emit multiple
-    edit_file ops for the same file in one turn: the later ops' hashes go
-    stale once the first one applies. Editing DIFFERENT files in separate
-    ops in the same turn is fine — they don't interact."""
-        if getattr(wire_format, "multi_op", False)
-        else """
-  - Each edit references the ORIGINAL file state — the array is NOT a
-    sequential "apply then re-read" pipeline. Overlapping edits (same region
-    or ref) are rejected; combine them into one `replace`. If a later edit
-    depends on an earlier edit's RESULT, use separate edit_file calls with
-    read_file between them (observation sync shows the intermediate state)."""
-    )
+  - one edit per call:
+{_indent(ex_single)}"""
+        same_file = """
+  - For SEVERAL edits to one file, call edit_file repeatedly and re-read the
+    region between calls — a ref goes stale once an earlier edit shifts the
+    lines it points at."""
 
     return f"""
 
@@ -201,7 +161,7 @@ def _build_edit_file_inline(wire_format) -> str:
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
   - Use write_file only for creating new files, not for editing existing ones.\
-{batch_constraint}"""
+{same_file}"""
 
 
 def _build_delegate_inline(wire_format) -> str:

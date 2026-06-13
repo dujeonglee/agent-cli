@@ -444,21 +444,21 @@ class TestBuildSystemPrompt:
         assert "re-read" in flat.lower() or "re-fetch" in flat.lower()
 
     def test_hashline_guide_warns_same_file_multi_op_edits(self):
-        """Multi-op: each edit_file op is ONE edit referencing the file's
-        ORIGINAL state (the per-tool `edits` array is unwrapped). The guide
-        must warn against emitting several edit_file ops for the SAME file in
-        one turn — the later ops' hashes go stale after the first applies —
-        and point to separate turns. This is the multi-op form of the
-        sequential-hash-reuse drift (S25FE-kernel session 1776946589).
-        Whitespace is collapsed because the inline guide wraps across lines."""
+        """Multi-op + flat-native edit_file (Step 3): each edit_file op is ONE
+        edit. The guide must warn against emitting several edit_file ops for the
+        SAME file in one turn — a ref is anchored to a line number + hash, so
+        once one op rewrites the file the later ops' refs go stale (they do NOT
+        follow shifted lines) — and point to separate turns with a re-read.
+        This is the multi-op form of the sequential-hash-reuse drift
+        (S25FE-kernel session 1776946589). Whitespace is collapsed because the
+        inline guide wraps across lines."""
         import re
 
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
         flat = re.sub(r"\s+", " ", prompt)
-        # Each op references ORIGINAL state, not a sequential pipeline.
-        assert "ORIGINAL state" in flat
         # Warns against same-file multi-op edits in one turn …
-        assert "same file in one turn" in flat
+        assert "SAME file" in flat
+        assert "several edit_file ops in one turn" in flat
         assert "stale" in flat
         # … and points to separate turns instead.
         assert "separate turns" in flat

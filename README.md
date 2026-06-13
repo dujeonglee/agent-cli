@@ -595,9 +595,9 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### action_input 키 네이밍 규칙
 
-prefixed 도구의 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `shell_command`, `edit_file_edits`, `code_index_queries`, `delegate_tasks`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `edits[].op`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)와 **flat-native 도구(`read_file`·`write_file` — consolidation Step 3, plain `{path, ...}`)** 는 표준 키를 그대로 씁니다.
+prefixed 도구의 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `shell_command`, `code_index_queries`, `delegate_tasks`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `queries[].mode`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)와 **flat-native 도구(`read_file`·`write_file`·`edit_file` — consolidation Step 3, plain `{path, ...}`)** 는 표준 키를 그대로 씁니다.
 
-> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — prefixed 도구는 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"command": ...}` → `{"shell_command": ...}`). 표준 키로 보내도 동작하며(prefix strip 은 no-op), flat-native 도구(`read_file`/`write_file`)는 prefix 없이 그대로입니다. 단, 최상위 배열 키(`edit_file_edits`, `delegate_tasks`) 안의 **중첩 키는 prefix 가 붙지 않습니다**.
+> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — prefixed 도구는 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"command": ...}` → `{"shell_command": ...}`). 표준 키로 보내도 동작하며(prefix strip 은 no-op), flat-native 도구(`read_file`/`write_file`/`edit_file`)는 prefix 없이 그대로입니다. 단, 최상위 배열 키(`code_index_queries`, `delegate_tasks`) 안의 **중첩 키는 prefix 가 붙지 않습니다**.
 
 ### read_file — 파일 읽기
 
@@ -623,7 +623,7 @@ prefixed 도구의 `action_input` 키는 **소유 도구 이름을 prefix** 로 
 
 ### edit_file — Hashline 편집
 
-`read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다:
+`read_file`에서 받은 hashline 태그를 사용하여 정밀 편집합니다. **한 op = 한 편집** (flat-native):
 
 ```
 1#VR:def hello():
@@ -631,11 +631,15 @@ prefixed 도구의 `action_input` 키는 **소유 도구 이름을 prefix** 로 
 3#ZZ:
 ```
 
+각 op 의 action_input (`path` + 편집 필드):
+
 ```json
-{"op": "replace", "pos": "2#KT", "lines": ["    return \"hello\""]}
-{"op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}
-{"op": "append", "pos": "1#VR", "lines": ["    # comment"]}
+{"path": "app.py", "op": "replace", "pos": "2#KT", "lines": ["    return \"hello\""]}
+{"path": "app.py", "op": "replace", "pos": "1#VR", "end": "3#ZZ", "lines": ["def greet():", "    pass"]}
+{"path": "app.py", "op": "append", "pos": "1#VR", "lines": ["    # comment"]}
 ```
+
+여러 편집은 멀티-op 으로 edit_file op 을 여러 개 보냅니다. 단 hashline ref 는 줄번호+해시 앵커라 앞 편집이 줄을 밀면 뒤 편집의 ref 가 어긋납니다 — **같은 파일 다중편집은 턴을 나눠** 사이에 re-read 하고, 다른 파일 편집은 같은 턴에 여러 op 로 보내도 됩니다.
 
 해시 불일치 시 퍼지 매칭으로 자동 보정합니다 (공백/따옴표/대시 정규화).
 

@@ -444,15 +444,13 @@ class TestFileExtractHelper:
         ]
         assert extract_file_paths(msgs) == ["foo.c"]
 
-    def test_edit_file_prefix_key(self):
+    def test_edit_file_flat_key(self):
+        # Flat-native (Step 3): edit_file takes flat {path, op, pos, ...}.
         msgs = [
             {
                 "role": "assistant",
                 "action": "edit_file",
-                "action_input": {
-                    "edit_file_path": "bar.c",
-                    "edit_file_edits": [{"op": "replace", "pos": "1#VR"}],
-                },
+                "action_input": {"path": "bar.c", "op": "replace", "pos": "1#VR"},
             }
         ]
         assert extract_file_paths(msgs) == ["bar.c"]

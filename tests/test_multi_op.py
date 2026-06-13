@@ -36,22 +36,11 @@ class TestWrapSingleOp:
         flat = {"path": "a.py", "stat": True}
         assert TOOLS["read_file"].wrap_single_op(flat) == flat
 
-    def test_edit_file_wraps_flat_edit(self):
-        out = TOOLS["edit_file"].wrap_single_op(
-            {"path": "a.py", "op": "replace", "pos": "2#KT", "lines": ["x"]}
-        )
-        assert out == {
-            "edit_file_path": "a.py",
-            "edit_file_edits": [{"op": "replace", "pos": "2#KT", "lines": ["x"]}],
-        }
-
-    def test_edit_file_already_batch_passes_through(self):
-        flat = {"path": "a.py", "edits": [{"op": "delete", "pos": "1#AA"}]}
-        out = TOOLS["edit_file"].wrap_single_op(flat)
-        assert out == {
-            "edit_file_path": "a.py",
-            "edit_file_edits": [{"op": "delete", "pos": "1#AA"}],
-        }
+    def test_edit_file_flat_is_identity(self):
+        # Flat-native (Step 3): edit_file's wrap_single_op is identity — one
+        # op carries one edit, dispatched with no canonical re-wrap.
+        flat = {"path": "a.py", "op": "replace", "pos": "2#KT", "lines": ["x"]}
+        assert TOOLS["edit_file"].wrap_single_op(flat) == flat
 
     def test_code_index_wraps_flat_query(self):
         out = TOOLS["code_index"].wrap_single_op({"mode": "list", "path": "a.py"})

@@ -55,9 +55,11 @@ class TestValidateToolInput:
 
     def test_string_auto_convert_edit_file(self):
         """String input for edit_file → {"path": "..."}."""
+        # Flat-native (Step 3): edit_file requires path/op/pos, so a bare
+        # path string is missing op.
         ok, err, converted = validate_tool_input("edit_file", "src/main.py")
-        assert ok is False  # missing required "edits" field
-        assert "edits" in err
+        assert ok is False
+        assert "op" in err
 
     def test_none_input(self):
         ok, err, _ = validate_tool_input("read_file", None)
@@ -88,15 +90,14 @@ class TestTypeValidation:
         assert ok is True
         assert inp["shell_timeout"] == 30  # coerced in-place
 
-    def test_dict_edits_auto_coerced_to_array(self):
-        """Small model sends dict instead of [dict] — auto-coerce."""
-        inp = {
-            "edit_file_path": "a.py",
-            "edit_file_edits": {"op": "replace", "pos": "1#VR"},
-        }
-        ok, err, _ = validate_tool_input("edit_file", inp)
+    def test_dict_array_param_auto_coerced_to_array(self):
+        """Small model sends dict instead of [dict] for an array param —
+        auto-coerce. edit_file went flat-native (Step 3), so this is pinned
+        against a still-batch tool (delegate_tasks)."""
+        inp = {"delegate_tasks": {"task": "do x"}}
+        ok, err, _ = validate_tool_input("delegate", inp)
         assert ok is True
-        assert isinstance(inp["edit_file_edits"], list)
+        assert isinstance(inp["delegate_tasks"], list)
 
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""
