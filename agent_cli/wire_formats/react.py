@@ -247,8 +247,8 @@ def _normalize_action_input(result: ParsedAction, data: dict) -> None:
        with bundled siblings (``{"shell_command":"ls"}``) must still
        surface action_input so the loop's ``infer_action`` can recover the
        tool (wire-key prefix → tool) under ``action_required=False`` — the
-       parser-side half of the preservation invariant, symmetric with
-       prefix_md recovering a trailing Input dict without an action header.
+       parser-side half of the preservation invariant: a dropped action is
+       recoverable from the preserved action_input keys.
 
     Precedence rule: if action_input is already present and truthy, use
     it verbatim and ignore any siblings. Empty dicts and None both
@@ -407,8 +407,8 @@ class ReActFormat(WireFormat):
     """
 
     name = "react"
-    # Both fields optional, unified with prefix_md: a missing thought or a
-    # dropped action no longer forces a retry by themselves. A dropped
+    # Both fields optional: a missing thought or a dropped action no longer
+    # force a retry by themselves. A dropped
     # action is recovered via infer_action on the preserved action_input
     # (the parser keeps non-reserved siblings bundled even without an
     # action — see _normalize_action_input). NO_THOUGHT / NO_ACTION

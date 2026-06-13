@@ -87,88 +87,10 @@ class _StrictReact(ReActFormat):
 
 # ── 1. Parser preserves action_input across dropped-action shapes ──
 
-# (name, raw, expect_action, expect_action_input, expect_stage)
-_PREFIX_CASES = [
-    (
-        "empty_action_body",
-        '## Thought\nx\n## Action\n\n## Input\n{"shell_command": "make"}',
-        None,
-        {"shell_command": "make"},
-        3,
-    ),
-    (
-        "invalid_action_body_prose",
-        "## Action\nread the file please\n## Input\n"
-        '{"read_file_reads": [{"path": "a"}]}',
-        None,
-        {"read_file_reads": [{"path": "a"}]},
-        3,
-    ),
-    (
-        "no_action_header_with_input",
-        '## Thought\nx\n## Input\n{"shell_command": "make"}',
-        None,
-        {"shell_command": "make"},
-        3,
-    ),
-    (
-        "bare_trailing_json",
-        'Let me run it.\n{"shell_command": "make"}',
-        None,
-        {"shell_command": "make"},
-        3,
-    ),
-    (
-        "valid_normal",
-        '## Thought\nx\n## Action\nshell\n## Input\n{"shell_command": "make"}',
-        "shell",
-        {"shell_command": "make"},
-        1,
-    ),
-    (
-        "thought_optional",
-        '## Action\nshell\n## Input\n{"shell_command": "make"}',
-        "shell",
-        {"shell_command": "make"},
-        1,
-    ),
-    (
-        "valid_action_broken_input",
-        "## Action\nshell\n## Input\nnot json at all",
-        "shell",
-        None,
-        2,
-    ),
-    (
-        "unrecoverable_no_json",
-        "## Thought\njust musing out loud",
-        None,
-        None,
-        0,
-    ),
-]
-
-
-class TestPrefixMdPreservation:
-    @pytest.mark.parametrize(
-        "name,raw,exp_action,exp_input,exp_stage",
-        _PREFIX_CASES,
-        ids=[c[0] for c in _PREFIX_CASES],
-    )
-    def test_parse_preserves_input(self, name, raw, exp_action, exp_input, exp_stage):
-        parsed = get("prefix_md").parse(raw)
-        assert parsed.action == exp_action
-        assert parsed.action_input == exp_input
-        assert parsed.parse_stage == exp_stage
-
-    def test_dropped_action_is_inferable(self):
-        # Every empty/invalid/headerless case with a recoverable input must
-        # let infer_action recover the tool (the whole point).
-        for name, raw, exp_action, exp_input, _ in _PREFIX_CASES:
-            parsed = get("prefix_md").parse(raw)
-            if exp_action is None and exp_input is not None:
-                assert infer_action(parsed.action_input) is not None, name
-
+# NOTE: prefix_md cases removed with the plugin (wire-format consolidation
+# Step 1, 2026-06-13). The md_array side of the cross-wire dropped-action
+# parity is rebuilt in Step 2, once react becomes multi-op and its shape
+# settles — see project-wire-format-consolidation-roadmap memory.
 
 # react JSON shapes — action dropped under several drift forms.
 _REACT_CASES = [
@@ -218,19 +140,12 @@ class TestReactPreservation:
 
 
 class TestCrossWireParity:
-    def test_dropped_action_same_outcome(self):
-        # Same semantic emission (dropped action, shell_command present) in
-        # each wire's shape → identical preserved input + inferred tool.
-        pp = get("prefix_md").parse(
-            '## Thought\nx\n## Action\n\n## Input\n{"shell_command": "ls"}'
-        )
-        pr = get("react").parse('{"thought":"x","action_input":{"shell_command":"ls"}}')
-        assert pp.action_input == pr.action_input == {"shell_command": "ls"}
-        assert not pp.action and not pr.action
-        assert infer_action(pp.action_input) == infer_action(pr.action_input) == "shell"
+    # NOTE: the dropped-action SAME-OUTCOME parity test compared prefix_md vs
+    # react; it is restored as md_array vs react in Step 2 (react's multi-op
+    # shape lands then). See the consolidation-roadmap memory.
 
-    def test_both_plugins_optional_by_default(self):
-        for name in ("prefix_md", "react"):
+    def test_shipped_plugins_optional_by_default(self):
+        for name in ("react", "md_array"):
             plugin = get(name)
             assert plugin.thought_required is False, name
             assert plugin.action_required is False, name
@@ -357,36 +272,9 @@ class TestThoughtRequiredGate:
 
 
 # ── 4. Real-world failure shape (session 1780718751) ──
-
-
-class TestRealFailureShape:
-    """The 18 NO_ACTION turns observed live all had a '## Action' header
-    with an empty body followed by a valid prefixed Input JSON. Before the
-    fix prefix_md dropped that Input → action_input=None → unrecoverable."""
-
-    @pytest.mark.parametrize(
-        "input_json,expect_tool",
-        [
-            ('{"shell_command": "make test 2>&1", "shell_timeout": 30}', "shell"),
-            (
-                '{"edit_file_edits": [{"op": "replace", "pos": "1#AB"}],'
-                ' "edit_file_path": "src/p_bsp.c"}',
-                "edit_file",
-            ),
-            (
-                '{"write_file_content": "x", "write_file_path": "include/x.h"}',
-                "write_file",
-            ),
-            ('{"read_file_reads": [{"path": "src/m_geom.c"}]}', "read_file"),
-        ],
-    )
-    def test_empty_action_header_recovers(self, input_json, expect_tool):
-        raw = f"## Thought\nrebuild and run\n## Action\n\n## Input\n{input_json}"
-        parsed = get("prefix_md").parse(raw)
-        assert parsed.action is None
-        assert isinstance(parsed.action_input, dict)
-        assert parsed.parse_stage == 3
-        assert infer_action(parsed.action_input) == expect_tool
+# NOTE: this guarded prefix_md's specific '## Action'+empty+'## Input' bug
+# (18/188 turns). Removed with prefix_md (Step 1); the md_array-equivalent
+# real-shape guard is added in Step 2. See the consolidation-roadmap memory.
 
 
 # ── 5. Prompt flag hook (output unchanged, gate wired) ──
@@ -408,24 +296,21 @@ class TestPromptFlagHook:
 
     def test_prompts_keep_strong_wording(self):
         # Flags are False but no soft variant is wired, so the strong
-        # obligation still shows in both plugins' Format Rules (unchanged).
-        for name in ("prefix_md", "react"):
-            fr = get(name).format_rules()
-            assert "Do not leave it empty" in fr, name
+        # obligation still shows in react's Format Rules (unchanged).
+        fr = get("react").format_rules()
+        assert "Do not leave it empty" in fr
 
     def test_field_specific_composes_numbered_rules(self):
-        for name in ("prefix_md", "react"):
+        for name in ("react", "md_array"):
             fs = get(name).format_rules_field_specific()
-            assert fs.startswith("1. ")
-            assert "\n2. " in fs
+            assert fs.startswith("1. "), name
+            assert "\n2. " in fs, name
 
     def test_softening_takes_effect_via_synthetic_plugin(self):
         # Prove the gate actually drives the section: a plugin that both
         # sets thought_required=False AND supplies a soft variant drops the
         # strong thought wording. (Shipped plugins don't do this yet.)
-        from agent_cli.wire_formats.prefix_md import PrefixMdFormat
-
-        class _SoftThought(PrefixMdFormat):
+        class _SoftThought(ReActFormat):
             def format_rules_field_specific(self) -> str:
                 return f"1. {self._gated_rule(self.thought_required, 'STRONG', 'thought optional')}"
 

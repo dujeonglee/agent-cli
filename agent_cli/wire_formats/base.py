@@ -100,7 +100,7 @@ class Op:
     """One tool invocation within a turn — the per-op unit of a ``ParsedTurn``.
 
     Mirrors the action-carrying fields of :class:`ParsedAction`. A
-    single-action wire format (react / prefix_md) yields a turn with exactly
+    single-action wire format (react) yields a turn with exactly
     one ``Op``; a multi-op format yields several.
     """
 
@@ -188,7 +188,7 @@ class WireFormat(ABC):
     multi_op: bool = False
     """Whether the format expresses several tool ops in one turn.
 
-    False (default — react / prefix_md): one action per turn; per-tool batch
+    False (default — react): one action per turn; per-tool batch
     fields (``read_file_reads`` etc.) let one turn touch several targets. The
     prompt shows wire-key-prefixed params and the tools' batch prose.
 
@@ -302,7 +302,7 @@ class WireFormat(ABC):
         """
         pa = self.parse(llm_text)
         # Preserve the parse invariant: keep a single Op whenever there is an
-        # action OR a recovered action_input (the prefix_md dropped-action /
+        # action OR a recovered action_input (the dropped-action /
         # parse_stage-3 case), so the loop's per-op infer_action / NO_ACTION
         # echo can still recover it. Only a total parse failure (no action,
         # no input) yields zero ops.
@@ -323,7 +323,7 @@ class WireFormat(ABC):
     def is_degenerate(self, text: str) -> bool:
         """Whether *text* is a format runaway: the model repeated the wire
         shape instead of emitting one turn (e.g. several empty ``## Thought``
-        / ``## Action`` blocks in a single prefix_md response). Two uses: the
+        / ``## Action`` blocks in a single md_array response). Two uses: the
         loop passes it to ``provider.call(degeneration_check=...)`` to break
         the stream early, and labels the final emission ``FAILURE_DEGENERATE``.
 
@@ -345,7 +345,7 @@ class WireFormat(ABC):
         save covers every consumer.
 
         Default identity: a wire whose thought cannot carry its own sentinels
-        (react: thought is a JSON string, escaped) opts out. prefix_md
+        (react: thought is a JSON string, escaped) opts out. md_array
         overrides to drop stray ``##`` header lines. (``action`` / ``action_
         input`` need no cleaning — an invalid action token is already rejected,
         and action_input is JSON-escaped so its content can't form a line-start
@@ -454,8 +454,8 @@ class WireFormat(ABC):
     def render_action_input(self, action_input: dict) -> str:
         """Render an action_input dict in this format's inner shape.
 
-        The wire format owns serialization. ReAct, prefix_md, and
-        tag-wrapped formats all nest action_input as a JSON object, so
+        The wire format owns serialization. ReAct and tag-wrapped
+        formats all nest action_input as a JSON object, so
         the default serializes with ``json.dumps``. A plugin whose inner
         shape is not JSON (e.g. XML attribute encoding, key:value lines)
         overrides this hook. Callers (system-prompt inline guides,
@@ -474,7 +474,7 @@ class WireFormat(ABC):
         Default — JSON-shaped formats (ReAct, envelope) request the
         provider's JSON-object mode iff the model supports structured
         output: ``{"json_mode": capabilities.supports_structured_output}``.
-        prefix_md's markdown overrides to ``{"json_mode": False}``
+        md_array's markdown overrides to ``{"json_mode": False}``
         regardless of capability — forcing JSON mode on a markdown-shaped
         prompt makes the model degenerate (the ``[2025]`` / ``[1000,1000]``
         bug).

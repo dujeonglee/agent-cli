@@ -158,7 +158,8 @@ class TestParseTurnDefaultWrapper:
         assert turn.thinking == "th"
 
     def test_dropped_action_preserves_input_as_op(self):
-        # prefix_md parse_stage-3: no action name, but action_input recovered.
+        # parse_stage-3 (dropped-action recovery): no action name, but
+        # action_input recovered.
         # The wrapper MUST keep an Op so the loop's per-op infer_action / echo
         # can still recover it (the parse preservation invariant).
         pa = ParsedAction(
@@ -187,9 +188,9 @@ class TestParseTurnDefaultWrapper:
         assert turn.ops[0].truncated is True
 
     def test_real_formats_never_terminal_and_match_parse(self):
-        # For react / prefix_md the one-op turn equals what parse() dispatches,
-        # and `terminal` is always False (they complete via a `complete` op).
-        for name in ("react", "prefix_md"):
+        # For react the one-op turn equals what parse() dispatches, and
+        # `terminal` is always False (it completes via a `complete` op).
+        for name in ("react",):
             wf = get(name)
             text = wf.render_full_example(
                 thought="reason",

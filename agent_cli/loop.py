@@ -648,7 +648,7 @@ class AgentLoop:
 
         # Plugin-defined provider hints. The wire plugin decides them from
         # the model's capabilities — e.g. ``json_mode``: ReAct requests it
-        # iff the model supports structured output, prefix_md never does
+        # iff the model supports structured output, md_array never does
         # (markdown shape). This is the single wire ⨯ capability decision
         # point, so the provider never combines the two itself.
         extra_call_kwargs = self.wire_format.provider_call_kwargs(self.capabilities)
@@ -767,7 +767,7 @@ class AgentLoop:
         # explicit action (action_required=True), a dropped action is a
         # drift to be corrected by the model, so we skip inference and fall
         # through to the NO_ACTION recovery below. When False (the namespaced
-        # formats — prefix_md, react), the action is recoverable from the
+        # format — react), the action is recoverable from the
         # preserved action_input, so we infer it. Mirror of how
         # ``thought_required`` gates the NO_THOUGHT recovery.
         action_inferred = False

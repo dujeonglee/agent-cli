@@ -90,7 +90,7 @@ def _build_edit_file_inline(wire_format) -> str:
     plugin gets the SAME explanatory text at the SAME level of detail. Only
     the two worked examples (single + batch) pass through
     ``wire_format.render_action_input`` so each wire shows them in its own
-    shape (react/prefix_md render the JSON action_input verbatim; a future
+    shape (react renders the JSON action_input verbatim; a future
     plugin whose action_input is not a JSON dict transforms here — same hook
     delegate/read_file already use). The wire-shape rules themselves live in
     each plugin's ``format_rules()`` — this guide stays about edit_file's tool

@@ -29,11 +29,11 @@ _registry: dict[str, WireFormat] = {}
 # unspecified-wire fallback all resolve here. Change the default in ONE place.
 #
 # md_array (2026-06-11): promoted from experimental after Phase-2 (95.2% =
-# react) + real-world validation (DOOM web, 150 turns, 0.7% format-failure =
-# prefix_md parity). It is a functional superset of prefix_md (single-op plus
-# multi-op). prefix_md is kept as a registered choice (NOT deprecated) — a
-# proven fallback for one more cycle. Multi-op uptake is still low (~0.7% of
-# op-turns); the next lever is prompting for spontaneous batching.
+# react) + real-world validation (DOOM web, 150 turns, 0.7% format-failure).
+# It is a functional superset of the retired prefix_md (single-op plus
+# multi-op). prefix_md was removed (2026-06-13, wire-format consolidation
+# roadmap Step 1) — md_array subsumes its markdown shape. The two remaining
+# formats are md_array (markdown, multi-op) and react (JSON).
 DEFAULT_WIRE_FORMAT = "md_array"
 
 
@@ -140,12 +140,10 @@ __all__ = [
 # not yet see ``register`` in this module's namespace.
 def _register_builtin_plugins() -> None:
     from agent_cli.wire_formats.md_array import MdArrayFormat
-    from agent_cli.wire_formats.prefix_md import PrefixMdFormat
     from agent_cli.wire_formats.react import ReActFormat
 
     register(ReActFormat())
-    register(PrefixMdFormat())
-    register(MdArrayFormat())  # experimental — multi-op (DESIGN §7 rollout)
+    register(MdArrayFormat())  # default — multi-op (DESIGN §7)
 
 
 _register_builtin_plugins()

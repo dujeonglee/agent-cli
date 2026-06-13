@@ -304,10 +304,10 @@ class TestSummaryTextRendering:
         from agent_cli import wire_formats
         from agent_cli.context.manager import _to_summary_text
 
-        plugin = wire_formats.get("prefix_md")
+        plugin = wire_formats.get("react")
         rec = plugin.serialize_assistant_for_history(
-            "## Thought\nwrite it\n## Action\nwrite_file\n"
-            '## Input\n{"write_file_path": "r.c", "write_file_content": "y"}'
+            '{"thought": "write it", "action": "write_file", '
+            '"action_input": {"write_file_path": "r.c", "write_file_content": "y"}}'
         )
         line = _to_summary_text(rec)
         assert "write_file(r.c)" in line
@@ -508,10 +508,10 @@ class TestFileExtractHelper:
         hand-written dict. If serialization changes, this test moves with it."""
         from agent_cli import wire_formats
 
-        plugin = wire_formats.get("prefix_md")
+        plugin = wire_formats.get("react")
         rec = plugin.serialize_assistant_for_history(
-            "## Thought\nwrite it\n## Action\nwrite_file\n"
-            '## Input\n{"write_file_path": "r.c", "write_file_content": "y"}'
+            '{"thought": "write it", "action": "write_file", '
+            '"action_input": {"write_file_path": "r.c", "write_file_content": "y"}}'
         )
         assert rec["action"] == "write_file"
         assert extract_file_paths([rec]) == ["r.c"]

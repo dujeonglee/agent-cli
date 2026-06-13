@@ -376,7 +376,7 @@ class TestOpenAIProvider:
 
     @patch("agent_cli.providers.openai.requests.post")
     def test_no_json_mode_omits_response_format(self, mock_post, caps_structured):
-        """When the wire plugin decides ``json_mode=False`` (prefix_md's
+        """When the wire plugin decides ``json_mode=False`` (md_array's
         markdown shape), the provider must NOT force the server's JSON-object
         mode even though the model *supports* structured output — the
         provider honors the wire's decision and never re-derives it from

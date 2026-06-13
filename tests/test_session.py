@@ -41,11 +41,10 @@ class TestCreateSession:
         assert create_session().response_format == "md_array"
 
     def test_response_format_stored(self):
-        # An explicit non-default choice (prefix_md) is preserved — proves the
-        # field stores what's asked, and that prefix_md remains selectable
-        # after md_array became the default (NOT deprecated).
-        meta = create_session("/tmp/ws", response_format="prefix_md")
-        assert meta.response_format == "prefix_md"
+        # An explicit non-default choice (react) is preserved — proves the
+        # field stores what's asked, not just the md_array default.
+        meta = create_session("/tmp/ws", response_format="react")
+        assert meta.response_format == "react"
 
 
 class TestLoadSession:
@@ -60,11 +59,11 @@ class TestLoadSession:
         assert load_session("999999999") is None
 
     def test_response_format_round_trips(self, tmp_path):
-        meta = create_session("/tmp/ws", response_format="prefix_md")
+        meta = create_session("/tmp/ws", response_format="react")
         save_meta(meta)
         loaded = load_session(meta.session_id)
         assert loaded is not None
-        assert loaded.response_format == "prefix_md"
+        assert loaded.response_format == "react"
 
     def test_legacy_session_defaults_to_md_array(self, tmp_path):
         """A session.jsonl written before the response_format field existed

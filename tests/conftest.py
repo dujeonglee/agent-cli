@@ -27,7 +27,7 @@ def _default_wire_react(monkeypatch):
 
     Mocked-provider tests author LLM emissions as ReAct JSON, so the loop's
     default must be react for ``run_loop()`` (without an explicit
-    ``wire_format``) to parse them — otherwise prefix_md (the production
+    ``wire_format``) to parse them — otherwise md_array (the production
     default) rejects the JSON and the loop spins in recovery. Cross-wire
     parity is covered by dedicated parametrized tests, added incrementally.
     """

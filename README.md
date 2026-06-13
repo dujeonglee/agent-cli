@@ -184,7 +184,7 @@ agent-cli run "task description" [options]
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
 | `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
-| `--response-format` | Wire format 플러그인 이름. 빌트인: `md_array` (**기본** — 멀티-op: `## Thought`/`## Action` + flat `{action, params}` op 배열로 한 턴에 여러 독립 도구 호출, 종료는 thought-only. Phase-2 bakeoff 95.2%=react + 실전 150턴 형식실패 0.7%로 prefix_md 동급 검증 후 기본 전환), `prefix_md` (`## Thought / ## Action / ## Input` 마크다운 섹션, small-LLM이 envelope보다 자연스럽게 emit하도록 설계 — 검증된 단일-op fallback), `react` (순수 JSON `{thought, action, action_input}`). 세 포맷 compliance 는 omlx 27B/35B bakeoff에서 동등. `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `md_array` |
+| `--response-format` | Wire format 플러그인 이름. 빌트인: `md_array` (**기본** — 멀티-op: `## Thought`/`## Action` + flat `{action, params}` op 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. Phase-2 bakeoff 95.2%=react + 실전 150턴 형식실패 0.7%로 검증 후 기본 전환), `react` (순수 JSON `{thought, action, action_input}`). 두 포맷 compliance 는 omlx 27B/35B bakeoff에서 동등. `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `md_array` |
 
 `run` 실행 후 세션이 자동 저장됩니다. `web --resume <id>`로 이어서 작업할 수 있습니다:
 

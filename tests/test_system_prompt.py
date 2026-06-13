@@ -45,8 +45,8 @@ _SNAPSHOT_TOOLS = ["read_file", "shell", "code_index", "edit_file", "delegate", 
 
 class TestToolsSectionSnapshot:
     """Regression guard for the format-aware-prompt refactor (DESIGN §5): the
-    single-action formats (react / prefix_md) must render the Available Tools
-    section BYTE-IDENTICALLY through the change. ``_build_tools_section`` is
+    single-action format (react) must render the Available Tools section
+    BYTE-IDENTICALLY through the change. ``_build_tools_section`` is
     deterministic (unlike the full prompt, which carries CWD / directives), so
     it snapshots cleanly. Regenerate with::
 
@@ -54,10 +54,10 @@ class TestToolsSectionSnapshot:
 from agent_cli.prompts.system_prompt import _build_tools_section as b; \
 [open(f'tests/snapshots/tools_section_{n}.txt','w').write( \
 b(['read_file','shell','code_index','edit_file','delegate','ask'], w.get(n))) \
-for n in ('react','prefix_md')]"
+for n in ('react',)]"
     """
 
-    @pytest.mark.parametrize("name", ["react", "prefix_md"])
+    @pytest.mark.parametrize("name", ["react"])
     def test_tools_section_matches_snapshot(self, name):
         expected = (_SNAPSHOT_DIR / f"tools_section_{name}.txt").read_text(
             encoding="utf-8"

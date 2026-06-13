@@ -783,7 +783,7 @@ def run(
     response_format: str = typer.Option(
         DEFAULT_WIRE_FORMAT,
         "--response-format",
-        help="Wire format plugin name (default: md_array — markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-ins: prefix_md, react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name (default: md_array — markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-in: react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
