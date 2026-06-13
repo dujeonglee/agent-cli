@@ -27,3 +27,8 @@ htmlcov/
 out.txt
 OptimizationToDo.md
 OptimizationSummary.md
+
+# SWE-bench harness (bench/) — venv, repo cache, run outputs are local
+bench/.venv/
+bench/.cache/
+bench/runs/
