@@ -1,6 +1,7 @@
-"""Tests for ``agent_cli.tools.code_index.tool_code_index`` — the
-native-tool entry point that wraps the code_index package with mode
-dispatch.
+"""Tests for ``agent_cli.tools.code_index._dispatch_one`` — the per-query
+mode dispatch (code_index is flat-native, Step 3: one op = one query, so
+``_dispatch_one`` is the entry point; the old batch ``tool_code_index``
+wrapper was removed).
 
 Tests use ``monkeypatch.chdir(tmp_path)`` so each test runs in an
 isolated index root (the tool resolves cwd to find ``.agent-cli/``).
@@ -12,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_cli.tools.code_index import _dispatch_one, tool_code_index
+from agent_cli.tools.code_index import _dispatch_one
 
 
 def _write(path, content):
@@ -40,10 +41,10 @@ def project(tmp_path, monkeypatch):
 
 
 class TestDispatchValidation:
-    def test_action_input_must_be_dict(self):
-        r = tool_code_index("not a dict")
+    def test_query_must_be_dict(self):
+        r = _dispatch_one("not a dict")
         assert r.success is False
-        assert "action_input" in r.error
+        assert "must be an object" in r.error
 
     def test_mode_required(self):
         r = _dispatch_one({})

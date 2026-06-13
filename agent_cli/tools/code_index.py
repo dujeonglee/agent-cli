@@ -602,76 +602,12 @@ def _dispatch_one(query: dict) -> ToolResult:
     return handler(query)
 
 
-def _format_batch(queries: list, results: list[ToolResult]) -> ToolResult:
-    """Combine multiple code_index query results into one observation.
-
-    Mirrors :func:`read_file._format_batch` / delegate's parallel formatter:
-    per-query header (mode + target) + body (or ERROR), then a summary.
-    ``success`` is False only when *every* query failed — a partial success
-    stays True (code_index is read-only, so partial results are still useful).
-    """
-    parts: list[str] = []
-    ok = 0
-    for i, (q, res) in enumerate(zip(queries, results), 1):
-        if isinstance(q, dict):
-            label = q.get("mode", "?")
-            target = q.get("name") or q.get("path") or ""
-            if target:
-                label = f"{label} {target}"
-        else:
-            label = "?"
-        parts.append(f"─── [{i}] {label} ───")
-        if res.success:
-            parts.append(res.output or "(empty)")
-            ok += 1
-        else:
-            parts.append(f"ERROR: {res.error}")
-        parts.append("")
-
-    failed = len(queries) - ok
-    parts.append(
-        f"[code_index batch: {len(queries)} queries, {ok} ok, {failed} failed]"
-    )
-    combined = "\n".join(parts)
-    if ok == 0:
-        return ToolResult(False, error=combined)
-    return ToolResult(True, output=combined)
-
-
-def tool_code_index(action_input: dict) -> ToolResult:
-    """Run one or more code_index queries. ``action_input["queries"]`` is a
-    list of query specs, each consumed by :func:`_dispatch_one`.
-
-    A single-element list returns that query's result verbatim (no batch
-    header); multiple queries are combined by :func:`_format_batch`.
-    Modes may be mixed within one call (code_index is read-only).
-    """
-    if not isinstance(action_input, dict):
-        return ToolResult(False, error="action_input must be an object")
-    queries = action_input.get("queries")
-    if not queries or not isinstance(queries, list):
-        return ToolResult(
-            False,
-            error=(
-                "code_index requires a non-empty 'code_index_queries' list "
-                "(each item: {mode, ...mode-specific args})."
-            ),
-        )
-
-    results = [_dispatch_one(q) for q in queries]
-    if len(results) == 1:
-        return results[0]
-    return _format_batch(queries, results)
-
-
 class CodeIndexTool(Tool):
     name = "code_index"
     description = (
-        "Code/markdown index queries via persistent tree-sitter SQLite store "
-        "(read-only). Provide code_index_queries as a LIST; each item is one "
-        "query with its own mode. One call can run many queries (modes may be "
-        "mixed). For a single query, pass a one-element list.\n"
-        "Modes (per item):\n"
+        "Code/markdown index query via persistent tree-sitter SQLite store "
+        "(read-only). Each op runs one query with its own mode.\n"
+        "Modes:\n"
         "  list      - file outline (defs + structural symbols, line ranges) [path]\n"
         "  fetch     - single symbol body, hashline format for edit_file [path, name]\n"
         "  lookup    - find symbol by name across the index [name, symbol_kind?]\n"
@@ -688,136 +624,115 @@ class CodeIndexTool(Tool):
         "incrementally refreshed. For 'list'/'fetch' on paths outside the indexed "
         "root: on-demand parse (no DB write). Other modes require the indexed root."
     )
+    # Flat-native (consolidation roadmap Step 3): the schema is the plain
+    # single-query shape — no `code_index_queries` batch array and no
+    # `code_index_` wire-key prefix. One op runs one query; to run several
+    # queries in a turn, a multi-op format emits one code_index op per query.
+    # `wrap_single_op` is identity; `key_prefix` is left at its default so
+    # strip_prefix is a no-op on these flat keys and `claims` returns False for
+    # a flat `{mode}` (no `code_index_` key).
     parameters = {
         "type": "object",
         "properties": {
-            "code_index_queries": {
-                "type": "array",
+            "mode": {
+                "type": "string",
+                "enum": [
+                    "list",
+                    "fetch",
+                    "lookup",
+                    "kind",
+                    "file",
+                    "refs",
+                    "callers",
+                    "callees",
+                    "slice",
+                    "build",
+                ],
+                "description": "Operation. See tool description for per-mode params.",
+            },
+            "path": {
+                "type": "string",
+                "description": "File path. Required for list/fetch/file.",
+            },
+            "name": {
+                "type": "string",
                 "description": (
-                    "List of queries (one or many; modes may be mixed). For a "
-                    "single query, pass a one-element list."
+                    "Symbol name (exact, as shown by 'list'). Required for "
+                    "fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' "
+                    "also accepts the heading with marker (e.g. '## Setup')."
                 ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "mode": {
-                            "type": "string",
-                            "enum": [
-                                "list",
-                                "fetch",
-                                "lookup",
-                                "kind",
-                                "file",
-                                "refs",
-                                "callers",
-                                "callees",
-                                "slice",
-                                "build",
-                            ],
-                            "description": "Operation. See tool description for per-mode params.",
-                        },
-                        "path": {
-                            "type": "string",
-                            "description": "File path. Required for list/fetch/file.",
-                        },
-                        "name": {
-                            "type": "string",
-                            "description": (
-                                "Symbol name (exact, as shown by 'list'). Required for "
-                                "fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' "
-                                "also accepts the heading with marker (e.g. '## Setup')."
-                            ),
-                        },
-                        "symbol_kind": {
-                            "type": "string",
-                            "enum": [
-                                "function",
-                                "type",
-                                "variable",
-                                "constant",
-                                "section",
-                            ],
-                            "description": (
-                                "Symbol category filter. Optional for lookup. Required for "
-                                "kind. 'section' = markdown heading."
-                            ),
-                        },
-                        "ref_kind": {
-                            "type": "string",
-                            "enum": ["call", "name", "type"],
-                            "description": (
-                                "Reference site category. Optional for refs. "
-                                "call = invocation; name = bare identifier mention "
-                                "(callback, pointer); type = identifier in type position."
-                            ),
-                        },
-                        "search": {
-                            "type": "string",
-                            "description": (
-                                "Optional regex (re.search) to filter symbol names. "
-                                "Applies to list and kind modes."
-                            ),
-                        },
-                        "with_callees": {
-                            "type": "boolean",
-                            "description": "slice mode: include callee bodies (transitive up to depth).",
-                        },
-                        "with_callers": {
-                            "type": "boolean",
-                            "description": "slice mode: include caller bodies (transitive up to depth).",
-                        },
-                        "with_types": {
-                            "type": "boolean",
-                            "description": "slice mode: include types/structs referenced inside target body.",
-                        },
-                        "with_macros": {
-                            "type": "boolean",
-                            "description": "slice mode: include function-like macros invoked inside target body.",
-                        },
-                        "depth": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 5,
-                            "description": "slice mode: transitive depth for callees/callers (default 1).",
-                        },
-                        "max_bytes": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "slice mode: cap output bytes (default unlimited).",
-                        },
-                    },
-                    "required": ["mode"],
-                },
+            },
+            "symbol_kind": {
+                "type": "string",
+                "enum": [
+                    "function",
+                    "type",
+                    "variable",
+                    "constant",
+                    "section",
+                ],
+                "description": (
+                    "Symbol category filter. Optional for lookup. Required for "
+                    "kind. 'section' = markdown heading."
+                ),
+            },
+            "ref_kind": {
+                "type": "string",
+                "enum": ["call", "name", "type"],
+                "description": (
+                    "Reference site category. Optional for refs. "
+                    "call = invocation; name = bare identifier mention "
+                    "(callback, pointer); type = identifier in type position."
+                ),
+            },
+            "search": {
+                "type": "string",
+                "description": (
+                    "Optional regex (re.search) to filter symbol names. "
+                    "Applies to list and kind modes."
+                ),
+            },
+            "with_callees": {
+                "type": "boolean",
+                "description": "slice mode: include callee bodies (transitive up to depth).",
+            },
+            "with_callers": {
+                "type": "boolean",
+                "description": "slice mode: include caller bodies (transitive up to depth).",
+            },
+            "with_types": {
+                "type": "boolean",
+                "description": "slice mode: include types/structs referenced inside target body.",
+            },
+            "with_macros": {
+                "type": "boolean",
+                "description": "slice mode: include function-like macros invoked inside target body.",
+            },
+            "depth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "description": "slice mode: transitive depth for callees/callers (default 1).",
+            },
+            "max_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "slice mode: cap output bytes (default unlimited).",
             },
         },
-        "required": ["code_index_queries"],
+        "required": ["mode"],
     }
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        return flat
+
     def touched_paths(self, action_input: dict) -> list[str]:
-        queries = self.strip_prefix(action_input).get("queries") or []
-        return [
-            q["path"]
-            for q in queries
-            if isinstance(q, dict) and isinstance(q.get("path"), str)
-        ]
+        p = self.strip_prefix(action_input).get("path")
+        return [p] if isinstance(p, str) and p else []
 
     def summary_arg(self, action_input: dict) -> str:
-        queries = self.strip_prefix(action_input).get("queries") or []
-        if queries and isinstance(queries[0], dict):
-            q = queries[0]
-            return f"{q.get('mode', '')} {q.get('path', '')}".strip()
-        return ""
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        # Multi-op formats emit one query per op ({"mode", ...}); wrap it into
-        # the canonical one-element queries batch. Already-batch input passes
-        # through.
-        if not isinstance(flat, dict):
-            return flat
-        std = self.strip_prefix(flat)
-        if "queries" in std:
-            return self.add_prefix(flat)
-        return {f"{self.name}_queries": [std]}
+        std = self.strip_prefix(action_input)
+        return f"{std.get('mode', '')} {std.get('path', '')}".strip()
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
-        return tool_code_index(args)
+        return _dispatch_one(args)

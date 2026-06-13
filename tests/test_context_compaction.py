@@ -466,19 +466,20 @@ class TestFileExtractHelper:
         ]
         assert extract_file_paths(msgs) == ["a.c"]
 
-    def test_code_index_array_path_modes_only(self):
-        # code_index queries: fetch/list carry path; lookup does not → skipped.
+    def test_code_index_flat_path_modes_only(self):
+        # Flat-native (Step 3): one op = one query. fetch/list carry path
+        # (extracted); a path-less mode (lookup) contributes nothing.
         msgs = [
             {
                 "role": "assistant",
                 "action": "code_index",
-                "action_input": {
-                    "code_index_queries": [
-                        {"mode": "fetch", "path": "x.c", "name": "foo"},
-                        {"mode": "lookup", "name": "bar"},
-                    ]
-                },
-            }
+                "action_input": {"mode": "fetch", "path": "x.c", "name": "foo"},
+            },
+            {
+                "role": "assistant",
+                "action": "code_index",
+                "action_input": {"mode": "lookup", "name": "bar"},
+            },
         ]
         assert extract_file_paths(msgs) == ["x.c"]
 

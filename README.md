@@ -587,7 +587,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
 | `read_context` | 세션 이력 조회 (현재 세션 기본, scope/sessions 필터) |
-| `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용). `code_index_queries` 배열로 여러 query 를 한 번에 (모드 섞기 가능, 단일도 1개 배열). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
+| `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (대화형 web 전용, 배열 지원) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
@@ -595,9 +595,9 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### action_input 키 네이밍 규칙
 
-prefixed 도구의 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `shell_command`, `code_index_queries`, `delegate_tasks`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `queries[].mode`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)와 **flat-native 도구(`read_file`·`write_file`·`edit_file` — consolidation Step 3, plain `{path, ...}`)** 는 표준 키를 그대로 씁니다.
+prefixed 도구의 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `shell_command`, `delegate_tasks`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `tasks[].agent`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)와 **flat-native 도구(`read_file`·`write_file`·`edit_file`·`code_index` — consolidation Step 3, plain `{path/mode, ...}`)** 는 표준 키를 그대로 씁니다.
 
-> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — prefixed 도구는 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"command": ...}` → `{"shell_command": ...}`). 표준 키로 보내도 동작하며(prefix strip 은 no-op), flat-native 도구(`read_file`/`write_file`/`edit_file`)는 prefix 없이 그대로입니다. 단, 최상위 배열 키(`code_index_queries`, `delegate_tasks`) 안의 **중첩 키는 prefix 가 붙지 않습니다**.
+> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — prefixed 도구는 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"command": ...}` → `{"shell_command": ...}`). 표준 키로 보내도 동작하며(prefix strip 은 no-op), flat-native 도구(`read_file`/`write_file`/`edit_file`/`code_index`)는 prefix 없이 그대로입니다. 단, 최상위 배열 키(`delegate_tasks`) 안의 **중첩 키는 prefix 가 붙지 않습니다**.
 
 ### read_file — 파일 읽기
 
@@ -694,25 +694,18 @@ tree-sitter로 프로젝트 전체를 파싱해 `<project_root>/.agent-cli/code_
 
 `read_file`이 텍스트(line range)에 답한다면 `code_index`는 의미 단위(symbol)와 cross-file 관계(refs/callers/callees)에 답합니다.
 
-#### code_index_queries — 배열로 묶어 한 번에
+#### 한 op = 한 query (flat-native)
 
-code_index 는 읽기 전용(파일 안 씀)이고, 모든 query 를 **`code_index_queries` 배열**로 받습니다. 한 호출에 여러 query 를 담을 수 있고(모드 섞기 가능), 단일 query 도 1개짜리 배열로 보냅니다.
+code_index 는 읽기 전용(파일 안 씀)이고, **한 op 가 한 query**를 돌립니다 (flat). 여러 query 는 멀티-op 으로 code_index op 을 여러 개 보냅니다(읽기전용이라 순서/상태 의존 없음 — 모드 섞기 OK).
 
 ```json
-// 단일 query (표준 키 표기 — 실제 wire 는 code_index_queries)
-{"action": "code_index", "action_input": {"queries": [{"mode": "fetch", "path": "agent_cli/loop.py", "name": "AgentLoop._call_llm"}]}}
-
-// 여러 query 한 번에 (모드 섞기 — fetch + lookup + refs)
-{"action": "code_index", "action_input": {"queries": [
-  {"mode": "fetch", "path": "auth.py", "name": "User.login"},
-  {"mode": "lookup", "name": "AgentLoop"},
-  {"mode": "refs", "name": "process", "ref_kind": "call"}
-]}}
+// 단일 query
+{"action": "code_index", "action_input": {"mode": "fetch", "path": "agent_cli/loop.py", "name": "AgentLoop._call_llm"}}
 ```
 
-#### 10 mode (각 query item)
+#### 10 mode (각 op 의 action_input)
 
-아래는 각 query **item** 의 형태입니다 — 위처럼 `code_index_queries` 배열에 담아 보냅니다:
+아래는 각 op 의 action_input 형태입니다 — 한 op 가 하나의 query:
 
 ```json
 // 1. 파일 outline (read_file:stat의 구조 인지 대안)

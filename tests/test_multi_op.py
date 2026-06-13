@@ -42,9 +42,11 @@ class TestWrapSingleOp:
         flat = {"path": "a.py", "op": "replace", "pos": "2#KT", "lines": ["x"]}
         assert TOOLS["edit_file"].wrap_single_op(flat) == flat
 
-    def test_code_index_wraps_flat_query(self):
-        out = TOOLS["code_index"].wrap_single_op({"mode": "list", "path": "a.py"})
-        assert out == {"code_index_queries": [{"mode": "list", "path": "a.py"}]}
+    def test_code_index_flat_is_identity(self):
+        # Flat-native (Step 3): code_index's wrap_single_op is identity — one
+        # op runs one query, dispatched with no canonical re-wrap.
+        flat = {"mode": "list", "path": "a.py"}
+        assert TOOLS["code_index"].wrap_single_op(flat) == flat
 
     def test_delegate_wraps_flat_task(self):
         out = TOOLS["delegate"].wrap_single_op({"task": "do x", "context": "fork"})

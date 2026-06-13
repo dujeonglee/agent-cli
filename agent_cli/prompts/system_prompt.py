@@ -411,14 +411,11 @@ def _build_code_index_inline(wire_format) -> str:
 
     multi_op = getattr(wire_format, "multi_op", False)
 
-    def rai(*items):
-        # code_index_queries 배열-only: 각 예제를 1-원소 배열로 감싼다.
-        # 여러 item 을 주면 한 배치(모드 섞기 가능)로 렌더된다.
-        # multi-op formats: one query per op — no queries wrapper (the turn's
-        # op array replaces the per-tool batch), so render the item directly.
-        if multi_op:
-            return _rai_prefixed(wire_format, "code_index", items[0])
-        return _rai_prefixed(wire_format, "code_index", {"queries": list(items)})
+    def rai(item):
+        # code_index is flat-native (Step 3): one op = one query, no
+        # `queries` wrapper in any wire shape. The op array (multi-op) or
+        # successive turns (single-op) replace the old per-tool batch.
+        return _rai_prefixed(wire_format, "code_index", item)
 
     list_py = rai({"mode": "list", "path": "auth.py"})
     list_cpp = rai({"mode": "list", "path": "src/foo.cpp"})
@@ -450,19 +447,11 @@ def _build_code_index_inline(wire_format) -> str:
   Each code_index op runs ONE query. Read-only (no file writes). To run
   several queries (modes may be mixed), emit several code_index ops in
   the same turn."""
-        modes_header = "Ten modes (each op is one query):"
     else:
-        ex_batch = rai(
-            {"mode": "fetch", "path": "auth.py", "name": "User.login"},
-            {"mode": "lookup", "name": "AgentLoop"},
-        )
-        batch_para = f"""\
-  code_index takes a LIST of queries in code_index_queries — one call can
-  run many queries at once, and modes may be mixed. For a single query,
-  pass a one-element list. Read-only (no file writes). Batch example
-  (fetch one symbol + lookup another in a single call):
-       {ex_batch}"""
-        modes_header = "Ten modes (each is one query item inside code_index_queries):"
+        batch_para = """\
+  Each code_index call runs ONE query. Read-only (no file writes). Run
+  several queries with successive calls (modes may differ)."""
+    modes_header = "Ten modes (each op is one query):"
 
     return f"""\
 

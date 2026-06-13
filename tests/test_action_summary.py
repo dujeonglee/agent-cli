@@ -2,12 +2,12 @@
 the compaction transcript (``_to_summary_text``) and observation headers.
 
 Uses the REAL ``action_input`` shape each tool receives. Flat-native tools
-(write_file, read_file, edit_file — Step 3) take plain ``{path, ...}``; the
-remaining batch tools still use prefixed arrays (``code_index_queries``,
-``delegate_tasks``). The previous
-version tested ``summarize_tool_args`` with a hand-invented bare-key shape
-for batch tools that never occurred in history.jsonl, so it passed while the
-function returned "" for every real record, masking the prefix regression.
+(write_file, read_file, edit_file, code_index — Step 3) take plain
+``{path/mode, ...}``; the remaining batch tool still uses a prefixed array
+(``delegate_tasks``). The previous version tested ``summarize_tool_args``
+with a hand-invented bare-key shape for batch tools that never occurred in
+history.jsonl, so it passed while the function returned "" for every real
+record, masking the prefix regression.
 Each tool now owns its own label via ``Tool.summary_arg`` (sibling of
 ``Tool.touched_paths``).
 """
@@ -37,12 +37,8 @@ class TestToolSummaryArg:
         assert _sa("read_file", {"path": "a.c"}) == "a.c"
 
     def test_code_index_mode_and_path(self):
-        assert (
-            _sa(
-                "code_index", {"code_index_queries": [{"mode": "fetch", "path": "x.c"}]}
-            )
-            == "fetch x.c"
-        )
+        # Flat-native (Step 3): code_index takes a flat single query.
+        assert _sa("code_index", {"mode": "fetch", "path": "x.c"}) == "fetch x.c"
 
     def test_shell_truncates_to_60(self):
         out = _sa("shell", {"shell_command": "y" * 200})

@@ -195,7 +195,7 @@ class TestMultiOpPromptBranches:
         assert '"mode": "string, required' in flat
         assert '"queries":' not in flat
         assert '"code_index_queries":' not in flat
-        assert "Each op runs one query." in flat
+        assert "Each op runs one query" in flat
         assert "Provide queries as a LIST" not in flat
 
     def test_edit_file_input_json_flat_merges_scalar_and_item(self, section):

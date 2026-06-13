@@ -173,8 +173,8 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
     formats.
 
     A batch tool's schema declares its native (batch) interface: a single
-    array param (``code_index_queries``, ``delegate_tasks``) whose items are
-    the per-call shape. Under a multi-op format one op IS one item,
+    array param (``delegate_tasks``) whose items are the per-call shape.
+    Under a multi-op format one op IS one item,
     so the prompt must advertise the item fields at the top level — NOT the
     array wrapper. This unwraps the array param into its item-object
     properties and keeps scalars (prefix-stripped), exactly mirroring
@@ -198,27 +198,13 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
 
 # Batch-framing sentences to drop from a tool's description under multi-op
 # formats (one op = one item, so "pass a list" / "in a single call" guidance
-# is wrong). Keyed by tool name; applied AFTER the wire-prefix strip, so the
-# match text uses the stripped param names (``reads``, not ``read_file_reads``).
-# ``TestMultiOpToolDescriptions`` asserts no batch phrasing survives, so a
-# description edit that outdates a key fails loudly instead of silently
-# leaking the old shape.
-_MULTI_OP_DESC_REWRITES = {
-    # read_file is flat-native (Step 3): its description is already the plain
-    # single-file shape, so no batch-phrasing rewrite is needed. The remaining
-    # batch tools (code_index, edit_file, delegate) still declare array
-    # interfaces and rewrite their "pass a list" prose here.
-    "code_index": [
-        (
-            "Provide queries as a LIST; each item is one query with its own "
-            "mode. One call can run many queries (modes may be mixed). For a "
-            "single query, pass a one-element list.",
-            "Each op runs one query.",
-        ),
-        ("index queries via", "index query via"),
-        ("Modes (per item):", "Modes:"),
-    ],
-}
+# is wrong). Keyed by tool name; applied AFTER the wire-prefix strip. Mechanism
+# retained as an abstraction surface for any future batch tool, but currently
+# EMPTY: the flat-native tools (read_file/write_file/edit_file/code_index,
+# Step 3) describe themselves as single-op natively, and the remaining batch
+# tool (delegate) describes its tasks array accurately. ``TestMultiOp*``
+# asserts no batch phrasing leaks regardless.
+_MULTI_OP_DESC_REWRITES: dict[str, list[tuple[str, str]]] = {}
 
 
 def get_tool_descriptions(

@@ -29,7 +29,7 @@
   seen the first 20 lines.
 - shell: Run a shell command and return stdout/stderr.
   Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Timeout in seconds (default 30)"}
-- code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query.
+- code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query with its own mode.
 Modes:
   list      - file outline (defs + structural symbols, line ranges) [path]
   fetch     - single symbol body, hashline format for edit_file [path, name]
