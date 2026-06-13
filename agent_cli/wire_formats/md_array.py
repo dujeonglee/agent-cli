@@ -34,6 +34,7 @@ import json
 import re
 
 from agent_cli.wire_formats._json_diag import describe_json_error
+from agent_cli.wire_formats._json_repair import close_unbalanced
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 _THOUGHT_RE = re.compile(r"^##\s*Thought\s*$", re.MULTILINE)
@@ -263,6 +264,20 @@ def _extract_op_json(text: str):
     parsed = _extract_first_json(text, strict=False)
     if parsed is not None:
         return parsed, True
+    # Last resort: a well-formed op array the model finished but forgot to
+    # close (measured dominant NO_JSON shape — session 1781336790, a 6-op
+    # read_file batch missing its trailing `]`). `_extract_first_json` returns
+    # None on an unclosed array (depth never returns to 0), so close the
+    # unbalanced brackets at EOF (string-aware, depth-stack → deterministic
+    # closer) and re-parse (strict, then control-char-lenient). Accept only if
+    # it now validates; a deeper break (truncated mid-op) keeps it None →
+    # diagnostic+retry, never a forced bogus op.
+    closed, changed = close_unbalanced(text)
+    if changed:
+        for strict in (True, False):
+            parsed = _extract_first_json(closed, strict=strict)
+            if parsed is not None:
+                return parsed, True
     return None, False
 
 

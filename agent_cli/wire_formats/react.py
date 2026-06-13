@@ -23,6 +23,7 @@ import re
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
 from agent_cli.wire_formats._json_diag import describe_json_error
+from agent_cli.wire_formats._json_repair import close_unbalanced
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 
@@ -866,36 +867,6 @@ def _fix_unclosed_strings(text: str) -> tuple[str, bool]:
 
 
 def _fix_missing_brackets(text: str) -> tuple[str, bool]:
-    """Add missing closing brackets/braces.
-
-    Returns (fixed_text, was_closed).
-    """
-    stack: list[str] = []
-    in_string = False
-    escape_next = False
-
-    for ch in text:
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == "\\":
-            if in_string:
-                escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            stack.append("}")
-        elif ch == "[":
-            stack.append("]")
-        elif ch in ("}", "]"):
-            if stack and stack[-1] == ch:
-                stack.pop()
-
-    if stack:
-        return text + "".join(reversed(stack)), True
-
-    return text, False
+    """Add missing closing brackets/braces — thin alias over the shared
+    ``close_unbalanced`` (kept for this module's repair_json call site)."""
+    return close_unbalanced(text)
