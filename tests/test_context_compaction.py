@@ -312,6 +312,26 @@ class TestSummaryTextRendering:
         line = _to_summary_text(rec)
         assert "write_file(r.c)" in line
 
+    def test_summary_renders_all_ops_of_multi_op_record(self):
+        """Regression: a multi-op format (md_array) stores ``{ops:[...]}``, not
+        a top-level ``{action, action_input}``. ``_to_summary_text`` must
+        iterate ``ops`` and label EACH — reading only the top-level ``action``
+        produced thought-only summaries for md_array (the default since
+        2026-06-11), losing every record of which tools ran. Each flat op also
+        needs flat→canonical normalization so read_file's ``{path}`` shows."""
+        from agent_cli import wire_formats
+        from agent_cli.context.manager import _to_summary_text
+
+        plugin = wire_formats.get("md_array")
+        rec = plugin.serialize_assistant_for_history(
+            "## Thought\nread then write\n\n## Action\n"
+            '[{"action": "read_file", "path": "a.c"}, '
+            '{"action": "write_file", "path": "b.c", "content": "x"}]'
+        )
+        line = _to_summary_text(rec)
+        assert "read_file(a.c)" in line
+        assert "write_file(b.c)" in line
+
 
 class TestSummaryInputIsTranscript:
     """The summariser callback receives ONE user-role transcript message —
@@ -515,6 +535,21 @@ class TestFileExtractHelper:
         )
         assert rec["action"] == "write_file"
         assert extract_file_paths([rec]) == ["r.c"]
+
+    def test_extracts_all_paths_from_multi_op_record(self):
+        """Regression: a multi-op format (md_array) stores ``{ops:[...]}``;
+        extract must iterate ``ops`` AND normalize each flat op to canonical
+        (read_file ``{path}`` → ``read_file_reads[].path``). md_array's
+        compaction file list was empty before — both gaps fixed."""
+        from agent_cli import wire_formats
+
+        plugin = wire_formats.get("md_array")
+        rec = plugin.serialize_assistant_for_history(
+            "## Thought\nt\n\n## Action\n"
+            '[{"action": "read_file", "path": "a.c"}, '
+            '{"action": "write_file", "path": "b.c", "content": "x"}]'
+        )
+        assert extract_file_paths([rec]) == ["a.c", "b.c"]
 
 
 # ── 5. get_messages prepend ──────────────────────────

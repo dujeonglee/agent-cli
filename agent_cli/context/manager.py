@@ -812,22 +812,38 @@ def _to_summary_text(msg: dict) -> str:
         return header
 
     # assistant
-    if "thought" not in msg and "action" not in msg:
+    ops = msg.get("ops")
+    if not ops and "action" not in msg and "thought" not in msg:
         return f"Assistant: {msg.get('content', '')}"
     thought = (msg.get("thought") or "").strip()
-    action = msg.get("action") or ""
+    # Normalize single-op ({action, action_input}) and multi-op ({ops:[...]})
+    # records to one op list. Multi-op formats (md_array, react) store `ops`,
+    # so reading only the top-level `action` here lost EVERY tool label for
+    # them — the summariser saw thought-only prose with no record of which
+    # tools ran.
+    op_list = ops if isinstance(ops, list) else ([msg] if msg.get("action") else [])
     # Delegate the per-action label to the tool itself (sibling of
     # touched_paths): each tool reads its OWN prefixed/array action_input
-    # shape. A bare ``args.get("path")`` here silently returned "" for every
-    # wire-key-prefixed record. Lazy import avoids the module-load cycle
-    # (registry → context-tool → context.manager).
+    # shape. Lazy import avoids the module-load cycle (registry →
+    # context-tool → context.manager).
     from agent_cli.tools.registry import TOOLS
 
-    tool = TOOLS.get(action)
-    arg_summary = tool.summary_arg(msg.get("action_input") or {}) if tool else ""
-    action_line = f"  → action: {action}({arg_summary})" if action else ""
+    action_lines: list[str] = []
+    for op in op_list:
+        if not isinstance(op, dict):
+            continue
+        action = op.get("action") or ""
+        if not action:
+            continue
+        tool = TOOLS.get(action)
+        # Stored ops are FLAT (the model's emission, e.g. read_file `{path}`);
+        # summary_arg reads the tool's CANONICAL shape (`read_file_reads[]`).
+        # Normalize flat → canonical (idempotent on already-canonical input).
+        ai = op.get("action_input") or {}
+        arg_summary = tool.summary_arg(tool.wrap_single_op(ai)) if tool else ""
+        action_lines.append(f"  → action: {action}({arg_summary})")
     head = f"Assistant: {thought}" if thought else "Assistant:"
-    return f"{head}\n{action_line}" if action_line else head
+    return head + "\n" + "\n".join(action_lines) if action_lines else head
 
 
 def _convert_observation(msg: dict) -> dict:

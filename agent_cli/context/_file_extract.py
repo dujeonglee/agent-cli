@@ -46,16 +46,29 @@ def extract_file_paths(messages: list[dict[str, Any]]) -> list[str]:
     seen: set[str] = set()
 
     for msg in messages:
-        action = msg.get("action")
-        if not isinstance(action, str):
-            continue
-        tool = TOOLS.get(action)
-        action_input = msg.get("action_input")
-        if tool is None or not isinstance(action_input, dict):
-            continue
-        for entry in tool.touched_paths(action_input):
-            if entry and entry not in seen:
-                seen.add(entry)
-                paths.append(entry)
+        # Normalize single-op ({action, action_input}) and multi-op
+        # ({ops:[...]}) records to one op list. Multi-op formats (md_array,
+        # react) store `ops`, so reading only the top-level `action` extracted
+        # NO paths from them — the compaction file list came out empty.
+        ops = msg.get("ops")
+        op_list = ops if isinstance(ops, list) else [msg]
+        for op in op_list:
+            if not isinstance(op, dict):
+                continue
+            action = op.get("action")
+            if not isinstance(action, str):
+                continue
+            tool = TOOLS.get(action)
+            action_input = op.get("action_input")
+            if tool is None or not isinstance(action_input, dict):
+                continue
+            # Stored ops are FLAT (read_file `{path}`); touched_paths reads the
+            # CANONICAL shape (`read_file_reads[].path`). Normalize flat →
+            # canonical (idempotent on already-canonical input).
+            action_input = tool.wrap_single_op(action_input)
+            for entry in tool.touched_paths(action_input):
+                if entry and entry not in seen:
+                    seen.add(entry)
+                    paths.append(entry)
 
     return paths
