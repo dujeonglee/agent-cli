@@ -782,7 +782,19 @@ class AgentLoop:
         # Classify outcome early; the dispatch body may mutate this
         # dict to reflect a B1 (action loop) detection that is only
         # known after we see the chosen action.
-        if turn.parse_stage == 0:
+        # Degeneration is a GENERATION-level pathology — the stream ran away
+        # repeating the wire shape instead of terminating — so it is logically
+        # PRIOR to, and a more specific cause than, the parse-level symptom (a
+        # runaway naturally fails to parse and would otherwise be mislabeled
+        # NO_JSON). Checked FIRST. Recovery is driven by ``turn.parse_stage``
+        # (in ``_recover_unparsed``), NOT by this label, so relabeling a
+        # stage-0 runaway DEGENERATE changes only the telemetry signal
+        # (turns.jsonl) — the recovery path is unchanged. Empty output is not a
+        # runaway (``is_degenerate("")`` is False) so it still falls through to
+        # NO_OUTPUT below.
+        if self.wire_format.is_degenerate(llm_text):
+            initial_signal = FAILURE_DEGENERATE
+        elif turn.parse_stage == 0:
             # Split A1 into two sub-modes — empty/whitespace-only output
             # vs non-empty content that drifted from JSON. The recovery
             # path is identical (RETRY_HINT_NO_JSON fallback in both),
@@ -792,16 +804,6 @@ class AgentLoop:
                 initial_signal = FAILURE_NO_OUTPUT
             else:
                 initial_signal = FAILURE_NO_JSON
-        elif self.wire_format.is_degenerate(llm_text):
-            # Format runaway — the emission repeated the wire shape (empty
-            # blocks). The streaming path usually breaks this early
-            # (degeneration_check passed to provider.call); whatever text
-            # arrives is labeled here for measurement + raw capture. Checked
-            # BEFORE NO_ACTION because a runaway's trailing block is typically
-            # empty (action invalid), and degenerate is the more specific
-            # cause — the dispatch below still falls through to NO_ACTION
-            # recovery when the action is unusable.
-            initial_signal = FAILURE_DEGENERATE
         elif not any(op.action for op in turn.ops):
             initial_signal = FAILURE_NO_ACTION
         else:

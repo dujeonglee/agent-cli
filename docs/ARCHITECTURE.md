@@ -634,7 +634,9 @@ Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
 
 `prior_content`가 비면 정적 fallback (`RETRY_HINT_NO_JSON` / `RETRY_HINT_NO_ACTION`) — graceful path.
 
-**A1a (NO_JSON) vs A1b (NO_OUTPUT) 라벨 분리.** parse stage 0 실패는 두 가지 운영 모드가 섞여 있음 — (a) 모델이 *내용은 있는데* JSON 형식에서 드리프트 (YAML 키, prose, code fence 등), (b) 모델이 *아무것도* 안 뱉음 (whitespace-only). `loop.py`의 `_handle_text_path`가 `llm_text.strip()` 검사로 둘을 분리해 `failure_signal` 을 `FAILURE_NO_JSON` 또는 `FAILURE_NO_OUTPUT` 으로 기록. 회복 경로는 동일(둘 다 `format_no_json_retry`) — A1b는 echo 대상이 없어 자연스럽게 정적 fallback path로 떨어지고 `primitives_applied=[]` 가 됨. 라벨 분리의 목적은 *관찰성*이며, 두 모드가 회복률 분포에서 어떻게 갈리는지 데이터를 모은 뒤 별도 primitive 도입 여부를 결정 (DESIGN.md §1, A1a/A1b).
+**라벨 우선순위 — DEGENERATE 가 parse_stage 보다 먼저.** degeneration(wire shape 반복 runaway)은 **생성-레벨 병리**(스트림이 안 끝남)라 파싱 실패라는 *증상*보다 논리적으로 앞선다. 그래서 `_handle_text_path` 는 `wire_format.is_degenerate(llm_text)` 를 **parse_stage 검사 이전에** 평가 → 마크다운 runaway(`## Thought/## Action` 빈 블록 반복)는 JSON 이 없어 parse_stage 0 이지만 `FAILURE_NO_JSON` 이 아니라 **`FAILURE_DEGENERATE`** 로 정확히 집계된다(더 구체적 원인). 빈 출력은 `is_degenerate("")=False` 라 아래 NO_OUTPUT 로 떨어진다. **회복 경로는 `turn.parse_stage` 로 구동되므로**(`_recover_unparsed`) 라벨 재배치는 telemetry(turns.jsonl)만 정확하게 할 뿐 동작 불변. (이전엔 is_degenerate 가 parse_stage 0 *뒤* 에 있어 md_array runaway 가 NO_JSON 으로 가려졌음 — react 는 `is_degenerate=False` 라 무영향.)
+
+**A1a (NO_JSON) vs A1b (NO_OUTPUT) 라벨 분리.** parse stage 0 실패(=degenerate 아님)는 두 가지 운영 모드가 섞여 있음 — (a) 모델이 *내용은 있는데* JSON 형식에서 드리프트 (YAML 키, prose, code fence 등), (b) 모델이 *아무것도* 안 뱉음 (whitespace-only). `loop.py`의 `_handle_text_path`가 `llm_text.strip()` 검사로 둘을 분리해 `failure_signal` 을 `FAILURE_NO_JSON` 또는 `FAILURE_NO_OUTPUT` 으로 기록. 회복 경로는 동일(둘 다 `format_no_json_retry`) — A1b는 echo 대상이 없어 자연스럽게 정적 fallback path로 떨어지고 `primitives_applied=[]` 가 됨. 라벨 분리의 목적은 *관찰성*이며, 두 모드가 회복률 분포에서 어떻게 갈리는지 데이터를 모은 뒤 별도 primitive 도입 여부를 결정 (DESIGN.md §1, A1a/A1b).
 
 **근거 (failure grounding):** 추상적 *"your response was invalid"*는 모델이 무엇을 위반했는지 모르게 함 — 같은 출력을 반복할 가능성 높음. retry에 자기 출력을 인용해 보여주면 모델이 자기 드리프트(YAML-style 키, 함수-호출 신택스, bare prose 등)를 직접 보고 self-diagnose 가능. 구조 마커가 보통 출력 시작 부분이라 head-truncate.
 

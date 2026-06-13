@@ -776,18 +776,21 @@ class TestRunLoopObservability:
         from agent_cli.wire_formats import get
 
         # Empty wire blocks repeated (## Thought/## Action with no body) =
-        # format runaway. The turn must be LABELED degenerate; recovery then
-        # re-prompts and the model completes. (Real runs break this mid-stream
-        # via degeneration_check; the mock provider returns the full text so
-        # this exercises the loop's labeling branch.)
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("prefix_md"))
-        degen = "## Thought\n\n## Action\n\n## Thought\n\n## Action\n\n## Input\n{}"
+        # format runaway. This emission has NO JSON array → parse_stage 0,
+        # which would naively be labeled NO_JSON. But degeneration is a
+        # generation-level pathology checked BEFORE parse_stage, so it must be
+        # labeled DEGENERATE (the more specific cause) — guarding the label
+        # ordering. Recovery then re-prompts and the model completes. (Real
+        # runs break this mid-stream via degeneration_check; the mock provider
+        # returns the full text so this exercises the loop's labeling branch.)
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        degen = "## Thought\n\n## Action\n\n## Thought\n\n## Action\n"
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=degen),
             LLMResponse(
-                content="## Thought\ndone\n## Action\ncomplete\n## Input\n"
-                '{"result":"ok"}'
+                content="## Thought\ndone\n\n## Action\n"
+                '[{"action": "complete", "result": "ok"}]'
             ),
         ]
         run_loop(
@@ -797,7 +800,7 @@ class TestRunLoopObservability:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="prefix_md",
+            wire_format="md_array",
         )
         rows = self._read_turns(tmp_path)
         assert rows[0]["failure_signal"] == "DEGENERATE"
