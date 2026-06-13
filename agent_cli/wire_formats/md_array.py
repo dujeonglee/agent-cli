@@ -499,6 +499,16 @@ class MdArrayFormat(WireFormat):
             "content": self.sanitize_thought(raw_text) or "",
         }
 
+    def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
+        # Terminal `complete` turn in this format's `ops` shape, so history
+        # stays homogeneous with the 73 other op turns (not the base singular
+        # shape). round-trips through render_assistant_from_history's ops path.
+        return {
+            "role": "assistant",
+            "thought": thought or "",
+            "ops": [{"action": "complete", "action_input": {"result": result}}],
+        }
+
     def render_assistant_from_history(self, record: dict) -> dict:
         ops = record.get("ops")
         if isinstance(ops, list) and ops:

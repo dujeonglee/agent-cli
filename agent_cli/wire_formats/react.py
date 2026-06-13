@@ -618,6 +618,16 @@ class ReActFormat(WireFormat):
             "content": self.sanitize_thought(raw_text) or "",
         }
 
+    def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
+        # Terminal `complete` turn in react's `ops` shape (parity with
+        # md_array), keeping history homogeneous with every other op turn
+        # rather than the base singular shape.
+        return {
+            "role": "assistant",
+            "thought": thought or "",
+            "ops": [{"action": "complete", "action_input": {"result": result}}],
+        }
+
     def render_assistant_from_history(self, record: dict) -> dict:
         ops = record.get("ops")
         if isinstance(ops, list) and ops:

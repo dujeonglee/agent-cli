@@ -568,6 +568,27 @@ class WireFormat(ABC):
             "content": self.sanitize_thought(raw_text) or "",
         }
 
+    def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
+        """History record for a terminal ``complete`` turn.
+
+        The loop's complete handler holds the (possibly nested-envelope-
+        unwrapped) result rather than the raw emission, so it cannot route
+        through :meth:`serialize_assistant_for_history`. This is the parallel
+        entry point that stores the terminal turn in the SAME shape this
+        format uses for every other op, keeping history homogeneous (and
+        resume / shape-reading tooling consistent — a hand-built record here
+        once stored ``complete`` in a different shape than the rest).
+
+        Default is the singular ``{action, action_input}`` shape; multi-op
+        formats override to their ``ops`` shape.
+        """
+        return {
+            "role": "assistant",
+            "thought": thought or "",
+            "action": "complete",
+            "action_input": {"result": result},
+        }
+
     def render_assistant_from_history(self, record: dict) -> dict:
         """Convert a history.jsonl assistant record into a message dict.
 

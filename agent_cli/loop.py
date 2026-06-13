@@ -1085,12 +1085,9 @@ class AgentLoop:
 
             if self.ctx:
                 self.ctx.add(
-                    {
-                        "role": "assistant",
-                        "thought": turn.thought or "",
-                        "action": "complete",
-                        "action_input": {"result": answer},
-                    }
+                    self.wire_format.serialize_terminal_for_history(
+                        turn.thought or "", answer
+                    )
                 )
             render_step("final", answer, self.turn)
 
@@ -1101,12 +1098,9 @@ class AgentLoop:
         if echo_answer:
             if self.ctx:
                 self.ctx.add(
-                    {
-                        "role": "assistant",
-                        "thought": turn.thought or "",
-                        "action": "complete",
-                        "action_input": {"result": echo_answer},
-                    }
+                    self.wire_format.serialize_terminal_for_history(
+                        turn.thought or "", echo_answer
+                    )
                 )
             render_step("final", echo_answer, self.turn)
 
