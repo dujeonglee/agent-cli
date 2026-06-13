@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-cli"
-version = "2.0.0-dev"
+dynamic = ["version"]
 description = "ReAct pattern agentic loop CLI for on-premise LLMs"
 requires-python = ">=3.10"
 dependencies = [
@@ -49,6 +49,9 @@ web = [
 
 [project.scripts]
 agent-cli = "agent_cli.main:app"
+
+[tool.setuptools.dynamic]
+version = { attr = "agent_cli.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["agent_cli*"]

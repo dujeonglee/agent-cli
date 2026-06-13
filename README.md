@@ -7,24 +7,23 @@ ReAct 패턴 기반 에이전트 CLI. 멀티 프로바이더(OpenAI, Anthropic) 
 
 ## 설치
 
+Python 3.10+ 필요.
+
 ```bash
+# 릴리스 설치 (태그된 버전)
+pip install "git+ssh://git@github.com/dujeonglee/agent-cli.git@v2.0.0"
+
+# 웹 UI 포함
+pip install "agent-cli[web] @ git+ssh://git@github.com/dujeonglee/agent-cli.git@v2.0.0"
+
 # 개발 모드
-git clone https://github.com/your-repo/agent-cli.git
+git clone git@github.com:dujeonglee/agent-cli.git
 cd agent-cli
 pip install -e ".[dev]"
-
-# 또는 직접 실행
-pip install typer rich requests
-python agent-cli.py --help
 ```
 
 설치 후 `agent-cli` 명령어가 PATH에 등록됩니다. 처음 실행하면 설정 마법사가 자동으로 시작됩니다.
-
-```bash
-# pip install 없이 실행하는 방법
-python3 agent-cli.py run "task"
-python3 -m agent_cli run "task"
-```
+버전 확인은 `agent-cli --version`. GitHub Release에 첨부된 wheel(`pip install agent_cli-*.whl`)로도 설치할 수 있습니다.
 
 ## 빠른 시작
 

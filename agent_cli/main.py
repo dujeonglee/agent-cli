@@ -34,6 +34,28 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from agent_cli import __version__
+
+        typer.echo(f"agent-cli {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Show the agent-cli version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """AI agent CLI with ReAct pattern."""
+
+
 def _run_shell_inline(cmd: str) -> None:
     """Run a shell command and print output directly. Shared by run and web."""
     console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
