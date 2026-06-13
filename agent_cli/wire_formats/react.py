@@ -22,7 +22,22 @@ import re
 
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
-from agent_cli.wire_formats.base import ParsedAction, WireFormat
+from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
+
+
+def _ops_from_items(items: list) -> list[Op]:
+    """Convert a list of op-dicts (``{"action": tool, ...flat params}``) into
+    ``Op`` objects. Self-contained copy of the same extraction md_array uses —
+    the op SHAPE is a cross-format contract (guarded by a parity test), but the
+    code stays per-plugin so the two formats evolve independently."""
+    return [
+        Op(
+            action=(it.get("action") if isinstance(it.get("action"), str) else None),
+            action_input={k: v for k, v in it.items() if k != "action"},
+        )
+        for it in items
+        if isinstance(it, dict)
+    ]
 
 
 # ── ReAct parser ─────────────────────────────────────────────
@@ -383,6 +398,56 @@ _NO_THOUGHT_CONSTRAINT = (
 )
 
 
+# ── Multi-op Response Format (JSON twin of md_array) ─────────
+# react owns its own format-rules text rather than composing via
+# ``build_format_rules`` — the shared builder's tail hardcodes "Exactly ONE
+# action per turn", which is single-op. Self-contained per the plugin
+# philosophy: react and md_array carry the same multi-op CONTRACT but each
+# owns its wording so either can change without touching the other.
+_FORMAT_RULES = """\
+## Response Format
+
+Output a single JSON object only — no markdown fences, no surrounding text,
+no `observation` field (it is injected by the system):
+
+{"thought": "<your reasoning>", "actions": [<one or more tool calls>]}
+
+Each element of `actions` is one tool call: {"action": "<tool name>", <its
+parameters>}. Use the parameter names shown in each tool's guide above
+(plain, no prefix).
+
+Batch independent work into ONE turn. Before you emit, look at everything you
+intend to do: every operation that does NOT need another's output goes in
+THIS turn as a separate `actions` element. Reading three files, or a read
+plus an unrelated search, is ONE turn — not three; batching saves turns and
+context budget. Split into separate turns ONLY when a later step needs an
+earlier step's result (then emit just the first now — its observation arrives
+next turn).
+
+Rules:
+1. Always include a `thought` stating purpose (what you want to achieve) and
+   reason (why this action). Do not leave it empty.
+2. Each `actions` element must have an "action" naming one tool, and its
+   parameters must match that tool's input schema.
+3. Each op acts on ONE target. To read N files, emit N separate
+   {"action": "read_file", "path": ...} ops in the SAME turn. NEVER put a
+   list of items inside a single op (no nested arrays).
+4. When the task is DONE, end with a `complete` op carrying your final
+   answer: {"action": "complete", "result": "<your final answer>"}. Always
+   finish this way — do NOT just stop or omit `actions`.
+5. Every turn must include `actions` with at least one op (work, or `complete`
+   to finish).
+6. If an observation shows an error, fix parameters and retry.
+7. Respond in the user's language.
+
+Several independent operations in one turn (read three files at once — they
+don't depend on each other):
+{"thought": "To see how auth, session, and the login route fit together I need all three files; none depends on another's output, so read them together.", "actions": [{"action": "read_file", "path": "src/auth.py"}, {"action": "read_file", "path": "src/session.py"}, {"action": "read_file", "path": "src/routes/login.py"}]}
+
+Finishing the task:
+{"thought": "The login() function is implemented and the tests pass.", "actions": [{"action": "complete", "result": "Implemented login() in src/auth.py; all tests pass."}]}"""
+
+
 class ReActFormat(WireFormat):
     """Reference plugin — preserves pre-plugin behavior.
 
@@ -416,8 +481,35 @@ class ReActFormat(WireFormat):
     # a synthetic plugin so the True paths stay covered).
     thought_required = False
     action_required = False
+    # Multi-op: a turn carries `actions: [op, ...]`. Setting this engages the
+    # shared multi-op machinery — prompt renders flat per-tool params
+    # (`_multi_op_flat_params`) and dispatch re-wraps flat ops to canonical
+    # input (`wrap_single_op`), the same path md_array uses.
+    multi_op = True
 
     # ─── Prompt ────────────────────────────────────────────────
+
+    def format_rules(self) -> str:
+        # Own multi-op rules (not the single-op shared builder). See
+        # ``_FORMAT_RULES`` above.
+        return _FORMAT_RULES
+
+    def render_action_input(self, action_input: dict) -> str:
+        # Inline guides hand in a wire-key-prefixed dict (`_rai_prefixed`);
+        # render it as a flat op: {"action": tool, plain params} — the same
+        # multi-op op shape parse_turn reads. Self-contained copy of md_array's
+        # transform (the op shape is a cross-format contract; the code stays
+        # per-plugin). Without this react's inline examples render the prefixed
+        # `{"delegate_task": ...}` shape, not the flat `{"action": ...}` op.
+        if isinstance(action_input, dict) and action_input:
+            from agent_cli.tools.registry import TOOLS
+
+            for tool_name in sorted(TOOLS, key=len, reverse=True):
+                pfx = tool_name + "_"
+                if all(k.startswith(pfx) for k in action_input):
+                    flat = {k[len(pfx) :]: v for k, v in action_input.items()}
+                    return json.dumps({"action": tool_name, **flat}, ensure_ascii=False)
+        return json.dumps(action_input, ensure_ascii=False)
 
     def format_rules_anchor(self) -> str:
         return _FORMAT_RULES_ANCHOR
@@ -431,23 +523,119 @@ class ReActFormat(WireFormat):
         )
 
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
-        # ReAct shape: a single JSON object. ``thought=None`` (skill /
-        # agent invocation example) substitutes a short placeholder so
-        # the reasoning slot stays visible — teaches the model the slot
-        # is required even in invocation-only examples.
+        # Multi-op JSON: {"thought": ..., "actions": [{"action": tool, ...flat
+        # params}]}. ``action_input`` is a JSON string of the params; splice
+        # the action into it to form one flat op, then wrap in the actions
+        # array (a one-op example of the multi-op shape — mirrors md_array).
+        # ``thought=None`` (skill / agent invocation example) substitutes a
+        # short placeholder so the reasoning slot stays visible.
         reasoning = thought if thought is not None else "reasoning here"
-        return (
-            "{"
-            f'"thought": "{reasoning}", '
-            f'"action": "{action}", '
-            f'"action_input": {action_input}'
-            "}"
-        )
+        op = action_input
+        if '"action"' not in op:
+            try:
+                obj = json.loads(op)
+            except (json.JSONDecodeError, ValueError):
+                obj = None  # unparseable placeholder like "{...}" — leave as-is
+            else:
+                if isinstance(obj, dict):
+                    op = json.dumps({"action": action, **obj}, ensure_ascii=False)
+                else:
+                    # Non-dict params (e.g. legacy complete with a bare string):
+                    # keep the action, nest the value so the op stays valid JSON.
+                    op = json.dumps(
+                        {"action": action, "action_input": obj}, ensure_ascii=False
+                    )
+        return f'{{"thought": "{reasoning}", "actions": [{op}]}}'
 
     # ─── Parsing ───────────────────────────────────────────────
 
     def parse(self, llm_text: str) -> ParsedAction:
         return parse_react(llm_text)
+
+    def parse_turn(self, llm_text: str) -> ParsedTurn:
+        """Multi-op JSON: ``{"thought": ..., "actions": [{"action": ...,
+        ...flat params}, ...]}`` — several independent ops in one turn, each op
+        the same flat shape md_array uses.
+
+        Falls back to the CLASSIC single-op shape ``{"thought": ..., "action":
+        ..., "action_input": ...}`` as a one-op turn. That shape is the most
+        heavily-trained ReAct prior, so accepting it is genuine resilience (not
+        just back-compat). Discrimination is unambiguous: an ``actions`` array
+        → multi-op; anything else → the base wraps ``parse()`` as one op.
+        Completion is an explicit ``complete`` op (parity with md_array)."""
+        text = _sanitize_surrogates(llm_text)
+        stripped, thinking = _strip_thinking_blocks(text)
+        data = _try_json_parse(stripped)
+        stage = 1
+        if data is None:
+            data = _try_json_parse(stripped, strict=False)
+            stage = 2
+        if data is None:
+            repaired, _ = repair_json(stripped)
+            if isinstance(repaired, dict):
+                data, stage = repaired, 2
+        if isinstance(data, dict) and isinstance(data.get("actions"), list):
+            items = [it for it in data["actions"] if isinstance(it, dict)]
+            thought = data.get("thought")
+            clean = self.sanitize_thought(thought if isinstance(thought, str) else None)
+            return ParsedTurn(
+                thought=clean,
+                ops=_ops_from_items(items),
+                raw=llm_text,
+                parse_stage=stage,
+                thinking=thinking,
+            )
+        # Classic single-op (or unparseable) → base wraps parse() as 1 op.
+        return super().parse_turn(llm_text)
+
+    # ─── History round-trip (multi-op record) ──────────────────
+    # Self-contained: react stores the same logical record shape as md_array
+    # ({role, thought, ops}) but owns the code, and renders it back as a JSON
+    # object (md_array renders markdown). The op shape is the cross-format
+    # contract; the envelope is per-plugin.
+
+    def serialize_assistant_for_history(self, raw_text: str) -> dict:
+        turn = self.parse_turn(raw_text)
+        # Store an ops record only when at least one op names a tool. react's
+        # parser bundles bare non-reserved siblings as an actionless op (for
+        # live dropped-action infer), but for HISTORY a no-tool emission is
+        # drift — keep the raw text as content so it survives verbatim.
+        if turn.ops and any(op.action for op in turn.ops):
+            return {
+                "role": "assistant",
+                "thought": turn.thought or "",
+                "ops": [
+                    {"action": op.action, "action_input": op.action_input or {}}
+                    for op in turn.ops
+                ],
+            }
+        return {
+            "role": "assistant",
+            "content": self.sanitize_thought(raw_text) or "",
+        }
+
+    def render_assistant_from_history(self, record: dict) -> dict:
+        ops = record.get("ops")
+        if isinstance(ops, list) and ops:
+            flat = []
+            for o in ops:
+                if not isinstance(o, dict):
+                    continue
+                op = {"action": o.get("action")}
+                ai = o.get("action_input")
+                if isinstance(ai, dict):
+                    op.update(ai)
+                elif ai is not None:
+                    op["action_input"] = ai  # non-dict (legacy) — keep nested
+                flat.append(op)
+            content = json.dumps(
+                {"thought": record.get("thought", ""), "actions": flat},
+                ensure_ascii=False,
+            )
+            return {"role": "assistant", "content": content}
+        # Legacy single-op record ({thought, action, action_input}) → base
+        # round-trip via render_full_example (renders as a 1-op actions array).
+        return super().render_assistant_from_history(record)
 
     # ─── Recovery ──────────────────────────────────────────────
 

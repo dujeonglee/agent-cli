@@ -221,72 +221,80 @@ class TestNaturalLanguageConversion:
         msg = {
             "role": "assistant",
             "thought": "auth.py를 읽어 구조를 파악해야 한다",
-            "action": "read_file",
-            "action_input": {"path": "src/auth.py"},
+            "ops": [{"action": "read_file", "action_input": {"path": "src/auth.py"}}],
         }
         result = _to_natural_language(msg, wf)
         assert result["role"] == "assistant"
-        # ReAct round-trips structured fields back to the JSON wire
-        # shape, so the model sees the same emission shape regardless
-        # of whether the turn came from live buffer or history.
+        # ReAct round-trips the ops record back to the multi-op JSON wire
+        # shape, so the model sees the same emission shape regardless of
+        # whether the turn came from live buffer or history.
         parsed = json.loads(result["content"])
         assert parsed["thought"] == "auth.py를 읽어 구조를 파악해야 한다"
-        assert parsed["action"] == "read_file"
-        assert parsed["action_input"] == {"path": "src/auth.py"}
+        assert parsed["actions"] == [{"action": "read_file", "path": "src/auth.py"}]
 
     def test_assistant_complete(self, wf):
         msg = {
             "role": "assistant",
             "thought": "모든 작업이 완료되었다",
-            "action": "complete",
-            "action_input": {"result": "JWT 리팩토링 완료"},
+            "ops": [
+                {"action": "complete", "action_input": {"result": "JWT 리팩토링 완료"}}
+            ],
         }
         result = _to_natural_language(msg, wf)
         assert result["role"] == "assistant"
         # complete uses the same JSON wire shape — no special-case
         # natural-language formatting.
         parsed = json.loads(result["content"])
-        assert parsed["action"] == "complete"
-        assert parsed["action_input"]["result"] == "JWT 리팩토링 완료"
+        assert parsed["actions"] == [
+            {"action": "complete", "result": "JWT 리팩토링 완료"}
+        ]
 
     def test_assistant_delegate(self, wf):
         msg = {
             "role": "assistant",
             "thought": "explorer에게 의존성 분석을 위임하겠다",
-            "action": "delegate",
-            "action_input": {
-                "tasks": [{"task": "auth.py 의존성 조사", "agent": "explorer"}]
-            },
+            "ops": [
+                {
+                    "action": "delegate",
+                    "action_input": {
+                        "tasks": [{"task": "auth.py 의존성 조사", "agent": "explorer"}]
+                    },
+                }
+            ],
         }
         result = _to_natural_language(msg, wf)
         parsed = json.loads(result["content"])
-        assert parsed["action"] == "delegate"
-        assert parsed["action_input"]["tasks"][0]["agent"] == "explorer"
+        assert parsed["actions"][0]["action"] == "delegate"
+        assert parsed["actions"][0]["tasks"][0]["agent"] == "explorer"
 
     def test_assistant_shell(self, wf):
         msg = {
             "role": "assistant",
             "thought": "테스트를 실행하겠다",
-            "action": "shell",
-            "action_input": {"command": "pytest tests/ -v"},
+            "ops": [
+                {"action": "shell", "action_input": {"command": "pytest tests/ -v"}}
+            ],
         }
         result = _to_natural_language(msg, wf)
         parsed = json.loads(result["content"])
-        assert parsed["action"] == "shell"
-        assert parsed["action_input"]["command"] == "pytest tests/ -v"
+        assert parsed["actions"] == [{"action": "shell", "command": "pytest tests/ -v"}]
 
     def test_assistant_run_skill(self, wf):
         msg = {
             "role": "assistant",
             "thought": "코드를 요약하겠다",
-            "action": "run_skill",
-            "action_input": {"name": "summarize", "arguments": "src/"},
+            "ops": [
+                {
+                    "action": "run_skill",
+                    "action_input": {"name": "summarize", "arguments": "src/"},
+                }
+            ],
         }
         result = _to_natural_language(msg, wf)
         parsed = json.loads(result["content"])
-        assert parsed["action"] == "run_skill"
-        assert parsed["action_input"]["name"] == "summarize"
-        assert parsed["action_input"]["arguments"] == "src/"
+        assert parsed["actions"][0]["action"] == "run_skill"
+        assert parsed["actions"][0]["name"] == "summarize"
+        assert parsed["actions"][0]["arguments"] == "src/"
 
     def test_observation_read_file(self, wf):
         # Tool-result records carry NO args (history.jsonl stores only
@@ -333,15 +341,13 @@ class TestNaturalLanguageConversion:
         with empty defaults vs full content)."""
         msg = {
             "role": "assistant",
-            "action": "read_file",
-            "action_input": {"path": "test.py"},
+            "ops": [{"action": "read_file", "action_input": {"path": "test.py"}}],
         }
         result = _to_natural_language(msg, wf)
         parsed = json.loads(result["content"])
         assert parsed == {
             "thought": "",
-            "action": "read_file",
-            "action_input": {"path": "test.py"},
+            "actions": [{"action": "read_file", "path": "test.py"}],
         }
 
     def test_assistant_plain_content(self, wf):
@@ -417,8 +423,12 @@ class TestGetMessagesIntegration:
             {
                 "role": "assistant",
                 "thought": "현재 구조를 파악하기 위해 auth.py를 읽겠다",
-                "action": "read_file",
-                "action_input": {"read_file_reads": [{"path": "src/auth.py"}]},
+                "ops": [
+                    {
+                        "action": "read_file",
+                        "action_input": {"read_file_reads": [{"path": "src/auth.py"}]},
+                    }
+                ],
             },
         )
         _add(
@@ -434,28 +444,32 @@ class TestGetMessagesIntegration:
             {
                 "role": "assistant",
                 "thought": "리팩토링이 완료되었다",
-                "action": "complete",
-                "action_input": {"result": "AuthManager 리팩토링 완료"},
+                "ops": [
+                    {
+                        "action": "complete",
+                        "action_input": {"result": "AuthManager 리팩토링 완료"},
+                    }
+                ],
             },
         )
 
         msgs = ctx.get_messages()
         assert len(msgs) == 4
         assert msgs[0] == {"role": "user", "content": "auth.py를 리팩토링 해줘"}
-        # Assistant turns round-trip back to the JSON wire shape.
+        # Assistant turns round-trip back to the multi-op JSON wire shape.
         parsed_call = json.loads(msgs[1]["content"])
-        assert parsed_call["action"] == "read_file"
-        assert parsed_call["action_input"] == {
-            "read_file_reads": [{"path": "src/auth.py"}]
-        }
+        assert parsed_call["actions"] == [
+            {"action": "read_file", "read_file_reads": [{"path": "src/auth.py"}]}
+        ]
         # Observation stays in natural-language ``[tool]`` header form; the
         # tool-result record carries no args, so no path label here.
         assert "[read_file]" in msgs[2]["content"]
         assert "class AuthManager" in msgs[2]["content"]
         # complete uses the same JSON wire shape.
         parsed_complete = json.loads(msgs[3]["content"])
-        assert parsed_complete["action"] == "complete"
-        assert parsed_complete["action_input"]["result"] == "AuthManager 리팩토링 완료"
+        assert parsed_complete["actions"] == [
+            {"action": "complete", "result": "AuthManager 리팩토링 완료"}
+        ]
 
     def test_artifact_paths_preserved_in_messages(self, ctx):
         """Artifact paths from observations appear in get_messages output."""

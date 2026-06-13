@@ -243,8 +243,12 @@ class TestBuildAgentDescriptions:
         from agent_cli.prompts.system_prompt import build_agent_descriptions
 
         desc = build_agent_descriptions()
-        assert '"agent"' in desc  # nested key, not prefixed
-        assert '"delegate_tasks"' in desc  # top-level key carries the tool prefix
+        assert '"agent"' in desc  # nested key inside the task
+        # Default format is multi-op now (Step 2): render_action_input flattens
+        # the `delegate_` prefix to the flat op shape, so the top-level key is
+        # the plain `"tasks"`, not the prefixed `"delegate_tasks"`.
+        assert '"tasks"' in desc
+        assert '"delegate_tasks"' not in desc
 
     def test_empty_when_no_agents(self, tmp_path, monkeypatch):
         from agent_cli.prompts.system_prompt import build_agent_descriptions

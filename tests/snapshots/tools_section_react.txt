@@ -1,28 +1,26 @@
 ## Available Tools
-- read_file: Read one or more files in a single call. Provide read_file_reads as a list; each item reads one file with an optional mode. Lines are tagged as LINE#HASH:content for editing. For a single file, pass a one-element list. Per-item modes: stat=true (metadata + first 20 lines, NOT a read — follow up with a real read), search='regex' (matching regions with context, efficient for targeted lookups), line_start/line_end (partial read, 1-based inclusive), or none (full file).
-  Input JSON: {"read_file_reads": "array<object{path, line_start?, line_end?, search?, context?, stat?}>, required — List of reads (one or many). Each item reads one file. For a single file, pass a one-element list."}
-  read_file takes a LIST of reads (read_file_reads) — one call can read
-  many files or regions at once. For a single file, pass a one-element
-  list. Pick the right mode per read — full reads burn context budget,
-  but reading too little costs turns:
+- read_file: Read a file. Lines are tagged as LINE#HASH:content for editing. Modes: stat=true (metadata + first 20 lines, NOT a read — follow up with a real read), search='regex' (matching regions with context, efficient for targeted lookups), line_start/line_end (partial read, 1-based inclusive), or none (full file).
+  Input JSON: {"path": "string, required — File path to read", "line_start": "integer — Start line (1-based). Omit to read from beginning.", "line_end": "integer — End line (1-based, inclusive). Omit to read to end.", "search": "string — Regex pattern. Returns only matching lines with surrounding context.", "context": "integer — Lines of context before/after each search match (default 5).", "stat": "boolean — Metadata query only — line count, size, first 20 lines. Not a read."}
+  Each read_file op targets ONE file. To read several files, emit one
+  read_file op per file in the SAME turn (separate array elements — never
+  a list inside one op); independent files belong together in one turn and
+  save turns. Pick the right mode per op — a full file read burns context
+  budget, but reading too little costs turns:
 
   1. stat — metadata query, NOT a read (like Unix `stat`). Returns line
      count + size + the first 20 lines so you can pick a real read mode.
-       {"read_file_reads": [{"path": "app.py", "stat": true}]}
+       {"action": "read_file", "path": "app.py", "stat": true}
   2. search — grep-style targeted lookup. Returns only matching regions
      with surrounding context. Prefer this when the user names a
      specific function, class, or symbol — even if the file looks small.
-       {"read_file_reads": [{"path": "app.py", "search": "login", "context": 5}]}
+       {"action": "read_file", "path": "app.py", "search": "login", "context": 5}
   3. Partial — you know the exact region. Aim for ~500 lines at a time
      so you capture surrounding context. Reading 30-50 lines just to
      peek at one function usually costs more turns when you have to
      come back for context.
-       {"read_file_reads": [{"path": "app.py", "line_start": 100, "line_end": 600}]}
+       {"action": "read_file", "path": "app.py", "line_start": 100, "line_end": 600}
   4. Full — the file is known-small or central to the task.
-       {"read_file_reads": [{"path": "app.py"}]}
-  5. Batch — read several files/regions in one call; each item picks its
-     own mode:
-       {"read_file_reads": [{"path": "app.py", "line_start": 100, "line_end": 600}, {"path": "util.py", "search": "login"}]}
+       {"action": "read_file", "path": "app.py"}
 
   Flow: for an unknown file, if its extension is supported by
   code_index (.c, .cc, .cjs, .cpp, .cxx, .go, .h, .h++, .hh, .hpp, .hxx, .java, .js, .jsx, .markdown, .md, .mjs, .py, .pyi, .rs, .ts, .tsx), call code_index mode='list' first.
@@ -30,9 +28,9 @@
   stat alone is never enough — if you stop after stat, you have only
   seen the first 20 lines.
 - shell: Run a shell command and return stdout/stderr.
-  Input JSON: {"shell_command": "string, required — Shell command to run", "shell_timeout": "integer — Timeout in seconds (default 30)"}
-- code_index: Code/markdown index queries via persistent tree-sitter SQLite store (read-only). Provide code_index_queries as a LIST; each item is one query with its own mode. One call can run many queries (modes may be mixed). For a single query, pass a one-element list.
-Modes (per item):
+  Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Timeout in seconds (default 30)"}
+- code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query.
+Modes:
   list      - file outline (defs + structural symbols, line ranges) [path]
   fetch     - single symbol body, hashline format for edit_file [path, name]
   lookup    - find symbol by name across the index [name, symbol_kind?]
@@ -44,27 +42,25 @@ Modes (per item):
   slice     - markdown LLM context: def body + optional callees/callers/types/macros [name, ...]
   build     - force full rebuild (rare - lazy build handles normal cases)
 Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <project_root>/.agent-cli/code_index.db, lazy-built and incrementally refreshed. For 'list'/'fetch' on paths outside the indexed root: on-demand parse (no DB write). Other modes require the indexed root.
-  Input JSON: {"code_index_queries": "array<object{mode, path?, name?, symbol_kind?, ref_kind?, search?, with_callees?, with_callers?, with_types?, with_macros?, depth?, max_bytes?}>, required — List of queries (one or many; modes may be mixed). For a single query, pass a one-element list."}
+  Input JSON: {"mode": "string, required — Operation. See tool description for per-mode params.", "path": "string — File path. Required for list/fetch/file.", "name": "string — Symbol name (exact, as shown by 'list'). Required for fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' also accepts the heading with marker (e.g. '## Setup').", "symbol_kind": "string — Symbol category filter. Optional for lookup. Required for kind. 'section' = markdown heading.", "ref_kind": "string — Reference site category. Optional for refs. call = invocation; name = bare identifier mention (callback, pointer); type = identifier in type position.", "search": "string — Optional regex (re.search) to filter symbol names. Applies to list and kind modes.", "with_callees": "boolean — slice mode: include callee bodies (transitive up to depth).", "with_callers": "boolean — slice mode: include caller bodies (transitive up to depth).", "with_types": "boolean — slice mode: include types/structs referenced inside target body.", "with_macros": "boolean — slice mode: include function-like macros invoked inside target body.", "depth": "integer — slice mode: transitive depth for callees/callers (default 1).", "max_bytes": "integer — slice mode: cap output bytes (default unlimited)."}
   Persistent code/markdown index backed by a SQLite store at
   ``<project_root>/.agent-cli/code_index.db``. Lazy-built on first
   query; sha1-incremental on every call after that, so it stays fresh
   with no manual invalidation.
 
-  code_index takes a LIST of queries in code_index_queries — one call can
-  run many queries at once, and modes may be mixed. For a single query,
-  pass a one-element list. Read-only (no file writes). Batch example
-  (fetch one symbol + lookup another in a single call):
-       {"code_index_queries": [{"mode": "fetch", "path": "auth.py", "name": "User.login"}, {"mode": "lookup", "name": "AgentLoop"}]}
+  Each code_index op runs ONE query. Read-only (no file writes). To run
+  several queries (modes may be mixed), emit several code_index ops in
+  the same turn.
 
-  Ten modes (each is one query item inside code_index_queries):
+  Ten modes (each op is one query):
 
   1. mode='list' — per-file outline (one symbol per line:
      ``parent.name (kind) file:start-end``). Replaces read_file:stat
      for any supported-extension file.
-       {"code_index_queries": [{"mode": "list", "path": "auth.py"}]}
-       {"code_index_queries": [{"mode": "list", "path": "src/foo.cpp"}]}
+       {"action": "code_index", "mode": "list", "path": "auth.py"}
+       {"action": "code_index", "mode": "list", "path": "src/foo.cpp"}
      ``search='<regex>'`` filters the outline by symbol name (re.search):
-       {"code_index_queries": [{"mode": "list", "path": "auth.py", "search": "login"}]}
+       {"action": "code_index", "mode": "list", "path": "auth.py", "search": "login"}
   2. mode='fetch' — single-symbol body in hashline format
      (``LINE#HASH:content``) so it pipes straight into edit_file
      without a separate read_file. Definition wins when a name has
@@ -75,35 +71,35 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
      hashline-formatted in one call, ready to edit; read_file would
      return the same lines as plain text and lose the edit_file
      shortcut.
-       {"code_index_queries": [{"mode": "fetch", "path": "auth.py", "name": "User.login"}]}
-       {"code_index_queries": [{"mode": "fetch", "path": "README.md", "name": "## Setup"}]}
+       {"action": "code_index", "mode": "fetch", "path": "auth.py", "name": "User.login"}
+       {"action": "code_index", "mode": "fetch", "path": "README.md", "name": "## Setup"}
   3. mode='lookup' — find a symbol by name ACROSS the whole index.
      Optional ``symbol_kind`` (function / type / variable / constant /
      section) filter.
-       {"code_index_queries": [{"mode": "lookup", "name": "AgentLoop"}]}
-       {"code_index_queries": [{"mode": "lookup", "name": "Setup", "symbol_kind": "section"}]}
+       {"action": "code_index", "mode": "lookup", "name": "AgentLoop"}
+       {"action": "code_index", "mode": "lookup", "name": "Setup", "symbol_kind": "section"}
   4. mode='kind' — list every symbol of a given kind in the index.
      Useful for "show me every section/function/type".
-       {"code_index_queries": [{"mode": "kind", "symbol_kind": "function"}]}
+       {"action": "code_index", "mode": "kind", "symbol_kind": "function"}
   5. mode='file' — every symbol in one file from the index (no re-parse).
-       {"code_index_queries": [{"mode": "file", "path": "agent_cli/loop.py"}]}
+       {"action": "code_index", "mode": "file", "path": "agent_cli/loop.py"}
   6. mode='refs' — every reference site for a name. Optional
      ``ref_kind`` (call / name / type) — ``call`` for invocation sites,
      ``name`` for bare-identifier mentions (callbacks), ``type`` for
      identifiers in type position.
-       {"code_index_queries": [{"mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}]}
+       {"action": "code_index", "mode": "refs", "name": "AgentLoop._call_llm", "ref_kind": "call"}
   7. mode='callers' — functions that call this one (from the callgraph).
-       {"code_index_queries": [{"mode": "callers", "name": "process"}]}
+       {"action": "code_index", "mode": "callers", "name": "process"}
   8. mode='callees' — functions called by this one.
-       {"code_index_queries": [{"mode": "callees", "name": "process"}]}
+       {"action": "code_index", "mode": "callees", "name": "process"}
   9. mode='slice' — LLM-context markdown blob: the symbol's
      definition body plus optional callees / callers / types / macros
      up to ``depth`` (default 1, max 5). Use this when you need to
      understand a function in the company of its neighbours.
-       {"code_index_queries": [{"mode": "slice", "name": "process", "with_callees": true, "with_types": true, "depth": 2}]}
+       {"action": "code_index", "mode": "slice", "name": "process", "with_callees": true, "with_types": true, "depth": 2}
   10. mode='build' — force a full rebuild. Rare — the per-query
       incremental refresh handles normal cases.
-       {"code_index_queries": [{"mode": "build"}]}
+       {"action": "code_index", "mode": "build"}
 
   Path scope: ``list`` and ``fetch`` on a path OUTSIDE the indexed root
   fall through to an on-demand parse (single file, no DB write).
@@ -158,7 +154,7 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
 - ready_for_review: Call this BEFORE complete to verify your work fulfills all requirements. The system will return the original request for you to review against. After reviewing, call complete if everything is done, or continue working if not.
   Input JSON: {"summary": "string, required — Brief summary of what you accomplished"}
 - edit_file: Edit a file using hashline refs from read_file. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
-  Input JSON: {"edit_file_path": "string, required — File path", "edit_file_edits": "array<object{op, pos, end?, lines?}>, required — List of edit operations"}
+  Input JSON: {"path": "string, required — File path", "op": "string, required", "pos": "string, required", "end": "string", "lines": "array<string>"}
 
   Hashline editing guide:
   read_file returns lines tagged as LINE#HASH:content, e.g.:
@@ -167,10 +163,12 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
   Use edit_file with hashline refs copied EXACTLY from read_file output.
   Ops: replace (pos[..end] → lines) | append / prepend (insert at pos) |
        delete (remove pos[..end] range, no lines).
-  - single edit:
-      {"edit_file_path": "app.py", "edit_file_edits": [{"op": "replace", "pos": "2#KT", "lines": ["    return \"hello\""]}]}
-  - batch in one call (edits apply to ORIGINAL state, no overlaps):
-      {"edit_file_path": "app.py", "edit_file_edits": [{"op": "replace", "pos": "5#aa", "end": "7#bb", "lines": ["int hp = 100;", "return hp;"]}, {"op": "delete", "pos": "12#cc"}, {"op": "append", "pos": "30#ee", "lines": ["// end"]}]}
+  - one edit per op:
+      {"action": "edit_file", "path": "app.py", "op": "replace", "pos": "2#KT", "lines": ["    return \"hello\""]}
+  - several edits to one file → several edit_file ops in the same turn
+    (non-overlapping regions; refs resolve by hash, so they survive line
+    shifts from earlier ops). If a later edit depends on an earlier
+    edit's RESULT, emit only the first now and re-read next turn.
   Constraints:
   - Read the target lines in the CURRENT turn before edit_file. Hashes
     from earlier turns drift if anything else touched the file — do not
@@ -184,14 +182,18 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
   - Use write_file only for creating new files, not for editing existing ones.
-  - Each edit references the ORIGINAL file state — the array is NOT a
-    sequential "apply then re-read" pipeline. Overlapping edits (same region
-    or ref) are rejected; combine them into one `replace`. If a later edit
-    depends on an earlier edit's RESULT, use separate edit_file calls with
-    read_file between them (observation sync shows the intermediate state).
+  - Each edit_file op applies ONE edit, referencing the file's ORIGINAL
+    state (the hashes from your last read). To make SEVERAL edits to the
+    SAME file, do them across separate turns — re-read the region between
+    edits (the observation shows the new state). Do NOT emit multiple
+    edit_file ops for the same file in one turn: the later ops' hashes go
+    stale once the first one applies. Editing DIFFERENT files in separate
+    ops in the same turn is fine — they don't interact.
 - delegate: Delegate tasks to subagents. Single task = sync, multiple tasks = parallel. Use context mode to control what the subagent knows.
-  Input JSON: {"delegate_tasks": "array<object{task, context?, tools?, agent?}>, required — List of tasks. Single item = sync, multiple = parallel."}
-  Always use the "tasks" array format. Single item = sync, multiple = parallel.
+  Input JSON: {"task": "string, required — Task description for the subagent", "context": "string — none (independent), fork (copy conversation history)", "tools": "array<string> — Allowed tools (omit for default set)", "agent": "string — Agent name to load role/config from .agent-cli/agents/{name}.md"}
+  Each delegate op runs ONE subagent task. Several delegate ops in the
+  same turn run in PARALLEL — emit several only when the tasks are
+  independent.
   Context modes per task:
   - "none" (default): subagent starts with no context. Task must be self-contained.
   - "fork": subagent receives a copy of the current conversation history.
@@ -199,12 +201,10 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
   - "agent": optionally specify a predefined agent from .agent-cli/agents/{name}.md.
     The agent file defines the subagent's role/principles and can set allowed-tools/model.
   Constraints:
-  - Multiple tasks run in PARALLEL. If task B depends on task A's result,
-    call delegate twice: first A, then use A's result to call B.
+  - If task B depends on task A's result, emit only A now; use its
+    result next turn.
   Examples:
-  - Single: {"delegate_tasks": [{"task": "Read /tmp/data.csv and count rows"}]}
-  - With context: {"delegate_tasks": [{"task": "Fix the bug we found", "context": "fork"}]}
-  - With agent: {"delegate_tasks": [{"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}]}
-  - Agent + context: {"delegate_tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]}
-  - Parallel (independent): {"delegate_tasks": [{"task": "Analyze A", "context": "fork"}, {"task": "Analyze B", "context": "fork"}]}
-  - Read-only: {"delegate_tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}"
+  - Single: {"action": "delegate", "task": "Read /tmp/data.csv and count rows"}
+  - With context: {"action": "delegate", "task": "Fix the bug we found", "context": "fork"}
+  - With agent: {"action": "delegate", "task": "Review this code for vulnerabilities", "agent": "security-reviewer"}
+  - Read-only: {"action": "delegate", "task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}"

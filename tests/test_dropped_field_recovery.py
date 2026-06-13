@@ -140,9 +140,29 @@ class TestReactPreservation:
 
 
 class TestCrossWireParity:
-    # NOTE: the dropped-action SAME-OUTCOME parity test compared prefix_md vs
-    # react; it is restored as md_array vs react in Step 2 (react's multi-op
-    # shape lands then). See the consolidation-roadmap memory.
+    def test_dropped_action_same_outcome(self):
+        # The two shipped multi-op formats reach the SAME dropped-action
+        # recovery from the same semantic emission (an op with no `action`,
+        # only a tool-prefixed param). react (JSON) and md_array (markdown)
+        # differ only in envelope; the op shape + infer_action are identical.
+        rt = get("react").parse_turn(
+            '{"thought": "x", "actions": [{"shell_command": "ls"}]}'
+        )
+        mt = get("md_array").parse_turn(
+            '## Thought\nx\n\n## Action\n[{"shell_command": "ls"}]'
+        )
+        assert len(rt.ops) == len(mt.ops) == 1
+        assert rt.ops[0].action is None and mt.ops[0].action is None
+        assert (
+            rt.ops[0].action_input
+            == mt.ops[0].action_input
+            == {"shell_command": "ls"}
+        )
+        assert (
+            infer_action(rt.ops[0].action_input)
+            == infer_action(mt.ops[0].action_input)
+            == "shell"
+        )
 
     def test_shipped_plugins_optional_by_default(self):
         for name in ("react", "md_array"):

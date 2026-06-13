@@ -1340,12 +1340,16 @@ class TestRunLoopSchemaMismatch:
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
-        # read_file requires `path`, but model sends `file`
+        # write_file requires `path` + `content`; the model omits `path`. (A
+        # top-level required field, caught by validate. read_file's required
+        # field is the inner `reads[].path`, which multi-op wrapping nests
+        # below the validated top level — so a bad read item wouldn't surface
+        # here. write_file's `path` is top-level after wrap.)
         bad_call = json.dumps(
             {
                 "thought": "trying",
-                "action": "read_file",
-                "action_input": {"file": "x.py"},
+                "action": "write_file",
+                "action_input": {"content": "x"},
             }
         )
         provider = MagicMock()
@@ -1371,8 +1375,9 @@ class TestRunLoopSchemaMismatch:
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
+        # write_file with empty input → missing top-level required `path`.
         bad_call = json.dumps(
-            {"thought": "t", "action": "read_file", "action_input": {}}
+            {"thought": "t", "action": "write_file", "action_input": {}}
         )
         provider = MagicMock()
         provider.call.side_effect = [

@@ -155,7 +155,20 @@ def _build_edit_file_inline(wire_format) -> str:
 {_indent(ex_batch)}"""
 
     batch_constraint = (
-        ""
+        # Multi-op: each edit_file op carries ONE edit (the per-tool `edits`
+        # array is unwrapped — nesting a batch array inside the op array is
+        # what broke 27B). So SEVERAL edits to the SAME file must go across
+        # turns, NOT as several edit_file ops in one turn: every op's hashes
+        # reference the ORIGINAL file state, so after the first op rewrites
+        # the lines the later ops mismatch.
+        """
+  - Each edit_file op applies ONE edit, referencing the file's ORIGINAL
+    state (the hashes from your last read). To make SEVERAL edits to the
+    SAME file, do them across separate turns — re-read the region between
+    edits (the observation shows the new state). Do NOT emit multiple
+    edit_file ops for the same file in one turn: the later ops' hashes go
+    stale once the first one applies. Editing DIFFERENT files in separate
+    ops in the same turn is fine — they don't interact."""
         if getattr(wire_format, "multi_op", False)
         else """
   - Each edit references the ORIGINAL file state — the array is NOT a

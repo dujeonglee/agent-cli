@@ -139,10 +139,11 @@ class TestParseReturnsParsedAction:
 
 
 class TestRenderFullExample:
-    """The single rendering hook the Format Rules builder calls. ReAct
-    emits the bare JSON dict — full schema fields, with ``thought``
-    substituting a short placeholder when ``None`` so the reasoning
-    slot stays visible in skill / agent invocation examples.
+    """The single rendering hook the format-rules / invocation examples call.
+    Multi-op ReAct emits ``{"thought": ..., "actions": [{"action": tool,
+    ...flat params}]}`` — one op of the multi-op shape, the action spliced
+    into the flat op. ``thought`` substitutes a short placeholder when ``None``
+    so the reasoning slot stays visible in skill / agent invocation examples.
     """
 
     def test_full_emission_with_thought(self):
@@ -151,11 +152,8 @@ class TestRenderFullExample:
             action="tool_name",
             action_input="{...}",
         )
-        assert out == (
-            '{"thought": "your reasoning", '
-            '"action": "tool_name", '
-            '"action_input": {...}}'
-        )
+        # action_input "{...}" isn't valid JSON → left as the placeholder op.
+        assert out == '{"thought": "your reasoning", "actions": [{...}]}'
 
     def test_thought_none_substitutes_placeholder(self):
         """``thought=None`` is the skill / agent invocation example
@@ -169,20 +167,19 @@ class TestRenderFullExample:
             action_input='{"name": "x", "arguments": "y"}',
         )
         assert out == (
-            '{"thought": "reasoning here", '
-            '"action": "run_skill", '
-            '"action_input": {"name": "x", "arguments": "y"}}'
+            '{"thought": "reasoning here", "actions": '
+            '[{"action": "run_skill", "name": "x", "arguments": "y"}]}'
         )
 
     def test_action_input_string_passed_verbatim(self):
-        """The plugin receives a JSON string, not a dict, so the caller
-        controls whitespace / key order. Plugin must splice it as-is."""
+        """The plugin receives a JSON string of the params; it splices the
+        action in to form one flat op and wraps it in the actions array."""
         out = ReActFormat().render_full_example(
             thought="hi",
             action="x",
             action_input='{"a": 1, "b": 2}',
         )
-        assert '"action_input": {"a": 1, "b": 2}' in out
+        assert '"actions": [{"action": "x", "a": 1, "b": 2}]' in out
 
 
 class TestRenderActionInput:
@@ -261,6 +258,8 @@ class TestSerializeAssistantForHistory:
     fallback) in isolation."""
 
     def test_parses_react_json_into_role_keyed_dict(self):
+        # Multi-op record: {role, thought, ops}. A classic single-op emission
+        # serializes as a one-op record.
         text = (
             '{"thought": "reading", "action": "read_file", '
             '"action_input": {"path": "x.py"}}'
@@ -269,8 +268,7 @@ class TestSerializeAssistantForHistory:
         assert out == {
             "role": "assistant",
             "thought": "reading",
-            "action": "read_file",
-            "action_input": {"path": "x.py"},
+            "ops": [{"action": "read_file", "action_input": {"path": "x.py"}}],
         }
 
     def test_partial_react_with_only_action(self):
@@ -278,7 +276,20 @@ class TestSerializeAssistantForHistory:
         text = '{"action": "read_file", "action_input": {"path": "x"}}'
         out = ReActFormat().serialize_assistant_for_history(text)
         assert out["role"] == "assistant"
-        assert out["action"] == "read_file"
+        assert out["ops"] == [{"action": "read_file", "action_input": {"path": "x"}}]
+
+    def test_multi_op_serializes_all_ops(self):
+        # A genuine multi-op turn stores every op in order.
+        text = (
+            '{"thought": "two reads", "actions": ['
+            '{"action": "read_file", "path": "a"}, '
+            '{"action": "read_file", "path": "b"}]}'
+        )
+        out = ReActFormat().serialize_assistant_for_history(text)
+        assert out["ops"] == [
+            {"action": "read_file", "action_input": {"path": "a"}},
+            {"action": "read_file", "action_input": {"path": "b"}},
+        ]
 
     def test_partial_react_with_only_thought_falls_back_to_content(self):
         # The base default's serialize routes through ``self.parse()``
@@ -328,67 +339,75 @@ class TestRenderAssistantFromHistory:
     Self-reinforcement of the wire format survives overflow recovery."""
 
     def test_action_yields_json_wire_shape(self):
+        # Multi-op record → {"thought": ..., "actions": [flat op]} JSON.
         record = {
             "role": "assistant",
             "thought": "reading first",
-            "action": "read_file",
-            "action_input": {"path": "src/foo.py"},
+            "ops": [{"action": "read_file", "action_input": {"path": "src/foo.py"}}],
         }
         msg = ReActFormat().render_assistant_from_history(record)
         assert msg["role"] == "assistant"
-        # Content is a JSON object — re-emit of the original wire shape.
         parsed = json.loads(msg["content"])
         assert parsed == {
             "thought": "reading first",
-            "action": "read_file",
-            "action_input": {"path": "src/foo.py"},
+            "actions": [{"action": "read_file", "path": "src/foo.py"}],
         }
 
-    def test_key_order_thought_action_input(self):
-        # Canonical key order in the re-emit so the wire shape model
-        # sees is stable across recoveries.
+    def test_multi_op_round_trips_all_ops(self):
         record = {
             "role": "assistant",
-            "action": "read_file",
-            "thought": "reading",
-            "action_input": {"path": "x.py"},
+            "thought": "two reads",
+            "ops": [
+                {"action": "read_file", "action_input": {"path": "a"}},
+                {"action": "shell", "action_input": {"command": "ls"}},
+            ],
         }
-        msg = ReActFormat().render_assistant_from_history(record)
-        # Order in the serialized string: thought, action, action_input.
-        content = msg["content"]
-        assert content.index('"thought"') < content.index('"action"')
-        assert content.index('"action"') < content.index('"action_input"')
+        parsed = json.loads(
+            ReActFormat().render_assistant_from_history(record)["content"]
+        )
+        assert parsed["actions"] == [
+            {"action": "read_file", "path": "a"},
+            {"action": "shell", "command": "ls"},
+        ]
+
+    def test_key_order_thought_before_actions(self):
+        # Canonical key order: thought, then actions.
+        record = {
+            "role": "assistant",
+            "ops": [{"action": "read_file", "action_input": {"path": "x.py"}}],
+            "thought": "reading",
+        }
+        content = ReActFormat().render_assistant_from_history(record)["content"]
+        assert content.index('"thought"') < content.index('"actions"')
 
     def test_complete_emits_same_json_shape(self):
-        # No special-case for complete — same JSON wire shape.
+        # No special-case for complete — same multi-op JSON wire shape.
         record = {
             "role": "assistant",
             "thought": "task done",
-            "action": "complete",
-            "action_input": {"result": "Found 3 files."},
+            "ops": [
+                {"action": "complete", "action_input": {"result": "Found 3 files."}}
+            ],
         }
-        msg = ReActFormat().render_assistant_from_history(record)
-        parsed = json.loads(msg["content"])
-        assert parsed["action"] == "complete"
-        assert parsed["action_input"] == {"result": "Found 3 files."}
+        parsed = json.loads(
+            ReActFormat().render_assistant_from_history(record)["content"]
+        )
         assert parsed["thought"] == "task done"
+        assert parsed["actions"] == [{"action": "complete", "result": "Found 3 files."}]
 
     def test_missing_thought_renders_as_empty_string(self):
-        # Defensive shape: action without thought field. The re-emit
-        # uses an empty string rather than omitting the key so the
-        # wire shape stays uniform across recoveries. The 3-field JSON
-        # object shape is constant; only the values vary.
+        # Defensive shape: ops without a thought field → empty-string thought
+        # so the wire shape stays uniform across recoveries.
         record = {
             "role": "assistant",
-            "action": "shell",
-            "action_input": {"command": "ls"},
+            "ops": [{"action": "shell", "action_input": {"command": "ls"}}],
         }
-        msg = ReActFormat().render_assistant_from_history(record)
-        parsed = json.loads(msg["content"])
+        parsed = json.loads(
+            ReActFormat().render_assistant_from_history(record)["content"]
+        )
         assert parsed == {
             "thought": "",
-            "action": "shell",
-            "action_input": {"command": "ls"},
+            "actions": [{"action": "shell", "command": "ls"}],
         }
 
     def test_non_ascii_preserved_verbatim(self):
@@ -411,6 +430,8 @@ class TestRenderAssistantFromHistory:
         # bare string). The re-render must produce VALID JSON — earlier
         # behaviour str()'d the string and spliced it raw, producing
         # ``"action_input": the answer`` (no quotes, invalid JSON).
+        # Legacy single-op record (no `ops` key) with a bare-string
+        # action_input → the base round-trip path. Must produce VALID JSON.
         record = {
             "role": "assistant",
             "thought": "done",
@@ -418,13 +439,12 @@ class TestRenderAssistantFromHistory:
             "action_input": "the answer",
         }
         msg = ReActFormat().render_assistant_from_history(record)
-        # The whole content must parse back as valid JSON.
+        # The whole content must parse back as valid JSON (not bare/unquoted).
         parsed = json.loads(msg["content"])
-        assert parsed == {
-            "thought": "done",
-            "action": "complete",
-            "action_input": "the answer",
-        }
+        assert parsed["thought"] == "done"
+        assert parsed["actions"] == [
+            {"action": "complete", "action_input": "the answer"}
+        ]
 
     def test_no_structured_fields_falls_back_to_content(self):
         # Defensive: a record that ``serialize_assistant_for_history``

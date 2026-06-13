@@ -533,7 +533,7 @@ class TestFileExtractHelper:
             '{"thought": "write it", "action": "write_file", '
             '"action_input": {"write_file_path": "r.c", "write_file_content": "y"}}'
         )
-        assert rec["action"] == "write_file"
+        assert rec["ops"][0]["action"] == "write_file"
         assert extract_file_paths([rec]) == ["r.c"]
 
     def test_extracts_all_paths_from_multi_op_record(self):

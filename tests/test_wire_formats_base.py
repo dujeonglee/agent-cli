@@ -187,24 +187,24 @@ class TestParseTurnDefaultWrapper:
         turn = _ConfigurableFormat(pa).parse_turn("raw")
         assert turn.ops[0].truncated is True
 
-    def test_real_formats_never_terminal_and_match_parse(self):
-        # For react the one-op turn equals what parse() dispatches, and
-        # `terminal` is always False (it completes via a `complete` op).
-        for name in ("react",):
-            wf = get(name)
-            text = wf.render_full_example(
-                thought="reason",
-                action="shell",
-                action_input=wf.render_action_input({"command": "ls"}),
-            )
-            pa = wf.parse(text)
-            turn = wf.parse_turn(text)
-            assert turn.terminal is False
-            assert len(turn.ops) == 1
-            assert turn.ops[0].action == pa.action
-            assert turn.ops[0].action_input == pa.action_input
-            assert turn.thought == pa.thought
-            assert turn.parse_stage == pa.parse_stage
+    def test_react_render_round_trips_through_parse_turn(self):
+        # react is multi-op now: render_full_example emits {thought, actions:
+        # [op]} and parse_turn reads it back as a 1-op turn. `terminal` is
+        # always False (completion is an explicit `complete` op). parse() is
+        # the single-op projection and no longer mirrors parse_turn for a
+        # multi-op format, so we verify parse_turn directly.
+        wf = get("react")
+        text = wf.render_full_example(
+            thought="reason",
+            action="shell",
+            action_input=wf.render_action_input({"command": "ls"}),
+        )
+        turn = wf.parse_turn(text)
+        assert turn.terminal is False
+        assert len(turn.ops) == 1
+        assert turn.ops[0].action == "shell"
+        assert turn.ops[0].action_input == {"command": "ls"}
+        assert turn.thought == "reason"
 
 
 class TestABCConformance:

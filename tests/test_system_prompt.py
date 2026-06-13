@@ -167,12 +167,11 @@ class TestMultiOpPromptBranches:
         assert "`ask` vs finishing" in section
         assert "`ask` vs `complete`" not in section
 
-    def test_default_formats_keep_batch_and_complete(self):
-        # Sanity inverse: a singular format still renders batch + complete.
-        section = _build_tools_section(_SNAPSHOT_TOOLS, _get_wire_format("react"))
-        assert "- complete:" in section
-        assert "read_file_reads" in section
-        assert "5. Batch" in section
+    # NOTE: the "singular format keeps batch + complete" inverse test was
+    # removed when react became multi-op (Step 2) — no shipped single-op
+    # format remains to exercise the non-multi_op branch. The single-op
+    # rendering branches are now reachable only by a synthetic format; their
+    # cleanup is a follow-up (consolidation roadmap Step 3/4).
 
     # ── Root fix (DESIGN Exp 8): the tool Input-JSON schema, not just the
     # inline guide, must advertise the FLAT single-op shape under multi-op.
@@ -326,45 +325,35 @@ class TestBuildSystemPrompt:
         # Should be inline, not a separate section
         assert "## Hashline" not in prompt
 
-    def test_format_rules_enforce_single_action_per_turn(self):
-        """Rule 9: explicit single-action enforcement. Prior to this
-        rule the single-action shape was only implied by the example
-        JSON. Nothing told the model that an `actions` array or a
-        list in `action` was off-limits."""
+    def test_format_rules_allow_multi_op_actions(self):
+        """The default format is multi-op now (Step 2): the rules ENCOURAGE
+        batching independent ops into one turn — the inverse of the old
+        single-action enforcement. (Was test_format_rules_enforce_single_
+        action_per_turn — single-action is no longer the contract.)"""
         import re
 
         prompt = build_system_prompt(_make_caps(), ["shell"])
         flat = re.sub(r"\s+", " ", prompt)
-        # "Exactly ONE action" or similar phrasing
-        assert "ONE action" in flat or "exactly one" in flat.lower()
-        # Explicitly rejects actions array / list-valued action
-        assert "actions" in flat.lower()  # names the wrong shape
-        assert "array" in flat.lower() or "list" in flat.lower()
+        assert "actions" in flat.lower()  # the multi-op envelope field
+        assert "Batch independent" in flat or "one or more tool calls" in flat
 
     def test_format_rules_nudge_efficient_action(self):
-        """Rule 10: within a single action, favor turn-efficient
-        choices — batch input fields, shell batching (pipelines +
-        multi-file surveys + listings), narrow reads, and no
-        peek-then-redo. Intent-level checks so rewording doesn't
-        break the test."""
+        """Multi-op turn efficiency: the format rules nudge batching
+        INDEPENDENT operations into ONE turn (the multi-op form of "make the
+        turn count"), and the inline guides name per-turn-saving levers —
+        narrow reads and no peek-then-redo. Intent-level checks so rewording
+        doesn't break the test.
+
+        (The single-op shared-tail had a shell-batching nudge — "one shell
+        call replaces many read turns" — that the multi-op format rules
+        dropped. Restoring that to the multi-op rules is a separate md_array
+        prompt-content improvement, behavior-affecting so bakeoff-validated.)"""
         import re
 
-        prompt = build_system_prompt(_make_caps(), ["shell", "edit_file"])
+        prompt = build_system_prompt(_make_caps(), ["shell", "edit_file", "read_file"])
         flat = re.sub(r"\s+", " ", prompt)
-        # Batch input fields named (at least one of edit_file.edits /
-        # delegate.tasks appears in the guidance).
-        assert "edits" in flat or "tasks" in flat
-        # Shell batching concept. Three flavors should be representable:
-        # pipelines, multi-file surveys, batch listings — we accept any
-        # of those keywords as evidence the concept is present.
-        assert (
-            "pipeline" in flat.lower()
-            or "multi-file" in flat.lower()
-            or ("survey" in flat.lower() and "shell" in flat.lower())
-        )
-        # When shell survey suffices, don't redo with read_file — the
-        # boundary between shell batching and read_file must be named.
-        assert "read_file" in flat
+        # Multi-op batching nudge: independent ops belong in one turn.
+        assert "Batch independent" in flat or "batching saves turns" in flat
         # Narrow read guidance (search / targeted / narrow).
         assert "narrow" in flat.lower() or "targeted" in flat.lower()
         # No peek-then-redo anti-pattern.
@@ -454,28 +443,25 @@ class TestBuildSystemPrompt:
         # Recovery action is still spelled out.
         assert "re-read" in flat.lower() or "re-fetch" in flat.lower()
 
-    def test_hashline_guide_has_multi_edit_notes(self):
-        """Multi-edit notes in _HASHLINE_INLINE prevent the three
-        recurring drift patterns observed in S25FE-kernel session
-        1776946589:
-          1. Model assumes edits apply sequentially and uses
-             post-edit-1 hashes in edit 2.
-          2. Model submits overlapping edits (same ref / same region).
-          3. Model tries to modify lines that an earlier edit in the
-             same batch created.
-        All three are intent-level tripwires, not literal-string
-        checks. Whitespace is collapsed because the inline guide wraps
-        across lines."""
+    def test_hashline_guide_warns_same_file_multi_op_edits(self):
+        """Multi-op: each edit_file op is ONE edit referencing the file's
+        ORIGINAL state (the per-tool `edits` array is unwrapped). The guide
+        must warn against emitting several edit_file ops for the SAME file in
+        one turn — the later ops' hashes go stale after the first applies —
+        and point to separate turns. This is the multi-op form of the
+        sequential-hash-reuse drift (S25FE-kernel session 1776946589).
+        Whitespace is collapsed because the inline guide wraps across lines."""
         import re
 
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
         flat = re.sub(r"\s+", " ", prompt)
-        # (1) ORIGINAL state, not sequential pipeline
-        assert "ORIGINAL file state" in flat
-        # (2) overlap rejection with the fix instruction
-        assert "overlap" in flat.lower()
-        # (3) separate calls for dependent changes
-        assert "separate edit_file calls" in flat
+        # Each op references ORIGINAL state, not a sequential pipeline.
+        assert "ORIGINAL state" in flat
+        # Warns against same-file multi-op edits in one turn …
+        assert "same file in one turn" in flat
+        assert "stale" in flat
+        # … and points to separate turns instead.
+        assert "separate turns" in flat
 
     def test_delegate_included(self):
         prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
@@ -528,20 +514,12 @@ class TestBuildSystemPrompt:
         assert "ready_for_review" in prompt
         assert "complete" in prompt
 
-    def test_ready_for_review_before_complete_workflow(self):
-        """The prompt should instruct to call ready_for_review before complete."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        rfr_pos = prompt.index("ready_for_review")
-        complete_pos = prompt.index('"complete"')
-        assert rfr_pos < complete_pos
-
-    def test_workflow_review_before_complete(self):
-        """The prompt's workflow example shows ready_for_review preceding
-        complete. The redundant explicit rule was folded into the example
-        itself ("first verify with ready_for_review, then call complete")."""
-        prompt = build_system_prompt(_make_caps(), ["shell"])
-        assert "first verify with `ready_for_review`" in prompt
-        assert "then call `complete`" in prompt
+    # NOTE: the ready_for_review→complete workflow tests were removed when
+    # react became multi-op (Step 2). The multi-op format rules (react +
+    # md_array) drop the "first verify with ready_for_review, then call
+    # complete" gate wording — completion is an explicit `complete` op and
+    # ready_for_review is model-invoked (DESIGN Exp 8). The single-op shared
+    # builder carried that gate; the multi-op rules deliberately don't.
 
     def test_environment_section_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
@@ -763,7 +741,10 @@ class TestBuildSystemPrompt:
         turns). Earlier wording — 'Pick the smallest mode' — only warned
         one side and reinforced the over-narrow tendency."""
         prompt = build_system_prompt(_make_caps(), ["read_file"])
-        assert "burn context budget" in prompt
+        # Multi-op wording: "a full file read burns context budget, but
+        # reading too little costs turns". Match the both-sides concept
+        # tolerant of burn/burns.
+        assert "context budget" in prompt
         assert "costs turns" in prompt or "more turns" in prompt
 
     def test_read_file_steers_to_code_index_when_active(self):
