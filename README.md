@@ -585,7 +585,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
-| `delegate` | 서브에이전트에 작업 위임 (에이전트 역할 지정 가능) |
+| `delegate` | 서브에이전트에 작업 위임 (한 op=한 task; 여러 delegate op = 병렬, 에이전트 역할 지정 가능) |
 | `read_context` | 세션 이력 조회 (현재 세션 기본, scope/sessions 필터) |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
@@ -595,9 +595,11 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### action_input 키 네이밍 규칙
 
-prefixed 도구의 `action_input` 키는 **소유 도구 이름을 prefix** 로 갖습니다 — `{tool}_{param}` (예: `shell_command`, `delegate_tasks`). 키만으로 도구가 결정되므로, 모델이 `action` 이름을 빠뜨려도 input 모양으로 도구를 복구합니다. 중첩 키(예: `tasks[].agent`)에는 prefix 가 붙지 않으며, 제어 도구(`complete` / `ask` / `run_skill` / `ready_for_review`)와 **flat-native 도구(`read_file`·`write_file`·`edit_file`·`code_index` — consolidation Step 3, plain `{path/mode, ...}`)** 는 표준 키를 그대로 씁니다.
+대부분의 도구는 **flat-native**입니다 (consolidation Step 3) — `action_input` 에 표준 키를 그대로 씁니다: 파일 도구(`read_file`/`write_file`/`edit_file`)·`code_index`는 `{path/mode, ...}`, `delegate`는 `{task, ...}`, 제어 도구(`complete`/`ask`/`run_skill`/`ready_for_review`)도 표준 키. 한 op = 한 대상이고, 여러 대상(여러 파일 읽기, 여러 쿼리, **여러 병렬 서브에이전트**)은 한 턴에 **op 을 여러 개** 냅니다.
 
-> 아래 예시들은 **가독성을 위해 prefix 를 생략한 표준 키**로 표기합니다 — prefixed 도구는 실제 wire 전송 시 각 최상위 키 앞에 `{tool}_` 가 붙습니다 (`{"command": ...}` → `{"shell_command": ...}`). 표준 키로 보내도 동작하며(prefix strip 은 no-op), flat-native 도구(`read_file`/`write_file`/`edit_file`/`code_index`)는 prefix 없이 그대로입니다. 단, 최상위 배열 키(`delegate_tasks`) 안의 **중첩 키는 prefix 가 붙지 않습니다**.
+남은 prefixed 도구는 `shell`(`shell_command`)뿐이며, MCP/외부 도구는 자체 스키마를 씁니다. wire-key prefix(`{tool}_{param}`) 메커니즘은 모델이 `action` 이름을 빠뜨려도 키 모양으로 도구를 복구하는 용도로 남아 있습니다(현재 prefixed 도구·미래 도구용).
+
+> 아래 예시들은 표준 키로 표기합니다 — flat-native 도구는 그대로 전송하면 되고, prefixed 도구(`shell`)는 실제 wire 에서 키 앞에 `{tool}_` 가 붙습니다 (`{"command": ...}` → `{"shell_command": ...}`; 표준 키로 보내도 strip 이 no-op 라 동작).
 
 ### read_file — 파일 읽기
 
@@ -863,7 +865,7 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 
 ### delegate — 서브에이전트 위임
 
-작업을 in-process 서브에이전트에 위임합니다. 컨텍스트 모드로 서브에이전트가 부모 맥락을 얼마나 알지 제어합니다:
+작업을 in-process 서브에이전트에 위임합니다. **한 op = 한 task** (flat-native). 컨텍스트 모드로 서브에이전트가 부모 맥락을 얼마나 알지 제어합니다:
 
 | 모드 | 동작 |
 |------|------|
@@ -871,12 +873,13 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 | `fork` | 부모 컨텍스트를 복사하여 실행. 맥락 인지 + 독립 |
 
 ```json
-{"action": "delegate", "action_input": {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}}
-{"action": "delegate", "action_input": {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]}}
-{"action": "delegate", "action_input": {"tasks": [{"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}]}}
-{"action": "delegate", "action_input": {"tasks": [{"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}]}}
-{"action": "delegate", "action_input": {"tasks": [{"task": "Fix the bug", "agent": "fixer", "context": "fork"}]}}
+{"action": "delegate", "action_input": {"task": "Read /tmp/data.csv and count rows"}}
+{"action": "delegate", "action_input": {"task": "Fix the bug we found", "context": "fork"}}
+{"action": "delegate", "action_input": {"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}}
+{"action": "delegate", "action_input": {"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}}
 ```
+
+**병렬 실행**: 한 턴에 delegate op 을 **여러 개** 내면 독립 서브에이전트가 **동시에**(threading) 실행됩니다 — 루프가 그 op 들을 모아 병렬 디스패치합니다. 독립 작업일 때만 여러 개를 내고, task B가 task A의 결과에 의존하면 A만 먼저 낸 뒤 다음 턴에 그 결과로 B를 호출하세요.
 
 `tools` 파라미터로 서브에이전트가 사용할 수 있는 도구를 제한할 수 있습니다.
 

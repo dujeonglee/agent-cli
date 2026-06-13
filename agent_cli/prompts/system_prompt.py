@@ -180,28 +180,29 @@ def _build_delegate_inline(wire_format) -> str:
     touching this builder. ReAct and envelope both implement that
     hook as identity (action_input is JSON in both formats today).
     """
+    # delegate is flat-native (consolidation Step 3): one op = one task, no
+    # `tasks` array. Several delegate ops in a turn run in PARALLEL — the loop
+    # batches a run of parallel_safe delegate ops through _run_parallel.
+    examples = [
+        ("Single", {"task": "Read /tmp/data.csv and count rows"}),
+        ("With context", {"task": "Fix the bug we found", "context": "fork"}),
+        (
+            "With agent",
+            {
+                "task": "Review this code for vulnerabilities",
+                "agent": "security-reviewer",
+            },
+        ),
+        (
+            "Read-only",
+            {
+                "task": "Review changes",
+                "context": "fork",
+                "tools": ["read_file", "shell"],
+            },
+        ),
+    ]
     if getattr(wire_format, "multi_op", False):
-        # Multi-op formats: one task per op — the turn's op array replaces the
-        # per-tool `tasks` batch; several delegate ops in one turn = parallel.
-        examples = [
-            ("Single", {"task": "Read /tmp/data.csv and count rows"}),
-            ("With context", {"task": "Fix the bug we found", "context": "fork"}),
-            (
-                "With agent",
-                {
-                    "task": "Review this code for vulnerabilities",
-                    "agent": "security-reviewer",
-                },
-            ),
-            (
-                "Read-only",
-                {
-                    "task": "Review changes",
-                    "context": "fork",
-                    "tools": ["read_file", "shell"],
-                },
-            ),
-        ]
         intro = (
             "  Each delegate op runs ONE subagent task. Several delegate ops "
             "in the\n  same turn run in PARALLEL — emit several only when the "
@@ -212,61 +213,10 @@ def _build_delegate_inline(wire_format) -> str:
             "use its\n    result next turn."
         )
     else:
-        examples = [
-            ("Single", {"tasks": [{"task": "Read /tmp/data.csv and count rows"}]}),
-            (
-                "With context",
-                {"tasks": [{"task": "Fix the bug we found", "context": "fork"}]},
-            ),
-            (
-                "With agent",
-                {
-                    "tasks": [
-                        {
-                            "task": "Review this code for vulnerabilities",
-                            "agent": "security-reviewer",
-                        }
-                    ]
-                },
-            ),
-            (
-                "Agent + context",
-                {
-                    "tasks": [
-                        {"task": "Fix the bug", "agent": "fixer", "context": "fork"}
-                    ]
-                },
-            ),
-            (
-                "Parallel (independent)",
-                {
-                    "tasks": [
-                        {"task": "Analyze A", "context": "fork"},
-                        {"task": "Analyze B", "context": "fork"},
-                    ]
-                },
-            ),
-            (
-                "Read-only",
-                {
-                    "tasks": [
-                        {
-                            "task": "Review changes",
-                            "context": "fork",
-                            "tools": ["read_file", "shell"],
-                        }
-                    ]
-                },
-            ),
-        ]
-        intro = (
-            '  Always use the "tasks" array format. '
-            "Single item = sync, multiple = parallel."
-        )
+        intro = "  Each delegate call runs ONE subagent task."
         dependency = (
-            "  - Multiple tasks run in PARALLEL. If task B depends on task "
-            "A's result,\n    call delegate twice: first A, then use A's "
-            "result to call B."
+            "  - If task B depends on task A's result, call delegate twice: "
+            "first A,\n    then use A's result to call B."
         )
     # Inline tool-guide examples show only the action_input dict —
     # the surrounding tool name (delegate) is already in the guide

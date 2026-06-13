@@ -896,7 +896,10 @@ class AgentLoop:
             return self._dispatch_op(llm_text, turn, turn.ops[0], outcome)
 
         results: list[dict] = []
-        for op in turn.ops:
+        ops = turn.ops
+        i = 0
+        while i < len(ops):
+            op = ops[i]
             # Turn-ending special actions: flush accumulated results BEFORE
             # the branch runs so its observation lands after the work done
             # so far (chronological order for the model).
@@ -904,6 +907,24 @@ class AgentLoop:
                 self._flush_op_results(llm_text, results)
                 results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
+            # Parallel batch: a run of ≥2 consecutive ops of the SAME
+            # parallel_safe tool dispatches concurrently into one combined
+            # observation (delegate: independent subagents). A lone
+            # parallel_safe op falls through to the normal per-op path so it
+            # keeps its B1/A4/A5 guards. Mutating tools (parallel_safe=False)
+            # always take the sequential per-op path — order is their
+            # correctness guarantee (write→edit same file, mkdir→touch).
+            tool = TOOLS.get(op.action) if op.action else None
+            if tool is not None and tool.parallel_safe:
+                j = i
+                while j < len(ops) and ops[j].action == op.action:
+                    j += 1
+                if j - i > 1:
+                    self._dispatch_parallel_batch(
+                        llm_text, turn, ops[i:j], outcome, accumulate=results
+                    )
+                    i = j
+                    continue
             r = self._dispatch_op(llm_text, turn, op, outcome, accumulate=results)
             if r is not None:
                 # Guard/recovery fired inside the op (B1/A4/A5/no-action):
@@ -912,6 +933,7 @@ class AgentLoop:
                 # intervention-first, results still preserved).
                 self._flush_op_results(llm_text, results)
                 return r
+            i += 1
         self._flush_op_results(llm_text, results)
         return self._CONTINUE
 
@@ -939,6 +961,68 @@ class AgentLoop:
             f"Observation: {combined}",
             tool_name="+".join(r["tool_name"] for r in results),
             success=all_ok,
+        )
+
+    def _dispatch_parallel_batch(
+        self, llm_text, turn, batch_ops, outcome, *, accumulate
+    ):
+        """Dispatch a run of ≥2 consecutive parallel_safe ops concurrently,
+        appending ONE combined result to *accumulate*.
+
+        Only ``delegate`` is wired today (the sole ``parallel_safe`` tool): each
+        op's flat input becomes one task spec → ``tool_delegate({tasks:[...]})``
+        → ``_run_parallel`` (real threading). This is what makes the prompt's
+        "several delegate ops in one turn run in parallel" actually true (the
+        N-op loop is otherwise sequential).
+
+        A future read-only ``parallel_safe`` tool with no internal concurrent
+        engine would fan its ops over a thread-pool of per-op ``run()`` calls
+        in the extension slot below — not wired (no other tool opts in).
+        """
+        tool_name = batch_ops[0].action
+        # Render one action card per op (the model's flat emission, pre-wrap),
+        # matching the single-op render so the UI shows every delegate op.
+        for op in batch_ops:
+            disp = op.action_input if op.action_input is not None else {}
+            render_step(
+                "action",
+                "",
+                self.turn,
+                tool_name=tool_name,
+                tool_input=json.dumps(disp, ensure_ascii=False)
+                if isinstance(disp, dict)
+                else str(disp),
+            )
+
+        if tool_name != "delegate":
+            # Extension slot: a parallel_safe tool with no internal concurrent
+            # engine (e.g. a future read-only read_file/code_index opt-in) would
+            # fan its ops out over a thread-pool of per-op run() calls here.
+            raise NotImplementedError(
+                f"parallel_safe batch dispatch not wired for {tool_name!r}; only "
+                "delegate has an internal concurrent engine (_run_parallel)."
+            )
+
+        # delegate: assemble each flat op into one task spec and run the batch
+        # through the existing parallel engine (one combined observation).
+        specs = [
+            TOOLS["delegate"].strip_prefix(op.action_input or {}) for op in batch_ops
+        ]
+        result = self._dispatch_tool_with_hooks("delegate", {"tasks": specs})
+        observation = result.output if result.success else result.error
+        render_step(
+            "observation",
+            observation,
+            self.turn,
+            tool_name=tool_name,
+            success=result.success,
+        )
+        accumulate.append(
+            {
+                "tool_name": tool_name,
+                "observation": observation,
+                "success": result.success,
+            }
         )
 
     def _dispatch_op(self, llm_text: str, turn, op, outcome: dict, accumulate=None):
@@ -1569,16 +1653,13 @@ class AgentLoop:
             )
 
         raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
-        if "tasks" not in raw and "task" in raw:
-            raw = {
-                "tasks": [
-                    {
-                        "task": raw["task"],
-                        "context": raw.get("context", "none"),
-                        **({"tools": raw["tools"]} if raw.get("tools") else {}),
-                    }
-                ]
-            }
+        # Flat-native delegate (consolidation Step 3): a single op IS the flat
+        # task spec — wrap the whole dict as a one-element tasks list so all
+        # fields (task / context / tools / agent) survive. A parallel batch
+        # arrives already shaped as ``{tasks:[...]}`` (assembled by the loop's
+        # ``_dispatch_parallel_batch``) and passes through untouched.
+        if "tasks" not in raw:
+            raw = {"tasks": [raw]}
         result = tool_delegate(
             args=raw,
             parent_ctx=self.ctx,

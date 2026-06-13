@@ -184,7 +184,7 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
     refs go stale (they do NOT follow shifted lines). Re-read the region
     between edits — the observation shows the new state. Editing DIFFERENT
     files in separate ops in the same turn is fine — they don't interact.
-- delegate: Delegate tasks to subagents. Single task = sync, multiple tasks = parallel. Use context mode to control what the subagent knows.
+- delegate: Delegate ONE task to a subagent. Emit several delegate ops in the same turn to run independent tasks in PARALLEL. Use context mode to control what the subagent knows.
   Input JSON: {"task": "string, required — Task description for the subagent", "context": "string — none (independent), fork (copy conversation history)", "tools": "array<string> — Allowed tools (omit for default set)", "agent": "string — Agent name to load role/config from .agent-cli/agents/{name}.md"}
   Each delegate op runs ONE subagent task. Several delegate ops in the
   same turn run in PARALLEL — emit several only when the tasks are

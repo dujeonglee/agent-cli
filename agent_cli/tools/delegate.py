@@ -755,70 +755,55 @@ def tool_delegate(
 class DelegateTool(Tool):
     name = "delegate"
     description = (
-        "Delegate tasks to subagents. "
-        "Single task = sync, multiple tasks = parallel. "
+        "Delegate ONE task to a subagent. Emit several delegate ops in the "
+        "same turn to run independent tasks in PARALLEL. "
         "Use context mode to control what the subagent knows."
     )
+    # Flat-native (consolidation roadmap Step 3): the schema is the plain
+    # single-task shape — no `delegate_tasks` batch array and no `delegate_`
+    # wire-key prefix. One op = one subagent task; several delegate ops in a
+    # turn run concurrently (``parallel_safe=True`` → the loop batches a run of
+    # delegate ops and drives ``_run_parallel``). `wrap_single_op` is identity;
+    # `key_prefix` is left at its default (latent — strip is a no-op on flat
+    # keys, `claims` is False for a flat `{task}`).
+    parallel_safe = True
     parameters = {
         "type": "object",
         "properties": {
-            "delegate_tasks": {
+            "task": {
+                "type": "string",
+                "description": "Task description for the subagent",
+            },
+            "context": {
+                "type": "string",
+                "enum": ["none", "fork"],
+                "description": "none (independent), fork (copy conversation history)",
+            },
+            "tools": {
                 "type": "array",
-                "description": "List of tasks. Single item = sync, multiple = parallel.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": "Task description for the subagent",
-                        },
-                        "context": {
-                            "type": "string",
-                            "enum": ["none", "fork"],
-                            "description": "none (independent), fork (copy conversation history)",
-                        },
-                        "tools": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Allowed tools (omit for default set)",
-                        },
-                        "agent": {
-                            "type": "string",
-                            "description": "Agent name to load role/config from .agent-cli/agents/{name}.md",
-                        },
-                    },
-                    "required": ["task"],
-                },
+                "items": {"type": "string"},
+                "description": "Allowed tools (omit for default set)",
+            },
+            "agent": {
+                "type": "string",
+                "description": "Agent name to load role/config from .agent-cli/agents/{name}.md",
             },
         },
-        "required": ["delegate_tasks"],
+        "required": ["task"],
     }
 
     def touched_paths(self, action_input: dict) -> list[str]:
-        # delegate has no file paths — record a ``<delegate:agent>`` marker
-        # per task so the compaction file-list still reflects "a subagent was
-        # spawned" (the subagent's own files live in a different session).
-        tasks = self.strip_prefix(action_input).get("tasks") or []
-        return [
-            f"<delegate:{t['agent']}>"
-            for t in tasks
-            if isinstance(t, dict) and isinstance(t.get("agent"), str) and t["agent"]
-        ]
+        # delegate has no file paths — record a ``<delegate:agent>`` marker so
+        # the compaction file-list still reflects "a subagent was spawned"
+        # (the subagent's own files live in a different session).
+        agent = self.strip_prefix(action_input).get("agent")
+        return [f"<delegate:{agent}>"] if isinstance(agent, str) and agent else []
 
     def summary_arg(self, action_input: dict) -> str:
-        tasks = self.strip_prefix(action_input).get("tasks") or []
-        return tasks[0].get("agent", "") if tasks and isinstance(tasks[0], dict) else ""
+        return self.strip_prefix(action_input).get("agent", "")
 
     def wrap_single_op(self, flat: dict) -> dict:
-        # Multi-op formats emit one task per op ({"task", "context"?, ...});
-        # wrap it into the canonical one-element tasks batch (several delegate
-        # ops in a turn = parallel). Already-batch input passes through.
-        if not isinstance(flat, dict):
-            return flat
-        std = self.strip_prefix(flat)
-        if "tasks" in std:
-            return self.add_prefix(flat)
-        return {f"{self.name}_tasks": [std]}
+        return flat
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         # delegate is intercepted by the loop (it needs parent context,

@@ -91,13 +91,13 @@ class TestTypeValidation:
         assert inp["shell_timeout"] == 30  # coerced in-place
 
     def test_dict_array_param_auto_coerced_to_array(self):
-        """Small model sends dict instead of [dict] for an array param —
-        auto-coerce. edit_file went flat-native (Step 3), so this is pinned
-        against a still-batch tool (delegate_tasks)."""
-        inp = {"delegate_tasks": {"task": "do x"}}
-        ok, err, _ = validate_tool_input("delegate", inp)
-        assert ok is True
-        assert isinstance(inp["delegate_tasks"], list)
+        """Small model sends a dict instead of [dict] for an array param —
+        auto-coerce. All builtin tools are flat-native now (Step 3), so this
+        pins the ``_try_coerce`` helper directly; the coercion still serves
+        MCP / external tools whose schemas declare array params."""
+        from agent_cli.tools.registry import _try_coerce
+
+        assert _try_coerce({"task": "do x"}, "array") == [{"task": "do x"}]
 
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""
@@ -107,47 +107,36 @@ class TestTypeValidation:
 
 
 class TestDelegateSchema:
-    def test_delegate_has_tasks_param(self):
+    """Flat-native (consolidation Step 3): delegate takes one flat task per op
+    — `{task, context?, tools?, agent?}`, no `delegate_tasks` array. Several
+    delegate ops in a turn run in parallel (parallel_safe=True, loop-batched)."""
 
+    def test_delegate_flat_task_param(self):
         props = TOOL_SCHEMAS["delegate"].parameters["properties"]
-        assert "delegate_tasks" in props
-        assert props["delegate_tasks"]["type"] == "array"
+        assert "task" in props
+        assert props["task"]["type"] == "string"
+        # the old batch array wrapper is gone
+        assert "delegate_tasks" not in props
 
-    def test_delegate_tasks_is_array_of_objects(self):
-
-        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["delegate_tasks"][
-            "items"
-        ]
-        assert items["type"] == "object"
-        assert "task" in items["properties"]
-        assert "context" in items["properties"]
-        assert "tools" in items["properties"]
-
-    def test_delegate_tasks_required(self):
-
-        assert "delegate_tasks" in TOOL_SCHEMAS["delegate"].parameters["required"]
-
-    def test_delegate_no_top_level_task(self):
-
+    def test_delegate_flat_fields_present(self):
         props = TOOL_SCHEMAS["delegate"].parameters["properties"]
-        assert "task" not in props  # Only inside delegate_tasks array items
+        for k in ("task", "context", "tools", "agent"):
+            assert k in props
 
-    def test_delegate_schema_has_agent_field(self):
-        """AG-29: TOOL_SCHEMAS["delegate"] items have agent field."""
+    def test_delegate_task_required(self):
+        assert TOOL_SCHEMAS["delegate"].parameters["required"] == ["task"]
 
-        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["delegate_tasks"][
-            "items"
-        ]
-        assert "agent" in items["properties"]
-        assert items["properties"]["agent"]["type"] == "string"
+    def test_delegate_agent_is_string(self):
+        props = TOOL_SCHEMAS["delegate"].parameters["properties"]
+        assert props["agent"]["type"] == "string"
 
-    def test_delegate_schema_agent_not_required(self):
-        """AG-30: agent field is not in required list."""
+    def test_delegate_agent_not_required(self):
+        assert "agent" not in TOOL_SCHEMAS["delegate"].parameters["required"]
 
-        items = TOOL_SCHEMAS["delegate"].parameters["properties"]["delegate_tasks"][
-            "items"
-        ]
-        assert "agent" not in items["required"]
+    def test_delegate_is_parallel_safe(self):
+        # The marker the loop reads to batch consecutive delegate ops into one
+        # concurrent dispatch (the only tool that opts in).
+        assert TOOLS["delegate"].parallel_safe is True
 
 
 class TestEmptyStringStripping:
@@ -236,15 +225,25 @@ class TestGetToolDescriptions:
 
     def test_array_of_object_item_keys_surfaced(self):
         """Array-of-object params surface their item keys as
-        ``array<object{...}>`` so the item shape is visible without an
-        inline guide. code_index/delegate are the canonical batch tools
-        (read_file went flat-native in Step 3, so it is no longer an array)."""
-        desc = get_tool_descriptions(["code_index", "delegate"])
-        assert "array<object{" in desc
-        # code_index_queries items: mode (required) + path?/name?/...
-        assert "mode" in desc and "path" in desc
-        # delegate_tasks items: task (required) + context?/tools?/agent?
-        assert "context?" in desc and "agent?" in desc
+        ``array<object{...}>`` so the item shape is visible without an inline
+        guide. All builtin tools are flat-native now (Step 3), so this pins the
+        ``render_param_value`` renderer directly — the mechanism still serves
+        MCP / external tools whose schemas declare array-of-object params."""
+        from agent_cli.tools.registry import render_param_value
+
+        out = render_param_value(
+            {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"task": {"type": "string"}, "agent": {}},
+                    "required": ["task"],
+                },
+            },
+            required=True,
+        )
+        assert "array<object{" in out
+        assert "task" in out and "agent?" in out
 
     def test_scalar_type_preserved(self):
         """Scalar params keep their type even when they carry a

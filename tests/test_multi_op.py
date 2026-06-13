@@ -48,9 +48,12 @@ class TestWrapSingleOp:
         flat = {"mode": "list", "path": "a.py"}
         assert TOOLS["code_index"].wrap_single_op(flat) == flat
 
-    def test_delegate_wraps_flat_task(self):
-        out = TOOLS["delegate"].wrap_single_op({"task": "do x", "context": "fork"})
-        assert out == {"delegate_tasks": [{"task": "do x", "context": "fork"}]}
+    def test_delegate_flat_is_identity(self):
+        # Flat-native (Step 3): delegate's wrap_single_op is identity — one op
+        # = one task. Several delegate ops in a turn run in parallel (the loop
+        # batches them), so no per-op canonical re-wrap.
+        flat = {"task": "do x", "context": "fork"}
+        assert TOOLS["delegate"].wrap_single_op(flat) == flat
 
     def test_default_is_prefix_only(self):
         # Non-batch tools: keys get the canonical prefix, no structural change.
@@ -302,6 +305,70 @@ class TestMultiOpDispatch:
         ]
         assert len(flushed) == 1
         assert "alpha" in flushed[0]["content"]
+
+
+class TestMultiOpDelegateParallel:
+    """delegate is flat-native + ``parallel_safe`` (Step 3): a run of ≥2
+    consecutive delegate ops in one turn is batched by the loop into ONE
+    ``tool_delegate({tasks:[...]})`` call → ``_run_parallel`` (real
+    concurrency). This is what makes the prompt's "several delegate ops run in
+    parallel" actually true — the N-op loop is otherwise sequential."""
+
+    def _patch(self, monkeypatch):
+        import agent_cli.loop as loop_mod
+        from agent_cli.tools.result import ToolResult
+
+        calls = []
+
+        def fake_tool_delegate(args, **kw):
+            calls.append(args.get("tasks"))
+            return ToolResult(True, output="STATUS: success\nRESULT:\nok")
+
+        monkeypatch.setattr(loop_mod, "tool_delegate", fake_tool_delegate)
+        return calls
+
+    def test_two_delegate_ops_batched_into_one_parallel_call(
+        self, tmp_path, monkeypatch
+    ):
+        calls = self._patch(monkeypatch)
+        result, _, _ = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "delegate", "task": "Analyze A", "context": "fork"},
+                        {"action": "delegate", "task": "Analyze B", "context": "fork"},
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        assert result.success
+        # ONE tool_delegate call carrying BOTH tasks → _run_parallel path.
+        assert len(calls) == 1
+        assert len(calls[0]) == 2
+        assert {t["task"] for t in calls[0]} == {"Analyze A", "Analyze B"}
+
+    def test_single_delegate_op_runs_one_task_and_keeps_agent(
+        self, tmp_path, monkeypatch
+    ):
+        # A lone delegate op takes the normal per-op path; _invoke_delegate
+        # wraps the flat spec as {tasks:[it]} (sync) — preserving every field
+        # incl. agent (the flat-native normalization fix).
+        calls = self._patch(monkeypatch)
+        result, _, _ = _run(
+            [
+                _turn(
+                    ops=[{"action": "delegate", "task": "solo", "agent": "explorer"}]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        assert result.success
+        assert len(calls) == 1 and len(calls[0]) == 1
+        assert calls[0][0]["task"] == "solo"
+        assert calls[0][0]["agent"] == "explorer"
 
     def test_no_ops_goes_to_recovery(self, tmp_path):
         # A turn with zero usable ops (unparseable) = the model said nothing

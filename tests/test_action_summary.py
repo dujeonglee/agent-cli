@@ -1,13 +1,12 @@
 """Unit tests for ``Tool.summary_arg`` — the short per-tool label used in
 the compaction transcript (``_to_summary_text``) and observation headers.
 
-Uses the REAL ``action_input`` shape each tool receives. Flat-native tools
-(write_file, read_file, edit_file, code_index — Step 3) take plain
-``{path/mode, ...}``; the remaining batch tool still uses a prefixed array
-(``delegate_tasks``). The previous version tested ``summarize_tool_args``
-with a hand-invented bare-key shape for batch tools that never occurred in
-history.jsonl, so it passed while the function returned "" for every real
-record, masking the prefix regression.
+Uses the REAL ``action_input`` shape each tool receives. All builtin tools
+are flat-native now (read_file, write_file, edit_file, code_index, delegate —
+Step 3) and take plain ``{path/mode/task, ...}``. The previous version tested
+``summarize_tool_args`` with a hand-invented bare-key shape for the old batch
+tools that never occurred in history.jsonl, so it passed while the function
+returned "" for every real record, masking the prefix regression.
 Each tool now owns its own label via ``Tool.summary_arg`` (sibling of
 ``Tool.touched_paths``).
 """
@@ -45,10 +44,8 @@ class TestToolSummaryArg:
         assert len(out) == 60
 
     def test_delegate_agent(self):
-        assert (
-            _sa("delegate", {"delegate_tasks": [{"agent": "explorer", "task": "find"}]})
-            == "explorer"
-        )
+        # Flat-native (Step 3): one flat task per op.
+        assert _sa("delegate", {"agent": "explorer", "task": "find"}) == "explorer"
 
     def test_run_skill_name(self):
         assert (

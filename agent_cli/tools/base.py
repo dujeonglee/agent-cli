@@ -46,6 +46,17 @@ class Tool(ABC):
     description: str
     parameters: dict
 
+    #: Whether a turn's consecutive ops of THIS tool may run concurrently.
+    #: Default False — ops dispatch sequentially, which is the correctness
+    #: guarantee for side-effecting / order-dependent tools (write_file,
+    #: edit_file, shell: e.g. write-then-edit the same file, or mkdir-then-
+    #: touch, must run in order). Only side-effect-free / independent tools
+    #: set this True. The loop reads it to batch a run of same-tool ops into
+    #: one concurrent dispatch (see ``AgentLoop._dispatch_parallel_batch``).
+    #: Today only ``delegate`` opts in (independent subagents = the case where
+    #: concurrency is both safe and worth the wall-clock win).
+    parallel_safe: bool = False
+
     @property
     def key_prefix(self) -> str:
         """Wire-key namespace for this tool: ``{name}_``."""

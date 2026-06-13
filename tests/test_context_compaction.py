@@ -493,14 +493,14 @@ class TestFileExtractHelper:
         ]
         assert extract_file_paths(msgs) == []
 
-    def test_delegate_array_prefix(self):
+    def test_delegate_flat_marker(self):
+        # Flat-native (Step 3): one flat task per op → one <delegate:agent>
+        # marker. Several parallel subagents = several delegate ops.
         msgs = [
             {
                 "role": "assistant",
                 "action": "delegate",
-                "action_input": {
-                    "delegate_tasks": [{"agent": "explorer", "task": "find X"}]
-                },
+                "action_input": {"agent": "explorer", "task": "find X"},
             }
         ]
         assert extract_file_paths(msgs) == ["<delegate:explorer>"]
