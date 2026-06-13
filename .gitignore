@@ -4,6 +4,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+# stray build artifacts (normal builds land in dist/; this guards a root drop)
+*.whl
+*.tar.gz
 
 # Testing
 .pytest_cache/
