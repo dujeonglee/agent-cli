@@ -813,6 +813,12 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   background: #8881;
   font-size: 0.9rem;
 }
+/* The `display: flex/inline-flex` ID rules above outweigh the UA
+   `[hidden] { display: none }` (attribute selector), so the `hidden`
+   attribute is inert without these explicit higher-specificity rules —
+   the bar / Jira form would never hide. (Same pattern as `#abort[hidden]`.) */
+#export-bar[hidden] { display: none; }
+#export-jira-form[hidden] { display: none; }
 #export-bar .exp-all { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
 #export-count { color: #8889; min-width: 6rem; }
 #export-bar .exp-actions { display: inline-flex; gap: 0.4rem; }

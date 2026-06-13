@@ -316,6 +316,13 @@ class TestStaticUI:
         assert "/api/export/html" in js
         assert "/api/export/jira" in js
         assert "/api/export/jira/targets" in js
+        # The action bar uses the `hidden` attribute to show/hide, but its
+        # `display:flex` ID rule outweighs the UA `[hidden]` style — so an
+        # explicit `#export-bar[hidden] { display:none }` is REQUIRED or ✕
+        # never hides the bar. Guard it (regression: it shipped missing once).
+        css = client.get("/static/style.css").text
+        assert "#export-bar[hidden]" in css
+        assert "#export-jira-form[hidden]" in css
 
     def test_style_css_is_served(self, server_and_client):
         _, _, client = server_and_client
