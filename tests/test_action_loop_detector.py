@@ -218,7 +218,7 @@ class TestDetectSchemaMismatch:
         # validate_tool_input promotes strings to {required[0]: value}
         mismatched, err, normalized = detect_schema_mismatch("shell", "echo hi")
         assert mismatched is False
-        assert normalized == {"shell_command": "echo hi"}
+        assert normalized == {"command": "echo hi"}
 
     def test_unknown_tool_treated_as_mismatch(self):
         # validate_tool_input also rejects unknown tools, so the schema

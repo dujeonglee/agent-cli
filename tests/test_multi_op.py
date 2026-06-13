@@ -55,10 +55,29 @@ class TestWrapSingleOp:
         flat = {"task": "do x", "context": "fork"}
         assert TOOLS["delegate"].wrap_single_op(flat) == flat
 
-    def test_default_is_prefix_only(self):
-        # Non-batch tools: keys get the canonical prefix, no structural change.
-        out = TOOLS["shell"].wrap_single_op({"command": "ls"})
-        assert out == {"shell_command": "ls"}
+    def test_shell_flat_is_identity(self):
+        # Flat-native (Step 3): shell is the last builtin to flatten — its
+        # wrap_single_op is now identity too.
+        assert TOOLS["shell"].wrap_single_op({"command": "ls"}) == {"command": "ls"}
+
+    def test_base_default_wrap_is_add_prefix(self):
+        # No builtin tool uses the base default wrap anymore (all flat-native →
+        # identity, Step 3). A synthetic prefixed tool pins the base behavior,
+        # kept for MCP / future prefixed tools.
+        from agent_cli.tools.base import Tool
+        from agent_cli.tools.result import ToolResult
+
+        class _Prefixed(Tool):
+            name = "synthtool"
+            description = "x"
+            parameters = {"type": "object", "properties": {"command": {}}}
+
+            def _run(self, args, *, session_dir=None):
+                return ToolResult(True, output="")
+
+        assert _Prefixed().wrap_single_op({"command": "ls"}) == {
+            "synthtool_command": "ls"
+        }
 
 
 # ─── Mock multi-op wire format ──────────────────────

@@ -40,7 +40,7 @@ class TestToolSummaryArg:
         assert _sa("code_index", {"mode": "fetch", "path": "x.c"}) == "fetch x.c"
 
     def test_shell_truncates_to_60(self):
-        out = _sa("shell", {"shell_command": "y" * 200})
+        out = _sa("shell", {"command": "y" * 200})
         assert len(out) == 60
 
     def test_delegate_agent(self):

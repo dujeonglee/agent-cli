@@ -488,7 +488,7 @@ class TestFileExtractHelper:
             {
                 "role": "assistant",
                 "action": "shell",
-                "action_input": {"shell_command": "rm foo.c"},
+                "action_input": {"command": "rm foo.c"},
             }
         ]
         assert extract_file_paths(msgs) == []

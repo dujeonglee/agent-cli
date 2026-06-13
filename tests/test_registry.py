@@ -16,7 +16,7 @@ class TestValidateToolInput:
         assert err is None
 
     def test_valid_shell(self):
-        ok, err, _ = validate_tool_input("shell", {"shell_command": "ls -la"})
+        ok, err, _ = validate_tool_input("shell", {"command": "ls -la"})
         assert ok is True
 
     def test_missing_required(self):
@@ -42,10 +42,10 @@ class TestValidateToolInput:
         assert converted["path"] == "/tmp/test.py"
 
     def test_string_auto_convert_shell(self):
-        """String input for shell → {"shell_command": "..."}."""
+        """String input for shell → {"command": "..."}."""
         ok, err, converted = validate_tool_input("shell", "ls -la")
         assert ok is True
-        assert converted["shell_command"] == "ls -la"
+        assert converted["command"] == "ls -la"
 
     def test_string_auto_convert_write_file(self):
         """String input for write_file → {"path": "..."}."""
@@ -78,17 +78,15 @@ class TestValidateToolInput:
 
 class TestTypeValidation:
     def test_correct_types_pass(self):
-        ok, err, _ = validate_tool_input(
-            "shell", {"shell_command": "ls", "shell_timeout": 30}
-        )
+        ok, err, _ = validate_tool_input("shell", {"command": "ls", "timeout": 30})
         assert ok is True
 
     def test_string_timeout_auto_coerced(self):
         """Small model sends "30" instead of 30 — auto-coerce."""
-        inp = {"shell_command": "ls", "shell_timeout": "30"}
+        inp = {"command": "ls", "timeout": "30"}
         ok, err, _ = validate_tool_input("shell", inp)
         assert ok is True
-        assert inp["shell_timeout"] == 30  # coerced in-place
+        assert inp["timeout"] == 30  # coerced in-place
 
     def test_dict_array_param_auto_coerced_to_array(self):
         """Small model sends a dict instead of [dict] for an array param —
@@ -101,7 +99,7 @@ class TestTypeValidation:
 
     def test_wrong_type_no_coercion(self):
         """Cannot coerce list to string."""
-        ok, err, _ = validate_tool_input("shell", {"shell_command": [1, 2, 3]})
+        ok, err, _ = validate_tool_input("shell", {"command": [1, 2, 3]})
         assert ok is False
         assert "expected string" in err
 
@@ -143,25 +141,25 @@ class TestEmptyStringStripping:
     def test_optional_empty_string_removed(self):
         """Empty string on optional field should be stripped before validation."""
         action_input = {
-            "shell_command": "ls",
-            "shell_timeout": "",
+            "command": "ls",
+            "timeout": "",
         }
         ok, err, _ = validate_tool_input("shell", action_input)
         assert ok is True
-        assert "shell_timeout" not in action_input
+        assert "timeout" not in action_input
 
     def test_required_empty_string_not_removed(self):
         """Empty string on required field should NOT be stripped — validation fails."""
-        ok, err, _ = validate_tool_input("shell", {"shell_command": ""})
-        # shell_command="" is required and present, but it's an empty string
+        ok, err, _ = validate_tool_input("shell", {"command": ""})
+        # command="" is required and present, but it's an empty string
         assert ok is True  # type check passes (string), tool itself handles empty
 
     def test_non_empty_optional_kept(self):
         """Non-empty optional fields should remain untouched."""
-        action_input = {"shell_command": "ls", "shell_timeout": 30}
+        action_input = {"command": "ls", "timeout": 30}
         ok, err, _ = validate_tool_input("shell", action_input)
         assert ok is True
-        assert action_input["shell_timeout"] == 30
+        assert action_input["timeout"] == 30
 
 
 class TestStringInputAutoConversion:
@@ -180,7 +178,7 @@ class TestStringInputAutoConversion:
 
         mismatched, err, normalized = detect_schema_mismatch("shell", "echo hello")
         assert not mismatched, err
-        assert normalized == {"shell_command": "echo hello"}
+        assert normalized == {"command": "echo hello"}
 
         result = execute_tool("shell", normalized)
         assert result.success
@@ -250,7 +248,7 @@ class TestGetToolDescriptions:
         description (the old flattening dropped type when description
         existed)."""
         desc = get_tool_descriptions(["shell"])
-        # shell_timeout is an integer with a description
+        # timeout is an integer with a description
         assert "integer" in desc
 
 

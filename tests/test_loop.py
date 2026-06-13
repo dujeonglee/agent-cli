@@ -174,7 +174,7 @@ class TestRunLoopToolExecution:
                 {
                     "thought": "run pwd",
                     "action": "shell",
-                    "action_input": {"shell_command": "pwd"},
+                    "action_input": {"command": "pwd"},
                 }
             ),
             _complete("Executed command"),
@@ -251,7 +251,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try shell",
                     "action": "shell",
-                    "action_input": {"shell_command": "pwd"},
+                    "action_input": {"command": "pwd"},
                 }
             ),
             _complete("recovered after tool crashed"),
@@ -290,7 +290,7 @@ class TestToolExceptionSafetyNet:
                     {
                         "thought": "try",
                         "action": "shell",
-                        "action_input": {"shell_command": "pwd"},
+                        "action_input": {"command": "pwd"},
                     }
                 )
             ),
@@ -327,7 +327,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"shell_command": "x"},
+                    "action_input": {"command": "x"},
                 }
             ),
             _complete("ok"),
@@ -361,7 +361,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"shell_command": "x"},
+                    "action_input": {"command": "x"},
                 }
             ),
         )
@@ -386,7 +386,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"shell_command": "x"},
+                    "action_input": {"command": "x"},
                 }
             ),
         )
@@ -416,7 +416,7 @@ class TestToolExceptionSafetyNet:
                 {
                     "thought": "try",
                     "action": "shell",
-                    "action_input": {"shell_command": "x"},
+                    "action_input": {"command": "x"},
                 }
             ),
             _complete("ok"),
@@ -440,49 +440,27 @@ class TestToolExceptionSafetyNet:
 
 
 class TestActionInferenceCorrection:
-    """Dropped action name (parse_stage 3) recovered from action_input key
-    prefixes — dispatches the inferred tool AND rewrites the next-turn
-    prior to the corrected shape (no raw-drift mimicry).
+    """Dropped action name (parse_stage 3) recovery via action_input key
+    prefixes (``infer_action`` + next-turn prior rewrite).
 
-    Exercised here with shell, which is still a wire-key-prefixed tool
-    (``shell_command``). The flat-native tools (read_file/write_file/edit_file,
-    Step 3) carry no prefix, so a dropped action with flat input is ambiguous
-    and falls to NO_ACTION instead (see test_dropped_field_recovery). When the
-    remaining prefixed tools go flat, this end-to-end infer path becomes fully
-    latent — pinned only by the unit test in test_dropped_field_recovery."""
+    As of consolidation Step 3 ALL builtin tools are flat-native (no wire-key
+    prefix), so the positive path — infer a tool from a prefixed payload, then
+    dispatch it — is no longer reachable through any builtin: a dropped FLAT
+    action is ambiguous → NO_ACTION (see test_dropped_field_recovery), and a
+    dropped PREFIXED payload would infer a tool whose flat schema then rejects
+    the prefixed keys. The machinery is fully latent (kept for MCP / future
+    prefixed tools) and pinned at the unit level by
+    ``test_dropped_field_recovery.test_infer_machinery_preserved_for_prefixed_input``.
 
-    def test_infers_action_and_corrects_prior(self, caps):
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "run a command",
-                    # action name dropped — only the prefixed input key, so
-                    # infer_action recovers "shell" from the shell_ prefix
-                    "action_input": {"shell_command": "echo INFER_MARKER"},
-                }
-            ),
-            _complete("done"),
-        )
-        result = run_loop(
-            query="run it",
-            provider=provider,
-            capabilities=caps,
-            model="test-model",
-        )
-        # 1. inferred shell actually ran (command output in the observation)
-        assert result.success
-        second = _messages_from_call(provider.call.call_args_list[1])
-        obs = [m for m in second if "Observation" in (m.get("content") or "")]
-        assert any("INFER_MARKER" in m["content"] for m in obs)
-        # 2. assistant prior rewritten to the corrected shape (action
-        #    present), NOT the raw drift (action absent)
-        assistant = [m for m in second if m["role"] == "assistant"]
-        joined = " ".join(m.get("content", "") for m in assistant)
-        assert '"action": "shell"' in joined
+    What's still exercised end-to-end here is the NEGATIVE case: two distinct
+    tool prefixes are ambiguous → no inference → NO_ACTION. The latent prefixes
+    still make ``claims`` fire, so this guards that ambiguity short-circuits
+    inference."""
 
     def test_ambiguous_input_not_inferred(self, caps):
         # Two distinct tool prefixes present → ambiguous → no inference,
-        # falls through to the NO_ACTION retry, then completes.
+        # falls through to the NO_ACTION retry, then completes. (code_index /
+        # shell prefixes are latent now but `claims` still matches them.)
         provider = _make_provider(
             json.dumps(
                 {
@@ -1085,7 +1063,7 @@ def _shell_call(cmd: str) -> str:
         {
             "thought": "running",
             "action": "shell",
-            "action_input": {"shell_command": cmd},
+            "action_input": {"command": cmd},
         }
     )
 
@@ -1414,21 +1392,21 @@ class TestRunLoopMaxIter:
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"shell_command": "date +%s"},
+                    "action_input": {"command": "date +%s"},
                 }
             ),
             json.dumps(
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"shell_command": "uname -s"},
+                    "action_input": {"command": "uname -s"},
                 }
             ),
             json.dumps(
                 {
                     "thought": "thinking",
                     "action": "shell",
-                    "action_input": {"shell_command": "whoami"},
+                    "action_input": {"command": "whoami"},
                 }
             ),
         )
@@ -1460,7 +1438,7 @@ class TestToolHistoryTracking:
                 {
                     "thought": "run",
                     "action": "shell",
-                    "action_input": {"shell_command": "whoami"},
+                    "action_input": {"command": "whoami"},
                 }
             ),
             _complete("ok"),
@@ -1504,7 +1482,7 @@ class TestEchoAsFinalAnswer:
                 {
                     "thought": "search",
                     "action": "shell",
-                    "action_input": {"shell_command": "echo hello | grep h"},
+                    "action_input": {"command": "echo hello | grep h"},
                 }
             ),
             _complete("found"),
@@ -1524,7 +1502,7 @@ class TestEchoAsFinalAnswer:
                 {
                     "thought": "write",
                     "action": "shell",
-                    "action_input": {"shell_command": "echo hello > out.txt"},
+                    "action_input": {"command": "echo hello > out.txt"},
                 }
             ),
             _complete("written"),
@@ -3444,7 +3422,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"shell_command": "pytest"},
+                    "action_input": {"command": "pytest"},
                 },
             ]
         )
@@ -3473,7 +3451,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"shell_command": "ls"},
+                    "action_input": {"command": "ls"},
                 },
                 {
                     "role": "assistant",
@@ -3495,7 +3473,7 @@ class TestFormatToolCallsForReview:
             {
                 "role": "assistant",
                 "action": "shell",
-                "action_input": {"shell_command": f"echo {i}"},
+                "action_input": {"command": f"echo {i}"},
             }
             for i in range(35)
         ]
@@ -3514,7 +3492,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"shell_command": long_cmd},
+                    "action_input": {"command": long_cmd},
                 }
             ]
         )
@@ -3565,7 +3543,7 @@ class TestBuildReviewObservationWithCtx:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"shell_command": "ls"},
+                    "action_input": {"command": "ls"},
                 }
             ]
         )
@@ -3597,7 +3575,7 @@ class TestBuildReviewObservationWithCtx:
                 {
                     "role": "assistant",
                     "action": "shell",
-                    "action_input": {"shell_command": "ls"},
+                    "action_input": {"command": "ls"},
                 }
             ]
         )

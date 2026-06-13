@@ -179,17 +179,27 @@ def tool_shell(args: dict) -> ToolResult:
 class ShellTool(Tool):
     name = "shell"
     description = "Run a shell command and return stdout/stderr."
+    # Flat-native (consolidation roadmap Step 3): the schema is the plain
+    # single-command shape — no `shell_` wire-key prefix. shell is the last
+    # builtin to flatten, so after this no builtin carries a prefix; the prefix
+    # machinery (strip/add/claims/infer/base wrap) is fully latent (it still
+    # serves MCP / future prefixed tools). `wrap_single_op` is identity;
+    # `key_prefix` is left at its default (strip a no-op on flat keys, `claims`
+    # False for a flat `{command}`).
     parameters = {
         "type": "object",
         "properties": {
-            "shell_command": {"type": "string", "description": "Shell command to run"},
-            "shell_timeout": {
+            "command": {"type": "string", "description": "Shell command to run"},
+            "timeout": {
                 "type": "integer",
                 "description": "Timeout in seconds (default 30)",
             },
         },
-        "required": ["shell_command"],
+        "required": ["command"],
     }
+
+    def wrap_single_op(self, flat: dict) -> dict:
+        return flat
 
     def summary_arg(self, action_input: dict) -> str:
         return (self.strip_prefix(action_input).get("command") or "")[:60]

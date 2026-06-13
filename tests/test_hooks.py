@@ -507,7 +507,7 @@ class TestSkillHooksEndToEnd:
                 {
                     "thought": "call shell",
                     "action": "shell",
-                    "action_input": {"shell_command": "printf marker"},
+                    "action_input": {"command": "printf marker"},
                 }
             ),
             json.dumps(
@@ -569,7 +569,7 @@ class TestSkillHooksEndToEnd:
                 {
                     "thought": "call shell",
                     "action": "shell",
-                    "action_input": {"shell_command": "printf marker"},
+                    "action_input": {"command": "printf marker"},
                 }
             ),
             json.dumps(
@@ -888,7 +888,7 @@ class TestAgentFrontmatterHooks:
                     {
                         "thought": "call shell",
                         "action": "shell",
-                        "action_input": {"shell_command": "printf marker"},
+                        "action_input": {"command": "printf marker"},
                     }
                 )
             ),

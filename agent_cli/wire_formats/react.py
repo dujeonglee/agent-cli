@@ -259,11 +259,13 @@ def _normalize_action_input(result: ParsedAction, data: dict) -> None:
        protocol fields or meta keys can't poison tool input.
 
        Layer 2 runs even when ``action`` is absent: a dropped action name
-       with bundled siblings (``{"shell_command":"ls"}``) must still
-       surface action_input so the loop's ``infer_action`` can recover the
-       tool (wire-key prefix → tool) under ``action_required=False`` — the
+       with bundled siblings (e.g. a prefixed ``{"xtool_arg":"v"}``) must
+       still surface action_input so the loop's ``infer_action`` can recover
+       the tool (wire-key prefix → tool) under ``action_required=False`` — the
        parser-side half of the preservation invariant: a dropped action is
-       recoverable from the preserved action_input keys.
+       recoverable from the preserved action_input keys. (All builtin tools
+       are flat-native as of consolidation Step 3, so this prefix-recovery
+       path is latent — it serves MCP / future prefixed tools.)
 
     Precedence rule: if action_input is already present and truthy, use
     it verbatim and ignore any siblings. Empty dicts and None both
