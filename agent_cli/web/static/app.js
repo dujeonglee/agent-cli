@@ -644,9 +644,20 @@
           escapeHtml(d.tool_name || "")
       )
     );
-    card.appendChild(
-      el("pre", ["obs-body"], colorizeDiffBody(escapeHtml(d.content || "")))
-    );
+    // A `delegate` observation is a subagent's prose answer (the
+    // STATUS/RESULT/[Task N]/[Duration] wrapper around markdown text), so
+    // render it through the markdown pipeline like an assistant turn. Every
+    // other tool's output (read_file hashlines, shell text, write/edit diffs)
+    // is monospace/structured → keep the <pre> + diff colouring.
+    if ((d.tool_name || "") === "delegate") {
+      card.appendChild(
+        el("div", ["obs-body", "obs-md"], escapeAndFormat(d.content || ""))
+      );
+    } else {
+      card.appendChild(
+        el("pre", ["obs-body"], colorizeDiffBody(escapeHtml(d.content || "")))
+      );
+    }
     appendToTimeline(card, d.task_id);
     scrollToBottom();
   }

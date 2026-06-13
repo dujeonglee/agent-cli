@@ -324,6 +324,18 @@ class TestStaticUI:
         assert "#export-bar[hidden]" in css
         assert "#export-jira-form[hidden]" in css
 
+    def test_delegate_observation_renders_markdown(self, server_and_client):
+        # A delegate observation is a subagent's prose answer → it must be
+        # markdown-rendered (escapeAndFormat → .obs-md div), not the raw <pre>
+        # the other (monospace) tool outputs use. Guard the branch + style so
+        # it can't silently regress to the unreadable raw blob.
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert '=== "delegate"' in js
+        assert "obs-md" in js and "escapeAndFormat" in js
+        css = client.get("/static/style.css").text
+        assert ".obs-body.obs-md" in css
+
     def test_style_css_is_served(self, server_and_client):
         _, _, client = server_and_client
         resp = client.get("/static/style.css")

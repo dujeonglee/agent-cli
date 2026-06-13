@@ -131,6 +131,14 @@ main#messages {
   margin: 0;
   color: #374151;
 }
+/* delegate result body is markdown-rendered (escapeAndFormat), not raw
+   monospace — reset to the normal prose font so headings/lists/paragraphs
+   read like an assistant message. Keeps the scroll cap for long results. */
+.card-observation .obs-body.obs-md {
+  font-family: inherit;
+  font-size: inherit;
+  white-space: normal;
+}
 /* Rich markup → HTML spans rendered by ``richMarkupToHtml``. Colours
    mirror what ``format_diff`` paints in the CLI so users moving
    between terminals and the web UI see the same shape — bold headers,
