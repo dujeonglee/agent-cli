@@ -221,136 +221,59 @@ def _read_one(spec: dict) -> ToolResult:
         return ToolResult(False, error=f"read_file failed: {e}")
 
 
-def _format_batch(reads: list, results: list[ToolResult]) -> ToolResult:
-    """Combine multiple single-file reads into one observation.
-
-    Mirrors :func:`delegate._format_parallel_results`: per-read header +
-    body (or ERROR), then a summary line. ``success`` is False only when
-    *every* read failed — a partial success stays True so the model still
-    gets whatever it could read (reads are non-destructive).
-    """
-    parts: list[str] = []
-    ok = 0
-    for i, (spec, res) in enumerate(zip(reads, results), 1):
-        path = spec.get("path", "?") if isinstance(spec, dict) else "?"
-        parts.append(f"─── [{i}] {path} ───")
-        if res.success:
-            parts.append(res.output or "(empty)")
-            ok += 1
-        else:
-            parts.append(f"ERROR: {res.error}")
-        parts.append("")
-
-    failed = len(reads) - ok
-    parts.append(f"[read_file batch: {len(reads)} reads, {ok} ok, {failed} failed]")
-    combined = "\n".join(parts)
-    if ok == 0:
-        return ToolResult(False, error=combined)
-    return ToolResult(True, output=combined)
-
-
-def tool_read_file(args: dict) -> ToolResult:
-    """Read one or more files. ``args["reads"]`` is a list of read specs,
-    each consumed by :func:`_read_one`.
-
-    A single-element list returns that read's result verbatim (no batch
-    header, so single reads are byte-identical to the old behavior);
-    multiple reads are combined by :func:`_format_batch`.
-    """
-    reads = args.get("reads")
-    if not reads or not isinstance(reads, list):
-        return ToolResult(
-            False,
-            error=(
-                "read_file requires a non-empty 'read_file_reads' list "
-                "(each item: {path, ...optional line_start/line_end/search/stat})."
-            ),
-        )
-
-    results = [_read_one(spec) for spec in reads]
-    if len(results) == 1:
-        return results[0]
-    return _format_batch(reads, results)
-
-
 class ReadFileTool(Tool):
     name = "read_file"
     description = (
-        "Read one or more files in a single call. Provide read_file_reads as a "
-        "list; each item reads one file with an optional mode. Lines are tagged "
-        "as LINE#HASH:content for editing. For a single file, pass a one-element "
-        "list. Per-item modes: stat=true (metadata + first 20 lines, NOT a read — "
-        "follow up with a real read), search='regex' (matching regions with "
-        "context, efficient for targeted lookups), line_start/line_end (partial "
-        "read, 1-based inclusive), or none (full file)."
+        "Read a file. Lines are tagged as LINE#HASH:content for editing. "
+        "Modes: stat=true (metadata + first 20 lines, NOT a read — follow up "
+        "with a real read), search='regex' (matching regions with context, "
+        "efficient for targeted lookups), line_start/line_end (partial read, "
+        "1-based inclusive), or none (full file)."
     )
+    # Flat-native (consolidation roadmap Step 3): the schema is the plain
+    # single-file shape — no `read_file_reads` batch array and no
+    # `read_file_` wire-key prefix. One op reads one file; to read several
+    # files in a turn, a multi-op format emits one read_file op per file.
+    # `wrap_single_op` is identity (no canonical re-wrap); `key_prefix` is left
+    # at its default so strip_prefix is a no-op on these flat keys and `claims`
+    # correctly returns False for a flat `{path}` (no `read_file_` key).
     parameters = {
         "type": "object",
         "properties": {
-            "read_file_reads": {
-                "type": "array",
-                "description": (
-                    "List of reads (one or many). Each item reads one file. For a "
-                    "single file, pass a one-element list."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "File path to read"},
-                        "line_start": {
-                            "type": "integer",
-                            "description": "Start line (1-based). Omit to read from beginning.",
-                        },
-                        "line_end": {
-                            "type": "integer",
-                            "description": "End line (1-based, inclusive). Omit to read to end.",
-                        },
-                        "search": {
-                            "type": "string",
-                            "description": "Regex pattern. Returns only matching lines with surrounding context.",
-                        },
-                        "context": {
-                            "type": "integer",
-                            "description": "Lines of context before/after each search match (default 5).",
-                        },
-                        "stat": {
-                            "type": "boolean",
-                            "description": "Metadata query only — line count, size, first 20 lines. Not a read.",
-                        },
-                    },
-                    "required": ["path"],
-                },
+            "path": {"type": "string", "description": "File path to read"},
+            "line_start": {
+                "type": "integer",
+                "description": "Start line (1-based). Omit to read from beginning.",
+            },
+            "line_end": {
+                "type": "integer",
+                "description": "End line (1-based, inclusive). Omit to read to end.",
+            },
+            "search": {
+                "type": "string",
+                "description": "Regex pattern. Returns only matching lines with surrounding context.",
+            },
+            "context": {
+                "type": "integer",
+                "description": "Lines of context before/after each search match (default 5).",
+            },
+            "stat": {
+                "type": "boolean",
+                "description": "Metadata query only — line count, size, first 20 lines. Not a read.",
             },
         },
-        "required": ["read_file_reads"],
+        "required": ["path"],
     }
 
+    def wrap_single_op(self, flat: dict) -> dict:
+        return flat
+
     def touched_paths(self, action_input: dict) -> list[str]:
-        reads = self.strip_prefix(action_input).get("reads") or []
-        return [
-            r["path"]
-            for r in reads
-            if isinstance(r, dict) and isinstance(r.get("path"), str)
-        ]
+        p = self.strip_prefix(action_input).get("path")
+        return [p] if isinstance(p, str) and p else []
 
     def summary_arg(self, action_input: dict) -> str:
-        paths = [
-            r["path"]
-            for r in (self.strip_prefix(action_input).get("reads") or [])
-            if isinstance(r, dict) and r.get("path")
-        ]
-        return paths[0] if len(paths) == 1 else (f"{len(paths)} files" if paths else "")
-
-    def wrap_single_op(self, flat: dict) -> dict:
-        # Multi-op formats emit one file per op ({"path": ..., mode keys});
-        # wrap it into the canonical one-element reads batch. Already-batch
-        # input (a model emitting `reads` anyway) passes through.
-        if not isinstance(flat, dict):
-            return flat
-        std = self.strip_prefix(flat)
-        if "reads" in std:
-            return self.add_prefix(flat)
-        return {f"{self.name}_reads": [std]}
+        return self.strip_prefix(action_input).get("path", "")
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
-        return tool_read_file(args)
+        return _read_one(args)

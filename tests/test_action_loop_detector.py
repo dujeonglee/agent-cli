@@ -200,18 +200,19 @@ class TestDetectSchemaMismatch:
     """
 
     def test_valid_input_returns_no_mismatch(self):
+        # Flat-native (Step 3): read_file takes flat {path, ...mode}.
         mismatched, err, normalized = detect_schema_mismatch(
-            "read_file", {"read_file_reads": [{"path": "x.py"}]}
+            "read_file", {"path": "x.py"}
         )
         assert mismatched is False
         assert err is None
-        assert normalized == {"read_file_reads": [{"path": "x.py"}]}
+        assert normalized == {"path": "x.py"}
 
     def test_missing_required_field(self):
         mismatched, err, _ = detect_schema_mismatch("read_file", {})
         assert mismatched is True
         assert err is not None
-        assert "read_file_reads" in err  # error mentions the missing field
+        assert "path" in err  # error mentions the missing field
 
     def test_string_input_auto_promoted_to_dict(self):
         # validate_tool_input promotes strings to {required[0]: value}

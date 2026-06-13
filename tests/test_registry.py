@@ -10,9 +10,8 @@ from agent_cli.tools.registry import (
 
 class TestValidateToolInput:
     def test_valid_read_file(self):
-        ok, err, _ = validate_tool_input(
-            "read_file", {"read_file_reads": [{"path": "/tmp/test.py"}]}
-        )
+        # Flat-native (Step 3): read_file takes flat {path, ...mode}.
+        ok, err, _ = validate_tool_input("read_file", {"path": "/tmp/test.py"})
         assert ok is True
         assert err is None
 
@@ -37,10 +36,10 @@ class TestValidateToolInput:
 
     def test_string_json_auto_convert(self):
         ok, err, converted = validate_tool_input(
-            "read_file", '{"read_file_reads": [{"path": "/tmp/test.py"}]}'
+            "read_file", '{"path": "/tmp/test.py"}'
         )
         assert ok is True
-        assert converted["read_file_reads"] == [{"path": "/tmp/test.py"}]
+        assert converted["path"] == "/tmp/test.py"
 
     def test_string_auto_convert_shell(self):
         """String input for shell → {"shell_command": "..."}."""
@@ -237,11 +236,12 @@ class TestGetToolDescriptions:
     def test_array_of_object_item_keys_surfaced(self):
         """Array-of-object params surface their item keys as
         ``array<object{...}>`` so the item shape is visible without an
-        inline guide. read_file/delegate are the canonical batch tools."""
-        desc = get_tool_descriptions(["read_file", "delegate"])
-        # read_file_reads items: path/line_start/line_end/search/context/stat
+        inline guide. code_index/delegate are the canonical batch tools
+        (read_file went flat-native in Step 3, so it is no longer an array)."""
+        desc = get_tool_descriptions(["code_index", "delegate"])
         assert "array<object{" in desc
-        assert "path" in desc and "stat?" in desc
+        # code_index_queries items: mode (required) + path?/name?/...
+        assert "mode" in desc and "path" in desc
         # delegate_tasks items: task (required) + context?/tools?/agent?
         assert "context?" in desc and "agent?" in desc
 

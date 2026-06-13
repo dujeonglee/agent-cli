@@ -70,7 +70,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read file",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             _complete("File contains: hello world"),
@@ -112,7 +112,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             json.dumps(
@@ -144,7 +144,7 @@ class TestRunLoopComplete:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             json.dumps(
@@ -442,37 +442,52 @@ class TestToolExceptionSafetyNet:
 class TestActionInferenceCorrection:
     """Dropped action name (parse_stage 3) recovered from action_input key
     prefixes — dispatches the inferred tool AND rewrites the next-turn
-    prior to the corrected shape (no raw-drift mimicry)."""
+    prior to the corrected shape (no raw-drift mimicry).
+
+    Exercised here with edit_file, which is still a wire-key-prefixed batch
+    tool (``edit_file_edits``). The flat-native tools (read_file/write_file,
+    Step 3) carry no prefix, so a dropped action with flat input is ambiguous
+    and falls to NO_ACTION instead (see test_dropped_field_recovery). When the
+    remaining batch tools go flat, this end-to-end infer path becomes fully
+    latent — pinned only by the unit test in test_dropped_field_recovery."""
 
     def test_infers_action_and_corrects_prior(self, caps, tmp_path):
+        from agent_cli.tools.read_file import format_hashlines
+
         target = tmp_path / "x.txt"
-        target.write_text("hello body")
+        target.write_text("hello body\n")
+        ref = format_hashlines("hello body\n").split("\n")[0].split(":", 1)[0]
         provider = _make_provider(
             json.dumps(
                 {
-                    "thought": "read the file",
-                    # action name dropped — only the prefixed input key
-                    "action_input": {"read_file_reads": [{"path": str(target)}]},
+                    "thought": "edit the file",
+                    # action name dropped — only the prefixed input keys, so
+                    # infer_action recovers "edit_file" from the edit_file_ prefix
+                    "action_input": {
+                        "edit_file_path": str(target),
+                        "edit_file_edits": [
+                            {"op": "replace", "pos": ref, "lines": ["EDITED LINE"]}
+                        ],
+                    },
                 }
             ),
             _complete("done"),
         )
         result = run_loop(
-            query="read it",
+            query="edit it",
             provider=provider,
             capabilities=caps,
             model="test-model",
         )
-        # 1. inferred read_file actually ran (file body in observation)
+        # 1. inferred edit_file actually ran (the edit landed in the file)
         assert result.success
-        second = _messages_from_call(provider.call.call_args_list[1])
-        obs = [m for m in second if "Observation" in (m.get("content") or "")]
-        assert any("hello body" in m["content"] for m in obs)
+        assert "EDITED LINE" in target.read_text()
         # 2. assistant prior rewritten to the corrected shape (action
         #    present), NOT the raw drift (action absent)
+        second = _messages_from_call(provider.call.call_args_list[1])
         assistant = [m for m in second if m["role"] == "assistant"]
         joined = " ".join(m.get("content", "") for m in assistant)
-        assert '"action": "read_file"' in joined
+        assert '"action": "edit_file"' in joined
 
     def test_ambiguous_input_not_inferred(self, caps):
         # Two distinct tool prefixes present → ambiguous → no inference,
@@ -482,7 +497,7 @@ class TestActionInferenceCorrection:
                 {
                     "thought": "drift",
                     "action_input": {
-                        "read_file_reads": [{"path": "a"}],
+                        "edit_file_edits": [{"op": "append", "pos": "1#AB"}],
                         "shell_command": "ls",
                     },
                 }
@@ -601,12 +616,15 @@ class TestRunLoopParseFailure:
 
 
 class TestActionRenderShowsRawEmission:
-    """The action card must show the model's ACTUAL emission, not the
-    dispatch-canonical form. Under md_array the model emits a flat `{path}`
-    read op; `wrap_single_op` re-wraps it to `{read_file_reads:[...]}` so the
-    validate→strip→run pipeline is unchanged — but the render must keep showing
-    `{path}` (matching history.jsonl / resume-replay), else the UI
-    misrepresents what the model wrote (the `read_file_reads` confusion)."""
+    """The action card must show the model's ACTUAL emission (``op.action_input``,
+    pre-wrap), not a dispatch-canonical form. read_file is flat-native (Step 3),
+    so its `wrap_single_op` is identity and the model's flat `{path}` op flows
+    straight through validate→run; the card must show that flat `{path}` —
+    matching history.jsonl / resume-replay — never the old `read_file_reads`
+    batch wrapper a reader might still expect. (The render-vs-wrap gap the
+    2d45aa5 fix closed is still observable for the batch tools whose wrap
+    re-shapes flat ops; read_file no longer exercises it but pins the flat
+    card invariant.)"""
 
     def _capture_render(self, monkeypatch):
         import agent_cli.loop as loop_mod
@@ -672,10 +690,9 @@ class TestActionRenderShowsRawEmission:
         assert "read_file_reads" not in rendered
         assert json.loads(rendered) == {"path": str(target)}
 
-    def test_dispatch_still_runs_via_wrapped_form(self, caps, monkeypatch, tmp_path):
-        # Regression guard: changing only the RENDER input must not disturb
-        # dispatch — the read still executes (wrap→strip→run) and returns the
-        # file body. We assert the observation carries the file content.
+    def test_dispatch_runs_flat_op(self, caps, monkeypatch, tmp_path):
+        # Regression guard: the flat read op executes (identity wrap → run) and
+        # returns the file body. We assert the observation carries the content.
         from agent_cli.context.manager import ContextManager
         from agent_cli.wire_formats import get
 
@@ -1445,7 +1462,7 @@ class TestToolHistoryTracking:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             json.dumps(
@@ -1540,7 +1557,7 @@ class TestRepeatedCallDetection:
             {
                 "thought": "read again",
                 "action": "read_file",
-                "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                "action_input": {"path": str(test_file)},
             }
         )
         provider = _make_provider(same_call, same_call, same_call)
@@ -1566,21 +1583,21 @@ class TestRepeatedCallDetection:
                 {
                     "thought": "r1",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(f1)}]},
+                    "action_input": {"path": str(f1)},
                 }
             ),
             json.dumps(
                 {
                     "thought": "r2",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(f2)}]},
+                    "action_input": {"path": str(f2)},
                 }
             ),
             json.dumps(
                 {
                     "thought": "r3",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(f3)}]},
+                    "action_input": {"path": str(f3)},
                 }
             ),
             _complete("ok"),
@@ -1673,7 +1690,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             _complete("final"),
@@ -1881,7 +1898,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             # Second response is never consumed — `_should_continue` should
@@ -2056,7 +2073,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "working",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             _complete("done"),
@@ -2105,7 +2122,7 @@ class TestGracefulInterrupt:
                 {
                     "thought": "reading file",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             _complete("final"),
@@ -2678,7 +2695,7 @@ class TestContextContinuity:
                 {
                     "thought": "read",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": str(test_file)}]},
+                    "action_input": {"path": str(test_file)},
                 }
             ),
             _complete("done"),
@@ -3430,7 +3447,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": "login.py"}]},
+                    "action_input": {"path": "login.py"},
                 },
                 {"role": "user", "tool": "read_file", "content": "Observation: ..."},
                 {
@@ -3455,7 +3472,7 @@ class TestFormatToolCallsForReview:
                 {
                     "role": "assistant",
                     "action": "read_file",
-                    "action_input": {"read_file_reads": [{"path": "a.py"}]},
+                    "action_input": {"path": "a.py"},
                 },
                 {
                     "role": "assistant",
@@ -3617,13 +3634,9 @@ class TestNoOutputTruncation:
                     "thought": "read large file",
                     "action": "read_file",
                     "action_input": {
-                        "read_file_reads": [
-                            {
-                                "path": str(test_file),
-                                "line_start": 1,
-                                "line_end": 500,
-                            }
-                        ],
+                        "path": str(test_file),
+                        "line_start": 1,
+                        "line_end": 500,
                     },
                 }
             ),

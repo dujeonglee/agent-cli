@@ -30,13 +30,11 @@ from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 
 class TestWrapSingleOp:
-    def test_read_file_wraps_flat_path(self):
-        out = TOOLS["read_file"].wrap_single_op({"path": "a.py", "stat": True})
-        assert out == {"read_file_reads": [{"path": "a.py", "stat": True}]}
-
-    def test_read_file_already_batch_passes_through(self):
-        out = TOOLS["read_file"].wrap_single_op({"reads": [{"path": "a.py"}]})
-        assert out == {"read_file_reads": [{"path": "a.py"}]}
+    def test_read_file_flat_is_identity(self):
+        # Flat-native (Step 3): read_file's wrap_single_op is identity — the
+        # model's flat single-file op dispatches with no canonical re-wrap.
+        flat = {"path": "a.py", "stat": True}
+        assert TOOLS["read_file"].wrap_single_op(flat) == flat
 
     def test_edit_file_wraps_flat_edit(self):
         out = TOOLS["edit_file"].wrap_single_op(

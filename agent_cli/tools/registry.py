@@ -205,15 +205,10 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
 # description edit that outdates a key fails loudly instead of silently
 # leaking the old shape.
 _MULTI_OP_DESC_REWRITES = {
-    "read_file": [
-        (
-            "Read one or more files in a single call. Provide reads as a list; "
-            "each item reads one file with an optional mode. ",
-            "Read a file. ",
-        ),
-        ("For a single file, pass a one-element list. ", ""),
-        ("Per-item modes:", "Modes:"),
-    ],
+    # read_file is flat-native (Step 3): its description is already the plain
+    # single-file shape, so no batch-phrasing rewrite is needed. The remaining
+    # batch tools (code_index, edit_file, delegate) still declare array
+    # interfaces and rewrite their "pass a list" prose here.
     "code_index": [
         (
             "Provide queries as a LIST; each item is one query with its own "

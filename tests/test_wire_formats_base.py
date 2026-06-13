@@ -162,15 +162,20 @@ class TestParseTurnDefaultWrapper:
         # action_input recovered.
         # The wrapper MUST keep an Op so the loop's per-op infer_action / echo
         # can still recover it (the parse preservation invariant).
+        # A still-prefixed batch tool's key (edit_file_edits) — the shape
+        # infer_action can recover a dropped action from. (read_file is now
+        # flat-native, so its dropped-action input would be ambiguous.)
         pa = ParsedAction(
             action=None,
-            action_input={"read_file_reads": [{"path": "a"}]},
+            action_input={"edit_file_edits": [{"op": "append", "pos": "1#AB"}]},
             parse_stage=3,
         )
         turn = _ConfigurableFormat(pa).parse_turn("raw")
         assert len(turn.ops) == 1
         assert turn.ops[0].action is None
-        assert turn.ops[0].action_input == {"read_file_reads": [{"path": "a"}]}
+        assert turn.ops[0].action_input == {
+            "edit_file_edits": [{"op": "append", "pos": "1#AB"}]
+        }
         assert turn.parse_stage == 3
 
     def test_total_failure_yields_no_ops(self):

@@ -362,21 +362,21 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
     def rai(j):
         return _rai_prefixed(wire_format, "read_file", j)
 
+    # read_file is flat-native (consolidation roadmap Step 3): one op reads ONE
+    # file — there is no per-tool batch array in any wire shape, so the examples
+    # are always the flat single-file form (rendered through the wire's
+    # render_action_input). Only the framing differs by format: a multi-op
+    # format reads several files by emitting several read_file ops in one turn;
+    # a single-op format reads one file per turn.
+    # Wording note (DESIGN Exp 8): avoid the plural noun "reads" next to the
+    # tool name "read_file" — the 27B composed `read_file` + `reads` into the
+    # invented wire key `read_file_reads`. "op", "file(s)" and the verb "read"
+    # carry the same meaning without seeding that token.
+    ex_stat = rai({"path": "app.py", "stat": True})
+    ex_search = rai({"path": "app.py", "search": "login", "context": 5})
+    ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
+    ex_full = rai({"path": "app.py"})
     if getattr(wire_format, "multi_op", False):
-        # Multi-op formats: one file per op — the turn's op array IS the batch
-        # mechanism, so the per-tool batch list and its prose are dropped
-        # (DESIGN §4.1/§4.2: nesting a batch array inside the op array is what
-        # broke 27B). Examples are item-level, rendered through the wire's
-        # render_action_input so they appear in its flat op shape.
-        ex_stat = rai({"path": "app.py", "stat": True})
-        ex_search = rai({"path": "app.py", "search": "login", "context": 5})
-        ex_partial = rai({"path": "app.py", "line_start": 100, "line_end": 600})
-        ex_full = rai({"path": "app.py"})
-        # Wording note (DESIGN Exp 8): avoid the plural noun "reads" next to
-        # the tool name "read_file" — the 27B composed `read_file` + `reads`
-        # into the invented wire key `read_file_reads` (which the md_array
-        # prompt never shows). "op", "file(s)" and the verb "read" carry the
-        # same meaning without seeding that token.
         intro = """\
 
   Each read_file op targets ONE file. To read several files, emit one
@@ -385,35 +385,11 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
   save turns. Pick the right mode per op — a full file read burns context
   budget, but reading too little costs turns:
 """
-        batch_mode = ""
     else:
-        ex_stat = rai({"reads": [{"path": "app.py", "stat": True}]})
-        ex_search = rai(
-            {"reads": [{"path": "app.py", "search": "login", "context": 5}]}
-        )
-        ex_partial = rai(
-            {"reads": [{"path": "app.py", "line_start": 100, "line_end": 600}]}
-        )
-        ex_full = rai({"reads": [{"path": "app.py"}]})
-        ex_multi = rai(
-            {
-                "reads": [
-                    {"path": "app.py", "line_start": 100, "line_end": 600},
-                    {"path": "util.py", "search": "login"},
-                ]
-            }
-        )
         intro = """\
 
-  read_file takes a LIST of reads (read_file_reads) — one call can read
-  many files or regions at once. For a single file, pass a one-element
-  list. Pick the right mode per read — full reads burn context budget,
-  but reading too little costs turns:
-"""
-        batch_mode = f"""\
-  5. Batch — read several files/regions in one call; each item picks its
-     own mode:
-       {ex_multi}
+  Each read_file call reads ONE file. Pick the right mode — a full file
+  read burns context budget, but reading too little costs turns:
 """
     base_modes = f"""\
 {intro}
@@ -431,7 +407,7 @@ def _build_read_file_inline(active_tools: list[str], wire_format) -> str:
        {ex_partial}
   4. Full — the file is known-small or central to the task.
        {ex_full}
-{batch_mode}"""
+"""
     if "code_index" in active_tools:
         from agent_cli.code_index.languages import get_supported_extensions
 

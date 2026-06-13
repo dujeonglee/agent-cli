@@ -1,13 +1,15 @@
 """Unit tests for ``Tool.summary_arg`` — the short per-tool label used in
 the compaction transcript (``_to_summary_text``) and observation headers.
 
-Uses the REAL ``action_input`` shape (wire-key prefix + arrays), NOT the
-old hand-invented bare-key shape. The previous version tested
-``summarize_tool_args`` with ``{"path": ...}`` — a shape that never occurs
-in history.jsonl (real keys are ``write_file_path`` / ``read_file_reads[]``)
-— so it passed while the function returned "" for every real record,
-masking the prefix regression. Each tool now owns its own label via
-``Tool.summary_arg`` (sibling of ``Tool.touched_paths``).
+Uses the REAL ``action_input`` shape each tool receives. Flat-native tools
+(write_file, read_file — Step 3) take plain ``{path, ...}``; the remaining
+batch tools still use prefixed arrays (``edit_file_edits``,
+``read``-style ``code_index_queries``, ``delegate_tasks``). The previous
+version tested ``summarize_tool_args`` with a hand-invented bare-key shape
+for batch tools that never occurred in history.jsonl, so it passed while the
+function returned "" for every real record, masking the prefix regression.
+Each tool now owns its own label via ``Tool.summary_arg`` (sibling of
+``Tool.touched_paths``).
 """
 
 from __future__ import annotations
@@ -30,14 +32,9 @@ class TestToolSummaryArg:
             == "a.py"
         )
 
-    def test_read_file_single(self):
-        assert _sa("read_file", {"read_file_reads": [{"path": "a.c"}]}) == "a.c"
-
-    def test_read_file_multiple(self):
-        assert (
-            _sa("read_file", {"read_file_reads": [{"path": "a.c"}, {"path": "b.c"}]})
-            == "2 files"
-        )
+    def test_read_file_flat_path(self):
+        # Flat-native (Step 3): one op reads one file → summary is its path.
+        assert _sa("read_file", {"path": "a.c"}) == "a.c"
 
     def test_code_index_mode_and_path(self):
         assert (

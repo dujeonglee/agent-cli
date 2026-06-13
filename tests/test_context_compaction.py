@@ -195,7 +195,7 @@ class TestSummary:
                 "role": "assistant",
                 "thought": "I will read it",
                 "action": "read_file",
-                "action_input": {"read_file_reads": [{"path": "a.py"}]},
+                "action_input": {"path": "a.py"},
             },
         )
         # Pad to force compaction.
@@ -422,8 +422,9 @@ class TestFileExtractHelper:
 
     These use the REAL assistant-record shape that ``ContextManager._cache``
     holds (and persists to history.jsonl): wire-key prefix on action_input
-    keys (``write_file_path``) plus array-only tools (``read_file_reads``,
-    ``code_index_queries``). The previous version used a hand-invented
+    keys (``write_file_path``) and the flat single-file ``{path}`` of
+    flat-native read_file (Step 3), plus array-only batch tools
+    (``code_index_queries``). The previous version used a hand-invented
     ``{role: user, tool, args: {path}}`` shape that NEVER occurs — real tool
     results are ``{role, tool, success, content}`` with no ``args``, and
     assistant actions carry prefixed/array keys. So it passed while extract
@@ -456,16 +457,16 @@ class TestFileExtractHelper:
         ]
         assert extract_file_paths(msgs) == ["bar.c"]
 
-    def test_read_file_array(self):
-        # read_file is array-only (read_file_reads); path lives in each item.
+    def test_read_file_flat(self):
+        # Flat-native (Step 3): read_file takes flat {path}; one op = one file.
         msgs = [
             {
                 "role": "assistant",
                 "action": "read_file",
-                "action_input": {"read_file_reads": [{"path": "a.c"}, {"path": "b.c"}]},
+                "action_input": {"path": "a.c"},
             }
         ]
-        assert extract_file_paths(msgs) == ["a.c", "b.c"]
+        assert extract_file_paths(msgs) == ["a.c"]
 
     def test_code_index_array_path_modes_only(self):
         # code_index queries: fetch/list carry path; lookup does not → skipped.
@@ -510,7 +511,7 @@ class TestFileExtractHelper:
             {
                 "role": "assistant",
                 "action": "read_file",
-                "action_input": {"read_file_reads": [{"path": "a.c"}]},
+                "action_input": {"path": "a.c"},
             },
             {
                 "role": "assistant",
@@ -537,8 +538,10 @@ class TestFileExtractHelper:
     def test_extracts_all_paths_from_multi_op_record(self):
         """Regression: a multi-op format (md_array) stores ``{ops:[...]}``;
         extract must iterate ``ops`` AND normalize each flat op to canonical
-        (read_file ``{path}`` → ``read_file_reads[].path``). md_array's
-        compaction file list was empty before — both gaps fixed."""
+        before reading paths. For flat-native read_file (Step 3) ``{path}`` is
+        already canonical (identity wrap); still-prefixed batch tools are
+        normalized via their wrap_single_op. md_array's compaction file list
+        was empty before — both gaps fixed."""
         from agent_cli import wire_formats
 
         plugin = wire_formats.get("md_array")

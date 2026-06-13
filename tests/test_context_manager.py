@@ -426,7 +426,7 @@ class TestGetMessagesIntegration:
                 "ops": [
                     {
                         "action": "read_file",
-                        "action_input": {"read_file_reads": [{"path": "src/auth.py"}]},
+                        "action_input": {"path": "src/auth.py"},
                     }
                 ],
             },
@@ -459,7 +459,7 @@ class TestGetMessagesIntegration:
         # Assistant turns round-trip back to the multi-op JSON wire shape.
         parsed_call = json.loads(msgs[1]["content"])
         assert parsed_call["actions"] == [
-            {"action": "read_file", "read_file_reads": [{"path": "src/auth.py"}]}
+            {"action": "read_file", "path": "src/auth.py"}
         ]
         # Observation stays in natural-language ``[tool]`` header form; the
         # tool-result record carries no args, so no path label here.
