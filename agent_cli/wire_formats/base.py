@@ -403,6 +403,20 @@ class WireFormat(ABC):
         """Fallback message when the prior emission was empty / whitespace
         and parsing produced no action."""
 
+    def diagnose_syntax_error(self, prior_content: str) -> str | None:
+        """Pinpoint *where* the prior emission's JSON broke (message +
+        line/column + caret), or ``None`` when there's nothing to diagnose.
+
+        Opt-in seam: the base returns ``None`` so a format that carries no
+        JSON (or chooses not to diagnose) keeps the generic NO_JSON hint
+        unchanged. JSON-bearing formats override to extract their JSON
+        candidate (format-specific) and hand it to
+        ``wire_formats._json_diag.describe_json_error`` (the shared pure
+        formatter). Consumed by ``recovery.wf_recovery.format_no_json_retry``
+        via the loop's parse-fail recovery.
+        """
+        return None
+
     @abstractmethod
     def system_user_prefixes(self) -> tuple[str, ...]:
         """Return the list of recovery framing prefixes this plugin emits.

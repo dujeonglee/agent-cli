@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import re
 
+from agent_cli.wire_formats._json_diag import describe_json_error
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 _THOUGHT_RE = re.compile(r"^##\s*Thought\s*$", re.MULTILINE)
@@ -544,6 +545,15 @@ class MdArrayFormat(WireFormat):
             f"{self.failure_framing_no_action()} "
             f"{self.constraint_reminder_action_required()}"
         )
+
+    def diagnose_syntax_error(self, prior_content: str) -> str | None:
+        # The JSON lives in the `## Action` body (the op array). Diagnose
+        # that — the same candidate parse_turn feeds to json.loads. Fall back
+        # to the whole emission when the header was dropped (header-less op
+        # JSON), so a missing bracket is still located.
+        _, body, _ = _split_sections(prior_content)
+        candidate = _INPUT_RESIDUE.sub("", body).strip() if body else prior_content
+        return describe_json_error(candidate)
 
     def system_user_prefixes(self) -> tuple[str, ...]:
         return (

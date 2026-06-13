@@ -1478,8 +1478,11 @@ class AgentLoop:
         else:
             # JSON parse failed entirely
             _debug_log(f"JSON parse failed (stage={turn.parse_stage}):\n{llm_text}")
+            syntax_error = self.wire_format.diagnose_syntax_error(llm_text)
             intervention = format_no_json_retry(
-                prior_content=llm_text, wire_format=self.wire_format
+                prior_content=llm_text,
+                wire_format=self.wire_format,
+                syntax_error=syntax_error,
             )
             recovery_reason = "invalid JSON"
         render_recovery(llm_text, intervention.message, recovery_reason, self.turn)

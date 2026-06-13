@@ -22,6 +22,7 @@ import re
 
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.primitives import echo_prior_output
+from agent_cli.wire_formats._json_diag import describe_json_error
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 
@@ -658,6 +659,13 @@ class ReActFormat(WireFormat):
 
     def static_retry_hint_no_action(self) -> str:
         return _STATIC_RETRY_HINT_NO_ACTION
+
+    def diagnose_syntax_error(self, prior_content: str) -> str | None:
+        # The whole emission is one JSON object — strip fences and take the
+        # outermost { ... } block (the same candidate parse_turn tried), then
+        # let the shared formatter locate the break.
+        candidate = _extract_json_block(strip_markdown_fences(prior_content))
+        return describe_json_error(candidate)
 
     def system_user_prefixes(self) -> tuple[str, ...]:
         return _SYSTEM_USER_PREFIXES

@@ -39,7 +39,9 @@ def _resolve_wire_format(wire_format):
     return _get_wire_format()
 
 
-def format_no_json_retry(*, prior_content: str = "", wire_format=None) -> Intervention:
+def format_no_json_retry(
+    *, prior_content: str = "", wire_format=None, syntax_error: str | None = None
+) -> Intervention:
     """Build the Intervention for an LLM response that failed to parse.
 
     Composes recovery primitives: echoes the model's prior output (failure
@@ -52,6 +54,12 @@ def format_no_json_retry(*, prior_content: str = "", wire_format=None) -> Interv
     (the loop's pre-Step-6 call sites, every test in
     ``test_retry_builders``) keep their original behavior bit-for-bit.
 
+    ``syntax_error`` (from ``WireFormat.diagnose_syntax_error``) is the
+    optional "where it broke" pointer — message + line/column + caret. When
+    present it is embedded as its own block after the framing, so the model
+    is told the exact fault, not just "not valid JSON". Omitting it (the
+    default) leaves the message bit-for-bit identical to before.
+
     Returns an :class:`Intervention` carrying both the user-role message
     to inject and the names of primitives composed (for observability).
 
@@ -62,18 +70,14 @@ def format_no_json_retry(*, prior_content: str = "", wire_format=None) -> Interv
     if not echo:
         return Intervention(message=wf.static_retry_hint_no_json(), primitives=[])
 
-    msg = "\n".join(
-        [
-            wf.failure_framing_parse_fail(),
-            "",
-            echo,
-            "Honor that. " + wf.constraint_reminder_call(),
-        ]
-    )
-    return Intervention(
-        message=msg,
-        primitives=["echo_prior_output", "constrain_format_json"],
-    )
+    parts = [wf.failure_framing_parse_fail()]
+    primitives = ["echo_prior_output", "constrain_format_json"]
+    if syntax_error:
+        parts += [syntax_error]
+        primitives = ["diagnose_json_error", *primitives]
+    parts += ["", echo, "Honor that. " + wf.constraint_reminder_call()]
+
+    return Intervention(message="\n".join(parts), primitives=primitives)
 
 
 def format_no_action_retry(
