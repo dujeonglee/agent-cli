@@ -97,6 +97,24 @@ agent-cli setup
 }
 ```
 
+#### Jira export (선택)
+
+웹 UI의 Export 기능(아래)에서 Jira 코멘트로 내보내려면 `jira` 섹션을 추가합니다. **여러 인스턴스**(회사용/OSS용 등)를 둘 수 있고, API 토큰은 **서버에만** 보관됩니다(브라우저로 안 나감):
+
+```json
+{
+  "jira": {
+    "instances": {
+      "work": {"base_url": "https://work.atlassian.net", "email": "me@co.com", "api_token": "<API token>"},
+      "oss":  {"base_url": "https://oss.atlassian.net",  "email": "me@x.com",  "api_token": "<API token>"}
+    },
+    "default": "work"
+  }
+}
+```
+
+API 토큰은 Atlassian 계정 설정에서 발급합니다. Jira Cloud 무료 티어(≤10명)로도 동작합니다.
+
 ### 설정 우선순위
 
 높은 게 낮은 걸 덮어씁니다 (필드 단위 병합):
@@ -228,6 +246,10 @@ UI 기능:
 - **Send → Stop → Stopping… 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 즉시 **Stopping…**(비활성)으로 바뀌어 중복 클릭을 막고, 진행 중인 turn 을 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). LLM 생성 도중이면 스트림을 즉시 끊고 미완성 응답을 폐기하며, 도구 실행 중이면 그 스텝을 마친 뒤 멈춥니다. turn 이 끝나면 다시 Send 로 복귀. 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@agent`(delegate) 실행 모두 Stop 으로 중단됩니다 (delegate 는 병렬 worker 가 같은 `stop_event` 를 공유).
 
 **⚡ Prompt Inspector:** 헤더의 ⚡ 버튼으로 우측 드로어를 열면 **현재 턴에 실제로 전송된 시스템 프롬프트**를 섹션별로 확인할 수 있습니다. 상단의 토큰 예산 스택바(섹션별 색·비율), 섹션 아코디언(이름·토큰 뱃지·본문), 검색 필터를 제공합니다. 열 때마다 최신 LLM 호출의 스냅샷을 가져오며(`GET /api/debug/prompt`, 토큰 인증), 훅이 주입한 동적 섹션도 `Hook: <이름>`으로 표시됩니다. **에이전트별 스코프**: delegate 서브에이전트가 돌면 드로어 상단에 `[Main] [explorer·1] [coder·2]` 칩 row가 나타나, 칩을 클릭하면 해당 서브에이전트가 실제로 받은 시스템 프롬프트로 전환되고 `Main`을 누르면 메인으로 돌아옵니다. 끝난 서브에이전트의 프롬프트도 사후 검사를 위해 남아 있으며, 칩의 ✕로 개별 제거할 수 있습니다(Main은 제거 불가).
+
+**📤 Export:** 헤더의 📤 버튼으로 **선택 모드**에 들어가면 각 대화 카드 좌측에 체크박스가 나타납니다(기본 전부 해제). 원하는 카드를 고르거나 `All`로 전체 선택한 뒤(하단 액션바에 선택 개수 표시), 두 가지로 내보낼 수 있습니다:
+> - **⬇ HTML** — 선택한 대화를 self-contained HTML 파일로 다운로드(스타일 인라인, 어디서나 열림).
+> - **Jira…** — 선택한 대화를 한 개의 **Jira 코멘트**로 게시. 인스턴스 드롭다운(여러 개 설정 시) + issue key(예: `PROJ-123`) 입력 후 Send. 설정은 위 [Jira export](#jira-export-선택) 참조. (API 토큰은 서버에만 보관, ADF 포맷으로 전송.)
 
 **종료 (Ctrl+C):** 한 번의 Ctrl+C로 깨끗하게 종료됩니다. uvicorn의 lifespan shutdown 훅이 활성 SSE 연결을 정리하고, 백그라운드 worker는 `SHUTDOWN` sentinel로 깨어나 빠져나가며, 세션이 자동 저장됩니다. `agent-cli web --resume <session_id>`로 이어서 실행하면 이전 turn들이 SSE snapshot으로 재생되어 UI에 그대로 복원됩니다.
 

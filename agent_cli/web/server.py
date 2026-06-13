@@ -35,7 +35,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
@@ -565,6 +565,77 @@ def create_app(server: WebServer) -> FastAPI:
         server._require_token(token)
         removed = server.renderer.delete_prompt_scope(task_id)
         return {"ok": True, "removed": removed}
+
+    @app.get("/api/export/jira/targets")
+    async def export_jira_targets(token: str = Query(...)):
+        """Configured Jira instance names + base URLs for the export dropdown.
+        Token-authenticated; NEVER returns API tokens. Empty list when no Jira
+        is configured (the UI then disables the Jira option)."""
+        server._require_token(token)
+        from agent_cli.config import load_config
+        from agent_cli.integrations import jira as jira_mod
+
+        return {"ok": True, "targets": jira_mod.list_targets(load_config())}
+
+    @app.post("/api/export/html")
+    async def export_html(request: Request, token: str = Query(...)):
+        """Render selected transcript entries to a self-contained HTML doc and
+        return it as a download. Body: ``{title?, entries: [...]}``. Read-only,
+        so token-auth (no controller check) — any authenticated viewer may
+        export what they can see."""
+        server._require_token(token)
+        from agent_cli.integrations import export as export_mod
+
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        entries = body.get("entries")
+        if not isinstance(entries, list):
+            raise HTTPException(status_code=400, detail="entries must be a list")
+        title = body.get("title") or ""
+        doc = export_mod.entries_to_html(entries, title=str(title))
+        return Response(
+            content=doc,
+            media_type="text/html; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="agent-cli-export.html"'
+            },
+        )
+
+    @app.post("/api/export/jira")
+    async def export_jira(request: Request, token: str = Query(...)):
+        """Post selected transcript entries as ONE Jira comment. Body:
+        ``{target?, issue_key, entries: [...]}``. Resolves the named instance
+        from config (token stays server-side), renders entries to ADF, and
+        POSTs the comment. Returns ``{ok, url}`` or 400 with the error."""
+        server._require_token(token)
+        from agent_cli.config import load_config
+        from agent_cli.integrations import export as export_mod
+        from agent_cli.integrations import jira as jira_mod
+
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        entries = body.get("entries")
+        if not isinstance(entries, list):
+            raise HTTPException(status_code=400, detail="entries must be a list")
+        issue_key = body.get("issue_key") or ""
+        target = body.get("target")
+        try:
+            inst = jira_mod.resolve_instance(load_config(), target)
+            adf = export_mod.entries_to_adf(entries)
+            url = jira_mod.post_comment(
+                inst["base_url"],
+                inst["email"],
+                inst["api_token"],
+                issue_key,
+                adf,
+            )
+        except jira_mod.JiraError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return JSONResponse({"ok": True, "url": url, "target": inst["name"]})
 
     @app.get("/api/stream")
     async def stream(token: str = Query(...)):

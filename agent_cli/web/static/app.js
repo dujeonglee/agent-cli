@@ -1471,3 +1471,279 @@
   });
   $search.addEventListener("input", applyFilter);
 })();
+
+// ── Export feature (self-contained IIFE) ───────────────────────────────
+//
+// Decoupled from the main render loop: it reads top-level cards straight
+// from #messages (classifying by card class, body from innerText), so it
+// needs no hook into the card renderers. Selection happens in place via
+// per-card checkboxes shown only in export mode; the bottom action bar
+// exports the selected entries as a downloaded HTML file or a Jira comment.
+(function () {
+  "use strict";
+
+  const token = new URLSearchParams(window.location.search).get("token");
+  const $btn = document.getElementById("export-btn");
+  const $bar = document.getElementById("export-bar");
+  const $messages = document.getElementById("messages");
+  if (!$btn || !$bar || !$messages || !token) return;
+
+  const $all = document.getElementById("export-all");
+  const $count = document.getElementById("export-count");
+  const $html = document.getElementById("export-html");
+  const $jiraBtn = document.getElementById("export-jira-btn");
+  const $cancel = document.getElementById("export-cancel");
+  const $jiraForm = document.getElementById("export-jira-form");
+  const $jiraTarget = document.getElementById("export-jira-target");
+  const $jiraIssue = document.getElementById("export-jira-issue");
+  const $jiraSend = document.getElementById("export-jira-send");
+  const $msg = document.getElementById("export-msg");
+
+  let exportMode = false;
+  const selected = new Set(); // selected card elements
+
+  function qtoken() {
+    return "token=" + encodeURIComponent(token);
+  }
+
+  // Classify a top-level card → {kind, label, mono, body?(selector)} or null
+  // to skip (transient streaming / rejected raw cards).
+  function classify(card) {
+    const cl = card.classList;
+    if (!cl || !cl.contains("card")) return null;
+    if (cl.contains("card-user"))
+      return { kind: "user", label: "User", mono: false, body: ".bubble" };
+    if (cl.contains("card-assistant"))
+      return { kind: "assistant", label: "Assistant", mono: false };
+    if (cl.contains("card-observation")) {
+      const head = card.querySelector(".obs-head");
+      return {
+        kind: "observation",
+        label: head ? head.innerText.trim() : "Observation",
+        mono: true,
+        body: ".obs-body",
+      };
+    }
+    if (cl.contains("card-error"))
+      return { kind: "error", label: "Error", mono: true };
+    if (cl.contains("card-task-group")) {
+      const t = card.querySelector(".task-title");
+      return {
+        kind: "delegate",
+        label: t ? t.innerText.trim() : "delegate",
+        mono: false,
+        body: ".task-body",
+      };
+    }
+    return null; // card-streaming / card-failed / unknown
+  }
+
+  function topCards() {
+    return Array.from($messages.children).filter(function (c) {
+      return classify(c) !== null;
+    });
+  }
+
+  function attachCheckbox(card) {
+    if (card.querySelector(":scope > .export-check")) return;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "export-check";
+    cb.checked = selected.has(card);
+    // Don't let a checkbox click bubble to card-collapse handlers.
+    cb.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+    cb.addEventListener("change", function () {
+      if (cb.checked) selected.add(card);
+      else selected.delete(card);
+      updateBar();
+    });
+    card.insertBefore(cb, card.firstChild);
+  }
+
+  function detachCheckboxes() {
+    $messages.querySelectorAll(".export-check").forEach(function (c) {
+      c.remove();
+    });
+  }
+
+  function updateBar() {
+    const cards = topCards();
+    $count.textContent = selected.size + " selected";
+    $all.checked = cards.length > 0 && selected.size === cards.length;
+    $all.indeterminate = selected.size > 0 && selected.size < cards.length;
+    const has = selected.size > 0;
+    $html.disabled = !has;
+    $jiraBtn.disabled = !has;
+  }
+
+  // Checkbox cards that arrive while export mode is active (e.g. a still-
+  // running agent appends more turns).
+  const observer = new MutationObserver(function (muts) {
+    if (!exportMode) return;
+    muts.forEach(function (m) {
+      m.addedNodes.forEach(function (n) {
+        if (n.nodeType === 1 && classify(n)) attachCheckbox(n);
+      });
+    });
+    updateBar();
+  });
+
+  function enter() {
+    exportMode = true;
+    selected.clear();
+    document.body.classList.add("export-mode");
+    $bar.hidden = false;
+    hideJiraForm();
+    $msg.textContent = "";
+    topCards().forEach(attachCheckbox);
+    observer.observe($messages, { childList: true });
+    updateBar();
+  }
+
+  function exit() {
+    exportMode = false;
+    observer.disconnect();
+    detachCheckboxes();
+    selected.clear();
+    document.body.classList.remove("export-mode");
+    $bar.hidden = true;
+  }
+
+  function collectEntries() {
+    return topCards()
+      .filter(function (c) {
+        return selected.has(c);
+      })
+      .map(function (card) {
+        const c = classify(card);
+        const bodyEl = c.body ? card.querySelector(c.body) : card;
+        const body = (bodyEl ? bodyEl.innerText : card.innerText) || "";
+        return { kind: c.kind, label: c.label, body: body.trim(), mono: c.mono };
+      });
+  }
+
+  async function exportHtml() {
+    $msg.textContent = "Exporting…";
+    try {
+      const resp = await fetch("/api/export/html?" + qtoken(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: document.title, entries: collectEntries() }),
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "agent-cli-export-" + Date.now() + ".html";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      $msg.textContent = "";
+      exit();
+    } catch (e) {
+      $msg.textContent = "Export failed: " + e.message;
+    }
+  }
+
+  async function loadJiraTargets() {
+    try {
+      const r = await fetch("/api/export/jira/targets?" + qtoken());
+      const d = await r.json();
+      return (d && d.targets) || [];
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  async function showJiraForm() {
+    const targets = await loadJiraTargets();
+    if (!targets.length) {
+      $msg.textContent =
+        "No Jira configured — add jira.instances to .agent-cli/config.json.";
+      return;
+    }
+    $jiraTarget.innerHTML = "";
+    targets.forEach(function (t) {
+      const o = document.createElement("option");
+      o.value = t.name;
+      o.textContent = t.name;
+      if (t.default) o.selected = true;
+      $jiraTarget.appendChild(o);
+    });
+    // Hide the selector when there's only one instance.
+    $jiraTarget.style.display = targets.length > 1 ? "" : "none";
+    $jiraForm.hidden = false;
+    $msg.textContent = "";
+    $jiraIssue.focus();
+  }
+
+  function hideJiraForm() {
+    $jiraForm.hidden = true;
+  }
+
+  async function sendJira() {
+    const issue = $jiraIssue.value.trim();
+    if (!issue) {
+      $msg.textContent = "Enter an issue key (e.g. PROJ-123).";
+      return;
+    }
+    $jiraSend.disabled = true;
+    $msg.textContent = "Posting to Jira…";
+    try {
+      const r = await fetch("/api/export/jira?" + qtoken(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: $jiraTarget.value,
+          issue_key: issue,
+          entries: collectEntries(),
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error((d && d.detail) || "HTTP " + r.status);
+      $msg.innerHTML =
+        'Posted → <a href="' +
+        d.url +
+        '" target="_blank" rel="noopener">' +
+        issue +
+        "</a>";
+      setTimeout(exit, 2500);
+    } catch (e) {
+      $msg.textContent = "Jira failed: " + e.message;
+    } finally {
+      $jiraSend.disabled = false;
+    }
+  }
+
+  // ── Wiring ──
+  $btn.addEventListener("click", function () {
+    if (exportMode) exit();
+    else enter();
+  });
+  $cancel.addEventListener("click", exit);
+  $all.addEventListener("change", function () {
+    const cards = topCards();
+    if ($all.checked) cards.forEach(function (c) { selected.add(c); });
+    else selected.clear();
+    $messages.querySelectorAll(".export-check").forEach(function (cb) {
+      cb.checked = selected.has(cb.parentNode);
+    });
+    updateBar();
+  });
+  $html.addEventListener("click", exportHtml);
+  $jiraBtn.addEventListener("click", function () {
+    if ($jiraForm.hidden) showJiraForm();
+    else hideJiraForm();
+  });
+  $jiraSend.addEventListener("click", sendJira);
+  $jiraIssue.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendJira();
+    }
+  });
+})();

@@ -25,6 +25,7 @@ import json
 import logging
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -301,6 +302,20 @@ class TestStaticUI:
         assert "/api/stream" in body
         assert "/api/input" in body
         assert "token" in body
+
+    def test_export_ui_wired(self, server_and_client):
+        # Frontend↔backend contract guard for the Export feature: the page has
+        # the export controls and app.js hits the export endpoints. Keeps the
+        # JS (untested by an engine here) from silently drifting off the
+        # server endpoints, which ARE tested in TestExportEndpoints.
+        _, _, client = server_and_client
+        html = client.get("/").text
+        for el_id in ("export-btn", "export-bar", "export-all", "export-jira-form"):
+            assert f'id="{el_id}"' in html, el_id
+        js = client.get("/static/app.js").text
+        assert "/api/export/html" in js
+        assert "/api/export/jira" in js
+        assert "/api/export/jira/targets" in js
 
     def test_style_css_is_served(self, server_and_client):
         _, _, client = server_and_client
@@ -1049,3 +1064,90 @@ class TestDebugPromptScopedEndpoints:
         assert (
             client.delete("/api/debug/prompt?token=wrong&task_id=x").status_code == 401
         )
+
+
+class TestExportEndpoints:
+    """Export feature endpoints: HTML download + Jira comment + targets.
+
+    Token-authenticated and read-only (no controller gate). Jira config /
+    HTTP POST are patched so these run without a live (paid) Jira."""
+
+    _CFG = {
+        "jira": {
+            "instances": {
+                "work": {
+                    "base_url": "https://work.atlassian.net",
+                    "email": "me@co.com",
+                    "api_token": "tok-w",
+                }
+            },
+            "default": "work",
+        }
+    }
+
+    def test_targets_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/export/jira/targets").status_code == 422  # no token
+        assert client.get("/api/export/jira/targets?token=wrong").status_code == 401
+
+    def test_targets_lists_instances_without_tokens(self, server_and_client):
+        _, _, client = server_and_client
+        with patch("agent_cli.config.load_config", return_value=self._CFG):
+            r = client.get("/api/export/jira/targets?token=testtoken")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ok"] is True
+        names = {t["name"] for t in data["targets"]}
+        assert names == {"work"}
+        assert "tok-w" not in r.text  # token never leaves the server
+
+    def test_html_export_returns_attachment(self, server_and_client):
+        _, _, client = server_and_client
+        r = client.post(
+            "/api/export/html?token=testtoken",
+            json={
+                "title": "S",
+                "entries": [{"kind": "user", "label": "User", "body": "hi there"}],
+            },
+        )
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "attachment" in r.headers["content-disposition"]
+        assert "hi there" in r.text and "<!doctype html>" in r.text
+
+    def test_html_export_requires_token_and_list(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.post("/api/export/html", json={}).status_code == 422
+        r = client.post("/api/export/html?token=testtoken", json={"entries": "x"})
+        assert r.status_code == 400
+
+    def test_jira_export_success(self, server_and_client):
+        _, _, client = server_and_client
+        with (
+            patch("agent_cli.config.load_config", return_value=self._CFG),
+            patch("agent_cli.integrations.jira.requests.post") as post,
+        ):
+            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
+            r = client.post(
+                "/api/export/jira?token=testtoken",
+                json={
+                    "issue_key": "PROJ-3",
+                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
+                },
+            )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ok"] is True
+        assert data["url"] == "https://work.atlassian.net/browse/PROJ-3"
+        # the ADF body was posted to the right URL
+        assert post.call_args.args[0].endswith("/rest/api/3/issue/PROJ-3/comment")
+
+    def test_jira_export_no_config_is_400(self, server_and_client):
+        _, _, client = server_and_client
+        with patch("agent_cli.config.load_config", return_value={}):
+            r = client.post(
+                "/api/export/jira?token=testtoken",
+                json={"issue_key": "P-1", "entries": []},
+            )
+        assert r.status_code == 400
+        assert "Jira" in r.json()["detail"]

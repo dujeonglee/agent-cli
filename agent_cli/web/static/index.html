@@ -11,9 +11,27 @@
     <span id="info">connecting…</span>
     <span id="token-usage" title="token usage"></span>
     <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
+    <button id="export-btn" type="button" title="Export conversation">📤</button>
     <span id="conn-status" title="connection status">●</span>
   </header>
   <main id="messages"></main>
+
+  <!-- Export selection action bar (shown only in export mode) -->
+  <div id="export-bar" hidden>
+    <label class="exp-all"><input type="checkbox" id="export-all"> All</label>
+    <span id="export-count">0 selected</span>
+    <span class="exp-actions">
+      <button id="export-html" type="button" title="Download as HTML">⬇ HTML</button>
+      <button id="export-jira-btn" type="button" title="Post as Jira comment">Jira…</button>
+      <button id="export-cancel" type="button" title="Cancel">✕</button>
+    </span>
+    <span id="export-jira-form" hidden>
+      <select id="export-jira-target" title="Jira instance"></select>
+      <input id="export-jira-issue" type="text" placeholder="ISSUE-123" autocomplete="off">
+      <button id="export-jira-send" type="button">Send</button>
+    </span>
+    <span id="export-msg" class="exp-msg"></span>
+  </div>
 
   <!-- Prompt Inspector drawer -->
   <div id="inspector-backdrop" hidden></div>
