@@ -1170,3 +1170,125 @@ class TestExportEndpoints:
             )
         assert r.status_code == 400
         assert "Jira" in r.json()["detail"]
+
+
+class TestWorkspaceDownload:
+    """Workspace file tree + zip download. Token-auth, read-only. The
+    workspace root is overridden to a tmp dir so tests are isolated and
+    don't zip the whole repo."""
+
+    @staticmethod
+    def _setup(server, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.c").write_text("int main(){}\n")
+        (tmp_path / "src" / "util.c").write_text("// util\n")
+        (tmp_path / "README.md").write_text("# hi\n")
+        (tmp_path / ".agent-cli").mkdir()
+        (tmp_path / ".agent-cli" / "x.json").write_text("{}")
+        server.workspace = tmp_path.resolve()
+
+    def test_tree_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/workspace/tree").status_code == 422
+        assert client.get("/api/workspace/tree?token=wrong").status_code == 401
+
+    def test_tree_lists_root_dirs_first(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.get("/api/workspace/tree?token=testtoken")
+        assert r.status_code == 200
+        entries = r.json()["entries"]
+        names = [e["name"] for e in entries]
+        # dirs first (sorted), then files; .agent-cli IS shown (no exclusions)
+        assert names == [".agent-cli", "src", "README.md"]
+        src = next(e for e in entries if e["name"] == "src")
+        assert src["type"] == "dir" and src["rel"] == "src"
+        # directories report a recursive size too (not None)
+        assert src["size"] > 0
+
+    def test_tree_lazy_subdir(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.get("/api/workspace/tree?token=testtoken&path=src")
+        assert {e["name"] for e in r.json()["entries"]} == {"main.c", "util.c"}
+
+    def test_tree_rejects_traversal(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        assert (
+            client.get("/api/workspace/tree?token=testtoken&path=../etc").status_code
+            == 400
+        )
+
+    def test_download_selected_dir_recursive(self, server_and_client, tmp_path):
+        import io
+        import zipfile
+
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/workspace/download?token=testtoken", json={"paths": ["src"]}
+        )
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/zip"
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        assert set(zf.namelist()) == {"src/main.c", "src/util.c"}
+
+    def test_download_single_file(self, server_and_client, tmp_path):
+        import io
+        import zipfile
+
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/workspace/download?token=testtoken", json={"paths": ["README.md"]}
+        )
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        assert zf.namelist() == ["README.md"]
+
+    def test_download_all_includes_everything(self, server_and_client, tmp_path):
+        import io
+        import zipfile
+
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post("/api/workspace/download?token=testtoken", json={"all": True})
+        names = set(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
+        # "전부 표시" decision: .agent-cli is included on All
+        assert "src/main.c" in names and "README.md" in names
+        assert ".agent-cli/x.json" in names
+
+    def test_download_empty_selection_400(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        assert (
+            client.post(
+                "/api/workspace/download?token=testtoken", json={"paths": []}
+            ).status_code
+            == 400
+        )
+
+    def test_download_rejects_traversal(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/workspace/download?token=testtoken", json={"paths": ["../secret"]}
+        )
+        assert r.status_code == 400
+
+    def test_download_ui_wired(self, server_and_client):
+        _, _, client = server_and_client
+        html = client.get("/").text
+        for el_id in (
+            "download-btn",
+            "download-drawer",
+            "dl-all",
+            "dl-tree",
+            "dl-download",
+        ):
+            assert f'id="{el_id}"' in html, el_id
+        js = client.get("/static/app.js").text
+        assert "/api/workspace/tree" in js
+        assert "/api/workspace/download" in js
+        css = client.get("/static/style.css").text
+        assert "#download-drawer" in css

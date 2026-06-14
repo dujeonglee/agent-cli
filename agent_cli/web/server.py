@@ -27,10 +27,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import secrets
 import socket
+import tempfile
 import threading
 import subprocess
+import zipfile
 from pathlib import Path
 from queue import Empty, SimpleQueue
 
@@ -38,6 +41,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
+from starlette.background import BackgroundTask
 
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.render.web import WebConnection, WebRenderer
@@ -342,6 +346,18 @@ class WebServer:
         # request handler thread.
         self._stop_lock = threading.Lock()
         self._stop_handle: threading.Event | None = None
+        # Workspace root for the download feature = the dir the server (and
+        # agent) runs in. Resolved once at startup; downloads are confined to
+        # this subtree (path-traversal guarded in ``_safe_workspace_path``).
+        self.workspace = Path.cwd().resolve()
+
+    def _safe_workspace_path(self, rel: str) -> Path:
+        """Resolve ``rel`` under the workspace root, rejecting traversal /
+        symlink escapes. ``""`` / ``"."`` → the workspace root itself."""
+        p = (self.workspace / (rel or ".")).resolve()
+        if p != self.workspace and self.workspace not in p.parents:
+            raise HTTPException(status_code=400, detail="path outside workspace")
+        return p
 
     # ─── External hooks (used by the CLI ``web`` command) ─────
 
@@ -636,6 +652,85 @@ def create_app(server: WebServer) -> FastAPI:
         except jira_mod.JiraError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return JSONResponse({"ok": True, "url": url, "target": inst["name"]})
+
+    @app.get("/api/workspace/tree")
+    async def workspace_tree(token: str = Query(...), path: str = Query("")):
+        """List one directory level of the workspace (lazy tree expansion).
+        Returns ``{path, entries:[{name, type, size}]}`` — dirs first, then
+        files, name-sorted. Read-only, token-auth."""
+        server._require_token(token)
+        d = server._safe_workspace_path(path)
+        if not d.is_dir():
+            raise HTTPException(status_code=400, detail="not a directory")
+
+        def _dir_size(p: Path) -> int:
+            total = 0
+            for f in p.rglob("*"):
+                try:
+                    if f.is_file():
+                        total += f.stat().st_size
+                except OSError:
+                    pass
+            return total
+
+        entries = []
+        for child in sorted(d.iterdir(), key=lambda c: (c.is_file(), c.name.lower())):
+            is_dir = child.is_dir()
+            try:
+                size = _dir_size(child) if is_dir else child.stat().st_size
+            except OSError:
+                size = 0
+            entries.append(
+                {
+                    "name": child.name,
+                    "rel": str(child.resolve().relative_to(server.workspace)),
+                    "type": "dir" if is_dir else "file",
+                    "size": size,
+                }
+            )
+        return JSONResponse({"path": path, "entries": entries})
+
+    @app.post("/api/workspace/download")
+    async def workspace_download(request: Request, token: str = Query(...)):
+        """Zip the selected workspace paths and return the archive, deleting
+        the temp file after send. Body: ``{paths:[rel...], all?:bool}``. A dir
+        is added recursively; a file individually. Read-only, token-auth."""
+        server._require_token(token)
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        rels = ["."] if body.get("all") else (body.get("paths") or [])
+        if not isinstance(rels, list) or not rels:
+            raise HTTPException(status_code=400, detail="no paths selected")
+
+        targets = [server._safe_workspace_path(r) for r in rels]
+        tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+        tmp.close()
+        try:
+            with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
+                seen: set[Path] = set()
+                for p in targets:
+                    if not p.exists():
+                        continue
+                    files = (
+                        (f for f in p.rglob("*") if f.is_file()) if p.is_dir() else [p]
+                    )
+                    for f in files:
+                        if f in seen:
+                            continue
+                        seen.add(f)
+                        zf.write(f, f.relative_to(server.workspace))
+        except Exception:
+            os.unlink(tmp.name)
+            raise
+        name = "workspace" if body.get("all") else server.workspace.name
+        return FileResponse(
+            tmp.name,
+            media_type="application/zip",
+            filename=f"{name}.zip",
+            background=BackgroundTask(os.unlink, tmp.name),
+        )
 
     @app.get("/api/stream")
     async def stream(token: str = Query(...)):

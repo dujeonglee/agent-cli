@@ -12,6 +12,7 @@
     <span id="token-usage" title="token usage"></span>
     <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
     <button id="export-btn" type="button" title="Export conversation">📤</button>
+    <button id="download-btn" type="button" title="Download workspace files">📥</button>
     <span id="conn-status" title="connection status">●</span>
   </header>
   <main id="messages"></main>
@@ -32,6 +33,22 @@
     </span>
     <span id="export-msg" class="exp-msg"></span>
   </div>
+
+  <!-- Workspace download drawer -->
+  <div id="download-backdrop" hidden></div>
+  <aside id="download-drawer" aria-hidden="true">
+    <div class="dl-head">
+      <div class="dl-title">📥 Download</div>
+      <button id="dl-close" type="button" title="Close">✕</button>
+    </div>
+    <label class="dl-all"><input type="checkbox" id="dl-all"> All (whole workspace)</label>
+    <div id="dl-tree" class="dl-tree"></div>
+    <div class="dl-foot">
+      <span id="dl-count">0 selected</span>
+      <button id="dl-download" type="button" title="Download as zip">⬇ Download zip</button>
+    </div>
+    <div id="dl-msg" class="dl-msg"></div>
+  </aside>
 
   <!-- Prompt Inspector drawer -->
   <div id="inspector-backdrop" hidden></div>

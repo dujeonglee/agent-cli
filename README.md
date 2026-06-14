@@ -250,6 +250,8 @@ UI 기능:
 > - **⬇ HTML** — 선택한 대화를 self-contained HTML 파일로 다운로드(스타일 인라인, 어디서나 열림).
 > - **Jira…** — 선택한 대화를 한 개의 **Jira 코멘트**로 게시. 인스턴스 드롭다운(여러 개 설정 시) + issue key(예: `PROJ-123`) 입력 후 Send. 설정은 위 [Jira export](#jira-export-선택) 참조. (API 토큰은 서버에만 보관, ADF 포맷으로 전송.)
 
+**📥 Download:** 헤더의 📥 버튼으로 우측 드로어를 열면 **워크스페이스 파일 트리**가 나타납니다(디렉토리는 ▶로 펼쳐 하위 탐색, 파일·디렉토리 옆에 크기 표시). 원하는 파일/디렉토리를 체크하거나 `All`(워크스페이스 전체)로 선택한 뒤 **⬇ Download zip** 을 누르면 선택 항목이 임시 zip으로 압축되어 다운로드됩니다(전송 후 서버의 임시 파일은 삭제). 디렉토리를 고르면 그 하위 전체가, 파일을 고르면 그 파일만 담깁니다. 워크스페이스(서버 실행 디렉토리) 밖 경로는 서버가 차단합니다.
+
 **종료 (Ctrl+C):** 한 번의 Ctrl+C로 깨끗하게 종료됩니다. uvicorn의 lifespan shutdown 훅이 활성 SSE 연결을 정리하고, 백그라운드 worker는 `SHUTDOWN` sentinel로 깨어나 빠져나가며, 세션이 자동 저장됩니다. `agent-cli web --resume <session_id>`로 이어서 실행하면 이전 turn들이 SSE snapshot으로 재생되어 UI에 그대로 복원됩니다.
 
 CLI parity 명령어:

@@ -1758,3 +1758,179 @@
     }
   });
 })();
+
+// ─── Workspace download (📥) — lazy file tree → zip selected paths ───
+(function () {
+  const token = new URLSearchParams(window.location.search).get("token");
+  const $btn = document.getElementById("download-btn");
+  const $drawer = document.getElementById("download-drawer");
+  const $backdrop = document.getElementById("download-backdrop");
+  const $close = document.getElementById("dl-close");
+  const $all = document.getElementById("dl-all");
+  const $tree = document.getElementById("dl-tree");
+  const $count = document.getElementById("dl-count");
+  const $go = document.getElementById("dl-download");
+  const $msg = document.getElementById("dl-msg");
+  if (!$btn || !$drawer || !token) return;
+
+  const qt = () => "token=" + encodeURIComponent(token);
+  const selected = new Set();
+  const esc = (s) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const fmtSize = (n) =>
+    n == null ? "" : n < 1024 ? n + "B" : n < 1048576
+      ? (n / 1024).toFixed(0) + "KB" : (n / 1048576).toFixed(1) + "MB";
+
+  function updateCount() {
+    if ($all.checked) {
+      $count.textContent = "whole workspace";
+    } else {
+      $count.textContent = selected.size + " selected";
+    }
+  }
+
+  async function fetchTree(path) {
+    const r = await fetch("/api/workspace/tree?" + qt() + "&path=" + encodeURIComponent(path));
+    if (!r.ok) throw new Error("tree " + r.status);
+    return (await r.json()).entries;
+  }
+
+  function makeRow(entry, depth) {
+    const row = document.createElement("div");
+    row.className = "dl-row";
+    row.style.paddingLeft = depth * 16 + "px";
+
+    const toggle = document.createElement("span");
+    toggle.className = "dl-toggle";
+    toggle.textContent = entry.type === "dir" ? "▶" : "";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = selected.has(entry.rel);
+    cb.addEventListener("change", () => {
+      if (cb.checked) selected.add(entry.rel);
+      else selected.delete(entry.rel);
+      updateCount();
+    });
+
+    const label = document.createElement("span");
+    label.className = "dl-label";
+    const icon = entry.type === "dir" ? "📁" : "📄";
+    const size = ` <span class="dl-size">${fmtSize(entry.size)}</span>`;
+    label.innerHTML = `${icon} ${esc(entry.name)}${size}`;
+
+    row.appendChild(toggle);
+    row.appendChild(cb);
+    row.appendChild(label);
+
+    const wrap = document.createElement("div");
+    wrap.appendChild(row);
+
+    if (entry.type === "dir") {
+      const kids = document.createElement("div");
+      kids.className = "dl-kids";
+      let loaded = false;
+      const expand = async () => {
+        if (kids.childElementCount === 0) {
+          try {
+            const entries = await fetchTree(entry.rel);
+            entries.forEach((e) => kids.appendChild(makeRow(e, depth + 1)));
+          } catch (e) {
+            $msg.textContent = "로드 실패: " + e.message;
+          }
+        }
+      };
+      const onToggle = async () => {
+        loaded = !loaded;
+        toggle.textContent = loaded ? "▼" : "▶";
+        kids.style.display = loaded ? "" : "none";
+        if (loaded) await expand();
+      };
+      toggle.style.cursor = "pointer";
+      toggle.addEventListener("click", onToggle);
+      label.style.cursor = "pointer";
+      label.addEventListener("click", onToggle);
+      wrap.appendChild(kids);
+    }
+    return wrap;
+  }
+
+  async function open() {
+    $backdrop.hidden = false;
+    $backdrop.classList.add("open");
+    $drawer.classList.add("open");
+    $drawer.setAttribute("aria-hidden", "false");
+    selected.clear();
+    $all.checked = false;
+    $msg.textContent = "";
+    $tree.innerHTML = "<div class='dl-loading'>loading…</div>";
+    updateCount();
+    try {
+      const entries = await fetchTree("");
+      $tree.innerHTML = "";
+      entries.forEach((e) => $tree.appendChild(makeRow(e, 0)));
+      if (!entries.length) $tree.innerHTML = "<div class='dl-loading'>(empty)</div>";
+    } catch (e) {
+      $tree.innerHTML = "<div class='dl-loading'>로드 실패: " + esc(e.message) + "</div>";
+    }
+  }
+
+  function close() {
+    $backdrop.classList.remove("open");
+    $drawer.classList.remove("open");
+    $drawer.setAttribute("aria-hidden", "true");
+    setTimeout(() => { $backdrop.hidden = true; }, 200);
+  }
+
+  $all.addEventListener("change", () => {
+    $tree.style.opacity = $all.checked ? "0.4" : "";
+    $tree.style.pointerEvents = $all.checked ? "none" : "";
+    updateCount();
+  });
+
+  async function download() {
+    const payload = $all.checked
+      ? { all: true }
+      : { paths: Array.from(selected) };
+    if (!$all.checked && selected.size === 0) {
+      $msg.textContent = "선택된 항목이 없습니다";
+      return;
+    }
+    $go.disabled = true;
+    $msg.textContent = "압축 중…";
+    try {
+      const r = await fetch("/api/workspace/download?" + qt(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        let d = "";
+        try { d = (await r.json()).detail || ""; } catch (e) {}
+        throw new Error(d || ("HTTP " + r.status));
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") || "";
+      const m = cd.match(/filename="?([^"]+)"?/);
+      const fname = (m && m[1]) || "workspace.zip";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      $msg.textContent = "다운로드 시작: " + fname;
+    } catch (e) {
+      $msg.textContent = "실패: " + e.message;
+    } finally {
+      $go.disabled = false;
+    }
+  }
+
+  $btn.addEventListener("click", open);
+  $close.addEventListener("click", close);
+  $backdrop.addEventListener("click", close);
+  $go.addEventListener("click", download);
+})();
