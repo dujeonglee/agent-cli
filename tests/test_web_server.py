@@ -1290,5 +1290,8 @@ class TestWorkspaceDownload:
         js = client.get("/static/app.js").text
         assert "/api/workspace/tree" in js
         assert "/api/workspace/download" in js
+        # open() must clear the All-applied dim/disable, or a prior All
+        # download leaves the tree greyed + unclickable on reopen (regression)
+        assert 'style.pointerEvents = ""' in js
         css = client.get("/static/style.css").text
         assert "#download-drawer" in css

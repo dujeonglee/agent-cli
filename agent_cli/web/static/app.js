@@ -1862,6 +1862,10 @@
     $drawer.setAttribute("aria-hidden", "false");
     selected.clear();
     $all.checked = false;
+    // reset the dim/disable that the All checkbox applies — otherwise a
+    // prior All-download leaves the tree greyed out + unclickable on reopen
+    $tree.style.opacity = "";
+    $tree.style.pointerEvents = "";
     $msg.textContent = "";
     $tree.innerHTML = "<div class='dl-loading'>loading…</div>";
     updateCount();
