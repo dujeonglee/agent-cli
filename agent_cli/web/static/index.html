@@ -16,6 +16,14 @@
     <span id="viewers" title="connected viewers"></span>
     <span id="conn-status" title="connection status">●</span>
   </header>
+  <!-- First-connect nickname bar (pre-filled with the assigned fun default) -->
+  <div id="name-bar" hidden>
+    <span class="nb-label">닉네임</span>
+    <input id="nb-input" type="text" maxlength="24" autocomplete="off"
+           placeholder="이름 입력">
+    <button id="nb-set" type="button">설정</button>
+    <button id="nb-skip" type="button" title="기본값 유지">✕</button>
+  </div>
   <main id="messages"></main>
 
   <!-- Export selection action bar (shown only in export mode) -->

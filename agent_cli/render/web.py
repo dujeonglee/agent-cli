@@ -284,6 +284,18 @@ class WebRenderer(Renderer):
         with self._lock:
             return self._nicknames.get(conn_id or "", "?")
 
+    def set_nickname(self, conn_id: str | None, name: str) -> bool:
+        """Let a viewer rename itself (the fun default is pre-filled in the
+        UI, the user edits/confirms). Trimmed + length-capped; empty rejected.
+        Rebroadcasts the roster so everyone sees the new name."""
+        name = (name or "").strip()[:24]
+        if not conn_id or not name:
+            return False
+        with self._lock:
+            self._nicknames[conn_id] = name
+            self._broadcast_viewers_locked()
+        return True
+
     def queue_state(self, pending: list[dict]) -> None:
         """Broadcast the pending user-message queue (real-time). Each item is
         ``{id, nickname, conn_id, text}``; the frontend renders the list and

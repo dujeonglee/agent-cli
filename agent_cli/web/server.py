@@ -855,6 +855,18 @@ def create_app(server: WebServer) -> FastAPI:
         ok = server.cancel_pending(body.get("conn_id"), str(body.get("id", "")))
         return JSONResponse({"cancelled": ok})
 
+    @app.post("/api/nickname")
+    async def set_nickname(request: Request, token: str = Query(...)):
+        """Set the caller's display nickname. Body: ``{conn_id, name}``. The
+        UI pre-fills the assigned fun default; the user edits/confirms."""
+        server._require_token(token)
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        ok = server.renderer.set_nickname(body.get("conn_id"), body.get("name", ""))
+        return JSONResponse({"ok": ok})
+
     @app.post("/api/abort")
     async def abort(token: str = Query(...)):
         """Interrupt the current ``prompt_user`` / ``confirm`` wait."""

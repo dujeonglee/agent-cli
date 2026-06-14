@@ -1343,3 +1343,42 @@ class TestViewerCount:
         _, _, client = server_and_client
         assert 'id="viewers"' in client.get("/").text
         assert '"viewers"' in client.get("/static/app.js").text
+
+
+class TestNickname:
+    """User-set nickname (fun default pre-filled, editable on first connect)."""
+
+    def test_set_nickname_updates_roster(self, server_and_client):
+        _, renderer, client = server_and_client
+        from agent_cli.render.web import WebConnection
+
+        renderer.register_connection(WebConnection(id="c1"))
+        resp = client.post(
+            "/api/nickname?token=testtoken",
+            json={"conn_id": "c1", "name": "  Captain Code  "},
+        )
+        assert resp.status_code == 200 and resp.json()["ok"] is True
+        assert renderer.nickname_for("c1") == "Captain Code"  # trimmed
+
+    def test_empty_name_rejected(self, server_and_client):
+        _, renderer, client = server_and_client
+        from agent_cli.render.web import WebConnection
+
+        renderer.register_connection(WebConnection(id="c1"))
+        before = renderer.nickname_for("c1")
+        resp = client.post(
+            "/api/nickname?token=testtoken", json={"conn_id": "c1", "name": "   "}
+        )
+        assert resp.json()["ok"] is False
+        assert renderer.nickname_for("c1") == before  # unchanged
+
+    def test_nickname_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.post("/api/nickname?token=nope", json={}).status_code == 401
+
+    def test_nickname_ui_wired(self, server_and_client):
+        _, _, client = server_and_client
+        html = client.get("/").text
+        for el_id in ("name-bar", "nb-input", "nb-set"):
+            assert f'id="{el_id}"' in html, el_id
+        assert "/api/nickname" in client.get("/static/app.js").text

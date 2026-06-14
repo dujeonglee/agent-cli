@@ -1125,7 +1125,67 @@
     $viewers.textContent =
       "👁 " + d.count + (labels.length ? " · " + labels.join(", ") : "");
     $viewers.title = labels.join(", ");
+    maybeNamePrompt(d.viewers || []);
   });
+
+  // ── Nickname (input on first connect; fun default pre-filled) ───────
+  // Once per page load: if a name was saved before, re-apply it silently;
+  // otherwise show a bar pre-filled with the assigned fun default so the
+  // user can edit/confirm (or ✕ to keep the default).
+  const NICK_KEY = "agentcli_nickname";
+  const $nameBar = document.getElementById("name-bar");
+  const $nbInput = document.getElementById("nb-input");
+  const $nbSet = document.getElementById("nb-set");
+  const $nbSkip = document.getElementById("nb-skip");
+  let namePrompted = false;
+
+  function postNickname(name) {
+    fetch("/api/nickname?token=" + encodeURIComponent(token), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conn_id: myConnId, name: name }),
+    }).catch(function () {});
+  }
+
+  function maybeNamePrompt(viewers) {
+    if (namePrompted || !myConnId || !$nameBar) return;
+    namePrompted = true;
+    const saved = (localStorage.getItem(NICK_KEY) || "").trim();
+    if (saved) {
+      postNickname(saved); // remembered from a previous session
+      return;
+    }
+    const me = viewers.find(function (v) {
+      return v.id === myConnId;
+    });
+    $nbInput.value = me ? me.name : ""; // pre-fill the fun default
+    $nameBar.hidden = false;
+    $nbInput.focus();
+    $nbInput.select();
+  }
+
+  function applyNickname() {
+    const name = $nbInput.value.trim();
+    if (name) {
+      postNickname(name);
+      localStorage.setItem(NICK_KEY, name);
+    }
+    $nameBar.hidden = true;
+  }
+  if ($nbSet) $nbSet.addEventListener("click", applyNickname);
+  if ($nbSkip) {
+    $nbSkip.addEventListener("click", function () {
+      $nameBar.hidden = true;
+    });
+  }
+  if ($nbInput) {
+    $nbInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyNickname();
+      }
+    });
+  }
 
   // ── Pending message queue (live) ───────
   // Messages queued while the worker is busy; injected one-per-turn-boundary.
