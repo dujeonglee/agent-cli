@@ -36,6 +36,7 @@ from swebench.harness.test_spec.test_spec import make_test_spec
 
 WHEEL = "agent_cli-2.0.0-py3-none-any.whl"
 AGENTCLI_PY = "/opt/miniconda3/envs/agentcli/bin"
+AGENTCLI_CACHE = Path("bench/.cache/agentcli_env.tgz")
 PROMPT = """\
 Resolve the following GitHub issue in this repository. Read the relevant \
 source files, make the necessary code changes to fix the issue, then call \
@@ -63,6 +64,36 @@ def host_provider_config() -> tuple[dict, dict | None]:
     if mp.exists():
         models = json.loads(mp.read_text())
     return cfg, models
+
+
+def ensure_agentcli_cache(client, base_image_key: str):
+    """Build the agentcli conda env ONCE and cache it as a tarball. All
+    swebench images share /opt/miniconda3, so the env (at the identical path
+    /opt/miniconda3/envs/agentcli) is portable across instances by tar — no
+    relocation needed. Replaces a 3-5min per-instance conda+pip install
+    (emulated) with a ~seconds cp+extract."""
+    if AGENTCLI_CACHE.exists():
+        return
+    AGENTCLI_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    print(f"agentcli env 베이크 (1회, base={base_image_key})…", flush=True)
+    c = client.containers.run(
+        base_image_key, command="sleep infinity", detach=True,
+        platform="linux/amd64",
+    )
+    try:
+        subprocess.run(["docker", "cp", f"dist/{WHEEL}", f"{c.name}:/tmp/{WHEEL}"], check=True)
+        rc = c.exec_run(["bash", "-lc",
+            f"conda create -n agentcli python=3.11 -y >/dev/null 2>&1 && "
+            f"{AGENTCLI_PY}/pip install -q /tmp/{WHEEL} && "
+            f"{AGENTCLI_PY}/agent-cli --version"])
+        out = rc.output.decode("utf-8", "replace")
+        if rc.exit_code != 0 or "agent-cli" not in out:
+            raise RuntimeError(f"agentcli bake failed: {out[-400:]}")
+        c.exec_run(["bash", "-lc", "tar czf /tmp/agentcli_env.tgz -C /opt/miniconda3/envs agentcli"])
+        subprocess.run(["docker", "cp", f"{c.name}:/tmp/agentcli_env.tgz", str(AGENTCLI_CACHE)], check=True)
+        print(f"  베이크 완료 → {AGENTCLI_CACHE} ({AGENTCLI_CACHE.stat().st_size // 1024 // 1024}MB)", flush=True)
+    finally:
+        c.remove(force=True)
 
 
 def cp_in(cname: str, content: str, dest: str):
@@ -106,14 +137,11 @@ def run_instance(inst: dict, args, client) -> dict:
         )
         ex("echo '.agent-cli/' >> /testbed/.git/info/exclude")
 
-        # 2. separate agentcli env + agent-cli wheel
-        print("    agentcli env + wheel 설치…", flush=True)
-        subprocess.run(["docker", "cp", f"dist/{WHEEL}", f"{cname}:/tmp/{WHEEL}"], check=True)
-        ex(
-            f"conda create -n agentcli python=3.11 -y >/dev/null 2>&1 && "
-            f"{AGENTCLI_PY}/pip install -q /tmp/{WHEEL}",
-            timeout=1200,
-        )
+        # 2. separate agentcli env — restore the baked cache (cp+extract,
+        #    ~seconds) instead of conda create + pip install (~minutes emulated)
+        print("    agentcli env 복원(cache)…", flush=True)
+        subprocess.run(["docker", "cp", str(AGENTCLI_CACHE), f"{cname}:/tmp/agentcli_env.tgz"], check=True)
+        ex("mkdir -p /opt/miniconda3/envs && tar xzf /tmp/agentcli_env.tgz -C /opt/miniconda3/envs", timeout=300)
         # provider config (base_url → host.docker.internal) + model caps
         cfg, models = host_provider_config()
         ex("mkdir -p /root/.agent-cli")
@@ -230,6 +258,10 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     client = docker.from_env()
     print(f"[B] 인스턴스 {len(rows)}개 → {out}", flush=True)
+
+    # bake the agentcli env once (shared across all instances)
+    base_key = make_test_spec(rows[0]).base_image_key
+    ensure_agentcli_cache(client, base_key)
 
     preds, healths = [], []
     for inst in rows:
