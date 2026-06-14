@@ -3900,3 +3900,54 @@ class TestOutputTruncationGuard:
         )
         assert target.exists()
         assert target.read_text() == "hello"
+
+
+class TestMessageInjection:
+    """Turn-boundary injection of queued user messages (web multi-user) +
+    task-log accumulation (first query + injected, all labeled)."""
+
+    def test_queued_message_injected_and_labeled(self, caps, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("done"))
+        pending = [{"nickname": "Witty Otter", "text": "also handle X"}]
+
+        def dq():
+            return pending.pop(0) if pending else None
+
+        run_loop(
+            query="do Y",
+            query_label="Brave Penguin",
+            dequeue_user_message=dq,
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        users = [
+            m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
+        ]
+        # first query labeled with sender nickname
+        assert "[Brave Penguin]: do Y" in users
+        # the queued message was injected as a labeled user turn
+        assert "[Witty Otter]: also handle X" in users
+
+    def test_no_callback_leaves_query_unlabeled(self, caps, tmp_path):
+        # CLI path (no dequeue callback, no label) — first query stays raw.
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        run_loop(
+            query="just do it",
+            provider=_make_provider(_complete("ok")),
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=2,
+        )
+        users = [
+            m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
+        ]
+        assert "just do it" in users  # no nickname label

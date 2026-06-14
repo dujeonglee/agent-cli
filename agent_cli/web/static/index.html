@@ -66,11 +66,13 @@
   </aside>
   <footer>
     <div id="input-mode-badge"></div>
+    <div id="queue-list" hidden></div>
     <div id="input-area">
       <textarea id="input"
                 placeholder="Type a message — Enter to send, Shift+Enter for newline"
                 rows="3"></textarea>
       <button id="send" type="button">Send</button>
+      <button id="chat-stop" type="button" hidden title="Stop the current run">Stop</button>
       <button id="abort" type="button" hidden>Stop</button>
     </div>
   </footer>

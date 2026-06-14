@@ -168,6 +168,10 @@ class WebRenderer(Renderer):
         # non-persistent (live) so the buffer doesn't accumulate one
         # entry per turn — only the latest matters.
         self._latest_token_usage: tuple[str, dict[str, Any]] | None = None
+        # Pending user-message queue state (the messages waiting to be
+        # injected at turn boundaries). Cached like the slots above so a
+        # reconnecting client sees the current queue immediately.
+        self._latest_queue: tuple[str, dict[str, Any]] | None = None
         # Per-thread delegate-task routing. Worker threads spawned by
         # ``_run_parallel`` register their ``task_id`` here via
         # ``begin_delegate_task``; ``_emit`` then auto-attaches
@@ -231,6 +235,8 @@ class WebRenderer(Renderer):
                 snapshot.append(self._latest_worker_state)
             if self._latest_token_usage is not None:
                 snapshot.append(self._latest_token_usage)
+            if self._latest_queue is not None:
+                snapshot.append(self._latest_queue)
             # ``identity`` first: the client needs its conn_id before anything.
             snapshot.insert(0, ("identity", {"conn_id": conn.id}))
             self._assign_nickname_locked(conn.id)
@@ -271,6 +277,22 @@ class WebRenderer(Renderer):
         for c in self._connections:
             if not c.closed.is_set():
                 c.queue.put(("viewers", payload))
+
+    def nickname_for(self, conn_id: str | None) -> str:
+        """The fun nickname assigned to ``conn_id`` (for queued-message
+        attribution), or "?" if unknown."""
+        with self._lock:
+            return self._nicknames.get(conn_id or "", "?")
+
+    def queue_state(self, pending: list[dict]) -> None:
+        """Broadcast the pending user-message queue (real-time). Each item is
+        ``{id, nickname, conn_id, text}``; the frontend renders the list and
+        shows a cancel control on the viewer's own items. Cached so a
+        reconnecting client sees the queue immediately."""
+        payload = {"pending": pending}
+        with self._lock:
+            self._latest_queue = ("queue", payload)
+        self._emit("queue", payload, persistent=False)
 
     def unregister_connection(self, conn: WebConnection) -> None:
         """Drop ``conn`` and wake any pending queue waiter.

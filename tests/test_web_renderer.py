@@ -1168,10 +1168,10 @@ class TestWorkerLoopIntegration:
         we're testing is the renderer+server contract; the loop
         body itself is uninteresting for this test."""
         renderer.worker_idle()
-        popped = server.pop_chat(timeout=2.0)
-        assert popped == message
-        if popped is server.SHUTDOWN or popped is None:
+        item = server.dequeue_blocking()
+        if item is server.SHUTDOWN:
             return False
+        assert item["text"] == message
         renderer.worker_busy()
         return True
 
@@ -1183,10 +1183,10 @@ class TestWorkerLoopIntegration:
         conn = WebConnection(id="c")
         r.register_connection(conn)
 
-        # Caller pushes a message before the worker pops, then the
-        # worker emits idle → pop → busy. The frontend sees
+        # Caller enqueues a message before the worker pops, then the
+        # worker emits idle → dequeue → busy. The frontend sees
         # idle (transient) and busy (transient) in order.
-        s.push_chat("hello")
+        s.enqueue("c", "hello")
         ran = self._worker_pop_process(s, r, "hello")
         assert ran is True
 
@@ -1197,7 +1197,6 @@ class TestWorkerLoopIntegration:
             except Exception:
                 break
         names = [ev for ev, _ in events]
-        # Both transitions delivered live.
         assert "worker_state" in names
         states = [d["busy"] for ev, d in events if ev == "worker_state"]
         # idle (False) then busy (True), in that order.
@@ -1211,16 +1210,12 @@ class TestWorkerLoopIntegration:
         conn = WebConnection(id="c")
         r.register_connection(conn)
 
-        # Simulate the SHUTDOWN sentinel path. ``_worker_pop_process``
-        # would emit worker_busy after popping a real message, but
-        # SHUTDOWN must skip that flip — busy after shutdown is
+        # SHUTDOWN must skip the busy flip — busy after shutdown is
         # nonsensical and the connections are tearing down anyway.
         r.worker_idle()
         s.shutdown()
-        popped = s.pop_chat(timeout=2.0)
-        assert popped is s.SHUTDOWN
-        # No worker_busy after SHUTDOWN.
-
+        item = s.dequeue_blocking()
+        assert item is s.SHUTDOWN
         # Latest state should still be idle.
         assert r._latest_worker_state == ("worker_state", {"busy": False})
 

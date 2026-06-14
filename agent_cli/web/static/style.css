@@ -290,7 +290,7 @@ footer {
 #input:focus { outline: 2px solid #93c5fd; outline-offset: 0; border-color: #60a5fa; }
 #input:disabled { background: #f3f4f6; color: #9ca3af; }
 
-#send, #abort {
+#send, #abort, #chat-stop {
   padding: 8px 16px;
   color: white;
   border: none;
@@ -302,12 +302,25 @@ footer {
 #send { background: #2563eb; }
 #send:hover { background: #1d4ed8; }
 #send:disabled { background: #d1d5db; cursor: not-allowed; }
-/* Send button acting as Stop (chat mode, worker busy) — red, like #abort. */
-#send.send-stop { background: #dc2626; }
-#send.send-stop:hover { background: #b91c1c; }
-#abort { background: #dc2626; }
-#abort:hover { background: #b91c1c; }
-#abort[hidden] { display: none; }
+#abort, #chat-stop { background: #dc2626; }
+#abort:hover, #chat-stop:hover { background: #b91c1c; }
+#abort[hidden], #chat-stop[hidden] { display: none; }
+#chat-stop:disabled { background: #d1d5db; cursor: not-allowed; }
+
+/* Pending message queue (live) */
+#queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+#queue-list[hidden] { display: none; }
+.queue-item {
+  display: flex; align-items: center; gap: 8px;
+  background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px;
+  padding: 5px 10px; font-size: 13px; color: #7c2d12;
+}
+.queue-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.queue-cancel {
+  border: none; background: none; color: #9a3412; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 2px 4px;
+}
+.queue-cancel:hover { color: #dc2626; }
 
 /* Action card variants — distinct from the generic <pre class="args">
    fallback so per-tool renderings stand out and stay readable. */

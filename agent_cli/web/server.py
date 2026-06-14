@@ -30,6 +30,7 @@ import tempfile
 import threading
 import subprocess
 import zipfile
+from collections import deque
 from pathlib import Path
 from queue import Empty, SimpleQueue
 
@@ -330,10 +331,16 @@ class WebServer:
         # ``secrets.token_urlsafe`` gives a URL-safe random token —
         # ``--token`` override sticks if provided.
         self.token = token or secrets.token_urlsafe(32)
-        # Queue of pending top-level user chat messages — the worker
-        # thread pops one, runs the loop, repeats. Bounded queue is
-        # unnecessary (single active client, throttled by SSE flow).
-        self._chat_queue: SimpleQueue = SimpleQueue()
+        # Pending user-message queue. Every connection may enqueue; the
+        # worker pops one (blocking) to START a run, and the running loop
+        # pops more at turn boundaries (non-blocking) to INJECT mid-run.
+        # A deque + condition (not SimpleQueue) so we can also cancel by id
+        # and snapshot the queue for the live display. Items:
+        # ``{id, conn_id, nickname, text}``.
+        self._pending: deque = deque()
+        self._pending_cv = threading.Condition()
+        self._pending_shutdown = False
+        self._msg_seq = 0
         # Stop handle for the in-flight chat turn. The worker registers a
         # fresh ``threading.Event`` per message and passes it to
         # ``run_loop(stop_event=…)``; ``/api/stop`` sets it so the loop
@@ -380,31 +387,82 @@ class WebServer:
             return True
         return False
 
-    def push_chat(self, message: str) -> None:
-        """Queue a top-level chat message for the worker loop."""
-        self._chat_queue.put(message)
+    def enqueue(self, conn_id: str | None, text: str) -> dict:
+        """Add a user message to the pending queue (any connection may).
+        Returns the queued item ``{id, conn_id, nickname, text}``."""
+        nickname = self.renderer.nickname_for(conn_id)
+        with self._pending_cv:
+            self._msg_seq += 1
+            item = {
+                "id": str(self._msg_seq),
+                "conn_id": conn_id or "",
+                "nickname": nickname,
+                "text": text,
+            }
+            self._pending.append(item)
+            self._pending_cv.notify()
+        self._broadcast_queue()
+        return item
 
-    def pop_chat(self, timeout: float | None = None):
-        """Worker-side: pop the next chat message (blocks).
+    def dequeue_blocking(self):
+        """Worker-idle: block until a message is queued (or shutdown).
 
-        Returns ``WebServer.SHUTDOWN`` if :meth:`shutdown` was called,
-        a string for normal messages, or ``None`` on poll timeout.
-        Workers must compare with ``is WebServer.SHUTDOWN`` and break.
+        Returns ``WebServer.SHUTDOWN`` if :meth:`shutdown` was called, else
+        the queued item dict. Workers compare with ``is WebServer.SHUTDOWN``.
         """
-        try:
-            return self._chat_queue.get(timeout=timeout)
-        except Empty:
-            return None
+        with self._pending_cv:
+            while not self._pending and not self._pending_shutdown:
+                self._pending_cv.wait()
+            # Drain pending BEFORE shutting down (FIFO: messages queued before
+            # shutdown are still processed, then SHUTDOWN on the empty queue).
+            if not self._pending:
+                return self.SHUTDOWN
+            item = self._pending.popleft()
+        self._broadcast_queue()
+        return item
+
+    def dequeue_nowait(self) -> dict | None:
+        """Turn-boundary (running loop): pop one queued message if available,
+        else ``None`` (don't block — the loop keeps going)."""
+        with self._pending_cv:
+            if not self._pending:
+                return None
+            item = self._pending.popleft()
+        self._broadcast_queue()
+        return item
+
+    def cancel_pending(self, conn_id: str | None, msg_id: str) -> bool:
+        """Remove a still-pending message — only its OWNER (matching
+        ``conn_id``) may cancel. Returns True if removed."""
+        removed = False
+        with self._pending_cv:
+            for it in list(self._pending):
+                if it["id"] == msg_id and it["conn_id"] == (conn_id or ""):
+                    self._pending.remove(it)
+                    removed = True
+                    break
+        if removed:
+            self._broadcast_queue()
+        return removed
+
+    def queue_snapshot(self) -> list[dict]:
+        with self._pending_cv:
+            return [dict(it) for it in self._pending]
+
+    def _broadcast_queue(self) -> None:
+        """Push the live queue state to all clients (released the queue lock
+        first — ``queue_state`` takes the renderer lock)."""
+        self.renderer.queue_state(self.queue_snapshot())
 
     def shutdown(self) -> None:
-        """Wake any worker blocked in :meth:`pop_chat`.
+        """Wake any worker blocked in :meth:`dequeue_blocking`.
 
-        Pushes the :attr:`SHUTDOWN` sentinel onto the chat queue so the
-        worker thread's ``get()`` returns immediately. Idempotent — a
-        second call just queues another sentinel (worker exits on the
-        first).
+        Sets the shutdown flag and notifies so the worker's wait returns
+        ``SHUTDOWN``. Idempotent.
         """
-        self._chat_queue.put(self.SHUTDOWN)
+        with self._pending_cv:
+            self._pending_shutdown = True
+            self._pending_cv.notify_all()
 
     # ─── Auth helper ──────────────────────────────────────────
 
@@ -761,10 +819,11 @@ def create_app(server: WebServer) -> FastAPI:
                 raise HTTPException(
                     status_code=400, detail="chat content must be a string"
                 )
-            # Echo as persistent event so the frontend renders it, then
-            # queue for the worker loop.
-            server.renderer.push_user_message(content)
-            server.push_chat(content)
+            # Enqueue (no immediate echo): the message shows in the live queue
+            # display until it's dequeued — by the worker to START a run, or by
+            # the running loop at a turn boundary to INJECT — at which point it
+            # is rendered as a conversation card.
+            server.enqueue(body.get("conn_id"), content)
             return JSONResponse({"accepted": True})
         if kind == "prompt":
             # Echo prompt answers so the UI shows the user's reply
@@ -782,6 +841,19 @@ def create_app(server: WebServer) -> FastAPI:
             server.renderer.push_user_input(kind, body)
             return JSONResponse({"accepted": True})
         raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
+
+    @app.post("/api/queue/cancel")
+    async def queue_cancel(request: Request, token: str = Query(...)):
+        """Cancel a still-pending queued message. Body: ``{conn_id, id}`` —
+        only the owner (matching ``conn_id``) may cancel; already-dequeued
+        messages can't be cancelled. Returns ``{cancelled: bool}``."""
+        server._require_token(token)
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        ok = server.cancel_pending(body.get("conn_id"), str(body.get("id", "")))
+        return JSONResponse({"cancelled": ok})
 
     @app.post("/api/abort")
     async def abort(token: str = Query(...)):

@@ -1235,22 +1235,25 @@ def web(
             # refreshed client also lands on the right send-button
             # state via snapshot replay, not just live listeners.
             renderer.worker_idle()
-            message = server.pop_chat(timeout=None)
-            if message is server.SHUTDOWN:
+            item = server.dequeue_blocking()
+            if item is server.SHUTDOWN:
                 # Server shutdown — break out so the worker thread
                 # can exit cleanly instead of being killed daemon-style.
                 # No worker_busy flip here: SHUTDOWN isn't a user
                 # message, and the connections are being torn down
                 # anyway.
                 break
-            if message is None:
-                continue
-            # Real user message — flip to busy until the next ``pop_chat``
-            # call (after handle_slash_command / try_dispatch_agent_or_skill /
+            message = item["text"]
+            nickname = item["nickname"]
+            # Real user message — flip to busy until the next dequeue
+            # (after handle_slash_command / try_dispatch_agent_or_skill /
             # run_loop finish). Anything that follows — including a
             # ``prompt_user`` / ``confirm`` wait — keeps the worker in
             # the busy state until the next loop iteration.
             renderer.worker_busy()
+            # Echo the dequeued message as a conversation card (input no
+            # longer echoes — it sits in the live queue display until popped).
+            renderer.push_user_message(f"[{nickname}]: {message}")
             # Fresh stop handle for this turn so the web "Stop" button
             # (POST /api/stop → server.trigger_stop) can signal the loop
             # to exit at the next turn boundary — the same ``stop_event``
@@ -1284,6 +1287,8 @@ def web(
                 try:
                     run_loop(
                         query=message,
+                        query_label=nickname,
+                        dequeue_user_message=server.dequeue_nowait,
                         provider=llm_provider,
                         capabilities=capabilities,
                         model=resolved_model,

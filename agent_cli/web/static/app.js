@@ -32,6 +32,7 @@
   const $messages = document.getElementById("messages");
   const $input = document.getElementById("input");
   const $send = document.getElementById("send");
+  const $chatStop = document.getElementById("chat-stop");
   const $abort = document.getElementById("abort");
   const $info = document.getElementById("info");
   const $tokenUsage = document.getElementById("token-usage");
@@ -71,41 +72,34 @@
   // (server.trigger_stop → run_loop stop_event). Enter is NOT wired to
   // stop — the button is the deliberate affordance, so a stray Enter
   // can't abort a run by accident.
-  function isStopMode() {
+  // Whether a chat run is in flight (Stop button shown). Send is ALWAYS
+  // available in chat mode now — typing while busy QUEUES the message
+  // (injected at the next turn boundary), so Stop is a separate button.
+  function isBusyChat() {
     return currentMode === "chat" && workerBusy;
   }
 
   function updateSendEnabled() {
-    // chat mode: idle → "Send" (ready for next message); busy → "Stop"
-    //   (interrupt the in-flight turn) rather than a dead disabled button.
-    // prompt mode: always enabled (answering IS what unblocks the worker).
-    // confirm mode: send button isn't the primary control —
-    //   ``renderConfirmButtons`` owns the input affordance there.
-    const stopMode = isStopMode();
-    // chat: idle → "Send" (enabled); busy → "Stop" (enabled) until the
-    // user clicks it, then "Stopping…" (disabled) until the turn ends.
-    const stopping = stopMode && stopRequested;
-    if (currentMode === "prompt") {
-      $send.disabled = false;
-    } else if (currentMode === "confirm") {
-      $send.disabled = false; // Falls back to default option
-    } else {
-      $send.disabled = stopping; // "Stopping…" → disabled; else enabled
+    // Send is always enabled (chat idle → starts a run; chat busy → queues;
+    // prompt/confirm → answers). Stop is a SEPARATE button shown only while a
+    // chat run is in flight.
+    const busy = isBusyChat();
+    const stopping = busy && stopRequested;
+    $send.disabled = false;
+    $send.textContent = "Send";
+    if ($chatStop) {
+      $chatStop.hidden = !busy;
+      $chatStop.disabled = stopping;
+      $chatStop.textContent = stopping ? "Stopping…" : "Stop";
     }
-    $send.textContent = stopMode ? (stopping ? "Stopping…" : "Stop") : "Send";
-    // Red only while actionable ("Stop"); the disabled "Stopping…" uses
-    // the default disabled grey.
-    $send.classList.toggle("send-stop", stopMode && !stopRequested);
     $input.placeholder =
       currentMode === "prompt"
         ? "Type your answer — Enter to send"
         : currentMode === "confirm"
           ? "Optional comment (empty = no comment)"
-          : stopping
-            ? "Stopping… waiting for the current step to finish"
-            : stopMode
-              ? "Worker is processing… click Stop to interrupt"
-              : "Type a message — Enter to send, Shift+Enter for newline";
+          : busy
+            ? "Worker is processing… your message will be queued (injected next turn)"
+            : "Type a message — Enter to send, Shift+Enter for newline";
   }
 
   // ── HTML escaping + minimal markdown ───────
@@ -889,28 +883,23 @@
     });
   }
 
+  if ($chatStop) {
+    $chatStop.addEventListener("click", function () {
+      if (!$chatStop.disabled) requestStop();
+    });
+  }
+
   $send.addEventListener("click", function () {
     if ($send.disabled) return;
-    if (isStopMode()) {
-      requestStop();
-      return;
-    }
     if (currentMode === "confirm") {
       // No textarea-only path in confirm — buttons are the contract.
       // Pressing Send falls back to the default option.
       submitConfirm(confirmDefaultKey);
-    } else if (currentMode === "prompt") {
-      // Answering an ``ask`` — server flips to worker_busy on its
-      // own when the answer arrives. No optimistic flip here.
-      submitChatOrPrompt();
     } else {
-      // Chat send: optimistically flip to busy so the button
-      // disables instantly. The server's ``worker_busy`` event
-      // will arrive a moment later and confirm the state (and any
-      // future refresh will see the latest one via snapshot).
+      // chat (idle → starts a run; busy → queues for injection) / prompt
+      // (answers an ask). The server decides; no optimistic busy flip —
+      // a queued message doesn't change worker state.
       submitChatOrPrompt();
-      workerBusy = true;
-      updateSendEnabled();
     }
   });
   $input.addEventListener("keydown", function (e) {
@@ -929,22 +918,12 @@
       e.keyCode !== 229
     ) {
       e.preventDefault();
-      // Mirror the click handler — refuse to submit when send is
-      // gated. Without this Enter would still queue a chat message
-      // into a busy worker even though the button looks disabled,
-      // defeating the whole point of the gating.
       if ($send.disabled) return;
-      // In stop mode the button says "Stop"; Enter must NOT trigger it
-      // (and must not queue a message). Stop is click-only by design.
-      if (isStopMode()) return;
       if (currentMode === "confirm") {
         submitConfirm(confirmDefaultKey);
-      } else if (currentMode === "prompt") {
-        submitChatOrPrompt();
       } else {
+        // chat (queues if busy) / prompt — Stop is click-only (separate btn).
         submitChatOrPrompt();
-        workerBusy = true;
-        updateSendEnabled();
       }
     }
   });
@@ -1146,6 +1125,38 @@
     $viewers.textContent =
       "👁 " + d.count + (labels.length ? " · " + labels.join(", ") : "");
     $viewers.title = labels.join(", ");
+  });
+
+  // ── Pending message queue (live) ───────
+  // Messages queued while the worker is busy; injected one-per-turn-boundary.
+  // Each viewer can cancel their OWN still-pending items.
+  const $queueList = document.getElementById("queue-list");
+  es.addEventListener("queue", function (e) {
+    if (!$queueList) return;
+    const pending = JSON.parse(e.data).pending || [];
+    $queueList.innerHTML = "";
+    $queueList.hidden = pending.length === 0;
+    pending.forEach(function (it) {
+      const row = el("div", ["queue-item"]);
+      const txt = el("span", ["queue-text"]);
+      txt.textContent = "⏳ [" + it.nickname + "] " + it.text;
+      row.appendChild(txt);
+      if (it.conn_id === myConnId) {
+        const x = el("button", ["queue-cancel"]);
+        x.type = "button";
+        x.textContent = "✕";
+        x.title = "Cancel this queued message";
+        x.addEventListener("click", function () {
+          fetch("/api/queue/cancel?token=" + encodeURIComponent(token), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conn_id: myConnId, id: it.id }),
+          });
+        });
+        row.appendChild(x);
+      }
+      $queueList.appendChild(row);
+    });
   });
 })();
 

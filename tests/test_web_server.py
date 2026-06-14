@@ -426,7 +426,7 @@ class TestAuth:
 
 
 class TestInputEndpoint:
-    def test_chat_message_echoes_to_renderer_and_queue(self, server_and_client):
+    def test_chat_message_is_enqueued_not_echoed(self, server_and_client):
         server, renderer, client = server_and_client
         cid = _register(renderer)
         resp = client.post(
@@ -434,11 +434,14 @@ class TestInputEndpoint:
             json={"kind": "chat", "content": "hello", "conn_id": cid},
         )
         assert resp.status_code == 200
-        # Echoed as persistent ``user_message`` event for replay.
-        assert renderer.persistent_count == 1
-        # Queued for the worker loop.
-        popped = server.pop_chat(timeout=0.5)
-        assert popped == "hello"
+        # No immediate conversation echo — it sits in the live queue until
+        # dequeued (then the worker/loop renders it).
+        pending = server.queue_snapshot()
+        assert len(pending) == 1
+        assert pending[0]["text"] == "hello" and pending[0]["conn_id"] == cid
+        # dequeue_blocking returns the item (text + nickname).
+        item = server.dequeue_blocking()
+        assert item["text"] == "hello"
 
     def test_prompt_response_goes_to_renderer_input_queue(self, server_and_client):
         _, renderer, client = server_and_client
@@ -590,44 +593,86 @@ class TestWebResumeCli:
         assert not isinstance(result.exception, typer.Exit) or result.exit_code == 1
 
 
-class TestShutdownSentinel:
-    """``WebServer.shutdown()`` pushes ``SHUTDOWN`` onto the chat
-    queue so a worker thread blocked in ``pop_chat`` wakes up and
-    breaks. Identity comparison (``is``) keeps a user-typed message
-    from colliding with the sentinel even if its value happened to
-    look like the same string."""
+class TestMessageQueue:
+    """``enqueue`` / ``dequeue_blocking`` / ``dequeue_nowait`` / cancel +
+    the ``shutdown`` sentinel that wakes a blocked worker."""
 
-    def test_shutdown_wakes_worker_with_sentinel(self):
+    def test_shutdown_wakes_blocked_worker(self):
         renderer = WebRenderer()
         srv = WebServer(renderer)
         msgs: list = []
 
         def worker():
             while True:
-                m = srv.pop_chat()
+                m = srv.dequeue_blocking()
                 if m is srv.SHUTDOWN:
                     msgs.append("done")
                     break
-                msgs.append(m)
+                msgs.append(m["text"])
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
-        srv.push_chat("hello")
+        srv.enqueue("c1", "hello")
         srv.shutdown()
         t.join(timeout=1.0)
         assert msgs == ["hello", "done"]
         assert not t.is_alive()
 
-    def test_shutdown_is_identity_sentinel(self):
-        """``SHUTDOWN`` must be a unique sentinel — ``is`` compares
-        identity so even a chat message that stringifies the same
-        cannot accidentally be mistaken for shutdown."""
+    def test_enqueue_assigns_nickname_and_id(self):
         renderer = WebRenderer()
+        renderer.register_connection(WebConnection(id="c1"))
         srv = WebServer(renderer)
-        srv.push_chat("SHUTDOWN")  # user types the word
-        item = srv.pop_chat(timeout=0.5)
-        assert item is not srv.SHUTDOWN
-        assert item == "SHUTDOWN"
+        item = srv.enqueue("c1", "do the thing")
+        assert item["text"] == "do the thing"
+        assert item["conn_id"] == "c1"
+        assert item["nickname"]  # a fun nickname was attached
+        assert item["id"]
+
+    def test_dequeue_nowait_fifo_then_none(self):
+        srv = WebServer(WebRenderer())
+        srv.enqueue("a", "first")
+        srv.enqueue("b", "second")
+        assert srv.dequeue_nowait()["text"] == "first"
+        assert srv.dequeue_nowait()["text"] == "second"
+        assert srv.dequeue_nowait() is None  # empty → non-blocking None
+
+    def test_cancel_only_by_owner_and_pending(self):
+        srv = WebServer(WebRenderer())
+        it = srv.enqueue("owner", "x")
+        assert srv.cancel_pending("someone-else", it["id"]) is False  # not owner
+        assert len(srv.queue_snapshot()) == 1
+        assert srv.cancel_pending("owner", it["id"]) is True
+        assert srv.queue_snapshot() == []
+        # already gone → cancel is a no-op False
+        assert srv.cancel_pending("owner", it["id"]) is False
+
+    def test_enqueue_broadcasts_queue_event(self):
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+        srv = WebServer(renderer)
+        srv.enqueue("c1", "hello")
+        # the `queue` event is broadcast to the live connection
+        events = []
+        import queue as _q
+
+        while True:
+            try:
+                ev, data = conn.queue.get_nowait()
+            except _q.Empty:
+                break
+            if ev == "queue":
+                events.append(data)
+        assert events and events[-1]["pending"][0]["text"] == "hello"
+
+    def test_queue_ui_wired(self, server_and_client):
+        _, _, client = server_and_client
+        html = client.get("/").text
+        for el_id in ("queue-list", "chat-stop"):
+            assert f'id="{el_id}"' in html, el_id
+        js = client.get("/static/app.js").text
+        assert '"queue"' in js  # SSE handler
+        assert "/api/queue/cancel" in js
 
 
 class TestAbortEndpoint:

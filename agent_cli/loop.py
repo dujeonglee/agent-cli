@@ -107,6 +107,8 @@ class AgentLoop:
         skill_args: str = "",
         graceful_interrupt: bool = False,
         stop_event=None,
+        dequeue_user_message=None,
+        query_label: str = "",
         agent_role: str = "",
         agent_name: str = "",
         mcp_manager=None,
@@ -126,6 +128,14 @@ class AgentLoop:
         self.wire_format = wire_format
 
         self.query = query
+        # Optional nickname for the first query (web multi-user) and a
+        # callback the run loop polls at each turn boundary to inject queued
+        # user messages mid-run (web). ``task_log`` accumulates EVERY user
+        # request (first query + injected) so recovery / review reference the
+        # full set of asks, not just the first.
+        self.query_label = query_label
+        self.dequeue_user_message = dequeue_user_message
+        self.task_log: list[str] = []
         self.provider = provider
         self.capabilities = capabilities
         self.model = model
@@ -357,6 +367,7 @@ class AgentLoop:
             while self._should_continue():
                 if self._interrupted:
                     return self._on_interrupt()
+                self._inject_queued_messages()
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
@@ -482,18 +493,52 @@ class AgentLoop:
             skill_args=self.skill_args,
         )
 
-        # Message setup
+        # Message setup. The first query seeds the task log (labeled with the
+        # sender's nickname in web multi-user; raw otherwise).
+        first = (
+            f"[{self.query_label}]: {self.query}" if self.query_label else self.query
+        )
+        self.task_log = [first]
         if self.ctx:
-            self.ctx.add({"role": "user", "content": self.query})
+            self.ctx.add({"role": "user", "content": first})
             self.messages = self.ctx.get_messages()
         else:
-            self.messages = [{"role": "user", "content": self.query}]
+            self.messages = [{"role": "user", "content": first}]
 
     def _should_continue(self) -> bool:
         if self.stop_event and self.stop_event.is_set():
             self._interrupted = True
             return False
         return self.max_turns <= 0 or self.turn < self.max_turns
+
+    def _task_text(self) -> str:
+        """All user requests this run (first query + injected), for recovery /
+        review anchoring. Falls back to the raw query if the log is empty."""
+        return "\n".join(self.task_log) if self.task_log else self.query
+
+    def _inject_queued_messages(self) -> None:
+        """Turn boundary (web): pull ONE queued user message and inject it as a
+        user turn so the next LLM turn sees it. No-op when no callback (CLI) or
+        the queue is empty. Appends to the task log + shows a user card."""
+        if self.dequeue_user_message is None:
+            return
+        item = self.dequeue_user_message()
+        if not item:
+            return
+        labeled = f"[{item.get('nickname') or '?'}]: {item.get('text') or ''}"
+        self.task_log.append(labeled)
+        if self.ctx:
+            self.ctx.add({"role": "user", "content": labeled})
+            self.messages = self.ctx.get_messages()
+        else:
+            self.messages.append({"role": "user", "content": labeled})
+        # show it as a conversation card (web renderer only — push_user_message
+        # is a web affordance; CLI/minimal renderers don't inject anyway)
+        from agent_cli.render import get_renderer
+
+        renderer = get_renderer()
+        if hasattr(renderer, "push_user_message"):
+            renderer.push_user_message(labeled)
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a
@@ -1210,7 +1255,7 @@ class AgentLoop:
                     if isinstance(op.action_input, dict)
                     else str(op.action_input or {}),
                 )
-            obs = _build_review_observation(self.query, summary, ctx=self.ctx)
+            obs = _build_review_observation(self._task_text(), summary, ctx=self.ctx)
             if not self.skill_name:
                 render_step(
                     "observation",
@@ -1278,7 +1323,7 @@ class AgentLoop:
                     action=tool_name,
                     args_repr=args_repr,
                     repeat_count=self.loop_detector.consecutive_count,
-                    task=self.query,
+                    task=self._task_text(),
                 )
                 if intervention is None:
                     # Level ≥3: recovery exhausted — hard fail with a
@@ -1791,6 +1836,8 @@ def run_loop(
     skill_args: str = "",
     graceful_interrupt: bool = False,
     stop_event=None,
+    dequeue_user_message=None,
+    query_label: str = "",
     agent_role: str = "",
     agent_name: str = "",
     mcp_manager=None,
@@ -1829,6 +1876,8 @@ def run_loop(
         agent_stack=agent_stack,
         skill_args=skill_args,
         graceful_interrupt=graceful_interrupt,
+        dequeue_user_message=dequeue_user_message,
+        query_label=query_label,
         stop_event=stop_event,
         agent_role=agent_role,
         agent_name=agent_name,
