@@ -219,7 +219,24 @@ class WebRenderer(Renderer):
             # ``role`` first: the client needs its identity (conn_id) + control
             # state before it can send input or render the right affordance.
             snapshot.insert(0, ("role", {"conn_id": conn.id, "role": role}))
+            # Live viewer count: the JOINING conn learns it via the snapshot
+            # (no extra queue event — keeps single-conn queue assertions
+            # clean); EXISTING conns learn via their queue.
+            n = sum(1 for c in self._connections if not c.closed.is_set())
+            snapshot.append(("viewers", {"count": n}))
+            for c in self._connections:
+                if c is not conn and not c.closed.is_set():
+                    c.queue.put(("viewers", {"count": n}))
             return snapshot
+
+    def _broadcast_viewers_locked(self) -> None:
+        """Push the current viewer (open-connection) count to every remaining
+        client's queue. Caller must hold ``self._lock`` — invoked from
+        unregister (the leaver is already removed)."""
+        n = sum(1 for c in self._connections if not c.closed.is_set())
+        for c in self._connections:
+            if not c.closed.is_set():
+                c.queue.put(("viewers", {"count": n}))
 
     def unregister_connection(self, conn: WebConnection) -> None:
         """Drop ``conn`` and wake any pending queue waiter. If the leaving
@@ -243,6 +260,8 @@ class WebRenderer(Renderer):
                             ("control_granted", {"conn_id": c.id, "auto": True})
                         )
                         break
+            # the leaver is already removed → broadcast the decremented count
+            self._broadcast_viewers_locked()
         conn.queue.put(_CLOSE_SENTINEL)
 
     # ─── Control handoff (first-come-keeps-control) ──────────

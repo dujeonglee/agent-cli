@@ -23,6 +23,16 @@ from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebConnection, WebRenderer
 
 
+def _qget(conn, timeout=0.5):
+    """Next queued (event, data) skipping the cross-cutting ``viewers``
+    count broadcast (put on existing connections' queues when another
+    joins/leaves)."""
+    while True:
+        event, data = conn.queue.get(timeout=timeout)
+        if event != "viewers":
+            return event, data
+
+
 # ── Event distribution ─────────────────────────────
 
 
@@ -128,7 +138,7 @@ class TestConnectionLifecycle:
         # First entry is this connection's role (it learns conn_id + control
         # before anything else); the rest is the usual buffer replay.
         assert snapshot[0] == ("role", {"conn_id": "c1", "role": "controller"})
-        kinds = [event for event, _ in snapshot if event != "role"]
+        kinds = [event for event, _ in snapshot if event not in ("role", "viewers")]
         assert kinds == ["assistant_turn", "observation"]
 
     def test_first_controls_second_observes_both_receive(self):
@@ -144,7 +154,7 @@ class TestConnectionLifecycle:
         assert not a.closed.is_set()
         # A subsequent emit fans out to BOTH (observers see the stream too).
         r.final("broadcast", turn=1)
-        ea, _ = a.queue.get(timeout=0.5)
+        ea, _ = _qget(a)  # a's queue has a viewers event from b's join
         eb, _ = b.queue.get(timeout=0.5)
         assert ea == "assistant_turn" and eb == "assistant_turn"
 
@@ -188,17 +198,17 @@ class TestControlHandoff:
     def test_request_notifies_controller(self):
         r, a, b = self._two()
         r.request_control("b")
-        ev, data = a.queue.get(timeout=0.5)
+        ev, data = _qget(a)
         assert ev == "control_request" and data["requester_id"] == "b"
 
     def test_grant_transfers_control(self):
         r, a, b = self._two()
         r.request_control("b")
-        a.queue.get(timeout=0.5)  # drain control_request
+        _qget(a)  # drain control_request
         assert r.respond_control("a", "b", grant=True) is True
         assert r.is_controller("b") and not r.is_controller("a")
-        assert b.queue.get(timeout=0.5)[0] == "control_granted"
-        assert a.queue.get(timeout=0.5)[0] == "control_lost"
+        assert _qget(b)[0] == "control_granted"
+        assert _qget(a)[0] == "control_lost"
 
     def test_deny_keeps_control(self):
         r, a, b = self._two()
@@ -218,7 +228,7 @@ class TestControlHandoff:
         r.register_connection(c)  # second observer
         r.unregister_connection(a)  # controller leaves
         assert r.is_controller("b")  # oldest remaining observer
-        assert b.queue.get(timeout=0.5)[0] == "control_granted"
+        assert _qget(b)[0] == "control_granted"
         assert not r.is_controller("c")
 
 
@@ -1190,7 +1200,9 @@ class TestWorkerStateReconnect:
 
         conn = WebConnection(id="late")
         snapshot = r.register_connection(conn)
-        names = [e for e, _ in snapshot]
+        # the viewer-count event is positionally irrelevant — filter it so the
+        # ready-first / worker_state-trails invariant stays the assertion
+        names = [e for e, _ in snapshot if e != "viewers"]
         # role leads (connection identity), then ready.
         assert names[0] == "role"
         assert names[1] == "ready"

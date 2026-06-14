@@ -1139,6 +1139,12 @@
     updateControlUI();
   });
 
+  const $viewers = document.getElementById("viewers");
+  es.addEventListener("viewers", function (e) {
+    const n = JSON.parse(e.data).count;
+    if ($viewers) $viewers.textContent = "👁 " + n;
+  });
+
   es.addEventListener("control_request", function (e) {
     // Only the controller receives this — another page wants control.
     const d = JSON.parse(e.data);

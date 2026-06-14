@@ -50,6 +50,15 @@ def server_and_client():
     return server, renderer, client
 
 
+def _qget(conn, timeout=1.0):
+    """Next queued (event, data) skipping the cross-cutting ``viewers``
+    count broadcast (put on every connection's queue on join/leave)."""
+    while True:
+        event, data = conn.queue.get(timeout=timeout)
+        if event != "viewers":
+            return event, data
+
+
 def _controller(renderer, conn_id="ctrl"):
     """Register a connection as the controller and return its id — input is
     gated to the controller (first-come-keeps-control), so input tests need
@@ -148,7 +157,7 @@ class TestHandleSlashCommand:
         assert handled is True
         # ``observation`` event is emitted as a persistent message —
         # frontend renders it as a tool-result card.
-        event, data = conn.queue.get(timeout=1.0)
+        event, data = _qget(conn)
         assert event == "observation"
         assert data["tool_name"] == "sh"
         assert data["success"] is True
@@ -164,7 +173,7 @@ class TestHandleSlashCommand:
         handled = handle_slash_command("/sh exit 7", renderer)
 
         assert handled is True
-        event, data = conn.queue.get(timeout=1.0)
+        event, data = _qget(conn)
         assert event == "observation"
         assert data["success"] is False
         assert "exit code: 7" in data["content"]
@@ -177,7 +186,7 @@ class TestHandleSlashCommand:
         renderer.register_connection(conn)
 
         assert handle_slash_command("/sh", renderer) is True
-        event, data = conn.queue.get(timeout=1.0)
+        event, data = _qget(conn)
         assert event == "observation"
         assert "Usage:" in data["content"]
         assert data["success"] is False
@@ -196,7 +205,7 @@ class TestHandleSlashCommand:
 
         assert handled is True
         ctx.compact_now.assert_called_once()
-        event, data = conn.queue.get(timeout=1.0)
+        event, data = _qget(conn)
         assert event == "observation"
         assert data["tool_name"] == "compact"
         assert data["success"] is True
@@ -214,7 +223,7 @@ class TestHandleSlashCommand:
         ctx.max_context_tokens = 100000
 
         handle_slash_command("/compact", renderer, ctx=ctx)
-        _, data = conn.queue.get(timeout=1.0)
+        _, data = _qget(conn)
         assert "Nothing to compact" in data["content"]
 
     def test_slash_compact_without_ctx_reports_unavailable(self):
@@ -225,7 +234,7 @@ class TestHandleSlashCommand:
         renderer.register_connection(conn)
 
         assert handle_slash_command("/compact", renderer, ctx=None) is True
-        _, data = conn.queue.get(timeout=1.0)
+        _, data = _qget(conn)
         assert data["success"] is False
 
     def test_slash_help_lists_supported_commands(self):
@@ -236,7 +245,7 @@ class TestHandleSlashCommand:
         renderer.register_connection(conn)
 
         assert handle_slash_command("/help", renderer) is True
-        event, data = conn.queue.get(timeout=1.0)
+        event, data = _qget(conn)
         assert event == "observation"
         # Must mention each supported command so the user can discover
         # them without leaving the UI.
@@ -805,7 +814,13 @@ class TestStreamGenerator:
     """
 
     async def _next(self, gen, timeout: float = 1.0) -> dict:
-        return await asyncio.wait_for(gen.__anext__(), timeout=timeout)
+        # ``viewers`` is a cross-cutting count broadcast that can appear in the
+        # snapshot or interleave on join/leave — skip it so sequence asserts
+        # stay about the events under test.
+        while True:
+            ev = await asyncio.wait_for(gen.__anext__(), timeout=timeout)
+            if ev.get("event") != "viewers":
+                return ev
 
     async def test_replay_buffer_on_connect(self):
         renderer = WebRenderer()
@@ -1295,3 +1310,40 @@ class TestWorkspaceDownload:
         assert 'style.pointerEvents = ""' in js
         css = client.get("/static/style.css").text
         assert "#download-drawer" in css
+
+
+class TestViewerCount:
+    """Connected-viewer count broadcast on join/leave + UI wiring."""
+
+    @staticmethod
+    def _viewer_counts(conn):
+        import queue as _q
+
+        out = []
+        while True:
+            try:
+                ev, data = conn.queue.get_nowait()
+            except _q.Empty:
+                break
+            if ev == "viewers":
+                out.append(data["count"])
+        return out
+
+    def test_broadcast_on_join_and_leave(self):
+        r = WebRenderer()
+        a = WebConnection(id="a")
+        # joining conn learns the count via its snapshot (not its queue)
+        snap_a = r.register_connection(a)
+        assert ("viewers", {"count": 1}) in snap_a
+        assert self._viewer_counts(a) == []  # nothing on its own queue
+        b = WebConnection(id="b")
+        snap_b = r.register_connection(b)
+        assert ("viewers", {"count": 2}) in snap_b
+        assert self._viewer_counts(a) == [2]  # existing conn learns via queue
+        r.unregister_connection(b)
+        assert self._viewer_counts(a) == [1]  # decremented on leave
+
+    def test_viewers_ui_wired(self, server_and_client):
+        _, _, client = server_and_client
+        assert 'id="viewers"' in client.get("/").text
+        assert '"viewers"' in client.get("/static/app.js").text
