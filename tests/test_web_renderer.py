@@ -123,7 +123,7 @@ class TestRecovery:
 
 
 class TestConnectionLifecycle:
-    """Register (role assignment) + multi-viewer fan-out + replay snapshot."""
+    """Register (identity event) + multi-viewer fan-out + replay snapshot."""
 
     def test_register_returns_role_then_buffer_snapshot(self):
         r = WebRenderer()
@@ -135,38 +135,27 @@ class TestConnectionLifecycle:
         conn = WebConnection(id="c1")
         snapshot = r.register_connection(conn)
 
-        # First entry is this connection's role (it learns conn_id + control
-        # before anything else); the rest is the usual buffer replay.
-        assert snapshot[0] == ("role", {"conn_id": "c1", "role": "controller"})
-        kinds = [event for event, _ in snapshot if event not in ("role", "viewers")]
+        # First entry is this connection's identity (it learns conn_id before
+        # anything else); the rest is the usual buffer replay.
+        assert snapshot[0] == ("identity", {"conn_id": "c1"})
+        kinds = [event for event, _ in snapshot if event not in ("identity", "viewers")]
         assert kinds == ["assistant_turn", "observation"]
 
-    def test_first_controls_second_observes_both_receive(self):
+    def test_all_connections_receive_the_fanout(self):
         r = WebRenderer()
         a = WebConnection(id="a")
         snap_a = r.register_connection(a)
-        assert snap_a[0][1]["role"] == "controller"
+        assert snap_a[0] == ("identity", {"conn_id": "a"})
 
         b = WebConnection(id="b")
         snap_b = r.register_connection(b)
-        assert snap_b[0][1]["role"] == "observer"
-        # No takeover: ``a`` is not closed and gets no takeover event.
+        assert snap_b[0] == ("identity", {"conn_id": "b"})
         assert not a.closed.is_set()
-        # A subsequent emit fans out to BOTH (observers see the stream too).
+        # A subsequent emit fans out to BOTH (every connection is equal).
         r.final("broadcast", turn=1)
         ea, _ = _qget(a)  # a's queue has a viewers event from b's join
         eb, _ = b.queue.get(timeout=0.5)
         assert ea == "assistant_turn" and eb == "assistant_turn"
-
-    def test_is_controller_gate(self):
-        r = WebRenderer()
-        a = WebConnection(id="a")
-        r.register_connection(a)
-        b = WebConnection(id="b")
-        r.register_connection(b)
-        assert r.is_controller("a") is True
-        assert r.is_controller("b") is False
-        assert r.is_controller(None) is False
 
     def test_unregister_pushes_close_sentinel_and_stops_receiving(self):
         r = WebRenderer()
@@ -181,55 +170,6 @@ class TestConnectionLifecycle:
         first = conn.queue.get(timeout=0.5)
         assert first == ("__close__", {})
         assert conn.queue.empty()
-
-
-class TestControlHandoff:
-    """Request → controller approves/denies → control transfers; the
-    controller leaving auto-passes control to the oldest observer."""
-
-    def _two(self):
-        r = WebRenderer()
-        a = WebConnection(id="a")  # controller (first)
-        r.register_connection(a)
-        b = WebConnection(id="b")  # observer
-        r.register_connection(b)
-        return r, a, b
-
-    def test_request_notifies_controller(self):
-        r, a, b = self._two()
-        r.request_control("b")
-        ev, data = _qget(a)
-        assert ev == "control_request" and data["requester_id"] == "b"
-
-    def test_grant_transfers_control(self):
-        r, a, b = self._two()
-        r.request_control("b")
-        _qget(a)  # drain control_request
-        assert r.respond_control("a", "b", grant=True) is True
-        assert r.is_controller("b") and not r.is_controller("a")
-        assert _qget(b)[0] == "control_granted"
-        assert _qget(a)[0] == "control_lost"
-
-    def test_deny_keeps_control(self):
-        r, a, b = self._two()
-        r.respond_control("a", "b", grant=False)
-        assert r.is_controller("a")
-        assert b.queue.get(timeout=0.5)[0] == "control_denied"
-
-    def test_non_controller_cannot_respond(self):
-        r, a, b = self._two()
-        # b (observer) forging a grant to itself → rejected, control unchanged.
-        assert r.respond_control("b", "b", grant=True) is False
-        assert r.is_controller("a")
-
-    def test_controller_leaving_auto_passes_to_oldest_observer(self):
-        r, a, b = self._two()
-        c = WebConnection(id="c")
-        r.register_connection(c)  # second observer
-        r.unregister_connection(a)  # controller leaves
-        assert r.is_controller("b")  # oldest remaining observer
-        assert _qget(b)[0] == "control_granted"
-        assert not r.is_controller("c")
 
 
 class TestTokenUsage:
@@ -565,7 +505,7 @@ class TestHeaderWorkspace:
         snapshot = r.register_connection(conn)
         # ``role`` is index 0 (connection identity); the latest ready must be
         # next so the top-bar renders before any other replayed cards.
-        assert snapshot[0][0] == "role"
+        assert snapshot[0][0] == "identity"
         event, data = snapshot[1]
         assert event == "ready"
         assert data["workspace"] == "/proj"
@@ -584,7 +524,7 @@ class TestHeaderWorkspace:
         # with NO ``skill_name`` field set on the visible data.
         conn = WebConnection(id="c")
         snapshot = r.register_connection(conn)
-        assert snapshot[0][0] == "role"  # connection identity first
+        assert snapshot[0][0] == "identity"  # connection identity first
         event, data = snapshot[1]
         assert event == "ready"
         assert data["skill_name"] == ""
@@ -1022,7 +962,7 @@ class TestReplayFromHistory:
         names = [e for e, _ in snapshot]
         # role first (connection identity), ready next (header replay), then
         # the replayed conversation events.
-        assert names[0] == "role"
+        assert names[0] == "identity"
         assert names[1] == "ready"
         assert "user_message" in names
         assert "assistant_turn" in names
@@ -1204,7 +1144,7 @@ class TestWorkerStateReconnect:
         # ready-first / worker_state-trails invariant stays the assertion
         names = [e for e, _ in snapshot if e != "viewers"]
         # role leads (connection identity), then ready.
-        assert names[0] == "role"
+        assert names[0] == "identity"
         assert names[1] == "ready"
         # worker_state trails.
         assert names[-1] == "worker_state"

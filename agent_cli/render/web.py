@@ -18,13 +18,10 @@ Architecture::
                                           ↑
                                       POST /api/input puts here
 
-Multi-viewer, first-come-keeps-control: every authenticated connection is kept
-in ``_connections`` and receives the fan-out (read-only observers); only
-``_controller_id`` may send input. A new connection joins as an observer and
-can request control (the controller approves/denies via ``request_control`` /
-``respond_control``); on the controller leaving, control auto-passes to the
-oldest observer. The worker thread is unaware of clients — it just emits, the
-renderer fans out to all.
+Multi-viewer, all equal: every authenticated connection is kept in
+``_connections``, receives the fan-out, AND may send input / queue messages.
+The worker thread is unaware of clients — it just emits, the renderer fans
+out to all.
 
 Buffer / replay: ``_event_buffer`` holds every persistent event since
 session start (or since session resume on ``--resume <id>``). When a new
@@ -109,14 +106,9 @@ class WebRenderer(Renderer):
         self._connections: list[WebConnection] = []
         # conn_id → fun nickname (assigned on register, shown to all viewers)
         self._nicknames: dict[str, str] = {}
-        # Control model (first-come-keeps-control): every connection RECEIVES
-        # the stream (read-only observers), but only the ``_controller_id``
-        # connection may send input. A new connection joins as an observer and
-        # can request control; the controller approves/denies. On the
-        # controller leaving, control auto-passes to the oldest observer.
-        # ``_connections`` is append-order = oldest-first (used for both
-        # auto-succession and snapshot fan-out).
-        self._controller_id: str | None = None
+        # Every connection is equal: all receive the fan-out AND may send
+        # input / queue messages (no controller/observer split).
+        # ``_connections`` is append-order = oldest-first (snapshot fan-out).
         # input queue feeds prompt_user / confirm
         self._input_queue: SimpleQueue = SimpleQueue()
         # Pending assistant emission: thought() arrives before action() /
@@ -218,23 +210,17 @@ class WebRenderer(Renderer):
                     conn.queue.put((event, data))
 
     def register_connection(self, conn: WebConnection) -> list[tuple[str, dict]]:
-        """Add ``conn`` as a subscriber (NO takeover) and assign its role.
+        """Add ``conn`` as a subscriber. Every connection is equal — all may
+        send input and queue messages (no controller/observer split).
 
-        First connection — or any connection arriving while no controller is
-        present — becomes the controller; the rest are read-only observers.
-        The returned snapshot starts with a connection-specific ``role`` event
-        (so the client learns its ``conn_id`` + role before anything else),
-        then the usual replay. Caller yields the snapshot, then loops on
-        ``conn.queue`` for live events.
+        The returned snapshot starts with an ``identity`` event (so the client
+        learns its ``conn_id`` before anything else — used for the viewer
+        roster "(you)" mark and queued-message ownership), then the usual
+        replay. Caller yields the snapshot, then loops on ``conn.queue`` for
+        live events.
         """
         with self._lock:
             self._connections.append(conn)
-            if (
-                self._controller_id is None
-                or self._find_conn_locked(self._controller_id) is None
-            ):
-                self._controller_id = conn.id
-            role = "controller" if conn.id == self._controller_id else "observer"
 
             snapshot = list(self._event_buffer)
             # Prepend the latest session-info ``ready`` so a client that opens
@@ -245,9 +231,8 @@ class WebRenderer(Renderer):
                 snapshot.append(self._latest_worker_state)
             if self._latest_token_usage is not None:
                 snapshot.append(self._latest_token_usage)
-            # ``role`` first: the client needs its identity (conn_id) + control
-            # state before it can send input or render the right affordance.
-            snapshot.insert(0, ("role", {"conn_id": conn.id, "role": role}))
+            # ``identity`` first: the client needs its conn_id before anything.
+            snapshot.insert(0, ("identity", {"conn_id": conn.id}))
             self._assign_nickname_locked(conn.id)
             # Live viewers: the JOINING conn learns the roster via its snapshot
             # (no extra queue event — keeps single-conn queue assertions
@@ -288,9 +273,7 @@ class WebRenderer(Renderer):
                 c.queue.put(("viewers", payload))
 
     def unregister_connection(self, conn: WebConnection) -> None:
-        """Drop ``conn`` and wake any pending queue waiter. If the leaving
-        connection held control, auto-pass it to the oldest remaining observer
-        so the session stays controllable.
+        """Drop ``conn`` and wake any pending queue waiter.
 
         The sentinel put is the symmetric pair of ``register_connection``'s
         list append: register exposes the queue to writers, unregister signals
@@ -301,69 +284,9 @@ class WebRenderer(Renderer):
             if conn in self._connections:
                 self._connections.remove(conn)
             self._nicknames.pop(conn.id, None)
-            if conn.id == self._controller_id:
-                self._controller_id = None
-                for c in self._connections:  # oldest-first
-                    if not c.closed.is_set():
-                        self._controller_id = c.id
-                        c.queue.put(
-                            ("control_granted", {"conn_id": c.id, "auto": True})
-                        )
-                        break
             # the leaver is already removed → broadcast the decremented count
             self._broadcast_viewers_locked()
         conn.queue.put(_CLOSE_SENTINEL)
-
-    # ─── Control handoff (first-come-keeps-control) ──────────
-
-    def _find_conn_locked(self, conn_id: str | None) -> WebConnection | None:
-        if conn_id is None:
-            return None
-        for c in self._connections:
-            if c.id == conn_id and not c.closed.is_set():
-                return c
-        return None
-
-    def is_controller(self, conn_id: str | None) -> bool:
-        """True iff ``conn_id`` currently holds control (input gate)."""
-        with self._lock:
-            return conn_id is not None and conn_id == self._controller_id
-
-    def request_control(self, requester_id: str) -> None:
-        """An observer asks for control: notify the controller (which shows an
-        approve/deny prompt). If there is no live controller, grant immediately
-        so the session never gets stuck uncontrollable."""
-        with self._lock:
-            if requester_id == self._controller_id:
-                return
-            requester = self._find_conn_locked(requester_id)
-            if requester is None:
-                return
-            controller = self._find_conn_locked(self._controller_id)
-            if controller is None:
-                self._controller_id = requester_id
-                requester.queue.put(("control_granted", {"conn_id": requester_id}))
-                return
-            controller.queue.put(("control_request", {"requester_id": requester_id}))
-
-    def respond_control(
-        self, responder_id: str, requester_id: str, grant: bool
-    ) -> bool:
-        """The controller approves/denies a pending request. Returns False if
-        the responder is not the current controller (stale/forged)."""
-        with self._lock:
-            if responder_id != self._controller_id:
-                return False
-            requester = self._find_conn_locked(requester_id)
-            if grant and requester is not None:
-                old = self._find_conn_locked(self._controller_id)
-                self._controller_id = requester_id
-                requester.queue.put(("control_granted", {"conn_id": requester_id}))
-                if old is not None:
-                    old.queue.put(("control_lost", {}))
-            elif requester is not None:
-                requester.queue.put(("control_denied", {}))
-            return True
 
     # ─── Parallel delegate visibility ───────────────
 

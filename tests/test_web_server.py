@@ -59,10 +59,9 @@ def _qget(conn, timeout=1.0):
             return event, data
 
 
-def _controller(renderer, conn_id="ctrl"):
-    """Register a connection as the controller and return its id — input is
-    gated to the controller (first-come-keeps-control), so input tests need
-    one and must send ``conn_id``."""
+def _register(renderer, conn_id="ctrl"):
+    """Register a connection and return its id (input tests need a live
+    connection so push_user_message / can_prompt work)."""
     renderer.register_connection(WebConnection(id=conn_id))
     return conn_id
 
@@ -429,7 +428,7 @@ class TestAuth:
 class TestInputEndpoint:
     def test_chat_message_echoes_to_renderer_and_queue(self, server_and_client):
         server, renderer, client = server_and_client
-        cid = _controller(renderer)
+        cid = _register(renderer)
         resp = client.post(
             "/api/input?token=testtoken",
             json={"kind": "chat", "content": "hello", "conn_id": cid},
@@ -443,7 +442,7 @@ class TestInputEndpoint:
 
     def test_prompt_response_goes_to_renderer_input_queue(self, server_and_client):
         _, renderer, client = server_and_client
-        cid = _controller(renderer)
+        cid = _register(renderer)
         result: list[str] = []
 
         def worker():
@@ -507,7 +506,7 @@ class TestInputEndpoint:
         from agent_cli.render.base import ConfirmOption
 
         _, renderer, client = server_and_client
-        cid = _controller(renderer)
+        cid = _register(renderer)
         result: list[tuple[str, str]] = []
 
         def worker():
@@ -535,24 +534,24 @@ class TestInputEndpoint:
 
     def test_unknown_kind_is_400(self, server_and_client):
         _, renderer, client = server_and_client
-        cid = _controller(renderer)
+        cid = _register(renderer)
         resp = client.post(
             "/api/input?token=testtoken",
             json={"kind": "bogus", "content": "x", "conn_id": cid},
         )
         assert resp.status_code == 400
 
-    def test_non_controller_input_is_403(self, server_and_client):
-        # An observer (or missing/forged conn_id) cannot send input.
+    def test_any_connection_can_send_input(self, server_and_client):
+        # No controller gate: every registered connection may send input.
         _, renderer, client = server_and_client
-        _controller(renderer, "ctrl")
-        renderer.register_connection(WebConnection(id="obs"))  # observer
-        for conn_id in ("obs", "nope", None):
+        renderer.register_connection(WebConnection(id="a"))
+        renderer.register_connection(WebConnection(id="b"))
+        for conn_id in ("a", "b"):
             resp = client.post(
                 "/api/input?token=testtoken",
                 json={"kind": "chat", "content": "x", "conn_id": conn_id},
             )
-            assert resp.status_code == 403, conn_id
+            assert resp.status_code == 200, conn_id
 
     def test_invalid_json_is_400(self, server_and_client):
         _, _, client = server_and_client
@@ -562,71 +561,6 @@ class TestInputEndpoint:
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 400
-
-
-class TestControlEndpoints:
-    """POST /api/request-control + /api/respond-control — the handoff flow."""
-
-    def _has_event(self, conn, name, n=5):
-        for _ in range(n):
-            try:
-                ev, _data = conn.queue.get(timeout=0.5)
-            except Exception:
-                return False
-            if ev == name:
-                return True
-        return False
-
-    def test_request_then_grant_transfers_control(self, server_and_client):
-        _, renderer, client = server_and_client
-        a = WebConnection(id="a")
-        renderer.register_connection(a)  # controller
-        renderer.register_connection(WebConnection(id="b"))  # observer
-
-        assert (
-            client.post(
-                "/api/request-control?token=testtoken", json={"conn_id": "b"}
-            ).status_code
-            == 200
-        )
-        assert self._has_event(a, "control_request")  # controller notified
-        assert (
-            client.post(
-                "/api/respond-control?token=testtoken",
-                json={"conn_id": "a", "requester_id": "b", "grant": True},
-            ).status_code
-            == 200
-        )
-        assert renderer.is_controller("b")
-
-    def test_respond_from_non_controller_is_403(self, server_and_client):
-        _, renderer, client = server_and_client
-        renderer.register_connection(WebConnection(id="a"))  # controller
-        renderer.register_connection(WebConnection(id="b"))  # observer
-        # b (observer) forges a grant → 403, control unchanged.
-        resp = client.post(
-            "/api/respond-control?token=testtoken",
-            json={"conn_id": "b", "requester_id": "b", "grant": True},
-        )
-        assert resp.status_code == 403
-        assert renderer.is_controller("a")
-
-    def test_request_control_requires_conn_id(self, server_and_client):
-        _, _, client = server_and_client
-        resp = client.post("/api/request-control?token=testtoken", json={})
-        assert resp.status_code == 400
-
-    def test_control_endpoints_require_token(self, server_and_client):
-        _, _, client = server_and_client
-        assert (
-            client.post(
-                "/api/request-control?token=nope", json={"conn_id": "x"}
-            ).status_code
-            == 401
-        )
-        assert (
-            client.post("/api/respond-control?token=nope", json={}).status_code == 401
-        )
 
 
 class TestWebResumeCli:
@@ -831,7 +765,7 @@ class TestStreamGenerator:
         gen = server.stream_events(conn)
         try:
             # First yielded event is the connection's role (identity).
-            assert (await self._next(gen))["event"] == "role"
+            assert (await self._next(gen))["event"] == "identity"
             event_dict = await self._next(gen)
             assert event_dict["event"] == "assistant_turn"
             data = json.loads(event_dict["data"])
@@ -852,7 +786,7 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
-            assert (await self._next(gen))["event"] == "role"  # identity first
+            assert (await self._next(gen))["event"] == "identity"  # identity first
             first = await self._next(gen)
             second = await self._next(gen)
             third = await self._next(gen)
@@ -869,7 +803,7 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
-            assert (await self._next(gen))["event"] == "role"  # drain snapshot
+            assert (await self._next(gen))["event"] == "identity"  # drain snapshot
 
             # Emit a moment after starting to consume so the live loop
             # (not the snapshot replay) carries the event.
@@ -896,9 +830,9 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
-            role = await self._next(gen)  # registers c1 as controller
-            assert role["event"] == "role"
-            assert json.loads(role["data"])["role"] == "controller"
+            ident = await self._next(gen)  # registers c1
+            assert ident["event"] == "identity"
+            assert json.loads(ident["data"])["conn_id"] == "c1"
 
             # A fresh connection joins — must NOT end this generator.
             renderer.register_connection(WebConnection(id="c2"))
@@ -920,7 +854,7 @@ class TestStreamGenerator:
         conn = WebConnection(id="c1")
         gen = server.stream_events(conn)
         try:
-            assert (await self._next(gen))["event"] == "role"  # drain snapshot
+            assert (await self._next(gen))["event"] == "identity"  # drain snapshot
 
             # Push a real event AND then immediately unregister so
             # the generator sees one event followed by the sentinel.

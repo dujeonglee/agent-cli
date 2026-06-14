@@ -12,14 +12,10 @@ match ``WebServer.token``. The token is generated at startup (or
 provided by ``--token``) and printed to stdout so the operator can share
 the URL with the LAN.
 
-Multi-viewer, first-come-keeps-control: every authenticated SSE connection
-RECEIVES the stream (read-only observers), but only the CONTROLLER connection
-may send input. The first connection becomes controller; later ones are
-observers that can request control (the controller approves/denies, control
-transfers). On the controller leaving, control auto-passes to the oldest
-observer. Implemented via :meth:`WebRenderer.register_connection` /
-``request_control`` / ``respond_control``; input is gated server-side by
-``conn_id`` in :func:`input_endpoint`.
+Multi-viewer, all equal: every authenticated SSE connection RECEIVES the
+stream AND may send input (no controller/observer split). Each connection
+learns its ``conn_id`` from the ``identity`` event for the viewer-roster
+"(you)" mark and queued-message ownership.
 """
 
 from __future__ import annotations
@@ -745,25 +741,19 @@ def create_app(server: WebServer) -> FastAPI:
 
         Body shape::
 
-            {"kind": "prompt", "content": "...", "conn_id": "..."}
-            {"kind": "confirm", "key": "y", "comment": "...", "conn_id": "..."}
-            {"kind": "chat", "content": "...", "conn_id": "..."}
+            {"kind": "prompt", "content": "..."}
+            {"kind": "confirm", "key": "y", "comment": "..."}
+            {"kind": "chat", "content": "..."}
 
         ``chat`` is the only kind that advances the AgentLoop directly;
-        ``prompt`` / ``confirm`` answer an in-flight render call.
-
-        Only the CONTROLLER connection may send input — ``conn_id`` identifies
-        the sender (learned from its ``role`` event) and is checked against the
-        current controller. Observers get 403 (their UI shows a request button,
-        not an input box, so this is a belt-and-suspenders server guard).
+        ``prompt`` / ``confirm`` answer an in-flight render call. Every
+        authenticated connection may send input (no controller gate).
         """
         server._require_token(token)
         try:
             body = await request.json()
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="invalid JSON body")
-        if not server.renderer.is_controller(body.get("conn_id")):
-            raise HTTPException(status_code=403, detail="not the controller")
         kind = body.get("kind")
         if kind == "chat":
             content = body.get("content", "")
@@ -792,40 +782,6 @@ def create_app(server: WebServer) -> FastAPI:
             server.renderer.push_user_input(kind, body)
             return JSONResponse({"accepted": True})
         raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
-
-    @app.post("/api/request-control")
-    async def request_control(request: Request, token: str = Query(...)):
-        """An observer asks the controller for control. Body: ``{conn_id}``.
-        The controller receives a ``control_request`` SSE event and responds
-        via ``/api/respond-control``."""
-        server._require_token(token)
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
-        conn_id = body.get("conn_id")
-        if not conn_id:
-            raise HTTPException(status_code=400, detail="conn_id required")
-        server.renderer.request_control(conn_id)
-        return JSONResponse({"accepted": True})
-
-    @app.post("/api/respond-control")
-    async def respond_control(request: Request, token: str = Query(...)):
-        """The controller approves/denies a pending request. Body:
-        ``{conn_id, requester_id, grant}`` — ``conn_id`` must be the current
-        controller (server-checked). On grant, control transfers and both
-        pages get ``control_granted`` / ``control_lost`` events."""
-        server._require_token(token)
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
-        ok = server.renderer.respond_control(
-            body.get("conn_id"), body.get("requester_id"), bool(body.get("grant"))
-        )
-        if not ok:
-            raise HTTPException(status_code=403, detail="not the controller")
-        return JSONResponse({"accepted": True})
 
     @app.post("/api/abort")
     async def abort(token: str = Query(...)):

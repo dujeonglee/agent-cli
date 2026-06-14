@@ -42,12 +42,10 @@
   // ── State ──────────────────────────────────
   let currentMode = "chat"; // "chat" | "prompt" | "confirm"
   let confirmDefaultKey = null;
-  // Control model (first-come-keeps-control): every page receives the stream,
-  // but only the controller can send input. The server assigns this page's
-  // identity + role via the ``role`` event; ``myConnId`` must accompany every
-  // input POST so the server can verify the sender is the controller.
+  // Every connection is equal (all may send input / queue). ``myConnId`` (from
+  // the ``identity`` event) is used to mark "(you)" in the viewer roster and
+  // to own queued messages.
   let myConnId = null;
-  let myRole = "observer"; // "controller" | "observer"
   let streamingCard = null;
   let streamingText = "";
   // ``workerBusy`` mirrors the server's ``worker_state`` event: true
@@ -850,7 +848,7 @@
 
   // ── POST helpers ───────────────────────────
   function postInput(body) {
-    body.conn_id = myConnId; // the controller gate keys on this
+    body.conn_id = myConnId; // identifies the sender (queued-message ownership)
     return fetch(
       "/api/input?token=" + encodeURIComponent(token),
       {
@@ -1131,12 +1129,11 @@
     updateSendEnabled();
   });
 
-  // ── Control model (first-come-keeps-control) ───────
-  es.addEventListener("role", function (e) {
-    const d = JSON.parse(e.data);
-    myConnId = d.conn_id;
-    myRole = d.role;
-    updateControlUI();
+  // ── Identity + viewer roster ───────
+  // Every connection is equal (all may send input / queue). conn_id is needed
+  // only to mark "(you)" in the roster and to own queued messages.
+  es.addEventListener("identity", function (e) {
+    myConnId = JSON.parse(e.data).conn_id;
   });
 
   const $viewers = document.getElementById("viewers");
@@ -1150,114 +1147,6 @@
       "👁 " + d.count + (labels.length ? " · " + labels.join(", ") : "");
     $viewers.title = labels.join(", ");
   });
-
-  es.addEventListener("control_request", function (e) {
-    // Only the controller receives this — another page wants control.
-    const d = JSON.parse(e.data);
-    showControlRequestPrompt(d.requester_id);
-  });
-
-  es.addEventListener("control_granted", function () {
-    myRole = "controller";
-    updateControlUI();
-    flashControlNotice("제어권을 받았습니다");
-  });
-
-  es.addEventListener("control_lost", function () {
-    myRole = "observer";
-    updateControlUI();
-    flashControlNotice("제어권을 다른 페이지에 넘겼습니다");
-  });
-
-  es.addEventListener("control_denied", function () {
-    flashControlNotice("제어권 요청이 거부되었습니다");
-  });
-
-  // Reflect controller/observer in the UI: observers see a read-only banner +
-  // "권한 요청" button instead of the input box.
-  function updateControlUI() {
-    const isController = myRole === "controller";
-    $inputArea.style.display = isController ? "" : "none";
-    let bar = document.getElementById("observer-bar");
-    if (isController) {
-      if (bar) bar.remove();
-      return;
-    }
-    if (!bar) {
-      bar = el("div", ["observer-bar"]);
-      bar.id = "observer-bar";
-      const label = el("span", ["observer-label"]);
-      label.textContent = "🔒 읽기 전용 — 다른 페이지가 제어 중";
-      const btn = el("button", ["observer-request-btn"]);
-      btn.type = "button";
-      btn.textContent = "권한 요청";
-      btn.addEventListener("click", function () {
-        btn.disabled = true;
-        btn.textContent = "요청 보냄…";
-        fetch("/api/request-control?token=" + encodeURIComponent(token), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conn_id: myConnId }),
-        });
-        setTimeout(function () {
-          if (myRole === "observer") {
-            btn.disabled = false;
-            btn.textContent = "권한 요청";
-          }
-        }, 5000);
-      });
-      bar.appendChild(label);
-      bar.appendChild(btn);
-      $inputArea.parentNode.insertBefore(bar, $inputArea.nextSibling);
-    }
-  }
-
-  // Controller-side approve/deny popup for an incoming control request.
-  function showControlRequestPrompt(requesterId) {
-    const existing = document.getElementById("control-request-popup");
-    if (existing) existing.remove();
-    const pop = el("div", ["control-popup"]);
-    pop.id = "control-request-popup";
-    const msg = el("div", ["control-popup-msg"]);
-    msg.textContent = "다른 페이지가 제어권을 요청했습니다. 승인할까요?";
-    const row = el("div", ["control-popup-row"]);
-    const grant = el("button", ["control-grant"]);
-    grant.type = "button";
-    grant.textContent = "승인";
-    const deny = el("button", ["control-deny"]);
-    deny.type = "button";
-    deny.textContent = "거부";
-    function respond(ok) {
-      fetch("/api/respond-control?token=" + encodeURIComponent(token), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conn_id: myConnId,
-          requester_id: requesterId,
-          grant: ok,
-        }),
-      });
-      pop.remove();
-    }
-    grant.addEventListener("click", function () { respond(true); });
-    deny.addEventListener("click", function () { respond(false); });
-    row.appendChild(grant);
-    row.appendChild(deny);
-    pop.appendChild(msg);
-    pop.appendChild(row);
-    document.body.appendChild(pop);
-  }
-
-  function flashControlNotice(text) {
-    const n = el("div", ["control-toast"]);
-    n.textContent = text;
-    document.body.appendChild(n);
-    setTimeout(function () { n.classList.add("show"); }, 10);
-    setTimeout(function () {
-      n.classList.remove("show");
-      setTimeout(function () { n.remove(); }, 300);
-    }, 2500);
-  }
 })();
 
 // ── Prompt Inspector ─────────────────────────
