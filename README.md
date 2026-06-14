@@ -25,6 +25,15 @@ pip install -e ".[dev]"
 설치 후 `agent-cli` 명령어가 PATH에 등록됩니다. 처음 실행하면 설정 마법사가 자동으로 시작됩니다.
 버전 확인은 `agent-cli --version`. GitHub Release에 첨부된 wheel(`pip install agent_cli-*.whl`)로도 설치할 수 있습니다.
 
+### 업데이트
+
+```bash
+agent-cli update          # 최신 릴리스 확인 → 확인 후 설치
+agent-cli update --check  # 새 버전 있는지 확인만 (설치 안 함)
+```
+
+GitHub CLI(`gh`)로 최신 릴리스 태그를 확인하고(private repo 인증은 `gh` 로그인이 처리 — 토큰 설정 불필요), 릴리스에 첨부된 wheel을 받아 `pip`로 업그레이드합니다. 개발용 editable 설치(`pip install -e .`)에서는 덮어쓰지 않고 `git pull`을 안내합니다(`--force`로 우회).
+
 ## 빠른 시작
 
 ```bash

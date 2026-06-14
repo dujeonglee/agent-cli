@@ -1036,6 +1036,144 @@ def _maybe_resume_recent(workspace: str, response_format: str, prompt_fn) -> tup
     return create_session(response_format=response_format), False
 
 
+_GH_REPO = "dujeonglee/agent-cli"
+
+
+def _parse_version(v: str) -> tuple:
+    """`v2.3.1` / `2.3.1-dev` → comparable int tuple (pre-release suffix
+    dropped). Non-numeric parts coerce to 0 so a malformed tag never crashes
+    the comparison."""
+    core = v.lstrip("vV").split("-")[0].split("+")[0]
+    out = []
+    for part in core.split("."):
+        try:
+            out.append(int(part))
+        except ValueError:
+            out.append(0)
+    return tuple(out)
+
+
+def _is_editable_install() -> bool:
+    """True when running from a source checkout / editable install — pip
+    overwriting it would clobber the working tree, so ``update`` refuses
+    (unless --force) and points at ``git pull`` instead."""
+    try:
+        import json as _json
+        from importlib.metadata import distribution
+
+        durl = distribution("agent-cli").read_text("direct_url.json")
+        if durl:
+            return bool(_json.loads(durl).get("dir_info", {}).get("editable"))
+    except Exception:
+        pass
+    import agent_cli
+
+    root = Path(agent_cli.__file__).resolve().parent.parent
+    return (root / ".git").exists() and (root / "pyproject.toml").exists()
+
+
+@app.command()
+def update(
+    check: bool = typer.Option(
+        False, "--check", help="Only check for a newer release; don't install."
+    ),
+    yes: bool = typer.Option(False, "-y", "--yes", help="Skip the confirmation."),
+    force: bool = typer.Option(
+        False, "--force", help="Update even a dev / editable install."
+    ),
+):
+    """Check GitHub for a newer release and update (via ``gh`` + ``pip``).
+
+    Uses the GitHub CLI (``gh``) so private-repo auth is handled by your
+    ``gh`` login — no token setup. The release's attached wheel is downloaded
+    and installed with pip. ``--check`` only reports availability.
+    """
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+
+    from agent_cli import __version__ as current
+
+    if shutil.which("gh") is None:
+        console.print(
+            "[red]gh CLI not found.[/red] Install GitHub CLI: https://cli.github.com"
+        )
+        raise typer.Exit(1)
+
+    r = subprocess.run(
+        [
+            "gh",
+            "release",
+            "view",
+            "-R",
+            _GH_REPO,
+            "--json",
+            "tagName",
+            "-q",
+            ".tagName",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        console.print(
+            f"[red]Could not fetch latest release:[/red] {r.stderr.strip()[:200]}"
+        )
+        raise typer.Exit(1)
+    latest = r.stdout.strip()
+    if not latest:
+        console.print("No releases found.")
+        raise typer.Exit(1)
+
+    console.print(f"current: [cyan]v{current}[/cyan]   latest: [cyan]{latest}[/cyan]")
+    if _parse_version(latest) <= _parse_version(current):
+        console.print("[green]✓ Already up to date.[/green]")
+        raise typer.Exit(0)
+
+    console.print(f"[yellow]Update available: v{current} → {latest}[/yellow]")
+    if check:
+        console.print("Run [cyan]agent-cli update[/cyan] to install.")
+        raise typer.Exit(0)
+    if _is_editable_install() and not force:
+        console.print(
+            "Dev / editable install detected — update with [cyan]git pull[/cyan] "
+            "(or [cyan]--force[/cyan] to pip-overwrite)."
+        )
+        raise typer.Exit(1)
+    if not yes and not typer.confirm(f"Install {latest} now?"):
+        raise typer.Exit(0)
+
+    with tempfile.TemporaryDirectory() as d:
+        dl = subprocess.run(
+            [
+                "gh",
+                "release",
+                "download",
+                latest,
+                "-R",
+                _GH_REPO,
+                "-p",
+                "*.whl",
+                "-D",
+                d,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        wheels = list(Path(d).glob("*.whl"))
+        if dl.returncode != 0 or not wheels:
+            console.print(f"[red]Download failed:[/red] {dl.stderr.strip()[:200]}")
+            raise typer.Exit(1)
+        pip = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", str(wheels[0])]
+        )
+        if pip.returncode != 0:
+            console.print("[red]pip install failed.[/red]")
+            raise typer.Exit(1)
+    console.print(f"[green]✓ Updated to {latest}.[/green] Restart agent-cli to use it.")
+
+
 @app.command()
 def web(
     provider: Optional[str] = typer.Option(

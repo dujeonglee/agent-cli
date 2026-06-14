@@ -74,6 +74,8 @@ gh release create vX.Y.Z \
 
 ## 설치 (사용자)
 
+설치 후 업데이트는 `agent-cli update`(gh 로 최신 릴리스 wheel 받아 pip 업그레이드, `--check` 로 확인만).
+
 ```bash
 # 태그된 릴리스에서 직접
 pip install "git+ssh://git@github.com/dujeonglee/agent-cli.git@vX.Y.Z"
