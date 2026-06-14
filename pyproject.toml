@@ -27,13 +27,15 @@ dependencies = [
     # stdlib ``sqlite3`` (zero cost when Python was built with SQLite
     # support) and only reaches for this wheel if the stdlib module
     # is missing — i.e., on locked-down servers whose Python was
-    # compiled ``--without-sqlite``. The project only publishes
-    # Linux manylinux wheels (no macOS / Windows binaries), and that
-    # matches the deployment target where the SQLite gap actually
-    # happens (locked-down server VMs); macOS / Windows hosts ship
-    # stdlib sqlite3 in their normal Python distributions, so the
-    # marker keeps the wheel out of dev installs that don't need it.
-    "pysqlite3-binary>=0.5; sys_platform == 'linux'",
+    # compiled ``--without-sqlite``. **It only publishes x86_64
+    # manylinux wheels** — there is NO arm64 (aarch64) wheel and no
+    # sdist, so an unqualified ``sys_platform == 'linux'`` marker makes
+    # the whole package uninstallable on arm64 Linux (pip: "No matching
+    # distribution"). Restrict the marker to x86_64 Linux, the only
+    # place the wheel exists; arm64 Linux (and macOS / Windows) rely on
+    # their stdlib ``sqlite3`` (conda / system Python ship it), which the
+    # shim already prefers.
+    "pysqlite3-binary>=0.5; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.optional-dependencies]

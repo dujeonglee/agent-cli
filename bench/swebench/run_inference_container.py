@@ -27,16 +27,44 @@ from pathlib import Path
 
 import docker
 from datasets import load_dataset
+from swebench.harness.constants import BASE_IMAGE_BUILD_DIR, ENV_IMAGE_BUILD_DIR
 from swebench.harness.docker_build import (
     build_container,
-    build_env_images,
+    build_image,
     setup_logger,
 )
 from swebench.harness.test_spec.test_spec import make_test_spec
 
 WHEEL = "agent_cli-2.0.0-py3-none-any.whl"
 AGENTCLI_PY = "/opt/miniconda3/envs/agentcli/bin"
-AGENTCLI_CACHE = Path("bench/.cache/agentcli_env.tgz")
+
+
+def agentcli_cache(arch: str) -> Path:
+    # arch-specific: the env's python is built for the base image's arch
+    return Path(f"bench/.cache/agentcli_env_{arch}.tgz")
+
+
+def _ensure_image(client, key, dockerfile, platform, scripts, build_dir):
+    try:
+        client.images.get(key)
+        return  # already built
+    except docker.errors.ImageNotFound:
+        pass
+    build_image(key, scripts, dockerfile, platform, client, build_dir)
+
+
+def build_base_env(spec, client):
+    """Build base→env images for this spec's arch (native arm64 or x86).
+    Replaces build_env_images, which is hardwired to x86_64."""
+    _ensure_image(
+        client, spec.base_image_key, spec.base_dockerfile, spec.platform, {},
+        BASE_IMAGE_BUILD_DIR / spec.base_image_key.replace(":", "__"),
+    )
+    _ensure_image(
+        client, spec.env_image_key, spec.env_dockerfile, spec.platform,
+        {"setup_env.sh": spec.setup_env_script},
+        ENV_IMAGE_BUILD_DIR / spec.env_image_key.replace(":", "__"),
+    )
 PROMPT = """\
 Resolve the following GitHub issue in this repository. Read the relevant \
 source files, make the necessary code changes to fix the issue, then call \
@@ -66,19 +94,19 @@ def host_provider_config() -> tuple[dict, dict | None]:
     return cfg, models
 
 
-def ensure_agentcli_cache(client, base_image_key: str):
+def ensure_agentcli_cache(client, base_image_key: str, platform: str, cache: Path):
     """Build the agentcli conda env ONCE and cache it as a tarball. All
     swebench images share /opt/miniconda3, so the env (at the identical path
-    /opt/miniconda3/envs/agentcli) is portable across instances by tar — no
-    relocation needed. Replaces a 3-5min per-instance conda+pip install
-    (emulated) with a ~seconds cp+extract."""
-    if AGENTCLI_CACHE.exists():
+    /opt/miniconda3/envs/agentcli) is portable across instances of the same
+    arch by tar — no relocation needed. Replaces a 3-5min per-instance
+    conda+pip install with a ~seconds cp+extract."""
+    if cache.exists():
         return
-    AGENTCLI_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    print(f"agentcli env 베이크 (1회, base={base_image_key})…", flush=True)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    print(f"agentcli env 베이크 (1회, base={base_image_key}, {platform})…", flush=True)
     c = client.containers.run(
         base_image_key, command="sleep infinity", detach=True,
-        platform="linux/amd64",
+        platform=platform,
     )
     try:
         subprocess.run(["docker", "cp", f"dist/{WHEEL}", f"{c.name}:/tmp/{WHEEL}"], check=True)
@@ -90,8 +118,8 @@ def ensure_agentcli_cache(client, base_image_key: str):
         if rc.exit_code != 0 or "agent-cli" not in out:
             raise RuntimeError(f"agentcli bake failed: {out[-400:]}")
         c.exec_run(["bash", "-lc", "tar czf /tmp/agentcli_env.tgz -C /opt/miniconda3/envs agentcli"])
-        subprocess.run(["docker", "cp", f"{c.name}:/tmp/agentcli_env.tgz", str(AGENTCLI_CACHE)], check=True)
-        print(f"  베이크 완료 → {AGENTCLI_CACHE} ({AGENTCLI_CACHE.stat().st_size // 1024 // 1024}MB)", flush=True)
+        subprocess.run(["docker", "cp", f"{c.name}:/tmp/agentcli_env.tgz", str(cache)], check=True)
+        print(f"  베이크 완료 → {cache} ({cache.stat().st_size // 1024 // 1024}MB)", flush=True)
     finally:
         c.remove(force=True)
 
@@ -107,11 +135,8 @@ def cp_in(cname: str, content: str, dest: str):
 def run_instance(inst: dict, args, client) -> dict:
     iid = inst["instance_id"]
     print(f"  [{iid}] {inst['repo']} @ {inst['base_commit'][:8]}", flush=True)
-    spec = make_test_spec(inst)  # x86_64 (QEMU on arm64) — matches eval
-    build_env_images(
-        client, [inst], force_rebuild=False, max_workers=1,
-        instance_image_tag="latest", env_image_tag="latest",
-    )
+    spec = make_test_spec(inst, arch=args.arch)
+    build_base_env(spec, client)  # arch-aware base→env (native arm64 or x86)
     logger = setup_logger(iid, Path(args.out) / f"{iid}.build.log")
     container = build_container(spec, client, args.run_id, logger, nocache=False)
     container.start()
@@ -140,7 +165,7 @@ def run_instance(inst: dict, args, client) -> dict:
         # 2. separate agentcli env — restore the baked cache (cp+extract,
         #    ~seconds) instead of conda create + pip install (~minutes emulated)
         print("    agentcli env 복원(cache)…", flush=True)
-        subprocess.run(["docker", "cp", str(AGENTCLI_CACHE), f"{cname}:/tmp/agentcli_env.tgz"], check=True)
+        subprocess.run(["docker", "cp", str(agentcli_cache(args.arch)), f"{cname}:/tmp/agentcli_env.tgz"], check=True)
         ex("mkdir -p /opt/miniconda3/envs && tar xzf /tmp/agentcli_env.tgz -C /opt/miniconda3/envs", timeout=300)
         # provider config (base_url → host.docker.internal) + model caps
         cfg, models = host_provider_config()
@@ -238,6 +263,8 @@ def main():
     ap.add_argument("--instances", default=None)
     ap.add_argument("--max-turns", type=int, default=25)
     ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--arch", default="x86_64", choices=["x86_64", "arm64"],
+                    help="arm64 = native build (no QEMU); x86_64 = emulated on Apple Silicon")
     ap.add_argument("--model-name", default="agent-cli-qwen27b-container")
     ap.add_argument("--run-id", default="smokeB")
     ap.add_argument("--out", default="bench/runs/smokeB")
@@ -259,9 +286,11 @@ def main():
     client = docker.from_env()
     print(f"[B] 인스턴스 {len(rows)}개 → {out}", flush=True)
 
-    # bake the agentcli env once (shared across all instances)
-    base_key = make_test_spec(rows[0]).base_image_key
-    ensure_agentcli_cache(client, base_key)
+    # bake the agentcli env once (shared across all instances of this arch)
+    spec0 = make_test_spec(rows[0], arch=args.arch)
+    ensure_agentcli_cache(
+        client, spec0.base_image_key, spec0.platform, agentcli_cache(args.arch)
+    )
 
     preds, healths = [], []
     for inst in rows:
