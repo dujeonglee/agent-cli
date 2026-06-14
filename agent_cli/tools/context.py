@@ -1,7 +1,7 @@
 """read_context tool — lets LLM browse and search session history.
 
 Modes:
-  - list: show all sessions (session_id, time, query)
+  - list: show all sessions (session_id, time, first message)
   - search: structured keyword search across history.jsonl files
 
 Search supports two orthogonal filters:
@@ -30,7 +30,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_cli.context.session import list_sessions
+from agent_cli.context.session import get_session_dir, list_sessions
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -76,13 +76,31 @@ def tool_read_context(args: dict, *, session_dir: Path | None = None) -> ToolRes
 # ── mode=list ─────────────────────────────────────────────────────
 
 
+def _session_title(meta) -> str:
+    """Short title for a session = its first user message (the replacement for
+    the removed ``query`` meta field, which now lives in history.jsonl)."""
+    hp = get_session_dir(meta) / "history.jsonl"
+    if not hp.exists():
+        return "(no history)"
+    try:
+        for line in hp.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            if rec.get("role") == "user":
+                txt = (rec.get("content") or "").strip().replace("\n", " ")
+                return (txt[:60] + "…") if len(txt) > 60 else (txt or "(empty)")
+    except Exception:
+        pass
+    return "(no query)"
+
+
 def _mode_list() -> ToolResult:
     sessions = list_sessions()
     if not sessions:
         return ToolResult(True, output="No previous sessions found.")
-    lines = [
-        f"- {s.session_id} [{s.updated_at}] {s.query or '(no query)'}" for s in sessions
-    ]
+    lines = [f"- {s.session_id} [{s.updated_at}] {_session_title(s)}" for s in sessions]
     return ToolResult(True, output="\n".join(lines))
 
 

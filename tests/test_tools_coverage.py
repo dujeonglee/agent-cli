@@ -965,6 +965,43 @@ class TestReadContextTool:
         assert result.success
         assert "No previous sessions" in result.output
 
+    def test_list_shows_first_message_not_crash_on_missing_query(
+        self, tmp_path, monkeypatch
+    ):
+        # Regression: SessionMeta no longer has a ``query`` field — list mode
+        # must derive the title from history.jsonl's first user message
+        # instead of crashing with AttributeError ('SessionMeta' has no
+        # attribute 'query').
+        import json as _json
+        import agent_cli.context.session as session_mod
+
+        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
+        sdir = tmp_path / "sessions" / "1781440579"
+        sdir.mkdir(parents=True)
+        (sdir / "session.jsonl").write_text(
+            _json.dumps(
+                {
+                    "_meta": {
+                        "session_id": "1781440579",
+                        "workspace": "/proj",
+                        "updated_at": "2026-06-14 21:36:19",
+                        "response_format": "md_array",
+                    }
+                }
+            )
+            + "\n"
+        )
+        (sdir / "history.jsonl").write_text(
+            _json.dumps({"role": "user", "content": "[두웅]: analyze this project"})
+            + "\n"
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"mode": "list"})
+        assert result.success  # no AttributeError
+        assert "1781440579" in result.output
+        assert "[두웅]: analyze this project" in result.output
+
     def test_unknown_mode(self):
         from agent_cli.tools.context import tool_read_context
 
