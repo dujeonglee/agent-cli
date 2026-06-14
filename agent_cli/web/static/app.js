@@ -1141,8 +1141,14 @@
 
   const $viewers = document.getElementById("viewers");
   es.addEventListener("viewers", function (e) {
-    const n = JSON.parse(e.data).count;
-    if ($viewers) $viewers.textContent = "👁 " + n;
+    if (!$viewers) return;
+    const d = JSON.parse(e.data);
+    const labels = (d.viewers || []).map(function (v) {
+      return v.id === myConnId ? v.name + " (you)" : v.name;
+    });
+    $viewers.textContent =
+      "👁 " + d.count + (labels.length ? " · " + labels.join(", ") : "");
+    $viewers.title = labels.join(", ");
   });
 
   es.addEventListener("control_request", function (e) {

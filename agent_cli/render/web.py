@@ -37,6 +37,7 @@ runtime UX, not state.
 from __future__ import annotations
 
 import json
+import random
 import threading
 from dataclasses import dataclass, field
 from queue import Empty, SimpleQueue
@@ -49,6 +50,32 @@ from agent_cli.render.base import ConfirmOption, Renderer
 # loop (which has no task_id). Kept a constant so the renderer, server, and
 # tests agree on the sentinel.
 _MAIN_SCOPE = ""
+
+# Fun default nicknames assigned to viewers on connect (browsers can't read
+# the client's OS username, so a friendly auto-label is the practical
+# identity). A random unused one is picked per connection.
+_NICKNAMES = [
+    "Sneaky Fox",
+    "Witty Otter",
+    "Brave Penguin",
+    "Sleepy Panda",
+    "Curious Cat",
+    "Jazzy Llama",
+    "Grumpy Walrus",
+    "Dizzy Ferret",
+    "Mellow Moose",
+    "Snappy Crab",
+    "Funky Gecko",
+    "Loyal Hound",
+    "Zesty Quokka",
+    "Cosmic Yak",
+    "Turbo Sloth",
+    "Nifty Newt",
+    "Rowdy Raccoon",
+    "Bouncy Badger",
+    "Spicy Mantis",
+    "Chill Capybara",
+]
 
 
 @dataclass
@@ -80,6 +107,8 @@ class WebRenderer(Renderer):
         # event_buffer entries: (event_name, data_dict)
         self._event_buffer: list[tuple[str, dict[str, Any]]] = []
         self._connections: list[WebConnection] = []
+        # conn_id → fun nickname (assigned on register, shown to all viewers)
+        self._nicknames: dict[str, str] = {}
         # Control model (first-come-keeps-control): every connection RECEIVES
         # the stream (read-only observers), but only the ``_controller_id``
         # connection may send input. A new connection joins as an observer and
@@ -219,24 +248,44 @@ class WebRenderer(Renderer):
             # ``role`` first: the client needs its identity (conn_id) + control
             # state before it can send input or render the right affordance.
             snapshot.insert(0, ("role", {"conn_id": conn.id, "role": role}))
-            # Live viewer count: the JOINING conn learns it via the snapshot
+            self._assign_nickname_locked(conn.id)
+            # Live viewers: the JOINING conn learns the roster via its snapshot
             # (no extra queue event — keeps single-conn queue assertions
             # clean); EXISTING conns learn via their queue.
-            n = sum(1 for c in self._connections if not c.closed.is_set())
-            snapshot.append(("viewers", {"count": n}))
+            payload = self._viewers_payload_locked()
+            snapshot.append(("viewers", payload))
             for c in self._connections:
                 if c is not conn and not c.closed.is_set():
-                    c.queue.put(("viewers", {"count": n}))
+                    c.queue.put(("viewers", payload))
             return snapshot
 
+    def _assign_nickname_locked(self, conn_id: str) -> None:
+        used = set(self._nicknames.values())
+        free = [n for n in _NICKNAMES if n not in used]
+        if free:
+            name = random.choice(free)
+        else:  # more viewers than pool — disambiguate with a counter
+            name = f"{random.choice(_NICKNAMES)} #{len(self._nicknames) + 1}"
+        self._nicknames[conn_id] = name
+
+    def _viewers_payload_locked(self) -> dict:
+        """`{count, viewers:[{id, name}]}` for the open connections. The
+        client matches its own ``conn_id`` to mark "(you)"."""
+        vs = [
+            {"id": c.id, "name": self._nicknames.get(c.id, "?")}
+            for c in self._connections
+            if not c.closed.is_set()
+        ]
+        return {"count": len(vs), "viewers": vs}
+
     def _broadcast_viewers_locked(self) -> None:
-        """Push the current viewer (open-connection) count to every remaining
-        client's queue. Caller must hold ``self._lock`` — invoked from
-        unregister (the leaver is already removed)."""
-        n = sum(1 for c in self._connections if not c.closed.is_set())
+        """Push the current viewer roster to every remaining client's queue.
+        Caller must hold ``self._lock`` — invoked from unregister (the leaver
+        is already removed)."""
+        payload = self._viewers_payload_locked()
         for c in self._connections:
             if not c.closed.is_set():
-                c.queue.put(("viewers", {"count": n}))
+                c.queue.put(("viewers", payload))
 
     def unregister_connection(self, conn: WebConnection) -> None:
         """Drop ``conn`` and wake any pending queue waiter. If the leaving
@@ -251,6 +300,7 @@ class WebRenderer(Renderer):
         with self._lock:
             if conn in self._connections:
                 self._connections.remove(conn)
+            self._nicknames.pop(conn.id, None)
             if conn.id == self._controller_id:
                 self._controller_id = None
                 for c in self._connections:  # oldest-first

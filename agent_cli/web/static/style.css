@@ -39,7 +39,7 @@ header {
   margin-right: 12px;
   flex-shrink: 0;
 }
-#viewers { font-size: 12px; color: #64748b; margin: 0 6px; white-space: nowrap; }
+#viewers { font-size: 12px; color: #64748b; margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
 #conn-status { font-size: 18px; color: #9ca3af; line-height: 1; }
 #conn-status.up { color: #16a34a; }
 #conn-status.down { color: #dc2626; }

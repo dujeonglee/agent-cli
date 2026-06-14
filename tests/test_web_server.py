@@ -1313,10 +1313,10 @@ class TestWorkspaceDownload:
 
 
 class TestViewerCount:
-    """Connected-viewer count broadcast on join/leave + UI wiring."""
+    """Viewer roster (count + fun nicknames) broadcast on join/leave + UI."""
 
     @staticmethod
-    def _viewer_counts(conn):
+    def _viewer_events(conn):
         import queue as _q
 
         out = []
@@ -1326,22 +1326,39 @@ class TestViewerCount:
             except _q.Empty:
                 break
             if ev == "viewers":
-                out.append(data["count"])
+                out.append(data)
         return out
 
+    @staticmethod
+    def _snap_viewers(snapshot):
+        for ev, data in snapshot:
+            if ev == "viewers":
+                return data
+        return None
+
     def test_broadcast_on_join_and_leave(self):
+        from agent_cli.render.web import _NICKNAMES
+
         r = WebRenderer()
         a = WebConnection(id="a")
-        # joining conn learns the count via its snapshot (not its queue)
+        # joining conn learns the roster via its snapshot (not its queue)
         snap_a = r.register_connection(a)
-        assert ("viewers", {"count": 1}) in snap_a
-        assert self._viewer_counts(a) == []  # nothing on its own queue
+        va = self._snap_viewers(snap_a)
+        assert va["count"] == 1
+        assert va["viewers"][0]["id"] == "a"
+        assert va["viewers"][0]["name"] in _NICKNAMES  # fun default assigned
+        assert self._viewer_events(a) == []  # nothing on its own queue
+
         b = WebConnection(id="b")
         snap_b = r.register_connection(b)
-        assert ("viewers", {"count": 2}) in snap_b
-        assert self._viewer_counts(a) == [2]  # existing conn learns via queue
+        assert self._snap_viewers(snap_b)["count"] == 2
+        evs = self._viewer_events(a)  # existing conn learns via queue
+        assert evs[-1]["count"] == 2
+        names = {v["name"] for v in evs[-1]["viewers"]}
+        assert len(names) == 2  # distinct nicknames while pool not exhausted
+
         r.unregister_connection(b)
-        assert self._viewer_counts(a) == [1]  # decremented on leave
+        assert self._viewer_events(a)[-1]["count"] == 1  # decremented on leave
 
     def test_viewers_ui_wired(self, server_and_client):
         _, _, client = server_and_client
