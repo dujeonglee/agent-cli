@@ -1248,7 +1248,7 @@ def web(
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
-    Single AgentLoop, single active SSE client (takeover model). Token
+    Single AgentLoop, multiple equal SSE viewers (all may input/queue). Token
     is generated on startup unless ``--token`` is provided; the URL with
     the token is printed to stdout for the operator to share.
 

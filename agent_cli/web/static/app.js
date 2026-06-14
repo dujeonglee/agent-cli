@@ -51,7 +51,7 @@
   let streamingText = "";
   // ``workerBusy`` mirrors the server's ``worker_state`` event: true
   // means the chat worker is between popping a user message and
-  // returning to the next ``pop_chat`` blocking call. While busy,
+  // returning to the next ``dequeue_blocking`` call. While busy,
   // the chat ``Send`` button stays disabled so a second message
   // can't be queued into an in-flight turn. The prompt-mode answer
   // path is not gated by this flag — answering an ``ask`` is the
@@ -1094,7 +1094,7 @@
 
   es.addEventListener("worker_state", function (e) {
     // Server-side flip: worker_busy fires right after popping a
-    // user message, worker_idle right before the next pop_chat
+    // user message, worker_idle right before the next dequeue
     // wait. Refresh / reconnect lands here too — the server
     // prepends the latest worker_state to the snapshot replay so
     // a freshly-connected client sees the correct send-button

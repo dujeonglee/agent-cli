@@ -6,11 +6,11 @@ Coverage axes:
    tokens; the health probe is open.
 2. **SSE stream** — events emitted by the renderer reach the SSE
    subscriber in order; the persistent buffer is replayed on connect.
-3. **Takeover** — a second SSE connection makes the first receive a
-   ``takeover`` event and disconnect.
+3. **Multi-viewer** — every connection is equal (all may input / queue);
+   a second connection does not end the first's stream.
 4. **POST /api/input** — chat / prompt / confirm routes wire through
-   to the renderer (and chat additionally feeds the queue exposed by
-   ``WebServer.pop_chat``).
+   to the renderer (chat enqueues onto the pending message queue:
+   ``enqueue`` / ``dequeue_blocking`` / ``dequeue_nowait`` / cancel).
 5. **POST /api/abort** — releases a blocked ``prompt_user`` /
    ``confirm`` call.
 
@@ -867,7 +867,7 @@ class TestStreamGenerator:
             await gen.aclose()
 
     async def test_second_connection_does_not_end_first(self):
-        # No takeover: a second connection joins as an observer and the first
+        # A second connection joins; the first generator keeps running and
         # generator keeps running + receiving events.
         renderer = WebRenderer()
         server = WebServer(renderer, token="t")

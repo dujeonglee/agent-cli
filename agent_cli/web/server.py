@@ -315,11 +315,11 @@ class WebServer:
     request handlers stay thin and unit-testable.
     """
 
-    # Identity sentinel pushed onto ``_chat_queue`` from
-    # :meth:`shutdown` so the worker thread's blocking ``pop_chat``
-    # call wakes up and breaks its loop cleanly. ``is`` comparison
-    # (identity, not equality) keeps the sentinel safe even if a user
-    # happens to type a chat message whose value collides.
+    # Identity sentinel returned by :meth:`dequeue_blocking` once
+    # :meth:`shutdown` flips the queue's shutdown flag, so the worker
+    # thread's blocking call wakes up and breaks its loop cleanly. Workers
+    # compare with ``is`` (identity); queued items are dicts, so a user
+    # message can never collide with this object.
     SHUTDOWN = object()
 
     def __init__(
@@ -788,7 +788,7 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.get("/api/stream")
     async def stream(token: str = Query(...)):
-        """SSE event stream. Token-authenticated, takeover-aware."""
+        """SSE event stream. Token-authenticated; multi-viewer (all equal)."""
         server._require_token(token)
         conn = WebConnection(id=secrets.token_hex(8))
         return EventSourceResponse(server.stream_events(conn))

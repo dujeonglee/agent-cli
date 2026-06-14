@@ -4,7 +4,7 @@ Coverage axes:
 
 1. **Event distribution** — persistent events go to the buffer + every
    active connection; transient events only to live connections.
-2. **Connection lifecycle** — registering takes over older connections,
+2. **Connection lifecycle** — every connection is equal (no takeover);
    the snapshot returned to a new client matches the buffer.
 3. **Assistant turn bundling** — ``thought()`` is held and emitted as
    part of the next ``action()`` / ``final()`` so each LLM emission
@@ -204,7 +204,7 @@ class TestTokenUsage:
         first = WebConnection(id="c1")
         r.register_connection(first)
         r.token_usage(self._STATS, turn=1)
-        # New connection (takeover) — snapshot should carry the usage.
+        # New connection — snapshot should carry the usage.
         second = WebConnection(id="c2")
         snapshot = r.register_connection(second)
         assert any(ev == "token_usage" and d.get("in") == 5000 for ev, d in snapshot)
@@ -1048,7 +1048,7 @@ class TestWorkerStateReconnect:
 
     def test_late_client_sees_idle_state_in_snapshot(self):
         # Symmetric: worker has finished a turn and is waiting in
-        # pop_chat. New client must see worker_state busy=False so
+        # dequeue. New client must see worker_state busy=False so
         # the send button enables on connect.
         r = WebRenderer()
         r.worker_busy()
@@ -1088,8 +1088,8 @@ class TestWorkerStateReconnect:
         assert worker_states[0] == {"busy": True}
 
     def test_busy_state_replays_for_a_second_viewer(self):
-        # Multi-viewer model: a second client joins as an observer (no
-        # takeover). It must still see the current busy state in its replay —
+        # Multi-viewer model: a second client joins (all equal, no takeover).
+        # It must still see the current busy state in its replay —
         # joining is not a state reset, and the first client stays connected.
         r = WebRenderer()
         old = WebConnection(id="old")
@@ -1152,7 +1152,7 @@ class TestWorkerStateReconnect:
 
 class TestWorkerLoopIntegration:
     """End-to-end: main.py's chat worker thread must emit
-    ``worker_idle`` immediately before every ``pop_chat`` blocking
+    ``worker_idle`` immediately before every ``dequeue_blocking``
     call and ``worker_busy`` immediately after popping. The SHUTDOWN
     sentinel must NOT trigger a busy flip — that would race the
     connection teardown.

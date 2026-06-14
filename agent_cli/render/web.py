@@ -199,7 +199,7 @@ class WebRenderer(Renderer):
         attachment for events that already carry an explicit
         ``task_id`` (the ``delegate_task_*`` lifecycle markers fill
         it in themselves) and for events whose data shape is
-        deliberately bare (e.g. ``input_resolved``, ``takeover``).
+        deliberately bare (e.g. ``input_resolved``).
         """
         tid = threading.get_ident()
         task_id = self._thread_to_task.get(tid)
@@ -401,7 +401,7 @@ class WebRenderer(Renderer):
             )
 
     def shutdown_all_connections(self) -> None:
-        """Close every active SSE generator without sending takeover.
+        """Close every active SSE generator (used on shutdown).
 
         Pushes the ``__close__`` sentinel into each connection's queue
         so the SSE generator's blocking executor-thread ``queue.get``
@@ -682,7 +682,7 @@ class WebRenderer(Renderer):
     def worker_busy(self) -> None:
         """Signal that the chat worker just picked up a user message
         and is processing it. Stays busy until the worker returns to
-        ``pop_chat`` — through every intermediate LLM turn, tool call,
+        ``dequeue_blocking`` — through every intermediate LLM turn, tool call,
         and even any ``prompt_user`` / ``confirm`` wait. The frontend
         uses this to disable the chat ``Send`` button so the user
         doesn't queue a second message into an actively-running turn.
@@ -699,7 +699,7 @@ class WebRenderer(Renderer):
 
     def worker_idle(self) -> None:
         """Signal that the chat worker is back at the top-level
-        ``pop_chat`` and ready to accept the next user message.
+        ``dequeue_blocking`` and ready to accept the next user message.
         Re-enables the frontend ``Send`` button. See ``worker_busy``
         for the persistence + reconnect semantics."""
         payload = {"busy": False}
