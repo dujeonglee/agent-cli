@@ -12,6 +12,41 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-14
+
+### Added
+
+- **`agent-cli update`** — GitHub 최신 릴리스 확인 후 업데이트(`gh` + `pip`).
+  `--check`(확인만)·`-y`(확인 생략)·`--force`(dev 설치 강행). private repo
+  인증은 `gh` 로그인이 처리(토큰 불필요), 릴리스 첨부 wheel 을 설치.
+- **웹 워크스페이스 다운로드(📥)** — 우측 드로어의 lazy 파일 트리에서 파일/
+  디렉토리를 골라 zip 다운로드(디렉토리=재귀, All=전체). 파일·디렉토리 크기 표시.
+- **웹 멀티유저** — 접속자 수·닉네임 로스터(`👁 N · …`), 접속 시 닉네임 입력
+  (재미있는 기본값 20개 풀에서 배정, localStorage 기억), 사용자 메시지 큐:
+  실행 중 보낸 메시지가 큐에 쌓여 실시간 표시되고 매 턴 종료 시 하나씩 대화에
+  주입(steering), 자기 큐 메시지 취소 가능. 모든 사용자 요청은 `[닉네임]:`
+  라벨로 LLM 에 노출 + task 로그 누적.
+
+### Changed
+
+- **웹 제어 모델 단순화** — controller/observer 권한 시스템(권한 요청/승인)
+  제거, 모든 연결이 동등하게 입력·큐 가능. `role` 이벤트 → `identity`.
+
+### Fixed
+
+- `pysqlite3-binary` 의존성 marker 를 x86_64 Linux 로 한정 — **arm64 Linux 에서
+  agent-cli 설치 불가** 버그 수정(arm64 wheel 부재).
+- `complete` 턴 history 직렬화를 포맷 동질 모양(`ops`)으로 — 단수 `{action}`
+  으로 새던 불일치 수정.
+- `read_context {mode:list}` 크래시(제거된 `SessionMeta.query` 참조) 수정 —
+  세션 제목을 history 첫 메시지에서 유도.
+- 웹 다운로드 All 후 재오픈 시 트리 비활성 잔존 수정.
+
+### Bench (제품 외)
+
+- `bench/swebench/` — SWE-bench 어댑터(호스트 인퍼런스 A + 컨테이너 인-에이전트
+  B, 네이티브 arm64), report. django-10914 검증, B5-django resolved 4/5.
+
 ## [2.0.0] - 2026-06-14
 
 첫 공개 릴리스. on-premise LLM을 위한 ReAct 패턴 에이전트 CLI.
@@ -57,5 +92,6 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/dujeonglee/agent-cli/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/dujeonglee/agent-cli/releases/tag/v2.0.0
