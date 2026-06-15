@@ -800,6 +800,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #export-cancel { margin-left: 0.2rem; }
 #export-jira-form { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 #export-jira-form input { padding: 0.25rem 0.4rem; }
+#export-jira-url { width: 13rem; }
 #export-jira-user, #export-jira-secret { width: 9rem; }
 #export-jira-issue { width: 7rem; }
 .exp-hint { color: #8889; font-size: 0.78rem; cursor: help; }

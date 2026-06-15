@@ -107,7 +107,7 @@ agent-cli setup
 
 #### Jira export (선택)
 
-웹 UI의 Export 기능(아래)에서 Jira 코멘트로 내보내려면 `jira` 섹션을 추가합니다. **여러 인스턴스**(회사용/OSS용 등)를 둘 수 있습니다. config 에는 **`base_url` 만** 둡니다 — 자격증명은 서버에 저장하지 않고, 코멘트를 다는 **각 사용자가 웹 UI에서 본인 계정으로 입력**합니다(그래서 코멘트 작성자가 서버 계정이 아니라 그 사용자 본인이 됩니다):
+웹 UI의 Export 기능(아래)에서 Jira 코멘트로 내보냅니다. **config 는 선택입니다** — config 없이도 웹 UI 에서 base_url·계정·토큰을 직접 입력해 게시할 수 있습니다. 자주 쓰는 사이트는 config 에 등록해두면 드롭다운으로 뜨고 URL 이 미리 채워집니다(**여러 인스턴스** 가능). config 에는 **`base_url` 만** 둡니다 — 자격증명은 서버에 저장하지 않고, 코멘트를 다는 **각 사용자가 웹 UI에서 본인 계정으로 입력**합니다(그래서 코멘트 작성자가 서버 계정이 아니라 그 사용자 본인이 됩니다):
 
 ```json
 {
@@ -121,6 +121,7 @@ agent-cli setup
 }
 ```
 
+- **UI 에서 URL 직접 입력(옵셔널)**: config 에 등록된 인스턴스는 드롭다운으로 고르면 URL 이 채워지고, 그 자리에서 수정하거나 새 URL 을 직접 타이핑할 수도 있습니다(localStorage 에 마지막 URL·계정 기억). ⚠️ **config 에 없는 URL 은 `https://` 만 허용**합니다 — 서버가 미검증 호스트로 자격증명을 보내므로 TLS 를 강제합니다(config 에 등록된 URL 은 내부 `http` 도 허용).
 - **Cloud / Server·DC 자동 판별**: `deployment` 을 생략하면 서버가 `{base_url}/rest/api/2/serverInfo` 를 프로브해 자동 판별하고(웹 UI가 알맞은 입력 필드를 미리 선택), `"cloud"` / `"server"` 로 명시해 프로브를 건너뛸 수도 있습니다. UI 의 토글로 사용자가 직접 바꿀 수도 있습니다.
 - **자격증명 입력**: Cloud 는 `email` + `API token`(Atlassian 계정 설정에서 발급), Server/Data Center 는 `username` + `password`(또는 PAT). 입력값은 **그 브라우저의 localStorage 에만** 저장되어 다음 접속 때 자동 채워지고, 코멘트 POST 한 번에만 transient 하게 쓰입니다(서버 로그·세션에 남지 않음). ⚠️ 웹 UI 는 LAN 평문 HTTP 이므로 신뢰된 네트워크에서만 사용하세요.
 - Jira Cloud 무료 티어(≤10명)로도 동작합니다.
@@ -259,7 +260,7 @@ UI 기능:
 
 **📤 Export:** 헤더의 📤 버튼으로 **선택 모드**에 들어가면 각 대화 카드 좌측에 체크박스가 나타납니다(기본 전부 해제). 원하는 카드를 고르거나 `All`로 전체 선택한 뒤(하단 액션바에 선택 개수 표시), 두 가지로 내보낼 수 있습니다:
 > - **⬇ HTML** — 선택한 대화를 self-contained HTML 파일로 다운로드(스타일 인라인, 어디서나 열림).
-> - **Jira…** — 선택한 대화를 한 개의 **Jira 코멘트**로, **본인 계정으로** 게시. 인스턴스 드롭다운(여러 개 설정 시) + Cloud/Server 토글 + 본인 계정·토큰(또는 username·password) + issue key(예: `PROJ-123`) 입력 후 Send. 자격증명은 브라우저 localStorage 에 기억됩니다. Cloud 는 ADF, Server/DC 는 wiki 마크업으로 전송. 설정은 위 [Jira export](#jira-export-선택) 참조.
+> - **Jira…** — 선택한 대화를 한 개의 **Jira 코멘트**로, **본인 계정으로** 게시. 인스턴스 드롭다운(설정 시) + **base URL**(설정값 prefill, 직접 입력·수정 가능) + Cloud/Server 토글 + 본인 계정·토큰(또는 username·password) + issue key(예: `PROJ-123`) 입력 후 Send. URL·자격증명은 브라우저 localStorage 에 기억됩니다. Cloud 는 ADF, Server/DC 는 wiki 마크업으로 전송. 설정은 위 [Jira export](#jira-export-선택) 참조.
 
 **📥 Download:** 헤더의 📥 버튼으로 우측 드로어를 열면 **워크스페이스 파일 트리**가 나타납니다(디렉토리는 ▶로 펼쳐 하위 탐색, 파일·디렉토리 옆에 크기 표시). 원하는 파일/디렉토리를 체크하거나 `All`(워크스페이스 전체)로 선택한 뒤 **⬇ Download zip** 을 누르면 선택 항목이 임시 zip으로 압축되어 다운로드됩니다(전송 후 서버의 임시 파일은 삭제). 디렉토리를 고르면 그 하위 전체가, 파일을 고르면 그 파일만 담깁니다. 워크스페이스(서버 실행 디렉토리) 밖 경로는 서버가 차단합니다.
 

@@ -1478,6 +1478,7 @@
   const $cancel = document.getElementById("export-cancel");
   const $jiraForm = document.getElementById("export-jira-form");
   const $jiraTarget = document.getElementById("export-jira-target");
+  const $jiraUrl = document.getElementById("export-jira-url");
   const $jiraDeployment = document.getElementById("export-jira-deployment");
   const $jiraUser = document.getElementById("export-jira-user");
   const $jiraSecret = document.getElementById("export-jira-secret");
@@ -1645,21 +1646,25 @@
     }
   }
 
-  // Per-instance credentials live ONLY in this browser's localStorage — they
-  // are never stored server-side; the comment is posted as the front-end user.
-  function credKey(name) {
-    return "agentcli_jira_cred_" + (name || "");
+  // Credentials live ONLY in this browser's localStorage — never stored
+  // server-side; the comment is posted as the front-end user. They are keyed by
+  // base_url (the real scope of where the credentials are sent), so a typed /
+  // edited URL carries its own saved login. LAST_URL remembers the URL to
+  // prefill when there is no configured default (zero-config use).
+  var JIRA_LAST_URL = "agentcli_jira_url";
+  function credKey(url) {
+    return "agentcli_jira_cred_" + (url || "").replace(/\/+$/, "");
   }
-  function loadCreds(name) {
+  function loadCreds(url) {
     try {
-      return JSON.parse(localStorage.getItem(credKey(name)) || "{}") || {};
+      return JSON.parse(localStorage.getItem(credKey(url)) || "{}") || {};
     } catch (_e) {
       return {};
     }
   }
-  function saveCreds(name, user, secret) {
+  function saveCreds(url, user, secret) {
     try {
-      localStorage.setItem(credKey(name), JSON.stringify({ user: user, secret: secret }));
+      localStorage.setItem(credKey(url), JSON.stringify({ user: user, secret: secret }));
     } catch (_e) {}
   }
 
@@ -1671,28 +1676,31 @@
     $jiraSecret.placeholder = server ? "password / PAT" : "API token";
   }
 
-  // Map each known target name → its detected/pinned deployment so a target
-  // switch updates the toggle + reloads that instance's saved credentials.
-  let jiraDeployByName = {};
+  // Known config targets keyed by name → {base_url, deployment} so picking a
+  // target fills the URL + toggle; the URL field is still freely editable.
+  let jiraTargetsByName = {};
 
-  function onJiraTargetChange() {
-    const name = $jiraTarget.value;
-    const dep = jiraDeployByName[name] || "cloud";
-    $jiraDeployment.value = dep;
-    applyDeploymentLabels(dep);
-    const c = loadCreds(name);
+  // Reload the saved login + toggle for whatever URL is currently in the field.
+  function onJiraUrlChange() {
+    const c = loadCreds($jiraUrl.value.trim());
     $jiraUser.value = c.user || "";
     $jiraSecret.value = c.secret || "";
   }
 
+  function onJiraTargetChange() {
+    const t = jiraTargetsByName[$jiraTarget.value];
+    if (t) {
+      $jiraUrl.value = t.base_url || "";
+      const dep = t.deployment || "cloud";
+      $jiraDeployment.value = dep;
+      applyDeploymentLabels(dep);
+    }
+    onJiraUrlChange();
+  }
+
   async function showJiraForm() {
     const targets = await loadJiraTargets();
-    if (!targets.length) {
-      $msg.textContent =
-        "No Jira configured — add jira.instances to .agent-cli/config.json.";
-      return;
-    }
-    jiraDeployByName = {};
+    jiraTargetsByName = {};
     $jiraTarget.innerHTML = "";
     targets.forEach(function (t) {
       const o = document.createElement("option");
@@ -1700,14 +1708,23 @@
       o.textContent = t.name;
       if (t.default) o.selected = true;
       $jiraTarget.appendChild(o);
-      jiraDeployByName[t.name] = t.deployment || "cloud";
+      jiraTargetsByName[t.name] = t;
     });
-    // Hide the selector when there's only one instance.
+    // Hide the selector when there are 0 or 1 instances; the URL field is the
+    // entry point either way (config targets prefill it; otherwise type it).
     $jiraTarget.style.display = targets.length > 1 ? "" : "none";
     $jiraForm.hidden = false;
     $msg.textContent = "";
-    onJiraTargetChange();
-    if ($jiraUser.value && $jiraSecret.value) $jiraIssue.focus();
+    if (targets.length) {
+      onJiraTargetChange();
+    } else {
+      // Zero-config: prefill the last-used URL (if any) + its saved login.
+      $jiraUrl.value = localStorage.getItem(JIRA_LAST_URL) || "";
+      applyDeploymentLabels($jiraDeployment.value);
+      onJiraUrlChange();
+    }
+    if (!$jiraUrl.value) $jiraUrl.focus();
+    else if ($jiraUser.value && $jiraSecret.value) $jiraIssue.focus();
     else $jiraUser.focus();
   }
 
@@ -1716,6 +1733,11 @@
   }
 
   async function sendJira() {
+    const url = $jiraUrl.value.trim().replace(/\/+$/, "");
+    if (!url) {
+      $msg.textContent = "Enter your Jira base URL (e.g. https://your.atlassian.net).";
+      return;
+    }
     const issue = $jiraIssue.value.trim();
     if (!issue) {
       $msg.textContent = "Enter an issue key (e.g. PROJ-123).";
@@ -1727,7 +1749,6 @@
       $msg.textContent = "Enter your Jira account and token/password.";
       return;
     }
-    const name = $jiraTarget.value;
     $jiraSend.disabled = true;
     $msg.textContent = "Posting to Jira…";
     try {
@@ -1735,7 +1756,8 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          target: name,
+          target: $jiraTarget.value,
+          base_url: url,
           issue_key: issue,
           deployment: $jiraDeployment.value,
           entries: collectEntries(),
@@ -1744,7 +1766,8 @@
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error((d && d.detail) || "HTTP " + r.status);
-      saveCreds(name, user, secret);
+      saveCreds(url, user, secret);
+      try { localStorage.setItem(JIRA_LAST_URL, url); } catch (_e) {}
       $msg.innerHTML =
         'Posted → <a href="' +
         d.url +
@@ -1781,6 +1804,7 @@
   });
   $jiraSend.addEventListener("click", sendJira);
   $jiraTarget.addEventListener("change", onJiraTargetChange);
+  $jiraUrl.addEventListener("change", onJiraUrlChange);
   $jiraDeployment.addEventListener("change", function () {
     applyDeploymentLabels($jiraDeployment.value);
   });

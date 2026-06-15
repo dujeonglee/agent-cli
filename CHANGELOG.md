@@ -23,6 +23,10 @@
   - **Jira Cloud + Server/Data Center 모두 지원** — `{base_url}/rest/api/2/
     serverInfo` 프로브로 deployment 자동 판별(또는 config 명시/UI 토글). Cloud=
     `/rest/api/3`+ADF, Server/DC=`/rest/api/2`+wiki 마크업으로 코멘트 본문 전송.
+  - **config 선택화(zero-config)** — config 없이도 웹 UI 에서 base_url 을 직접
+    입력해 게시 가능. config 인스턴스는 드롭다운+URL prefill 로 제공. config 에
+    없는 사용자 입력 URL 은 `https://` 만 허용(서버가 미검증 호스트로 자격증명을
+    보내므로 TLS 강제; config 등록 URL 은 내부 http 허용).
 
 ## [2.1.0] - 2026-06-14
 

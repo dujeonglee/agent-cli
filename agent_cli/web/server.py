@@ -683,12 +683,14 @@ def create_app(server: WebServer) -> FastAPI:
     @app.post("/api/export/jira")
     async def export_jira(request: Request, token: str = Query(...)):
         """Post selected transcript entries as ONE Jira comment, AS THE
-        FRONTEND USER. Body: ``{target?, issue_key, deployment?, entries: [...],
-        auth: {user, secret}}``. Resolves the named instance's base_url from
-        config, renders entries to ADF (Cloud) or wiki markup (Server/DC) per
-        ``deployment``, and POSTs with the user-supplied credentials. Those
-        credentials are used ONLY for this request — never logged or persisted.
-        Returns ``{ok, url}`` or 400 with the error."""
+        FRONTEND USER. Body: ``{target?, base_url?, issue_key, deployment?,
+        entries: [...], auth: {user, secret}}``. ``base_url`` (optional) lets the
+        user point at a URL not in config — works with no config at all, but an
+        unconfigured URL must be https. Otherwise the named instance is resolved
+        from config. Renders entries to ADF (Cloud) or wiki markup (Server/DC)
+        per ``deployment`` and POSTs with the user-supplied credentials, which
+        are used ONLY for this request — never logged or persisted. Returns
+        ``{ok, url}`` or 400 with the error."""
         server._require_token(token)
         from agent_cli.config import load_config
         from agent_cli.integrations import export as export_mod
@@ -712,7 +714,7 @@ def create_app(server: WebServer) -> FastAPI:
                 detail="Jira credentials are required (your account + token/password).",
             )
         try:
-            inst = jira_mod.resolve_instance(load_config(), target)
+            inst = jira_mod.resolve_target(load_config(), target, body.get("base_url"))
             deployment = (
                 jira_mod._normalize_deployment(body.get("deployment"))
                 or inst.get("deployment")

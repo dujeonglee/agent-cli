@@ -160,6 +160,41 @@ def resolve_instance(
     }
 
 
+def resolve_target(
+    config: dict[str, Any],
+    target: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    """Resolve where to post — a config instance OR a user-supplied ``base_url``.
+
+    When ``base_url`` is given it takes precedence (the UI lets a user type/edit
+    the URL, optionally with no server config at all). A user-supplied URL that
+    does NOT match any configured instance must be ``https://`` — the server
+    posts the user's credentials to it, so an arbitrary host is allowed only
+    over TLS. A URL matching a configured instance is trusted as-is (admins may
+    use internal ``http``). With no ``base_url``, falls back to
+    :func:`resolve_instance` (config-only path). Returns
+    ``{name, base_url, deployment}``; raises :class:`JiraError` on a bad URL or
+    an unresolvable config target.
+    """
+    user_url = (base_url or "").strip().rstrip("/")
+    if not user_url:
+        return resolve_instance(config, target)
+    by_url = {t["base_url"].rstrip("/"): t for t in list_targets(config)}
+    match = by_url.get(user_url)
+    if match:
+        return {
+            "name": match["name"],
+            "base_url": user_url,
+            "deployment": match["deployment"],
+        }
+    if not user_url.lower().startswith("https://"):
+        raise JiraError(
+            "Jira base URL must use https:// (or configure it server-side)."
+        )
+    return {"name": user_url, "base_url": user_url, "deployment": None}
+
+
 def post_comment(
     base_url: str,
     deployment: str | None,

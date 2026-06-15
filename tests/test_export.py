@@ -186,6 +186,38 @@ class TestJiraResolution:
             jira_mod.resolve_instance(cfg, "x")
 
 
+class TestResolveTarget:
+    def test_no_url_falls_back_to_config(self):
+        inst = jira_mod.resolve_target(_CFG, "dc", None)
+        assert inst["name"] == "dc"
+        assert inst["base_url"] == "https://jira.corp.net"
+        assert inst["deployment"] == "server"
+
+    def test_url_matching_config_is_trusted(self):
+        # trailing slash + config match → reuses the instance's deployment
+        inst = jira_mod.resolve_target(_CFG, None, "https://jira.corp.net/")
+        assert inst["name"] == "dc"
+        assert inst["deployment"] == "server"
+
+    def test_user_url_https_allowed_without_config(self):
+        inst = jira_mod.resolve_target({}, None, "https://my.atlassian.net")
+        assert inst["base_url"] == "https://my.atlassian.net"
+        assert inst["name"] == "https://my.atlassian.net"
+        assert inst["deployment"] is None
+
+    def test_user_url_http_rejected(self):
+        with pytest.raises(jira_mod.JiraError, match="https"):
+            jira_mod.resolve_target({}, None, "http://insecure.example")
+
+    def test_config_url_may_be_http_when_pinned(self):
+        # a URL matching a configured instance is trusted as-is (admins may use
+        # internal http); the https rule applies only to unconfigured URLs.
+        cfg = {"jira": {"instances": {"int": {"base_url": "http://jira.lan"}}}}
+        inst = jira_mod.resolve_target(cfg, None, "http://jira.lan")
+        assert inst["name"] == "int"
+        assert inst["base_url"] == "http://jira.lan"
+
+
 # ── Deployment detection (mocked serverInfo) ──────────────────────────────────
 
 

@@ -1189,6 +1189,43 @@ class TestExportEndpoints:
         assert isinstance(call.kwargs["json"]["body"], str)
         assert "*User*" in call.kwargs["json"]["body"]
 
+    def test_jira_export_user_supplied_https_url_zero_config(self, server_and_client):
+        # No config at all: the user types the base_url in the UI and it works.
+        _, _, client = server_and_client
+        with (
+            patch("agent_cli.config.load_config", return_value={}),
+            patch("agent_cli.integrations.jira.requests.post") as post,
+        ):
+            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
+            r = client.post(
+                "/api/export/jira?token=testtoken",
+                json={
+                    "base_url": "https://mine.atlassian.net",
+                    "issue_key": "X-1",
+                    "deployment": "cloud",
+                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
+                    "auth": {"user": "me@x.com", "secret": "tok"},
+                },
+            )
+        assert r.status_code == 200
+        assert r.json()["url"] == "https://mine.atlassian.net/browse/X-1"
+        assert post.call_args.args[0].startswith("https://mine.atlassian.net/rest/")
+
+    def test_jira_export_user_supplied_http_url_is_400(self, server_and_client):
+        _, _, client = server_and_client
+        with patch("agent_cli.config.load_config", return_value={}):
+            r = client.post(
+                "/api/export/jira?token=testtoken",
+                json={
+                    "base_url": "http://insecure.lan",
+                    "issue_key": "X-1",
+                    "entries": [],
+                    "auth": {"user": "u", "secret": "s"},
+                },
+            )
+        assert r.status_code == 400
+        assert "https" in r.json()["detail"]
+
     def test_jira_export_missing_auth_is_400(self, server_and_client):
         _, _, client = server_and_client
         with patch("agent_cli.config.load_config", return_value=self._CFG):
