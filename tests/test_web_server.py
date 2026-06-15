@@ -1085,14 +1085,16 @@ class TestExportEndpoints:
     Token-authenticated and read-only (no controller gate). Jira config /
     HTTP POST are patched so these run without a live (paid) Jira."""
 
+    # Credentials are no longer stored server-side; deployment is pinned so the
+    # targets endpoint doesn't probe the network during tests.
     _CFG = {
         "jira": {
             "instances": {
                 "work": {
                     "base_url": "https://work.atlassian.net",
-                    "email": "me@co.com",
-                    "api_token": "tok-w",
-                }
+                    "deployment": "cloud",
+                },
+                "dc": {"base_url": "https://jira.corp", "deployment": "server"},
             },
             "default": "work",
         }
@@ -1103,16 +1105,17 @@ class TestExportEndpoints:
         assert client.get("/api/export/jira/targets").status_code == 422  # no token
         assert client.get("/api/export/jira/targets?token=wrong").status_code == 401
 
-    def test_targets_lists_instances_without_tokens(self, server_and_client):
+    def test_targets_lists_instances_with_deployment(self, server_and_client):
         _, _, client = server_and_client
         with patch("agent_cli.config.load_config", return_value=self._CFG):
             r = client.get("/api/export/jira/targets?token=testtoken")
         assert r.status_code == 200
         data = r.json()
         assert data["ok"] is True
-        names = {t["name"] for t in data["targets"]}
-        assert names == {"work"}
-        assert "tok-w" not in r.text  # token never leaves the server
+        by_name = {t["name"]: t for t in data["targets"]}
+        assert set(by_name) == {"work", "dc"}
+        assert by_name["work"]["deployment"] == "cloud"
+        assert by_name["dc"]["deployment"] == "server"
 
     def test_html_export_returns_attachment(self, server_and_client):
         _, _, client = server_and_client
@@ -1134,7 +1137,7 @@ class TestExportEndpoints:
         r = client.post("/api/export/html?token=testtoken", json={"entries": "x"})
         assert r.status_code == 400
 
-    def test_jira_export_success(self, server_and_client):
+    def test_jira_export_cloud_posts_adf_as_user(self, server_and_client):
         _, _, client = server_and_client
         with (
             patch("agent_cli.config.load_config", return_value=self._CFG),
@@ -1146,24 +1149,69 @@ class TestExportEndpoints:
                 json={
                     "issue_key": "PROJ-3",
                     "entries": [{"kind": "user", "label": "User", "body": "hi"}],
+                    "auth": {"user": "me@co.com", "secret": "tok"},
                 },
             )
         assert r.status_code == 200
         data = r.json()
         assert data["ok"] is True
         assert data["url"] == "https://work.atlassian.net/browse/PROJ-3"
-        # the ADF body was posted to the right URL
-        assert post.call_args.args[0].endswith("/rest/api/3/issue/PROJ-3/comment")
+        assert data["deployment"] == "cloud"
+        # ADF posted to v3 with the USER's credentials (not a server account)
+        call = post.call_args
+        assert call.args[0].endswith("/rest/api/3/issue/PROJ-3/comment")
+        assert call.kwargs["auth"] == ("me@co.com", "tok")
+        assert call.kwargs["json"]["body"]["type"] == "doc"
+
+    def test_jira_export_server_posts_wiki_as_user(self, server_and_client):
+        _, _, client = server_and_client
+        with (
+            patch("agent_cli.config.load_config", return_value=self._CFG),
+            patch("agent_cli.integrations.jira.requests.post") as post,
+        ):
+            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
+            r = client.post(
+                "/api/export/jira?token=testtoken",
+                json={
+                    "target": "dc",
+                    "issue_key": "DC-9",
+                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
+                    "auth": {"user": "alice", "secret": "pw"},
+                },
+            )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["deployment"] == "server"
+        call = post.call_args
+        assert call.args[0].endswith("/rest/api/2/issue/DC-9/comment")
+        assert call.kwargs["auth"] == ("alice", "pw")
+        # v2 body is a wiki-markup STRING, not ADF
+        assert isinstance(call.kwargs["json"]["body"], str)
+        assert "*User*" in call.kwargs["json"]["body"]
+
+    def test_jira_export_missing_auth_is_400(self, server_and_client):
+        _, _, client = server_and_client
+        with patch("agent_cli.config.load_config", return_value=self._CFG):
+            r = client.post(
+                "/api/export/jira?token=testtoken",
+                json={"issue_key": "P-1", "entries": []},
+            )
+        assert r.status_code == 400
+        assert "credentials" in r.json()["detail"].lower()
 
     def test_jira_export_no_config_is_400(self, server_and_client):
         _, _, client = server_and_client
         with patch("agent_cli.config.load_config", return_value={}):
             r = client.post(
                 "/api/export/jira?token=testtoken",
-                json={"issue_key": "P-1", "entries": []},
+                json={
+                    "issue_key": "P-1",
+                    "entries": [],
+                    "auth": {"user": "u", "secret": "s"},
+                },
             )
         assert r.status_code == 400
-        assert "Jira" in r.json()["detail"]
+        assert "No Jira instances" in r.json()["detail"]
 
 
 class TestWorkspaceDownload:

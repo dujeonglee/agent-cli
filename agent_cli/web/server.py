@@ -638,14 +638,21 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.get("/api/export/jira/targets")
     async def export_jira_targets(token: str = Query(...)):
-        """Configured Jira instance names + base URLs for the export dropdown.
-        Token-authenticated; NEVER returns API tokens. Empty list when no Jira
-        is configured (the UI then disables the Jira option)."""
+        """Configured Jira instance names + base URLs (+ deployment) for the
+        export dropdown. Token-authenticated; NEVER returns credentials (none
+        are stored server-side). Each target's ``deployment`` is the
+        config-pinned value or, when absent, probed from serverInfo so the UI
+        pre-selects the right credential fields. Empty list when no Jira is
+        configured (the UI then disables the Jira option)."""
         server._require_token(token)
         from agent_cli.config import load_config
         from agent_cli.integrations import jira as jira_mod
 
-        return {"ok": True, "targets": jira_mod.list_targets(load_config())}
+        targets = jira_mod.list_targets(load_config())
+        for t in targets:
+            if not t.get("deployment"):
+                t["deployment"] = jira_mod.detect_deployment(t["base_url"])
+        return {"ok": True, "targets": targets}
 
     @app.post("/api/export/html")
     async def export_html(request: Request, token: str = Query(...)):
@@ -675,10 +682,13 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.post("/api/export/jira")
     async def export_jira(request: Request, token: str = Query(...)):
-        """Post selected transcript entries as ONE Jira comment. Body:
-        ``{target?, issue_key, entries: [...]}``. Resolves the named instance
-        from config (token stays server-side), renders entries to ADF, and
-        POSTs the comment. Returns ``{ok, url}`` or 400 with the error."""
+        """Post selected transcript entries as ONE Jira comment, AS THE
+        FRONTEND USER. Body: ``{target?, issue_key, deployment?, entries: [...],
+        auth: {user, secret}}``. Resolves the named instance's base_url from
+        config, renders entries to ADF (Cloud) or wiki markup (Server/DC) per
+        ``deployment``, and POSTs with the user-supplied credentials. Those
+        credentials are used ONLY for this request — never logged or persisted.
+        Returns ``{ok, url}`` or 400 with the error."""
         server._require_token(token)
         from agent_cli.config import load_config
         from agent_cli.integrations import export as export_mod
@@ -693,19 +703,39 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=400, detail="entries must be a list")
         issue_key = body.get("issue_key") or ""
         target = body.get("target")
+        auth = body.get("auth") or {}
+        user = str(auth.get("user") or "").strip()
+        secret = str(auth.get("secret") or "")
+        if not user or not secret:
+            raise HTTPException(
+                status_code=400,
+                detail="Jira credentials are required (your account + token/password).",
+            )
         try:
             inst = jira_mod.resolve_instance(load_config(), target)
-            adf = export_mod.entries_to_adf(entries)
+            deployment = (
+                jira_mod._normalize_deployment(body.get("deployment"))
+                or inst.get("deployment")
+                or jira_mod.detect_deployment(inst["base_url"])
+                or "cloud"
+            )
+            if deployment == "server":
+                comment_body = export_mod.entries_to_wiki(entries)
+            else:
+                comment_body = export_mod.entries_to_adf(entries)
             url = jira_mod.post_comment(
                 inst["base_url"],
-                inst["email"],
-                inst["api_token"],
+                deployment,
+                user,
+                secret,
                 issue_key,
-                adf,
+                comment_body,
             )
         except jira_mod.JiraError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        return JSONResponse({"ok": True, "url": url, "target": inst["name"]})
+        return JSONResponse(
+            {"ok": True, "url": url, "target": inst["name"], "deployment": deployment}
+        )
 
     @app.get("/api/workspace/tree")
     async def workspace_tree(token: str = Query(...), path: str = Query("")):

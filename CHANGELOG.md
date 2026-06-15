@@ -12,6 +12,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Jira 코멘트를 프론트엔드 사용자 본인 명의로 게시** — 코멘트 작성자가 백엔드
+  config 계정이 아니라, 웹 UI 에서 자격증명을 입력한 그 사용자가 됩니다.
+  - **(호환 깨짐)** config `jira.instances` 에서 `email`/`api_token` 제거 —
+    이제 `base_url`(+ 선택 `deployment`)만 둡니다. 자격증명은 서버에 저장하지
+    않고 사용자가 웹 UI 에서 입력(브라우저 localStorage 기억, POST 한 번에만
+    transient 사용).
+  - **Jira Cloud + Server/Data Center 모두 지원** — `{base_url}/rest/api/2/
+    serverInfo` 프로브로 deployment 자동 판별(또는 config 명시/UI 토글). Cloud=
+    `/rest/api/3`+ADF, Server/DC=`/rest/api/2`+wiki 마크업으로 코멘트 본문 전송.
+
 ## [2.1.0] - 2026-06-14
 
 ### Added

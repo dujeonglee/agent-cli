@@ -1478,6 +1478,9 @@
   const $cancel = document.getElementById("export-cancel");
   const $jiraForm = document.getElementById("export-jira-form");
   const $jiraTarget = document.getElementById("export-jira-target");
+  const $jiraDeployment = document.getElementById("export-jira-deployment");
+  const $jiraUser = document.getElementById("export-jira-user");
+  const $jiraSecret = document.getElementById("export-jira-secret");
   const $jiraIssue = document.getElementById("export-jira-issue");
   const $jiraSend = document.getElementById("export-jira-send");
   const $msg = document.getElementById("export-msg");
@@ -1642,6 +1645,46 @@
     }
   }
 
+  // Per-instance credentials live ONLY in this browser's localStorage — they
+  // are never stored server-side; the comment is posted as the front-end user.
+  function credKey(name) {
+    return "agentcli_jira_cred_" + (name || "");
+  }
+  function loadCreds(name) {
+    try {
+      return JSON.parse(localStorage.getItem(credKey(name)) || "{}") || {};
+    } catch (_e) {
+      return {};
+    }
+  }
+  function saveCreds(name, user, secret) {
+    try {
+      localStorage.setItem(credKey(name), JSON.stringify({ user: user, secret: secret }));
+    } catch (_e) {}
+  }
+
+  // deployment → placeholder labels for the credential fields. Cloud uses
+  // email + API token; Server/DC uses username + password (or PAT).
+  function applyDeploymentLabels(dep) {
+    const server = dep === "server";
+    $jiraUser.placeholder = server ? "username" : "email";
+    $jiraSecret.placeholder = server ? "password / PAT" : "API token";
+  }
+
+  // Map each known target name → its detected/pinned deployment so a target
+  // switch updates the toggle + reloads that instance's saved credentials.
+  let jiraDeployByName = {};
+
+  function onJiraTargetChange() {
+    const name = $jiraTarget.value;
+    const dep = jiraDeployByName[name] || "cloud";
+    $jiraDeployment.value = dep;
+    applyDeploymentLabels(dep);
+    const c = loadCreds(name);
+    $jiraUser.value = c.user || "";
+    $jiraSecret.value = c.secret || "";
+  }
+
   async function showJiraForm() {
     const targets = await loadJiraTargets();
     if (!targets.length) {
@@ -1649,6 +1692,7 @@
         "No Jira configured — add jira.instances to .agent-cli/config.json.";
       return;
     }
+    jiraDeployByName = {};
     $jiraTarget.innerHTML = "";
     targets.forEach(function (t) {
       const o = document.createElement("option");
@@ -1656,12 +1700,15 @@
       o.textContent = t.name;
       if (t.default) o.selected = true;
       $jiraTarget.appendChild(o);
+      jiraDeployByName[t.name] = t.deployment || "cloud";
     });
     // Hide the selector when there's only one instance.
     $jiraTarget.style.display = targets.length > 1 ? "" : "none";
     $jiraForm.hidden = false;
     $msg.textContent = "";
-    $jiraIssue.focus();
+    onJiraTargetChange();
+    if ($jiraUser.value && $jiraSecret.value) $jiraIssue.focus();
+    else $jiraUser.focus();
   }
 
   function hideJiraForm() {
@@ -1674,6 +1721,13 @@
       $msg.textContent = "Enter an issue key (e.g. PROJ-123).";
       return;
     }
+    const user = $jiraUser.value.trim();
+    const secret = $jiraSecret.value;
+    if (!user || !secret) {
+      $msg.textContent = "Enter your Jira account and token/password.";
+      return;
+    }
+    const name = $jiraTarget.value;
     $jiraSend.disabled = true;
     $msg.textContent = "Posting to Jira…";
     try {
@@ -1681,13 +1735,16 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          target: $jiraTarget.value,
+          target: name,
           issue_key: issue,
+          deployment: $jiraDeployment.value,
           entries: collectEntries(),
+          auth: { user: user, secret: secret },
         }),
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error((d && d.detail) || "HTTP " + r.status);
+      saveCreds(name, user, secret);
       $msg.innerHTML =
         'Posted → <a href="' +
         d.url +
@@ -1723,6 +1780,10 @@
     else hideJiraForm();
   });
   $jiraSend.addEventListener("click", sendJira);
+  $jiraTarget.addEventListener("change", onJiraTargetChange);
+  $jiraDeployment.addEventListener("change", function () {
+    applyDeploymentLabels($jiraDeployment.value);
+  });
   $jiraIssue.addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();

@@ -37,8 +37,15 @@
     </span>
     <span id="export-jira-form" hidden>
       <select id="export-jira-target" title="Jira instance"></select>
+      <select id="export-jira-deployment" title="Jira type">
+        <option value="cloud">Cloud</option>
+        <option value="server">Server/DC</option>
+      </select>
+      <input id="export-jira-user" type="text" autocomplete="off" placeholder="email">
+      <input id="export-jira-secret" type="password" autocomplete="off" placeholder="API token">
       <input id="export-jira-issue" type="text" placeholder="ISSUE-123" autocomplete="off">
       <button id="export-jira-send" type="button">Send</button>
+      <span class="exp-hint" title="Credentials are stored only in this browser (localStorage) and sent over your LAN connection to post as you.">🔒 your account · saved in this browser</span>
     </span>
     <span id="export-msg" class="exp-msg"></span>
   </div>

@@ -1,10 +1,10 @@
-"""Conversation export rendering — selected transcript entries → HTML / ADF.
+"""Conversation export rendering — selected transcript entries → HTML / ADF / wiki.
 
 The web UI's Export feature sends a list of selected transcript entries to the
-server, which renders them into a self-contained HTML document (download) or an
-Atlassian Document Format (ADF) doc (Jira comment body). Both renderers are
-pure functions of the entry list so they unit-test without a browser or a live
-Jira.
+server, which renders them into a self-contained HTML document (download), an
+Atlassian Document Format (ADF) doc (Jira **Cloud** comment body), or a
+wiki-markup string (Jira **Server/DC** comment body). All renderers are pure
+functions of the entry list so they unit-test without a browser or a live Jira.
 
 Entry contract (one per selected transcript card, built by the frontend):
 
@@ -107,7 +107,7 @@ def _adf_code_block(text: str) -> dict[str, Any]:
 
 
 def entries_to_adf(entries: list[dict[str, Any]]) -> dict[str, Any]:
-    """Render *entries* into an ADF document for a Jira comment body.
+    """Render *entries* into an ADF document for a Jira **Cloud** comment body.
 
     Each entry becomes a bold-label paragraph followed by its body — a
     ``codeBlock`` for monospace bodies (tool I/O / observation), a plain
@@ -124,3 +124,26 @@ def entries_to_adf(entries: list[dict[str, Any]]) -> dict[str, Any]:
     if not content:
         content.append(_adf_text_paragraph("(no content)"))
     return {"type": "doc", "version": 1, "content": content}
+
+
+# ── Jira wiki markup (Server / Data Center) ───────────────────────────────────
+
+
+def entries_to_wiki(entries: list[dict[str, Any]]) -> str:
+    """Render *entries* into a Jira **wiki-markup** string for a Server/DC
+    comment body (``/rest/api/2`` takes a string, not ADF).
+
+    Mirrors :func:`entries_to_adf`: a bold ``*label*`` line, then the body — a
+    ``{code}`` block for monospace bodies (literal, no markup interpretation), a
+    plain line otherwise. Empty bodies are skipped (label only); an entry-less
+    export yields a placeholder so the comment is never empty.
+    """
+    parts: list[str] = []
+    for entry in entries:
+        _kind, label, body, mono = _entry_fields(entry)
+        parts.append(f"*{label}*")
+        if body:
+            parts.append(f"{{code}}\n{body}\n{{code}}" if mono else body)
+    if not parts:
+        return "(no content)"
+    return "\n\n".join(parts)
