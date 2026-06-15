@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-06-15
+
 ### Changed
 
 - **Jira 코멘트를 프론트엔드 사용자 본인 명의로 게시** — 코멘트 작성자가 백엔드
@@ -108,6 +110,7 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/dujeonglee/agent-cli/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/dujeonglee/agent-cli/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/dujeonglee/agent-cli/releases/tag/v2.0.0
