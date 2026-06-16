@@ -321,7 +321,7 @@ Sessions for /path/to/project:
 
 **`--resume` 없이 시작할 때:** `web` 을 `--resume` 없이 실행하면, 가장 최근 세션을 위 포맷으로 보여주고 `Resume it? [y/N]` 를 묻습니다. `y` 면 그 세션을 이어가고, 그 외(Enter 포함)는 새 세션으로 시작합니다 (안전한 기본값). 파이프/비대화 환경(stdin 이 TTY 아님)에서는 묻지 않고 항상 새 세션입니다.
 
-LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 조회할 수 있습니다 (구조화 키워드 검색, 필드별 필터 지원).
+LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 조회할 수 있습니다 (구조화 JSON 쿼리 — keyword·kind·tool·author·turn 필터 자유 조합).
 
 ## 스킬 (Prompt Skills)
 
@@ -621,7 +621,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (한 op=한 task; 여러 delegate op = 병렬, 에이전트 역할 지정 가능) |
-| `read_context` | 세션 이력 조회 (현재 세션 기본, scope/sessions 필터) |
+| `read_context` | 세션 이력 조회 (구조화 JSON 쿼리: keyword/kind/tool/author/turn + sessions) |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (대화형 web 전용, 배열 지원) |
@@ -705,9 +705,14 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 {"action": "read_context", "action_input": {"mode": "search", "keyword": "인증", "sessions": "all"}}
 {"action": "read_context", "action_input": {"mode": "search", "keyword": "인증", "sessions": ["1777199924", "1777199950"]}}
 
-// 필드 필터 (scope) — reasoning / tool / observation / query 중 선택
-{"action": "read_context", "action_input": {"mode": "search", "keyword": "auth", "scope": "tool"}}
-{"action": "read_context", "action_input": {"mode": "search", "keyword": "auth", "scope": ["reasoning", "tool"]}}
+// 구조화 필터 (자유 조합, 최소 1개) — kind / tool / author / turn
+// kind: query(사용자 질문) / action(툴 호출 턴) / observation(툴 결과) / final(완료 답) / raw
+{"action": "read_context", "action_input": {"mode": "search", "kind": "observation", "tool": "read_file"}}
+{"action": "read_context", "action_input": {"mode": "search", "kind": ["action", "final"], "keyword": "auth"}}
+// author: 웹 멀티유저에서 특정 사용자의 질문만
+{"action": "read_context", "action_input": {"mode": "search", "kind": "query", "author": "두정"}}
+// turn: 특정 턴 (또는 {from,to} 범위)
+{"action": "read_context", "action_input": {"mode": "search", "turn": 5}}
 
 // 매치된 턴의 전체 내용 회상 (search 결과의 loc 문자열을 그대로 전달)
 {"action": "read_context", "action_input": {"mode": "fetch", "loc": "1777199924/history.jsonl:42"}}

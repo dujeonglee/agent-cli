@@ -123,6 +123,10 @@ class ContextManager:
         self._cache_tokens: int = 0
         self._history_path = self.session_dir / "history.jsonl"
         self._compaction_path = self.session_dir / "compaction.json"
+        # Current LLM turn — stamped onto each history.jsonl record's retrieval
+        # `turn` field so read_context can range/group by turn. The loop sets
+        # it at each turn boundary; 0 covers the run-starting query.
+        self._current_turn: int = 0
 
         # Compaction state. ``_summary`` empty until first compaction
         # completes. ``_dynamic_start_index`` tracks how many history
@@ -183,6 +187,11 @@ class ContextManager:
         self._cache.append(message)
         self._cache_tokens += msg_tokens
         self._append_to_history(message)
+
+    def set_turn(self, turn: int) -> None:
+        """Set the current LLM turn index. The loop calls this at each turn
+        boundary so subsequent history records carry the right ``turn``."""
+        self._current_turn = turn
 
     def reconcile_actual_tokens(
         self, actual_total_tokens: int, system_tokens: int = 0
@@ -619,8 +628,28 @@ class ContextManager:
         would crash on the first turn's history flush.
         """
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
+        record = self._enrich_record(message)
         with open(self._history_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(message, ensure_ascii=False) + "\n")
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def _enrich_record(self, message: dict) -> dict:
+        """Build the history.jsonl record: the round-trip message + retrieval
+        keys for read_context's structured JSON queries.
+
+        Additive — round-trip fields (role/thought/ops/content/tool/success)
+        are preserved verbatim (resume/compaction read them unchanged); we ADD
+        ``kind``/``turn``/``ts``/``tools``/``text`` (and pass ``author``
+        through) so queries no longer guess via the "Observation:" / "[nick]:"
+        prefix conventions. The cache / LLM path is untouched (this is the file
+        write only)."""
+        kind, tools, text = _classify_record(message)
+        record = dict(message)
+        record["kind"] = kind
+        record["turn"] = self._current_turn
+        record["ts"] = _now_iso()
+        record["tools"] = tools
+        record["text"] = text
+        return record
 
     def _save_compaction_json(self) -> None:
         """Serialise compaction state next to history.jsonl. Idempotent
@@ -728,6 +757,79 @@ class ContextManager:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_OBSERVATION_PREFIX = "Observation: "
+_OP_SUMMARY_CAP = 200
+
+
+def _op_summary(action: str, action_input) -> str:
+    """Flatten one op to a compact ``action {args}`` search string (capped)."""
+    try:
+        args = json.dumps(action_input, ensure_ascii=False)
+    except (TypeError, ValueError):
+        args = str(action_input)
+    s = f"{action} {args}".strip()
+    return s[:_OP_SUMMARY_CAP]
+
+
+def _classify_record(message: dict) -> tuple[str, list[str], str]:
+    """Derive ``(kind, tools, text)`` retrieval fields from a record's shape.
+
+    ``kind``  — query | observation | action | final | raw | system | <role>
+    ``tools`` — tool names involved (list; empty for query/final/raw)
+    ``text``  — flat searchable surface (prefix-stripped query/observation,
+                thought+op summaries for actions, the result for a final)
+
+    Pure function of the record shape — no prefix-convention guessing leaks
+    into read_context; this is the single place that encodes it.
+    """
+    role = message.get("role")
+    content = str(message.get("content") or "")
+
+    if role == "system":
+        return "system", [], content
+
+    if role == "user":
+        if "tool" in message:  # tool observation
+            text = (
+                content[len(_OBSERVATION_PREFIX) :]
+                if content.startswith(_OBSERVATION_PREFIX)
+                else content
+            )
+            return "observation", [str(message.get("tool") or "")], text
+        # human query — strip the "[author]: " label for the search surface
+        author = message.get("author")
+        text = content
+        if author and content.startswith(f"[{author}]: "):
+            text = content[len(f"[{author}]: ") :]
+        return "query", [], text
+
+    if role == "assistant":
+        ops = message.get("ops")
+        if isinstance(ops, list) and ops:
+            actions = [
+                o.get("action") for o in ops if isinstance(o, dict) and o.get("action")
+            ]
+            is_final = "complete" in actions
+            thought = str(message.get("thought") or "")
+            parts: list[str] = [thought] if thought else []
+            for o in ops:
+                if not isinstance(o, dict):
+                    continue
+                action = o.get("action") or ""
+                ai = o.get("action_input")
+                if action == "complete":
+                    result = ai.get("result") if isinstance(ai, dict) else ai
+                    parts.append(str(result or ""))
+                else:
+                    parts.append(_op_summary(action, ai))
+            text = " | ".join(p for p in parts if p)
+            return ("final" if is_final else "action"), actions, text
+        # raw assistant content (e.g. NO_JSON fallback stored verbatim)
+        return "raw", [], content
+
+    return str(role or "?"), [], content
 
 
 def _estimate_message_tokens(msg: dict) -> int:

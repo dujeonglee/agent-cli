@@ -374,6 +374,10 @@ class AgentLoop:
             while self._should_continue():
                 if self._interrupted:
                     return self._on_interrupt()
+                # Stamp the turn ABOUT to run so history records (any injected
+                # messages + this turn's action/observation) carry it.
+                if self.ctx:
+                    self.ctx.set_turn(self.turn + 1)
                 self._inject_queued_messages()
                 self.turn += 1
                 self._begin_turn()
@@ -517,11 +521,17 @@ class AgentLoop:
         """
         labeled = f"[{author}]: {text}" if author else text
         self.task_log.append(labeled)
+        # ``author`` rides along (when present) so the history enrich can
+        # attribute the query + strip the label for the search surface. The
+        # cache / LLM path ignores the extra key.
+        record = {"role": "user", "content": labeled}
+        if author:
+            record["author"] = author
         if self.ctx:
-            self.ctx.add({"role": "user", "content": labeled})
+            self.ctx.add(record)
             self.messages = self.ctx.get_messages()
         else:
-            self.messages.append({"role": "user", "content": labeled})
+            self.messages.append(record)
 
     def _should_continue(self) -> bool:
         if self.stop_event and self.stop_event.is_set():

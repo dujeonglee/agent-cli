@@ -1,27 +1,24 @@
-"""read_context tool — lets LLM browse and search session history.
+"""read_context tool — lets the LLM browse + structurally query session history.
 
 Modes:
   - list: show all sessions (session_id, time, first message)
-  - search: structured keyword search across history.jsonl files
+  - search: structured JSON query over history.jsonl records
+  - fetch: retrieve full turn(s) at a loc returned by search
 
-Search supports two orthogonal filters:
-  1. ``scope`` — restrict matches by record field
-       reasoning   : assistant.thought
-       tool        : assistant.action + action_input
-       observation : user.content starting with "Observation:"
-       query       : user.content NOT starting with "Observation:"
-     Default = all four. Single string ("reasoning") auto-promoted to list.
-  2. ``sessions`` — restrict matches by session
-       (omitted)   : current session only
-       "all"       : every session
-       "<id>"      : specific session
-       ["<id>", …] : multiple specific sessions
-     Single string auto-promoted to list.
+Search filters (combine freely; at least one required) match against each
+record's retrieval fields (written by ``context.manager`` enrich, and derived
+on read via the shared ``_classify_record`` so any record shape works):
+  - ``keyword``  : substring over the record's flat ``text`` surface
+  - ``kind``     : query | action | observation | final | raw | system
+                   (str or list; replaces the old reasoning/tool/... scopes)
+  - ``tool``     : tool-name membership (e.g. "read_file"; str or list)
+  - ``author``   : nickname (web multi-user attribution)
+  - ``turn``     : int, {"from","to"}, or [from,to] — turn range
+  - ``sessions`` : (omitted)=current only · "all"=every · "<id>"/["<id>",…]
 
-Search returns one block per matching turn (records with multiple matched
-scopes are aggregated). Previews collapse whitespace and cap at 200 chars.
-The 50-match cap is honored at append time (early break) so a single
-session with many matches cannot starve later sessions of slots.
+Returns one block per matching record (loc + kind/turn/tools/author + text
+preview). Previews collapse whitespace and cap at 200 chars. The 50-match cap
+is honored at append time so a busy session can't starve later ones.
 """
 
 from __future__ import annotations
@@ -36,9 +33,12 @@ from agent_cli.tools.result import ToolResult
 
 _SESSIONS_BASE = Path(".agent-cli") / "sessions"
 
-# Field-filter scope names for mode=search.
-_VALID_SCOPES: tuple[str, ...] = ("reasoning", "tool", "observation", "query")
-_OBSERVATION_PREFIX = "Observation:"
+# Record kinds for the mode=search ``kind`` filter (mirrors
+# context.manager._classify_record output).
+_VALID_KINDS: frozenset[str] = frozenset(
+    {"query", "action", "observation", "final", "raw", "system"}
+)
+_OBSERVATION_PREFIX = "Observation:"  # fetch-mode rendering label
 _PREVIEW_CAP = 200
 _MAX_MATCHES = 50
 
@@ -59,7 +59,10 @@ def tool_read_context(args: dict, *, session_dir: Path | None = None) -> ToolRes
     if mode == "search":
         return _mode_search(
             keyword=args.get("keyword", ""),
-            scope=args.get("scope"),
+            kind=args.get("kind"),
+            tool=args.get("tool"),
+            author=args.get("author"),
+            turn=args.get("turn"),
             sessions=args.get("sessions"),
             session_dir=session_dir,
         )
@@ -109,17 +112,38 @@ def _mode_list() -> ToolResult:
 
 def _mode_search(
     keyword: str,
-    scope: Any,
+    kind: Any,
+    tool: Any,
+    author: Any,
+    turn: Any,
     sessions: Any,
     session_dir: Path | None,
 ) -> ToolResult:
-    if not keyword:
-        return ToolResult(False, error="keyword is required for mode='search'.")
+    """Structured JSON query over history.jsonl records.
 
+    Filters (combine freely; at least one required): ``keyword`` substring over
+    the record's flat ``text`` surface, ``kind`` (query/action/observation/
+    final/raw), ``tool`` (tool-name membership), ``author`` (nickname), ``turn``
+    (int or {from,to}). Records are classified on read via the shared
+    ``_classify_record`` so the query never re-guesses prefix conventions and
+    works regardless of whether the record carries the persisted enrich keys.
+    """
     try:
-        scopes = _normalize_scope(scope)
+        kinds = _normalize_kinds(kind)
+        tools = _normalize_str_set(tool)
+        turn_range = _normalize_turn(turn)
     except ValueError as e:
         return ToolResult(False, error=str(e))
+    author_f = str(author).strip() if author else ""
+    keyword = keyword or ""
+    if not (keyword or kinds or tools or author_f or turn_range):
+        return ToolResult(
+            False,
+            error=(
+                "mode='search' needs at least one filter: keyword, kind, tool, "
+                "author, or turn."
+            ),
+        )
 
     target_dirs, error = _resolve_session_dirs(sessions, session_dir)
     if error:
@@ -159,50 +183,85 @@ def _mode_search(
                             msg = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-                        match = _match_turn(msg, keyword, scopes)
+                        match = _match_record(
+                            msg,
+                            keyword=keyword,
+                            kinds=kinds,
+                            tools=tools,
+                            author=author_f,
+                            turn_range=turn_range,
+                        )
                         if not match:
                             continue
-                        matches.append(
-                            {
-                                "loc": f"{session_id}/{rel_path}:{line_num}",
-                                "role": msg.get("role", "?"),
-                                "matched": match["matched"],
-                                "previews": match["previews"],
-                            }
-                        )
+                        match["loc"] = f"{session_id}/{rel_path}:{line_num}"
+                        matches.append(match)
                         if len(matches) >= _MAX_MATCHES:
                             truncated = True
                             break
             except OSError:
                 continue
 
-    return _format_search_result(keyword, scopes, matches, truncated)
+    return _format_search_result(
+        keyword, kinds, tools, author_f, turn_range, matches, truncated
+    )
 
 
 # ── Argument normalization ────────────────────────────────────────
 
 
-def _normalize_scope(scope: Any) -> list[str]:
-    """Coerce ``scope`` into a list of valid scope names.
+def _normalize_kinds(kind: Any) -> set[str]:
+    """Coerce ``kind`` into a validated set (empty = no kind filter).
 
-    Accepts None (→ all), str (→ [str]), or list. Unknown names raise
-    ``ValueError`` so the model gets explicit feedback rather than
-    silently broadened search.
+    Accepts None (→ {}), str (→ {str}), or list. Unknown values raise
+    ``ValueError`` so the model gets explicit feedback.
     """
-    if scope is None:
-        return list(_VALID_SCOPES)
-    if isinstance(scope, str):
-        scope = [scope]
-    if not isinstance(scope, list):
+    if kind is None:
+        return set()
+    if isinstance(kind, str):
+        kind = [kind]
+    if not isinstance(kind, list):
         raise ValueError(
-            f"scope must be a string or array of strings, got {type(scope).__name__}"
+            f"kind must be a string or array of strings, got {type(kind).__name__}"
         )
-    invalid = [s for s in scope if s not in _VALID_SCOPES]
+    invalid = [k for k in kind if k not in _VALID_KINDS]
     if invalid:
         raise ValueError(
-            f"invalid scope value(s): {invalid}. Valid: {list(_VALID_SCOPES)}"
+            f"invalid kind value(s): {invalid}. Valid: {sorted(_VALID_KINDS)}"
         )
-    return list(scope) if scope else list(_VALID_SCOPES)
+    return set(kind)
+
+
+def _normalize_str_set(value: Any) -> set[str]:
+    """Coerce a str / list-of-str into a set (empty = no filter)."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, list):
+        return {str(v) for v in value}
+    raise ValueError(f"expected string or array, got {type(value).__name__}")
+
+
+def _normalize_turn(turn: Any) -> tuple[int, int] | None:
+    """Coerce ``turn`` into an inclusive ``(from, to)`` range, or None.
+
+    Accepts int (→ (n, n)), {"from", "to"} dict, or [from, to] list.
+    """
+    if turn is None:
+        return None
+    if isinstance(turn, bool):  # guard: bool is an int subclass
+        raise ValueError("turn must be an integer or range")
+    if isinstance(turn, int):
+        return (turn, turn)
+    if isinstance(turn, dict):
+        lo = turn.get("from")
+        hi = turn.get("to")
+        lo = 0 if lo is None else int(lo)
+        hi = 10**9 if hi is None else int(hi)
+        return (lo, hi)
+    if isinstance(turn, list) and len(turn) == 2:
+        return (int(turn[0]), int(turn[1]))
+    raise ValueError("turn must be an int, {from,to}, or [from,to]")
 
 
 def _resolve_session_dirs(
@@ -256,57 +315,43 @@ def _resolve_session_dirs(
 # ── Per-turn matching ─────────────────────────────────────────────
 
 
-def _match_turn(msg: dict, keyword: str, scopes: list[str]) -> dict | None:
-    """Check whether a turn matches in any requested scope.
+def _match_record(
+    msg: dict,
+    *,
+    keyword: str,
+    kinds: set[str],
+    tools: set[str],
+    author: str,
+    turn_range: tuple[int, int] | None,
+) -> dict | None:
+    """Apply the field filters to one record. Returns a result dict (kind /
+    tools / author / turn / preview) or None when it doesn't match.
 
-    Returns ``{"matched": [scope, …], "previews": {scope: str, …}}`` or
-    None if no scope matched. A single turn matched in multiple scopes
-    yields one result with both previews.
-    """
-    kw = keyword.lower()
-    role = msg.get("role")
-    matched: list[str] = []
-    previews: dict[str, str] = {}
+    Classifies the record on read via the shared ``_classify_record`` — so the
+    same logic that writes the enrich keys also reads them, and the query works
+    on any record shape (no prefix-convention re-guessing)."""
+    from agent_cli.context.manager import _classify_record
 
-    if role == "assistant":
-        if "reasoning" in scopes:
-            thought = msg.get("thought") or ""
-            if isinstance(thought, str) and kw in thought.lower():
-                matched.append("reasoning")
-                previews["reasoning"] = _format_text(thought)
-
-        if "tool" in scopes:
-            action = msg.get("action") or ""
-            if not isinstance(action, str):
-                action = str(action)
-            ai = msg.get("action_input")
-            ai_str = ""
-            if ai is not None:
-                try:
-                    ai_str = json.dumps(ai, ensure_ascii=False)
-                except (TypeError, ValueError):
-                    ai_str = str(ai)
-            if (action and kw in action.lower()) or (ai_str and kw in ai_str.lower()):
-                matched.append("tool")
-                previews["tool"] = _format_tool(action, ai_str)
-
-    elif role == "user":
-        content = msg.get("content") or ""
-        if not isinstance(content, str):
-            content = str(content)
-        is_obs = content.startswith(_OBSERVATION_PREFIX)
-
-        if "observation" in scopes and is_obs and kw in content.lower():
-            matched.append("observation")
-            previews["observation"] = _format_obs_match(content, kw)
-
-        if "query" in scopes and not is_obs and kw in content.lower():
-            matched.append("query")
-            previews["query"] = _format_text(content)
-
-    if not matched:
+    kind, rec_tools, text = _classify_record(msg)
+    if kinds and kind not in kinds:
         return None
-    return {"matched": matched, "previews": previews}
+    if tools and not (set(rec_tools) & tools):
+        return None
+    if author and (msg.get("author") or "") != author:
+        return None
+    if turn_range is not None:
+        t = msg.get("turn")
+        if not isinstance(t, int) or not (turn_range[0] <= t <= turn_range[1]):
+            return None
+    if keyword and keyword.lower() not in text.lower():
+        return None
+    return {
+        "kind": kind,
+        "tools": rec_tools,
+        "author": msg.get("author"),
+        "turn": msg.get("turn"),
+        "preview": _format_text(text),
+    }
 
 
 # ── Preview formatting ────────────────────────────────────────────
@@ -320,57 +365,59 @@ def _format_text(text: str, cap: int = _PREVIEW_CAP) -> str:
     return collapsed
 
 
-def _format_tool(action: str, ai_str: str) -> str:
-    """Render ``action(action_input_json)`` with cap."""
-    if not action and not ai_str:
-        return ""
-    if not ai_str:
-        return _format_text(f"{action}()")
-    return _format_text(f"{action}({ai_str})")
-
-
-def _format_obs_match(content: str, keyword_lower: str) -> str:
-    """Pick the matching line from a (potentially huge) observation.
-
-    Falls back to whole-content preview when no single line contains the
-    keyword (rare; happens when keyword spans newlines).
-    """
-    for line in content.split("\n"):
-        if keyword_lower in line.lower():
-            return _format_text(line)
-    return _format_text(content)
-
-
 # ── Result rendering ──────────────────────────────────────────────
+
+
+def _describe_filters(
+    keyword: str,
+    kinds: set[str],
+    tools: set[str],
+    author: str,
+    turn_range: tuple[int, int] | None,
+) -> str:
+    parts = []
+    if keyword:
+        parts.append(f"keyword='{keyword}'")
+    if kinds:
+        parts.append(f"kind={sorted(kinds)}")
+    if tools:
+        parts.append(f"tool={sorted(tools)}")
+    if author:
+        parts.append(f"author='{author}'")
+    if turn_range:
+        parts.append(f"turn={turn_range[0]}..{turn_range[1]}")
+    return ", ".join(parts)
 
 
 def _format_search_result(
     keyword: str,
-    scopes: list[str],
+    kinds: set[str],
+    tools: set[str],
+    author: str,
+    turn_range: tuple[int, int] | None,
     matches: list[dict],
     truncated: bool,
 ) -> ToolResult:
-    scope_str = ", ".join(scopes)
+    desc = _describe_filters(keyword, kinds, tools, author, turn_range)
     if not matches:
-        return ToolResult(
-            True, output=f"No matches for '{keyword}' (scope: {scope_str})."
-        )
+        return ToolResult(True, output=f"No matches ({desc}).")
 
-    header = (
-        f"Search results for '{keyword}' (scope: {scope_str}) — {len(matches)} matches"
-    )
+    header = f"Search results ({desc}) — {len(matches)} matches"
     if truncated:
         header += f" (capped at {_MAX_MATCHES})"
     header += ":\n"
 
     blocks = []
     for m in matches:
-        head = f"-- {m['loc']} [{m['role']}]  matched: {', '.join(m['matched'])}"
-        lines = [head]
-        for s in m["matched"]:
-            preview = m["previews"].get(s, "")
-            lines.append(f"   {s}: {preview}")
-        blocks.append("\n".join(lines))
+        meta = [f"kind={m['kind']}"]
+        if m.get("turn") is not None:
+            meta.append(f"turn={m['turn']}")
+        if m.get("tools"):
+            meta.append(f"tools={m['tools']}")
+        if m.get("author"):
+            meta.append(f"author={m['author']}")
+        head = f"-- {m['loc']}  ({', '.join(meta)})"
+        blocks.append(f"{head}\n   {m['preview']}")
 
     footer = (
         "\n\nUse mode='fetch' with loc='<above>' to read the full turn "
@@ -597,10 +644,11 @@ class ReadContextTool(Tool):
     name = "read_context"
     description = (
         "Read context from sessions. "
-        "read_context_mode='list': session list. read_context_mode='search': structured keyword search "
-        "(default current session; pass 'read_context_scope'/'read_context_sessions' to restrict). "
-        "read_context_mode='fetch': retrieve full turn(s) at given read_context_loc (use search results' "
-        "loc string verbatim; add 'read_context_range' to include adjacent turns)."
+        "read_context_mode='list': session list. read_context_mode='search': structured JSON query "
+        "(filters: keyword/kind/tool/author/turn — combine freely, ≥1 required; default current "
+        "session, pass read_context_sessions to restrict). read_context_mode='fetch': retrieve full "
+        "turn(s) at given read_context_loc (use search results' loc string verbatim; add "
+        "'read_context_range' to include adjacent turns)."
     )
     parameters = {
         "type": "object",
@@ -611,24 +659,46 @@ class ReadContextTool(Tool):
             },
             "read_context_keyword": {
                 "type": "string",
-                "description": "Search keyword (required for read_context_mode=search)",
+                "description": "Search: substring over each record's text surface.",
             },
-            "read_context_scope": {
+            "read_context_kind": {
                 "type": "array",
                 "items": {
                     "type": "string",
                     "enum": [
-                        "reasoning",
-                        "tool",
-                        "observation",
                         "query",
+                        "action",
+                        "observation",
+                        "final",
+                        "raw",
+                        "system",
                     ],
                 },
                 "description": (
-                    "Optional field filter for read_context_mode=search. "
-                    "reasoning=assistant.thought, tool=action+input, "
-                    "observation=tool results, query=user input. "
-                    "Default: all four. Single string accepted (auto-promoted)."
+                    "Search filter by record kind: query=user ask, action=assistant "
+                    "tool turn, observation=tool result, final=complete answer, "
+                    "raw=unparsed. Single string accepted (auto-promoted)."
+                ),
+            },
+            "read_context_tool": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Search filter by tool name involved (e.g. 'read_file'). "
+                    "Single string accepted (auto-promoted)."
+                ),
+            },
+            "read_context_author": {
+                "type": "string",
+                "description": (
+                    "Search filter by author nickname (web multi-user attribution)."
+                ),
+            },
+            "read_context_turn": {
+                "type": "integer",
+                "description": (
+                    "Search filter by turn index. (Range queries: pass "
+                    "{from,to} in tooling that supports it.)"
                 ),
             },
             "read_context_sessions": {

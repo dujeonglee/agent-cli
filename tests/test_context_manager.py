@@ -4,7 +4,11 @@ import json
 
 import pytest
 
-from agent_cli.context.manager import ContextManager, _to_natural_language
+from agent_cli.context.manager import (
+    ContextManager,
+    _classify_record,
+    _to_natural_language,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────
@@ -530,3 +534,99 @@ class TestWireFormatAttachment:
         stub = _StubFormat()
         ctx = ContextManager(session_dir, max_context_tokens=1000, wire_format=stub)
         assert ctx.wire_format is stub
+
+
+# ── history.jsonl retrieval enrich (read_context JSON query) ──
+
+
+class TestClassifyRecord:
+    """`_classify_record` derives (kind, tools, text) from record shape — the
+    single source the write-time enrich AND read_context's on-read query share."""
+
+    def test_query(self):
+        kind, tools, text = _classify_record(
+            {"role": "user", "content": "[Alice]: write X", "author": "Alice"}
+        )
+        assert kind == "query"
+        assert tools == []
+        assert text == "write X"  # [author]: label stripped
+
+    def test_query_no_author_raw_text(self):
+        kind, _t, text = _classify_record({"role": "user", "content": "just do it"})
+        assert kind == "query" and text == "just do it"
+
+    def test_observation(self):
+        kind, tools, text = _classify_record(
+            {"role": "user", "tool": "shell", "content": "Observation: out"}
+        )
+        assert kind == "observation"
+        assert tools == ["shell"]
+        assert text == "out"  # "Observation: " prefix stripped
+
+    def test_action(self):
+        kind, tools, text = _classify_record(
+            {
+                "role": "assistant",
+                "thought": "read it",
+                "ops": [{"action": "read_file", "action_input": {"path": "a.py"}}],
+            }
+        )
+        assert kind == "action"
+        assert tools == ["read_file"]
+        assert "read it" in text and "read_file" in text and "a.py" in text
+
+    def test_final(self):
+        kind, tools, text = _classify_record(
+            {
+                "role": "assistant",
+                "thought": "done",
+                "ops": [
+                    {"action": "complete", "action_input": {"result": "the answer"}}
+                ],
+            }
+        )
+        assert kind == "final"
+        assert tools == ["complete"]
+        assert "the answer" in text
+
+    def test_raw_assistant(self):
+        kind, tools, text = _classify_record(
+            {"role": "assistant", "content": "leftover NO_JSON"}
+        )
+        assert kind == "raw" and tools == [] and text == "leftover NO_JSON"
+
+    def test_system(self):
+        kind, _t, _x = _classify_record({"role": "system", "content": "sys"})
+        assert kind == "system"
+
+
+class TestHistoryEnrich:
+    """add() persists enriched records (kind/turn/ts/tools/text) to
+    history.jsonl while the cache / LLM path stays the round-trip shape."""
+
+    def test_history_line_carries_enrich_keys(self, ctx):
+        ctx.set_turn(2)
+        ctx.add({"role": "user", "content": "[Bob]: hi", "author": "Bob"})
+        line = ctx.history_path.read_text().strip().splitlines()[-1]
+        rec = json.loads(line)
+        assert rec["kind"] == "query"
+        assert rec["turn"] == 2
+        assert rec["author"] == "Bob"
+        assert rec["text"] == "hi"
+        assert rec["tools"] == []
+        assert rec.get("ts")  # timestamp present
+
+    def test_set_turn_stamps_subsequent_records(self, ctx):
+        ctx.set_turn(0)
+        ctx.add({"role": "user", "content": "q"})
+        ctx.set_turn(5)
+        ctx.add({"role": "assistant", "thought": "t", "ops": [{"action": "shell"}]})
+        recs = [json.loads(ln) for ln in ctx.history_path.read_text().splitlines()]
+        assert recs[0]["turn"] == 0 and recs[0]["kind"] == "query"
+        assert recs[1]["turn"] == 5 and recs[1]["kind"] == "action"
+
+    def test_cache_and_llm_path_unaffected_by_enrich(self, ctx):
+        # enrich is file-only — get_messages returns clean {role, content}.
+        ctx.add({"role": "user", "content": "[Bob]: hi", "author": "Bob"})
+        msgs = ctx.get_messages()
+        assert all(set(m.keys()) <= {"role", "content"} for m in msgs)
