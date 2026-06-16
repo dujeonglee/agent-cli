@@ -12,6 +12,24 @@
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-06-17
+
+### Changed
+
+- **`read_context` 를 SQL 질의로 전환** — 필터 파라미터(`mode`/`kind`/`tool`/
+  `author`/`turn`) 더미 대신 **단일 `query`(SQL SELECT)** 프리미티브. history
+  를 인메모리 `history` 테이블(컬럼 `session/loc/seq/kind/turn/ts/tools/files/
+  author/text`)로 적재하고 LLM이 SELECT 작성. 읽기전용(SELECT/READ 외 거부),
+  결과 50행 cap, `query` 생략 시 스키마+예시+세션 목록. (도구 입력 스키마 변경 —
+  프롬프트-구동이라 모델이 노출된 스키마로 적응.) `mode=list/search/fetch` 제거,
+  context.py 736→362 LOC.
+
+### Added
+
+- **`files` 검색 컬럼** — 각 history 레코드에 **툴이 조작한 파일 경로**를 enrich
+  (`extract_file_paths` 재사용). "auth.py 를 건드린 레코드 전부" 같은 조회 가능
+  (`... WHERE files LIKE '%auth.py%'`).
+
 ## [3.3.0] - 2026-06-17
 
 ### Added
@@ -164,7 +182,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.4.0...HEAD
+[3.4.0]: https://github.com/dujeonglee/agent-cli/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/dujeonglee/agent-cli/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/dujeonglee/agent-cli/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/dujeonglee/agent-cli/compare/v3.1.0...v3.1.1
