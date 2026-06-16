@@ -3918,7 +3918,7 @@ class TestMessageInjection:
 
         run_loop(
             query="do Y",
-            query_label="Brave Penguin",
+            query_author="Brave Penguin",
             dequeue_user_message=dq,
             provider=provider,
             capabilities=caps,
@@ -3931,7 +3931,8 @@ class TestMessageInjection:
         ]
         # first query labeled with sender nickname
         assert "[Brave Penguin]: do Y" in users
-        # the queued message was injected as a labeled user turn
+        # the queued message was injected as a labeled user turn (no
+        # route_message → plain chat steering, preserves prior behavior)
         assert "[Witty Otter]: also handle X" in users
 
     def test_no_callback_leaves_query_unlabeled(self, caps, tmp_path):
@@ -3951,3 +3952,108 @@ class TestMessageInjection:
             m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
         ]
         assert "just do it" in users  # no nickname label
+
+    def test_injected_command_routed_not_added_as_chat(self, caps, tmp_path):
+        # An injected command (/sh, @agent, …) goes through route_message —
+        # the SAME path as a run-starter — instead of leaking in as chat text.
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("done"))
+        pending = [{"nickname": "Otter", "text": "/sh ls -ll"}]
+
+        def dq():
+            return pending.pop(0) if pending else None
+
+        routed = []
+
+        def route(text):
+            routed.append(text)
+            return text.startswith(("/", "@"))  # command → handled here
+
+        run_loop(
+            query="do Y",
+            query_author="Pen",
+            dequeue_user_message=dq,
+            route_message=route,
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        users = [
+            m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
+        ]
+        # route_message saw the injected command...
+        assert "/sh ls -ll" in routed
+        # ...and it was NOT injected as a literal chat user message.
+        assert not any("/sh ls -ll" in (u or "") for u in users)
+
+    def test_injected_chat_falls_through_to_steering(self, caps, tmp_path):
+        # When route_message returns False (plain chat), the injected message
+        # is added as a labeled steering user turn.
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("done"))
+        pending = [{"nickname": "Otter", "text": "also focus on X"}]
+
+        def dq():
+            return pending.pop(0) if pending else None
+
+        run_loop(
+            query="do Y",
+            query_author="Pen",
+            dequeue_user_message=dq,
+            route_message=lambda _text: False,  # never a command
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        users = [
+            m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
+        ]
+        assert "[Otter]: also focus on X" in users
+
+    def test_starter_and_injected_share_route_message(self, caps, tmp_path):
+        # Symmetry: the run-STARTER text is NOT chat-injected when it is a
+        # command — same route_message gate as injected. (Here the starter is
+        # plain chat so it runs; we assert the injected command path is the
+        # only one routed, proving both use the one callback.)
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(session_dir=tmp_path)
+        provider = _make_provider(_complete("done"))
+        pending = [{"nickname": "Otter", "text": "@explorer scan repo"}]
+
+        def dq():
+            return pending.pop(0) if pending else None
+
+        routed = []
+
+        def route(text):
+            routed.append(text)
+            return text.startswith(("/", "@"))
+
+        run_loop(
+            query="plain chat starter",
+            query_author="Pen",
+            dequeue_user_message=dq,
+            route_message=route,
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=3,
+        )
+        # the injected @agent went through the shared router
+        assert "@explorer scan repo" in routed
+        users = [
+            m.get("content") for m in ctx.get_raw_messages() if m.get("role") == "user"
+        ]
+        # starter (plain chat) was added; injected command was NOT chat-injected
+        assert "[Pen]: plain chat starter" in users
+        assert not any("@explorer scan repo" in (u or "") for u in users)

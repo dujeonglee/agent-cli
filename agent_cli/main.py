@@ -1401,32 +1401,43 @@ def web(
             stop_event = threading.Event()
             server.set_stop_handle(stop_event)
             try:
-                if handle_slash_command(message, renderer, ctx=ctx):
-                    continue
-                if try_dispatch_agent_or_skill(
-                    message,
-                    web_output,
-                    llm_provider=llm_provider,
-                    capabilities=capabilities,
-                    resolved_model=resolved_model,
-                    provider=provider,
-                    resolved_url=resolved_url,
-                    resolved_key=resolved_key,
-                    max_turns=max_turns,
-                    verbose=verbose,
-                    max_depth=max_depth,
-                    delegate_timeout=delegate_timeout,
-                    ctx=ctx,
-                    session=session,
-                    graceful_interrupt=True,
-                    stop_event=stop_event,
-                ):
+                # Single routing path shared by the run-STARTER and every
+                # mid-run injected (queued) message: ``/help``·``/sh``·
+                # ``/compact`` then ``@agent``·``/skill``. Returns True when the
+                # message was a command (handled here). Threaded into the loop
+                # as ``route_message`` so an injected ``/sh`` / ``@agent``
+                # behaves exactly as one typed at run-start instead of leaking
+                # in as literal chat text.
+                def route_one(text: str) -> bool:
+                    if handle_slash_command(text, renderer, ctx=ctx):
+                        return True
+                    return try_dispatch_agent_or_skill(
+                        text,
+                        web_output,
+                        llm_provider=llm_provider,
+                        capabilities=capabilities,
+                        resolved_model=resolved_model,
+                        provider=provider,
+                        resolved_url=resolved_url,
+                        resolved_key=resolved_key,
+                        max_turns=max_turns,
+                        verbose=verbose,
+                        max_depth=max_depth,
+                        delegate_timeout=delegate_timeout,
+                        ctx=ctx,
+                        session=session,
+                        graceful_interrupt=True,
+                        stop_event=stop_event,
+                    )
+
+                if route_one(message):
                     continue
                 try:
                     run_loop(
                         query=message,
-                        query_label=nickname,
+                        query_author=nickname,
                         dequeue_user_message=server.dequeue_nowait,
+                        route_message=route_one,
                         provider=llm_provider,
                         capabilities=capabilities,
                         model=resolved_model,

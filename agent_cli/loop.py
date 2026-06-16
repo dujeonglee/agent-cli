@@ -108,7 +108,8 @@ class AgentLoop:
         graceful_interrupt: bool = False,
         stop_event=None,
         dequeue_user_message=None,
-        query_label: str = "",
+        route_message=None,
+        query_author: str | None = None,
         agent_role: str = "",
         agent_name: str = "",
         mcp_manager=None,
@@ -128,13 +129,19 @@ class AgentLoop:
         self.wire_format = wire_format
 
         self.query = query
-        # Optional nickname for the first query (web multi-user) and a
-        # callback the run loop polls at each turn boundary to inject queued
-        # user messages mid-run (web). ``task_log`` accumulates EVERY user
-        # request (first query + injected) so recovery / review reference the
-        # full set of asks, not just the first.
-        self.query_label = query_label
+        # Web multi-user intake. ``query_author`` = nickname of whoever sent the
+        # run-STARTING message (None for CLI / single user). ``dequeue_user_message``
+        # pulls ONE queued message at each turn boundary; ``route_message(text)``
+        # routes it through the SAME command path as a run-starter (``/sh``,
+        # ``/compact``, ``@agent``, ``/skill``) and returns True when it handled
+        # the message — so an injected command behaves identically to one typed
+        # at run-start, instead of leaking in as literal chat text. A plain chat
+        # message (route_message returns False / None) is injected as a steering
+        # user turn. ``task_log`` accumulates EVERY user request (starter +
+        # injected) so recovery / review reference the full set of asks.
+        self.query_author = query_author
         self.dequeue_user_message = dequeue_user_message
+        self.route_message = route_message
         self.task_log: list[str] = []
         self.provider = provider
         self.capabilities = capabilities
@@ -493,17 +500,28 @@ class AgentLoop:
             skill_args=self.skill_args,
         )
 
-        # Message setup. The first query seeds the task log (labeled with the
-        # sender's nickname in web multi-user; raw otherwise).
-        first = (
-            f"[{self.query_label}]: {self.query}" if self.query_label else self.query
-        )
-        self.task_log = [first]
+        # Message setup. The run-starting query is added through the SAME path
+        # as turn-boundary injections (single labeling + task-log + ctx point).
+        self.task_log = []
+        if self.ctx is None:
+            self.messages = []
+        self._add_user_message(self.query, self.query_author)
+
+    def _add_user_message(self, text: str, author: str | None = None) -> None:
+        """Add a user message to the conversation + task log.
+
+        Shared by the run-starter (``_setup``) and the plain-chat branch of
+        turn-boundary injection so the ``[author]: text`` labeling, task-log
+        accumulation, and ctx/messages update live in ONE place. ``author``
+        (a nickname) is prefixed only when truthy — CLI / single-user stays raw.
+        """
+        labeled = f"[{author}]: {text}" if author else text
+        self.task_log.append(labeled)
         if self.ctx:
-            self.ctx.add({"role": "user", "content": first})
+            self.ctx.add({"role": "user", "content": labeled})
             self.messages = self.ctx.get_messages()
         else:
-            self.messages = [{"role": "user", "content": first}]
+            self.messages.append({"role": "user", "content": labeled})
 
     def _should_continue(self) -> bool:
         if self.stop_event and self.stop_event.is_set():
@@ -517,28 +535,40 @@ class AgentLoop:
         return "\n".join(self.task_log) if self.task_log else self.query
 
     def _inject_queued_messages(self) -> None:
-        """Turn boundary (web): pull ONE queued user message and inject it as a
-        user turn so the next LLM turn sees it. No-op when no callback (CLI) or
-        the queue is empty. Appends to the task log + shows a user card."""
+        """Turn boundary (web): pull ONE queued user message and process it the
+        SAME way a run-starter is processed. No-op when no callback (CLI) or the
+        queue is empty.
+
+        A command (``/sh``, ``/compact``, ``@agent``, ``/skill``) is routed via
+        ``route_message`` exactly as at run-start — so it executes instead of
+        leaking in as literal chat. Its effect lands in the shared ctx (e.g. a
+        ``@agent`` delegate result, a ``/compact``), so we refresh ``messages``
+        and record the ask in the task log. A plain chat message falls through
+        to ``_add_user_message`` as a steering injection."""
         if self.dequeue_user_message is None:
             return
         item = self.dequeue_user_message()
         if not item:
             return
-        labeled = f"[{item.get('nickname') or '?'}]: {item.get('text') or ''}"
-        self.task_log.append(labeled)
-        if self.ctx:
-            self.ctx.add({"role": "user", "content": labeled})
-            self.messages = self.ctx.get_messages()
-        else:
-            self.messages.append({"role": "user", "content": labeled})
-        # show it as a conversation card (web renderer only — push_user_message
-        # is a web affordance; CLI/minimal renderers don't inject anyway)
+        text = item.get("text") or ""
+        author = item.get("nickname")
+        labeled = f"[{author}]: {text}" if author else text
+        # Echo the dequeued message as a conversation card BEFORE routing —
+        # mirrors the worker's run-starter echo so an injected command/chat
+        # shows the same way it would at run-start (web renderer only;
+        # push_user_message is a web affordance, CLI/minimal don't inject).
         from agent_cli.render import get_renderer
 
         renderer = get_renderer()
         if hasattr(renderer, "push_user_message"):
             renderer.push_user_message(labeled)
+        if self.route_message is not None and self.route_message(text):
+            # Routed as a command — record the ask; ctx may have changed.
+            self.task_log.append(labeled)
+            if self.ctx:
+                self.messages = self.ctx.get_messages()
+            return
+        self._add_user_message(text, author)
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a
@@ -1837,7 +1867,8 @@ def run_loop(
     graceful_interrupt: bool = False,
     stop_event=None,
     dequeue_user_message=None,
-    query_label: str = "",
+    route_message=None,
+    query_author: str | None = None,
     agent_role: str = "",
     agent_name: str = "",
     mcp_manager=None,
@@ -1877,7 +1908,8 @@ def run_loop(
         skill_args=skill_args,
         graceful_interrupt=graceful_interrupt,
         dequeue_user_message=dequeue_user_message,
-        query_label=query_label,
+        route_message=route_message,
+        query_author=query_author,
         stop_event=stop_event,
         agent_role=agent_role,
         agent_name=agent_name,
