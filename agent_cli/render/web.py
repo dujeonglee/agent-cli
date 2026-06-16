@@ -469,22 +469,53 @@ class WebRenderer(Renderer):
                         self.push_user_message(content)
             elif role == "assistant":
                 thought = msg.get("thought", "") or ""
-                action = msg.get("action", "") or ""
-                action_input = msg.get("action_input", {})
-                if action == "complete":
-                    if isinstance(action_input, dict):
-                        final_text = action_input.get("result", "") or ""
-                    else:
-                        final_text = str(action_input) if action_input else ""
+                ops = msg.get("ops")
+                if isinstance(ops, list) and ops:
+                    # Both wire formats store every assistant turn — INCLUDING
+                    # the terminal ``complete`` — in the ``ops`` shape
+                    # (``serialize_terminal_for_history`` / ``serialize_
+                    # assistant_for_history``). Emit the thought once (held),
+                    # then flush one card per op. Without this branch the whole
+                    # assistant side (thought / action / final) is dropped on
+                    # resume — only the singular legacy shape was handled.
                     self.thought(thought, turn=0)
-                    self.final(final_text, turn=0)
-                elif action:
+                    for op in ops:
+                        if isinstance(op, dict):
+                            self._replay_assistant_op(
+                                op.get("action", "") or "", op.get("action_input", {})
+                            )
+                elif msg.get("action"):
+                    # Legacy singular ``{action, action_input}`` shape — kept for
+                    # old history files / the base (non-multi-op) format.
                     self.thought(thought, turn=0)
-                    if isinstance(action_input, dict):
-                        tool_input = json.dumps(action_input, ensure_ascii=False)
-                    else:
-                        tool_input = str(action_input)
-                    self.action(action, tool_input, turn=0)
+                    self._replay_assistant_op(
+                        msg.get("action", "") or "", msg.get("action_input", {})
+                    )
+                else:
+                    # Raw content-only assistant turn (e.g. a NO_JSON emission
+                    # stored verbatim) — render as a final card so the resumed
+                    # transcript isn't silently missing it.
+                    content = msg.get("content", "")
+                    if content:
+                        self.final(content, turn=0)
+
+    def _replay_assistant_op(self, action: str, action_input) -> None:
+        """Emit one assistant op as a replay card — ``final`` for a terminal
+        ``complete``, otherwise an ``action`` card. Mirrors the live
+        ``render_step`` calls; the caller emits the (held) thought first so the
+        first op's card carries it."""
+        if action == "complete":
+            if isinstance(action_input, dict):
+                final_text = action_input.get("result", "") or ""
+            else:
+                final_text = str(action_input) if action_input else ""
+            self.final(final_text, turn=0)
+        elif action:
+            if isinstance(action_input, dict):
+                tool_input = json.dumps(action_input, ensure_ascii=False)
+            else:
+                tool_input = str(action_input)
+            self.action(action, tool_input, turn=0)
 
     @property
     def persistent_count(self) -> int:

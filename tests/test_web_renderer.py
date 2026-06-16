@@ -16,6 +16,7 @@ Coverage axes:
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -966,6 +967,96 @@ class TestReplayFromHistory:
         assert names[1] == "ready"
         assert "user_message" in names
         assert "assistant_turn" in names
+
+    # ── Real ``ops`` shape (what both wire formats actually serialize) ──
+    # The tests above use the legacy singular ``{action, action_input}`` shape
+    # (kept working for old history files). md_array / react store EVERY
+    # assistant turn — including terminal ``complete`` — in the ``ops`` shape,
+    # so these guard the path that real resumes exercise.
+
+    def test_replays_ops_complete_as_final(self, tmp_path):
+        # Regression: a terminal complete in ops shape must render its final
+        # answer (previously dropped → blank assistant side on resume).
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "wrapping up",
+                "ops": [
+                    {"action": "complete", "action_input": {"result": "the answer"}}
+                ],
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        events = [(e, d) for e, d in r._event_buffer]
+        assert [e for e, _ in events] == ["assistant_turn"]
+        turn = events[0][1]
+        assert turn["final"] == "the answer"
+        assert turn["thought"] == "wrapping up"
+
+    def test_replays_ops_action_call(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "read it",
+                "ops": [{"action": "read_file", "action_input": {"path": "y.py"}}],
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        names = [e for e, _ in r._event_buffer]
+        assert names == ["assistant_turn"]
+        data = r._event_buffer[0][1]
+        assert data["thought"] == "read it"
+        assert data["action"]["tool_name"] == "read_file"
+        assert json.loads(data["action"]["tool_input"]) == {"path": "y.py"}
+
+    def test_replays_multi_op_turn_one_card_per_op(self, tmp_path):
+        # A multi-op turn emits one card per op; the thought rides the first.
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "two reads",
+                "ops": [
+                    {"action": "read_file", "action_input": {"path": "a"}},
+                    {"action": "read_file", "action_input": {"path": "b"}},
+                ],
+            }
+        )
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        cards = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        assert len(cards) == 2
+        assert cards[0]["thought"] == "two reads"
+        assert cards[1]["thought"] == ""  # thought already flushed on first op
+        assert json.loads(cards[0]["action"]["tool_input"]) == {"path": "a"}
+        assert json.loads(cards[1]["action"]["tool_input"]) == {"path": "b"}
+
+    def test_replays_content_only_assistant_as_final(self, tmp_path):
+        # A raw content-only assistant entry (e.g. a NO_JSON emission stored
+        # verbatim) renders as a final card so the transcript isn't lost.
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "s1", max_context_tokens=100_000)
+        ctx.add({"role": "assistant", "content": "raw leftover text"})
+        r = WebRenderer()
+        r.replay_from_history(ctx)
+
+        events = [(e, d) for e, d in r._event_buffer]
+        assert [e for e, _ in events] == ["assistant_turn"]
+        assert events[0][1]["final"] == "raw leftover text"
 
 
 class TestWorkerStateEmit:
