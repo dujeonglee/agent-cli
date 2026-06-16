@@ -12,6 +12,20 @@
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-06-17
+
+### Added
+
+- **`read_context` 구조화 JSON 쿼리** — 세션 이력 검색이 키워드 substring +
+  필드 필터(`kind`/`tool`/`author`/`turn`)를 자유 조합하는 구조화 쿼리로
+  확장. `kind`(query/action/observation/final/raw), `tool`(툴명), `author`
+  (웹 멀티유저 닉네임), `turn`(int 또는 {from,to} 범위)로 "정말 필요한
+  레코드만" 회상. 구 `scope`(reasoning/tool/observation/query) 폐기.
+- **history.jsonl 검색 enrich** — 각 레코드에 `kind`/`turn`/`ts`/`tools`/
+  `text`(+`author`) 검색 키를 가산 기록(round-trip/LLM 경로는 무변경). 외부
+  `jq` 로도 구조화 조회 가능. (검색 분류 단일 출처 `_classify_record` — 구
+  tool-scope 가 ops-모양 액션을 놓치던 버그도 해소.)
+
 ## [3.2.0] - 2026-06-16
 
 ### Added
@@ -150,7 +164,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/dujeonglee/agent-cli/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/dujeonglee/agent-cli/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/dujeonglee/agent-cli/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/dujeonglee/agent-cli/compare/v3.0.0...v3.1.0
