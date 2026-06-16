@@ -12,6 +12,19 @@
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-06-16
+
+### Added
+
+- **Jira Server/DC 의 평문 `http://` URL 지원** — 웹 UI 에서 사용자가 직접
+  입력한(=config 미등록) base_url 에 `http://` 도 허용(기존 `https` 전용 →
+  `http`/`https`). 사내 평문 HTTP Jira 를 대상으로 쓸 수 있습니다. 평문 자격증명
+  전송 위험은 차단이 아니라 입력 시 UI 경고로 표시하며, `http`/`https` 외 scheme
+  은 거부합니다. config 에 등록된 URL 의 내부 http 허용은 종전과 동일.
+- **닉네임 중간 변경** — 웹 로스터 옆 ✎ 버튼으로 접속 후에도 닉네임을 언제든
+  재설정(현재 닉 prefill → 즉시 로스터 반영). 첫 연결 닉네임 바를 재사용하며
+  서버는 ephemeral 유지(영속화 없음).
+
 ## [3.0.0] - 2026-06-15
 
 ### Changed
@@ -110,7 +123,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/dujeonglee/agent-cli/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/dujeonglee/agent-cli/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/dujeonglee/agent-cli/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/dujeonglee/agent-cli/releases/tag/v2.0.0
