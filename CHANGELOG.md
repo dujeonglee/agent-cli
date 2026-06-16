@@ -12,6 +12,16 @@
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-06-16
+
+### Fixed
+
+- **웹 세션 resume 시 assistant 카드 누락** — `replay_from_history` 가 단수
+  `{action}` 모양만 디코드해, 두 wire format 이 실제로 저장하는 `ops` 모양
+  assistant 턴(`complete` 최종답 포함)이 전부 렌더 누락되던 버그 수정. 이제
+  `ops` 분기로 op마다 thought+action(complete=final) 재방출, 레거시 단수 모양·
+  raw content-only(final 카드)도 호환.
+
 ## [3.1.0] - 2026-06-16
 
 ### Added
@@ -123,7 +133,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.1.1...HEAD
+[3.1.1]: https://github.com/dujeonglee/agent-cli/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/dujeonglee/agent-cli/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/dujeonglee/agent-cli/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/dujeonglee/agent-cli/compare/v2.0.0...v2.1.0
