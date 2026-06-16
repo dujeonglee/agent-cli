@@ -12,6 +12,18 @@
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-06-17
+
+### Fixed
+
+- **sqlite 없는 환경에서 read_context 가 앱 기동을 깨뜨리던 버그** — `read_context`
+  가 `import sqlite3` 를 모듈 최상단에 둬, stdlib `sqlite3` 확장이 없는 Python
+  (locked-down/custom 빌드)에서 `No module named '_sqlite3'` 로 **코어 도구
+  로드 실패 → 앱 기동 불가**. 이제 `code_index._sqlite` shim(stdlib→`pysqlite3`
+  폴백)을 lazy 로 거쳐 — code_index 가 도는 환경이면 read_context 도 동작하고,
+  sqlite 가 정말 없으면 쿼리 시 친절한 에러(크래시 아님). authorizer 도
+  pysqlite3 가 상수를 안 노출하면 skip(안전은 SELECT prefix + ephemeral DB).
+
 ## [3.4.0] - 2026-06-17
 
 ### Changed
@@ -182,7 +194,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.4.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.4.1...HEAD
+[3.4.1]: https://github.com/dujeonglee/agent-cli/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/dujeonglee/agent-cli/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/dujeonglee/agent-cli/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/dujeonglee/agent-cli/compare/v3.1.1...v3.2.0
