@@ -12,6 +12,23 @@
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-06-16
+
+### Added
+
+- **웹 큐 메시지 단일 라우팅** — 실행 중 큐에 넣은 메시지도 run 시작 메시지와
+  **동일하게 라우팅**됩니다. 이제 중간에 보낸 `/sh`·`/compact`·`@agent`·`/skill`
+  이 리터럴 chat 텍스트로 새지 않고 **실제로 실행**됩니다(이전엔 run 시작 시에만
+  동작). `@agent` 중간 주입은 모델의 `delegate` 와 동일한 경로로 수렴. `/sh`·
+  `/help` 은 종전처럼 display-only, `/compact`·`@agent`·`/skill` 은 컨텍스트에
+  반영. 평문 메시지는 기존대로 스티어링 주입.
+
+### Changed
+
+- (내부) 사용자 메시지 intake 통합 — run-starter/injected 의 라벨링·라우팅
+  중복 제거(`_add_user_message` 단일 헬퍼, `query_label`→`query_author`). 동작
+  하위호환(CLI 무변경). 설계 `docs/intake-unification/DESIGN.md`.
+
 ## [3.1.1] - 2026-06-16
 
 ### Fixed
@@ -133,7 +150,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.1.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/dujeonglee/agent-cli/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/dujeonglee/agent-cli/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/dujeonglee/agent-cli/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/dujeonglee/agent-cli/compare/v2.1.0...v3.0.0
