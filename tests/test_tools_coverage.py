@@ -1011,6 +1011,24 @@ class TestReadContextTool:
         assert "kind=query" in result.output
         assert "hello world" in result.output
 
+    def test_sqlite_unavailable_degrades_gracefully(self, tmp_path, monkeypatch):
+        # Locked-down / custom CPython without _sqlite3 and no pysqlite3:
+        # the module still imports (core tool) and a query returns a clear
+        # error instead of crashing the registry.
+        import agent_cli.tools.context as ctx_mod
+
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
+        monkeypatch.setattr(ctx_mod, "_sqlite", lambda: None)
+
+        result = ctx_mod.tool_read_context(
+            {"query": "SELECT text FROM history"}, session_dir=cur
+        )
+        assert not result.success
+        assert "sqlite" in result.error.lower()
+        # help (no query) does not need sqlite and still works
+        assert ctx_mod.tool_read_context({}, session_dir=cur).success
+
     def test_kind_classified_on_read(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(

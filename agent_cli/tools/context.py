@@ -28,7 +28,6 @@ SELECT/READ, and the in-memory DB is rebuilt per call and thrown away.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +38,25 @@ from agent_cli.tools.result import ToolResult
 _SESSIONS_BASE = Path(".agent-cli") / "sessions"
 _MAX_ROWS = 50  # result cap
 _CELL_CAP = 200  # per-cell preview cap
+
+# read_context is a CORE tool (always registered), so this module must import
+# even where SQLite is unavailable. Some locked-down / custom CPython builds
+# ship without the ``sqlite3`` extension and (on non-x86_64) can't get the
+# ``pysqlite3-binary`` fallback either. Resolve SQLite LAZILY via the
+# code_index shim and degrade gracefully (a clear "unavailable" message at
+# query time) instead of crashing the whole tool registry at import.
+
+
+def _sqlite():
+    """Return the SQLite module (stdlib or pysqlite3 fallback), or None when
+    neither is available on this host."""
+    try:
+        from agent_cli.code_index._sqlite import sqlite3
+
+        return sqlite3
+    except ImportError:
+        return None
+
 
 _COLUMNS = (
     "session",
@@ -70,6 +88,16 @@ def tool_read_context(args: dict, *, session_dir: Path | None = None) -> ToolRes
 
     if not query:
         return _help(session_dir)
+
+    if _sqlite() is None:
+        return ToolResult(
+            False,
+            error=(
+                "read_context needs SQLite, which this Python build lacks "
+                "(no _sqlite3 extension and no pysqlite3 fallback). History "
+                "query is unavailable on this host."
+            ),
+        )
 
     target_dirs, error = _resolve_session_dirs(sessions, session_dir)
     if error:
@@ -187,8 +215,11 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
     return rows
 
 
-def _build_db(rows: list[tuple]) -> sqlite3.Connection:
-    """Build an in-memory, read-only-enforced ``history`` table."""
+def _build_db(rows: list[tuple]):
+    """Build an in-memory, read-only-enforced ``history`` table.
+
+    Caller guarantees SQLite is available (``_sqlite()`` checked upstream)."""
+    sqlite3 = _sqlite()
     conn = sqlite3.connect(":memory:")
     cols = ", ".join(
         f"{c} {'INTEGER' if c in ('seq', 'turn') else 'TEXT'}" for c in _COLUMNS
@@ -200,24 +231,33 @@ def _build_db(rows: list[tuple]) -> sqlite3.Connection:
         rows,
     )
     conn.commit()
-    conn.set_authorizer(_read_only_authorizer)
+    _apply_read_only(conn, sqlite3)
     return conn
 
 
-# Allow only the operations a SELECT needs; deny writes/DDL/pragmas.
-_READ_OK = {
-    sqlite3.SQLITE_SELECT,
-    sqlite3.SQLITE_READ,
-    sqlite3.SQLITE_FUNCTION,
-    sqlite3.SQLITE_RECURSIVE,
-}
+def _apply_read_only(conn, sqlite3) -> None:
+    """Best-effort authorizer denying everything but SELECT/READ.
+
+    Belt-and-suspenders only: the SELECT/WITH prefix check + single-statement
+    ``execute`` + throwaway in-memory DB are the primary guard. Some SQLite
+    builds (notably certain ``pysqlite3`` wheels — the fallback used where the
+    stdlib ``sqlite3`` extension is absent) don't expose the authorizer
+    constants; there we simply skip it rather than crash, since the primary
+    guard already makes writes impossible/harmless."""
+    try:
+        read_ok = {
+            sqlite3.SQLITE_SELECT,
+            sqlite3.SQLITE_READ,
+            sqlite3.SQLITE_FUNCTION,
+            sqlite3.SQLITE_RECURSIVE,
+        }
+        ok, deny = sqlite3.SQLITE_OK, sqlite3.SQLITE_DENY
+    except AttributeError:
+        return
+    conn.set_authorizer(lambda action, *_a: ok if action in read_ok else deny)
 
 
-def _read_only_authorizer(action: int, *_args) -> int:
-    return sqlite3.SQLITE_OK if action in _READ_OK else sqlite3.SQLITE_DENY
-
-
-def _run_sql(conn: sqlite3.Connection, query: str) -> ToolResult:
+def _run_sql(conn, query: str) -> ToolResult:
     head = query.lstrip("( \t\n").lstrip().upper()
     if not (head.startswith("SELECT") or head.startswith("WITH")):
         return ToolResult(
@@ -226,7 +266,7 @@ def _run_sql(conn: sqlite3.Connection, query: str) -> ToolResult:
         )
     try:
         cur = conn.execute(query)
-    except sqlite3.DatabaseError as e:
+    except _sqlite().DatabaseError as e:
         msg = str(e)
         if "not authorized" in msg:
             msg = "query is not read-only (only SELECT/READ allowed)"
