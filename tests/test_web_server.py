@@ -1211,20 +1211,29 @@ class TestExportEndpoints:
         assert r.json()["url"] == "https://mine.atlassian.net/browse/X-1"
         assert post.call_args.args[0].startswith("https://mine.atlassian.net/rest/")
 
-    def test_jira_export_user_supplied_http_url_is_400(self, server_and_client):
+    def test_jira_export_user_supplied_http_url_ok(self, server_and_client):
+        # A user-typed http:// base_url is now allowed (plaintext risk is a UI
+        # warning, not a hard block). deployment is given explicitly so
+        # detect_deployment does not hit the network.
         _, _, client = server_and_client
-        with patch("agent_cli.config.load_config", return_value={}):
+        with (
+            patch("agent_cli.config.load_config", return_value={}),
+            patch("agent_cli.integrations.jira.requests.post") as post,
+        ):
+            post.return_value = type("R", (), {"status_code": 201, "text": "{}"})()
             r = client.post(
                 "/api/export/jira?token=testtoken",
                 json={
                     "base_url": "http://insecure.lan",
                     "issue_key": "X-1",
-                    "entries": [],
+                    "deployment": "cloud",
+                    "entries": [{"kind": "user", "label": "User", "body": "hi"}],
                     "auth": {"user": "u", "secret": "s"},
                 },
             )
-        assert r.status_code == 400
-        assert "https" in r.json()["detail"]
+        assert r.status_code == 200
+        assert r.json()["url"] == "http://insecure.lan/browse/X-1"
+        assert post.call_args.args[0].startswith("http://insecure.lan/rest/")
 
     def test_jira_export_missing_auth_is_400(self, server_and_client):
         _, _, client = server_and_client

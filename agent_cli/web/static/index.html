@@ -14,6 +14,7 @@
     <button id="export-btn" type="button" title="Export conversation">📤</button>
     <button id="download-btn" type="button" title="Download workspace files">📥</button>
     <span id="viewers" title="connected viewers"></span>
+    <button id="rename-btn" type="button" title="닉네임 변경" hidden>✎</button>
     <span id="conn-status" title="connection status">●</span>
   </header>
   <!-- First-connect nickname bar (pre-filled with the assigned fun default) -->
@@ -38,6 +39,7 @@
     <span id="export-jira-form" hidden>
       <select id="export-jira-target" title="Jira instance"></select>
       <input id="export-jira-url" type="url" autocomplete="off" placeholder="https://your-jira" title="Jira base URL">
+      <span id="export-jira-http-warn" class="exp-warn" hidden>⚠ http 는 자격증명이 평문으로 전송됩니다. 신뢰된 네트워크에서만 사용하세요.</span>
       <select id="export-jira-deployment" title="Jira type">
         <option value="cloud">Cloud</option>
         <option value="server">Server/DC</option>

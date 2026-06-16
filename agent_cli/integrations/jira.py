@@ -169,10 +169,10 @@ def resolve_target(
 
     When ``base_url`` is given it takes precedence (the UI lets a user type/edit
     the URL, optionally with no server config at all). A user-supplied URL that
-    does NOT match any configured instance must be ``https://`` — the server
-    posts the user's credentials to it, so an arbitrary host is allowed only
-    over TLS. A URL matching a configured instance is trusted as-is (admins may
-    use internal ``http``). With no ``base_url``, falls back to
+    does NOT match any configured instance must be ``http://`` or ``https://``
+    — the plaintext risk of ``http`` is surfaced as a UI warning, not blocked
+    here. A URL matching a configured instance is trusted as-is (admins may use
+    internal ``http``). With no ``base_url``, falls back to
     :func:`resolve_instance` (config-only path). Returns
     ``{name, base_url, deployment}``; raises :class:`JiraError` on a bad URL or
     an unresolvable config target.
@@ -188,9 +188,9 @@ def resolve_target(
             "base_url": user_url,
             "deployment": match["deployment"],
         }
-    if not user_url.lower().startswith("https://"):
+    if not user_url.lower().startswith(("http://", "https://")):
         raise JiraError(
-            "Jira base URL must use https:// (or configure it server-side)."
+            "Jira base URL must use http:// or https:// (or configure it server-side)."
         )
     return {"name": user_url, "base_url": user_url, "deployment": None}
 

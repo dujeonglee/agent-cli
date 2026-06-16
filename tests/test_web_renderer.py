@@ -1376,3 +1376,35 @@ class TestPromptInspectorScopes:
         assert r.prompt_snapshot("task-A") is not None
         labels = {s["id"]: s["label"] for s in r.prompt_scopes()}
         assert labels.get("task-A") == "explorer·1"
+
+
+# ── Nickname mid-session change ────────────────────
+
+
+class TestSetNickname:
+    """``set_nickname`` is callable at any time (the ✎ rename entry point in
+    the UI re-invokes the same path), and each call re-broadcasts the roster
+    so every client sees the updated name."""
+
+    def test_set_nickname_rebroadcasts_updated_roster(self):
+        r = WebRenderer()
+        c = WebConnection(id="c1")
+        r.register_connection(c)
+
+        # First set, then a mid-session change — both return True and each
+        # re-broadcasts the roster.
+        assert r.set_nickname("c1", "Alice") is True
+        assert r.set_nickname("c1", "Bob") is True
+
+        # Drain the queue; the last viewers event must carry the new name.
+        last = None
+        while True:
+            try:
+                ev, data = c.queue.get_nowait()
+            except Exception:
+                break
+            if ev == "viewers":
+                last = data
+        assert last is not None
+        names = [v["name"] for v in last["viewers"]]
+        assert "Bob" in names and "Alice" not in names

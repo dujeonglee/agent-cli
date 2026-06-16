@@ -1116,6 +1116,7 @@
   });
 
   const $viewers = document.getElementById("viewers");
+  const $renameBtn = document.getElementById("rename-btn");
   es.addEventListener("viewers", function (e) {
     if (!$viewers) return;
     const d = JSON.parse(e.data);
@@ -1125,6 +1126,12 @@
     $viewers.textContent =
       "👁 " + d.count + (labels.length ? " · " + labels.join(", ") : "");
     $viewers.title = labels.join(", ");
+    // ✎ rename: visible once we know who we are and we're in the roster.
+    const me = (d.viewers || []).find(function (v) {
+      return v.id === myConnId;
+    });
+    if (me) myNickname = me.name; // latest name for rename prefill
+    if ($renameBtn) $renameBtn.hidden = !me;
     maybeNamePrompt(d.viewers || []);
   });
 
@@ -1138,6 +1145,7 @@
   const $nbSet = document.getElementById("nb-set");
   const $nbSkip = document.getElementById("nb-skip");
   let namePrompted = false;
+  let myNickname = ""; // latest roster name, for prefill on rename
 
   function postNickname(name) {
     fetch("/api/nickname?token=" + encodeURIComponent(token), {
@@ -1145,6 +1153,16 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conn_id: myConnId, name: name }),
     }).catch(function () {});
+  }
+
+  // Show the name-bar pre-filled with `current`, focused. Shared by the
+  // first-connect prompt and the ✎ rename entry point.
+  function openNameBar(current) {
+    if (!$nameBar) return;
+    $nbInput.value = current || "";
+    $nameBar.hidden = false;
+    $nbInput.focus();
+    $nbInput.select();
   }
 
   function maybeNamePrompt(viewers) {
@@ -1158,10 +1176,7 @@
     const me = viewers.find(function (v) {
       return v.id === myConnId;
     });
-    $nbInput.value = me ? me.name : ""; // pre-fill the fun default
-    $nameBar.hidden = false;
-    $nbInput.focus();
-    $nbInput.select();
+    openNameBar(me ? me.name : ""); // pre-fill the fun default
   }
 
   function applyNickname() {
@@ -1184,6 +1199,12 @@
         e.preventDefault();
         applyNickname();
       }
+    });
+  }
+  if ($renameBtn) {
+    $renameBtn.addEventListener("click", function () {
+      if (!myConnId) return; // identity not yet known
+      openNameBar(myNickname); // prefill with current nickname
     });
   }
 
@@ -1484,6 +1505,7 @@
   const $jiraSecret = document.getElementById("export-jira-secret");
   const $jiraIssue = document.getElementById("export-jira-issue");
   const $jiraSend = document.getElementById("export-jira-send");
+  const $jiraHttpWarn = document.getElementById("export-jira-http-warn");
   const $msg = document.getElementById("export-msg");
 
   let exportMode = false;
@@ -1680,11 +1702,20 @@
   // target fills the URL + toggle; the URL field is still freely editable.
   let jiraTargetsByName = {};
 
+  // Show a plaintext-credential warning when the (user-typed) URL is http://.
+  // https / config URLs are TLS-protected; empty hides it.
+  function updateJiraHttpWarn() {
+    if (!$jiraHttpWarn) return;
+    const url = $jiraUrl.value.trim().toLowerCase();
+    $jiraHttpWarn.hidden = !url.startsWith("http://");
+  }
+
   // Reload the saved login + toggle for whatever URL is currently in the field.
   function onJiraUrlChange() {
     const c = loadCreds($jiraUrl.value.trim());
     $jiraUser.value = c.user || "";
     $jiraSecret.value = c.secret || "";
+    updateJiraHttpWarn();
   }
 
   function onJiraTargetChange() {
@@ -1805,6 +1836,8 @@
   $jiraSend.addEventListener("click", sendJira);
   $jiraTarget.addEventListener("change", onJiraTargetChange);
   $jiraUrl.addEventListener("change", onJiraUrlChange);
+  // Re-evaluate the plaintext warning live as the URL is typed.
+  $jiraUrl.addEventListener("input", onJiraUrlChange);
   $jiraDeployment.addEventListener("change", function () {
     applyDeploymentLabels($jiraDeployment.value);
   });

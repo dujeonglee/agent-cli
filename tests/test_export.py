@@ -205,9 +205,26 @@ class TestResolveTarget:
         assert inst["name"] == "https://my.atlassian.net"
         assert inst["deployment"] is None
 
-    def test_user_url_http_rejected(self):
-        with pytest.raises(jira_mod.JiraError, match="https"):
-            jira_mod.resolve_target({}, None, "http://insecure.example")
+    def test_user_url_http_allowed_without_config(self):
+        # http:// is now allowed for user-typed URLs (the plaintext risk is a
+        # UI warning, not a hard block).
+        inst = jira_mod.resolve_target({}, None, "http://insecure.example")
+        assert inst["base_url"] == "http://insecure.example"
+        assert inst["name"] == "http://insecure.example"
+        assert inst["deployment"] is None
+
+    @pytest.mark.parametrize(
+        "bad", ["ftp://jira.lan", "file:///etc", "javascript:alert(1)", "jira.lan"]
+    )
+    def test_user_url_non_http_scheme_rejected(self, bad):
+        with pytest.raises(jira_mod.JiraError):
+            jira_mod.resolve_target({}, None, bad)
+
+    def test_reject_message_mentions_http_and_https(self):
+        with pytest.raises(jira_mod.JiraError) as ei:
+            jira_mod.resolve_target({}, None, "ftp://x")
+        msg = str(ei.value).lower()
+        assert "http://" in msg and "https://" in msg
 
     def test_config_url_may_be_http_when_pinned(self):
         # a URL matching a configured instance is trusted as-is (admins may use

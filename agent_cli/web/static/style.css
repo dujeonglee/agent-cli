@@ -40,6 +40,8 @@ header {
   flex-shrink: 0;
 }
 #viewers { font-size: 12px; color: #64748b; margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
+#rename-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: #64748b; padding: 0 2px; flex-shrink: 0; }
+#rename-btn[hidden] { display: none; }
 
 /* First-connect nickname bar */
 #name-bar {
@@ -804,6 +806,8 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #export-jira-user, #export-jira-secret { width: 9rem; }
 #export-jira-issue { width: 7rem; }
 .exp-hint { color: #8889; font-size: 0.78rem; cursor: help; }
+.exp-warn { color: #b45309; font-size: 0.78rem; }
+#export-jira-http-warn[hidden] { display: none; }
 .exp-msg { color: #8889; }
 .exp-msg a { color: #58f; }
 
