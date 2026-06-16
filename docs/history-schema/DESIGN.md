@@ -52,5 +52,19 @@ round-trip 필드(`role`/`thought`/`ops`/`content`/`tool`/`success`)는 **그대
   `_format_obs_match`/`_normalize_scope`/`_VALID_SCOPES` 제거.)
 - 테스트: `_classify_record`/enrich(manager) + read_context 필드 쿼리 전면 갱신.
 
+## v2 — SQL 피벗 + files (확정)
+read_context 의 인터페이스를 **단일 `query`(SQL SELECT)** 로 전환(필터 파라미터
+더미 제거 = 단순화). history.jsonl 을 인메모리 sqlite `history` 테이블로 온-디맨드
+적재하고 LLM 이 SELECT 작성:
+- 컬럼: `session/loc/seq/kind/turn/ts/tools/files/author/text` — 읽기 시점에
+  `_classify_record`(kind/tools/text)+`extract_file_paths`(files)로 유도, turn/ts/
+  author 는 레코드에서.
+- **`files` enrich 추가**: `extract_file_paths`(툴-aware, ops 처리) 재사용해
+  레코드별 조작 파일 경로 저장 → "auth.py 를 건드린 레코드" 조회.
+- 읽기전용: sqlite authorizer(SELECT/READ 외 거부) + 비-SELECT prefix 거부 +
+  인메모리 ephemeral. 50행 cap. `query` 생략 시 스키마+예시+세션 help.
+- 효과: context.py 736→362 LOC, kind/tool/author/turn 정규화·`_match_record`·
+  mode=list/search/fetch 전부 SQL 로 흡수. 다음 BM25(FTS5)와 동일 sqlite 기반.
+
 ## 범위 밖 (다음 단계)
-BM25/FTS5 랭킹, action↔observation `ref` 링크, text 평탄화 고도화.
+BM25/FTS5 랭킹(같은 sqlite 위 `MATCH … ORDER BY rank`).

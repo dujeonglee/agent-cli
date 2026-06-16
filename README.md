@@ -321,7 +321,7 @@ Sessions for /path/to/project:
 
 **`--resume` 없이 시작할 때:** `web` 을 `--resume` 없이 실행하면, 가장 최근 세션을 위 포맷으로 보여주고 `Resume it? [y/N]` 를 묻습니다. `y` 면 그 세션을 이어가고, 그 외(Enter 포함)는 새 세션으로 시작합니다 (안전한 기본값). 파이프/비대화 환경(stdin 이 TTY 아님)에서는 묻지 않고 항상 새 세션입니다.
 
-LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 조회할 수 있습니다 (구조화 JSON 쿼리 — keyword·kind·tool·author·turn 필터 자유 조합).
+LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 질의**할 수 있습니다 (history 테이블에 `SELECT` — kind/tools/files/author/turn/text 컬럼, 읽기전용).
 
 ## 스킬 (Prompt Skills)
 
@@ -621,7 +621,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (한 op=한 task; 여러 delegate op = 병렬, 에이전트 역할 지정 가능) |
-| `read_context` | 세션 이력 조회 (구조화 JSON 쿼리: keyword/kind/tool/author/turn + sessions) |
+| `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문 (대화형 web 전용, 배열 지원) |
@@ -692,41 +692,28 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 ### read_context — 세션 이력 조회
 
-이전 또는 현재 세션의 이력을 조회합니다. LLM이 context window 밖으로 evict/compaction된 정보가 필요할 때 자발적으로 사용합니다.
+이전 또는 현재 세션의 이력을 **SQL 로 질의**합니다. LLM이 context window 밖으로 evict/compaction된 정보가 필요할 때 자발적으로 사용합니다. history.jsonl 이 인메모리 `history` 테이블로 적재되고, LLM이 `SELECT` 를 작성합니다(읽기전용).
+
+테이블 `history` (레코드 1개 = 1행): `session`, `loc`, `seq`, `kind`(query/action/observation/final/raw/system), `turn`, `ts`, `tools`(툴명), `files`(조작 파일 경로), `author`(닉네임), `text`(검색·내용 표면).
 
 ```json
-// 세션 목록 (id, 마지막 활동 시간, 마지막 쿼리)
-{"action": "read_context", "action_input": {"mode": "list"}}
+// 스키마 + 예시 + 세션 목록 보기 (query 생략)
+{"action": "read_context", "action_input": {}}
 
-// 키워드 검색 — 기본은 현재 세션 (delegate/skill subdir 포함)
-{"action": "read_context", "action_input": {"mode": "search", "keyword": "인증"}}
+// auth.py 를 건드린 관측만
+{"action": "read_context", "action_input": {"query": "SELECT loc, turn, text FROM history WHERE kind='observation' AND files LIKE '%auth.py%'"}}
 
-// 다른 세션까지 확장 — sessions="all" 또는 특정 session_id 지정
-{"action": "read_context", "action_input": {"mode": "search", "keyword": "인증", "sessions": "all"}}
-{"action": "read_context", "action_input": {"mode": "search", "keyword": "인증", "sessions": ["1777199924", "1777199950"]}}
+// 특정 사용자(웹 멀티유저)의 질문만
+{"action": "read_context", "action_input": {"query": "SELECT text FROM history WHERE kind='query' AND author='두정'"}}
 
-// 구조화 필터 (자유 조합, 최소 1개) — kind / tool / author / turn
-// kind: query(사용자 질문) / action(툴 호출 턴) / observation(툴 결과) / final(완료 답) / raw
-{"action": "read_context", "action_input": {"mode": "search", "kind": "observation", "tool": "read_file"}}
-{"action": "read_context", "action_input": {"mode": "search", "kind": ["action", "final"], "keyword": "auth"}}
-// author: 웹 멀티유저에서 특정 사용자의 질문만
-{"action": "read_context", "action_input": {"mode": "search", "kind": "query", "author": "두정"}}
-// turn: 특정 턴 (또는 {from,to} 범위)
-{"action": "read_context", "action_input": {"mode": "search", "turn": 5}}
+// 키워드 + 턴 범위 + 정렬/제한
+{"action": "read_context", "action_input": {"query": "SELECT loc, text FROM history WHERE text LIKE '%인증%' AND turn>=5 ORDER BY turn LIMIT 20"}}
 
-// 매치된 턴의 전체 내용 회상 (search 결과의 loc 문자열을 그대로 전달)
-{"action": "read_context", "action_input": {"mode": "fetch", "loc": "1777199924/history.jsonl:42"}}
-
-// 인접 턴까지 함께 (range는 ±N 턴, 최대 5)
-{"action": "read_context", "action_input": {"mode": "fetch", "loc": "1777199924/history.jsonl:42", "range": 2}}
-
-// 복수 loc 한 번에 (최대 10개)
-{"action": "read_context", "action_input": {"mode": "fetch", "loc": ["1777199924/history.jsonl:42", "1777199950/history.jsonl:13"]}}
+// 다른 세션까지 — sessions 로 적재 범위 지정(all 또는 특정 id)
+{"action": "read_context", "action_input": {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}}
 ```
 
-**scope 의미**: `reasoning` = assistant.thought, `tool` = action + action_input,
-`observation` = "Observation:" 시작하는 user content, `query` = 그 외 user 입력.
-미지정 시 4개 전부. search 결과는 턴 단위로 묶이고 preview는 200자 cap, 한 검색당 최대 50건.
+**읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부), 결과 최대 50행(필요시 `LIMIT`/조건으로 좁히기). `sessions` 미지정 시 현재 세션(delegate/skill subdir 포함).
 
 **fetch는 search와 정반대로 cap 없음** — 모델이 의도적으로 부른 회상이라 multi-line/대용량 observation도 그대로 반환. 다중 loc는 all-or-nothing (하나라도 잘못되면 전체 실패).
 

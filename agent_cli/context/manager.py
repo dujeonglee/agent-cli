@@ -648,6 +648,10 @@ class ContextManager:
         record["turn"] = self._current_turn
         record["ts"] = _now_iso()
         record["tools"] = tools
+        # Files this record's tool(s) operate on — reuses the tool-aware
+        # ``extract_file_paths`` (handles flat/ops shapes) so queries can find
+        # "everything that touched auth.py", not just by tool name.
+        record["files"] = extract_file_paths([message])
         record["text"] = text
         return record
 

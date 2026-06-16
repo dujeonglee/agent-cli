@@ -953,25 +953,22 @@ class TestReadContextTool:
         monkeypatch.setattr(ctx_mod, "_SESSIONS_BASE", base)
         return base
 
-    # ── Mode dispatch ──────────────────────────────────────────
+    # ── No-query help ──────────────────────────────────────────
 
-    def test_list_no_sessions(self, tmp_path, monkeypatch):
+    def test_no_query_returns_help(self, tmp_path, monkeypatch):
         import agent_cli.context.session as session_mod
 
         monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
         from agent_cli.tools.context import tool_read_context
 
-        result = tool_read_context({"mode": "list"})
+        result = tool_read_context({})
         assert result.success
-        assert "No previous sessions" in result.output
+        assert "history" in result.output and "SELECT" in result.output
+        # schema columns shown
+        for col in ("kind", "turn", "tools", "files", "author", "text"):
+            assert col in result.output
 
-    def test_list_shows_first_message_not_crash_on_missing_query(
-        self, tmp_path, monkeypatch
-    ):
-        # Regression: SessionMeta no longer has a ``query`` field — list mode
-        # must derive the title from history.jsonl's first user message
-        # instead of crashing with AttributeError ('SessionMeta' has no
-        # attribute 'query').
+    def test_help_lists_sessions(self, tmp_path, monkeypatch):
         import json as _json
         import agent_cli.context.session as session_mod
 
@@ -992,217 +989,96 @@ class TestReadContextTool:
             + "\n"
         )
         (sdir / "history.jsonl").write_text(
-            _json.dumps({"role": "user", "content": "[두웅]: analyze this project"})
-            + "\n"
+            _json.dumps({"role": "user", "content": "[두웅]: analyze this"}) + "\n"
         )
         from agent_cli.tools.context import tool_read_context
 
-        result = tool_read_context({"mode": "list"})
-        assert result.success  # no AttributeError
+        result = tool_read_context({})  # no query → help
+        assert result.success
         assert "1781440579" in result.output
-        assert "[두웅]: analyze this project" in result.output
 
-    def test_unknown_mode(self):
-        from agent_cli.tools.context import tool_read_context
+    # ── Basic SELECT / column derivation ───────────────────────
 
-        result = tool_read_context({"mode": "invalid"})
-        assert not result.success
-        assert "unknown mode" in result.error.lower()
-
-    def test_search_missing_keyword(self):
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "search"})
-        assert not result.success
-        assert "keyword" in result.error.lower()
-
-    def test_default_mode_is_list(self, tmp_path, monkeypatch):
-        import agent_cli.context.session as session_mod
-
-        monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({})  # no mode → default list
-        assert result.success
-        assert "No previous sessions" in result.output
-
-    # ── Default sessions=current behavior ─────────────────────
-
-    def test_search_default_uses_only_current_session(self, tmp_path, monkeypatch):
+    def test_select_returns_rows(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(
-            base, "current", ['{"role":"user","content":"target keyword"}']
-        )
-        # Other session also contains the keyword — must NOT be returned
-        self._make_session(
-            base, "other", ['{"role":"user","content":"target keyword too"}']
-        )
-
+        cur = self._make_session(base, "s", ['{"role":"user","content":"hello world"}'])
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context(
-            {"mode": "search", "keyword": "target"}, session_dir=cur
+            {"query": "SELECT kind, text FROM history"}, session_dir=cur
         )
         assert result.success
-        assert "current/" in result.output
-        assert "other/" not in result.output
-
-    def test_search_no_session_dir_returns_hint(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        # No session_dir + no sessions arg → cannot resolve default
-        result = tool_read_context({"mode": "search", "keyword": "x"})
-        assert result.success
-        assert "current session" in result.output.lower()
-        assert "all" in result.output.lower()
-
-    def test_search_sessions_all_searches_every_session(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
-        self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
-
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "alpha", "sessions": "all"}
-        )
-        assert result.success
-        assert "s1/" in result.output and "s2/" in result.output
-
-    def test_search_sessions_specific_id(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
-        self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
-
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "alpha", "sessions": "s1"}
-        )
-        assert result.success
-        assert "s1/" in result.output
-        assert "s2/" not in result.output
-
-    def test_search_sessions_array_multiple_ids(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
-        self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
-        self._make_session(base, "s3", ['{"role":"user","content":"alpha"}'])
-
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "alpha", "sessions": ["s1", "s3"]}
-        )
-        assert result.success
-        assert "s1/" in result.output and "s3/" in result.output
-        assert "s2/" not in result.output
-
-    def test_search_sessions_unknown_id_errors(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
-
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "alpha", "sessions": "nope"}
-        )
-        assert not result.success
-        assert "not found" in result.error.lower()
-
-    def test_search_sessions_all_combined_with_id_errors(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "x", "sessions": ["all", "s1"]}
-        )
-        assert not result.success
-        assert "all" in result.error.lower()
-
-    # ── Filters: kind ──────────────────────────────────────────
-
-    def test_kind_filter_query(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"user","content":"design the auth flow"}',
-                '{"role":"assistant","thought":"_","ops":[{"action":"read_file","action_input":{"path":"auth.py"}}]}',
-                '{"role":"user","tool":"read_file","content":"Observation: auth stuff"}',
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "search", "kind": "query"}, session_dir=cur)
-        assert result.success
-        assert "design the auth flow" in result.output
         assert "kind=query" in result.output
-        # only the query record (not the action/observation)
-        assert "read_file" not in result.output
+        assert "hello world" in result.output
 
-    def test_kind_string_auto_promoted(self, tmp_path, monkeypatch):
+    def test_kind_classified_on_read(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(
             base,
             "s",
             [
-                '{"role":"user","content":"q here"}',
+                '{"role":"user","content":"q"}',
+                '{"role":"assistant","thought":"t","ops":[{"action":"shell","action_input":{"cmd":"ls"}}]}',
+                '{"role":"user","tool":"shell","content":"Observation: out"}',
+                '{"role":"assistant","thought":"d","ops":[{"action":"complete","action_input":{"result":"r"}}]}',
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT kind FROM history ORDER BY seq"}, session_dir=cur
+        )
+        assert result.success
+        out = result.output
+        assert (
+            out.index("kind=query")
+            < out.index("kind=action")
+            < out.index("kind=observation")
+            < out.index("kind=final")
+        )
+
+    # ── files / tools / author / turn / text filters ───────────
+
+    def test_files_filter(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"auth.py"}}]}',
+                '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"db.py"}}]}',
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT loc, files FROM history WHERE files LIKE '%auth.py%'"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "auth.py" in result.output
+        assert "db.py" not in result.output
+
+    def test_tools_filter(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"a"}}]}',
+                '{"role":"user","tool":"read_file","content":"Observation: body"}',
                 '{"role":"assistant","thought":"t","ops":[{"action":"shell","action_input":{"cmd":"ls"}}]}',
             ],
         )
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context(
-            {"mode": "search", "kind": "action"}, session_dir=cur
+            {"query": "SELECT kind FROM history WHERE tools LIKE '%read_file%'"},
+            session_dir=cur,
         )
         assert result.success
-        assert "kind=action" in result.output
-        assert "kind=query" not in result.output
-
-    def test_kind_invalid_errors(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "kind": "reasoning"}, session_dir=cur
-        )
-        assert not result.success
-        assert "invalid kind" in result.error.lower()
-
-    def test_no_filter_errors(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "search"}, session_dir=cur)
-        assert not result.success
-        assert "at least one filter" in result.error.lower()
-
-    # ── Filters: tool / author / turn ──────────────────────────
-
-    def test_tool_filter_matches_action_and_observation(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"a.py"}}]}',
-                '{"role":"user","tool":"read_file","content":"Observation: file body"}',
-                '{"role":"assistant","thought":"t","ops":[{"action":"shell","action_input":{"cmd":"ls"}}]}',
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "tool": "read_file"}, session_dir=cur
-        )
-        assert result.success
-        # action + observation for read_file match; the shell op does not
-        assert result.output.count("tools=['read_file']") == 2
+        # action + observation both carry read_file; shell op excluded
+        assert result.output.count("kind=") == 2
         assert "shell" not in result.output
 
     def test_author_filter(self, tmp_path, monkeypatch):
@@ -1218,15 +1094,13 @@ class TestReadContextTool:
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context(
-            {"mode": "search", "author": "Alice"}, session_dir=cur
+            {"query": "SELECT text, author FROM history WHERE author='Alice'"},
+            session_dir=cur,
         )
         assert result.success
-        assert "author=Alice" in result.output
-        assert "Bob" not in result.output
-        # label stripped for the search surface
-        assert "do X" in result.output
+        assert "do X" in result.output and "Bob" not in result.output
 
-    def test_turn_filter_single_and_range(self, tmp_path, monkeypatch):
+    def test_turn_filter(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(
             base,
@@ -1234,580 +1108,174 @@ class TestReadContextTool:
             [
                 '{"role":"user","content":"q0","turn":0}',
                 '{"role":"assistant","thought":"t","ops":[{"action":"shell","action_input":{}}],"turn":1}',
-                '{"role":"assistant","thought":"t","ops":[{"action":"complete","action_input":{"result":"r"}}],"turn":2}',
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        single = tool_read_context({"mode": "search", "turn": 1}, session_dir=cur)
-        assert (
-            single.success
-            and "turn=1" in single.output
-            and "turn=2" not in single.output
-        )
-
-        rng = tool_read_context(
-            {"mode": "search", "turn": {"from": 1, "to": 2}}, session_dir=cur
-        )
-        assert rng.success and "turn=1" in rng.output and "turn=2" in rng.output
-        assert "turn=0" not in rng.output
-
-    def test_keyword_over_text_surface(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"assistant","thought":"check the auth flow","ops":[{"action":"shell","action_input":{"cmd":"ls"}}]}',
-                '{"role":"assistant","thought":"unrelated","ops":[{"action":"shell","action_input":{"cmd":"pwd"}}]}',
+                '{"role":"assistant","thought":"t","ops":[{"action":"shell","action_input":{}}],"turn":2}',
             ],
         )
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context(
-            {"mode": "search", "keyword": "auth"}, session_dir=cur
+            {"query": "SELECT turn FROM history WHERE turn>=1 ORDER BY turn"},
+            session_dir=cur,
+        )
+        assert result.success
+        assert "turn=1" in result.output and "turn=2" in result.output
+        assert "turn=0" not in result.output
+
+    def test_text_keyword_like(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(
+            base,
+            "s",
+            [
+                '{"role":"assistant","thought":"check the auth flow","ops":[{"action":"shell","action_input":{}}]}',
+                '{"role":"assistant","thought":"unrelated","ops":[{"action":"shell","action_input":{}}]}',
+            ],
+        )
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT text FROM history WHERE text LIKE '%auth%'"},
+            session_dir=cur,
         )
         assert result.success
         assert "check the auth flow" in result.output
         assert "unrelated" not in result.output
 
-    def test_combined_filters(self, tmp_path, monkeypatch):
+    def test_distinct_session(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"a"}'])
+        self._make_session(base, "s2", ['{"role":"user","content":"b"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}
+        )
+        assert result.success
+        assert "session=s1" in result.output and "session=s2" in result.output
+
+    # ── Read-only safety ───────────────────────────────────────
+
+    def test_delete_rejected(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"query": "DELETE FROM history"}, session_dir=cur)
+        assert not result.success
+        assert "select" in result.error.lower()
+
+    def test_drop_rejected(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context({"query": "DROP TABLE history"}, session_dir=cur)
+        assert not result.success
+
+    def test_bad_sql_friendly_error(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"x"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT nope FROM history"}, session_dir=cur
+        )
+        assert not result.success
+        assert "sql error" in result.error.lower()
+
+    # ── sessions selector ──────────────────────────────────────
+
+    def test_sessions_specific_id(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        self._make_session(base, "s1", ['{"role":"user","content":"alpha"}'])
+        self._make_session(base, "s2", ['{"role":"user","content":"alpha"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT session FROM history", "sessions": "s1"}
+        )
+        assert result.success
+        assert "session=s1" in result.output and "session=s2" not in result.output
+
+    def test_sessions_unknown_errors(self, tmp_path, monkeypatch):
+        self._patch_base(monkeypatch, tmp_path)
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT * FROM history", "sessions": "nope"}
+        )
+        assert not result.success
+        assert "not found" in result.error.lower()
+
+    # ── Robustness ─────────────────────────────────────────────
+
+    def test_corrupt_jsonl_skipped(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"auth.py"}}],"turn":3}',
-                '{"role":"assistant","thought":"t","ops":[{"action":"read_file","action_input":{"path":"db.py"}}],"turn":4}',
-            ],
+            base, "s", ["not json", '{"role":"user","content":"valid line"}']
         )
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context(
-            {"mode": "search", "tool": "read_file", "keyword": "auth"}, session_dir=cur
+            {"query": "SELECT text FROM history"}, session_dir=cur
         )
         assert result.success
-        assert "auth.py" in result.output
-        assert "db.py" not in result.output
+        assert "valid line" in result.output
 
-    # ── No false positives / robustness ───────────────────────
-
-    def test_missing_ops_does_not_crash(self, tmp_path, monkeypatch):
-        # raw assistant content (no ops) classifies as kind=raw, no crash
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(
-            base, "s", ['{"role":"assistant","content":"raw leftover auth"}']
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "auth"}, session_dir=cur
-        )
-        assert result.success
-        assert "kind=raw" in result.output
-
-    def test_corrupt_jsonl_line_skipped(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(
-            base,
-            "s",
-            ["not json at all", '{"role":"user","content":"valid auth line"}'],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "auth"}, session_dir=cur
-        )
-        assert result.success
-        assert "valid auth line" in result.output
-
-    def test_search_includes_subdir_history(self, tmp_path, monkeypatch):
+    def test_subdir_history_included(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         cur = base / "s"
         cur.mkdir(parents=True)
         sub = cur / "delegate-1"
         sub.mkdir()
-        (sub / "history.jsonl").write_text(
-            '{"role":"user","content":"sub auth line"}\n'
-        )
+        (sub / "history.jsonl").write_text('{"role":"user","content":"sub line"}\n')
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context(
-            {"mode": "search", "keyword": "auth"}, session_dir=cur
+            {"query": "SELECT loc, text FROM history"}, session_dir=cur
         )
         assert result.success
-        assert "sub auth line" in result.output
-        assert "delegate-1" in result.output
+        assert "sub line" in result.output and "delegate-1" in result.output
 
-    # ── Preview formatting ─────────────────────────────────────
-
-    def test_preview_collapses_whitespace_and_caps(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        long = "auth " + "x " * 300
-        import json as _json
-
-        cur = self._make_session(
-            base, "s", [_json.dumps({"role": "user", "content": long})]
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "auth"}, session_dir=cur
-        )
-        assert result.success
-        assert "\n\n" in result.output  # block structure
-        assert "..." in result.output  # capped
-
-    # ── Result format ──────────────────────────────────────────
-
-    def test_format_header_includes_filters(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(base, "s", ['{"role":"user","content":"auth here"}'])
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "auth", "kind": "query"}, session_dir=cur
-        )
-        assert result.success
-        assert "keyword='auth'" in result.output
-        assert "kind=['query']" in result.output
-
-    def test_format_no_matches_message(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(base, "s", ['{"role":"user","content":"hello"}'])
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "zzz"}, session_dir=cur
-        )
-        assert result.success
-        assert "No matches" in result.output
-
-    def test_truncation_caps_at_50(self, tmp_path, monkeypatch):
+    def test_row_cap(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
         import json as _json
 
         lines = [
-            _json.dumps({"role": "user", "content": f"auth line {i}"})
-            for i in range(80)
+            _json.dumps({"role": "user", "content": f"line {i}"}) for i in range(80)
         ]
         cur = self._make_session(base, "s", lines)
         from agent_cli.tools.context import tool_read_context
 
         result = tool_read_context(
-            {"mode": "search", "keyword": "auth"}, session_dir=cur
+            {"query": "SELECT text FROM history"}, session_dir=cur
         )
         assert result.success
         assert "capped at 50" in result.output
 
-    # ── Plumbing: execute_tool passes session_dir ────────────
+    def test_no_rows_message(self, tmp_path, monkeypatch):
+        base = self._patch_base(monkeypatch, tmp_path)
+        cur = self._make_session(base, "s", ['{"role":"user","content":"hi"}'])
+        from agent_cli.tools.context import tool_read_context
+
+        result = tool_read_context(
+            {"query": "SELECT text FROM history WHERE kind='final'"}, session_dir=cur
+        )
+        assert result.success
+        assert "No rows" in result.output
+
+    # ── Plumbing: execute_tool passes session_dir ──────────────
 
     def test_execute_tool_forwards_session_dir(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(base, "current", ['{"role":"user","content":"alpha"}'])
-        # Other session has the same keyword — proves session_dir filter works
-        self._make_session(base, "other", ['{"role":"user","content":"alpha"}'])
-
-        from agent_cli.tools import _execute_tool as execute_tool
-
+        cur = self._make_session(base, "s", ['{"role":"user","content":"plumbing"}'])
         result = execute_tool(
             "read_context",
-            {"mode": "search", "keyword": "alpha"},
+            {"query": "SELECT text FROM history"},
             session_dir=cur,
         )
         assert result.success
-        assert "current/" in result.output
-        assert "other/" not in result.output
-
-    def test_execute_tool_other_tools_unaffected(self, tmp_path):
-        """Adding session_dir kwarg must not break other tools."""
-        from agent_cli.tools import _execute_tool as execute_tool
-
-        # shell ignores session_dir entirely
-        result = execute_tool("shell", {"command": "echo ok"}, session_dir=tmp_path)
-        assert result.success
-        assert "ok" in result.output
-
-    # ── Search → fetch hint footer ────────────────────────────
-
-    def test_search_results_include_fetch_hint(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(base, "s", ['{"role":"user","content":"alpha hit"}'])
-
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "alpha"}, session_dir=cur
-        )
-        assert result.success
-        assert "mode='fetch'" in result.output
-
-    def test_search_no_match_omits_fetch_hint(self, tmp_path, monkeypatch):
-        """Hint is only useful when there's something to fetch."""
-        base = self._patch_base(monkeypatch, tmp_path)
-        cur = self._make_session(base, "s", ['{"role":"user","content":"alpha"}'])
-
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "search", "keyword": "nothere"}, session_dir=cur
-        )
-        assert result.success
-        assert "mode='fetch'" not in result.output
-
-    # ── mode=fetch: argument validation ───────────────────────
-
-    def test_fetch_missing_loc(self):
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch"})
-        assert not result.success
-        assert "loc is required" in result.error.lower()
-
-    def test_fetch_empty_loc_list(self):
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": []})
-        assert not result.success
-        assert "non-empty" in result.error.lower()
-
-    def test_fetch_loc_too_many(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        too_many = [f"s{i}/history.jsonl:1" for i in range(11)]
-        result = tool_read_context({"mode": "fetch", "loc": too_many})
-        assert not result.success
-        assert "max 10" in result.error.lower()
-
-    def test_fetch_loc_string_auto_promoted(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "s", ['{"role":"user","content":"alpha"}'])
-
-        from agent_cli.tools.context import tool_read_context
-
-        # Single string accepted
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
-        assert result.success
-        assert "alpha" in result.output
-
-    def test_fetch_loc_bad_format_no_colon(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl"})
-        assert not result.success
-        assert "line_num" in result.error.lower()
-
-    def test_fetch_loc_bad_format_non_int_line(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:abc"})
-        assert not result.success
-        assert "integer" in result.error.lower()
-
-    def test_fetch_loc_bad_format_zero_line(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:0"})
-        assert not result.success
-        assert "line_num must be >= 1" in result.error.lower() or (
-            "line_num" in result.error.lower() and ">=" in result.error.lower()
-        )
-
-    def test_fetch_loc_bad_format_no_slash(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "history.jsonl:5"})
-        assert not result.success
-        assert "session_id" in result.error.lower()
-
-    def test_fetch_range_negative(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": -1}
-        )
-        assert not result.success
-        assert "range must be" in result.error.lower()
-
-    def test_fetch_range_above_cap(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": 6}
-        )
-        assert not result.success
-        assert "range must be" in result.error.lower()
-
-    def test_fetch_range_non_integer(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": "two"}
-        )
-        assert not result.success
-        assert "range must be" in result.error.lower()
-
-    # ── mode=fetch: file/range errors ─────────────────────────
-
-    def test_fetch_session_not_found(self, tmp_path, monkeypatch):
-        self._patch_base(monkeypatch, tmp_path)
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "nope/history.jsonl:1"})
-        assert not result.success
-        assert "file not found" in result.error.lower()
-
-    def test_fetch_line_out_of_range(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "s", ['{"role":"user","content":"only one line"}'])
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:99"})
-        assert not result.success
-        assert "out of range" in result.error.lower()
-
-    def test_fetch_all_or_nothing_partial_failure(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "good", ['{"role":"user","content":"valid"}'])
-        from agent_cli.tools.context import tool_read_context
-
-        # First loc is valid, second is bogus → entire fetch fails
-        result = tool_read_context(
-            {
-                "mode": "fetch",
-                "loc": ["good/history.jsonl:1", "bogus/history.jsonl:1"],
-            }
-        )
-        assert not result.success
-        # Output of valid loc should NOT have leaked into error
-        assert "valid" not in (result.error or "")
-
-    # ── mode=fetch: happy path ────────────────────────────────
-
-    def test_fetch_single_target_only(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"user","content":"first"}',
-                '{"role":"assistant","thought":"reasoning","action":"x","action_input":{"k":"v"}}',
-                '{"role":"user","content":"third"}',
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:2"})
-        assert result.success
-        # Target turn fields rendered
-        assert "thought: reasoning" in result.output
-        assert "action: x" in result.output
-        # action_input compact JSON
-        assert '{"k": "v"}' in result.output or '{"k":"v"}' in result.output
-        # Other turns NOT included (range default = 0)
-        assert "first" not in result.output
-        assert "third" not in result.output
-        # Target marker
-        assert "<- target" in result.output
-
-    def test_fetch_with_range(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"user","content":"line one"}',
-                '{"role":"assistant","thought":"_","action":"x","action_input":{}}',
-                '{"role":"user","content":"line three (target)"}',
-                '{"role":"assistant","thought":"_","action":"y","action_input":{}}',
-                '{"role":"user","content":"line five"}',
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "fetch", "loc": "s/history.jsonl:3", "range": 1}
-        )
-        assert result.success
-        # Range +/-1 includes lines 2, 3, 4
-        assert "line three (target)" in result.output
-        assert "<- target" in result.output  # only on the target turn
-        # Header should reflect range
-        assert "(range +/-1)" in result.output
-        # Adjacent turns appear (lines 2 and 4)
-        assert "action: x" in result.output  # line 2 turn
-        assert "action: y" in result.output  # line 4 turn
-        # Out-of-range turns not shown
-        assert "line one" not in result.output
-        assert "line five" not in result.output
-
-    def test_fetch_range_clipped_at_file_boundary(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"user","content":"first"}',
-                '{"role":"user","content":"second"}',
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        # Target = line 1, range = 5 → wants -4..6 but clips to 1..2
-        result = tool_read_context(
-            {"mode": "fetch", "loc": "s/history.jsonl:1", "range": 5}
-        )
-        assert result.success
-        assert "first" in result.output
-        assert "second" in result.output
-
-    def test_fetch_multiple_locs(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(base, "s1", ['{"role":"user","content":"alpha at s1"}'])
-        self._make_session(base, "s2", ['{"role":"user","content":"beta at s2"}'])
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {
-                "mode": "fetch",
-                "loc": ["s1/history.jsonl:1", "s2/history.jsonl:1"],
-            }
-        )
-        assert result.success
-        # Top header counts groups
-        assert "Fetched 2 locations" in result.output
-        # Both locs rendered with their group headers
-        assert "=== s1/history.jsonl:1" in result.output
-        assert "=== s2/history.jsonl:1" in result.output
-        # Both contents present
-        assert "alpha at s1" in result.output
-        assert "beta at s2" in result.output
-
-    def test_fetch_multiline_content_block_style(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        # Observation with embedded newlines (preserved via \n escape)
-        self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"user","content":"Observation: line one\\nline two\\nline three"}'
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
-        assert result.success
-        # Block-style: label on its own line, then indented content lines.
-        # First line carries the "Observation:" prefix; subsequent lines do not.
-        assert "observation:\n" in result.output
-        assert "     Observation: line one" in result.output
-        assert "     line two" in result.output
-        assert "     line three" in result.output
-        # Newlines preserved (not collapsed)
-        assert "line one line two" not in result.output
-
-    def test_fetch_observation_label_for_obs_prefixed_content(
-        self, tmp_path, monkeypatch
-    ):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(
-            base,
-            "obs",
-            ['{"role":"user","content":"Observation: tool result body"}'],
-        )
-        self._make_session(
-            base,
-            "qry",
-            ['{"role":"user","content":"plain user query"}'],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        # Observation-prefixed content → labelled 'observation'
-        r1 = tool_read_context({"mode": "fetch", "loc": "obs/history.jsonl:1"})
-        assert r1.success
-        assert "observation: Observation: tool result body" in r1.output
-
-        # Non-obs user content → labelled 'content'
-        r2 = tool_read_context({"mode": "fetch", "loc": "qry/history.jsonl:1"})
-        assert r2.success
-        assert "content: plain user query" in r2.output
-
-    def test_fetch_corrupt_json_line_renders_raw(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        sdir = base / "s"
-        sdir.mkdir(parents=True)
-        # Write a malformed line directly (bypasses _make_session JSON shape)
-        (sdir / "history.jsonl").write_text("not valid json at all\n")
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
-        assert result.success
-        assert "corrupt JSON" in result.output
-        assert "not valid json" in result.output
-
-    def test_fetch_artifact_field_rendered(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        self._make_session(
-            base,
-            "s",
-            [
-                '{"role":"user","content":"Observation: head","artifact":"shell/cmd_x.log"}'
-            ],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
-        assert result.success
-        assert "[artifact: shell/cmd_x.log]" in result.output
-
-    def test_fetch_includes_subdir_history(self, tmp_path, monkeypatch):
-        base = self._patch_base(monkeypatch, tmp_path)
-        sdir = base / "s"
-        delegate_dir = sdir / "delegate_x"
-        delegate_dir.mkdir(parents=True)
-        (delegate_dir / "history.jsonl").write_text(
-            '{"role":"user","content":"sub-session content"}\n'
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context(
-            {"mode": "fetch", "loc": "s/delegate_x/history.jsonl:1"}
-        )
-        assert result.success
-        assert "sub-session content" in result.output
-
-    def test_fetch_no_size_cap_on_observation(self, tmp_path, monkeypatch):
-        """Unlike search preview (200 char cap), fetch returns full content."""
-        base = self._patch_base(monkeypatch, tmp_path)
-        # 500-char observation
-        big = "X" * 500
-        self._make_session(
-            base,
-            "s",
-            ['{"role":"user","content":"Observation: ' + big + '"}'],
-        )
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "fetch", "loc": "s/history.jsonl:1"})
-        assert result.success
-        assert big in result.output
-        assert "..." not in result.output  # no truncation
-
-    def test_fetch_unknown_mode_helpful_error(self):
-        """Unknown mode error mentions fetch as available."""
-        from agent_cli.tools.context import tool_read_context
-
-        result = tool_read_context({"mode": "wat"})
-        assert not result.success
-        assert "fetch" in result.error.lower()
+        assert "plumbing" in result.output
 
 
 class TestRunSkillTool:
