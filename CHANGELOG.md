@@ -12,6 +12,19 @@
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-06-17
+
+### Changed
+
+- **compaction 요약 프롬프트를 agentic-resume 지향으로 정교화** — 기존 4-clause
+  (intent/actions/decisions/outcomes) 대신 **구조화 섹션**(TASK / STATE / DONE /
+  PENDING / DECISIONS / FAILURES / FACTS, 빈 섹션 생략)을 요청. 에이전트가 요약만
+  으로 작업을 이어가야 하므로 **남은 작업(PENDING)·실패한 시도(FAILURES)·verbatim
+  식별자(FACTS: 경로/명령/에러 문자열)** 보존 + "transcript 에 있는 것만, 지어내지
+  말 것" 규칙을 추가. 재귀 병합은 "same section headings" 로 구조 유지.
+  실세션 검증(Qwen3.6-27B): 구조 준수 + 실제 `AttributeError` 실패를 verbatim
+  포착, 6.4K→2.3K자 압축.
+
 ## [3.7.1] - 2026-06-17
 
 ### Fixed
@@ -271,7 +284,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.7.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.8.0...HEAD
+[3.8.0]: https://github.com/dujeonglee/agent-cli/compare/v3.7.1...v3.8.0
 [3.7.1]: https://github.com/dujeonglee/agent-cli/compare/v3.7.0...v3.7.1
 [3.7.0]: https://github.com/dujeonglee/agent-cli/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/dujeonglee/agent-cli/compare/v3.5.1...v3.6.0

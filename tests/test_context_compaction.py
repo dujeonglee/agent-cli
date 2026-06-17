@@ -1097,6 +1097,17 @@ class TestAgentLoopCompactorCallback:
         assert loop.capabilities.supports_structured_output is True
         assert loop.capabilities.supports_thinking is True
 
+    def test_summary_prompt_covers_agentic_resume_directives(self):
+        """Guard the structured summary prompt against silent regression to
+        the old 4-clause version. The agent resumes from this summary, so it
+        MUST ask for pending work, failures, verbatim identifiers, and a
+        no-invent rule — not just intent/actions/decisions/outcomes."""
+        loop, received = self._make_loop()
+        loop._llm_compact_summarize([{"role": "user", "content": "x"}])
+        system = received["system"].lower()
+        for needle in ("pending", "failures", "verbatim", "do not invent"):
+            assert needle in system, f"summary prompt missing: {needle!r}"
+
 
 # ── 13. CompactionError import sanity ────────────────
 

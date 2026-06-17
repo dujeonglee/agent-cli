@@ -390,7 +390,8 @@ class ContextManager:
                     "## Running summary of earlier conversation\n\n"
                     f"{self._summary}\n\n"
                     "Below is a transcript of NEW messages to fold into the "
-                    "running summary. Produce one updated summary.\n\n"
+                    "running summary. Produce one updated summary under the "
+                    "same section headings.\n\n"
                     f"{transcript}"
                 )
             else:

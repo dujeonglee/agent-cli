@@ -302,10 +302,28 @@ class AgentLoop:
         from dataclasses import replace
 
         summarisation_prompt = (
-            "Summarise the conversation below concisely. Preserve "
-            "(a) the user's original intent, (b) key actions taken "
-            "(tools used, files touched), (c) decisions made, (d) "
-            "outcomes / discoveries. Stay under 2000 tokens. Plain text."
+            "You are compacting an agent's working transcript so it can "
+            "continue the task with this summary in place of the raw "
+            "history. Write a plain-text summary under these headings "
+            "(omit a heading if it has no content):\n\n"
+            "TASK — the user's original request(s) and intent.\n"
+            "STATE — what is currently true: progress so far, what works.\n"
+            "DONE — actions taken: tools used and exact file paths / "
+            "symbols touched, and what changed.\n"
+            "PENDING — work not yet finished and the next step that was "
+            "about to run.\n"
+            "DECISIONS — choices made and why, including alternatives "
+            "rejected.\n"
+            "FAILURES — approaches that failed or errors encountered, so "
+            "they are not retried.\n"
+            "FACTS — keep verbatim: paths, identifiers, commands, config "
+            "values, signatures, error strings, and any user "
+            "correction/preference.\n\n"
+            "Rules: use ONLY information present in the transcript — do not "
+            "invent or assume. Keep exact identifiers verbatim (paths, "
+            "names, numbers, commands). Be concise; stay under 2000 tokens. "
+            "Plain text only — no JSON, no code fences except to quote a "
+            "short critical snippet."
         )
         summary_capabilities = replace(
             self.capabilities,

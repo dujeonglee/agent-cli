@@ -1047,7 +1047,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 
 1. **분할**: `[system anchor][dynamic]` — system prompt만 무조건 보존
 2. **Evict 절반 (token-based)**: oldest 절반을 떼어냄
-3. **LLM 요약**: evict 묶음을 단일 호출로 요약. 이전 요약이 있으면 prior summary를 같은 호출에 prepend (recursive single-call — 합치는 별도 단계 없음)
+3. **LLM 요약**: evict 묶음을 단일 호출로 요약. 요약은 구조화 섹션(TASK / STATE / DONE / PENDING / DECISIONS / FAILURES / FACTS)으로 만들어져, 에이전트가 요약만으로 작업을 이어갈 수 있게 남은 작업·실패한 시도·정확한 식별자(경로/명령/에러)를 보존합니다. 이전 요약이 있으면 prior summary를 같은 호출에 prepend (recursive single-call — 합치는 별도 단계 없음)
 4. **파일 경로 추출**: evict 안의 `read_file/write_file/edit_file/code_index` 호출과 `<delegate:agent>` placeholder를 누적 file_list에 dedup 머지
 5. **재구성**: `[system][summary][file_list][retained dynamic]`
 6. **영속화**: `compaction.json` (version, summary, file_list, dynamic_start_index 등) — `--resume` 시 압축 상태 그대로 복원
