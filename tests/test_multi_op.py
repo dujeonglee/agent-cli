@@ -299,8 +299,8 @@ class TestMultiOpDispatch:
         assert provider.call.call_count == 2  # nudge turn, then complete
 
     def test_turn_ending_op_flushes_accumulated_first(self, tmp_path):
-        # [read op, ask op]: the read executes and must be flushed as an
-        # observation BEFORE the ask branch takes over the turn.
+        # [read op, complete op]: the read executes and must be flushed as an
+        # observation BEFORE the terminal `complete` ends the turn.
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
         result, ctx, _ = _run(
@@ -308,7 +308,7 @@ class TestMultiOpDispatch:
                 _turn(
                     ops=[
                         {"action": "read_file", "path": str(f1)},
-                        {"action": "ask", "question": "continue?"},
+                        {"action": "complete", "result": "done"},
                     ]
                 ),
             ],
@@ -324,6 +324,70 @@ class TestMultiOpDispatch:
         ]
         assert len(flushed) == 1
         assert "alpha" in flushed[0]["content"]
+
+    def test_ask_is_not_turn_ending_accumulates(self, tmp_path, monkeypatch):
+        # ask is NOT terminal — [read, ask] both accumulate into ONE combined
+        # observation (read=[1/2], ask=[2/2]), like a normal tool batch.
+        import agent_cli.loop as loop_mod
+
+        monkeypatch.setattr(loop_mod, "_handle_ask", lambda qs: "yes")
+        f1 = tmp_path / "a.txt"
+        f1.write_text("alpha")
+        _result, ctx, _ = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "read_file", "path": str(f1)},
+                        {"action": "ask", "question": "continue?"},
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        combined = [
+            m["content"]
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[2/2] ask — OK" in m.get("content", "")
+        ]
+        assert len(combined) == 1
+        assert "[1/2] read_file — OK" in combined[0] and "alpha" in combined[0]
+        assert "User responded:\nyes" in combined[0]
+
+    def test_multiple_ask_ops_batch_sequentially(self, tmp_path, monkeypatch):
+        # several ask ops in one turn each prompt in sequence → ONE combined obs
+        # (the read_file-style batch, applied to ask).
+        import agent_cli.loop as loop_mod
+
+        asked: list[list[str]] = []
+        answers = iter(["A1", "A2"])
+
+        def fake_ask(qs):
+            asked.append(list(qs))
+            return next(answers)
+
+        monkeypatch.setattr(loop_mod, "_handle_ask", fake_ask)
+        _result, ctx, _ = _run(
+            [
+                _turn(
+                    ops=[
+                        {"action": "ask", "question": "q1?"},
+                        {"action": "ask", "question": "q2?"},
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        assert asked == [["q1?"], ["q2?"]]  # one question per op, in order
+        combined = [
+            m["content"]
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[1/2] ask — OK" in m.get("content", "")
+        ]
+        assert len(combined) == 1
+        assert "A1" in combined[0] and "A2" in combined[0]
+        assert "[2/2] ask — OK" in combined[0]
 
 
 class TestMultiOpDelegateParallel:

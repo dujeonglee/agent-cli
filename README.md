@@ -624,7 +624,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
-| `ask` | 사용자에게 질문 (대화형 web 전용, 배열 지원) |
+| `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
 | `ready_for_review` | 완료 직전 자가 검증 — 원본 query를 observation으로 받아 누락 점검 후 `complete` 호출 |
 

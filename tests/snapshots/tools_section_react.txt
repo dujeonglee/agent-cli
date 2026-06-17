@@ -123,8 +123,8 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
   drivers) may parse as ERROR nodes and disappear from the index — if
   ``mode='lookup'`` returns only a declaration when you expected a
   definition, ask the user to add a defconfig.
-- ask: Ask the user one or more questions and WAIT for their reply. Use only when you cannot proceed without specific input from the user; otherwise end with `complete`.
-  Input JSON: {"questions": "array<string>, required — List of questions to ask the user"}
+- ask: Ask the user ONE question and WAIT for their reply. One question per op — to ask several, emit several `ask` ops in the array (each is answered in turn), the same way you batch read_file. Use only when you cannot proceed without specific input; otherwise end with `complete`.
+  Input JSON: {"question": "string, required — The question to ask the user."}
   `ask` vs `complete` — pick by intent, not tone:
   - `ask`: you GENUINELY cannot proceed without information from the
     user. A real question with real alternatives where you don't know

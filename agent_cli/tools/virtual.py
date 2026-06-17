@@ -47,31 +47,31 @@ class AskTool(Tool):
     # this description — keeping the prose in one place avoids the two
     # surfaces teaching the same distinction back to back.
     description = (
-        "Ask the user one or more questions and WAIT for their reply. "
-        "Use only when you cannot proceed without specific input from the "
-        "user; otherwise end with `complete`."
+        "Ask the user ONE question and WAIT for their reply. One question per "
+        "op — to ask several, emit several `ask` ops in the array (each is "
+        "answered in turn), the same way you batch read_file. Use only when you "
+        "cannot proceed without specific input; otherwise end with `complete`."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "questions": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "List of questions to ask the user",
+            "question": {
+                "type": "string",
+                "description": "The question to ask the user.",
             },
         },
-        "required": ["questions"],
+        "required": ["question"],
     }
 
     def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
         # Placeholder for direct/test callers — the loop intercepts `ask`
-        # before dispatch. Return the salient field (the `questions` list,
-        # matching the schema) joined into one block; sibling virtual tools
-        # do the same with their own salient field.
-        questions = args.get("questions") or []
-        if isinstance(questions, str):
-            questions = [questions]
-        return ToolResult(True, output="\n".join(str(q) for q in questions) or "(ask)")
+        # before dispatch. ``question`` is the flat single-question field; the
+        # legacy ``questions`` list is still tolerated (loop's _extract_questions
+        # accepts both) so older emissions don't break.
+        q = args.get("question") or args.get("questions") or []
+        if isinstance(q, str):
+            q = [q]
+        return ToolResult(True, output="\n".join(str(x) for x in q) or "(ask)")
 
 
 class RunSkillTool(Tool):

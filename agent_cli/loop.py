@@ -981,9 +981,12 @@ class AgentLoop:
         # N ops (multi-op formats): regular tool ops execute and ACCUMULATE
         # into one combined observation (run-all; any-fail ⇒ the combined
         # observation is marked failed so the model retries the failed op).
-        # A turn-ending branch (complete / ask / run_skill / ready_for_review
-        # / guard intervention / recovery) flushes whatever already ran first
-        # so executed work isn't lost, then returns.
+        # A turn-ending branch (complete / run_skill / ready_for_review / guard
+        # intervention / recovery) flushes whatever already ran first so
+        # executed work isn't lost, then returns. ``ask`` is NOT turn-ending —
+        # it produces an observation (the user's reply) and accumulates like a
+        # normal tool, so several ``ask`` ops batch (each prompts in turn) just
+        # like a read/shell batch.
         if len(turn.ops) == 1:
             return self._dispatch_op(llm_text, turn, turn.ops[0], outcome)
 
@@ -995,7 +998,7 @@ class AgentLoop:
             # Turn-ending special actions: flush accumulated results BEFORE
             # the branch runs so its observation lands after the work done
             # so far (chronological order for the model).
-            if op.action in ("complete", "ask", "run_skill", "ready_for_review"):
+            if op.action in ("complete", "run_skill", "ready_for_review"):
                 self._flush_op_results(llm_text, results)
                 results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
@@ -1211,6 +1214,19 @@ class AgentLoop:
                     else str(op.action_input),
                 )
                 user_response = _handle_ask(questions)
+                # ``ask`` is a normal observation-producing op (the user's
+                # reply is the observation), not a terminal. In a multi-op turn
+                # it accumulates like read/shell so consecutive asks batch into
+                # the one combined observation; alone it appends its own.
+                if accumulate is not None:
+                    accumulate.append(
+                        {
+                            "tool_name": "ask",
+                            "observation": f"User responded:\n{user_response}",
+                            "success": True,
+                        }
+                    )
+                    return None
                 obs_msg = f"Observation: User responded:\n{user_response}"
                 _append_observation(
                     self.messages,
