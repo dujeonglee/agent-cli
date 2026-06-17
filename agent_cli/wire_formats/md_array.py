@@ -34,7 +34,7 @@ import json
 import re
 
 from agent_cli.wire_formats._json_diag import describe_json_error
-from agent_cli.wire_formats._json_repair import close_unbalanced
+from agent_cli.wire_formats._json_repair import close_unbalanced, repair_value_quotes
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 _THOUGHT_RE = re.compile(r"^##\s*Thought\s*$", re.MULTILINE)
@@ -278,6 +278,18 @@ def _extract_op_json(text: str):
             parsed = _extract_first_json(closed, strict=strict)
             if parsed is not None:
                 return parsed, True
+    # Last resort: a string value/key missing ONE quote (open or close) —
+    # ``"path": mgt.c"`` / ``"path": "mgt.c}``. Error-position-guided requote
+    # (string-aware), composed with close_unbalanced so a payload that is BOTH
+    # quote-broken AND unclosed still recovers. Accept only if it validates
+    # (bail-if-invalid) → a wrong guess falls through to diagnostic+retry.
+    requoted, changed = repair_value_quotes(text)
+    if changed:
+        for cand in (requoted, close_unbalanced(requoted)[0]):
+            for strict in (True, False):
+                parsed = _extract_first_json(cand, strict=strict)
+                if parsed is not None:
+                    return parsed, True
     return None, False
 
 
