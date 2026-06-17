@@ -211,6 +211,41 @@ class TestTokenUsage:
         assert any(ev == "token_usage" and d.get("in") == 5000 for ev, d in snapshot)
 
 
+class TestCompaction:
+    """Context-compaction lifecycle → dedicated structured SSE event the
+    frontend renders as an inline conversation line."""
+
+    def test_emits_structured_compaction_event(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.compaction(phase="done", old_tokens=12400, new_tokens=5100, evicted_count=8)
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "compaction"
+        assert data["phase"] == "done"
+        assert data["old_tokens"] == 12400
+        assert data["new_tokens"] == 5100
+        assert data["evicted_count"] == 8
+
+    def test_compaction_is_transient_not_buffered(self):
+        """A compaction is a live timeline marker — not replayed on reconnect."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.compaction(phase="start", old_tokens=12400, evicted_count=8)
+        assert r.persistent_count == 0
+
+    def test_warning_phase_carries_reason(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.compaction(phase="warning", reason="provider down")
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "compaction"
+        assert data["phase"] == "warning"
+        assert data["reason"] == "provider down"
+
+
 # ── Prune (FIFO sync) ──────────────────────────────
 
 

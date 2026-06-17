@@ -491,6 +491,45 @@
     }
   }
 
+  // Inline context-compaction marker. `start` drops a "압축 중…" system line;
+  // `done`/`warning` update that same line in place (tracked per scope so a
+  // delegate subagent's compaction updates its own line, not main's). The
+  // marker is transient — not replayed on reconnect (see WebRenderer).
+  const compactionLines = {};
+  function renderCompaction(d) {
+    const scope = d.task_id || "main";
+    let line = compactionLines[scope];
+    if (d.phase === "start") {
+      line = el("div", ["card", "card-sys"]);
+      line.appendChild(el("span", ["sys-icon"], "⊙"));
+      line.appendChild(
+        el("span", ["sys-text"], "컨텍스트 압축 중… (" + fmtTok(d.old_tokens) + " tok)")
+      );
+      compactionLines[scope] = line;
+      appendToTimeline(line, d.task_id);
+      scrollToBottom();
+      return;
+    }
+    // done / warning: update the pending line, or append a fresh one if the
+    // start event was missed (reconnect mid-compaction).
+    if (!line) {
+      line = el("div", ["card", "card-sys"]);
+      line.appendChild(el("span", ["sys-icon"], "⊙"));
+      line.appendChild(el("span", ["sys-text"], ""));
+      appendToTimeline(line, d.task_id);
+    }
+    const textEl = line.querySelector(".sys-text");
+    if (d.phase === "done") {
+      textEl.textContent =
+        "컨텍스트 압축됨 " + fmtTok(d.old_tokens) + " → " + fmtTok(d.new_tokens) + " tok";
+    } else if (d.phase === "warning") {
+      line.classList.add("warn");
+      textEl.textContent = "컨텍스트 압축 실패 (" + (d.reason || "") + ") — FIFO 사용";
+    }
+    delete compactionLines[scope];
+    scrollToBottom();
+  }
+
   // ── Card renderers ─────────────────────────
   function renderUserMessage(content) {
     const card = el("div", ["card", "card-user"]);
@@ -1014,6 +1053,10 @@
   es.addEventListener("observation", function (e) {
     const d = JSON.parse(e.data);
     renderObservation(d);
+  });
+
+  es.addEventListener("compaction", function (e) {
+    renderCompaction(JSON.parse(e.data));
   });
 
   es.addEventListener("error", function (e) {

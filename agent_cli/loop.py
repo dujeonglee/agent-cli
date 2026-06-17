@@ -729,7 +729,9 @@ class AgentLoop:
         # Prompt Inspector snapshot: what THIS call's system prompt looks
         # like, as named sections. No-op for CLI renderers (store-only on
         # web), so per-turn cost is negligible.
-        render_system_prompt_snapshot(self._system_sections, self.turn)
+        render_system_prompt_snapshot(
+            build_inspector_sections(self._system_sections, self.ctx), self.turn
+        )
 
         # Plugin-defined provider hints. The wire plugin decides them from
         # the model's capabilities — e.g. ``json_mode``: ReAct requests it
@@ -1977,6 +1979,30 @@ def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
         "context_window": context_window,
         "total_out": total_out,
     }
+
+
+def build_inspector_sections(system_sections, ctx):
+    """Prompt Inspector sections = system-prompt sections + compaction-
+    injected context (running summary + touched-file list).
+
+    The summary and file list are injected as ``role=user`` messages right
+    after the system prompt (``ContextManager.get_messages``), so they are
+    NOT part of ``self.system`` — but they DO consume the context window and
+    shape the turn, so the inspector surfaces them as clearly-labelled extra
+    sections. Returns a NEW list; never mutates ``system_sections`` (which
+    is the single source ``self.system`` derives from).
+    """
+    sections = list(system_sections)
+    if ctx is None:
+        return sections
+    summary = getattr(ctx, "summary", "")
+    if summary:
+        sections.append(("⊙ Compaction summary (user-injected)", summary))
+    file_list = getattr(ctx, "file_list", None) or []
+    if file_list:
+        listing = "\n".join(f"- {p}" for p in file_list)
+        sections.append(("⊙ Files touched (user-injected)", listing))
+    return sections
 
 
 # Fields a model might use to wrap a question's text inside a dict —

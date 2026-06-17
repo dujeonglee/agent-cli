@@ -299,6 +299,44 @@ class Renderer(ABC):
         self.status("error", f"format error ({reason}) — retrying", turn)
         self.observation(intervention_message, turn, None, success=False)
 
+    def compaction(
+        self,
+        *,
+        phase: str,
+        old_tokens: int = 0,
+        new_tokens: int = 0,
+        evicted_count: int = 0,
+        reason: str = "",
+    ) -> None:
+        """Context-compaction lifecycle (``start`` / ``done`` / ``warning``).
+
+        Default — route through :meth:`status` so CLI/minimal renderers
+        print a one-line notice. The web renderer overrides this to emit a
+        dedicated structured ``compaction`` SSE event the frontend renders
+        as an inline conversation line (the generic ``status`` event has no
+        frontend listener). Unknown ``phase`` is silent rather than raising
+        — this is a UX path and a typo must not break the agent loop.
+        """
+        if phase == "start":
+            self.status(
+                "info",
+                f"Compacting context ({old_tokens:,} tokens, "
+                f"{evicted_count} messages → summary)",
+                0,
+            )
+        elif phase == "done":
+            self.status(
+                "info",
+                f"Compaction done ({old_tokens:,} → {new_tokens:,} tokens)",
+                0,
+            )
+        elif phase == "warning":
+            self.status(
+                "warning",
+                f"Context compaction failed ({reason}); using FIFO drop instead.",
+                0,
+            )
+
     @abstractmethod
     def raw(self, text: str, turn: int, verbose: bool) -> None:
         """Raw LLM response (verbose mode)."""

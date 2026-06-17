@@ -659,6 +659,32 @@ class WebRenderer(Renderer):
             persistent=False,
         )
 
+    def compaction(
+        self,
+        *,
+        phase: str,
+        old_tokens: int = 0,
+        new_tokens: int = 0,
+        evicted_count: int = 0,
+        reason: str = "",
+    ) -> None:
+        """Dedicated structured event for the frontend's inline conversation
+        line (the generic ``status`` event has no frontend listener). Raw
+        figures go over the wire; the frontend formats the line. Transient —
+        a compaction is a live timeline marker, not replayed on reconnect.
+        """
+        self._emit(
+            "compaction",
+            {
+                "phase": phase,
+                "old_tokens": old_tokens,
+                "new_tokens": new_tokens,
+                "evicted_count": evicted_count,
+                "reason": reason,
+            },
+            persistent=False,
+        )
+
     def token_usage(self, stats: dict, turn: int, verbose: bool = False) -> None:
         """Emit the per-turn token usage for the frontend's top-bar
         readout. Raw stats go over the wire (the frontend formats); the

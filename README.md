@@ -256,7 +256,7 @@ UI 기능:
 - **토큰 현황 표시**: 상단 info bar 옆에 `ctx 5.2K/256K (2%) · ↑5.2K ↓320 · Σ↓1.8K` 형태로 매 turn 갱신 — 현재 context 사용률(%), 이번 turn 의 in/out, 세션 누적 output. 새로고침 후에도 유지(SSE snapshot). CLI(`run`)도 동일 정보를 매 turn 한 줄로 표시(`in: … | out: … | ctx: … | Σout: …`). `usage.input_tokens`(서버 실측)를 받아 `renderer.token_usage` 로 추상화 → CLI/web 공통
 - **Send → Stop → Stopping… 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 즉시 **Stopping…**(비활성)으로 바뀌어 중복 클릭을 막고, 진행 중인 turn 을 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). LLM 생성 도중이면 스트림을 즉시 끊고 미완성 응답을 폐기하며, 도구 실행 중이면 그 스텝을 마친 뒤 멈춥니다. turn 이 끝나면 다시 Send 로 복귀. 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@agent`(delegate) 실행 모두 Stop 으로 중단됩니다 (delegate 는 병렬 worker 가 같은 `stop_event` 를 공유).
 
-**⚡ Prompt Inspector:** 헤더의 ⚡ 버튼으로 우측 드로어를 열면 **현재 턴에 실제로 전송된 시스템 프롬프트**를 섹션별로 확인할 수 있습니다. 상단의 토큰 예산 스택바(섹션별 색·비율), 섹션 아코디언(이름·토큰 뱃지·본문), 검색 필터를 제공합니다. 열 때마다 최신 LLM 호출의 스냅샷을 가져오며(`GET /api/debug/prompt`, 토큰 인증), 훅이 주입한 동적 섹션도 `Hook: <이름>`으로 표시됩니다. **에이전트별 스코프**: delegate 서브에이전트가 돌면 드로어 상단에 `[Main] [explorer·1] [coder·2]` 칩 row가 나타나, 칩을 클릭하면 해당 서브에이전트가 실제로 받은 시스템 프롬프트로 전환되고 `Main`을 누르면 메인으로 돌아옵니다. 끝난 서브에이전트의 프롬프트도 사후 검사를 위해 남아 있으며, 칩의 ✕로 개별 제거할 수 있습니다(Main은 제거 불가).
+**⚡ Prompt Inspector:** 헤더의 ⚡ 버튼으로 우측 드로어를 열면 **현재 턴에 실제로 전송된 시스템 프롬프트**를 섹션별로 확인할 수 있습니다. 상단의 토큰 예산 스택바(섹션별 색·비율), 섹션 아코디언(이름·토큰 뱃지·본문), 검색 필터를 제공합니다. 열 때마다 최신 LLM 호출의 스냅샷을 가져오며(`GET /api/debug/prompt`, 토큰 인증), 훅이 주입한 동적 섹션도 `Hook: <이름>`으로 표시됩니다. 컨텍스트 압축(compaction)이 일어나면 그 요약과 파일 목록도 `⊙ Compaction summary / Files touched (user-injected)` 섹션으로 함께 보여, 모델이 실제로 받는 압축 컨텍스트를 검사할 수 있습니다. **에이전트별 스코프**: delegate 서브에이전트가 돌면 드로어 상단에 `[Main] [explorer·1] [coder·2]` 칩 row가 나타나, 칩을 클릭하면 해당 서브에이전트가 실제로 받은 시스템 프롬프트로 전환되고 `Main`을 누르면 메인으로 돌아옵니다. 끝난 서브에이전트의 프롬프트도 사후 검사를 위해 남아 있으며, 칩의 ✕로 개별 제거할 수 있습니다(Main은 제거 불가).
 
 **📤 Export:** 헤더의 📤 버튼으로 **선택 모드**에 들어가면 각 대화 카드 좌측에 체크박스가 나타납니다(기본 전부 해제). 원하는 카드를 고르거나 `All`로 전체 선택한 뒤(하단 액션바에 선택 개수 표시), 두 가지로 내보낼 수 있습니다:
 > - **⬇ HTML** — 선택한 대화를 self-contained HTML 파일로 다운로드(스타일 인라인, 어디서나 열림).
@@ -1053,6 +1053,8 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 7. **Belt-and-braces fallback**: LLM 호출 실패 또는 재구성된 cache가 여전히 budget 초과면 플레인 FIFO drop으로 떨어뜨림 — 무한 트리거 루프 방지
 
 `--no-compaction` 플래그 또는 `AGENT_CLI_COMPACTION=off` 환경 변수로 압축을 끄면 기존 플레인 FIFO만 동작합니다 (LLM 호출 비용·외부 의존이 곤란한 배포 환경 대비). 이 설정은 delegate·skill 서브에이전트에도 그대로 전파되어, 부모에서 압축을 끄면 중첩 실행도 모두 FIFO만 사용합니다.
+
+압축이 일어나면 CLI는 한 줄 상태로, 웹은 **대화창 인라인 시스템 라인**(`⊙ 컨텍스트 압축됨 X→Y tok`)으로 진행을 표시합니다. 압축으로 흡수된 요약·파일 목록은 웹의 ⚡ Prompt Inspector 에서도 확인할 수 있습니다(위 참조).
 
 #### 디렉토리 구조
 

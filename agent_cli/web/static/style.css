@@ -164,6 +164,21 @@ main#messages {
   font-size: inherit;
   white-space: normal;
 }
+
+/* Inline system marker (context compaction). Centred, muted, unobtrusive —
+   a timeline divider rather than a content card. */
+.card-sys {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  color: #6b7280;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  margin: 2px auto;
+}
+.card-sys .sys-icon { opacity: 0.7; }
+.card-sys.warn { color: #b45309; }
 /* Rich markup → HTML spans rendered by ``richMarkupToHtml``. Colours
    mirror what ``format_diff`` paints in the CLI so users moving
    between terminals and the web UI see the same shape — bold headers,

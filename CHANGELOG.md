@@ -12,6 +12,26 @@
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-06-17
+
+### Added
+
+- **웹에서 컨텍스트 압축(compaction) 가시화** — 두 군데로 노출:
+  - **대화창 인라인 시스템 라인**: 압축 진행이 `⊙ 컨텍스트 압축 중… → 압축됨
+    X→Y tok`(실패 시 warning) 으로 대화 타임라인에 표시. 전용 `compaction`
+    SSE 이벤트(구조화 payload)를 프론트가 렌더(`.card-sys`). 이전엔 백엔드가
+    generic `status` SSE 를 쐈으나 프론트 리스너가 없어 웹에선 안 보였음.
+  - **Prompt Inspector**: 압축으로 흡수된 요약·파일 목록을 `⊙ Compaction
+    summary / Files touched (user-injected)` 섹션으로 표시. 이들은
+    `get_messages()` 가 시스템 프롬프트 직후 `role=user` 로 주입하는 내용이라
+    `self.system` 엔 없지만 컨텍스트를 점유하므로 검사 가능하게 노출.
+
+### Changed
+
+- `render_compaction_progress` 가 `_renderer.compaction(phase, ...)` 으로 위임 —
+  base 기본 구현은 `status` 한 줄(CLI 무변경), `WebRenderer` 는 전용 SSE 이벤트로
+  override. (포맷 텍스트는 base 로 이동, CLI 출력 바이트 동일.)
+
 ## [3.5.1] - 2026-06-17
 
 ### Fixed
@@ -229,7 +249,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.5.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.6.0...HEAD
+[3.6.0]: https://github.com/dujeonglee/agent-cli/compare/v3.5.1...v3.6.0
 [3.5.1]: https://github.com/dujeonglee/agent-cli/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/dujeonglee/agent-cli/compare/v3.4.2...v3.5.0
 [3.4.2]: https://github.com/dujeonglee/agent-cli/compare/v3.4.1...v3.4.2

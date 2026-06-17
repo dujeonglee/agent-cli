@@ -147,33 +147,19 @@ def render_compaction_progress(
       - ``"warning"`` — LLM summarisation failed; the belt-and-braces
         FIFO fallback handled the over-budget case instead.
 
-    The function intentionally accepts only the data needed to
-    render the text and leaves CLI-vs-web routing to ``_renderer.
-    status`` (which each Renderer subclass already implements).
+    The function intentionally accepts only the data needed to render the
+    notice and leaves CLI-vs-web routing to ``_renderer.compaction`` — the
+    base renderer's default formats a one-line ``status``, the web renderer
+    overrides it to emit a dedicated structured ``compaction`` SSE event
+    the frontend renders as an inline conversation line.
     """
-    if phase == "start":
-        _renderer.status(
-            "info",
-            f"Compacting context ({old_tokens:,} tokens, "
-            f"{evicted_count} messages → summary)",
-            0,
-        )
-    elif phase == "done":
-        _renderer.status(
-            "info",
-            f"Compaction done ({old_tokens:,} → {new_tokens:,} tokens)",
-            0,
-        )
-    elif phase == "warning":
-        _renderer.status(
-            "warning",
-            f"Context compaction failed ({reason}); using FIFO drop instead.",
-            0,
-        )
-    else:
-        # Unknown phase — silent rather than raising, since this is a
-        # UX path and a typo here shouldn't break the agent loop.
-        pass
+    _renderer.compaction(
+        phase=phase,
+        old_tokens=old_tokens,
+        new_tokens=new_tokens,
+        evicted_count=evicted_count,
+        reason=reason,
+    )
 
 
 def render_model_detected(

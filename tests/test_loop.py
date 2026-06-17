@@ -5,9 +5,56 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_cli.loop import run_loop
+from agent_cli.loop import build_inspector_sections, run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+
+
+class _FakeInspectorCtx:
+    """Minimal ContextManager stand-in for inspector-section tests."""
+
+    def __init__(self, summary="", file_list=None):
+        self.summary = summary
+        self.file_list = file_list or []
+
+
+class TestInspectorSections:
+    """Prompt Inspector surfaces compaction-injected context (summary +
+    touched files) as clearly-labelled sections, without mutating the
+    system-prompt section list that ``self.system`` derives from."""
+
+    _SYS = [("System Prompt", "you are an agent"), ("Tools", "read_file, ...")]
+
+    def test_no_ctx_returns_system_sections_copy(self):
+        out = build_inspector_sections(self._SYS, None)
+        assert out == self._SYS
+        assert out is not self._SYS  # new list, not the same reference
+
+    def test_no_compaction_yet_adds_nothing(self):
+        out = build_inspector_sections(self._SYS, _FakeInspectorCtx())
+        assert out == self._SYS
+
+    def test_summary_appended_as_labelled_section(self):
+        ctx = _FakeInspectorCtx(summary="earlier: user asked X, we did Y")
+        out = build_inspector_sections(self._SYS, ctx)
+        assert len(out) == len(self._SYS) + 1
+        name, text = out[-1]
+        assert "Compaction summary" in name
+        assert text == "earlier: user asked X, we did Y"
+
+    def test_file_list_appended_as_bullets(self):
+        ctx = _FakeInspectorCtx(summary="s", file_list=["a.py", "b/c.py"])
+        out = build_inspector_sections(self._SYS, ctx)
+        names = [n for n, _ in out]
+        assert any("Files touched" in n for n in names)
+        files_section = next(t for n, t in out if "Files touched" in n)
+        assert "- a.py" in files_section and "- b/c.py" in files_section
+
+    def test_does_not_mutate_input_sections(self):
+        original = list(self._SYS)
+        ctx = _FakeInspectorCtx(summary="s", file_list=["a.py"])
+        build_inspector_sections(self._SYS, ctx)
+        assert self._SYS == original  # unchanged
 
 
 def _complete(result: str) -> str:
