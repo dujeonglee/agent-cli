@@ -100,7 +100,7 @@ main#messages {
 }
 .card-user .card-time { color: #93c5fd; background: transparent; }
 
-.card-user { margin-left: auto; display: flex; justify-content: flex-end; }
+.card-user { margin-left: auto; display: flex; justify-content: flex-end; padding-top: 20px; }
 .card-user .bubble {
   background: #2563eb;
   color: white;
@@ -114,7 +114,7 @@ main#messages {
 .card-assistant {
   background: white;
   border: 1px solid #e5e7eb;
-  padding: 12px;
+  padding: 24px 12px 12px;
   border-radius: 8px;
 }
 .card-assistant .thought {
@@ -151,7 +151,7 @@ main#messages {
 .card-observation {
   background: #f9fafb;
   border-left: 3px solid #9ca3af;
-  padding: 8px 12px;
+  padding: 22px 12px 8px;
   border-radius: 4px;
 }
 .card-observation.ok { border-left-color: #16a34a; }
@@ -210,7 +210,7 @@ main#messages {
 .card-error {
   background: #fef2f2;
   border-left: 3px solid #dc2626;
-  padding: 8px 12px;
+  padding: 22px 12px 8px;
   border-radius: 4px;
   color: #7f1d1d;
   white-space: pre-wrap;

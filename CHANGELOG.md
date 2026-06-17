@@ -12,6 +12,15 @@
 
 ## [Unreleased]
 
+## [3.7.1] - 2026-06-17
+
+### Fixed
+
+- **카드 시각이 본문 글씨와 겹치던 문제 수리** — absolute 배치된 모서리 시각이
+  전폭 텍스트(assistant thought/final, error, user bubble)의 첫 줄 위에
+  올라타던 것을, 해당 카드 상단에 거터(padding-top)를 확보해 본문이 시각
+  아래에서 시작하도록 조정. (v3.7.0 CSS 회귀.)
+
 ## [3.7.0] - 2026-06-17
 
 ### Added
@@ -262,7 +271,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.7.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.7.1...HEAD
+[3.7.1]: https://github.com/dujeonglee/agent-cli/compare/v3.7.0...v3.7.1
 [3.7.0]: https://github.com/dujeonglee/agent-cli/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/dujeonglee/agent-cli/compare/v3.5.1...v3.6.0
 [3.5.1]: https://github.com/dujeonglee/agent-cli/compare/v3.5.0...v3.5.1
