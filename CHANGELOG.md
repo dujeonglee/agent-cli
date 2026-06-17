@@ -12,6 +12,19 @@
 
 ## [Unreleased]
 
+## [3.4.2] - 2026-06-17
+
+### Fixed
+
+- **NO_JSON 회복 — 문자열 따옴표 하나 누락(앞/뒤) 일반화 수리** — `"path": mgt.c"`
+  (여는 따옴표 누락)·`"path": "mgt.c}`(닫는 따옴표 누락)처럼 따옴표 한쪽이 빠진
+  경우를 파서 에러-위치 가이드로 복구(`repair_value_quotes`). bail-if-invalid
+  (재파싱 valid 일 때만 채택), bare `true`/`42`·EOF-truncation 은 안 건드림,
+  미닫힘 `]` 와 합성. 한 페이로드의 여러 누락도 처리.
+- **`## Thought` 헤더 누락 보정 (md_array)** — 모델이 `## Thought` 헤더 없이
+  reasoning 을 내고 `## Action` 을 뒤따르게 하면, 앞 prose 가 drop 되던 것을 이제
+  thought 로 회수(오타 헤더도 구제). 정상/헤더없는-answer/Action-맨앞 경로 무변경.
+
 ## [3.4.1] - 2026-06-17
 
 ### Fixed
@@ -194,7 +207,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.4.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.4.2...HEAD
+[3.4.2]: https://github.com/dujeonglee/agent-cli/compare/v3.4.1...v3.4.2
 [3.4.1]: https://github.com/dujeonglee/agent-cli/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/dujeonglee/agent-cli/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/dujeonglee/agent-cli/compare/v3.2.0...v3.3.0
