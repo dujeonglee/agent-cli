@@ -101,6 +101,26 @@ class TestParseTurnWork:
         assert t.ops == []
         assert not t.terminal
 
+    def test_missing_thought_header_recovers_leading_prose(self):
+        # Model emitted reasoning WITHOUT the `## Thought` header, then
+        # `## Action`. The leading prose is recovered as the thought (was
+        # dropped → thought=None before).
+        t = WF.parse_turn(
+            "Need to inspect mgt.c first.\n\n"
+            '## Action\n[{"action": "read_file", "path": "mgt.c"}]'
+        )
+        assert t.thought == "Need to inspect mgt.c first."
+        assert [(o.action, o.action_input) for o in t.ops] == [
+            ("read_file", {"path": "mgt.c"})
+        ]
+        assert t.parse_stage == 1
+
+    def test_action_first_no_thought(self):
+        # `## Action` is the very first thing → no leading prose → thought None.
+        t = WF.parse_turn('## Action\n[{"action": "complete", "result": "done"}]')
+        assert t.thought is None
+        assert t.ops[0].action == "complete"
+
 
 class TestAnonymousObjectRepair:
     """Batching ops with large params, the model wraps each op's params in an

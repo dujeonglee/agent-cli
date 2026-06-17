@@ -296,9 +296,12 @@ def _extract_op_json(text: str):
 def _split_sections(text: str) -> tuple[str | None, str | None, bool]:
     """Return ``(thought, action_body, has_action_header)``.
 
-    ``thought`` is the ``## Thought`` body — or, with no headers at all, the
-    whole text (a header-less terminal answer). ``action_body`` is the text
-    after ``## Action`` (None when the header is absent).
+    ``thought`` is the ``## Thought`` body — or, when ``## Action`` is present
+    but ``## Thought`` is not, the leading text before ``## Action`` (the model
+    emitted its reasoning without the header — recover it as the thought rather
+    than drop it; also salvages a mistyped Thought header). With no headers at
+    all, the whole text (a header-less terminal answer). ``action_body`` is the
+    text after ``## Action`` (None when the header is absent).
     """
     tm = _THOUGHT_RE.search(text)
     am = _ACTION_RE.search(text)
@@ -306,7 +309,10 @@ def _split_sections(text: str) -> tuple[str | None, str | None, bool]:
     if tm:
         end = am.start() if (am and am.start() > tm.end()) else len(text)
         thought = text[tm.end() : end].strip()
-    elif not am:
+    elif am:
+        # `## Action` present, `## Thought` absent → leading prose is the thought.
+        thought = text[: am.start()].strip() or None
+    else:
         thought = text.strip()  # plain text, no headers → the answer
     if not am:
         return thought, None, False
