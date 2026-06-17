@@ -12,6 +12,17 @@
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-06-17
+
+### Changed
+
+- **`ask` 도구 flat-native 화 + 비-terminal 배치** — op 안의 `questions:[...]`
+  배치 배열 대신 **`{action:"ask", question:"하나"}` 단수**(flat-native 불변식의
+  마지막 holdout 제거). 여러 질문은 **ask op 여러 개로 배치**(read_file 처럼).
+  또한 `ask` 가 더 이상 턴을 끝내지 않고 — 사용자 응답을 observation 으로 내고
+  일반 도구처럼 accumulate — 여러 ask 가 순차 프롬프트 후 합성 observation 1개로
+  묶입니다. 단일 질문 동작은 무변경, legacy `questions[]` 도 계속 관용(하위 안전).
+
 ## [3.4.2] - 2026-06-17
 
 ### Fixed
@@ -207,7 +218,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.4.2...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.5.0...HEAD
+[3.5.0]: https://github.com/dujeonglee/agent-cli/compare/v3.4.2...v3.5.0
 [3.4.2]: https://github.com/dujeonglee/agent-cli/compare/v3.4.1...v3.4.2
 [3.4.1]: https://github.com/dujeonglee/agent-cli/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/dujeonglee/agent-cli/compare/v3.3.0...v3.4.0
