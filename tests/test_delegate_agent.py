@@ -237,6 +237,76 @@ class TestRunSingleWithAgent:
         assert result.success
         assert captured_kwargs["agent_role"] == "You are a test engineer."
 
+    def test_compaction_disabled_propagates_to_run_loop(self, monkeypatch):
+        """Parent's compaction_enabled=False threads into the delegate's
+        run_loop (matches the --no-compaction CLI flag flowing to subagents)."""
+        captured_kwargs = {}
+
+        def mock_run_loop(**kwargs):
+            captured_kwargs.update(kwargs)
+            from agent_cli.tools.result import ToolResult
+
+            return ToolResult(True, output="done")
+
+        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+        class FakeProvider:
+            pass
+
+        _run_single(
+            task="Do work",
+            provider=FakeProvider(),
+            model="test",
+            capabilities=caps,
+            compaction_enabled=False,
+        )
+        assert captured_kwargs["compaction_enabled"] is False
+
+    def test_compaction_defaults_enabled(self, monkeypatch):
+        """Backward-compat: omitting compaction_enabled keeps compaction on."""
+        captured_kwargs = {}
+
+        def mock_run_loop(**kwargs):
+            captured_kwargs.update(kwargs)
+            from agent_cli.tools.result import ToolResult
+
+            return ToolResult(True, output="done")
+
+        monkeypatch.setattr("agent_cli.loop.run_loop", mock_run_loop)
+
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+        class FakeProvider:
+            pass
+
+        _run_single(
+            task="Do work",
+            provider=FakeProvider(),
+            model="test",
+            capabilities=caps,
+        )
+        assert captured_kwargs["compaction_enabled"] is True
+
     def test_agent_not_found_returns_error(self, tmp_path, monkeypatch):
         """AG-16: Non-existent agent returns error ToolResult."""
         agents_dir = tmp_path / ".agent-cli" / "agents"

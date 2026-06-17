@@ -1052,7 +1052,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 6. **영속화**: `compaction.json` (version, summary, file_list, dynamic_start_index 등) — `--resume` 시 압축 상태 그대로 복원
 7. **Belt-and-braces fallback**: LLM 호출 실패 또는 재구성된 cache가 여전히 budget 초과면 플레인 FIFO drop으로 떨어뜨림 — 무한 트리거 루프 방지
 
-`--no-compaction` 플래그 또는 `AGENT_CLI_COMPACTION=off` 환경 변수로 압축을 끄면 기존 플레인 FIFO만 동작합니다 (LLM 호출 비용·외부 의존이 곤란한 배포 환경 대비).
+`--no-compaction` 플래그 또는 `AGENT_CLI_COMPACTION=off` 환경 변수로 압축을 끄면 기존 플레인 FIFO만 동작합니다 (LLM 호출 비용·외부 의존이 곤란한 배포 환경 대비). 이 설정은 delegate·skill 서브에이전트에도 그대로 전파되어, 부모에서 압축을 끄면 중첩 실행도 모두 FIFO만 사용합니다.
 
 #### 디렉토리 구조
 

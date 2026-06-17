@@ -1270,6 +1270,7 @@ class AgentLoop:
                 parent_hooks_config=self.hooks_config,
                 parent_depth=self.depth,
                 max_depth=self.max_depth,
+                compaction_enabled=self.compaction_enabled,
             )
             obs = skill_tool_result.output or skill_tool_result.error
             render_step(
@@ -1783,6 +1784,7 @@ class AgentLoop:
             agent_stack=self.agent_stack,
             stop_event=self.stop_event,
             hooks_config=self.hooks_config,
+            compaction_enabled=self.compaction_enabled,
         )
 
         if self.hook_runner:
@@ -2120,6 +2122,7 @@ def _handle_run_skill(
     parent_hooks_config: dict | None = None,
     parent_depth: int = 0,
     max_depth: int = 2,
+    compaction_enabled: bool = True,
 ):
     """Handle run_skill at loop level with full ctx access."""
     # Inline import: circular dependency — executor.py imports run_loop from this module
@@ -2206,6 +2209,7 @@ def _handle_run_skill(
             stop_event=stop_event,
             parent_hooks_config=parent_hooks_config,
             parent_depth=parent_depth,
+            compaction_enabled=compaction_enabled,
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")

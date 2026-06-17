@@ -171,6 +171,44 @@ class TestParentRoleInheritance:
             )
             assert agent_role == ""
 
+    def test_compaction_disabled_propagates_to_run_loop(self, caps, ctx):
+        """Parent's compaction_enabled=False threads into the skill's run_loop
+        (matches the --no-compaction CLI flag flowing to subagents)."""
+        skill = _make_skill()
+
+        with patch("agent_cli.skills.executor.run_loop") as mock_loop:
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
+            execute_skill(
+                skill=skill,
+                arguments="test",
+                provider=MagicMock(),
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+                compaction_enabled=False,
+            )
+            assert mock_loop.call_args.kwargs.get("compaction_enabled") is False
+
+    def test_compaction_defaults_enabled(self, caps, ctx):
+        """Backward-compat: omitting compaction_enabled keeps compaction on."""
+        skill = _make_skill()
+
+        with patch("agent_cli.skills.executor.run_loop") as mock_loop:
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
+            execute_skill(
+                skill=skill,
+                arguments="test",
+                provider=MagicMock(),
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+            )
+            assert mock_loop.call_args.kwargs.get("compaction_enabled") is True
+
 
 class TestSkillSubdir:
     def test_skill_creates_subdir(self, caps, ctx):

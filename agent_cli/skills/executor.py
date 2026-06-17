@@ -107,6 +107,7 @@ def execute_skill(
     parent_role: str = "",
     parent_hooks_config: dict | None = None,
     parent_depth: int = 0,
+    compaction_enabled: bool = True,
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -192,6 +193,7 @@ def execute_skill(
         graceful_interrupt=graceful_interrupt,
         stop_event=stop_event,
         agent_role=parent_role,
+        compaction_enabled=compaction_enabled,
     )
 
     result = loop_result.output if loop_result.success else None

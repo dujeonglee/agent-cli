@@ -12,6 +12,17 @@
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-06-17
+
+### Fixed
+
+- **`--no-compaction` 플래그가 delegate/skill 서브에이전트에 전파되도록 수리** —
+  부모 `AgentLoop` 의 `compaction_enabled` 가 `tool_delegate`/`_run_single`/
+  `_run_parallel`(delegate)과 `_handle_run_skill`→`execute_skill`(skill)의
+  `run_loop` 호출까지 스레딩됨. 이전엔 `AGENT_CLI_COMPACTION=off`(env)는 각 loop 의
+  `_compaction_enabled()` per-loop 체크로 전파되었지만 `--no-compaction`(CLI 플래그)는
+  main loop 만 끄고 서브에이전트는 여전히 압축하는 비대칭이 있었음. 이제 양쪽 일관.
+
 ## [3.5.0] - 2026-06-17
 
 ### Changed
@@ -218,7 +229,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.5.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.5.1...HEAD
+[3.5.1]: https://github.com/dujeonglee/agent-cli/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/dujeonglee/agent-cli/compare/v3.4.2...v3.5.0
 [3.4.2]: https://github.com/dujeonglee/agent-cli/compare/v3.4.1...v3.4.2
 [3.4.1]: https://github.com/dujeonglee/agent-cli/compare/v3.4.0...v3.4.1

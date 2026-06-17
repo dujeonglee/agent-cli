@@ -342,6 +342,7 @@ def _run_single(
     agent_stack: list[str] | None = None,
     stop_event=None,
     hooks_config: dict | None = None,
+    compaction_enabled: bool = True,
 ) -> ToolResult:
     """Execute a single delegate task."""
     # Inline import: circular dependency — loop.py imports tool_delegate from this module
@@ -469,6 +470,7 @@ def _run_single(
         stop_event=stop_event,
         agent_role=agent_role,
         hooks_config=hooks_config,
+        compaction_enabled=compaction_enabled,
     )
 
     duration = time.monotonic() - t0
@@ -526,6 +528,7 @@ def _run_parallel(
     agent_stack: list[str] | None = None,
     stop_event=None,
     hooks_config: dict | None = None,
+    compaction_enabled: bool = True,
 ) -> ToolResult:
     """Execute multiple delegate tasks in parallel using threading.
 
@@ -589,6 +592,7 @@ def _run_parallel(
                 agent_stack=agent_stack,
                 stop_event=stop_event,
                 hooks_config=hooks_config,
+                compaction_enabled=compaction_enabled,
             )
             result_for_marker = results[index]
         finally:
@@ -651,6 +655,7 @@ def tool_delegate(
     agent_stack: list[str] | None = None,
     stop_event=None,
     hooks_config: dict | None = None,
+    compaction_enabled: bool = True,
 ) -> ToolResult:
     """Delegate tasks to in-process subagents.
 
@@ -680,6 +685,7 @@ def tool_delegate(
         skill_stack=skill_stack,
         agent_stack=agent_stack,
         hooks_config=hooks_config,
+        compaction_enabled=compaction_enabled,
     )
 
     if len(tasks) == 1:
