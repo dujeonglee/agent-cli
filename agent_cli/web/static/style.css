@@ -80,7 +80,25 @@ main#messages {
 .card {
   max-width: 800px;
   width: 100%;
+  position: relative;
 }
+
+/* Muted corner timestamp (YYMMDD HH:MM:SS; full date+ms in the title
+   tooltip). Translucent bg keeps it readable if it overlaps content. */
+.card-time {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  line-height: 1;
+  color: #9ca3af;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: rgba(249, 250, 251, 0.78);
+  padding: 1px 3px;
+  border-radius: 3px;
+  z-index: 1;
+}
+.card-user .card-time { color: #93c5fd; background: transparent; }
 
 .card-user { margin-left: auto; display: flex; justify-content: flex-end; }
 .card-user .bubble {

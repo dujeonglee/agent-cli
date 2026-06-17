@@ -12,6 +12,19 @@
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-06-17
+
+### Added
+
+- **웹 카드에 시각 표시** — 각 대화 카드(user/assistant/observation/error)
+  모서리에 발생 시각을 `YYMMDD HH:MM:SS` 로 표시(마우스 hover 시 전체 날짜+밀리초
+  tooltip). `_emit` 단일 fan-out 지점에서 모든 이벤트에 server-stamp `ts` 를
+  부착하므로 **delegate/skill 내부 카드까지 자동 커버**.
+  - **resume 시각 보존**: `--resume` 로 재생되는 카드는 `replay_from_history` 가
+    history record 의 원본 `ts` 를 통과시켜 **실제 발생 시각**으로 표시(재접속
+    시점이 아님). history `ts`(ISO)·live `ts`(epoch) 둘 다 프론트가 수용,
+    레거시 pre-ts 기록은 wall-clock fallback.
+
 ## [3.6.0] - 2026-06-17
 
 ### Added
@@ -249,7 +262,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.6.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.7.0...HEAD
+[3.7.0]: https://github.com/dujeonglee/agent-cli/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/dujeonglee/agent-cli/compare/v3.5.1...v3.6.0
 [3.5.1]: https://github.com/dujeonglee/agent-cli/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/dujeonglee/agent-cli/compare/v3.4.2...v3.5.0

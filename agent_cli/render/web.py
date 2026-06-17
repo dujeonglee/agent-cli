@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import random
 import threading
+import time
 from dataclasses import dataclass, field
 from queue import Empty, SimpleQueue
 from typing import Any
@@ -179,6 +180,12 @@ class WebRenderer(Renderer):
         # can route into the right collapsible group instead of
         # interleaving on the main timeline.
         self._thread_to_task: dict[int, str] = {}
+        # During ``replay_from_history`` (resume), holds the history record's
+        # original ``ts`` so replayed cards show when the step ACTUALLY
+        # happened, not the resume moment. ``None`` = live path → ``_emit``
+        # stamps fresh wall-clock. Set/cleared around the single-threaded seed
+        # loop (runs before the worker thread or any SSE client exists).
+        self._replay_ts: float | str | None = None
 
     # ─── Event distribution ─────────────────────────
 
@@ -205,6 +212,19 @@ class WebRenderer(Renderer):
         task_id = self._thread_to_task.get(tid)
         if task_id is not None and "task_id" not in data:
             data = {**data, "task_id": task_id}
+        # Server-stamp emit time once, at the single fan-out point, so every
+        # card-producing event (incl. delegate/skill inner cards, which route
+        # through here with their ``task_id``) carries a ``ts``. Baked into the
+        # persistent buffer too → reconnect replay shows the original time. On
+        # resume, ``_replay_ts`` carries the history record's original ts so
+        # seeded cards aren't all stamped with the resume moment. Frontend
+        # accepts either epoch seconds (live) or ISO string (history) and
+        # formats to local time.
+        if "ts" not in data:
+            data = {
+                **data,
+                "ts": self._replay_ts if self._replay_ts is not None else time.time(),
+            }
         with self._lock:
             if persistent:
                 self._event_buffer.append((event, data))
@@ -438,6 +458,11 @@ class WebRenderer(Renderer):
         BEFORE the worker thread starts or any SSE client connects.
         """
         for msg in ctx.get_raw_messages():
+            # Resumed cards show the step's original time (from the enriched
+            # history record), not the resume moment. ``_restore_cache`` loads
+            # full records, so ``ts`` survives in the cache; legacy pre-ts
+            # sessions yield None → ``_emit`` falls back to wall-clock.
+            self._replay_ts = msg.get("ts")
             role = msg.get("role")
             if role == "user":
                 # ``tool`` key presence — not truthiness — signals an
@@ -498,6 +523,8 @@ class WebRenderer(Renderer):
                     content = msg.get("content", "")
                     if content:
                         self.final(content, turn=0)
+        # Back to live: subsequent events get a fresh wall-clock stamp.
+        self._replay_ts = None
 
     def _replay_assistant_op(self, action: str, action_input) -> None:
         """Emit one assistant op as a replay card — ``final`` for a terminal

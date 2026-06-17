@@ -349,6 +349,43 @@
     return e;
   }
 
+  // ── Card timestamps ────────────────────────
+  // Server stamps every event with `ts` (epoch seconds) at emit time; the
+  // browser formats to its own local time. Short form on the card
+  // (YYMMDD HH:MM:SS), full form (with ms) in the hover tooltip.
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+  // `ts` is epoch seconds (live `_emit`) or an ISO string (resume replay,
+  // from the history record). Normalise both to a Date.
+  function tsToDate(ts) {
+    return typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
+  }
+  function fmtCardTime(ts) {
+    const d = tsToDate(ts);
+    return (
+      pad2(d.getFullYear() % 100) + pad2(d.getMonth() + 1) + pad2(d.getDate()) +
+      " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds())
+    );
+  }
+  function fmtCardTimeFull(ts) {
+    const d = tsToDate(ts);
+    return (
+      d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+      " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()) +
+      "." + String(d.getMilliseconds()).padStart(3, "0")
+    );
+  }
+  // Attach a muted corner timestamp to any `.card`. No-op when `ts` is absent
+  // (e.g. legacy buffered events) so nothing breaks if the field is missing.
+  function stampCard(cardEl, ts) {
+    if (ts == null) return cardEl;
+    const t = el("span", ["card-time"], escapeHtml(fmtCardTime(ts)));
+    t.title = fmtCardTimeFull(ts);
+    cardEl.appendChild(t);
+    return cardEl;
+  }
+
   // Auto-scroll follows the bottom while the user is parked there,
   // but yields the moment they scroll up to read something —
   // standard chat behaviour. Re-enables itself when the user returns
@@ -531,9 +568,10 @@
   }
 
   // ── Card renderers ─────────────────────────
-  function renderUserMessage(content) {
+  function renderUserMessage(content, ts) {
     const card = el("div", ["card", "card-user"]);
     card.appendChild(el("div", ["bubble"], escapeAndFormat(content)));
+    stampCard(card, ts);
     $messages.appendChild(card);
     scrollToBottom();
   }
@@ -557,6 +595,7 @@
       a.appendChild(detail);
       card.appendChild(a);
     }
+    stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
     scrollToBottom();
   }
@@ -689,6 +728,7 @@
         el("pre", ["obs-body"], colorizeDiffBody(escapeHtml(d.content || "")))
       );
     }
+    stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
     scrollToBottom();
   }
@@ -696,6 +736,7 @@
   function renderError(d) {
     const card = el("div", ["card", "card-error"]);
     card.textContent = d.content;
+    stampCard(card, d.ts);
     appendToTimeline(card, d.task_id);
     scrollToBottom();
   }
@@ -1036,7 +1077,7 @@
 
   es.addEventListener("user_message", function (e) {
     const d = JSON.parse(e.data);
-    renderUserMessage(d.content);
+    renderUserMessage(d.content, d.ts);
   });
 
   es.addEventListener("assistant_turn", function (e) {

@@ -246,6 +246,68 @@ class TestCompaction:
         assert data["reason"] == "provider down"
 
 
+class _FakeResumeCtx:
+    """ctx stub for replay_from_history — returns preloaded raw messages."""
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    def get_raw_messages(self):
+        return self._messages
+
+
+class TestCardTimestamps:
+    """Every event is server-stamped with ``ts`` at the single fan-out point
+    (covers delegate/skill inner cards too); resume replay carries the
+    history record's original ts instead of a fresh stamp."""
+
+    def test_live_event_stamped_with_epoch_ts(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.push_user_message("hello")
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "user_message"
+        assert isinstance(data["ts"], float)  # epoch seconds (live path)
+
+    def test_resume_replay_preserves_history_ts(self):
+        """A resumed card must show when the step ACTUALLY happened — the
+        history record's ISO ts — not the resume moment."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        iso = "2026-06-17T14:32:05.123456+00:00"
+        ctx = _FakeResumeCtx([{"role": "user", "content": "hi", "ts": iso}])
+        r.replay_from_history(ctx)
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "user_message"
+        assert data["ts"] == iso  # original history ts, passed through verbatim
+
+    def test_replay_ts_reset_after_seed(self):
+        """After the seed loop, live events fall back to fresh wall-clock."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        ctx = _FakeResumeCtx(
+            [{"role": "user", "content": "old", "ts": "2026-06-17T14:32:05+00:00"}]
+        )
+        r.replay_from_history(ctx)
+        conn.queue.get(timeout=0.5)  # drain the replayed card
+        r.push_user_message("new live message")
+        _, data = conn.queue.get(timeout=0.5)
+        assert isinstance(data["ts"], float)  # back to live epoch stamp
+
+    def test_legacy_message_without_ts_falls_back_to_wallclock(self):
+        """A pre-ts history record (no ``ts``) still gets a usable stamp."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        ctx = _FakeResumeCtx([{"role": "user", "content": "ancient"}])
+        r.replay_from_history(ctx)
+        _, data = conn.queue.get(timeout=0.5)
+        assert isinstance(data["ts"], float)
+
+
 # ── Prune (FIFO sync) ──────────────────────────────
 
 
@@ -596,6 +658,7 @@ class TestDelegateTaskVisibility:
         )
         event, data = conn.queue.get(timeout=1.0)
         assert event == "delegate_task_start"
+        data.pop("ts", None)  # server-stamped emit time — not under test here
         assert data == {
             "task_id": "t-1",
             "index": 0,
@@ -698,6 +761,7 @@ class TestDelegateTaskVisibility:
         r.set_thread_status("reading file...")
         event, data = conn.queue.get(timeout=1.0)
         assert event == "delegate_task_status"
+        data.pop("ts", None)  # server-stamped emit time — not under test here
         assert data == {"task_id": "t-1", "status": "reading file..."}
 
     def test_set_thread_status_silent_outside_delegate(self):
@@ -1113,6 +1177,7 @@ class TestWorkerStateEmit:
         r.worker_busy()
         event, data = conn.queue.get(timeout=1.0)
         assert event == "worker_state"
+        data.pop("ts", None)  # server-stamped emit time — not under test here
         assert data == {"busy": True}
 
     def test_worker_idle_emits_busy_false(self):
@@ -1122,6 +1187,7 @@ class TestWorkerStateEmit:
         r.worker_idle()
         event, data = conn.queue.get(timeout=1.0)
         assert event == "worker_state"
+        data.pop("ts", None)  # server-stamped emit time — not under test here
         assert data == {"busy": False}
 
     def test_worker_state_event_is_transient_not_buffered(self):
