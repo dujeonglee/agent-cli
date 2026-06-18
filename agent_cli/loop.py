@@ -677,14 +677,6 @@ class AgentLoop:
         says the action was NOT executed and to retry smaller. Returns
         ``_CONTINUE`` so the loop gives the model another turn.
         """
-        if not self.skill_name:
-            render_step(
-                "observation",
-                OUTPUT_TRUNCATED_NOTICE,
-                self.turn,
-                tool_name="output_truncated",
-                success=False,
-            )
         _append_observation(
             self.messages,
             self.ctx,
@@ -693,6 +685,8 @@ class AgentLoop:
             f"Observation: {OUTPUT_TRUNCATED_NOTICE}",
             tool_name="output_truncated",
             success=False,
+            turn=self.turn,
+            render=not self.skill_name,
         )
         _debug_log(
             f"Output truncated (stop_reason=length) at turn {self.turn}; "
@@ -976,6 +970,8 @@ class AgentLoop:
                 intervention.message,
                 tool_name="",
                 success=False,
+                turn=self.turn,
+                render=False,  # render_recovery already surfaced it
             )
             outcome["failure_signal"] = FAILURE_NO_THOUGHT
             outcome["primitives"] = list(intervention.primitives)
@@ -1076,6 +1072,7 @@ class AgentLoop:
             f"Observation: {combined}",
             tool_name="+".join(r["tool_name"] for r in results),
             success=all_ok,
+            turn=self.turn,
         )
 
     def _dispatch_parallel_batch(
@@ -1125,13 +1122,8 @@ class AgentLoop:
         ]
         result = self._dispatch_tool_with_hooks("delegate", {"tasks": specs})
         observation = result.output if result.success else result.error
-        render_step(
-            "observation",
-            observation,
-            self.turn,
-            tool_name=tool_name,
-            success=result.success,
-        )
+        # Rendered from storage by _flush_op_results' _append_observation
+        # (combined card), matching ctx + resume — no separate pre-render.
         accumulate.append(
             {
                 "tool_name": tool_name,
@@ -1256,6 +1248,8 @@ class AgentLoop:
                     obs_msg,
                     tool_name="ask",
                     success=True,
+                    turn=self.turn,
+                    render=False,  # the answer is surfaced by the input UI
                 )
                 return self._CONTINUE
 
@@ -1293,13 +1287,6 @@ class AgentLoop:
                 compaction_enabled=self.compaction_enabled,
             )
             obs = skill_tool_result.output or skill_tool_result.error
-            render_step(
-                "observation",
-                obs,
-                self.turn,
-                tool_name="run_skill",
-                success=skill_tool_result.success,
-            )
             obs_msg = f"Observation: {obs}"
             _append_observation(
                 self.messages,
@@ -1310,6 +1297,7 @@ class AgentLoop:
                 tool_name="run_skill",
                 success=skill_tool_result.success,
                 artifact=skill_tool_result.artifact,
+                turn=self.turn,
             )
             return self._CONTINUE
 
@@ -1333,14 +1321,6 @@ class AgentLoop:
                     else str(op.action_input or {}),
                 )
             obs = _build_review_observation(self._task_text(), summary, ctx=self.ctx)
-            if not self.skill_name:
-                render_step(
-                    "observation",
-                    obs,
-                    self.turn,
-                    tool_name="ready_for_review",
-                    success=True,
-                )
             obs_msg = f"Observation: {obs}"
             _append_observation(
                 self.messages,
@@ -1350,6 +1330,8 @@ class AgentLoop:
                 obs_msg,
                 tool_name="ready_for_review",
                 success=True,
+                turn=self.turn,
+                render=not self.skill_name,
             )
             return self._CONTINUE
 
@@ -1439,6 +1421,8 @@ class AgentLoop:
                     intervention.message,
                     tool_name=tool_name,
                     success=False,
+                    turn=self.turn,
+                    render=False,  # render_recovery already surfaced it
                 )
                 outcome["primitives"] = list(intervention.primitives)
                 self.turn -= 1  # Don't count loop nudges as user-facing turns
@@ -1485,6 +1469,8 @@ class AgentLoop:
                     f"Observation: {err_msg}",
                     tool_name=tool_name,
                     success=False,
+                    turn=self.turn,
+                    render=False,  # render_recovery already surfaced it
                 )
                 return self._CONTINUE
 
@@ -1509,6 +1495,8 @@ class AgentLoop:
                     f"Observation: {err_msg}",
                     tool_name=tool_name,
                     success=False,
+                    turn=self.turn,
+                    render=False,  # render_recovery already surfaced it
                 )
                 return self._CONTINUE
             tool_input = normalized  # use post-normalization input for dispatch
@@ -1523,18 +1511,11 @@ class AgentLoop:
             if truncation_warning:
                 observation = f"{observation}\n{truncation_warning}"
 
-            render_step(
-                "observation",
-                observation,
-                self.turn,
-                tool_name=tool_name,
-                success=tool_result.success,
-            )
-
             # N-op accumulate mode: record the execution for the caller's
-            # combined observation instead of appending one here. (Per-op
-            # corrected-record rewrite is a multi-op-serialization concern —
-            # handled with the multi-op plugin's history step, not here.)
+            # combined observation instead of appending one here. The render
+            # happens once, from storage, in _append_observation (single-op
+            # below, or _flush_op_results for the combined) — so the live card
+            # matches ctx + resume and shows the spill guide for huge output.
             if accumulate is not None:
                 accumulate.append(
                     {
@@ -1568,6 +1549,7 @@ class AgentLoop:
                 success=tool_result.success,
                 artifact=tool_result.artifact,
                 corrected_record=corrected,
+                turn=self.turn,
             )
             return self._CONTINUE
 
@@ -1610,6 +1592,8 @@ class AgentLoop:
             intervention.message,
             tool_name="",
             success=False,
+            turn=self.turn,
+            render=False,  # render_recovery already surfaced it
         )
         # Surface composed primitive names to the enclosing _handle_text_path
         # so the trailing finally-block records them.
@@ -2475,8 +2459,10 @@ def _append_observation(
     *,
     tool_name: str,
     success: bool,
+    turn: int = 0,
     artifact: str = "",
     corrected_record: dict | None = None,
+    render: bool = True,
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
 
@@ -2518,6 +2504,7 @@ def _append_observation(
 
     messages.append({"role": "assistant", "content": prior_content})
     messages.append({"role": "user", "content": obs_msg})
+    stored_content = obs_msg
     if ctx:
         ctx.add(history_record)
         obs_entry = {
@@ -2528,4 +2515,20 @@ def _append_observation(
         }
         if artifact:
             obs_entry["artifact"] = artifact
-        ctx.add(obs_entry)
+        stored = ctx.add(obs_entry)
+        # ctx.add returns the stored (possibly spilled) message; tolerate a
+        # ctx stub that returns None (some tests) by keeping obs_msg.
+        if isinstance(stored, dict):
+            stored_content = stored.get("content", obs_msg)
+
+    # Single render point for observations: render what was STORED (spill
+    # guide when the output was spilled) so the live web/CLI card matches ctx
+    # and resume. ``render=False`` for recovery paths, which already surface
+    # the intervention via ``render_recovery`` (no double-render).
+    if render:
+        from agent_cli.context.manager import _spill_view
+
+        display = _spill_view(stored_content)
+        if isinstance(display, str) and display.startswith("Observation: "):
+            display = display[len("Observation: ") :]
+        render_step("observation", display, turn, tool_name=tool_name, success=success)

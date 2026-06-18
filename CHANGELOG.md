@@ -12,7 +12,32 @@
 
 ## [Unreleased]
 
-## [3.8.0] - 2026-06-17
+## [3.9.0] - 2026-06-18
+
+### Fixed
+
+- **단일 도구 출력이 컨텍스트 윈도우를 넘겨 압축을 깨뜨리던 버그 수리** — `find` /
+  `code_index` 같은 한 번의 거대 출력(실측 800K 토큰)이 (a) 캐시 토큰을 윈도우
+  이상으로 부풀리고, (b) 압축 evict 가 dynamic 전체를 먹어 `tokens_after=0`(캐시
+  비움·최신 메시지 손실), (c) 요약 호출 자체를 윈도우 초과로 밀어넣던 문제.
+
+### Added
+
+- **과대 도구 출력 spill (무손실 청크 + 회수)** — 관찰 출력이 50K 토큰을 넘으면
+  `ctx.add` 단일 지점에서 청크 분할해 `content = {"spill": true, "output":
+  [guide, chunk1, ...]}` 로 저장. **컨텍스트엔 guide(output[0])만** 들어가고(토큰
+  회계·LLM·요약·분류 모두 guide 기준) 전체 청크는 history.jsonl 에 **무손실 보존**.
+  회수는 read_context 의 새 `content`(JSON) 컬럼 + `json_extract`:
+  `SELECT json_extract(content,'$.output[N]') FROM history WHERE turn=T`.
+- 어떤 단일 메시지도 윈도우를 넘지 않으므로 압축 evict·요약 호출이 항상 윈도우 안.
+
+### Changed
+
+- **관찰 렌더를 단일 지점(`_append_observation`)으로 통합 — "저장한 것을 보여준다"**.
+  관찰 카드는 이제 ctx 에 저장된(spill 적용) 값으로 렌더되어 라이브·재접속·resume
+  이 일관(거대 출력은 guide 카드). 부수적으로 multi-op 턴의 관찰 *결과*는 turn 끝에
+  합본 1카드로 표시(action 카드는 op별 라이브 유지) — resume 이 이미 보여주던 모습과
+  동일. 회복(recovery) 경로는 `render_recovery` 가 이미 렌더하므로 중복 안 함.
 
 ### Changed
 
@@ -284,7 +309,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.8.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.0...HEAD
+[3.9.0]: https://github.com/dujeonglee/agent-cli/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/dujeonglee/agent-cli/compare/v3.7.1...v3.8.0
 [3.7.1]: https://github.com/dujeonglee/agent-cli/compare/v3.7.0...v3.7.1
 [3.7.0]: https://github.com/dujeonglee/agent-cli/compare/v3.6.0...v3.7.0

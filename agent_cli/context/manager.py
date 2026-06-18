@@ -50,6 +50,18 @@ _COMPACTION_THRESHOLD_RATIO = 0.9  # trigger when cache > 90% of budget
 _SUMMARY_CHAR_CAP = 8000  # ≈ 2000 tokens at 4 chars/token
 _COMPACTION_JSON_VERSION = 1
 
+# Oversized tool-output spill: a tool observation whose content exceeds
+# ``_SPILL_THRESHOLD_TOKENS`` is replaced (at ``add`` time) with a chunked
+# spill record — ``content = {"spill": True, "output": [guide, c1, c2, ...]}``.
+# Only the guide (``output[0]``) enters the cache / LLM / summary; the full
+# content is preserved in history.jsonl and chunks are pulled on demand via
+# read_context's ``json_extract``. This keeps any single message well under
+# the window so compaction's eviction + the summariser's own call never go
+# over (the find/code_index dump that emptied the cache to 0 tokens).
+_SPILL_THRESHOLD_TOKENS = 50_000
+_SPILL_CHUNK_TOKENS = 50_000
+_SPILL_HEAD_LINES = 30  # lines of the raw output previewed in the guide
+
 
 def compute_token_budget(context_window: int, max_output_tokens: int) -> int:
     """Compute the fallback context budget (``max_context_tokens``).
@@ -172,7 +184,7 @@ class ContextManager:
         (NFR-CC-6). May be ``None`` (headless / no session)."""
         self._recorder = recorder
 
-    def add(self, message: dict) -> None:
+    def add(self, message: dict) -> dict:
         """Add a message to cache and persist to history.jsonl.
 
         Compaction is NOT triggered here. Preventive compaction (flow 1)
@@ -182,11 +194,19 @@ class ContextManager:
         reflects actual headroom ``(context − system − output) × 0.8``
         instead of a fixed 90%-of-budget estimate against a 4000-token
         system reserve. See docs/ARCHITECTURE.md §compaction.
+
+        Oversized tool outputs are spilled here (``_maybe_spill``) — the
+        single chokepoint for what enters the cache + history — so no single
+        message can blow past the window and break compaction.
         """
+        message = _maybe_spill(message, self._current_turn)
         msg_tokens = _estimate_message_tokens(message)
         self._cache.append(message)
         self._cache_tokens += msg_tokens
         self._append_to_history(message)
+        # Return the stored (possibly spilled) message so callers can render
+        # exactly what was stored (live card == ctx == resume).
+        return message
 
     def set_turn(self, turn: int) -> None:
         """Set the current LLM turn index. The loop calls this at each turn
@@ -790,7 +810,9 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
     into read_context; this is the single place that encodes it.
     """
     role = message.get("role")
-    content = str(message.get("content") or "")
+    # Spill records expose only the guide as their searchable text surface;
+    # chunks are pulled explicitly via read_context's json_extract.
+    content = str(_spill_view(message.get("content")) or "")
 
     if role == "system":
         return "system", [], content
@@ -837,12 +859,95 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
     return str(role or "?"), [], content
 
 
+def _spill_view(content):
+    """The context-visible text of a message's ``content``.
+
+    For a spill record (``{"spill": True, "output": [guide, ...]}``) this is
+    the guide (``output[0]``) — never the chunks. For anything else the
+    content is returned unchanged. Single chokepoint so every consumer
+    (token estimate, LLM render, summary, classify) shows the guide and the
+    multi-chunk dump stays out of the window.
+    """
+    if isinstance(content, dict) and content.get("spill"):
+        output = content.get("output") or []
+        return output[0] if output else ""
+    return content
+
+
+def _chunk_text_by_tokens(text: str, chunk_tokens: int) -> list[str]:
+    """Split ``text`` into chunks of ~``chunk_tokens`` each, on line
+    boundaries (so a chunk is coherent). Concatenating the chunks
+    reproduces the input exactly (no loss). A single line larger than the
+    budget becomes its own (over-budget) chunk rather than being split
+    mid-line — rare for the dumps this targets."""
+    lines = text.splitlines(keepends=True)
+    chunks: list[str] = []
+    cur: list[str] = []
+    cur_tokens = 0
+    for line in lines:
+        t = estimate_tokens(line)
+        if cur and cur_tokens + t > chunk_tokens:
+            chunks.append("".join(cur))
+            cur, cur_tokens = [], 0
+        cur.append(line)
+        cur_tokens += t
+    if cur:
+        chunks.append("".join(cur))
+    return chunks or [text]
+
+
+def _build_spill_guide(
+    text: str, n_chunks: int, total_tokens: int, *, turn, tool: str
+) -> str:
+    """The ``output[0]`` guide: a head preview + how to pull a chunk via
+    read_context. This is the ONLY part of an oversized output that enters
+    the context."""
+    head = "\n".join(text.splitlines()[:_SPILL_HEAD_LINES])
+    return (
+        f"[Large output stored ({total_tokens:,} tokens, {n_chunks} chunk(s) of "
+        f"~{_SPILL_CHUNK_TOKENS // 1000}K). tool={tool or '?'}, turn={turn}.\n\n"
+        f"Head ({_SPILL_HEAD_LINES} lines):\n{head}\n\n"
+        f"The full output is preserved — pull only the chunk(s) you need with "
+        f"read_context:\n"
+        f"  SELECT json_extract(content, '$.output[N]') FROM history "
+        f"WHERE turn={turn} AND json_extract(content,'$.spill')=1   (N = 1..{n_chunks})\n"
+        f"Or narrow the query/command if you don't need it all.]"
+    )
+
+
+def _maybe_spill(message: dict, current_turn) -> dict:
+    """Replace an oversized tool-observation's string content with a chunked
+    spill record. Only applies to records carrying a ``tool`` key (tool
+    results) with string content over the threshold — assistant turns and
+    plain user chat are never spilled. Returns the message unchanged when no
+    spill is needed (so callers can use identity)."""
+    if "tool" not in message:
+        return message
+    content = message.get("content")
+    if not isinstance(content, str):
+        return message
+    total = estimate_tokens(content)
+    if total <= _SPILL_THRESHOLD_TOKENS:
+        return message
+    chunks = _chunk_text_by_tokens(content, _SPILL_CHUNK_TOKENS)
+    guide = _build_spill_guide(
+        content, len(chunks), total, turn=current_turn, tool=message.get("tool", "")
+    )
+    spilled = dict(message)
+    spilled["content"] = {"spill": True, "output": [guide, *chunks]}
+    return spilled
+
+
 def _estimate_message_tokens(msg: dict) -> int:
     """Estimate tokens for a single message dict."""
     total = 4  # role + formatting overhead
     for key in ("content", "thought", "action_input"):
         val = msg.get(key)
         if val is None:
+            continue
+        if key == "content" and isinstance(val, dict) and val.get("spill"):
+            # Spill record: only the guide is context-visible.
+            total += estimate_tokens(_spill_view(val))
             continue
         if isinstance(val, str):
             total += estimate_tokens(val)
@@ -907,7 +1012,7 @@ def _to_summary_text(msg: dict) -> str:
         if not tool:
             return f"User: {msg.get('content', '')}"
         header = f"[{tool}]"
-        content = (msg.get("content", "") or "").strip()
+        content = (_spill_view(msg.get("content", "")) or "").strip()
         if content:
             excerpt = content[:_SUMMARY_CONTENT_EXCERPT]
             if len(content) > _SUMMARY_CONTENT_EXCERPT:
@@ -956,7 +1061,7 @@ def _to_summary_text(msg: dict) -> str:
 def _convert_observation(msg: dict) -> dict:
     """Convert a tool result message to natural language."""
     tool = msg.get("tool", "")
-    content = msg.get("content", "")
+    content = _spill_view(msg.get("content", ""))  # guide only for spill records
     artifact = msg.get("artifact", "")
 
     # Tool-result records carry no args (history.jsonl stores only

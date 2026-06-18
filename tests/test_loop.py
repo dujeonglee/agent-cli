@@ -741,6 +741,103 @@ class TestActionRenderShowsRawEmission:
         assert any("UNIQUE_MARKER_LINE" in (o or "") for o in observations)
 
 
+class TestObservationRenderFromStored:
+    """Observations are rendered from what was STORED (spill-aware), through
+    the single ``_append_observation`` render point — so the live web/CLI card
+    matches ctx + resume. A huge tool output shows the spill guide, never the
+    raw dump; recovery paths (already rendered via ``render_recovery``) are not
+    double-rendered."""
+
+    def _capture(self, monkeypatch):
+        import agent_cli.loop as loop_mod
+
+        recorded: list[dict] = []
+        real = loop_mod.render_step
+
+        def fake(step_type, content, turn, **kwargs):
+            recorded.append({"type": step_type, "content": content})
+            real(step_type, content, turn, **kwargs)
+
+        monkeypatch.setattr("agent_cli.loop.render_step", fake)
+        return recorded
+
+    def test_huge_tool_output_renders_as_guide_not_raw(
+        self, caps, monkeypatch, tmp_path
+    ):
+        from agent_cli.context import manager as M
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.wire_formats import get
+
+        monkeypatch.setattr(M, "_SPILL_THRESHOLD_TOKENS", 50)
+        monkeypatch.setattr(M, "_SPILL_CHUNK_TOKENS", 50)
+
+        big = tmp_path / "big.txt"
+        big.write_text("\n".join(f"/p/file_{i:04}.py MARKER" for i in range(1500)))
+        recorded = self._capture(monkeypatch)
+
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="## Thought\nread\n\n## Action\n"
+                f'[{{"action": "read_file", "path": "{big}"}}]'
+            ),
+            LLMResponse(
+                content="## Thought\ndone\n\n## Action\n"
+                '[{"action": "complete", "result": "ok"}]'
+            ),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+            wire_format="md_array",
+        )
+        obs = [r["content"] for r in recorded if r["type"] == "observation"]
+        assert obs, "no observation rendered"
+        # the rendered card is the spill guide, not the raw multi-chunk dump
+        assert any("read_context" in (o or "") for o in obs)
+        assert all("/p/file_0750.py" not in (o or "") for o in obs)
+
+    def test_recovery_observation_not_double_rendered(
+        self, caps, monkeypatch, tmp_path
+    ):
+        """An unknown-tool turn recovers via ``render_recovery`` (not a normal
+        observation card). ``_append_observation`` must NOT also render it."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.wire_formats import get
+
+        recorded = self._capture(monkeypatch)
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content="## Thought\ngo\n\n## Action\n"
+                '[{"action": "no_such_tool", "x": 1}]'
+            ),
+            LLMResponse(
+                content="## Thought\ndone\n\n## Action\n"
+                '[{"action": "complete", "result": "ok"}]'
+            ),
+        ]
+        run_loop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            max_turns=5,
+            wire_format="md_array",
+        )
+        # the recovery intervention is surfaced by render_recovery, not as a
+        # second render_step("observation") card.
+        obs = [r for r in recorded if r["type"] == "observation"]
+        assert obs == [], f"recovery double-rendered an observation: {obs}"
+
+
 class TestRunLoopObservability:
     """End-to-end checks that TurnRecord JSONL is written correctly.
 

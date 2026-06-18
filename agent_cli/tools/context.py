@@ -69,6 +69,7 @@ _COLUMNS = (
     "files",
     "author",
     "text",
+    "content",
 )
 
 
@@ -196,6 +197,17 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
                         kind, tools, text = _classify_record(rec)
                         files = extract_file_paths([rec])
                         turn = rec.get("turn")
+                        # Raw content as a queryable column: dict/list content
+                        # (spill records: ``{"spill":true,"output":[...]}``) is
+                        # stored as JSON text so ``json_extract`` can pull one
+                        # chunk; plain string content passes through verbatim.
+                        content_raw = rec.get("content")
+                        if isinstance(content_raw, (dict, list)):
+                            content_cell = json.dumps(content_raw, ensure_ascii=False)
+                        elif isinstance(content_raw, str):
+                            content_cell = content_raw
+                        else:
+                            content_cell = ""
                         rows.append(
                             (
                                 session_id,
@@ -208,6 +220,7 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
                                 " ".join(files),
                                 rec.get("author"),
                                 text,
+                                content_cell,
                             )
                         )
             except OSError:
@@ -369,10 +382,13 @@ class ReadContextTool(Tool):
         "Query past/current session history with SQL. read_context_query='SELECT "
         "… FROM history WHERE …' (read-only). Columns: session, loc, seq, kind"
         "(query/action/observation/final/raw/system), turn, ts, tools, files, "
-        "author, text. Search by kind/tools/files/author/turn, read full content "
-        "via the text column, list sessions via DISTINCT session. Omit the query "
-        "to see the schema + examples + session list. Default scope = current "
-        "session; read_context_sessions='all'/id(s) for others."
+        "author, text, content. Search by kind/tools/files/author/turn, read full "
+        "content via the text column, list sessions via DISTINCT session. A large "
+        "tool output is spilled: text holds a guide and content is JSON "
+        "{spill,output:[guide,chunk1,...]} — fetch one chunk with "
+        "json_extract(content,'$.output[N]') WHERE turn=T. Omit the query to see "
+        "the schema + examples + session list. Default scope = current session; "
+        "read_context_sessions='all'/id(s) for others."
     )
     parameters = {
         "type": "object",
