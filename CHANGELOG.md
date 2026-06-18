@@ -12,7 +12,19 @@
 
 ## [Unreleased]
 
-## [3.9.2] - 2026-06-18
+## [3.9.3] - 2026-06-18
+
+### Fixed
+
+- **토큰 추정이 멀티-op(`ops`) assistant 레코드 내용을 안 세던 버그 수리** —
+  `_estimate_message_tokens` 가 content/thought/top-level action_input 만 세고
+  md_array(기본 포맷)의 `ops` 안에 든 action·action_input·complete result 를
+  전부 누락했음 → **모든 assistant 턴이 thought 만 카운트**(예: write_file 의 큰
+  content 인자나 긴 complete 결과가 예산 추정에서 통째로 빠짐). 결과적으로
+  `ensure_within` 의 예방적 압축 판단이 과소추정돼 늦게 트리거(서버 reconcile/
+  force_fit 로 사후 보정은 됐으나 부정확). 이제 `ops` 를 순회해 각 op 의
+  action+action_input 을 카운트. (md_array 가 기본이 될 때 `_to_summary_text`·
+  `_file_extract` 는 ops 처리로 고쳤으나 `_estimate_message_tokens` 는 누락됐던 것.)
 
 ### Fixed
 
@@ -333,7 +345,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.2...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.3...HEAD
+[3.9.3]: https://github.com/dujeonglee/agent-cli/compare/v3.9.2...v3.9.3
 [3.9.2]: https://github.com/dujeonglee/agent-cli/compare/v3.9.1...v3.9.2
 [3.9.1]: https://github.com/dujeonglee/agent-cli/compare/v3.9.0...v3.9.1
 [3.9.0]: https://github.com/dujeonglee/agent-cli/compare/v3.8.0...v3.9.0

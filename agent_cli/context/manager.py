@@ -970,6 +970,24 @@ def _estimate_message_tokens(msg: dict) -> int:
     action = msg.get("action", "")
     if action:
         total += estimate_tokens(action)
+    # Multi-op (md_array / react default) assistant records carry their
+    # action(s) + action_input + complete result inside ``ops`` — count them,
+    # else every assistant turn is undercounted to just its ``thought`` (a
+    # large write_file content arg / complete result would be invisible to the
+    # budget estimator).
+    ops = msg.get("ops")
+    if isinstance(ops, list):
+        for op in ops:
+            if not isinstance(op, dict):
+                continue
+            op_action = op.get("action")
+            if op_action:
+                total += estimate_tokens(op_action)
+            op_input = op.get("action_input")
+            if isinstance(op_input, str):
+                total += estimate_tokens(op_input)
+            elif isinstance(op_input, dict):
+                total += estimate_tokens(json.dumps(op_input, ensure_ascii=False))
     artifact = msg.get("artifact", "")
     if artifact:
         total += estimate_tokens(artifact)

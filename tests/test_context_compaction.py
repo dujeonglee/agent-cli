@@ -1200,3 +1200,45 @@ class TestCompactNow:
         before, after = ctx.compact_now()
         assert before == after  # disabled → no-op, no FIFO drop
         assert calls == []
+
+
+class TestEstimateMessageTokensOps:
+    """``_estimate_message_tokens`` must traverse multi-op (``ops``) assistant
+    records — the md_array default stores action(s) + action_input + complete
+    result inside ``ops``. Counting only ``thought`` (the pre-fix behaviour)
+    undercounted every assistant turn (e.g. a large write_file content arg or
+    a long complete result was invisible to the budget estimator)."""
+
+    def test_counts_ops_action_input_and_result(self):
+        from agent_cli.context.manager import (
+            _estimate_message_tokens,
+            estimate_tokens,
+        )
+
+        big = "X" * 4000  # ≈ 1000 tokens each
+        rec = {
+            "role": "assistant",
+            "thought": "short",
+            "ops": [
+                {"action": "write_file", "action_input": {"path": "f", "content": big}},
+                {"action": "complete", "action_input": {"result": big}},
+            ],
+        }
+        est = _estimate_message_tokens(rec)
+        # both big payloads must be counted, not just the tiny thought
+        assert est >= 2 * estimate_tokens(big)
+
+    def test_single_op_legacy_shape_still_counted(self):
+        from agent_cli.context.manager import (
+            _estimate_message_tokens,
+            estimate_tokens,
+        )
+
+        big = "Y" * 4000
+        rec = {
+            "role": "assistant",
+            "thought": "t",
+            "action": "write_file",
+            "action_input": {"path": "f", "content": big},
+        }
+        assert _estimate_message_tokens(rec) >= estimate_tokens(big)
