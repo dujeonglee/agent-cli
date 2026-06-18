@@ -86,6 +86,40 @@ def _dynamic_context_sections(ctx) -> list[dict]:
     return sections
 
 
+def capture_startup_system_prompt(
+    renderer: WebRenderer,
+    *,
+    capabilities,
+    wire_format,
+    session_dir: str,
+    max_depth: int,
+) -> None:
+    """Build + capture the system-prompt snapshot at web startup so the Prompt
+    Inspector is populated BEFORE the first message (the loop only captures on
+    an LLM call). This mirrors what the main loop builds at depth 0 with all
+    tools (web chat uses ``active_tools=None`` → all, ``mcp_manager=None``).
+    The first real LLM call rebuilds + overwrites this — including the per-turn
+    ``Hook:`` sections, which only exist after ``PreLLMCall`` and so are absent
+    from this static preview. Best-effort: a build error must not block
+    startup."""
+    try:
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
+        from agent_cli.tools.registry import TOOLS
+
+        sections = build_system_prompt_sections(
+            capabilities=capabilities,
+            active_tools=list(TOOLS.keys()),
+            session_dir=session_dir,
+            mcp_manager=None,
+            wire_format=wire_format,
+            depth=0,
+            max_depth=max_depth,
+        )
+        renderer.note_system_prompt(sections, turn=0)
+    except Exception:
+        pass
+
+
 # ``no-cache`` (revalidate-required) rather than ``no-store`` so the
 # browser can still take a 304 fast path when nothing changed, but a
 # CSS/JS edit lands without forcing the operator to hard-refresh.
@@ -663,23 +697,31 @@ def create_app(server: WebServer) -> FastAPI:
         scope's first LLM call."""
         server._require_token(token)
         snapshot = server.renderer.prompt_snapshot(task_id)
-        if snapshot is None:
+        # System sections (kind=system, from the latest LLM call's snapshot —
+        # may be absent before the first call) + the live DYNAMIC context
+        # (conversation + observations, kind=dynamic) for the MAIN scope.
+        # Showing dynamic without a system snapshot is what fills the inspector
+        # the moment a resumed session loads (ctx restored, no LLM call yet).
+        # Sub-agent scopes (task_id) keep system-only — their ctx isn't here.
+        system_sections = []
+        turn = None
+        if snapshot is not None:
+            system_sections = [
+                {**s, "kind": s.get("kind", "system")}
+                for s in snapshot.get("sections", [])
+            ]
+            turn = snapshot.get("turn")
+        dynamic = _dynamic_context_sections(server.ctx) if not task_id else []
+        sections = system_sections + dynamic
+        if not sections:
             reason = "no LLM call yet for this agent" if task_id else "no LLM call yet"
             return {"ok": False, "reason": reason}
-        # System sections (default kind=system) + the live DYNAMIC context
-        # (conversation + observations) for the MAIN scope. Sub-agent scopes
-        # (task_id) keep system-only — their ctx isn't reachable here.
-        sections = [
-            {**s, "kind": s.get("kind", "system")} for s in snapshot.get("sections", [])
-        ]
-        if not task_id:
-            sections += _dynamic_context_sections(server.ctx)
         total_chars = sum(s["chars"] for s in sections) + 2 * max(0, len(sections) - 1)
         est_tokens = sum(s["est_tokens"] for s in sections)
         return {
             "ok": True,
             "task_id": task_id,
-            "turn": snapshot.get("turn"),
+            "turn": turn if turn is not None else 0,
             "sections": sections,
             "total_chars": total_chars,
             "est_tokens": est_tokens,

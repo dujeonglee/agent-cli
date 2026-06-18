@@ -12,7 +12,18 @@
 
 ## [Unreleased]
 
-## [3.10.0] - 2026-06-19
+## [3.11.0] - 2026-06-19
+
+### Added
+
+- **Prompt Inspector 가 첫 메시지 전에도 채워짐** — 지금까지 첫 LLM 호출이 있어야
+  스냅샷이 잡혀 인스펙터가 비어 있었음:
+  - **resume 즉시 대화 표시**: `/api/debug/prompt` 가 시스템 스냅샷이 없어도(메인
+    스코프) ctx 에 복원된 메시지가 있으면 동적 섹션만이라도 반환(`ok=False` 게이트
+    완화). resume 후 드로어를 열면 복원된 대화·관찰이 바로 보임.
+  - **시작 즉시 시스템 프롬프트 표시**: web 시작 시 `capture_startup_system_prompt`
+    가 정적 시스템 프롬프트를 미리 빌드·캡처(첫 메시지 전에 인스펙터 채움). `Hook:`
+    동적 섹션은 첫 `PreLLMCall` 후 채워지고, 첫 LLM 호출이 스냅샷을 덮어씀.
 
 ### Added
 
@@ -360,7 +371,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.10.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.11.0...HEAD
+[3.11.0]: https://github.com/dujeonglee/agent-cli/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/dujeonglee/agent-cli/compare/v3.9.3...v3.10.0
 [3.9.3]: https://github.com/dujeonglee/agent-cli/compare/v3.9.2...v3.9.3
 [3.9.2]: https://github.com/dujeonglee/agent-cli/compare/v3.9.1...v3.9.2

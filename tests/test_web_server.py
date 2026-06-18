@@ -334,6 +334,55 @@ class TestPromptInspectorDynamic:
         assert kinds[0] == "system"
         assert kinds.count("dynamic") == 2
 
+    def test_dynamic_shows_before_any_llm_call_on_resume(self):
+        """Part 1: a resumed session has ctx messages but no system snapshot
+        yet (the loop captures only on an LLM call). The inspector must still
+        show the restored conversation immediately, not 'no LLM call yet'."""
+        renderer = WebRenderer()  # NO note_system_prompt → no snapshot
+        ctx = _FakeInspectorCtx([{"role": "user", "content": "[DJ]: resumed question"}])
+        server = WebServer(renderer, token="t", ctx=ctx)
+        client = TestClient(create_app(server))
+        data = client.get("/api/debug/prompt?token=t").json()
+        assert data["ok"]  # not blocked by the missing system snapshot
+        assert all(s["kind"] == "dynamic" for s in data["sections"])
+        assert any("resumed question" in s["name"] for s in data["sections"])
+
+    def test_empty_session_no_snapshot_no_messages_is_not_ok(self):
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="t", ctx=_FakeInspectorCtx([]))
+        client = TestClient(create_app(server))
+        assert client.get("/api/debug/prompt?token=t").json()["ok"] is False
+
+    def test_startup_capture_populates_system_prompt_before_first_call(self):
+        """Part 2: build + capture the system prompt at web startup so the
+        inspector shows it before any message (the loop only captures on an
+        LLM call)."""
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.web.server import capture_startup_system_prompt
+        from agent_cli.wire_formats import get
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        renderer = WebRenderer()
+        assert renderer.prompt_snapshot() is None  # empty before
+        capture_startup_system_prompt(
+            renderer,
+            capabilities=caps,
+            wire_format=get("md_array"),
+            session_dir="",
+            max_depth=2,
+        )
+        snap = renderer.prompt_snapshot()
+        assert snap is not None and len(snap["sections"]) > 0
+        names = " ".join(s["name"] for s in snap["sections"]).lower()
+        assert "role" in names or "tool" in names  # real system sections
+
     def test_subagent_scope_stays_system_only(self):
         renderer = WebRenderer()
         # a delegate sub-agent snapshot under a task_id scope

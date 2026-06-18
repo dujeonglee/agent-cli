@@ -1354,6 +1354,20 @@ def web(
     if is_resume:
         renderer.replay_from_history(ctx)
 
+    # Populate the Prompt Inspector's system prompt BEFORE the first message
+    # (the loop only captures on an LLM call). With ctx already restored, the
+    # inspector then shows both the system prompt and the dynamic context the
+    # moment the drawer opens — no need to send a message first.
+    from agent_cli.web.server import capture_startup_system_prompt
+
+    capture_startup_system_prompt(
+        renderer,
+        capabilities=capabilities,
+        wire_format=wire_format_plugin,
+        session_dir=str(ctx.session_dir),
+        max_depth=max_depth,
+    )
+
     from agent_cli.web.server import WebDispatchOutput, handle_slash_command
 
     def _worker_loop() -> None:
