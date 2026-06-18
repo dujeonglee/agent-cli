@@ -12,6 +12,21 @@
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-06-19
+
+### Added
+
+- **Prompt Inspector 가 동적 컨텍스트(대화·관찰)도 표시** (Phase A, 읽기 전용) —
+  지금까지 정적 시스템 프롬프트만 보여주던 인스펙터가, 그 아래
+  `── 동적 컨텍스트 (대화 · 관찰) ──` 구분선과 함께 **현재 컨텍스트 윈도우에 든
+  메시지**(`ctx.get_messages()` 의 system 제외분 — 대화·관찰·요약·파일목록)를
+  메시지별 섹션으로 보여줍니다. LLM 이 실제로 받는 전체 입력을 검사 가능
+  (메인 스코프 한정; 서브에이전트 스코프는 system-only). spill 레코드면 guide 표시.
+  - 구현: `WebServer` 가 live `ctx` 를 받아 `GET /api/debug/prompt`(메인 스코프)에
+    `_dynamic_context_sections(ctx)`(`kind="dynamic"`)를 덧붙임. **기존 sections
+    파이프라인·프론트 아코디언을 그대로 재사용 — 새 추상화 0**(새 엔드포인트/렌더러
+    메서드/콜백 없음, `kind` 필드 1개 + 순수 헬퍼 1개 + 프론트 구분선만).
+
 ## [3.9.3] - 2026-06-18
 
 ### Fixed
@@ -345,7 +360,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.3...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.10.0...HEAD
+[3.10.0]: https://github.com/dujeonglee/agent-cli/compare/v3.9.3...v3.10.0
 [3.9.3]: https://github.com/dujeonglee/agent-cli/compare/v3.9.2...v3.9.3
 [3.9.2]: https://github.com/dujeonglee/agent-cli/compare/v3.9.1...v3.9.2
 [3.9.1]: https://github.com/dujeonglee/agent-cli/compare/v3.9.0...v3.9.1

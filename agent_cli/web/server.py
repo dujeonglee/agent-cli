@@ -45,6 +45,47 @@ from agent_cli.render.web import WebConnection, WebRenderer
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+
+def _dynamic_context_sections(ctx) -> list[dict]:
+    """The Prompt Inspector's DYNAMIC half: the conversation + observations
+    currently in the context window (``ctx.get_messages()`` minus the system
+    prompt, which the inspector shows separately as ``kind="system"``).
+
+    One message → one section, the SAME shape as the system sections so the
+    frontend renders them identically (no new render path). ``kind="dynamic"``
+    marks them. Reads a snapshot copy of the cache (``list(...)``) to avoid a
+    rare race with the worker thread appending mid-read (debug view — best
+    effort, no lock)."""
+    if ctx is None:
+        return []
+    from agent_cli.context.token_estimator import estimate_tokens
+
+    sections: list[dict] = []
+    try:
+        messages = list(ctx.get_messages())
+    except Exception:
+        return []
+    for m in messages:
+        if m.get("role") == "system":
+            continue  # already shown as the system snapshot
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        role = m.get("role", "?")
+        first = content.strip().split("\n", 1)[0][:60]
+        name = f"[{role}] {first}" if first else f"[{role}]"
+        sections.append(
+            {
+                "name": name,
+                "text": content,
+                "chars": len(content),
+                "est_tokens": estimate_tokens(content),
+                "kind": "dynamic",
+            }
+        )
+    return sections
+
+
 # ``no-cache`` (revalidate-required) rather than ``no-store`` so the
 # browser can still take a 304 fast path when nothing changed, but a
 # CSS/JS edit lands without forcing the operator to hard-refresh.
@@ -326,8 +367,14 @@ class WebServer:
         self,
         renderer: WebRenderer,
         token: str | None = None,
+        ctx=None,
     ) -> None:
         self.renderer = renderer
+        # The live ContextManager (shared with the worker's run_loop) — read
+        # by the Prompt Inspector to show the DYNAMIC context (conversation +
+        # observations), not just the static system prompt. May be None
+        # (tests / pre-session).
+        self.ctx = ctx
         # ``secrets.token_urlsafe`` gives a URL-safe random token —
         # ``--token`` override sticks if provided.
         self.token = token or secrets.token_urlsafe(32)
@@ -619,7 +666,24 @@ def create_app(server: WebServer) -> FastAPI:
         if snapshot is None:
             reason = "no LLM call yet for this agent" if task_id else "no LLM call yet"
             return {"ok": False, "reason": reason}
-        return {"ok": True, "task_id": task_id, **snapshot}
+        # System sections (default kind=system) + the live DYNAMIC context
+        # (conversation + observations) for the MAIN scope. Sub-agent scopes
+        # (task_id) keep system-only — their ctx isn't reachable here.
+        sections = [
+            {**s, "kind": s.get("kind", "system")} for s in snapshot.get("sections", [])
+        ]
+        if not task_id:
+            sections += _dynamic_context_sections(server.ctx)
+        total_chars = sum(s["chars"] for s in sections) + 2 * max(0, len(sections) - 1)
+        est_tokens = sum(s["est_tokens"] for s in sections)
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "turn": snapshot.get("turn"),
+            "sections": sections,
+            "total_chars": total_chars,
+            "est_tokens": est_tokens,
+        }
 
     @app.get("/api/debug/prompt/scopes")
     async def debug_prompt_scopes(token: str = Query(...)):

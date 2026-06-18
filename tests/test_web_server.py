@@ -282,6 +282,75 @@ class TestHandleSlashCommand:
 # ── Static UI ─────────────────────────────────────
 
 
+class _FakeInspectorCtx:
+    def __init__(self, messages):
+        self._messages = messages
+
+    def get_messages(self):
+        return self._messages
+
+
+class TestPromptInspectorDynamic:
+    """Phase A: the Prompt Inspector shows the DYNAMIC context (conversation +
+    observations) alongside the static system prompt, reusing the sections
+    pipeline (kind=system | dynamic)."""
+
+    def test_dynamic_sections_helper(self):
+        from agent_cli.web.server import _dynamic_context_sections
+
+        assert _dynamic_context_sections(None) == []
+        ctx = _FakeInspectorCtx(
+            [
+                {"role": "system", "content": "you are an agent"},  # skipped
+                {"role": "user", "content": "[DJ]: analyze the project"},
+                {"role": "user", "content": "[read_file]\nfile body..."},
+                {"role": "assistant", "content": "## Thought\nok\n## Action\n[...]"},
+            ]
+        )
+        secs = _dynamic_context_sections(ctx)
+        assert all(s["kind"] == "dynamic" for s in secs)
+        assert len(secs) == 3  # system skipped
+        assert any("analyze the project" in s["name"] for s in secs)
+        assert all(s["est_tokens"] >= 0 and "text" in s for s in secs)
+
+    def test_endpoint_includes_system_and_dynamic(self):
+        renderer = WebRenderer()
+        renderer.note_system_prompt([("System Prompt", "you are an agent")], turn=2)
+        ctx = _FakeInspectorCtx(
+            [
+                {"role": "user", "content": "[DJ]: hello"},
+                {"role": "assistant", "content": "## Thought\nhi"},
+            ]
+        )
+        server = WebServer(renderer, token="t", ctx=ctx)
+        client = TestClient(create_app(server))
+        r = client.get("/api/debug/prompt?token=t")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ok"]
+        kinds = [s.get("kind") for s in data["sections"]]
+        assert "system" in kinds and "dynamic" in kinds
+        # system section first, dynamic after
+        assert kinds[0] == "system"
+        assert kinds.count("dynamic") == 2
+
+    def test_subagent_scope_stays_system_only(self):
+        renderer = WebRenderer()
+        # a delegate sub-agent snapshot under a task_id scope
+        import threading
+
+        renderer._thread_to_task[threading.get_ident()] = "t-1"
+        renderer.note_system_prompt([("System", "subagent sys")], turn=1)
+        renderer._thread_to_task.pop(threading.get_ident(), None)
+        ctx = _FakeInspectorCtx([{"role": "user", "content": "should NOT appear"}])
+        server = WebServer(renderer, token="t", ctx=ctx)
+        client = TestClient(create_app(server))
+        r = client.get("/api/debug/prompt?token=t&task_id=t-1")
+        data = r.json()
+        assert data["ok"]
+        assert all(s.get("kind") == "system" for s in data["sections"])
+
+
 class TestStaticUI:
     """The frontend is served from ``/`` (HTML) + ``/static/*``
     (JS/CSS). The HTML page reads ``?token=…`` from window.location;

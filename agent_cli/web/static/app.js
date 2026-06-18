@@ -1398,8 +1398,19 @@
     $sections.innerHTML = data.sections
       .map(function (s, i) {
         const pct = ((100 * s.est_tokens) / total).toFixed(1);
+        const kind = s.kind || "system";
+        // Divider above the first dynamic section: the static system prompt
+        // ends, the live conversation/observations begin.
+        const prev = i > 0 ? data.sections[i - 1] : null;
+        let divider = "";
+        if (kind === "dynamic" && (!prev || (prev.kind || "system") !== "dynamic")) {
+          divider =
+            '<div class="insp-divider">── 동적 컨텍스트 (대화 · 관찰) ──</div>';
+        }
         return (
-          '<details class="insp-sec" data-name="' + esc(s.name.toLowerCase()) + '">' +
+          divider +
+          '<details class="insp-sec insp-' + kind +
+          '" data-name="' + esc(s.name.toLowerCase()) + '">' +
           "<summary>" +
           '<span class="insp-dot" style="background:' +
           PALETTE[i % PALETTE.length] + '"></span>' +

@@ -749,6 +749,19 @@ footer {
   background: #fff;
   overflow: hidden;
 }
+/* Divider between the static system prompt and the live dynamic context. */
+.insp-divider {
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 11px;
+  color: #9ca3af;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  margin: 6px 0 2px;
+  letter-spacing: 0.02em;
+}
+/* Dynamic-context sections: tinted left edge so they read as "conversation",
+   distinct from the system-prompt sections above the divider. */
+.insp-sec.insp-dynamic { border-left: 3px solid #c7d2fe; }
 .insp-sec > summary {
   list-style: none;
   cursor: pointer;

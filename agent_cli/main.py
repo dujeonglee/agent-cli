@@ -1335,7 +1335,9 @@ def web(
     # 3. Renderer + server + worker thread.
     renderer = WebRenderer(workspace=session.workspace)
     set_renderer(renderer)
-    server = WebServer(renderer, token=token)
+    # Pass the live ctx so the Prompt Inspector can show the dynamic context
+    # (conversation + observations), not just the static system prompt.
+    server = WebServer(renderer, token=token, ctx=ctx)
 
     # Prime the session-info ``ready`` so a client opening the page
     # before the first chat turn already sees the top-bar populated.
