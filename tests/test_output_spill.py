@@ -350,6 +350,94 @@ class TestReadContextRetrieval:
         assert "CHUNK_ONE" not in res.output
 
 
+# ── raw-history consumers must tolerate spill (dict) content ──
+
+
+class TestSpillConsumersNoCrash:
+    """Every reader of raw history records must tolerate a spill record whose
+    ``content`` is a dict (not a str). These paths crashed with
+    'dict object has no attribute startswith' / 'split' before the fix."""
+
+    def _history_with_spill(self, tmp_path):
+        sd = tmp_path / "sessions" / "1700000001"
+        sd.mkdir(parents=True)
+        recs = [
+            {"role": "user", "content": "[DJ]: read the big file"},
+            {
+                "role": "user",
+                "tool": "shell+read_file",
+                "success": True,
+                "content": {
+                    "spill": True,
+                    "output": ["[Large output stored …]", "CHUNK1", "CHUNK2"],
+                },
+                "kind": "observation",
+                "turn": 1,
+            },
+            {
+                "role": "assistant",
+                "action": "complete",
+                "action_input": {"result": "done"},
+            },
+        ]
+        hp = sd / "history.jsonl"
+        hp.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in recs) + "\n")
+        return hp
+
+    def test_recent_exchanges_tolerates_spill(self, tmp_path):
+        from agent_cli.context.session import recent_exchanges
+
+        hp = self._history_with_spill(tmp_path)
+        pairs = recent_exchanges(hp, n=10)  # must not raise
+        # the spill observation is skipped (it carries a tool); the query pairs
+        assert any("read the big file" in q for q, _ in pairs)
+
+    def test_session_title_tolerates_spill(self, tmp_path, monkeypatch):
+        import agent_cli.context.session as sess
+        from agent_cli.tools.context import _session_title
+
+        monkeypatch.setattr(sess, "_SESSIONS_BASE", tmp_path)
+        sd = tmp_path / "sessions" / "1700000002"
+        sd.mkdir(parents=True)
+        # Force the first user record to be a spill (dict content) so the
+        # defensive coercion in _session_title is exercised.
+        rec = {
+            "role": "user",
+            "tool": "read_file",
+            "content": {"spill": True, "output": ["GUIDE-TITLE", "c1"]},
+            "turn": 1,
+        }
+        (sd / "history.jsonl").write_text(json.dumps(rec, ensure_ascii=False) + "\n")
+        meta = sess.SessionMeta(
+            session_id="1700000002", workspace=str(tmp_path), updated_at="2026-06-18"
+        )
+        title = _session_title(meta)  # must not raise
+        assert isinstance(title, str)
+        assert "GUIDE-TITLE" in title
+
+    def test_delegate_extract_last_actions_tolerates_spill(self):
+        from agent_cli.tools.delegate import _extract_last_actions
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {"action": "shell", "action_input": {"command": "x"}}
+                ),
+            },
+            {
+                "role": "user",
+                "tool": "shell",
+                "content": {
+                    "spill": True,
+                    "output": ["guide", "ERROR something", "c2"],
+                },
+            },
+        ]
+        out = _extract_last_actions(messages)  # must not raise
+        assert isinstance(out, list)
+
+
 # ── web resume render ──────────────────────────────
 
 

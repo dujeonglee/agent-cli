@@ -12,7 +12,17 @@
 
 ## [Unreleased]
 
-## [3.9.1] - 2026-06-18
+## [3.9.2] - 2026-06-18
+
+### Fixed
+
+- **세션 요약/리스팅이 spill 레코드에서 크래시하던 버그 수리** (`AttributeError:
+  'dict' object has no attribute 'startswith'`). spill 레코드의 `content` 가 dict
+  인데, raw history 를 읽는 일부 소비자가 여전히 문자열로 가정했음:
+  `recent_exchanges`(resume 미리보기·`sessions` 목록 — 실제 크래시 지점),
+  `_session_title`(read_context 세션 목록), delegate `_extract_last_actions`(서브
+  에이전트 관찰 스크랩). 셋 다 `_spill_view` 로 guide 문자열을 보도록 수리. (이전
+  라운드에서 manager 소비자·web replay 는 처리했으나 이 세 경로를 놓쳤음.)
 
 ### Fixed
 
@@ -323,7 +333,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.2...HEAD
+[3.9.2]: https://github.com/dujeonglee/agent-cli/compare/v3.9.1...v3.9.2
 [3.9.1]: https://github.com/dujeonglee/agent-cli/compare/v3.9.0...v3.9.1
 [3.9.0]: https://github.com/dujeonglee/agent-cli/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/dujeonglee/agent-cli/compare/v3.7.1...v3.8.0

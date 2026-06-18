@@ -332,7 +332,11 @@ def _session_title(meta) -> str:
                 continue
             rec = json.loads(line)
             if rec.get("role") == "user":
-                txt = (rec.get("content") or "").strip().replace("\n", " ")
+                from agent_cli.context.manager import _spill_view
+
+                content = _spill_view(rec.get("content"))
+                txt = (content if isinstance(content, str) else "").strip()
+                txt = txt.replace("\n", " ")
                 return (txt[:60] + "…") if len(txt) > 60 else (txt or "(empty)")
     except Exception:
         pass

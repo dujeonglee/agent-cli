@@ -172,8 +172,14 @@ def recent_exchanges(history_path: Path, n: int = 10) -> list[tuple[str, str]]:
 
             role = msg.get("role")
             if role == "user":
-                content = msg.get("content", "")
-                if content.startswith("Observation:") or msg.get("tool"):
+                # Spill records store ``content`` as a dict — view it as the
+                # guide string (and they carry a ``tool``, so they're skipped).
+                from agent_cli.context.manager import _spill_view
+
+                content = _spill_view(msg.get("content", ""))
+                if not isinstance(content, str):
+                    content = ""
+                if msg.get("tool") or content.startswith("Observation:"):
                     continue
                 if any(content.startswith(p) for p in system_prefixes):
                     continue
