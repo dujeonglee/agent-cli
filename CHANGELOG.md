@@ -12,6 +12,20 @@
 
 ## [Unreleased]
 
+## [3.9.1] - 2026-06-18
+
+### Fixed
+
+- **spill 의 guide/청크가 긴 줄(1MB 단일-줄 파일)에서 윈도우를 초과하던 회귀 수리** —
+  v3.9.0 의 spill 은 head preview(30줄)와 청크를 **라인 기준**으로 잘라서, 줄바꿈이
+  거의 없는 출력(예: `read_file` hashline 으로 받은 1MB 단일 줄 파일)에서는 (a) guide
+  head 가 그 한 줄을 통째로 포함해 **guide 자체가 262K 토큰**(윈도우 초과)이 되고
+  (b) 청크 하나가 1MB(262K 토큰)가 되어, `tokens_after=0` 캐시 비움이 재발했음.
+  이제 **청크·guide head 모두 문자(char) 기준**: `_chunk_text_by_tokens` 는 ~50K
+  토큰(±200K자) 창에서 줄경계를 선호하되 **긴 줄은 하드분할**하고, guide head 는
+  `_SPILL_HEAD_TOKENS`(500)로 하드캡. 실측: 1MB 단일-줄 → spill 레코드 추정 599토큰
+  (이전 262K), 청크 6개 각 ≤50K, 무손실.
+
 ## [3.9.0] - 2026-06-18
 
 ### Fixed
@@ -309,7 +323,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.9.1...HEAD
+[3.9.1]: https://github.com/dujeonglee/agent-cli/compare/v3.9.0...v3.9.1
 [3.9.0]: https://github.com/dujeonglee/agent-cli/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/dujeonglee/agent-cli/compare/v3.7.1...v3.8.0
 [3.7.1]: https://github.com/dujeonglee/agent-cli/compare/v3.7.0...v3.7.1

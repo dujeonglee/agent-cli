@@ -33,6 +33,13 @@ def small_spill(monkeypatch):
     """Shrink the thresholds so modest strings trigger spill (fast tests)."""
     monkeypatch.setattr(M, "_SPILL_THRESHOLD_TOKENS", 50)
     monkeypatch.setattr(M, "_SPILL_CHUNK_TOKENS", 50)
+    monkeypatch.setattr(M, "_SPILL_HEAD_TOKENS", 20)
+
+
+def _long_line(chars: int = 8000) -> str:
+    """A single line with NO newlines — the shape that broke line-based head +
+    chunking (a 1MB hashline from reading a large single-line file)."""
+    return "X" * chars
 
 
 def _big_output(lines: int = 600) -> str:
@@ -105,6 +112,36 @@ class TestMaybeSpill:
     def test_non_string_content_unchanged(self, small_spill):
         already = _obs({"spill": True, "output": ["g", "c"]})
         assert _maybe_spill(already, 1) is already
+
+
+class TestSpillLongLines:
+    """Regression for the 1MB single-line file (read_file hashline): line-based
+    head + chunking left the guide AND a chunk at ~262K tokens (over window),
+    re-triggering the tokens_after=0 cache-emptying. Head and chunks must be
+    bounded by CHARACTERS, not lines."""
+
+    def test_giant_single_line_is_hard_split(self, small_spill):
+        full = _long_line(8000)
+        out = _maybe_spill(_obs(full), 1)
+        chunks = out["content"]["output"][1:]
+        assert len(chunks) > 1, "a giant single line must be split, not one chunk"
+        for ch in chunks:
+            assert estimate_tokens(ch) <= M._SPILL_CHUNK_TOKENS * 2  # bounded
+        assert "".join(chunks) == full  # no loss
+
+    def test_guide_bounded_for_long_first_line(self, small_spill):
+        full = _long_line(8000)
+        out = _maybe_spill(_obs(full), 1)
+        guide = out["content"]["output"][0]
+        # the guide head is capped by chars — guide stays tiny vs the content
+        assert estimate_tokens(guide) < estimate_tokens(full) // 2
+
+    def test_spilled_record_estimate_bounded_for_long_line(self, small_spill):
+        """The actual bug: a 1MB single-line read made the SPILL record
+        estimate to 262K (over the window). It must now be guide-sized."""
+        full = _long_line(8000)
+        spilled = _maybe_spill(_obs(full), 1)
+        assert _estimate_message_tokens(spilled) < estimate_tokens(full) // 2
 
 
 # ── token accounting ───────────────────────────────
@@ -227,9 +264,23 @@ class TestReadContextRetrieval:
         sessions = tmp_path / ".agent-cli" / "sessions"
         sdir = sessions / "1700000000"
         sdir.mkdir(parents=True)
-        spill = {
+        # A plain (non-spill) observation AND a spill record at the SAME turn —
+        # the mix that made json_extract error with "malformed JSON" when it
+        # ran over the plain row's string content.
+        plain = {
             "role": "user",
             "tool": "shell",
+            "success": True,
+            "content": "Observation: plain text, definitely not JSON {oops",
+            "kind": "observation",
+            "turn": 3,
+            "tools": "shell",
+            "files": "",
+            "text": "plain text",
+        }
+        spill = {
+            "role": "user",
+            "tool": "read_file",
             "success": True,
             "content": {
                 "spill": True,
@@ -237,14 +288,37 @@ class TestReadContextRetrieval:
             },
             "kind": "observation",
             "turn": 3,
-            "tools": "shell",
+            "tools": "read_file",
             "files": "",
             "text": "GUIDE: read_context turn=3",
         }
         (sdir / "history.jsonl").write_text(
-            json.dumps(spill, ensure_ascii=False) + "\n"
+            json.dumps(plain, ensure_ascii=False)
+            + "\n"
+            + json.dumps(spill, ensure_ascii=False)
+            + "\n"
         )
         return sdir
+
+    def test_json_extract_over_mixed_rows_does_not_error(self, tmp_path):
+        """The guide's query must work even when the turn has plain-string
+        (non-JSON) content rows alongside the spill row."""
+        from agent_cli.tools.context import tool_read_context
+
+        sdir = self._session(tmp_path)
+        res = tool_read_context(
+            {
+                "query": (
+                    "SELECT json_extract(content, '$.output[1]') FROM history "
+                    "WHERE turn=3 AND json_valid(content) "
+                    "AND json_extract(content,'$.spill')=1"
+                )
+            },
+            session_dir=sdir,
+        )
+        assert res.success, res.error
+        assert "malformed" not in (res.error or "").lower()
+        assert "CHUNK_ONE" in res.output
 
     def test_json_extract_returns_single_chunk(self, tmp_path):
         from agent_cli.tools.context import tool_read_context

@@ -197,17 +197,19 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
                         kind, tools, text = _classify_record(rec)
                         files = extract_file_paths([rec])
                         turn = rec.get("turn")
-                        # Raw content as a queryable column: dict/list content
-                        # (spill records: ``{"spill":true,"output":[...]}``) is
-                        # stored as JSON text so ``json_extract`` can pull one
-                        # chunk; plain string content passes through verbatim.
+                        # ``content`` column = the spill payload as JSON text
+                        # so ``json_extract(content,'$.output[N]')`` can pull a
+                        # chunk. NON-spill rows are stored as NULL (not the raw
+                        # string): json_extract on a plain string raises
+                        # "malformed JSON" and would abort a query that scans
+                        # mixed rows — json_extract(NULL) is safely NULL. Plain
+                        # content stays searchable/readable via the ``text``
+                        # column; ``content`` is the spill-retrieval surface.
                         content_raw = rec.get("content")
                         if isinstance(content_raw, (dict, list)):
                             content_cell = json.dumps(content_raw, ensure_ascii=False)
-                        elif isinstance(content_raw, str):
-                            content_cell = content_raw
                         else:
-                            content_cell = ""
+                            content_cell = None
                         rows.append(
                             (
                                 session_id,
@@ -385,8 +387,9 @@ class ReadContextTool(Tool):
         "author, text, content. Search by kind/tools/files/author/turn, read full "
         "content via the text column, list sessions via DISTINCT session. A large "
         "tool output is spilled: text holds a guide and content is JSON "
-        "{spill,output:[guide,chunk1,...]} — fetch one chunk with "
-        "json_extract(content,'$.output[N]') WHERE turn=T. Omit the query to see "
+        "{spill,output:[guide,chunk1,...]} (NULL for non-spill rows) — fetch one "
+        "chunk with json_extract(content,'$.output[N]') WHERE turn=T AND "
+        "json_valid(content) AND json_extract(content,'$.spill')=1. Omit the query to see "
         "the schema + examples + session list. Default scope = current session; "
         "read_context_sessions='all'/id(s) for others."
     )

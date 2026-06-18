@@ -61,6 +61,12 @@ _COMPACTION_JSON_VERSION = 1
 _SPILL_THRESHOLD_TOKENS = 50_000
 _SPILL_CHUNK_TOKENS = 50_000
 _SPILL_HEAD_LINES = 30  # lines of the raw output previewed in the guide
+_SPILL_HEAD_TOKENS = 500  # but the head preview is hard-capped to this many
+# ``estimate_tokens`` is ~chars/4; chunking/head caps work in CHARS so a single
+# very long line (e.g. a 1MB read_file hashline, no newlines) can't produce an
+# over-window chunk or guide. Slightly conservative is fine — the goal is only
+# "well under the window", not exact token counts.
+_CHARS_PER_TOKEN = 4
 
 
 def compute_token_budget(context_window: int, max_output_tokens: int) -> int:
@@ -875,24 +881,25 @@ def _spill_view(content):
 
 
 def _chunk_text_by_tokens(text: str, chunk_tokens: int) -> list[str]:
-    """Split ``text`` into chunks of ~``chunk_tokens`` each, on line
-    boundaries (so a chunk is coherent). Concatenating the chunks
-    reproduces the input exactly (no loss). A single line larger than the
-    budget becomes its own (over-budget) chunk rather than being split
-    mid-line — rare for the dumps this targets."""
-    lines = text.splitlines(keepends=True)
+    """Split ``text`` into chunks each ≲ ``chunk_tokens``, by CHARACTER count
+    (≈ chunk_tokens × chars/token), preferring a line boundary in the back
+    half of the window but HARD-splitting when a line is longer than the
+    budget. This is the fix for very-long / newline-free content (a 1MB
+    read_file hashline) which line-based chunking left as one over-window
+    chunk. Concatenating the chunks reproduces the input exactly (no loss)."""
+    chunk_chars = max(1, chunk_tokens * _CHARS_PER_TOKEN)
     chunks: list[str] = []
-    cur: list[str] = []
-    cur_tokens = 0
-    for line in lines:
-        t = estimate_tokens(line)
-        if cur and cur_tokens + t > chunk_tokens:
-            chunks.append("".join(cur))
-            cur, cur_tokens = [], 0
-        cur.append(line)
-        cur_tokens += t
-    if cur:
-        chunks.append("".join(cur))
+    i, n = 0, len(text)
+    while i < n:
+        end = min(i + chunk_chars, n)
+        if end < n:
+            # Prefer to break at the last newline in the back half of the
+            # window so chunks stay line-coherent when lines are reasonable.
+            nl = text.rfind("\n", i + chunk_chars // 2, end)
+            if nl != -1:
+                end = nl + 1
+        chunks.append(text[i:end])
+        i = end
     return chunks or [text]
 
 
@@ -903,6 +910,12 @@ def _build_spill_guide(
     read_context. This is the ONLY part of an oversized output that enters
     the context."""
     head = "\n".join(text.splitlines()[:_SPILL_HEAD_LINES])
+    # Hard-cap by chars too: a single very long line (1MB hashline) would
+    # otherwise make the "head" — and thus the guide that enters context —
+    # as large as the content. The guide must stay tiny regardless.
+    head_cap = _SPILL_HEAD_TOKENS * _CHARS_PER_TOKEN
+    if len(head) > head_cap:
+        head = head[:head_cap] + "\n…(head truncated)"
     return (
         f"[Large output stored ({total_tokens:,} tokens, {n_chunks} chunk(s) of "
         f"~{_SPILL_CHUNK_TOKENS // 1000}K). tool={tool or '?'}, turn={turn}.\n\n"
@@ -910,7 +923,8 @@ def _build_spill_guide(
         f"The full output is preserved — pull only the chunk(s) you need with "
         f"read_context:\n"
         f"  SELECT json_extract(content, '$.output[N]') FROM history "
-        f"WHERE turn={turn} AND json_extract(content,'$.spill')=1   (N = 1..{n_chunks})\n"
+        f"WHERE turn={turn} AND json_valid(content) "
+        f"AND json_extract(content,'$.spill')=1   (N = 1..{n_chunks})\n"
         f"Or narrow the query/command if you don't need it all.]"
     )
 

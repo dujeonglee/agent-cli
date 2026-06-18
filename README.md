@@ -699,7 +699,7 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 **과대 출력 spill 회수:** 도구 출력이 50K 토큰을 넘으면(예: 레포 전체 `find`, 전 심볼 `code_index` 덤프) 컨텍스트엔 head + 회수법을 담은 **guide 만** 들어가고, 전체는 history 에 **무손실 청크**로 보존됩니다. 필요한 청크만 `json_extract` 로 가져옵니다 — guide 가 정확한 쿼리를 알려줍니다:
 ```json
-{"action": "read_context", "action_input": {"query": "SELECT json_extract(content,'$.output[2]') FROM history WHERE turn=14 AND json_extract(content,'$.spill')=1"}}
+{"action": "read_context", "action_input": {"query": "SELECT json_extract(content,'$.output[2]') FROM history WHERE turn=14 AND json_valid(content) AND json_extract(content,'$.spill')=1"}}
 ```
 
 ```json
