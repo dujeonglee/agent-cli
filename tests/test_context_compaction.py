@@ -1220,10 +1220,7 @@ class TestEstimateMessageTokensOps:
             "role": "assistant",
             "thought": "short",
             "ops": [
-                # read_file does NOT elide → its arg is counted; complete result
-                # is counted too. (write_file/edit_file bodies ARE elided on the
-                # estimate now — see test_action_input_context_view.py.)
-                {"action": "read_file", "action_input": {"path": "f", "extra": big}},
+                {"action": "write_file", "action_input": {"path": "f", "content": big}},
                 {"action": "complete", "action_input": {"result": big}},
             ],
         }
@@ -1241,7 +1238,7 @@ class TestEstimateMessageTokensOps:
         rec = {
             "role": "assistant",
             "thought": "t",
-            "action": "complete",  # non-eliding → legacy single-op still counted
-            "action_input": {"result": big},
+            "action": "write_file",
+            "action_input": {"path": "f", "content": big},
         }
         assert _estimate_message_tokens(rec) >= estimate_tokens(big)

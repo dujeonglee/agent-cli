@@ -12,6 +12,20 @@
 
 ## [Unreleased]
 
+## [3.16.1] - 2026-06-19
+
+### Fixed
+
+- **write/edit action_input 본문 elide revert (마커 mimicry → 파일 손상)** —
+  v3.16.0 의 write_file/edit_file `render_action_input_for_context` override 를
+  제거. 재공급분에서 자기 write 가 `<…elided…>` 마커로 보이자 **모델이 그 마커를
+  파일 본문으로 모방(mimicry)** 해 write_file 이 100B 마커를 디스크에 저장(실측:
+  avltree.h/redblacktree.h 가 마커로 손상; 모델은 `shell` heredoc 으로 우회해
+  겨우 복구). 본문은 다시 재공급 시 verbatim. **교훈**: 모델 자신의 출력(action)을
+  가짜로 재공급하면 모방 위험 — 관찰(도구 결과) nudge 는 안전하나 action elide 는
+  아님. `render_action_input_for_context` seam·`_context_view` 는 **identity 기본
+  으로 유지**(미래용 latent, 동작 무영향). action_input bloat 는 미해결로 둠.
+
 ## [3.16.0] - 2026-06-19
 
 ### Changed
@@ -459,7 +473,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.16.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.16.1...HEAD
+[3.16.1]: https://github.com/dujeonglee/agent-cli/compare/v3.16.0...v3.16.1
 [3.16.0]: https://github.com/dujeonglee/agent-cli/compare/v3.15.0...v3.16.0
 [3.15.0]: https://github.com/dujeonglee/agent-cli/compare/v3.14.0...v3.15.0
 [3.14.0]: https://github.com/dujeonglee/agent-cli/compare/v3.13.0...v3.14.0
