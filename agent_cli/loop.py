@@ -145,6 +145,17 @@ class AgentLoop:
         self.task_log: list[str] = []
         self.provider = provider
         self.capabilities = capabilities
+        # Oversized-observation cap: a single tool observation larger than
+        # this many tokens is replaced (at the result→observation seam) with
+        # a narrow-it nudge instead of crowding out the context. context_window
+        # / 10 — large outputs degrade response quality, so we steer the model
+        # to fetch narrower instead of dumping. 0 = disabled (headless/test
+        # paths with no capabilities). Per-tool opt-out via Tool.apply_oversized_cap.
+        self._oversized_cap = (
+            capabilities.context_window // 10
+            if capabilities and getattr(capabilities, "context_window", 0)
+            else 0
+        )
         self.model = model
         self.provider_name = provider_name
         self.base_url = base_url
@@ -1121,7 +1132,7 @@ class AgentLoop:
             TOOLS["delegate"].strip_prefix(op.action_input or {}) for op in batch_ops
         ]
         result = self._dispatch_tool_with_hooks("delegate", {"tasks": specs})
-        observation = result.output if result.success else result.error
+        observation = self._tool_observation("delegate", result, {"tasks": specs})
         # Rendered from storage by _flush_op_results' _append_observation
         # (combined card), matching ctx + resume — no separate pre-render.
         accumulate.append(
@@ -1505,9 +1516,7 @@ class AgentLoop:
             # uses self.* for provider/ctx/hooks/etc.)
             tool_result = self._dispatch_tool_with_hooks(tool_name, tool_input)
 
-            observation = (
-                tool_result.output if tool_result.success else tool_result.error
-            )
+            observation = self._tool_observation(tool_name, tool_result, tool_input)
             if truncation_warning:
                 observation = f"{observation}\n{truncation_warning}"
 
@@ -1515,7 +1524,8 @@ class AgentLoop:
             # combined observation instead of appending one here. The render
             # happens once, from storage, in _append_observation (single-op
             # below, or _flush_op_results for the combined) — so the live card
-            # matches ctx + resume and shows the spill guide for huge output.
+            # matches ctx + resume. Oversized bodies are already nudge-capped
+            # by _tool_observation above.
             if accumulate is not None:
                 accumulate.append(
                     {
@@ -1845,6 +1855,29 @@ class AgentLoop:
                 hooks_config=self.hooks_config,
                 tool_result=_obs,
             )
+
+    # ── result → observation seam (per-tool render + oversized cap) ──
+    def _tool_observation(self, tool_name: str, result: ToolResult, args) -> str:
+        """Turn a tool's ToolResult into the observation body that enters
+        context. Two per-tool surfaces meet here: ``render_observation``
+        (how this tool formats its result — default output/error) and
+        ``apply_oversized_cap`` (whether the cap applies — default True).
+        An over-cap body is replaced with a narrow-it nudge. Tools not in the
+        registry (none today) fall back to the default render + cap on."""
+        tool = TOOLS.get(tool_name)
+        if tool is not None:
+            body = tool.render_observation(
+                result, args if isinstance(args, dict) else {}
+            )
+            cap_on = tool.apply_oversized_cap
+        else:
+            body = result.output if result.success else result.error
+            cap_on = True
+        if cap_on and self._oversized_cap:
+            tokens = estimate_tokens(body)
+            if tokens > self._oversized_cap:
+                return _render_oversized_nudge(tool_name, tokens, self._oversized_cap)
+        return body
 
     # ── 5. recent_tool_history append ──────────────────────────────
     def _record_tool_history(
@@ -2450,6 +2483,22 @@ def _normalize_input(tool_input) -> str:
     return str(tool_input)
 
 
+def _render_oversized_nudge(tool_name: str, tokens: int, cap: int) -> str:
+    """The observation body substituted for an over-cap tool output. The full
+    output is NOT added to context — oversized tool output crowds out reasoning
+    and lowers quality — so we steer the model to re-request a narrower slice.
+    Generic for now (tunable per-tool later via ``Tool.render_observation``)."""
+    return (
+        f"[{tool_name or 'tool'}: output too large — ~{tokens:,} tokens "
+        f"> cap {cap:,} (context_window/10). NOT added to context; the call "
+        f"itself succeeded. Large outputs crowd out reasoning and lower quality. "
+        f"Re-request a narrower slice: read a specific line range or symbols, add "
+        f"a LIMIT / tighter filter, or pipe through `head`/`grep`. To keep a full "
+        f"large result, write it to a file (e.g. `… | tee /tmp/out.txt`) then read "
+        f"specific parts with read_file.]"
+    )
+
+
 def _append_observation(
     messages: list[dict],
     ctx,
@@ -2521,14 +2570,12 @@ def _append_observation(
         if isinstance(stored, dict):
             stored_content = stored.get("content", obs_msg)
 
-    # Single render point for observations: render what was STORED (spill
-    # guide when the output was spilled) so the live web/CLI card matches ctx
-    # and resume. ``render=False`` for recovery paths, which already surface
-    # the intervention via ``render_recovery`` (no double-render).
+    # Single render point for observations: render what was STORED so the live
+    # web/CLI card matches ctx and resume. ``render=False`` for recovery paths,
+    # which already surface the intervention via ``render_recovery`` (no
+    # double-render).
     if render:
-        from agent_cli.context.manager import _spill_view
-
-        display = _spill_view(stored_content)
+        display = stored_content
         if isinstance(display, str) and display.startswith("Observation: "):
             display = display[len("Observation: ") :]
         render_step("observation", display, turn, tool_name=tool_name, success=success)

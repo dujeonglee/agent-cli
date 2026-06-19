@@ -57,6 +57,14 @@ class Tool(ABC):
     #: concurrency is both safe and worth the wall-clock win).
     parallel_safe: bool = False
 
+    #: Whether the oversized-observation cap applies to THIS tool's
+    #: observation. Default True → the cap (context_window/10) is enforced
+    #: consistently for every tool: an observation over the cap is replaced
+    #: with a narrow-it nudge instead of crowding out the context. A tool
+    #: whose large output is genuinely essential can opt out by setting
+    #: this False. The loop reads it at the result→observation seam.
+    apply_oversized_cap: bool = True
+
     @property
     def key_prefix(self) -> str:
         """Wire-key namespace for this tool: ``{name}_``."""
@@ -99,6 +107,19 @@ class Tool(ABC):
         if not isinstance(action_input, dict):
             return False
         return any(k.startswith(self.key_prefix) for k in action_input)
+
+    def render_observation(self, result: ToolResult, args: dict) -> str:
+        """Render this tool's result into the observation body that enters
+        the context + the LLM (the text after ``Observation: ``).
+
+        Default reproduces the historical behaviour: the output on success,
+        the error on failure. This is the single per-tool seam for "what this
+        tool contributes to context" — override to customise (e.g. a tool that
+        echoes a large artifact can trim it here, keeping its confirmation but
+        pointing back to the file/refs instead of dumping the whole thing).
+        ``args`` are the standard (prefix-stripped) action_input keys.
+        """
+        return result.output if result.success else result.error
 
     def run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
         """Public dispatch: strip the tool-name prefix from ``action_input``

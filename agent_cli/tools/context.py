@@ -36,8 +36,6 @@ from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 _SESSIONS_BASE = Path(".agent-cli") / "sessions"
-_MAX_ROWS = 50  # result cap
-_CELL_CAP = 200  # per-cell preview cap
 
 # read_context is a CORE tool (always registered), so this module must import
 # even where SQLite is unavailable. Some locked-down / custom CPython builds
@@ -69,7 +67,6 @@ _COLUMNS = (
     "files",
     "author",
     "text",
-    "content",
 )
 
 
@@ -197,19 +194,6 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
                         kind, tools, text = _classify_record(rec)
                         files = extract_file_paths([rec])
                         turn = rec.get("turn")
-                        # ``content`` column = the spill payload as JSON text
-                        # so ``json_extract(content,'$.output[N]')`` can pull a
-                        # chunk. NON-spill rows are stored as NULL (not the raw
-                        # string): json_extract on a plain string raises
-                        # "malformed JSON" and would abort a query that scans
-                        # mixed rows — json_extract(NULL) is safely NULL. Plain
-                        # content stays searchable/readable via the ``text``
-                        # column; ``content`` is the spill-retrieval surface.
-                        content_raw = rec.get("content")
-                        if isinstance(content_raw, (dict, list)):
-                            content_cell = json.dumps(content_raw, ensure_ascii=False)
-                        else:
-                            content_cell = None
                         rows.append(
                             (
                                 session_id,
@@ -222,7 +206,6 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
                                 " ".join(files),
                                 rec.get("author"),
                                 text,
-                                content_cell,
                             )
                         )
             except OSError:
@@ -287,28 +270,26 @@ def _run_sql(conn, query: str) -> ToolResult:
             msg = "query is not read-only (only SELECT/READ allowed)"
         return ToolResult(False, error=f"SQL error: {msg}")
     col_names = [d[0] for d in cur.description] if cur.description else []
-    fetched = cur.fetchmany(_MAX_ROWS + 1)
-    truncated = len(fetched) > _MAX_ROWS
-    return _format_rows(col_names, fetched[:_MAX_ROWS], truncated)
+    fetched = cur.fetchall()
+    return _format_rows(col_names, fetched)
 
 
 # ── Result rendering ──────────────────────────────────────────────
 
 
 def _cell(value: Any) -> str:
-    s = "" if value is None else str(value)
-    s = " ".join(s.split())
-    return (s[: _CELL_CAP - 1] + "…") if len(s) > _CELL_CAP else s
+    """Render one cell value VERBATIM (no truncation, no whitespace collapse).
+    read_context returns faithful content; an oversized result is caught by the
+    loop's oversized-observation cap (a narrow-it nudge), not silently mangled
+    here. The model is expected to project/limit large queries (e.g.
+    ``SELECT loc, substr(text,1,200) … LIMIT 30`` for a scan)."""
+    return "" if value is None else str(value)
 
 
-def _format_rows(
-    col_names: list[str], rows: list[tuple], truncated: bool
-) -> ToolResult:
+def _format_rows(col_names: list[str], rows: list[tuple]) -> ToolResult:
     if not rows:
         return ToolResult(True, output="No rows.")
     header = f"{len(rows)} row(s)"
-    if truncated:
-        header += f" (capped at {_MAX_ROWS}; add LIMIT/refine the query)"
     header += f"\ncolumns: {', '.join(col_names)}"
     lines = [header, ""]
     for i, row in enumerate(rows, 1):
@@ -332,9 +313,7 @@ def _session_title(meta) -> str:
                 continue
             rec = json.loads(line)
             if rec.get("role") == "user":
-                from agent_cli.context.manager import _spill_view
-
-                content = _spill_view(rec.get("content"))
+                content = rec.get("content")
                 txt = (content if isinstance(content, str) else "").strip()
                 txt = txt.replace("\n", " ")
                 return (txt[:60] + "…") if len(txt) > 60 else (txt or "(empty)")
@@ -344,11 +323,12 @@ def _session_title(meta) -> str:
 
 
 _HELP_EXAMPLES = (
-    "SELECT loc, turn, text FROM history WHERE kind='observation' "
-    "AND files LIKE '%auth.py%'",
+    # scan first (project a substr preview so many rows stay small)…
+    "SELECT loc, turn, substr(text,1,200) FROM history WHERE kind='observation' "
+    "AND files LIKE '%auth.py%' LIMIT 30",
+    # …then fetch the full content of the one row you want
+    "SELECT text FROM history WHERE loc='<session>/<file>:<line>'",
     "SELECT text FROM history WHERE author='Alice' AND kind='query'",
-    "SELECT loc, text FROM history WHERE tools LIKE '%shell%' AND turn>=5 "
-    "ORDER BY turn LIMIT 20",
     "SELECT DISTINCT session FROM history",
 )
 
@@ -388,14 +368,14 @@ class ReadContextTool(Tool):
         "Query past/current session history with SQL. read_context_query='SELECT "
         "… FROM history WHERE …' (read-only). Columns: session, loc, seq, kind"
         "(query/action/observation/final/raw/system), turn, ts, tools, files, "
-        "author, text, content. Search by kind/tools/files/author/turn, read full "
-        "content via the text column, list sessions via DISTINCT session. A large "
-        "tool output is spilled: text holds a guide and content is JSON "
-        "{spill,output:[guide,chunk1,...]} (NULL for non-spill rows) — fetch one "
-        "chunk with json_extract(content,'$.output[N]') WHERE turn=T AND "
-        "json_valid(content) AND json_extract(content,'$.spill')=1. Omit the query to see "
-        "the schema + examples + session list. Default scope = current session; "
-        "read_context_sessions='all'/id(s) for others."
+        "author, text. Search by kind/tools/files/author/turn; the text column "
+        "holds the full content of each record. Rows are returned VERBATIM (no "
+        "truncation) — keep a result small by projecting/limiting: e.g. "
+        "SELECT loc, substr(text,1,200) FROM history WHERE … LIMIT 30 to scan, "
+        "then SELECT text … for the one row you want. An oversized result is "
+        "rejected with a narrow-it nudge rather than dumped. Omit the query to "
+        "see the schema + examples + session list. Default scope = current "
+        "session; read_context_sessions='all'/id(s) for others."
     )
     parameters = {
         "type": "object",

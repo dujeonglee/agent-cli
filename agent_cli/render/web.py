@@ -474,12 +474,8 @@ class WebRenderer(Renderer):
                 # route through ``observation()``.
                 if "tool" in msg:
                     content = msg.get("content", "")
-                    # Spilled oversized output: the record stores
-                    # ``{"spill": True, "output": [guide, chunk1, ...]}`` — the
-                    # card shows only the guide (output[0]), never the chunks.
-                    if isinstance(content, dict) and content.get("spill"):
-                        out = content.get("output") or [""]
-                        content = out[0] if out else ""
+                    if not isinstance(content, str):
+                        content = ""
                     # ``_append_observation`` prefixes ``obs_msg`` with
                     # ``"Observation: "`` for the LLM-facing slot. The
                     # web frontend's observation card already labels

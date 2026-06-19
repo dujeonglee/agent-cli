@@ -12,6 +12,37 @@
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-06-19
+
+### Changed
+
+- **과대 도구 출력: 청크-spill → 거절+nudge (단순화)** — 도구 관찰(observation)이
+  **컨텍스트 윈도우의 1/10**(`loop._oversized_cap`)을 넘으면, 이전엔 무손실 청크로
+  history 에 보관하고 read_context `json_extract` 로 회수했었음. 이제 전체 출력을
+  **어디에도 넣지 않고 "좁히라"는 nudge**(`_render_oversized_nudge`)로 거절합니다 —
+  호출 자체는 성공. 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리므로, 모델을
+  라인범위/심볼/`LIMIT`/`grep`/`tee→read_file` 같은 surgical 회수로 자연스럽게
+  유도합니다(전체가 꼭 필요하면 파일로 빼서 부분 조회). spill 의 보관-회수 기계
+  (`_maybe_spill`/`_spill_view`/`_chunk_text_by_tokens`/`_build_spill_guide`,
+  `content={"spill":...}` 레코드, read_context json_extract 회수)를 전부 제거 →
+  `ctx.add` 는 순수 저장. 사용자/어시스턴트 메시지는 캡 대상 아님(의도적 입력·
+  모델 자신의 출력).
+
+- **read_context 결과 VERBATIM 반환 (트렁케이트 버그 수정)** — `_cell` 이 모든
+  셀을 200자로 절단하고 `" ".join(s.split())` 로 개행·공백을 뭉개던 동작을 제거.
+  이 때문에 spill 청크를 `json_extract` 로 회수해도 컨텍스트엔 200자로 잘리고
+  개행이 파괴된 조각만 들어가던 버그가 있었음. 50행 cap(`_MAX_ROWS`)도 제거 —
+  결과 크기는 위의 과대 출력 캡이 관장하고, 모델은 `LIMIT`/`substr` projection 으로
+  작게 유지(스캔→전체 fetch 패턴). spill 전용 `content` 컬럼도 제거.
+
+### Added
+
+- **도구별 추상화 표면 2개 (`Tool`)** — `Tool.render_observation(result, args)`
+  (도구 결과 → 관찰 본문 렌더, 기본=성공 `output`·실패 `error`)와
+  `Tool.apply_oversized_cap: bool = True`(과대 출력 캡 적용 여부, 도구별 opt-out).
+  loop `_tool_observation` 이 결과→관찰 seam 에서 둘 다 consult. 향후 write/edit
+  echo 트림 등 도구별 튜닝의 진입점(현재 기본 구현은 종전 동작과 동일).
+
 ## [3.13.0] - 2026-06-19
 
 ### Added
@@ -395,7 +426,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.13.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.14.0...HEAD
+[3.14.0]: https://github.com/dujeonglee/agent-cli/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/dujeonglee/agent-cli/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/dujeonglee/agent-cli/compare/v3.11.0...v3.12.0
 [3.11.0]: https://github.com/dujeonglee/agent-cli/compare/v3.10.0...v3.11.0

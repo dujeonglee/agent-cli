@@ -204,9 +204,7 @@ def _extract_last_actions(messages: list[dict]) -> list[str]:
     for msg_idx, it, summary in last_n:
         obs_hint = ""
         if msg_idx + 1 < len(messages) and messages[msg_idx + 1].get("role") == "user":
-            from agent_cli.context.manager import _spill_view
-
-            obs = _spill_view(messages[msg_idx + 1]["content"])
+            obs = messages[msg_idx + 1].get("content", "")
             if not isinstance(obs, str):
                 obs = ""
             for line in obs.split("\n")[:5]:

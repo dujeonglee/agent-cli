@@ -742,10 +742,11 @@ class TestActionRenderShowsRawEmission:
 
 
 class TestObservationRenderFromStored:
-    """Observations are rendered from what was STORED (spill-aware), through
-    the single ``_append_observation`` render point — so the live web/CLI card
-    matches ctx + resume. A huge tool output shows the spill guide, never the
-    raw dump; recovery paths (already rendered via ``render_recovery``) are not
+    """Observations are rendered from what was STORED, through the single
+    ``_append_observation`` render point — so the live web/CLI card matches ctx
+    + resume. A huge tool output is replaced with a narrow-it nudge (the
+    oversized-observation cap = context_window/10), never the raw dump;
+    recovery paths (already rendered via ``render_recovery``) are not
     double-rendered."""
 
     def _capture(self, monkeypatch):
@@ -761,16 +762,14 @@ class TestObservationRenderFromStored:
         monkeypatch.setattr("agent_cli.loop.render_step", fake)
         return recorded
 
-    def test_huge_tool_output_renders_as_guide_not_raw(
+    def test_huge_tool_output_renders_as_nudge_not_raw(
         self, caps, monkeypatch, tmp_path
     ):
-        from agent_cli.context import manager as M
         from agent_cli.context.manager import ContextManager
         from agent_cli.wire_formats import get
 
-        monkeypatch.setattr(M, "_SPILL_THRESHOLD_TOKENS", 50)
-        monkeypatch.setattr(M, "_SPILL_CHUNK_TOKENS", 50)
-
+        # caps.context_window=32768 → cap≈3276 tokens. This file's read output
+        # (1500 hashline rows) is well over that, so it must be nudged.
         big = tmp_path / "big.txt"
         big.write_text("\n".join(f"/p/file_{i:04}.py MARKER" for i in range(1500)))
         recorded = self._capture(monkeypatch)
@@ -798,8 +797,8 @@ class TestObservationRenderFromStored:
         )
         obs = [r["content"] for r in recorded if r["type"] == "observation"]
         assert obs, "no observation rendered"
-        # the rendered card is the spill guide, not the raw multi-chunk dump
-        assert any("read_context" in (o or "") for o in obs)
+        # the rendered card is the narrow-it nudge, not the raw dump
+        assert any("too large" in (o or "") for o in obs)
         assert all("/p/file_0750.py" not in (o or "") for o in obs)
 
     def test_recovery_observation_not_double_rendered(
@@ -3731,31 +3730,33 @@ class TestBuildReviewObservationWithCtx:
 
 
 class TestNoOutputTruncation:
-    """Verify tool output is passed to LLM without truncation."""
+    """Verify tool output WITHIN the oversized cap is passed to the LLM
+    verbatim — no silent truncation along the pipeline. (Output OVER the cap
+    is replaced with a narrow-it nudge — see TestObservationRenderFromStored /
+    test_oversized_observation.py.)"""
 
-    def test_large_file_not_truncated(self, caps, tmp_path):
-        """A large file requested via an explicit whole-file line range
-        is returned in full, not truncated. (Bare read_file(path) now
-        returns the full file too — the full-read guard was removed. This
-        test pins the separate invariant that an explicit whole-file line
-        range returns in full without truncation along the pipeline.)"""
-        large_content = "\n".join(f"line {i}: {'x' * 100}" for i in range(500))
-        test_file = tmp_path / "large.txt"
+    def test_whole_file_under_cap_not_truncated(self, caps, tmp_path):
+        """A whole-file line range whose output is under the cap
+        (caps.context_window/10 ≈ 3.3K tok) is returned in full, not
+        truncated — the no-silent-truncation invariant for normal reads."""
+        # ~100 modest lines → well under the ~3.3K-token cap for a 32K window.
+        large_content = "\n".join(f"line {i}: {'x' * 50}" for i in range(100))
+        test_file = tmp_path / "file.txt"
         test_file.write_text(large_content)
 
         provider = _make_provider(
             json.dumps(
                 {
-                    "thought": "read large file",
+                    "thought": "read file",
                     "action": "read_file",
                     "action_input": {
                         "path": str(test_file),
                         "line_start": 1,
-                        "line_end": 500,
+                        "line_end": 100,
                     },
                 }
             ),
-            _complete("Read 500 lines"),
+            _complete("Read 100 lines"),
         )
         from agent_cli.context.manager import ContextManager
 
@@ -3767,12 +3768,13 @@ class TestNoOutputTruncation:
             model="test",
             ctx=ctx,
         )
-        # Verify the observation contains all 500 lines (hashline format: "500#xx:")
+        # Verify the observation contains all 100 lines (hashline format: "100#xx:")
         messages = ctx.get_messages()
         all_content = " ".join(m.get("content", "") for m in messages)
-        assert "500#" in all_content, "Last line (500) should be in context"
-        # Verify no truncation notice
+        assert "100#" in all_content, "Last line (100) should be in context"
+        # Verify no truncation notice and no oversized nudge (under cap)
         assert "[... truncated" not in all_content
+        assert "too large" not in all_content
 
 
 # Verified live against an omlx server (Qwen3.6-27B-MLX-8bit, 2026-05-30).

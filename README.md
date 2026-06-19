@@ -696,19 +696,16 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 이전 또는 현재 세션의 이력을 **SQL 로 질의**합니다. LLM이 context window 밖으로 evict/compaction된 정보가 필요할 때 자발적으로 사용합니다. history.jsonl 이 인메모리 `history` 테이블로 적재되고, LLM이 `SELECT` 를 작성합니다(읽기전용).
 
-테이블 `history` (레코드 1개 = 1행): `session`, `loc`, `seq`, `kind`(query/action/observation/final/raw/system), `turn`, `ts`, `tools`(툴명), `files`(조작 파일 경로), `author`(닉네임), `text`(검색·내용 표면), `content`(원본 — spill 레코드는 JSON).
+테이블 `history` (레코드 1개 = 1행): `session`, `loc`, `seq`, `kind`(query/action/observation/final/raw/system), `turn`, `ts`, `tools`(툴명), `files`(조작 파일 경로), `author`(닉네임), `text`(각 레코드의 전체 내용).
 
-**과대 출력 spill 회수:** 도구 출력이 50K 토큰을 넘으면(예: 레포 전체 `find`, 전 심볼 `code_index` 덤프) 컨텍스트엔 head + 회수법을 담은 **guide 만** 들어가고, 전체는 history 에 **무손실 청크**로 보존됩니다. 필요한 청크만 `json_extract` 로 가져옵니다 — guide 가 정확한 쿼리를 알려줍니다:
-```json
-{"action": "read_context", "action_input": {"query": "SELECT json_extract(content,'$.output[2]') FROM history WHERE turn=14 AND json_valid(content) AND json_extract(content,'$.spill')=1"}}
-```
+**결과는 잘림 없이 그대로 반환됩니다** (이전의 200자 셀 절단·공백 collapse 제거). 결과를 작게 유지하려면 직접 projection/limit 하세요 — 먼저 미리보기로 훑고(`SELECT loc, substr(text,1,200) … LIMIT 30`), 원하는 한 행만 전체(`SELECT text …`)를 가져옵니다. 과대한 결과는 통째 덤프되지 않고 **"좁히라"는 nudge 로 거절**됩니다(아래 과대 출력 캡 참조).
 
 ```json
 // 스키마 + 예시 + 세션 목록 보기 (query 생략)
 {"action": "read_context", "action_input": {}}
 
-// auth.py 를 건드린 관측만
-{"action": "read_context", "action_input": {"query": "SELECT loc, turn, text FROM history WHERE kind='observation' AND files LIKE '%auth.py%'"}}
+// auth.py 를 건드린 관측만 — 먼저 미리보기로 훑기
+{"action": "read_context", "action_input": {"query": "SELECT loc, turn, substr(text,1,200) FROM history WHERE kind='observation' AND files LIKE '%auth.py%' LIMIT 30"}}
 
 // 특정 사용자(웹 멀티유저)의 질문만
 {"action": "read_context", "action_input": {"query": "SELECT text FROM history WHERE kind='query' AND author='두정'"}}
@@ -720,9 +717,14 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 {"action": "read_context", "action_input": {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}}
 ```
 
-**읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부), 결과 최대 50행(필요시 `LIMIT`/조건으로 좁히기). `sessions` 미지정 시 현재 세션(delegate/skill subdir 포함).
+**읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부). 행/셀 수 캡은 없습니다 — 결과를 작게 유지하는 건 모델 몫(`LIMIT`/`substr`/조건). `sessions` 미지정 시 현재 세션(delegate/skill subdir 포함).
 
-**fetch는 search와 정반대로 cap 없음** — 모델이 의도적으로 부른 회상이라 multi-line/대용량 observation도 그대로 반환. 다중 loc는 all-or-nothing (하나라도 잘못되면 전체 실패).
+### 과대 출력 캡 (oversized observation)
+
+도구 관찰(observation)이 **컨텍스트 윈도우의 1/10** 을 넘으면, 그 전체 출력은 컨텍스트에 들어가지 않고 **"좁혀서 다시 받아라"는 nudge 로 대체**됩니다(도구 호출 자체는 성공). 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리기 때문에, 모델을 라인범위/심볼/`LIMIT`/`grep` 같은 surgical 회수로 자연스럽게 유도합니다. 전체가 꼭 필요하면 파일로 빼서(`… | tee /tmp/out.txt`) 부분만 `read_file` 하면 됩니다.
+
+- **도구별 제어 (`Tool` 추상화 표면)**: `Tool.render_observation(result, args)` 가 도구의 결과 → 관찰 본문 렌더(기본=성공 시 output, 실패 시 error). `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 도구별로 끌 수 있습니다. 모든 빌트인은 기본값을 따라 일관 적용.
+- 사용자/어시스턴트 메시지는 캡 대상이 아닙니다(사람의 의도적 입력·모델 자신의 출력이라 거절/절단하지 않음).
 
 ### code_index — SQLite 코드 인덱스
 

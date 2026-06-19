@@ -1255,7 +1255,11 @@ class TestReadContextTool:
         assert result.success
         assert "sub line" in result.output and "delegate-1" in result.output
 
-    def test_row_cap(self, tmp_path, monkeypatch):
+    def test_no_row_cap_returns_all_rows(self, tmp_path, monkeypatch):
+        """The old 50-row cap is gone — read_context returns ALL matching rows
+        verbatim. Result size is governed by the loop's oversized-observation
+        cap (a narrow-it nudge), not a silent row/cell truncation. The model
+        keeps results small via LIMIT/substr projection."""
         base = self._patch_base(monkeypatch, tmp_path)
         import json as _json
 
@@ -1269,7 +1273,9 @@ class TestReadContextTool:
             {"query": "SELECT text FROM history"}, session_dir=cur
         )
         assert result.success
-        assert "capped at 50" in result.output
+        assert "80 row(s)" in result.output
+        assert "line 79" in result.output  # all rows present, none capped
+        assert "capped at" not in result.output
 
     def test_no_rows_message(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
