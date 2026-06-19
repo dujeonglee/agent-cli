@@ -543,3 +543,101 @@ class TestDetectionWiresStructuredFlags:
         assert caps.supports_structured_output is True
         assert caps.supports_strict_schema is True
         assert caps.supports_thinking is False
+
+
+class TestAnthropicRuntimeDetection:
+    """Anthropic capability probe — mirrors the OpenAI probe's logic via the
+    shared orchestrator + an Anthropic transport (``/messages``, x-api-key +
+    anthropic-version headers, ``content[].text`` response shape)."""
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_detects_context_and_uses_anthropic_headers(self, mock_post, mock_get):
+        mg = MagicMock(status_code=200)
+        mg.json.return_value = {"data": [{"id": "claude-x", "max_model_len": 200000}]}
+        mg.raise_for_status.return_value = None
+        mock_get.return_value = mg
+
+        mp = MagicMock(status_code=200)
+        mp.json.return_value = {"content": [{"type": "text", "text": "Hello!"}]}
+        mp.raise_for_status.return_value = None
+        mock_post.return_value = mp
+
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        caps = _detect_runtime_capabilities(
+            "anthropic", "http://x/v1", "claude-x", "sk"
+        )
+        assert caps is not None
+        assert caps.context_window == 200000
+        # GET /models used anthropic auth (not Bearer)
+        gh = mock_get.call_args.kwargs.get("headers", {})
+        assert gh.get("x-api-key") == "sk"
+        assert gh.get("anthropic-version") == "2023-06-01"
+        assert "Authorization" not in gh
+        # chat probe hit /messages with anthropic headers
+        assert mock_post.call_args.args[0].endswith("/messages")
+        ph = mock_post.call_args.kwargs.get("headers", {})
+        assert ph.get("x-api-key") == "sk"
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_thinking_tag_detected_from_messages_content(self, mock_post, mock_get):
+        mg = MagicMock(status_code=200)
+        mg.json.return_value = {"data": [{"id": "m", "max_model_len": 200000}]}
+        mg.raise_for_status.return_value = None
+        mock_get.return_value = mg
+
+        mp = MagicMock(status_code=200)
+        mp.json.return_value = {
+            "content": [{"type": "text", "text": "<think>r</think>\nHi"}]
+        }
+        mp.raise_for_status.return_value = None
+        mock_post.return_value = mp
+
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        assert caps.supports_thinking is True
+        assert caps.thinking_format == "think"
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_structured_probe_prompt_only_no_strict(self, mock_post, mock_get):
+        mg = MagicMock(status_code=200)
+        mg.json.return_value = {"data": [{"id": "m", "max_model_len": 200000}]}
+        mg.raise_for_status.return_value = None
+        mock_get.return_value = mg
+
+        mp = MagicMock(status_code=200)
+        # model emits valid JSON when asked → structured True; strict always False
+        mp.json.return_value = {
+            "content": [{"type": "text", "text": '{"colors": ["red"]}'}]
+        }
+        mp.raise_for_status.return_value = None
+        mock_post.return_value = mp
+
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        assert caps.supports_structured_output is True
+        assert caps.supports_strict_schema is False  # no OpenAI strict schema
+
+    @patch("agent_cli.providers.capabilities.requests.get")
+    @patch("agent_cli.providers.capabilities.requests.post")
+    def test_overflow_probe_via_messages_when_no_metadata(self, mock_post, mock_get):
+        mock_get.side_effect = Exception("no /models metadata")  # tier 1 miss
+
+        mp = MagicMock(status_code=400)
+        mp.text = "prompt is too long: 250000 tokens > 200000 maximum"
+        mp.json.return_value = {"content": [{"type": "text", "text": "x"}]}
+        mp.raise_for_status.return_value = None
+        mock_post.return_value = mp
+
+        from agent_cli.providers.capabilities import _detect_runtime_capabilities
+
+        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
+        assert caps is not None
+        # overflow probe hit /messages and parsed the limit
+        assert any("/messages" in c.args[0] for c in mock_post.call_args_list)
+        assert caps.context_window == 200000

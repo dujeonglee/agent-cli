@@ -12,7 +12,20 @@
 
 ## [Unreleased]
 
-## [3.12.0] - 2026-06-19
+## [3.13.0] - 2026-06-19
+
+### Added
+
+- **Anthropic 모델 capability 런타임 추론** — 지금까진 openai 만 런타임 probe 가
+  있고 anthropic 은 레지스트리/보수적 기본값(4096)에 의존했음. 이제 anthropic 도
+  context window·thinking·structured-output 을 런타임 probe. probe 오케스트레이션을
+  **공유 `_detect_capabilities(model, transport)`** 로 추출하고 **transport 만
+  provider별**(OpenAI=`/chat/completions`·Bearer, Anthropic=`/messages`·
+  `x-api-key`+`anthropic-version`·`content[].text`)로 분리 — 로직 중복 없음.
+  Anthropic: context는 `/models` 메타(omlx) → `/messages` overflow probe → 128K
+  폴백, structured 는 프롬프트-only JSON 검사(strict 항상 False), thinking 은
+  `<think>` 태그 탐지. (`_detect_openai_capabilities` 는 thin wrapper 로 유지 —
+  기존 동작/테스트 parity.)
 
 ### Added
 
@@ -382,7 +395,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.12.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.13.0...HEAD
+[3.13.0]: https://github.com/dujeonglee/agent-cli/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/dujeonglee/agent-cli/compare/v3.11.0...v3.12.0
 [3.11.0]: https://github.com/dujeonglee/agent-cli/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/dujeonglee/agent-cli/compare/v3.9.3...v3.10.0

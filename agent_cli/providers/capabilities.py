@@ -174,9 +174,17 @@ _THINKING_TAG_PATTERN = re.compile(
 def _detect_runtime_capabilities(
     provider: str, base_url: str, model: str, api_key: str = ""
 ) -> ModelCapabilities | None:
-    """Detect model capabilities at runtime via provider API."""
+    """Detect model capabilities at runtime via provider API.
+
+    Both providers share the probe orchestration (`_detect_capabilities`); only
+    the transport (OpenAI ``/chat/completions`` vs Anthropic ``/messages``)
+    differs."""
     if provider == "openai":
-        return _detect_openai_capabilities(base_url, model, api_key)
+        return _detect_capabilities(model, _OpenAITransport(base_url, model, api_key))
+    if provider == "anthropic":
+        return _detect_capabilities(
+            model, _AnthropicTransport(base_url, model, api_key)
+        )
     return None
 
 
@@ -276,55 +284,37 @@ def _probe_structured_output(base: str, model: str, headers: dict) -> tuple[bool
     return (True, strict_ok)
 
 
-def _detect_openai_capabilities(
-    base_url: str, model: str, api_key: str = ""
-) -> ModelCapabilities | None:
-    """Detect capabilities for OpenAI-compatible servers (vLLM, LM Studio, mlx-lm).
+def _detect_thinking(content: str) -> tuple[bool, str]:
+    """``<think>``-style tag detection on a probe response's content."""
+    m = _THINKING_TAG_PATTERN.search(content or "")
+    return (True, m.group(1).lower()) if m else (False, "")
 
-    Step 1: GET /v1/models for context window (max_model_len — vLLM, etc.)
-    Step 2: Probe with simple prompt for thinking support
-    Step 3: Probe response_format for structured-output / strict-schema support
-    """
+
+def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
+    """Provider-agnostic capability-probe orchestration.
+
+    The PROVIDER-SPECIFIC ``transport`` supplies three calls — the only part
+    that differs between OpenAI and Anthropic (endpoint / headers / request +
+    response shape):
+      - ``context_window()`` — 3-tier (metadata → overflow probe → fallback).
+      - ``simple_chat(text, max_tokens)`` → response content (thinking probe).
+      - ``probe_structured()`` → ``(supports_structured, supports_strict)``.
+    Everything else (reject-too-small, ``max_output = ctx//4``, ``<think>`` tag
+    detection, assembly, error→None degradation) is shared. ``UnsupportedModel
+    Error`` (window below the minimum) propagates; any other probe failure
+    returns None so detection degrades to defaults rather than crashing."""
     try:
-        base = base_url.rstrip("/")
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
         _emit_progress(f"First run for {model} — detecting capabilities")
+        _emit_progress(f"Querying context window ({model})")
+        context_window = transport.context_window()
 
-        # Step 1: Try to get context window from /v1/models
-        _emit_progress(f"Querying context window via /v1/models ({model})")
-        context_window = _detect_openai_context_window(base, model, api_key)
-
-        # Step 2: Probe for thinking support
+        # Thinking probe runs before the reject (matches the historical order).
         _emit_progress(
             f"Probing thinking support ({model}) — may take ~10s on cold load"
         )
-        url = f"{base}/chat/completions"
-        r = requests.post(
-            url,
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "user", "content": "Say hello."},
-                ],
-                "max_tokens": 512,
-            },
-            headers=headers,
-            timeout=DETECTION_PROBE_TIMEOUT,
+        supports_thinking, thinking_format = _detect_thinking(
+            transport.simple_chat("Say hello.", 512)
         )
-        r.raise_for_status()
-        data = r.json()
-
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        supports_thinking = False
-        thinking_format = ""
-        match = _THINKING_TAG_PATTERN.search(content)
-        if match:
-            supports_thinking = True
-            thinking_format = match.group(1).lower()
 
         if context_window < MIN_CONTEXT_WINDOW:
             raise UnsupportedModelError(
@@ -333,15 +323,11 @@ def _detect_openai_capabilities(
             )
         max_output = context_window // _OUTPUT_TOKEN_DIVISOR
 
-        # Step 3: Probe for structured-output support (json_object / strict
-        # json_schema). Runs only for an accepted model so a rejected one
-        # doesn't pay for extra probes.
-        supports_structured, supports_strict = _probe_structured_output(
-            base, model, headers
-        )
+        # Structured probe runs only for an accepted model (no extra cost on
+        # a rejected one).
+        supports_structured, supports_strict = transport.probe_structured()
 
         _emit_progress(f"Detection complete for {model}")
-
         return ModelCapabilities(
             context_window=context_window,
             max_output_tokens=max_output,
@@ -357,11 +343,175 @@ def _detect_openai_capabilities(
     except Exception as e:
         import sys
 
-        print(
-            f"[warn] OpenAI-compat detection failed for {model}: {e}",
-            file=sys.stderr,
-        )
+        print(f"[warn] capability detection failed for {model}: {e}", file=sys.stderr)
         return None
+
+
+class _OpenAITransport:
+    """Capability-probe transport for OpenAI-compatible servers
+    (omlx / vLLM / LM Studio / OpenAI). Delegates context-window + structured
+    probes to the existing OpenAI-specific helpers."""
+
+    def __init__(self, base_url: str, model: str, api_key: str = ""):
+        self.base = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+
+    def _headers(self) -> dict:
+        h = {"Content-Type": "application/json"}
+        if self.api_key:
+            h["Authorization"] = f"Bearer {self.api_key}"
+        return h
+
+    def context_window(self) -> int:
+        return _detect_openai_context_window(self.base, self.model, self.api_key)
+
+    def simple_chat(self, user_text: str, max_tokens: int) -> str:
+        r = requests.post(
+            f"{self.base}/chat/completions",
+            json={
+                "model": self.model,
+                "messages": [{"role": "user", "content": user_text}],
+                "max_tokens": max_tokens,
+            },
+            headers=self._headers(),
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    def probe_structured(self) -> tuple[bool, bool]:
+        return _probe_structured_output(self.base, self.model, self._headers())
+
+
+def _detect_openai_capabilities(
+    base_url: str, model: str, api_key: str = ""
+) -> ModelCapabilities | None:
+    """Detect capabilities for OpenAI-compatible servers — back-compat entry
+    that routes through the shared orchestrator with an OpenAI transport."""
+    return _detect_capabilities(model, _OpenAITransport(base_url, model, api_key))
+
+
+def _anthropic_text(data: dict) -> str:
+    """Text of an Anthropic ``/messages`` response
+    (``{"content": [{"type": "text", "text": …}]}``)."""
+    blocks = data.get("content") if isinstance(data, dict) else None
+    if isinstance(blocks, list) and blocks and isinstance(blocks[0], dict):
+        return blocks[0].get("text", "") or ""
+    return ""
+
+
+_ANTHROPIC_STRUCTURED_PROMPT = (
+    'Respond with ONLY a JSON object of the form {"colors": [...]} listing three '
+    "primary colors. No prose, no markdown fences."
+)
+
+
+class _AnthropicTransport:
+    """Capability-probe transport for the Anthropic Messages API (real Anthropic
+    or an Anthropic-compatible server such as omlx). ``/messages`` + ``x-api-key``
+    / ``anthropic-version`` headers; response is ``content[].text``. Anthropic
+    has no ``response_format`` enforcement, so the structured probe is
+    prompt-only and strict-schema is always False."""
+
+    def __init__(self, base_url: str, model: str, api_key: str = ""):
+        self.base = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+
+    def _headers(self) -> dict:
+        h = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+        if self.api_key:
+            h["x-api-key"] = self.api_key
+        return h
+
+    def context_window(self) -> int:
+        return _detect_anthropic_context_window(self.base, self.model, self.api_key)
+
+    def simple_chat(self, user_text: str, max_tokens: int) -> str:
+        r = requests.post(
+            f"{self.base}/messages",
+            json={
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": user_text}],
+            },
+            headers=self._headers(),
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        r.raise_for_status()
+        return _anthropic_text(r.json())
+
+    def probe_structured(self) -> tuple[bool, bool]:
+        try:
+            r = requests.post(
+                f"{self.base}/messages",
+                json={
+                    "model": self.model,
+                    "max_tokens": 256,
+                    "messages": [
+                        {"role": "user", "content": _ANTHROPIC_STRUCTURED_PROMPT}
+                    ],
+                },
+                headers=self._headers(),
+                timeout=DETECTION_PROBE_TIMEOUT,
+            )
+            r.raise_for_status()
+            json.loads(_anthropic_text(r.json()))
+            return (True, False)
+        except Exception:
+            return (False, False)
+
+
+def _detect_anthropic_context_window(
+    base_url: str, model: str, api_key: str = ""
+) -> int:
+    """Anthropic context window: ``/models`` metadata → ``/messages`` overflow
+    probe → ``_DEFAULT_CONTEXT_FALLBACK``. Mirrors the OpenAI tiers via the
+    Anthropic API. Real Anthropic ``/v1/models`` lacks the field (→ fallback /
+    registry), but omlx-style servers DO expose ``max_model_len`` and the
+    overflow probe reveals the limit otherwise."""
+    base = base_url.rstrip("/")
+    headers = {"anthropic-version": "2023-06-01"}
+    if api_key:
+        headers["x-api-key"] = api_key
+    # Tier 1: /models metadata (omlx exposes it; real Anthropic doesn't).
+    try:
+        r = requests.get(f"{base}/models", headers=headers, timeout=10)
+        r.raise_for_status()
+        for m in r.json().get("data", []):
+            if m.get("id") == model:
+                for key in ("max_model_len", "context_length"):
+                    ctx = m.get(key)
+                    if isinstance(ctx, int) and ctx > 0:
+                        return ctx
+                break
+    except Exception:
+        pass
+    # Tier 2: overflow probe via /messages — parse the limit from the 400 body.
+    from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
+
+    _emit_progress(f"Probing context window via overflow ({model})")
+    try:
+        r = requests.post(
+            f"{base}/messages",
+            json={
+                "model": model,
+                "max_tokens": 16,
+                "messages": [
+                    {"role": "user", "content": "word " * _CONTEXT_PROBE_WORDS}
+                ],
+            },
+            headers={**headers, "Content-Type": "application/json"},
+            timeout=DETECTION_PROBE_TIMEOUT,
+        )
+        if r.status_code != 200 and is_context_overflow(r.text):
+            _actual, limit = parse_overflow_amounts(r.text)
+            if limit and limit > 0:
+                return limit
+    except Exception:
+        pass
+    return _DEFAULT_CONTEXT_FALLBACK
 
 
 def _detect_openai_context_window(base_url: str, model: str, api_key: str = "") -> int:
