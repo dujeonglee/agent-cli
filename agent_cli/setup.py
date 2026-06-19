@@ -32,17 +32,25 @@ _DEFAULT_URLS = {
 }
 
 
-def _list_openai_models(base_url: str, api_key: str = "") -> list[str]:
-    """List model ids from an OpenAI-compatible ``/v1/models`` endpoint.
+def _list_models(
+    base_url: str, api_key: str = "", provider: str = "openai"
+) -> list[str]:
+    """List model ids from a provider's ``/models`` endpoint.
 
-    Works for omlx, vLLM, LM Studio, and OpenAI itself. ``base_url``
-    already includes the ``/v1`` suffix (see ``_DEFAULT_URLS``). Returns
-    an empty list on any failure so the caller falls back to manual
-    entry.
+    OpenAI-compatible (omlx, vLLM, LM Studio, OpenAI) and Anthropic both expose
+    ``GET {base_url}/models`` returning ``{data:[{id,...}]}`` — only the auth
+    headers differ (OpenAI: ``Authorization: Bearer``; Anthropic: ``x-api-key``
+    + ``anthropic-version``). ``base_url`` already includes the ``/v1`` suffix
+    (see ``_DEFAULT_URLS``). Returns [] on any failure so the caller falls back
+    to manual entry.
     """
     try:
         headers = {}
-        if api_key:
+        if provider == "anthropic":
+            headers["anthropic-version"] = "2023-06-01"  # required by /v1/models
+            if api_key:
+                headers["x-api-key"] = api_key
+        elif api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         r = requests.get(f"{base_url.rstrip('/')}/models", headers=headers, timeout=10)
         if r.status_code == 200:
@@ -169,24 +177,26 @@ class SetupWizard:
 
     def _select_model(self, provider: str, base_url: str, api_key: str) -> str:
         self.console.print("[bold]3. Select Default Model[/]")
+        # Both providers expose ``/models`` (omlx serves the same models under
+        # both APIs; real Anthropic has GET /v1/models too) — list them so the
+        # user picks a real id instead of typing. Falls back to manual entry
+        # when listing fails (no key / unsupported endpoint).
+        if provider == "anthropic":
+            return self._select_model_from_list(
+                base_url, api_key, "anthropic", "claude-sonnet-4-20250514"
+            )
+        return self._select_model_from_list(base_url, api_key, "openai", "gpt-4o")
 
-        if provider == "openai":
-            # OpenAI-compatible (omlx, vLLM, LM Studio, OpenAI) — list via
-            # /v1/models so on-prem servers show their real model ids.
-            return self._select_openai_model(base_url, api_key)
-        # Anthropic has no equivalent listing endpoint here — ask.
-        model = Prompt.ask("   Model name", default="claude-sonnet-4-20250514")
-        self.console.print()
-        return model
-
-    def _select_openai_model(self, base_url: str, api_key: str) -> str:
-        models = _list_openai_models(base_url, api_key)
+    def _select_model_from_list(
+        self, base_url: str, api_key: str, provider: str, manual_default: str
+    ) -> str:
+        models = _list_models(base_url, api_key, provider)
         if not models:
             self.console.print(
-                "   [yellow]Could not list models from /v1/models. "
+                "   [yellow]Could not list models from /models. "
                 "Enter model name manually.[/]"
             )
-            model = Prompt.ask("   Model name", default="gpt-4o")
+            model = Prompt.ask("   Model name", default=manual_default)
             self.console.print()
             return model
 

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from agent_cli.setup import (
     SetupWizard,
-    _list_openai_models,
+    _list_models,
 )
 
 
@@ -25,7 +25,7 @@ class TestListOpenAIModels:
                     ]
                 },
             )
-            models = _list_openai_models("http://127.0.0.1:8000/v1")
+            models = _list_models("http://127.0.0.1:8000/v1")
             assert models == ["Qwen3.6-27B-MLX-8bit", "Qwen3.6-35B-A3B-MLX-8bit"]
 
     def test_passes_api_key(self):
@@ -33,18 +33,42 @@ class TestListOpenAIModels:
             mock_get.return_value = MagicMock(
                 status_code=200, json=lambda: {"data": []}
             )
-            _list_openai_models("http://x/v1", api_key="secret")
+            _list_models("http://x/v1", api_key="secret")
             headers = mock_get.call_args.kwargs.get("headers", {})
             assert headers.get("Authorization") == "Bearer secret"
 
+    def test_anthropic_uses_xapikey_and_version_headers(self):
+        """Anthropic /v1/models needs x-api-key + anthropic-version, not Bearer."""
+        with patch("agent_cli.setup.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {"data": [{"id": "claude-sonnet-4-20250514"}]},
+            )
+            models = _list_models("http://x/v1", api_key="sk", provider="anthropic")
+            headers = mock_get.call_args.kwargs.get("headers", {})
+            assert headers.get("x-api-key") == "sk"
+            assert headers.get("anthropic-version") == "2023-06-01"
+            assert "Authorization" not in headers
+            assert models == ["claude-sonnet-4-20250514"]
+
+    def test_anthropic_version_header_sent_even_without_key(self):
+        with patch("agent_cli.setup.requests.get") as mock_get:
+            mock_get.return_value = MagicMock(
+                status_code=200, json=lambda: {"data": []}
+            )
+            _list_models("http://x/v1", provider="anthropic")
+            headers = mock_get.call_args.kwargs.get("headers", {})
+            assert headers.get("anthropic-version") == "2023-06-01"
+            assert "x-api-key" not in headers  # no key → omit
+
     def test_empty_on_failure(self):
         with patch("agent_cli.setup.requests.get", side_effect=Exception("fail")):
-            assert _list_openai_models("http://x/v1") == []
+            assert _list_models("http://x/v1") == []
 
     def test_empty_on_non_200(self):
         with patch("agent_cli.setup.requests.get") as mock_get:
             mock_get.return_value = MagicMock(status_code=404, json=lambda: {})
-            assert _list_openai_models("http://x/v1") == []
+            assert _list_models("http://x/v1") == []
 
     def test_skips_entries_without_id(self):
         with patch("agent_cli.setup.requests.get") as mock_get:
@@ -52,7 +76,7 @@ class TestListOpenAIModels:
                 status_code=200,
                 json=lambda: {"data": [{"object": "model"}, {"id": "good"}]},
             )
-            assert _list_openai_models("http://x/v1") == ["good"]
+            assert _list_models("http://x/v1") == ["good"]
 
 
 class TestSelectModelRouting:
@@ -61,7 +85,7 @@ class TestSelectModelRouting:
         wiz = SetupWizard()
         with (
             patch(
-                "agent_cli.setup._list_openai_models",
+                "agent_cli.setup._list_models",
                 return_value=["m1", "m2"],
             ) as mock_list,
             patch("agent_cli.setup.IntPrompt.ask", return_value=2),
@@ -73,11 +97,39 @@ class TestSelectModelRouting:
     def test_openai_falls_back_to_manual_when_empty(self):
         wiz = SetupWizard()
         with (
-            patch("agent_cli.setup._list_openai_models", return_value=[]),
+            patch("agent_cli.setup._list_models", return_value=[]),
             patch("agent_cli.setup.Prompt.ask", return_value="typed-model"),
         ):
             selected = wiz._select_model("openai", "http://x/v1", "")
         assert selected == "typed-model"
+
+    def test_anthropic_provider_lists_models(self):
+        """provider=anthropic now also lists models (not just a manual prompt)."""
+        wiz = SetupWizard()
+        with (
+            patch(
+                "agent_cli.setup._list_models",
+                return_value=["claude-a", "claude-b"],
+            ) as mock_list,
+            patch("agent_cli.setup.IntPrompt.ask", return_value=2),
+        ):
+            selected = wiz._select_model("anthropic", "http://x/v1", "k")
+        mock_list.assert_called_once()
+        # listing was queried with the anthropic provider
+        assert (
+            mock_list.call_args.args[2] == "anthropic"
+            or mock_list.call_args.kwargs.get("provider") == "anthropic"
+        )
+        assert selected == "claude-b"
+
+    def test_anthropic_falls_back_to_manual_when_empty(self):
+        wiz = SetupWizard()
+        with (
+            patch("agent_cli.setup._list_models", return_value=[]),
+            patch("agent_cli.setup.Prompt.ask", return_value="claude-typed"),
+        ):
+            selected = wiz._select_model("anthropic", "http://x/v1", "")
+        assert selected == "claude-typed"
 
 
 class TestSetupWizardConfig:

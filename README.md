@@ -83,7 +83,7 @@ No configuration found. Starting setup wizard...
    [2] Anthropic
 
 2. Connection → base URL, API key, 연결 테스트
-3. Model → OpenAI 호환은 `/v1/models`로 자동 탐색 및 선택, Anthropic은 직접 입력(기본 `claude-sonnet-4-20250514`)
+3. Model → OpenAI 호환·Anthropic 모두 `/v1/models`(provider별 인증 헤더)로 자동 탐색 및 목록 선택, 실패 시 직접 입력(OpenAI 기본 `gpt-4o`, Anthropic 기본 `claude-sonnet-4-20250514`)
 4. Review → 설정 확인 후 저장 위치 선택
 ```
 

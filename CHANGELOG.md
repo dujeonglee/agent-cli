@@ -12,7 +12,18 @@
 
 ## [Unreleased]
 
-## [3.11.0] - 2026-06-19
+## [3.12.0] - 2026-06-19
+
+### Added
+
+- **setup 마법사가 Anthropic 도 모델 목록을 보여줌** — 지금까진 OpenAI 호환만
+  `/v1/models` 로 목록·선택을 제공하고 Anthropic 은 수동 입력이었음. 이제 둘 다
+  `/v1/models` 로 자동 탐색해 번호로 선택(실패 시 수동 입력 폴백). `_list_models`
+  가 provider별 인증 헤더를 보냄(OpenAI=`Authorization: Bearer`, Anthropic=
+  `x-api-key`+`anthropic-version`); 응답 `data[].id` 는 동형. omlx 가 두 API 를
+  같은 모델로 서빙하고 실 Anthropic 도 GET /v1/models 를 지원해 양쪽 동작.
+  (`_list_openai_models`→`_list_models`, `_select_openai_model`→
+  `_select_model_from_list` 로 공유화.)
 
 ### Added
 
@@ -371,7 +382,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.11.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.12.0...HEAD
+[3.12.0]: https://github.com/dujeonglee/agent-cli/compare/v3.11.0...v3.12.0
 [3.11.0]: https://github.com/dujeonglee/agent-cli/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/dujeonglee/agent-cli/compare/v3.9.3...v3.10.0
 [3.9.3]: https://github.com/dujeonglee/agent-cli/compare/v3.9.2...v3.9.3
