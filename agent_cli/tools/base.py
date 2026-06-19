@@ -108,6 +108,22 @@ class Tool(ABC):
             return False
         return any(k.startswith(self.key_prefix) for k in action_input)
 
+    def render_action_input_for_context(self, action_input: dict) -> dict:
+        """This tool's ``action_input`` as it should appear when the assistant
+        turn is RE-FED to the LLM each subsequent turn (the symmetric
+        counterpart to :meth:`render_observation` — action side vs result side).
+
+        Default: identity (the action_input unchanged — same object). A tool
+        whose action carries a bulky body (write_file's ``content``,
+        edit_file's ``lines``) overrides to replace that value with a short
+        marker while KEEPING the op shape (so format self-reinforcement
+        survives) — the file is on disk, so re-feeding the body verbatim every
+        turn only crowds out context. Must NOT mutate ``action_input`` (the
+        caller passes the stored record; history.jsonl stays faithful) — return
+        a copy when changing anything.
+        """
+        return action_input
+
     def render_observation(self, result: ToolResult, args: dict) -> str:
         """Render this tool's result into the observation body that enters
         the context + the LLM (the text after ``Observation: ``).

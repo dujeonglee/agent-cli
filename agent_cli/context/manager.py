@@ -851,8 +851,50 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
     return str(role or "?"), [], content
 
 
+def _context_view(message: dict) -> dict:
+    """An assistant turn as it should appear in RE-FED context: each op's
+    ``action_input`` passed through its tool's
+    ``render_action_input_for_context`` (default identity — so this is a no-op
+    for every tool today; the seam is consulted by both the render path
+    (:func:`_to_natural_language`) and the budget path
+    (:func:`_estimate_message_tokens`) so the two always agree).
+
+    Returns ``message`` unchanged (same object) when nothing is elided, else a
+    shallow copy with rewritten ops — the source record (history.jsonl + cache)
+    is never mutated.
+    """
+    if message.get("role") != "assistant":
+        return message
+    from agent_cli.tools import TOOLS  # lazy: registry → context.manager cycle
+
+    def _view(action: str, ai):
+        if not action or not isinstance(ai, dict):
+            return ai
+        tool = TOOLS.get(action)
+        return tool.render_action_input_for_context(ai) if tool else ai
+
+    ops = message.get("ops")
+    if isinstance(ops, list):
+        new_ops = list(ops)
+        changed = False
+        for i, op in enumerate(ops):
+            if not isinstance(op, dict):
+                continue
+            ai = op.get("action_input")
+            view = _view(op.get("action"), ai)
+            if view is not ai:
+                new_ops[i] = {**op, "action_input": view}
+                changed = True
+        return {**message, "ops": new_ops} if changed else message
+
+    ai = message.get("action_input")
+    view = _view(message.get("action"), ai)
+    return {**message, "action_input": view} if view is not ai else message
+
+
 def _estimate_message_tokens(msg: dict) -> int:
     """Estimate tokens for a single message dict."""
+    msg = _context_view(msg)  # count what is actually re-fed (elided body)
     total = 4  # role + formatting overhead
     for key in ("content", "thought", "action_input"):
         val = msg.get(key)
@@ -914,7 +956,9 @@ def _to_natural_language(msg: dict, wire_format) -> dict:
             return _convert_observation(msg)
         return {"role": "user", "content": msg.get("content", "")}
 
-    return wire_format.render_assistant_from_history(msg)
+    # Re-feed the context view (bulky action_input bodies elided per-tool;
+    # default identity → unchanged today). History/cache stay faithful.
+    return wire_format.render_assistant_from_history(_context_view(msg))
 
 
 _SUMMARY_CONTENT_EXCERPT = 200  # chars of tool-result content kept per line

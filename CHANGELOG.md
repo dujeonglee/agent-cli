@@ -12,6 +12,21 @@
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-06-19
+
+### Added
+
+- **도구별 action_input 컨텍스트-뷰 seam (`Tool.render_action_input_for_context`)**
+  — `render_observation`(관찰 측)의 대칭(action 측): 어시스턴트 turn 이 매 턴
+  LLM 에 **재공급**될 때 그 도구의 action_input 표현(기본 **identity**). 큰 본문
+  인자(write_file `content`, edit_file `lines`)를 op 모양은 유지한 채 마커로
+  elide 할 seam — 파일은 디스크에 있으니 본문을 매 턴 재공급할 필요가 없음. manager
+  `_context_view(message)` 헬퍼가 **render(`_to_natural_language`)+estimate
+  (`_estimate_message_tokens`) 양쪽**에서 consult(재공급=카운트 일관), 항상 복사본에만
+  작용해 history.jsonl·cache 는 충실. **이번 커밋은 seam 만 깔며 기본 구현이
+  identity 라 동작은 기존과 바이트 동일** — write/edit override + 라이브 mimicry
+  검증은 후속 튜닝.
+
 ## [3.14.0] - 2026-06-19
 
 ### Changed
@@ -426,7 +441,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.14.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.15.0...HEAD
+[3.15.0]: https://github.com/dujeonglee/agent-cli/compare/v3.14.0...v3.15.0
 [3.14.0]: https://github.com/dujeonglee/agent-cli/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/dujeonglee/agent-cli/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/dujeonglee/agent-cli/compare/v3.11.0...v3.12.0
