@@ -54,13 +54,6 @@ class TestSetup:
         assert ih._initialized is True
 
 
-class TestMakePrompt:
-    def test_plain_text_prompt(self):
-        """make_prompt returns plain text with trailing space."""
-        result = ih.make_prompt("You:")
-        assert result == "You: "
-
-
 class TestSave:
     def test_creates_directory_and_file(self, tmp_path, monkeypatch):
         """save() creates parent directories and history file."""

@@ -500,13 +500,10 @@ class TestBuildSystemPrompt:
         assert "JSON" in prompt
         assert "thought" in prompt
 
-    def test_session_id_no_longer_creates_section(self):
-        """session_id param accepted but no longer creates a ## Session section."""
-        prompt = build_system_prompt(_make_caps(), ["shell"], session_id="1774882777")
+    def test_no_session_section(self):
+        """No ## Session section (the session_id feature + param were removed)."""
+        prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Session" not in prompt
-
-    def test_session_id_omitted_when_empty(self):
-        prompt = build_system_prompt(_make_caps(), ["shell"], session_id="")
         assert "Current session ID" not in prompt
 
     def test_ready_for_review_in_prompt(self):
@@ -801,7 +798,7 @@ class TestBuildSystemPrompt:
 
     def test_section_order_no_session_section(self):
         """Session ID no longer creates a section."""
-        prompt = build_system_prompt(_make_caps(), ["shell"], session_id="12345")
+        prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Session" not in prompt
 
     def test_static_tools_before_conditional(self):
@@ -1035,8 +1032,7 @@ class TestGitContextRemoved:
 
 class TestSessionIdRemoved:
     def test_no_session_section(self, caps):
-        prompt = build_system_prompt(caps, ["read_file"], session_id="test-123")
-        # session_id param still accepted but no longer creates a section
+        prompt = build_system_prompt(caps, ["read_file"])
         assert "## Session" not in prompt
 
 

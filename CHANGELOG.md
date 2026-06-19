@@ -12,6 +12,27 @@
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-06-19
+
+### Removed (dead code)
+
+- `input_history.make_prompt` (test-only, superseded by `read_rich_input`).
+- `code_index.store.IndexStore.get` (no caller).
+- `DelegateResult.files_read`/`files_modified` (never populated).
+- `build_system_prompt[_sections]` 의 죽은 `session_id` 파라미터 (기능은 진작
+  `session_dir` 로 대체됐고 본문 미사용; 호출부 전부 keyword 라 안전 제거).
+- `_handle_ask` 의 중복 `get_renderer` import.
+
+### Changed (dedup, no behavior change)
+
+- `ModelCapabilities` → models.json entry 직렬화를 단일 `capabilities.caps_to_entry()`
+  로 통합 (runtime-probe save 와 setup-wizard save 가 필드 목록을 공유 — drift 방지).
+- `code_index` 의 반복 가드를 로컬 `_require()`/`_validate_kind()` 헬퍼로 통합
+  (~10개 "X is required for mode" + 3개 kind 검증).
+
+전부 내부 정리 — 동작/CLI/설정 변경 없음. 전체 테스트 통과. (Python-hook 서브시스템,
+wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의도적으로 보존.)
+
 ## [4.0.0] - 2026-06-19
 
 코드 변경 없는 **버전 정정** 릴리스 — v3.14.0~v3.16.1 에 걸쳐 누적된 **하위호환
@@ -490,7 +511,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v4.0.1...HEAD
+[4.0.1]: https://github.com/dujeonglee/agent-cli/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/dujeonglee/agent-cli/compare/v3.16.1...v4.0.0
 [3.16.1]: https://github.com/dujeonglee/agent-cli/compare/v3.16.0...v3.16.1
 [3.16.0]: https://github.com/dujeonglee/agent-cli/compare/v3.15.0...v3.16.0

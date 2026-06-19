@@ -2141,9 +2141,7 @@ def _handle_ask(questions: list[str]) -> str:
     # without the loop knowing the difference. ``prompt_user`` propagates
     # EOF / Ctrl+C — caller policy is "(no response)" so the assistant
     # gets a stable answer slot even when the user bails.
-    from agent_cli.render import get_renderer
-
-    if not get_renderer().can_prompt():
+    if not renderer.can_prompt():
         # No interactive channel right now (non-TTY CLI / no connected web
         # client) → don't block forever on an answer that can't arrive;
         # give the model a stable answer slot. ``prompt_user`` itself
@@ -2152,7 +2150,7 @@ def _handle_ask(questions: list[str]) -> str:
         answer = "(no response)"
     else:
         try:
-            answer = get_renderer().prompt_user(
+            answer = renderer.prompt_user(
                 f"{prefix}\n{prefix}Your answer: ",
                 multiline=True,
                 continuation=f"{prefix}... ",

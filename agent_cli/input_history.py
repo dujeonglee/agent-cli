@@ -91,11 +91,6 @@ def setup() -> None:
     _initialized = True
 
 
-def make_prompt(text: str) -> str:
-    """Build a plain-text prompt for readline input."""
-    return f"{text} "
-
-
 def save() -> None:
     """Write current history to disk."""
     if not _has_readline:

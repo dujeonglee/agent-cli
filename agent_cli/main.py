@@ -648,16 +648,9 @@ def _prompt_model_capabilities(model: str):
             thinking_format=thinking_format,
         )
 
-        entry = {
-            "context_window": caps.context_window,
-            "max_output_tokens": caps.max_output_tokens,
-            "supports_structured_output": caps.supports_structured_output,
-            "supports_thinking": caps.supports_thinking,
-            "thinking_budget": caps.thinking_budget,
-            "supports_strict_schema": caps.supports_strict_schema,
-            "thinking_format": caps.thinking_format,
-        }
-        save_model_entry(model, entry)
+        from agent_cli.providers.capabilities import caps_to_entry
+
+        save_model_entry(model, caps_to_entry(caps))
         console.print(f"[{C['muted']}]Saved to ~/.agent-cli/models.json[/]\n")
         return caps
     except (EOFError, KeyboardInterrupt, ValueError):

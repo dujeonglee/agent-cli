@@ -75,12 +75,6 @@ class IndexStore:
             return self.files
         return self.meta[key]
 
-    def get(self, key, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
     # ----- accessors -----
 
     @property

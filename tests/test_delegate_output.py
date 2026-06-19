@@ -339,8 +339,6 @@ class TestRegression:
         """DO-36: Default DelegateResult has correct defaults for new fields."""
         dr = DelegateResult()
         assert dr.output is None
-        assert dr.files_read == []
-        assert dr.files_modified == []
         assert dr.iterations == 0
         assert dr.duration_secs == 0.0
         assert dr.activity_log == []

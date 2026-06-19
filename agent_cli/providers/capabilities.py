@@ -133,8 +133,12 @@ def get_capabilities(
     return DEFAULT_CAPABILITIES
 
 
-def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
-    """Save runtime-detected capabilities to ~/.agent-cli/models.json (new models only)."""
+def caps_to_entry(caps: ModelCapabilities, *, auto_detected: bool = False) -> dict:
+    """Serialize a ``ModelCapabilities`` to a models.json entry dict — the
+    inverse of :func:`_build_from_entry`. Single source so the field list can't
+    drift between the runtime-probe save path and the setup-wizard save path
+    (``main._prompt_model_capabilities``). ``auto_detected`` tags entries
+    written by the runtime probe."""
     entry = {
         "context_window": caps.context_window,
         "max_output_tokens": caps.max_output_tokens,
@@ -143,9 +147,15 @@ def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
         "thinking_budget": caps.thinking_budget,
         "supports_strict_schema": caps.supports_strict_schema,
         "thinking_format": caps.thinking_format,
-        "_auto_detected": True,
     }
-    save_model_entry(model, entry)
+    if auto_detected:
+        entry["_auto_detected"] = True
+    return entry
+
+
+def _auto_save_detected(model: str, caps: ModelCapabilities) -> None:
+    """Save runtime-detected capabilities to ~/.agent-cli/models.json (new models only)."""
+    save_model_entry(model, caps_to_entry(caps, auto_detected=True))
 
 
 def _build_from_entry(entry: dict) -> ModelCapabilities:

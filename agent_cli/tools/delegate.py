@@ -88,8 +88,6 @@ class DelegateResult:
     """Structured result from delegate execution."""
 
     output: str | None = None
-    files_read: list[str] = field(default_factory=list)
-    files_modified: list[str] = field(default_factory=list)
     iterations: int = 0
     duration_secs: float = 0.0
     activity_log: list[str] = field(default_factory=list)

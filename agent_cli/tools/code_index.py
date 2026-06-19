@@ -270,10 +270,29 @@ def _on_demand_symbols(file_abs: Path) -> Optional[list[dict]]:
 # ----- mode handlers --------------------------------------------------------
 
 
+def _require(value, key: str, mode: str) -> ToolResult | None:
+    """Error ToolResult when a required arg is missing/empty, else None.
+    Centralizes the ``'<key>' is required for mode='<mode>'`` message so it
+    can't drift across the ~10 mode handlers below."""
+    if not value:
+        return ToolResult(False, error=f"'{key}' is required for mode='{mode}'")
+    return None
+
+
+def _validate_kind(value, valid, label: str) -> ToolResult | None:
+    """Error ToolResult when ``value`` (if given) isn't in ``valid``, else None.
+    ``value`` of ``None`` passes (the filter is optional for some modes)."""
+    if value is not None and value not in valid:
+        return ToolResult(
+            False, error=f"invalid {label}: {value!r}. Valid: {sorted(valid)}"
+        )
+    return None
+
+
 def _do_list(action_input: dict) -> ToolResult:
     path_str = action_input.get("path")
-    if not path_str:
-        return ToolResult(False, error="'path' is required for mode='list'")
+    if err := _require(path_str, "path", "list"):
+        return err
     path_abs = Path(path_str).resolve()
     if not path_abs.is_file():
         return ToolResult(False, error=f"file not found: {path_str}")
@@ -314,10 +333,10 @@ def _do_list(action_input: dict) -> ToolResult:
 def _do_fetch(action_input: dict) -> ToolResult:
     path_str = action_input.get("path")
     name = action_input.get("name")
-    if not path_str:
-        return ToolResult(False, error="'path' is required for mode='fetch'")
-    if not name:
-        return ToolResult(False, error="'name' is required for mode='fetch'")
+    if err := _require(path_str, "path", "fetch"):
+        return err
+    if err := _require(name, "name", "fetch"):
+        return err
     path_abs = Path(path_str).resolve()
     if not path_abs.is_file():
         return ToolResult(False, error=f"file not found: {path_str}")
@@ -359,16 +378,11 @@ def _do_fetch(action_input: dict) -> ToolResult:
 
 def _do_lookup(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if not name:
-        return ToolResult(False, error="'name' is required for mode='lookup'")
+    if err := _require(name, "name", "lookup"):
+        return err
     symbol_kind = action_input.get("symbol_kind")
-    if symbol_kind is not None and symbol_kind not in NAME_KINDS:
-        return ToolResult(
-            False,
-            error=(
-                f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
-            ),
-        )
+    if err := _validate_kind(symbol_kind, NAME_KINDS, "symbol_kind"):
+        return err
 
     store, _ = _ensure_index()
     # Dual lookup: try qualified_name first, fall back to bare name.
@@ -388,15 +402,10 @@ def _do_lookup(action_input: dict) -> ToolResult:
 
 def _do_kind(action_input: dict) -> ToolResult:
     symbol_kind = action_input.get("symbol_kind")
-    if not symbol_kind:
-        return ToolResult(False, error="'symbol_kind' is required for mode='kind'")
-    if symbol_kind not in NAME_KINDS:
-        return ToolResult(
-            False,
-            error=(
-                f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
-            ),
-        )
+    if err := _require(symbol_kind, "symbol_kind", "kind"):
+        return err
+    if err := _validate_kind(symbol_kind, NAME_KINDS, "symbol_kind"):
+        return err
 
     store, _ = _ensure_index()
     syms = store.find_symbols(kind=symbol_kind)
@@ -419,8 +428,8 @@ def _do_kind(action_input: dict) -> ToolResult:
 
 def _do_file(action_input: dict) -> ToolResult:
     path_str = action_input.get("path")
-    if not path_str:
-        return ToolResult(False, error="'path' is required for mode='file'")
+    if err := _require(path_str, "path", "file"):
+        return err
     path_abs = Path(path_str).resolve()
 
     store, root = _ensure_index()
@@ -445,14 +454,11 @@ def _do_file(action_input: dict) -> ToolResult:
 
 def _do_refs(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if not name:
-        return ToolResult(False, error="'name' is required for mode='refs'")
+    if err := _require(name, "name", "refs"):
+        return err
     ref_kind = action_input.get("ref_kind")
-    if ref_kind is not None and ref_kind not in REF_KINDS:
-        return ToolResult(
-            False,
-            error=(f"invalid ref_kind: {ref_kind!r}. Valid: {sorted(REF_KINDS)}"),
-        )
+    if err := _validate_kind(ref_kind, REF_KINDS, "ref_kind"):
+        return err
 
     store, _ = _ensure_index()
     # Refs table stores bare names (because they come from raw source
@@ -470,8 +476,8 @@ def _do_refs(action_input: dict) -> ToolResult:
 
 def _do_callers(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if not name:
-        return ToolResult(False, error="'name' is required for mode='callers'")
+    if err := _require(name, "name", "callers"):
+        return err
     store, _ = _ensure_index()
     # Callgraph indexes by bare name (refs are bare-name). Resolve
     # qualified → bare via the symbols table.
@@ -496,8 +502,8 @@ def _do_callers(action_input: dict) -> ToolResult:
 
 def _do_callees(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if not name:
-        return ToolResult(False, error="'name' is required for mode='callees'")
+    if err := _require(name, "name", "callees"):
+        return err
     store, _ = _ensure_index()
     syms = _resolve_symbol(store, name)
     bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
@@ -520,8 +526,8 @@ def _do_callees(action_input: dict) -> ToolResult:
 
 def _do_slice(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if not name:
-        return ToolResult(False, error="'name' is required for mode='slice'")
+    if err := _require(name, "name", "slice"):
+        return err
     store, _ = _ensure_index()
     # cmd_slice picks a symbol by bare ``name``; resolve qualified
     # input through the symbols table first.
