@@ -226,5 +226,19 @@ class EditFileTool(Tool):
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")
 
+    def render_action_input_for_context(self, action_input: dict) -> dict:
+        """Elide the replacement ``lines`` body on re-feed (keep the op shape —
+        a 1-element array marker — so the wire shape stays valid). The edit was
+        already applied + confirmed; re-feeding the inserted text every turn
+        only crowds out context (the model reads_file to view)."""
+        lines = action_input.get("lines")
+        if isinstance(lines, list) and lines:
+            path = action_input.get("path", "")
+            return {
+                **action_input,
+                "lines": [f"<{len(lines)} lines edited in {path} — read_file to view>"],
+            }
+        return action_input
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_edit_file(args)

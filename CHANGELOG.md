@@ -12,6 +12,24 @@
 
 ## [Unreleased]
 
+## [3.16.0] - 2026-06-19
+
+### Changed
+
+- **write_file/edit_file action_input 본문 재공급 elide (always)** — v3.15.0 에서
+  깐 `render_action_input_for_context` seam 을 write_file(`content`)·edit_file
+  (`lines`)이 override. 어시스턴트 turn 이 매 턴 LLM 에 재공급될 때 본문을 op
+  모양 유지한 채 마커(`<N lines / NB written to PATH — read_file to view>`)로
+  **항상 치환** — 파일은 디스크에 있고 관찰이 이미 쓰기를 확인했으므로 큰 본문을
+  매 턴 재공급하는 건 context 낭비(추론 공간 잠식). `_context_view` 가 render +
+  estimate 양쪽에 적용해 재공급=예산 카운트 일관. **history.jsonl 은 무손실**
+  (seam 은 복사본에만 작용 — resume·read_context·audit 충실). observation echo
+  트림(`render_observation` override)은 미포함(후속).
+
+  ⚠️ 마커 mimicry(모델이 과거 턴의 `<elided>` 를 보고 본문 대신 마커를 emit)는
+  유닛으로 못 잡으므로 라이브 omlx 세션 검증이 필요. 관측 시 fallback = "최근
+  turn 본문 유지, 이전만 elide".
+
 ## [3.15.0] - 2026-06-19
 
 ### Added
@@ -441,7 +459,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.15.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.16.0...HEAD
+[3.16.0]: https://github.com/dujeonglee/agent-cli/compare/v3.15.0...v3.16.0
 [3.15.0]: https://github.com/dujeonglee/agent-cli/compare/v3.14.0...v3.15.0
 [3.14.0]: https://github.com/dujeonglee/agent-cli/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/dujeonglee/agent-cli/compare/v3.12.0...v3.13.0

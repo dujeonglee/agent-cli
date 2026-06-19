@@ -79,5 +79,20 @@ class WriteFileTool(Tool):
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")
 
+    def render_action_input_for_context(self, action_input: dict) -> dict:
+        """Elide the written ``content`` body on re-feed: keep the op shape but
+        replace the body with a marker. The file is on disk and the write was
+        already confirmed by the observation — re-feeding the whole body every
+        turn only crowds out context (the model reads_file to view)."""
+        body = action_input.get("content")
+        if isinstance(body, str) and body:
+            path = action_input.get("path", "")
+            n = body.count("\n") + 1
+            return {
+                **action_input,
+                "content": f"<{n} lines / {len(body)}B written to {path} — read_file to view>",
+            }
+        return action_input
+
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_write_file(args)

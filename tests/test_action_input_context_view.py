@@ -39,35 +39,50 @@ def _assistant_write(content="line1\nline2\nline3"):
     }
 
 
+def _assistant_read():
+    """An op of a tool that does NOT override the seam (stays identity)."""
+    return {
+        "role": "assistant",
+        "thought": "reading",
+        "ops": [{"action": "read_file", "action_input": {"path": "src/x.py"}}],
+    }
+
+
 # ── default seam = identity (behaviour unchanged) ────────────────────
 
 
 class TestSeamDefaultIdentity:
     def test_base_default_returns_input_unchanged(self):
-        ai = {"path": "x", "content": "body"}
-        # default is identity — returns the SAME object
-        assert TOOLS["write_file"].render_action_input_for_context(ai) is ai
+        ai = {"path": "x"}
+        # read_file does not override → base default identity (SAME object)
+        assert TOOLS["read_file"].render_action_input_for_context(ai) is ai
 
-    def test_all_builtins_default_identity(self):
-        ai = {"path": "x", "content": "body", "lines": ["a"]}
-        for t in TOOLS.values():
+    def test_non_overriding_builtins_default_identity(self):
+        ai = {"path": "x", "query": "q", "command": "ls"}
+        # write_file / edit_file DO override (see TestWriteEditOverrides);
+        # every other builtin inherits the base identity default.
+        for name, t in TOOLS.items():
+            if name in ("write_file", "edit_file"):
+                continue
             assert t.render_action_input_for_context(ai) is ai
 
     def test_context_view_noop_for_default_tools(self):
-        msg = _assistant_write()
-        # identity everywhere → _context_view returns the message unchanged
+        msg = _assistant_read()
+        # read_file is identity → _context_view returns the message unchanged
         assert _context_view(msg) is msg
 
     def test_render_unchanged_with_default_seam(self):
-        msg = _assistant_write("AAA\nBBB\nCCC")
+        msg = _assistant_read()
         wf = get_wire("md_array")
         # rendering through the seam must equal rendering the raw msg directly
         assert _to_natural_language(msg, wf) == wf.render_assistant_from_history(msg)
 
     def test_estimate_unchanged_with_default_seam(self):
-        msg = _assistant_write("x" * 4000)
-        # the full content is still counted (identity → no elision)
-        assert _estimate_message_tokens(msg) >= 4000 // 4
+        # read_file op with a long path-ish arg — identity → counted as-is
+        msg = _assistant_read()
+        assert _estimate_message_tokens(msg) == _estimate_message_tokens(
+            _context_view(msg)
+        )
 
 
 # ── mechanism: a tool that DOES override (write/edit will, later) ────
@@ -150,3 +165,70 @@ class TestThroughContextManager:
             if line.strip()
         ][-1]
         assert last["ops"][0]["action_input"]["content"] == "FULL\nBODY\nHERE"
+
+
+# ── real write_file / edit_file overrides (always elide body) ────────
+
+
+class TestWriteFileOverride:
+    def _view(self, ai):
+        return TOOLS["write_file"].render_action_input_for_context(ai)
+
+    def test_content_elided_to_marker(self):
+        ai = {"path": "src/x.py", "content": "a\nb\nc\nd\ne"}
+        out = self._view(ai)
+        assert out is not ai  # a copy
+        assert out["path"] == "src/x.py"  # other keys preserved
+        assert "read_file" in out["content"] and "src/x.py" in out["content"]
+        assert "5 lines" in out["content"]
+        assert "\n" not in out["content"]  # the body is gone
+
+    def test_original_not_mutated(self):
+        ai = {"path": "src/x.py", "content": "a\nb"}
+        self._view(ai)
+        assert ai["content"] == "a\nb"
+
+    def test_empty_content_unchanged(self):
+        ai = {"path": "src/x.py", "content": ""}
+        assert self._view(ai) is ai
+
+    def test_non_str_content_unchanged(self):
+        ai = {"path": "src/x.py", "content": {"oops": 1}}
+        assert self._view(ai) is ai
+
+    def test_estimate_drops_for_big_write(self):
+        msg = _assistant_write("x" * 40_000)
+        # the seam elides on count → far below the 40K-char body
+        assert _estimate_message_tokens(msg) < 40_000 // 4 // 4
+
+    def test_history_keeps_full_body(self, tmp_path):
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get_wire("md_array"))
+        ctx.add(_assistant_write("KEEP\nME\nFULL"))
+        last = [
+            json.loads(line)
+            for line in ctx.history_path.read_text().splitlines()
+            if line.strip()
+        ][-1]
+        assert last["ops"][0]["action_input"]["content"] == "KEEP\nME\nFULL"
+
+
+class TestEditFileOverride:
+    def _view(self, ai):
+        return TOOLS["edit_file"].render_action_input_for_context(ai)
+
+    def test_lines_elided_preserving_array_shape(self):
+        ai = {"path": "src/x.py", "op": "replace", "pos": "5#ab", "lines": ["x", "y"]}
+        out = self._view(ai)
+        assert out is not ai
+        assert out["pos"] == "5#ab" and out["op"] == "replace"  # refs preserved
+        assert isinstance(out["lines"], list) and len(out["lines"]) == 1
+        assert "2 lines" in out["lines"][0] and "src/x.py" in out["lines"][0]
+
+    def test_original_not_mutated(self):
+        ai = {"path": "src/x.py", "op": "replace", "lines": ["x", "y"]}
+        self._view(ai)
+        assert ai["lines"] == ["x", "y"]
+
+    def test_delete_op_without_lines_unchanged(self):
+        ai = {"path": "src/x.py", "op": "delete", "pos": "5#ab", "end": "9#cd"}
+        assert self._view(ai) is ai
