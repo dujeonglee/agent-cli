@@ -12,6 +12,23 @@
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-06-19
+
+코드 변경 없는 **버전 정정** 릴리스 — v3.14.0~v3.16.1 에 걸쳐 누적된 **하위호환
+파괴를 SemVer MAJOR 로 공식화**합니다. 기능/동작은 v3.16.1 과 동일합니다.
+
+### BREAKING
+
+- **v3.14.0 이전 세션 중 spill 이 발생한 것은 resume 불가** — v3.14.0 에서 과대
+  출력 spill 서브시스템을 제거하면서, 그 시절 세션의 history.jsonl 에 남은
+  `content={"spill":true,"output":[...]}` (dict) 관찰 레코드를 더는 처리하지
+  못합니다. 그런 세션을 `--resume` 하면 매 턴 `_convert_observation` 의 `join`
+  에서 `TypeError: sequence item …: expected str instance, dict found` 로
+  크래시합니다. **해결책**: 해당 옛 세션을 resume 하지 말고 새 세션으로 시작
+  (`.agent-cli/sessions/<id>` 삭제). v3.14.0 이후 생성된 세션은 영향 없음.
+  - 호환을 코드로 복구(레거시 dict 관용 가드)하는 대신 MAJOR 로 표기하기로 결정
+    — on-disk/history 포맷 변경이 옛 세션 resume 를 깨면 MAJOR 라는 기준 적용.
+
 ## [3.16.1] - 2026-06-19
 
 ### Fixed
@@ -473,7 +490,8 @@
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v3.16.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/dujeonglee/agent-cli/compare/v3.16.1...v4.0.0
 [3.16.1]: https://github.com/dujeonglee/agent-cli/compare/v3.16.0...v3.16.1
 [3.16.0]: https://github.com/dujeonglee/agent-cli/compare/v3.15.0...v3.16.0
 [3.15.0]: https://github.com/dujeonglee/agent-cli/compare/v3.14.0...v3.15.0
