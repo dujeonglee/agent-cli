@@ -800,12 +800,9 @@ class AgentLoop:
             # turns. usage covers system+messages; ctx subtracts the same
             # sys_tokens used for the threshold above. No-op without usage.
             if self.ctx and response.usage:
-                actual_total = (
-                    response.usage.input_tokens
-                    + response.usage.cache_creation_input_tokens
-                    + response.usage.cache_read_input_tokens
+                self.ctx.reconcile_actual_tokens(
+                    response.usage.total_input_tokens, system_tokens=sys_tokens
                 )
-                self.ctx.reconcile_actual_tokens(actual_total, system_tokens=sys_tokens)
             # A successful call means we're no longer in overflow for this
             # turn — reset the counter so a later turn gets a fresh budget
             # of shrink-and-retry attempts.
@@ -1990,15 +1987,19 @@ def _build_token_stats(usage, context_window: int, total_out: int) -> dict:
     """Build the render-agnostic token-usage payload for one turn.
 
     Pure data — the renderer (CLI line / web top-bar) decides how to
-    show it. ``input_tokens`` is the server's count for the whole prompt
-    (system + messages), i.e. the current context occupancy; with
-    ``context_window`` the renderer derives a usage %. Speeds/ttft are
-    included when the provider reported durations (omlx and other
-    OpenAI-compatible servers do; the Anthropic streaming path leaves
+    show it. ``"in"`` is ``usage.total_input_tokens`` (non-cached input +
+    cache writes + reads) = the whole prompt's context occupancy, so the
+    ctx% readout is correct even on an Anthropic prompt-cache hit (where
+    bare ``input_tokens`` would exclude the cached portion and under-report).
+    ``"in_speed"`` deliberately uses bare ``input_tokens`` — prefill only
+    processes the non-cached tokens, so that's the true prefill tok/s.
+    ``cache_read``/``cache_write`` are surfaced separately as a breakdown.
+    Speeds/ttft are included when the provider reported durations (omlx and
+    other OpenAI-compatible servers do; the Anthropic streaming path leaves
     them 0 → omitted by the renderer).
     """
     return {
-        "in": usage.input_tokens,
+        "in": usage.total_input_tokens,
         "out": usage.output_tokens,
         "in_speed": (
             usage.input_tokens / (usage.prompt_eval_ns / 1e9)

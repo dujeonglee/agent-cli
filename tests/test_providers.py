@@ -123,8 +123,9 @@ class TestAnthropicProvider:
         )
         assert result.usage.cache_creation_input_tokens == 100
         assert result.usage.cache_read_input_tokens == 50
-        # input_tokens stays separate — billable total is the sum
+        # input_tokens stays separate — billable/occupancy total is the sum
         assert result.usage.input_tokens == 5
+        assert result.usage.total_input_tokens == 5 + 100 + 50
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_cache_usage_fields_default_zero(self, mock_post, caps_structured):
@@ -145,6 +146,8 @@ class TestAnthropicProvider:
         )
         assert result.usage.cache_creation_input_tokens == 0
         assert result.usage.cache_read_input_tokens == 0
+        # no cache → total_input_tokens == input_tokens (omlx/non-cache parity)
+        assert result.usage.total_input_tokens == result.usage.input_tokens == 5
 
     @patch("agent_cli.providers.anthropic.requests.post")
     def test_interrupt_check_breaks_stream(self, mock_post, caps_structured):

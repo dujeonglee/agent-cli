@@ -4203,3 +4203,32 @@ class TestMessageInjection:
         # starter (plain chat) was added; injected command was NOT chat-injected
         assert "[Pen]: plain chat starter" in users
         assert not any("@explorer scan repo" in (u or "") for u in users)
+
+
+class TestBuildTokenStats:
+    """`_build_token_stats` reports context occupancy in ``"in"`` = the WHOLE
+    prompt (non-cached input + cache), so the ctx% readout is correct on an
+    Anthropic prompt-cache hit. ``"in_speed"`` stays on bare input_tokens
+    (prefill only processes the non-cached portion)."""
+
+    def test_in_includes_cache_occupancy(self):
+        from agent_cli.loop import _build_token_stats
+        from agent_cli.providers.base import TokenUsage
+
+        usage = TokenUsage(
+            input_tokens=500,
+            output_tokens=10,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=8000,
+        )
+        stats = _build_token_stats(usage, context_window=262144, total_out=10)
+        assert stats["in"] == 8500  # true occupancy, not bare 500
+        assert stats["cache_read"] == 8000  # breakdown surfaced separately
+
+    def test_no_cache_in_equals_input(self):
+        from agent_cli.loop import _build_token_stats
+        from agent_cli.providers.base import TokenUsage
+
+        usage = TokenUsage(input_tokens=1200, output_tokens=5)
+        stats = _build_token_stats(usage, context_window=8192, total_out=5)
+        assert stats["in"] == 1200  # omlx/non-cache parity

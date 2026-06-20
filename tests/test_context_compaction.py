@@ -1242,3 +1242,24 @@ class TestEstimateMessageTokensOps:
             "action_input": {"path": "f", "content": big},
         }
         assert _estimate_message_tokens(rec) >= estimate_tokens(big)
+
+
+class TestSumMessageTokens:
+    def test_sum_matches_manual(self):
+        from agent_cli.context.manager import (
+            _estimate_message_tokens,
+            _sum_message_tokens,
+        )
+
+        msgs = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world world"},
+        ]
+        assert _sum_message_tokens(msgs) == sum(
+            _estimate_message_tokens(m) for m in msgs
+        )
+
+    def test_empty(self):
+        from agent_cli.context.manager import _sum_message_tokens
+
+        assert _sum_message_tokens([]) == 0

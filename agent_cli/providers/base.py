@@ -23,6 +23,19 @@ class TokenUsage:
     cache_creation_input_tokens: int = 0  # tokens written to cache (25% premium)
     cache_read_input_tokens: int = 0  # tokens served from cache (10% cost)
 
+    @property
+    def total_input_tokens(self) -> int:
+        """The true prompt size / context occupancy: non-cached ``input_tokens``
+        + cache writes + cache reads. ``input_tokens`` alone EXCLUDES both cache
+        fields (Anthropic prompt cache), so use this wherever you mean "how full
+        is the context" (budget reconcile, ctx% readout). For providers without a
+        prompt cache (omlx etc.) the cache fields are 0, so this == input_tokens."""
+        return (
+            self.input_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+        )
+
 
 @dataclass
 class LLMResponse:

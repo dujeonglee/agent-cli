@@ -419,7 +419,7 @@ class ContextManager:
             self._summary = new_summary[:_SUMMARY_CHAR_CAP]
             self._file_list = self._merge_file_lists(self._file_list, new_paths)
             self._cache = anchor + retained
-            self._cache_tokens = sum(_estimate_message_tokens(m) for m in self._cache)
+            self._cache_tokens = _sum_message_tokens(self._cache)
             self._compaction_count += 1
             self._last_compacted_at = _now_iso()
             # The evicted slice came from the cache; reflect it in the
@@ -481,7 +481,7 @@ class ContextManager:
         if not dynamic:
             return anchor, [], []
 
-        dynamic_tokens = sum(_estimate_message_tokens(m) for m in dynamic)
+        dynamic_tokens = _sum_message_tokens(dynamic)
         target_evict = dynamic_tokens // 2
 
         # Edge case: a single huge dynamic message would otherwise be
@@ -733,7 +733,7 @@ class ContextManager:
         if use_offset:
             forward = messages[self._dynamic_start_index :]
             self._cache = forward
-            self._cache_tokens = sum(_estimate_message_tokens(m) for m in forward)
+            self._cache_tokens = _sum_message_tokens(forward)
             # If even the forward slice exceeds budget (budget shrank
             # since the previous run), trim oldest until it fits.
             while self._cache_tokens > self.max_context_tokens and len(self._cache) > 1:
@@ -743,7 +743,7 @@ class ContextManager:
             return
 
         # Legacy path: invalid or absent offset → reverse-load.
-        total = sum(_estimate_message_tokens(m) for m in messages)
+        total = _sum_message_tokens(messages)
         start_idx = 0
         if total > self.max_context_tokens:
             running = total
@@ -756,7 +756,7 @@ class ContextManager:
                 start_idx = len(messages) - 1
 
         self._cache = messages[start_idx:]
-        self._cache_tokens = sum(_estimate_message_tokens(m) for m in self._cache)
+        self._cache_tokens = _sum_message_tokens(self._cache)
 
     # ── Fork support ─────────────────────────────────
 
@@ -929,6 +929,13 @@ def _estimate_message_tokens(msg: dict) -> int:
     if artifact:
         total += estimate_tokens(artifact)
     return total
+
+
+def _sum_message_tokens(messages) -> int:
+    """Estimated token total for a message list — the single expression for
+    ``sum(_estimate_message_tokens(...))`` used across the cache (re)builds
+    (resume restore, compaction evict, force_fit)."""
+    return sum(_estimate_message_tokens(m) for m in messages)
 
 
 def _to_natural_language(msg: dict, wire_format) -> dict:
