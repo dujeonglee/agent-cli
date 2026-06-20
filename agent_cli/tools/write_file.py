@@ -2,11 +2,56 @@
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 
 from agent_cli.tools.base import Tool
 from agent_cli.tools.read_file import format_hashlines
 from agent_cli.tools.result import ToolResult
+
+# Runtime nudge (B1): a write_file that OVERWRITES an existing file but changes
+# only a small fraction of its lines is almost always a case that edit_file
+# would do far cheaper — re-writing re-sends the whole file into context each
+# turn (write content + hashline echo, twice). Below this changed-line fraction
+# we append a one-line steering note to the observation (the write still
+# happens; observation-side, so no mimicry risk). Tuned from a real session:
+# small edits sat at 2-3% changed, genuine full rewrites at 100%+.
+_REWRITE_NUDGE_RATIO = 0.30
+
+
+def _rewrite_nudge(path: str, new_content: str) -> str:
+    """One-line steering note when ``path`` exists, is non-empty, and the new
+    content changes < ``_REWRITE_NUDGE_RATIO`` of its lines (small overwrite).
+    Empty string otherwise (new file / empty file / genuine rewrite / unreadable
+    — all default to no nudge). Computed BEFORE the write, while the old content
+    is still on disk (render_observation runs after the overwrite, too late)."""
+    p = Path(path)
+    if not p.is_file():
+        return ""
+    try:
+        old = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    if not old.strip():
+        return ""
+    old_lines = old.splitlines()
+    new_lines = new_content.splitlines()
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines)
+    changed = sum(
+        max(i2 - i1, j2 - j1)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes()
+        if tag != "equal"
+    )
+    total = max(len(new_lines), 1)
+    if changed / total >= _REWRITE_NUDGE_RATIO:
+        return ""
+    pct = round(changed / total * 100)
+    return (
+        f"[note] You rewrote an existing file but only ~{pct}% of lines changed "
+        f"({changed}/{total}). For a change this small, edit_file costs only the "
+        f"changed lines — re-writing the whole file re-sends every line into your "
+        f"context each turn. Use edit_file next time (hashline refs are below)."
+    )
 
 
 def tool_write_file(args: dict) -> ToolResult:
@@ -23,12 +68,17 @@ def tool_write_file(args: dict) -> ToolResult:
     content = args.get("content", "")
     try:
         p = Path(path)
+        # Judge small-overwrite BEFORE writing — the old content is gone after.
+        nudge = _rewrite_nudge(path, content)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         # Echo the written content as hashlines — the same format read_file
         # emits — so it doubles as the edit_file ref source.
+        header = f"File saved: {path} ({len(content)} bytes)"
+        if nudge:
+            header += f"\n{nudge}"
         msg = (
-            f"File saved: {path} ({len(content)} bytes)\n"
+            f"{header}\n"
             f"To modify, call edit_file with the hashline refs below "
             f"(no need to read_file first):\n"
             f"{format_hashlines(content)}"

@@ -127,6 +127,67 @@ class TestWriteFile:
         assert "edit_file" in result.output
 
 
+class TestWriteFileRewriteNudge:
+    """Runtime nudge (B1): a write_file that OVERWRITES an existing file but
+    only changes a SMALL fraction of lines (< 30%) gets a one-line note in its
+    observation steering the model to edit_file next time. The write still
+    happens (allow + nudge, never block) and the note rides in ``output`` →
+    enters context verbatim. New files and genuine full rewrites get no note."""
+
+    def _lines(self, n, label="x"):
+        return "".join(f"{label} line {i}\n" for i in range(n))
+
+    def test_small_overwrite_nudges(self, tmp_path):
+        target = tmp_path / "calc.c"
+        target.write_text(self._lines(100))
+        # change 3 of 100 lines → ~3%, well under 30%
+        new = self._lines(100)
+        nl = new.splitlines()
+        nl[10] = "x line 10 CHANGED"
+        nl[50] = "x line 50 CHANGED"
+        nl[90] = "x line 90 CHANGED"
+        result = tool_write_file({"path": str(target), "content": "\n".join(nl) + "\n"})
+        assert result.success
+        assert target.read_text().count("CHANGED") == 3  # write still happened
+        assert "edit_file" in result.output
+        # the steering note is present (distinct from the standard edit hint)
+        assert "rewrote" in result.output.lower() or "% of" in result.output
+
+    def test_full_rewrite_no_nudge(self, tmp_path):
+        target = tmp_path / "calc.c"
+        target.write_text(self._lines(100, "old"))
+        # completely different content → > 30% changed
+        result = tool_write_file(
+            {"path": str(target), "content": self._lines(120, "new")}
+        )
+        assert result.success
+        assert "rewrote" not in result.output.lower()
+
+    def test_new_file_no_nudge(self, tmp_path):
+        target = tmp_path / "fresh.c"
+        result = tool_write_file({"path": str(target), "content": self._lines(50)})
+        assert result.success
+        assert "rewrote" not in result.output.lower()
+
+    def test_empty_existing_no_nudge(self, tmp_path):
+        """An existing-but-empty file is effectively a new write → no nudge."""
+        target = tmp_path / "empty.c"
+        target.write_text("")
+        result = tool_write_file({"path": str(target), "content": self._lines(40)})
+        assert result.success
+        assert "rewrote" not in result.output.lower()
+
+    def test_nudge_reports_change_fraction(self, tmp_path):
+        target = tmp_path / "f.c"
+        target.write_text(self._lines(200))
+        nl = self._lines(200).splitlines()
+        nl[5] = "x line 5 CHANGED"
+        result = tool_write_file({"path": str(target), "content": "\n".join(nl) + "\n"})
+        # mentions edit_file as the cheaper alternative + a change count/percent
+        assert "edit_file" in result.output
+        assert any(c.isdigit() for c in result.output)
+
+
 class TestShellTool:
     def test_basic_command(self):
         result = tool_shell({"command": "echo hello"})
