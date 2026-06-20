@@ -121,10 +121,6 @@ _THINK_FRAMES_RAW = (
 # updates on every chunk — only the visual frame is throttled.
 _FRAME_INTERVAL = 0.15
 
-# `chars / 4` matches `agent_cli.context.token_estimator.estimate_tokens`,
-# so the streaming counter speaks the same units as the budget plumbing.
-_CHARS_PER_TOKEN = 4
-
 
 def _display_width(text: str) -> int:
     """Calculate display width accounting for CJK double-width characters."""
@@ -558,7 +554,12 @@ class MinimalRenderer(Renderer):
             self._erase_reflowed_marquee()
             prefix = f"{self._prefix}  " if self._depth > 0 else "  "
             frame = _TALK_FRAMES[self._stream_chunks % len(_TALK_FRAMES)]
-            tokens = len(self._stream_buf) // _CHARS_PER_TOKEN
+            # estimate_tokens (chars/4) lazily — render→context→manager→render is
+            # a load-time import cycle, so this can't be a top-level import (same
+            # pattern as web.py). Single source of the chars/4 unit.
+            from agent_cli.context.token_estimator import estimate_tokens
+
+            tokens = estimate_tokens(self._stream_buf)
             line = f"{prefix}{frame} ~{tokens} tokens"
             # Narrow-terminal safety net: if frame+counter wouldn't fit,
             # drop the counter; if even the face wouldn't fit, truncate.

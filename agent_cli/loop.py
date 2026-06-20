@@ -78,6 +78,11 @@ from agent_cli.wire_formats import get as _get_wire_format
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 _MAX_OVERFLOW_RETRIES = 5
+# Compaction TARGET ratio: compact down to 80% of available headroom (leave a
+# 20% margin). Distinct from manager's _COMPACTION_THRESHOLD_RATIO (0.9 = when
+# to TRIGGER). Used by both the preventive (flow 1) and overflow-recovery
+# (flow 2) target computations in _call_llm.
+_COMPACTION_TARGET_RATIO = 0.8
 
 
 class AgentLoop:
@@ -721,7 +726,7 @@ class AgentLoop:
                         - sys_tokens
                         - self.capabilities.max_output_tokens
                     )
-                    * 0.8
+                    * _COMPACTION_TARGET_RATIO
                 ),
                 1,
             )
@@ -819,7 +824,7 @@ class AgentLoop:
                 # estimate, shrink the cache toward the limit, and retry.
                 actual, limit = parse_overflow_amounts(str(e))
                 budget = self.ctx.max_context_tokens
-                target = int((limit or budget) * 0.8)
+                target = int((limit or budget) * _COMPACTION_TARGET_RATIO)
                 if self.ctx.force_fit(target, actual_tokens=actual):
                     self.overflow_retries += 1
                     render_status(
