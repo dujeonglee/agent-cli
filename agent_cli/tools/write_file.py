@@ -47,12 +47,13 @@ def tool_write_file(args: dict) -> ToolResult:
 class WriteFileTool(Tool):
     name = "write_file"
     description = (
-        "Create or overwrite a file with raw content. Returns the written "
-        "content in hashline format (LINE#HASH:content) so you can edit_file "
-        "it immediately — no separate read_file needed. For NEW files use "
-        "write_file; to make a SMALL change to a file you already wrote or "
-        "read, prefer edit_file with the returned hashline refs rather than "
-        "rewriting the whole file."
+        "Create or overwrite a file with raw content. Returns hashline format "
+        "(LINE#HASH:content) so you can edit_file immediately — no read_file "
+        "needed. Use write_file ONLY for a NEW file or a genuine FULL rewrite. "
+        "To change PART of an existing file, use edit_file instead: re-writing "
+        "the whole file re-sends every line into your context each turn (the "
+        "file appears twice — your write + its echo) and stays there, eating "
+        "your context window; edit_file costs only the changed lines."
     )
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
     # single-target shape — no `write_file_` wire-key prefix. `wrap_single_op`

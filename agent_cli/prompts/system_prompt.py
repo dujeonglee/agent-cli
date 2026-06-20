@@ -140,6 +140,14 @@ def _build_edit_file_inline(wire_format) -> str:
 
     return f"""
 
+  edit vs write — to change PART of an existing file, use edit_file, NOT
+  write_file with the whole file. WHY THIS MATTERS TO YOU: re-writing a file
+  re-sends every one of its lines into your context each turn (the file shows
+  up TWICE — your write_file content + its hashline echo) and stays there,
+  eating your context window and crowding out the reasoning space you need to
+  stay sharp. edit_file costs only the changed lines. Reserve write_file for a
+  NEW file or a genuine FULL rewrite; for a small/partial change, edit_file.
+
   Hashline editing guide:
   read_file returns lines tagged as LINE#HASH:content, e.g.:
     1#VR:def hello():
