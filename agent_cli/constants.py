@@ -45,9 +45,6 @@ DELEGATE_DEFAULT_TIMEOUT = 300
 # probes).
 DETECTION_PROBE_TIMEOUT = 60
 
-# ── Token estimation ─────────────────────────
-OVERFLOW_RESERVE_TOKENS = 2048
-
 # ── Observation message templates ──────────────
 OBS_SUCCESS = "STATUS: success\nRESULT:\n{result}"
 

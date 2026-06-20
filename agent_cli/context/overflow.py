@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import re
 
-from agent_cli.constants import OVERFLOW_RESERVE_TOKENS
-from agent_cli.context.token_estimator import estimate_tokens_from_messages
-from agent_cli.providers.capabilities import ModelCapabilities
-
 # Provider-specific overflow error patterns (pi-mono reference)
 OVERFLOW_PATTERNS = [
     # Anthropic
@@ -107,13 +103,3 @@ def parse_overflow_amounts(error_message: str) -> tuple[int | None, int | None]:
     limit = int(limit_m.group(1)) if limit_m else None
     actual = int(actual_m.group(1)) if actual_m else None
     return (actual, limit)
-
-
-def check_preemptive_overflow(
-    messages: list[dict],
-    capabilities: ModelCapabilities,
-    reserve_tokens: int = OVERFLOW_RESERVE_TOKENS,
-) -> bool:
-    """Check if messages will likely exceed context window before calling LLM."""
-    estimated = estimate_tokens_from_messages(messages)
-    return estimated > (capabilities.context_window - reserve_tokens)

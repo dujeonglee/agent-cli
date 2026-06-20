@@ -2,10 +2,8 @@
 
 from agent_cli.context.overflow import (
     is_context_overflow,
-    check_preemptive_overflow,
     parse_overflow_amounts,
 )
-from agent_cli.providers.capabilities import ModelCapabilities
 
 # Verified live against an omlx server (Qwen3.6-27B-MLX-8bit, 2026-05-30):
 # a prompt over the configured context returns HTTP 400 with this body.
@@ -109,30 +107,3 @@ class TestParseOverflowAmounts:
 
     def test_unrelated_message_returns_none(self):
         assert parse_overflow_amounts("Connection refused") == (None, None)
-
-
-class TestCheckPreemptiveOverflow:
-    def test_within_limit(self):
-        caps = ModelCapabilities(
-            context_window=4096,
-            max_output_tokens=512,
-            supports_structured_output=False,
-            supports_thinking=False,
-            thinking_budget=0,
-            supports_strict_schema=False,
-        )
-        msgs = [{"role": "user", "content": "a" * 100}]  # ~25 tokens
-        assert check_preemptive_overflow(msgs, caps) is False
-
-    def test_over_limit(self):
-        caps = ModelCapabilities(
-            context_window=100,
-            max_output_tokens=50,
-            supports_structured_output=False,
-            supports_thinking=False,
-            thinking_budget=0,
-            supports_strict_schema=False,
-        )
-        # 4000 chars ≈ 1000 tokens, context_window=100, reserve=2048
-        msgs = [{"role": "user", "content": "a" * 4000}]
-        assert check_preemptive_overflow(msgs, caps) is True
