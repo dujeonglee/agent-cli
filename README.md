@@ -682,7 +682,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 해시 불일치 시 퍼지 매칭으로 자동 보정합니다 (공백/따옴표/대시 정규화).
 
-`edit_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). `write_file` 성공 시엔 작성한 content 가 **hashline(LINE#HASH:content)** 포맷으로 반환되어, `read_file` 없이 방금 쓴 파일을 바로 `edit_file` 로 수정할 수 있습니다 (write→edit 직결 — 작은 변경 시 전체 재작성 대신 부분 edit 유도). 또한 `write_file` 이 **기존 파일을 덮어쓰는데 바뀐 줄이 30% 미만**이면, 관찰에 *"~N% of lines changed … edit_file costs only the changed lines"* 넛지가 한 줄 붙어 다음엔 edit_file 을 쓰도록 유도합니다(쓰기는 정상 수행, 거부 아님 — 재작성은 매 턴 파일 전체를 컨텍스트에 재공급하므로).
+`edit_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). `write_file` 성공 시엔 작성한 content 가 **hashline(LINE#HASH:content)** 포맷으로 반환되어, `read_file` 없이 방금 쓴 파일을 바로 `edit_file` 로 수정할 수 있습니다 (write→edit 직결 — 작은 변경 시 전체 재작성 대신 부분 edit 유도). 또한 `write_file` 이 **기존 파일을 덮어쓰는데 바뀐 줄이 30% 미만**이면(작은 overwrite), 관찰에 *"~N% of lines changed … edit_file costs only the changed lines"* 넛지가 붙고 **echo 가 파일 전체 hashline 대신 바뀐 줄만의 diff** 로 바뀝니다 — churn 케이스의 컨텍스트 점유를 줄이고 모델에게 "edit 했어야 할 줄"을 보여줍니다(쓰기는 정상 수행, 거부 아님). 신규 파일·전면 재작성(≥30%)은 hashline echo 를 유지합니다(write→edit 직결용).
 
 ### complete — 작업 완료
 

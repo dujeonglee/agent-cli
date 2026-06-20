@@ -101,14 +101,17 @@ class TestWriteFile:
         assert "@@" not in result.output
         assert "-b" not in result.output
 
-    def test_hashline_when_unchanged(self, tmp_path):
-        """Identical content still returns hashlines (they are edit refs),
-        not a bare save confirmation."""
+    def test_unchanged_rewrite_is_small_overwrite(self, tmp_path):
+        """Re-writing IDENTICAL content (0% changed) is the most wasteful
+        rewrite of all — it counts as a small overwrite: the nudge fires and
+        the echo is NOT the full hashline dump (an empty diff → just the save
+        header). No point re-sending every line when nothing changed."""
         target = tmp_path / "same.txt"
-        target.write_text("hello\n")
-        result = tool_write_file({"path": str(target), "content": "hello\n"})
+        target.write_text("hello\nworld\n")
+        result = tool_write_file({"path": str(target), "content": "hello\nworld\n"})
         assert result.success
-        assert "1#" in result.output and "hello" in result.output
+        assert "rewrote" in result.output.lower()  # nudge fired (0% changed)
+        assert "1#" not in result.output  # no full hashline echo
 
     def test_hashline_on_new_file(self, tmp_path):
         """Creating a file → every line tagged with a hashline so the LLM
@@ -186,6 +189,63 @@ class TestWriteFileRewriteNudge:
         # mentions edit_file as the cheaper alternative + a change count/percent
         assert "edit_file" in result.output
         assert any(c.isdigit() for c in result.output)
+
+
+class TestWriteFileSmallOverwriteDiff:
+    """When a write_file is a SMALL overwrite (same condition as the nudge,
+    < 30% lines changed), its observation echoes a DIFF (just the changed
+    lines) instead of the whole file's hashlines — the echo for the churn
+    case shrinks to ~diff size. New files / genuine rewrites keep the full
+    hashline echo (write→edit-direct preserved; a diff would ≈ the file).
+    Observation-side only → no mimicry; the write itself is unchanged."""
+
+    def _lines(self, n, label="x"):
+        return "".join(f"{label} line {i}\n" for i in range(n))
+
+    def test_small_overwrite_shows_diff_not_full_hashlines(self, tmp_path):
+        target = tmp_path / "calc.c"
+        target.write_text(self._lines(100))
+        nl = self._lines(100).splitlines()
+        nl[10] = "x line 10 CHANGED"
+        result = tool_write_file({"path": str(target), "content": "\n".join(nl) + "\n"})
+        assert result.success
+        out = result.output
+        # unified-diff markers present, the changed line shown
+        assert "@@" in out or "--- a/" in out
+        assert "+x line 10 CHANGED" in out
+        # the full 100-line hashline dump is NOT echoed (only ~the changed region)
+        assert out.count("#") < 30  # a full 100-line hashline echo would be 100 tags
+        # write still happened with the full content
+        assert target.read_text().count("CHANGED") == 1
+
+    def test_full_rewrite_keeps_hashlines(self, tmp_path):
+        target = tmp_path / "calc.c"
+        target.write_text(self._lines(100, "old"))
+        result = tool_write_file(
+            {"path": str(target), "content": self._lines(120, "new")}
+        )
+        assert result.success
+        # genuine rewrite → full hashline echo (NOT a diff), for write→edit-direct
+        assert "1#" in result.output  # hashline tags present
+        assert "@@" not in result.output
+
+    def test_new_file_keeps_hashlines(self, tmp_path):
+        target = tmp_path / "fresh.c"
+        result = tool_write_file({"path": str(target), "content": self._lines(50)})
+        assert result.success
+        assert "1#" in result.output  # full hashline echo for a new file
+        assert "@@" not in result.output
+
+    def test_diff_echo_smaller_than_hashline_echo(self, tmp_path):
+        """The whole point: a small overwrite's observation is far smaller than
+        if it had echoed every line as a hashline."""
+        target = tmp_path / "big.c"
+        target.write_text(self._lines(300))
+        nl = self._lines(300).splitlines()
+        nl[150] = "x line 150 CHANGED"
+        result = tool_write_file({"path": str(target), "content": "\n".join(nl) + "\n"})
+        # a 300-line hashline echo would be > 300 lines; the diff is a handful
+        assert result.output.count("\n") < 50
 
 
 class TestShellTool:
