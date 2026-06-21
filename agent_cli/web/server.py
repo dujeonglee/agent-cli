@@ -434,6 +434,18 @@ class WebServer:
         # agent) runs in. Resolved once at startup; downloads are confined to
         # this subtree (path-traversal guarded in ``_safe_workspace_path``).
         self.workspace = Path.cwd().resolve()
+        # Auto-review toggle. When True, the worker runs a reviewer agent after
+        # each ``complete`` and keeps reviewing until it accepts (or the toggle
+        # goes off). Read LIVE each review round (a plain bool is fine — set
+        # from a request thread, read from the worker thread; a stale read at
+        # worst delays the toggle by one round). Off by default.
+        self._auto_review = False
+
+    def auto_review_enabled(self) -> bool:
+        return self._auto_review
+
+    def set_auto_review(self, enabled: bool) -> None:
+        self._auto_review = bool(enabled)
 
     def _safe_workspace_path(self, rel: str) -> Path:
         """Resolve ``rel`` under the workspace root, rejecting traversal /
@@ -1022,6 +1034,19 @@ def create_app(server: WebServer) -> FastAPI:
         server._require_token(token)
         stopped = server.trigger_stop()
         return JSONResponse({"stopped": stopped})
+
+    @app.post("/api/auto_review")
+    async def auto_review(request: Request, token: str = Query(...)):
+        """Set the auto-review toggle. Body: ``{enabled: bool}``. When on, the
+        worker runs a reviewer agent after each complete and keeps reviewing
+        until it accepts (or the toggle goes off)."""
+        server._require_token(token)
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        server.set_auto_review(bool(body.get("enabled", False)))
+        return JSONResponse({"enabled": server.auto_review_enabled()})
 
     return app
 

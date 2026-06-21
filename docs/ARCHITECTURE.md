@@ -1023,8 +1023,8 @@ compaction에 맡긴다 (모델이 거부에 헤매던 비용이 더 컸음).
 > **NOTE (v4.4.0):** `ready_for_review` 가상 도구는 **제거**됐습니다 — 모델이
 > complete 전에 자발적으로 호출하라는 self-review 도구였으나 실전 사용률 0
 > (297레코드 세션 0회). 아래 컨텍스트 빌더(`_build_review_observation` /
-> `_format_tool_calls_for_review`)는 **보존** — 후속 auto-review(complete 후
-> 옵션 토글로 리뷰 에이전트 자동 delegate)가 reviewer 컨텍스트로 재활용.
+> `_format_tool_calls_for_review`)는 **보존** — auto-review(v4.5.0, web `🔍 Review`
+> 토글)가 reviewer 컨텍스트로 재활용(`review.py::build_reviewer_task`).
 
 리뷰 컨텍스트 블록은 `_build_review_observation` (loop.py)이 합성합니다:
 `--- ORIGINAL REQUEST ---` / `--- YOUR SUMMARY ---` / *(옵션)* `--- YOUR TOOL CALLS ---` /

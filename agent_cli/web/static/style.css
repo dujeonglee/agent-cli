@@ -600,6 +600,27 @@ footer {
 #inspector-btn:hover, #export-btn:hover, #download-btn:hover {
   transform: scale(1.15);
 }
+#auto-review-btn {
+  background: none;
+  border: 1px solid rgba(255,255,255,.25);
+  border-radius: 10px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  opacity: .7;
+  transition: opacity .15s ease, background .15s ease;
+}
+#auto-review-btn:hover { opacity: 1; }
+#auto-review-btn.active {
+  opacity: 1;
+  background: rgba(80,200,120,.22);
+  border-color: rgba(80,200,120,.6);
+}
 
 #inspector-backdrop {
   position: fixed;

@@ -1594,3 +1594,34 @@ class TestNickname:
         for el_id in ("name-bar", "nb-input", "nb-set"):
             assert f'id="{el_id}"' in html, el_id
         assert "/api/nickname" in client.get("/static/app.js").text
+
+
+class TestAutoReviewToggle:
+    """POST /api/auto_review flips the worker-read toggle; default off."""
+
+    def test_default_off(self, server_and_client):
+        server, _, _ = server_and_client
+        assert server.auto_review_enabled() is False
+
+    def test_toggle_on_and_off(self, server_and_client):
+        server, _, client = server_and_client
+        r = client.post("/api/auto_review?token=testtoken", json={"enabled": True})
+        assert r.status_code == 200
+        assert r.json() == {"enabled": True}
+        assert server.auto_review_enabled() is True
+
+        r = client.post("/api/auto_review?token=testtoken", json={"enabled": False})
+        assert r.json() == {"enabled": False}
+        assert server.auto_review_enabled() is False
+
+    def test_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        r = client.post("/api/auto_review?token=wrong", json={"enabled": True})
+        assert r.status_code in (401, 403)
+
+    def test_set_auto_review_coerces_bool(self, server_and_client):
+        server, _, _ = server_and_client
+        server.set_auto_review(1)
+        assert server.auto_review_enabled() is True
+        server.set_auto_review(0)
+        assert server.auto_review_enabled() is False

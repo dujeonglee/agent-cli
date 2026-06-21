@@ -1442,29 +1442,78 @@ def web(
                 if route_one(message):
                     continue
                 try:
-                    run_loop(
-                        query=message,
-                        query_author=nickname,
-                        dequeue_user_message=server.dequeue_nowait,
-                        route_message=route_one,
-                        provider=llm_provider,
-                        capabilities=capabilities,
-                        model=resolved_model,
-                        provider_name=provider,
-                        base_url=resolved_url,
-                        api_key=resolved_key,
-                        max_turns=max_turns,
-                        verbose=verbose,
-                        ctx=ctx,
-                        max_depth=max_depth,
-                        delegate_timeout=delegate_timeout,
-                        session=session,
-                        graceful_interrupt=True,
-                        stop_event=stop_event,
-                        record_turns=record_turns,
-                        wire_format=wire_format_plugin,
-                        compaction_enabled=not no_compaction,
-                    )
+
+                    def _run_main(query: str, author: str):
+                        return run_loop(
+                            query=query,
+                            query_author=author,
+                            dequeue_user_message=server.dequeue_nowait,
+                            route_message=route_one,
+                            provider=llm_provider,
+                            capabilities=capabilities,
+                            model=resolved_model,
+                            provider_name=provider,
+                            base_url=resolved_url,
+                            api_key=resolved_key,
+                            max_turns=max_turns,
+                            verbose=verbose,
+                            ctx=ctx,
+                            max_depth=max_depth,
+                            delegate_timeout=delegate_timeout,
+                            session=session,
+                            graceful_interrupt=True,
+                            stop_event=stop_event,
+                            record_turns=record_turns,
+                            wire_format=wire_format_plugin,
+                            compaction_enabled=not no_compaction,
+                        )
+
+                    result = _run_main(message, nickname)
+
+                    # Auto-review (web toggle): after the main agent completes,
+                    # if the toggle is on, run a reviewer agent and keep
+                    # reviewing until it accepts (or the toggle goes off). The
+                    # reviewer is a normal delegate — no loop changes; the
+                    # verdict rides in its complete result (parsed worker-side).
+                    if server.auto_review_enabled() and result is not None:
+                        from agent_cli.review import run_auto_review
+                        from agent_cli.tools.delegate import tool_delegate
+
+                        def _spawn_reviewer(task: str) -> str:
+                            r = tool_delegate(
+                                {"tasks": [{"task": task, "agent": "reviewer"}]},
+                                parent_ctx=ctx,
+                                provider=llm_provider,
+                                model=resolved_model,
+                                capabilities=capabilities,
+                                provider_name=provider,
+                                base_url=resolved_url,
+                                api_key=resolved_key,
+                                max_depth=max_depth,
+                                timeout=delegate_timeout,
+                                session=session,
+                                stop_event=stop_event,
+                                compaction_enabled=not no_compaction,
+                            )
+                            return (r.output if r and r.success else r.error) or ""
+
+                        def _resume_main(feedback: str) -> str:
+                            r = _run_main(
+                                f"A reviewer checked your completed work and "
+                                f"did NOT accept it. Address this feedback, then "
+                                f"complete again:\n\n{feedback}",
+                                "reviewer",
+                            )
+                            return (r.output if r else "") or ""
+
+                        run_auto_review(
+                            message,
+                            (result.output if result else "") or "",
+                            ctx,
+                            is_enabled=server.auto_review_enabled,
+                            spawn_reviewer=_spawn_reviewer,
+                            resume_main=_resume_main,
+                        )
                 except Exception as exc:  # noqa: BLE001 — worker boundary
                     # Push the error into the renderer so the frontend
                     # sees it rather than dying silently. Worker keeps

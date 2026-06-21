@@ -2123,3 +2123,44 @@
   $backdrop.addEventListener("click", close);
   $go.addEventListener("click", download);
 })();
+
+// ── Auto-review toggle (header button → separate IIFE) ──────────────
+// Toggles the server's auto-review state (POST /api/auto_review). When on,
+// the worker runs a reviewer agent after each completion and keeps reviewing
+// until it accepts (or the toggle goes off). Pure client-side state mirror —
+// the button label/aria-pressed reflect the last server-confirmed value.
+(function () {
+  "use strict";
+
+  const token = new URLSearchParams(window.location.search).get("token");
+  const $btn = document.getElementById("auto-review-btn");
+  if (!$btn) return;
+  let enabled = false;
+
+  function paint() {
+    $btn.setAttribute("aria-pressed", enabled ? "true" : "false");
+    $btn.classList.toggle("active", enabled);
+    $btn.textContent = enabled ? "🔍 Review: on" : "🔍 Review: off";
+  }
+
+  $btn.addEventListener("click", function () {
+    const next = !enabled;
+    fetch("/api/auto_review?token=" + encodeURIComponent(token), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (d) {
+        enabled = !!d.enabled; // trust the server's confirmed value
+        paint();
+      })
+      .catch(function () {
+        /* leave the toggle as-is on failure */
+      });
+  });
+
+  paint();
+})();
