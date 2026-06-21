@@ -2297,7 +2297,7 @@ class TestAskTool:
         streaming-text card (raw JSON) never gets replaced with a
         structured ``assistant_turn`` card — and the next turn's
         streaming chunks visually append to it. Same applies to
-        ``run_skill`` and ``ready_for_review``."""
+        ``run_skill``."""
         from agent_cli.context.manager import ContextManager
 
         recorded: list[tuple] = []
@@ -3285,133 +3285,8 @@ class TestSkillStack:
         assert "recursive" not in output.lower()
 
 
-class TestReadyForReviewTextPath:
-    """Test ready_for_review tool via text parsing path."""
-
-    def test_ready_for_review_then_complete(self, caps, tmp_path):
-        """LLM calls ready_for_review, reviews, then completes."""
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "I think I'm done",
-                    "action": "ready_for_review",
-                    "action_input": {"summary": "Analyzed all files"},
-                }
-            ),
-            _complete("Analysis complete"),
-        )
-        from agent_cli.context.manager import ContextManager
-
-        ctx = ContextManager(session_dir=tmp_path)
-        result = run_loop(
-            query="Analyze the code",
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            ctx=ctx,
-        )
-        assert result.output == "Analysis complete"
-
-    def test_ready_for_review_returns_query_in_observation(self, caps, tmp_path):
-        """The observation from ready_for_review contains the original query."""
-        query_text = "Find all bugs in the authentication module"
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "reviewing",
-                    "action": "ready_for_review",
-                    "action_input": {"summary": "done"},
-                }
-            ),
-            _complete("ok"),
-        )
-        from agent_cli.context.manager import ContextManager
-
-        ctx = ContextManager(session_dir=tmp_path)
-        run_loop(
-            query=query_text,
-            provider=provider,
-            capabilities=caps,
-            model="test",
-            ctx=ctx,
-        )
-        # The query should have appeared in the messages (as review observation)
-        messages = ctx.get_messages()
-        obs_contents = [m["content"] for m in messages if m["role"] == "user"]
-        assert any(query_text in c for c in obs_contents)
-
-    def test_ready_for_review_renders_in_main_loop(self, caps, tmp_path):
-        """ready_for_review should render observation in main loop (not skill)."""
-        from unittest.mock import patch
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "I think I'm done",
-                    "action": "ready_for_review",
-                    "action_input": {"summary": "Did everything"},
-                }
-            ),
-            _complete("All done"),
-        )
-        from agent_cli.context.manager import ContextManager
-
-        ctx = ContextManager(session_dir=tmp_path)
-        with patch("agent_cli.loop.render_step") as mock_render:
-            run_loop(
-                query="Fix the bug",
-                provider=provider,
-                capabilities=caps,
-                model="test",
-                ctx=ctx,
-            )
-            # render_step should have been called for ready_for_review observation
-            render_calls = [
-                c
-                for c in mock_render.call_args_list
-                if c.args[0] == "observation"
-                and c.kwargs.get("tool_name") == "ready_for_review"
-            ]
-            assert len(render_calls) >= 1
-
-    def test_ready_for_review_not_rendered_in_skill(self, caps, tmp_path):
-        """ready_for_review should NOT render observation inside a skill."""
-        from unittest.mock import patch
-
-        provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "done",
-                    "action": "ready_for_review",
-                    "action_input": {"summary": "Done"},
-                }
-            ),
-            _complete("ok"),
-        )
-        from agent_cli.context.manager import ContextManager
-
-        ctx = ContextManager(session_dir=tmp_path)
-        with patch("agent_cli.loop.render_step") as mock_render:
-            run_loop(
-                query="Greet Alice",
-                provider=provider,
-                capabilities=caps,
-                model="test",
-                skill_name="greet",
-                ctx=ctx,
-            )
-            # render_step should NOT be called for ready_for_review in skill mode
-            render_calls = [
-                c
-                for c in mock_render.call_args_list
-                if c.args[0] == "observation"
-                and c.kwargs.get("tool_name") == "ready_for_review"
-            ]
-            assert len(render_calls) == 0
-
-
 class TestBuildReviewObservation:
-    """Unit tests for the ready_for_review observation builder.
+    """Unit tests for the review-context observation builder.
 
     These pin the exact prompt shape so any future tweak is intentional
     and reviewed — small changes here can shift model self-review
@@ -3532,15 +3407,15 @@ class TestFormatToolCallsForReview:
         assert _format_tool_calls_for_review(ctx) == ""
 
     def test_returns_empty_when_only_virtual_tools(self):
-        """ready_for_review / complete / ask should not produce a section."""
+        """complete / ask should not produce a section."""
         from agent_cli.loop import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
                 {
                     "role": "assistant",
-                    "action": "ready_for_review",
-                    "action_input": {"summary": "done"},
+                    "action": "ask",
+                    "action_input": {"question": "?"},
                 },
                 {
                     "role": "assistant",
@@ -3598,8 +3473,8 @@ class TestFormatToolCallsForReview:
                 },
                 {
                     "role": "assistant",
-                    "action": "ready_for_review",
-                    "action_input": {"summary": "s"},
+                    "action": "complete",
+                    "action_input": {"result": "ok"},
                 },
             ]
         )
@@ -3607,7 +3482,7 @@ class TestFormatToolCallsForReview:
         assert "read_file(" in out
         assert "shell(" in out
         assert "ask(" not in out
-        assert "ready_for_review(" not in out
+        assert "complete(" not in out
 
     def test_truncates_to_last_N_when_too_many(self):
         from agent_cli.loop import _format_tool_calls_for_review
@@ -3701,8 +3576,8 @@ class TestBuildReviewObservationWithCtx:
             [
                 {
                     "role": "assistant",
-                    "action": "ready_for_review",
-                    "action_input": {"summary": "done"},
+                    "action": "complete",
+                    "action_input": {"result": "done"},
                 }
             ]
         )

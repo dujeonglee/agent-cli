@@ -61,4 +61,4 @@ class TestToolSummaryArg:
         assert _sa("complete", {"result": "done"}) == "done"
 
     def test_base_fallback_no_strings_empty(self):
-        assert _sa("ready_for_review", {}) == ""
+        assert _sa("complete", {}) == ""

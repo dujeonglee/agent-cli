@@ -279,12 +279,6 @@ class TestVirtualToolPayloadHoist:
         result = parse_react(text)
         assert result.action_input == {"result": "kept"}
 
-    def test_ready_for_review_hoists_summary(self):
-        text = '{"thought": "checking", "action": "ready_for_review", "summary": "verified all edits"}'
-        result = parse_react(text)
-        assert result.action == "ready_for_review"
-        assert result.action_input == {"summary": "verified all edits"}
-
     def test_ask_hoists_top_level_question_as_questions(self):
         text = '{"thought": "need input", "action": "ask", "question": "What color?"}'
         result = parse_react(text)
@@ -300,7 +294,7 @@ class TestVirtualToolPayloadHoist:
     def test_virtual_tool_with_unknown_sibling_only_stays_none(self):
         """When a virtual tool has no known-alias sibling, action_input
         stays None — we do NOT fall through to the real-tool hoist for
-        virtual tools. Rationale: complete/ready_for_review/ask have
+        virtual tools. Rationale: complete/ask have
         well-defined payload shapes; arbitrary sibling keys shouldn't
         be blindly stuffed into action_input and pretend to be the
         payload."""

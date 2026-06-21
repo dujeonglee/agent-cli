@@ -151,8 +151,6 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
   `complete`.
 - complete: Call this tool when the task is done. Provide the final result.
   Input JSON: {"result": "string, required — The final result or answer"}
-- ready_for_review: Call this BEFORE complete to verify your work fulfills all requirements. The system will return the original request for you to review against. After reviewing, call complete if everything is done, or continue working if not.
-  Input JSON: {"summary": "string, required — Brief summary of what you accomplished"}
 - edit_file: Edit a file using a hashline ref from read_file. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
   Input JSON: {"path": "string, required — File path", "op": "string, required — replace | append | prepend | delete", "pos": "string, required — Hashline ref (e.g. '5#VR') of the target line", "end": "string — Hashline ref ending an inclusive range (replace/delete)", "lines": "array<string> — Replacement / inserted lines"}
 

@@ -628,11 +628,10 @@ LLM이 사용할 수 있는 도구 목록:
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |
 | `run_skill` | 등록된 스킬 실행 (LLM이 자동으로 호출 가능) |
-| `ready_for_review` | 완료 직전 자가 검증 — 원본 query를 observation으로 받아 누락 점검 후 `complete` 호출 |
 
 ### action_input 키 네이밍 규칙
 
-**모든 builtin 도구가 flat-native**입니다 (consolidation Step 3 완료) — `action_input` 에 표준 키를 그대로 씁니다: 파일 도구(`read_file`/`write_file`/`edit_file`)·`code_index`는 `{path/mode, ...}`, `delegate`는 `{task, ...}`, `shell`은 `{command, ...}`, 제어 도구(`complete`/`ask`/`run_skill`/`ready_for_review`)도 표준 키. 한 op = 한 대상이고, 여러 대상(여러 파일 읽기, 여러 쿼리, **여러 병렬 서브에이전트**)은 한 턴에 **op 을 여러 개** 냅니다.
+**모든 builtin 도구가 flat-native**입니다 (consolidation Step 3 완료) — `action_input` 에 표준 키를 그대로 씁니다: 파일 도구(`read_file`/`write_file`/`edit_file`)·`code_index`는 `{path/mode, ...}`, `delegate`는 `{task, ...}`, `shell`은 `{command, ...}`, 제어 도구(`complete`/`ask`/`run_skill`)도 표준 키. 한 op = 한 대상이고, 여러 대상(여러 파일 읽기, 여러 쿼리, **여러 병렬 서브에이전트**)은 한 턴에 **op 을 여러 개** 냅니다.
 
 어떤 builtin 도 wire-key prefix 를 쓰지 않습니다. wire-key prefix(`{tool}_{param}`) 메커니즘 — 모델이 `action` 이름을 빠뜨려도 키 모양으로 도구를 복구(dropped-action recovery) — 은 **미래 prefixed 도구/포맷용 latent seam** 으로 코드에 남아 있고, 현재 어떤 builtin 도 활성화하지 않습니다. MCP/외부 도구는 **prefix-less**(자체 bare 스키마)라 이 메커니즘과 무관합니다.
 

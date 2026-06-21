@@ -35,9 +35,7 @@ from __future__ import annotations
 
 # ── Shared text (same bytes for every plugin) ────────────────
 
-COMPLETION_INTRO = (
-    "When the task is done, first verify with `ready_for_review`, then call `complete`:"
-)
+COMPLETION_INTRO = "When the task is done, call `complete`:"
 
 SHARED_RULES_TAIL = """\
 3. If an observation shows an error, fix parameters and retry.
@@ -61,12 +59,6 @@ SCHEMA_EXAMPLE_INPUT = {
     "action_input": "{...}",
 }
 
-READY_FOR_REVIEW_EXAMPLE_INPUT = {
-    "thought": "summary of what I did",
-    "action": "ready_for_review",
-    "action_input": '{"summary": "..."}',
-}
-
 COMPLETE_EXAMPLE_INPUT = {
     "thought": "confirmed all requirements met",
     "action": "complete",
@@ -85,7 +77,6 @@ def build_format_rules(plugin) -> str:
     See module docstring for the contract the plugin must satisfy.
     """
     schema = plugin.render_full_example(**SCHEMA_EXAMPLE_INPUT)
-    rfr = plugin.render_full_example(**READY_FOR_REVIEW_EXAMPLE_INPUT)
     complete = plugin.render_full_example(**COMPLETE_EXAMPLE_INPUT)
 
     return (
@@ -95,7 +86,6 @@ def build_format_rules(plugin) -> str:
         f"{schema}\n"
         "\n"
         f"{COMPLETION_INTRO}\n"
-        f"{rfr}\n"
         f"{complete}\n"
         "\n"
         "Rules:\n"

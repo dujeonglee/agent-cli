@@ -233,7 +233,6 @@ _REACT_RESERVED: frozenset[str] = frozenset(
 # payload" path rather than dispatching with an arbitrary sibling.
 _VIRTUAL_TOOL_PAYLOAD_HOIST: dict[str, tuple[str, tuple[str, ...]]] = {
     "complete": ("result", ("result", "answer", "response", "final", "output")),
-    "ready_for_review": ("summary", ("summary",)),
     # For ask, _extract_questions in loop.py already treats "questions" and
     # "question" interchangeably, so placing the hoisted value under
     # "questions" is safe regardless of which top-level key the model used.
@@ -246,7 +245,7 @@ def _normalize_action_input(result: ParsedAction, data: dict) -> None:
 
     Two layers:
 
-    1. **Virtual tools** (complete / ready_for_review / ask). The payload
+    1. **Virtual tools** (complete / ask). The payload
        key can drift under several aliases (complete's `result` ↔
        `answer` ↔ `response`); map the first matching alias back to the
        canonical key. If no alias matches, leave action_input=None so

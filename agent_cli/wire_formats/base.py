@@ -212,9 +212,9 @@ class WireFormat(ABC):
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         """Render one full example of the wire shape.
 
-        The Format Rules builder calls this three times with shared
-        logical inputs — schema example, ``ready_for_review`` example,
-        ``complete`` example — so the *content* is identical across
+        The Format Rules builder calls this with shared logical inputs —
+        a schema example and a ``complete`` example — so the *content* is
+        identical across
         plugins and only the on-the-wire form differs. Measurement of
         model compliance can therefore compare two plugins fairly.
 
@@ -227,8 +227,7 @@ class WireFormat(ABC):
                 each plugin chooses how to handle the absent slot —
                 typically substituting a short placeholder so the slot
                 stays visible.
-            action: Action name (e.g. ``"read_file"``,
-                ``"ready_for_review"``).
+            action: Action name (e.g. ``"read_file"``, ``"complete"``).
             action_input: action_input as a JSON string. Plugins
                 splice it into their wire shape verbatim — receiving
                 a string rather than a dict avoids each plugin having

@@ -104,9 +104,8 @@ class TestMultiOpPromptBranches:
 
     def test_complete_not_listed(self, section):
         assert "- complete:" not in section
-        # ready_for_review stays, with its `complete` reference rephrased
-        assert "- ready_for_review:" in section
-        assert "BEFORE complete" not in section
+        # ready_for_review tool was removed entirely
+        assert "ready_for_review" not in section
 
     def test_param_keys_unprefixed(self, section):
         # No prefixed batch key appears at all under multi-op — not as a param
@@ -506,9 +505,9 @@ class TestBuildSystemPrompt:
         assert "## Session" not in prompt
         assert "Current session ID" not in prompt
 
-    def test_ready_for_review_in_prompt(self):
+    def test_ready_for_review_removed_from_prompt(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
-        assert "ready_for_review" in prompt
+        assert "ready_for_review" not in prompt  # tool removed
         assert "complete" in prompt
 
     # NOTE: the ready_for_review→complete workflow tests were removed when

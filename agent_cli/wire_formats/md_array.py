@@ -24,8 +24,9 @@ The shape (DESIGN §3; multi-op validated by single-turn bakeoffs):
   the deliverable — DESIGN Exp 8). Reviving ``complete`` fixes the class at the
   origin and lets the lenient-terminal parsing + the gate be removed. A
   thought-only / actionless turn is now a NO_ACTION nudge (call ``complete`` or
-  emit ops), never a silent completion. ``ready_for_review`` reverts to a
-  model-invoked pre-complete check (parity with prefix_md/react).
+  emit ops), never a silent completion. (The old loop-side review gate and the
+  model-invoked ``ready_for_review`` tool were both later removed — review is
+  now an optional auto-review pass after ``complete``, not a model tool.)
 """
 
 from __future__ import annotations

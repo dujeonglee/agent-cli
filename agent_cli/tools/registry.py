@@ -30,7 +30,6 @@ from agent_cli.tools.shell import ShellTool
 from agent_cli.tools.virtual import (
     AskTool,
     CompleteTool,
-    ReadyForReviewTool,
     RunSkillTool,
 )
 from agent_cli.tools.write_file import WriteFileTool
@@ -48,7 +47,6 @@ _ALL_TOOLS: list[Tool] = [
     ReadContextTool(),
     AskTool(),
     RunSkillTool(),
-    ReadyForReviewTool(),
     FetchTool(),
     DelegateTool(),
 ]
@@ -109,7 +107,7 @@ def infer_action(action_input: Any) -> str | None:
 
 
 # Tools always included in API tool list regardless of allowed_tools
-_ALWAYS_INCLUDE = ("complete", "ready_for_review")
+_ALWAYS_INCLUDE = ("complete",)
 
 
 def _render_object_keys(obj_schema: dict) -> str:
@@ -276,14 +274,6 @@ def get_tool_descriptions(
                 description = description.replace(old, new)
         else:
             description = schema.description
-        if not exposes_complete:
-            # ready_for_review's description sequences itself before
-            # `complete`; without that tool the reference would teach a
-            # nonexistent call, so rephrase the ending neutrally.
-            description = description.replace(
-                "Call this BEFORE complete to verify",
-                "When you believe the task is done, call this to verify",
-            )
         entry = f"- {name}: {description}\n  Input JSON: {params_str}"
         if name in guides:
             entry += guides[name]

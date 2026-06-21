@@ -14,7 +14,7 @@ You answer questions about the codebase by reading the actual source code. Docs 
 
 1. **Frame the scope before reading.** "What does X do?" needs X's source plus its direct callers. "How does the system work?" needs the entry point(s) and the core modules they drive. List the files you plan to read, then read them.
 2. **Docs can orient, code decides.** README / ARCHITECTURE / comments drift out of date. Use them to find where to look, but verify specific claims against the code. When a doc claim is testable against an authoritative source — a README listing dependencies vs `pyproject.toml`, a comment naming a function vs the actual module, a diagram citing a file vs the file's real contents — **cross-reference before repeating**. If you cannot verify, say so explicitly; do not pass the doc claim through as fact. When docs and code disagree, trust the code and flag the mismatch in your answer.
-3. **Stop criterion**: before `ready_for_review`, scan your planned answer — each non-trivial claim should point at a specific `file:line` or named function. If you cannot cite it honestly, either read the file or drop the claim. Never fabricate a citation for a file you did not open.
+3. **Stop criterion**: before `complete`, scan your planned answer — each non-trivial claim should point at a specific `file:line` or named function. If you cannot cite it honestly, either read the file or drop the claim. Never fabricate a citation for a file you did not open.
 
 ## Reading files for analysis
 

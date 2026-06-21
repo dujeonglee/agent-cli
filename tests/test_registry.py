@@ -199,16 +199,14 @@ class TestGetToolDescriptions:
         assert "ask" in desc
 
     def test_always_includes_essential_tools(self):
-        """complete and ready_for_review are always in descriptions even if not requested."""
+        """complete is always in descriptions even if not requested."""
         desc = get_tool_descriptions(["shell"])
         assert "complete" in desc
-        assert "ready_for_review" in desc
 
     def test_no_duplicate_when_already_requested(self):
         """If complete is already in the list, it should not appear twice."""
-        desc = get_tool_descriptions(["shell", "complete", "ready_for_review"])
+        desc = get_tool_descriptions(["shell", "complete"])
         assert desc.count("- complete:") == 1
-        assert desc.count("- ready_for_review:") == 1
 
     def test_required_fields_appear_in_descriptions(self):
         """Every required field of every native tool must surface in the

@@ -491,7 +491,7 @@ class AgentLoop:
             )
         # Surface through the renderer (CLI console / web SSE), not a
         # direct console.print — the latter leaked the notice to the web
-        # server's terminal. Mirror the ready_for_review path: only the
+        # server's terminal. Mirror the run_skill path: only the
         # top level renders, so a nested skill interrupt doesn't double-
         # print under its parent.
         if not self.skill_name:
@@ -1010,7 +1010,7 @@ class AgentLoop:
         # N ops (multi-op formats): regular tool ops execute and ACCUMULATE
         # into one combined observation (run-all; any-fail ⇒ the combined
         # observation is marked failed so the model retries the failed op).
-        # A turn-ending branch (complete / run_skill / ready_for_review / guard
+        # A turn-ending branch (complete / run_skill / guard
         # intervention / recovery) flushes whatever already ran first so
         # executed work isn't lost, then returns. ``ask`` is NOT turn-ending —
         # it produces an observation (the user's reply) and accumulates like a
@@ -1027,7 +1027,7 @@ class AgentLoop:
             # Turn-ending special actions: flush accumulated results BEFORE
             # the branch runs so its observation lands after the work done
             # so far (chronological order for the model).
-            if op.action in ("complete", "run_skill", "ready_for_review"):
+            if op.action in ("complete", "run_skill"):
                 self._flush_op_results(llm_text, results)
                 results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
@@ -1149,7 +1149,7 @@ class AgentLoop:
         """Dispatch ONE op of a turn. Returns a ToolResult or a sentinel.
 
         Carries the pre-multi-op per-action body unchanged: special actions
-        (complete / ask / run_skill / ready_for_review), then B1/A4/A5 guards
+        (complete / ask / run_skill), then B1/A4/A5 guards
         and tool execution, then the no-action fall-through recovery.
 
         ``accumulate`` (multi-op N-op path only): a list to collect this op's
@@ -1311,40 +1311,6 @@ class AgentLoop:
                 success=skill_tool_result.success,
                 artifact=skill_tool_result.artifact,
                 turn=self.turn,
-            )
-            return self._CONTINUE
-
-        # 10c. ready_for_review -- return original query for self-check (text path)
-        if op.action == "ready_for_review":
-            summary = ""
-            if isinstance(op.action_input, dict):
-                summary = op.action_input.get("summary", "")
-            # Same streaming-card concern as ``ask`` / ``run_skill``.
-            # Skill-mode skips the observation render below, so we
-            # only emit the action step at top level too — keeps the
-            # nested skill output clean.
-            if not self.skill_name:
-                render_step(
-                    "action",
-                    "",
-                    self.turn,
-                    tool_name="ready_for_review",
-                    tool_input=json.dumps(op.action_input, ensure_ascii=False)
-                    if isinstance(op.action_input, dict)
-                    else str(op.action_input or {}),
-                )
-            obs = _build_review_observation(self._task_text(), summary, ctx=self.ctx)
-            obs_msg = f"Observation: {obs}"
-            _append_observation(
-                self.messages,
-                self.ctx,
-                self.wire_format,
-                llm_text,
-                obs_msg,
-                tool_name="ready_for_review",
-                success=True,
-                turn=self.turn,
-                render=not self.skill_name,
             )
             return self._CONTINUE
 
@@ -2309,9 +2275,10 @@ def _handle_run_skill(
     return ToolResult(skill_result.success, output=obs, artifact=skill_result.artifact)
 
 
-_REVIEW_VIRTUAL_TOOLS: frozenset[str] = frozenset(
-    {"ready_for_review", "complete", "ask"}
-)
+# Virtual/terminal tools excluded from the "your tool calls" review listing —
+# they aren't real work, just loop control. (The review-context builders below
+# are retained for the auto-review feature; see _build_review_observation.)
+_REVIEW_VIRTUAL_TOOLS: frozenset[str] = frozenset({"complete", "ask"})
 
 
 def _short_review_args(args, max_len: int = 80) -> str:
@@ -2346,8 +2313,8 @@ def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
 
     Returns "" (no section emitted) when ctx is None, has no
     assistant tool calls, or only virtual tools were used. Virtual
-    tools (``ready_for_review`` / ``complete`` / ``ask``) are
-    filtered — they don't represent work the model has done.
+    tools (``complete`` / ``ask``) are filtered — they don't
+    represent work the model has done.
 
     The section gives the model a *factual* list of what it actually
     invoked, independent of whether the corresponding Observations
@@ -2389,9 +2356,13 @@ def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
 
 
 def _build_review_observation(query: str, summary: str, ctx=None) -> str:
-    """Build the observation returned by ready_for_review tool.
+    """Build a review-context block: original request + summary + tool calls.
 
-    The observation re-injects the original request (often pushed out of
+    Retained for the auto-review feature (PR2) — assembles the material a
+    reviewer needs. (Formerly the observation returned by the removed
+    ``ready_for_review`` tool.)
+
+    The block re-injects the original request (often pushed out of
     recency by long transcripts), pairs it with the model's self-summary,
     optionally appends a factual list of tool calls extracted from
     ``ctx`` (so the review survives Observation eviction by context

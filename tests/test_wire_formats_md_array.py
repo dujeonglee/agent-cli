@@ -523,10 +523,10 @@ class TestRenderHelpers:
     def test_render_full_example_splices_missing_action(self):
         # Virtual tools authored with standard keys (no "action" inside).
         ex = WF.render_full_example(
-            thought=None, action="ready_for_review", action_input='{"summary": "s"}'
+            thought=None, action="complete", action_input='{"result": "s"}'
         )
         t = WF.parse_turn(ex)
-        assert t.ops[0].action == "ready_for_review"
+        assert t.ops[0].action == "complete"
 
 
 class TestEndToEnd:

@@ -1,9 +1,9 @@
 """Virtual tools — schema-only entries the loop intercepts before
 dispatch.
 
-``complete`` / ``ask`` / ``run_skill`` / ``ready_for_review`` never reach
-``execute_tool``: the loop's ``_dispatch_text_path`` handles each by name
-and returns early. Their :meth:`run` is a placeholder mirroring the old
+``complete`` / ``ask`` / ``run_skill`` never reach ``execute_tool``: the
+loop's ``_dispatch_text_path`` handles each by name and returns early.
+Their :meth:`run` is a placeholder mirroring the old
 ``__init__`` lambdas (returns the salient field) so direct callers and
 tests still get a sane ToolResult, but the real behaviour lives in the
 loop. They carry full schemas so the registry, system prompt, and input
@@ -97,25 +97,3 @@ class RunSkillTool(Tool):
 
     def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
         return ToolResult(True, output="(run_skill: intercepted by loop)")
-
-
-class ReadyForReviewTool(Tool):
-    name = "ready_for_review"
-    description = (
-        "Call this BEFORE complete to verify your work fulfills all requirements. "
-        "The system will return the original request for you to review against. "
-        "After reviewing, call complete if everything is done, or continue working if not."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "summary": {
-                "type": "string",
-                "description": "Brief summary of what you accomplished",
-            },
-        },
-        "required": ["summary"],
-    }
-
-    def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
-        return ToolResult(True, output=args.get("summary", ""))
