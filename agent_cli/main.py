@@ -1511,31 +1511,32 @@ def web(
                             # reviewer's result otherwise lives only inside the
                             # delegate group card, so an ACCEPT left no trace and
                             # the run looked like it just ended after 'complete'.
-                            if event == "review_start":
-                                renderer.observation(
+                            # Both emit (live SSE) AND record to ctx so the card
+                            # survives resume (replay_from_history).
+                            from agent_cli.review import record_review_observation
+
+                            text = {
+                                "review_start": (
                                     "Auto-review: a reviewer is verifying the "
-                                    "completed work…",
-                                    0,
-                                    tool_name="auto-review",
-                                    success=True,
-                                )
-                            elif event == "accept":
-                                renderer.observation(
+                                    "completed work…"
+                                ),
+                                "accept": (
                                     "Auto-review passed — the reviewer accepted "
-                                    "the work.",
-                                    0,
-                                    tool_name="auto-review",
-                                    success=True,
-                                )
-                            elif event == "reject":
-                                renderer.observation(
+                                    "the work."
+                                ),
+                                "reject": (
                                     "Auto-review requested changes — applying the "
                                     "reviewer's feedback and continuing:\n\n"
-                                    + (detail or "(no detail)"),
-                                    0,
-                                    tool_name="auto-review",
-                                    success=False,
-                                )
+                                    + (detail or "(no detail)")
+                                ),
+                            }.get(event)
+                            if text is None:
+                                return
+                            ok = event != "reject"
+                            renderer.observation(
+                                text, 0, tool_name="auto-review", success=ok
+                            )
+                            record_review_observation(ctx, text, success=ok)
 
                         run_auto_review(
                             message,

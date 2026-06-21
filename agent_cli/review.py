@@ -44,6 +44,24 @@ def parse_review_verdict(reviewer_output: str) -> tuple[bool, str]:
     return (accept, feedback)
 
 
+def record_review_observation(ctx, content: str, *, success: bool) -> None:
+    """Persist an auto-review result to ``ctx`` (history.jsonl) so it survives
+    resume — the live SSE card alone vanishes on reload. Mirrors the loop's
+    observation record shape ({role:user, tool, success, content:"Observation:
+    …"}) so ``replay_from_history`` re-renders it as an observation card. No-op
+    when ``ctx`` is None (CLI / pre-session)."""
+    if ctx is None:
+        return
+    ctx.add(
+        {
+            "role": "user",
+            "tool": "auto-review",
+            "success": success,
+            "content": f"Observation: {content}",
+        }
+    )
+
+
 def build_reviewer_task(task_text: str, final_answer: str, ctx=None) -> str:
     """Assemble the reviewer delegate's task prompt: WHAT to review.
 

@@ -151,3 +151,46 @@ class TestRunAutoReview:
         reject = [d for e, d in self._rendered if e == "reject"]
         assert reject and "fix the parser" in reject[0]
         assert "accept" in [e for e, _ in self._rendered]  # final round accepted
+
+
+class TestRecordReviewObservation:
+    """Auto-review result cards must also land in ctx (history.jsonl) so they
+    survive resume — not just live SSE. The record mirrors loop's observation
+    shape ({role:user, tool, success, content:"Observation: …"}) so
+    replay_from_history renders it as an observation card on resume."""
+
+    class _FakeCtx:
+        def __init__(self):
+            self.added = []
+
+        def add(self, msg):
+            self.added.append(msg)
+            return msg
+
+    def test_records_to_ctx(self):
+        from agent_cli.review import record_review_observation
+
+        ctx = self._FakeCtx()
+        record_review_observation(ctx, "Auto-review passed.", success=True)
+        assert len(ctx.added) == 1
+        rec = ctx.added[0]
+        assert rec["role"] == "user"
+        assert rec["tool"] == "auto-review"
+        assert rec["success"] is True
+        # "Observation: " prefix so replay strips it like any tool result
+        assert rec["content"].startswith("Observation: ")
+        assert "Auto-review passed." in rec["content"]
+
+    def test_records_failure(self):
+        from agent_cli.review import record_review_observation
+
+        ctx = self._FakeCtx()
+        record_review_observation(ctx, "changes requested\nfix X", success=False)
+        assert ctx.added[0]["success"] is False
+        assert "fix X" in ctx.added[0]["content"]
+
+    def test_none_ctx_is_noop(self):
+        from agent_cli.review import record_review_observation
+
+        # must not crash when there's no ctx (CLI / pre-session)
+        record_review_observation(None, "x", success=True)
