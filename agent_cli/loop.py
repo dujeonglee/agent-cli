@@ -1083,7 +1083,7 @@ class AgentLoop:
             self.wire_format,
             llm_text,
             f"Observation: {combined}",
-            tool_name="+".join(r["tool_name"] for r in results),
+            tool_name=_combined_tool_label([r["tool_name"] for r in results]),
             success=all_ok,
             turn=self.turn,
         )
@@ -2456,6 +2456,23 @@ def _normalize_input(tool_input) -> str:
     if isinstance(tool_input, dict):
         return json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
     return str(tool_input)
+
+
+def _combined_tool_label(names: list[str]) -> str:
+    """Run-length-compress a multi-op turn's tool names for the combined
+    observation's label: ``["shell"] + ["write_file"]*12`` → ``shell+write_file×12``
+    instead of a 137-char ``shell+write_file+write_file+...`` that overflows the
+    line. Consecutive same-tool ops collapse to ``tool×N``; order is preserved
+    (non-adjacent repeats stay separate runs)."""
+    out: list[str] = []
+    i = 0
+    while i < len(names):
+        j = i
+        while j < len(names) and names[j] == names[i]:
+            j += 1
+        out.append(names[i] if j - i == 1 else f"{names[i]}×{j - i}")
+        i = j
+    return "+".join(out)
 
 
 def _render_oversized_nudge(tool_name: str, tokens: int, cap: int) -> str:

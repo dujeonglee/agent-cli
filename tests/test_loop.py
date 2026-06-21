@@ -4107,3 +4107,42 @@ class TestBuildTokenStats:
         usage = TokenUsage(input_tokens=1200, output_tokens=5)
         stats = _build_token_stats(usage, context_window=8192, total_out=5)
         assert stats["in"] == 1200  # omlx/non-cache parity
+
+
+class TestCombinedToolLabel:
+    """The combined observation's tool label run-length-compresses consecutive
+    same-tool ops so a 12-write turn reads ``write_file×12`` (not a 137-char
+    ``write_file+write_file+...`` that overflows the terminal line)."""
+
+    def test_runs_compressed(self):
+        from agent_cli.loop import _combined_tool_label
+
+        assert _combined_tool_label(["write_file"] * 12) == "write_file×12"
+        assert (
+            _combined_tool_label(["shell"] + ["write_file"] * 12)
+            == "shell+write_file×12"
+        )
+
+    def test_single_unchanged(self):
+        from agent_cli.loop import _combined_tool_label
+
+        assert _combined_tool_label(["shell"]) == "shell"
+        assert _combined_tool_label(["read_file", "read_file"]) == "read_file×2"
+
+    def test_mixed_runs(self):
+        from agent_cli.loop import _combined_tool_label
+
+        assert (
+            _combined_tool_label(["read_file", "read_file", "shell"])
+            == "read_file×2+shell"
+        )
+        # non-adjacent same tool: separate runs (preserves order)
+        assert (
+            _combined_tool_label(["read_file", "shell", "read_file"])
+            == "read_file+shell+read_file"
+        )
+
+    def test_empty(self):
+        from agent_cli.loop import _combined_tool_label
+
+        assert _combined_tool_label([]) == ""

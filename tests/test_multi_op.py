@@ -229,7 +229,8 @@ class TestMultiOpDispatch:
         assert "[2/2] read_file — OK" in content
         assert "alpha" in content and "beta" in content
         assert combined[0]["success"] is True
-        assert combined[0]["tool"] == "read_file+read_file"
+        # run-length compressed (was "read_file+read_file")
+        assert combined[0]["tool"] == "read_file×2"
 
     def test_any_fail_marks_turn_failed(self, tmp_path):
         f1 = tmp_path / "a.txt"
