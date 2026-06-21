@@ -91,21 +91,29 @@ def run_auto_review(
       complete result.
     - ``resume_main(feedback) -> str`` — inject feedback into the main session
       and resume the main agent, returning its NEW final answer.
-    - ``render(event)`` — optional progress hook ("accept" / "reject").
+    - ``render(event, detail="")`` — optional progress hook so the verdict is
+      surfaced to the MAIN conversation (otherwise the reviewer's verdict lives
+      only inside the delegate group card and the user never sees the outcome).
+      Events: ``review_start`` (a round began), ``accept`` (passed),
+      ``reject`` (detail = the feedback shown before the rework).
 
     Loop: review → accept stops; reject resumes the main agent with the
     feedback and reviews again. No safety cap — the user stops it via the
     toggle (decision: keep reviewing until accepted)."""
+
+    def _emit(event, detail=""):
+        if render:
+            render(event, detail)
+
     while is_enabled():
+        _emit("review_start")
         reviewer_task = build_reviewer_task(task_text, final_answer, ctx)
         verdict_text = spawn_reviewer(reviewer_task)
         accept, feedback = parse_review_verdict(verdict_text)
         if accept:
-            if render:
-                render("accept")
+            _emit("accept")
             return
-        if render:
-            render("reject")
+        _emit("reject", feedback)
         # Reject: hand the feedback back to the main agent, which fixes the work
         # and completes again; review the new result on the next iteration.
         final_answer = resume_main(feedback)

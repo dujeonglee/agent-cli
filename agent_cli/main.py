@@ -1506,6 +1506,37 @@ def web(
                             )
                             return (r.output if r else "") or ""
 
+                        def _review_render(event: str, detail: str = "") -> None:
+                            # Surface the verdict in the MAIN conversation — the
+                            # reviewer's result otherwise lives only inside the
+                            # delegate group card, so an ACCEPT left no trace and
+                            # the run looked like it just ended after 'complete'.
+                            if event == "review_start":
+                                renderer.observation(
+                                    "Auto-review: a reviewer is verifying the "
+                                    "completed work…",
+                                    0,
+                                    tool_name="auto-review",
+                                    success=True,
+                                )
+                            elif event == "accept":
+                                renderer.observation(
+                                    "Auto-review passed — the reviewer accepted "
+                                    "the work.",
+                                    0,
+                                    tool_name="auto-review",
+                                    success=True,
+                                )
+                            elif event == "reject":
+                                renderer.observation(
+                                    "Auto-review requested changes — applying the "
+                                    "reviewer's feedback and continuing:\n\n"
+                                    + (detail or "(no detail)"),
+                                    0,
+                                    tool_name="auto-review",
+                                    success=False,
+                                )
+
                         run_auto_review(
                             message,
                             (result.output if result else "") or "",
@@ -1513,6 +1544,7 @@ def web(
                             is_enabled=server.auto_review_enabled,
                             spawn_reviewer=_spawn_reviewer,
                             resume_main=_resume_main,
+                            render=_review_render,
                         )
                 except Exception as exc:  # noqa: BLE001 — worker boundary
                     # Push the error into the renderer so the frontend

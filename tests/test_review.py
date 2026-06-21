@@ -75,7 +75,7 @@ class TestRunAutoReview:
         en = iter(enabled)
         rv = iter(reviews)
         rs = iter(resumes)
-        spawned, resumed = [], []
+        spawned, resumed, rendered = [], [], []
 
         def is_enabled():
             return next(en, False)
@@ -88,6 +88,9 @@ class TestRunAutoReview:
             resumed.append(feedback)
             return next(rs)
 
+        def render(event, detail=""):
+            rendered.append((event, detail))
+
         run_auto_review(
             "task",
             "final answer",
@@ -95,7 +98,9 @@ class TestRunAutoReview:
             is_enabled=is_enabled,
             spawn_reviewer=spawn_reviewer,
             resume_main=resume_main,
+            render=render,
         )
+        self._rendered = rendered
         return spawned, resumed
 
     def test_accept_first_round_stops(self):
@@ -127,3 +132,22 @@ class TestRunAutoReview:
         )
         assert len(spawned) == 1
         assert resumed == ["more work"]  # resumed once, then toggle stopped it
+
+    def test_render_surfaces_accept_to_main(self):
+        """The verdict must be surfaced to the main UI (it was invisible — the
+        reviewer's ACCEPT lived only inside the delegate group card)."""
+        self._run(enabled=[True], reviews=["VERDICT: ACCEPT good"], resumes=[])
+        events = [e for e, _ in self._rendered]
+        assert "review_start" in events
+        assert "accept" in events
+
+    def test_render_surfaces_reject_with_feedback(self):
+        self._run(
+            enabled=[True, True],
+            reviews=["VERDICT: REJECT\nfix the parser", "VERDICT: ACCEPT"],
+            resumes=["fixed"],
+        )
+        # the reject event carries the feedback detail so the main card shows it
+        reject = [d for e, d in self._rendered if e == "reject"]
+        assert reject and "fix the parser" in reject[0]
+        assert "accept" in [e for e, _ in self._rendered]  # final round accepted
