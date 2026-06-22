@@ -1209,16 +1209,16 @@ class TestWorkerStateEmit:
         r.worker_busy()
         r.worker_idle()
         r.worker_busy()
-        assert r._latest_worker_state == ("worker_state", {"busy": True})
+        assert r._sticky["worker_state"]["payload"] == {"busy": True}
         r.worker_idle()
-        assert r._latest_worker_state == ("worker_state", {"busy": False})
+        assert r._sticky["worker_state"]["payload"] == {"busy": False}
 
 
 class TestWorkerStateReconnect:
     """The user's explicit requirement: send-button gating must
     survive a page refresh or a fresh SSE connection mid-turn. The
-    server holds the latest ``worker_state`` in a slot (parallel to
-    ``_latest_ready``) and prepends it to the snapshot every new
+    server holds the latest ``worker_state`` as sticky state (like
+    ``ready``) and replays it into the snapshot every new
     connection receives.
     """
 
@@ -1409,7 +1409,7 @@ class TestWorkerLoopIntegration:
         item = s.dequeue_blocking()
         assert item is s.SHUTDOWN
         # Latest state should still be idle.
-        assert r._latest_worker_state == ("worker_state", {"busy": False})
+        assert r._sticky["worker_state"]["payload"] == {"busy": False}
 
 
 # ── Prompt Inspector per-agent scopes ──────────────
@@ -1600,3 +1600,70 @@ class TestSetNickname:
         assert last is not None
         names = [v["name"] for v in last["viewers"]]
         assert "Bob" in names and "Alice" not in names
+
+
+class TestStickyState:
+    """Sticky state = a single server value broadcast live AND replayed into
+    each new connection's snapshot (so a late/refreshed client sees the last
+    value). ready/worker_state/token_usage/queue + auto_review all share this.
+    Pins the snapshot ORDER invariant (ready prepends; others append) across
+    the set_sticky refactor."""
+
+    def _events(self, snapshot):
+        return [e for e, _ in snapshot]
+
+    def test_ready_prepends_others_append(self):
+        r = WebRenderer()
+        r.header(provider="openai", model="m", max_turns=0)  # ready
+        r.worker_busy()  # worker_state
+        r.token_usage({"in": 10, "out": 5}, turn=1)  # token_usage
+        r.queue_state([{"id": "1", "nickname": "n", "text": "t"}])  # queue
+        snap = r.register_connection(WebConnection(id="c1"))
+        ev = self._events(snap)
+        # identity first, then ready (prepended), worker/token/queue appended
+        assert ev[0] == "identity"
+        assert ev[1] == "ready"  # ready prepends ahead of appended slots
+        assert "worker_state" in ev and "token_usage" in ev and "queue" in ev
+        # all appended-after the buffer, before viewers tail
+        assert ev.index("worker_state") > ev.index("ready")
+
+    def test_latest_value_wins(self):
+        r = WebRenderer()
+        r.worker_busy()
+        r.worker_idle()  # later value
+        snap = r.register_connection(WebConnection(id="c1"))
+        ws = [d for e, d in snap if e == "worker_state"]
+        assert len(ws) == 1 and ws[0] == {"busy": False}  # only the latest
+
+    def test_reconnect_sees_state(self):
+        r = WebRenderer()
+        r.token_usage({"in": 42, "out": 1}, turn=3)
+        # a brand-new connection (reconnect/refresh) must see the cached value
+        snap = r.register_connection(WebConnection(id="late"))
+        tok = [d for e, d in snap if e == "token_usage"]
+        assert tok and tok[0]["in"] == 42
+
+    def test_auto_review_is_sticky(self):
+        """The auto-review toggle state replays to new connections so every
+        browser's button reflects the shared server state."""
+        r = WebRenderer()
+        r.auto_review_state(True)
+        snap = r.register_connection(WebConnection(id="c1"))
+        ar = [d for e, d in snap if e == "auto_review"]
+        assert ar and ar[0].get("enabled") is True
+
+    def test_auto_review_broadcasts_to_existing_connections(self):
+        """Toggling on one browser updates others live (broadcast, not just
+        the toggler's local button)."""
+        r = WebRenderer()
+        a = WebConnection(id="a")
+        r.register_connection(a)
+        # drain join events
+        while not a.queue.empty():
+            a.queue.get_nowait()
+        r.auto_review_state(True)
+        seen = []
+        while not a.queue.empty():
+            seen.append(a.queue.get_nowait())
+        # _emit stamps a ``ts`` field, so check the enabled flag, not equality
+        assert any(e == "auto_review" and d.get("enabled") is True for e, d in seen)

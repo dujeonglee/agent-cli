@@ -1044,6 +1044,16 @@
     return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
   }
 
+  es.addEventListener("auto_review", function (e) {
+    // Sticky toggle state from the server (shared across all browsers).
+    // Bridge to the toggle button's own IIFE via a document CustomEvent so
+    // every viewer's button reflects the latest value (live + reconnect).
+    const d = JSON.parse(e.data);
+    document.dispatchEvent(
+      new CustomEvent("agentcli:auto_review", { detail: !!d.enabled }),
+    );
+  });
+
   es.addEventListener("token_usage", function (e) {
     // Top-bar readout: context occupancy %, this turn's in/out, and the
     // cumulative session output. Server sends raw counts; we format here.
@@ -2127,8 +2137,10 @@
 // ── Auto-review toggle (header button → separate IIFE) ──────────────
 // Toggles the server's auto-review state (POST /api/auto_review). When on,
 // the worker runs a reviewer agent after each completion and keeps reviewing
-// until it accepts (or the toggle goes off). Pure client-side state mirror —
-// the button label/aria-pressed reflect the last server-confirmed value.
+// until it accepts (or the toggle goes off). The state is SHARED across all
+// browsers: the server broadcasts ``auto_review`` (sticky) and the main SSE
+// handler relays it here via a document CustomEvent, so every viewer's button
+// stays in sync (live + on reconnect via snapshot), not just the clicker's.
 (function () {
   "use strict";
 
@@ -2143,23 +2155,23 @@
     $btn.textContent = enabled ? "🔍 Review: on" : "🔍 Review: off";
   }
 
+  // Sync from the server broadcast (any browser toggling, or our own
+  // reconnect snapshot). Server is the source of truth.
+  document.addEventListener("agentcli:auto_review", function (e) {
+    enabled = !!e.detail;
+    paint();
+  });
+
   $btn.addEventListener("click", function () {
-    const next = !enabled;
+    // POST the intended next state; the button repaints from the resulting
+    // ``auto_review`` broadcast (so all viewers converge on the server value).
     fetch("/api/auto_review?token=" + encodeURIComponent(token), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: next }),
-    })
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (d) {
-        enabled = !!d.enabled; // trust the server's confirmed value
-        paint();
-      })
-      .catch(function () {
-        /* leave the toggle as-is on failure */
-      });
+      body: JSON.stringify({ enabled: !enabled }),
+    }).catch(function () {
+      /* leave the toggle as-is on failure */
+    });
   });
 
   paint();

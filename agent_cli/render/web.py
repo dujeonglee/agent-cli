@@ -128,8 +128,8 @@ class WebRenderer(Renderer):
         # is the main loop, a ``task_id`` is a delegate sub-agent — resolved
         # from the CALLING thread via ``_thread_to_task`` (the same map
         # ``_emit`` uses), so ``note_system_prompt`` needs no extra context
-        # threaded down from the loop. Slot-per-scope semantics like
-        # ``_latest_ready``: only the most recent LLM call's prompt per scope
+        # threaded down from the loop. Slot-per-scope semantics like the sticky
+        # ``ready`` slot: only the most recent LLM call's prompt per scope
         # is kept (an on-demand view, not a history). Sub-agent snapshots
         # persist after the agent finishes so its prompt stays inspectable
         # post-mortem; the frontend drops one via ``DELETE``.
@@ -138,41 +138,27 @@ class WebRenderer(Renderer):
         # ``begin_delegate_task`` so the inspector chip row can name each
         # sub-agent ("explorer·1") without re-deriving it from the timeline.
         self._prompt_scope_labels: dict[str, dict[str, Any]] = {}
-        # Session-info "ready" event lives in its own slot — NOT in
-        # ``_event_buffer`` — so two semantics stay clean:
-        # (1) new SSE connections always see the latest ready in
-        #     their replay snapshot (prepended below in
-        #     ``register_connection``) — fixes the "connecting…"
-        #     stuck state when a client opens the page before the
-        #     first turn.
-        # (2) the web worker re-enters AgentLoop on every user message,
-        #     calling header() again. A slot avoids the buffer
-        #     accumulating one ready per turn.
-        self._latest_ready: tuple[str, dict[str, Any]] | None = None
-        # Worker busy/idle visibility for the frontend send-button
-        # gating. The chat worker thread emits ``worker_state`` on every
-        # transition: ``busy=True`` right after popping a user message,
-        # ``busy=False`` right before blocking on the next pop. Keeping
-        # only the *latest* state in a slot (rather than appending to
-        # the persistent buffer) means:
-        # (1) a refreshed/reconnecting client sees the current state
-        #     immediately via the snapshot prepend below, even if the
-        #     worker has been busy for 30s and won't emit anything new
-        #     until completion;
-        # (2) the buffer doesn't accumulate one entry per turn.
-        # Event payload: ``{"busy": bool}``. Server-side
-        # ``_worker_loop`` is the sole writer.
-        self._latest_worker_state: tuple[str, dict[str, Any]] | None = None
-        # Latest per-turn token usage, cached (like worker_state) so a
-        # refresh/reconnect repopulates the top-bar token readout from
-        # the snapshot instead of waiting for the next turn. Emitted
-        # non-persistent (live) so the buffer doesn't accumulate one
-        # entry per turn — only the latest matters.
-        self._latest_token_usage: tuple[str, dict[str, Any]] | None = None
-        # Pending user-message queue state (the messages waiting to be
-        # injected at turn boundaries). Cached like the slots above so a
-        # reconnecting client sees the current queue immediately.
-        self._latest_queue: tuple[str, dict[str, Any]] | None = None
+        # ── Sticky state registry ───────────────────────────────────
+        # A "sticky" state is a single server value that is (a) broadcast live
+        # to connected clients AND (b) replayed into each NEW connection's
+        # snapshot — so a late / refreshed / second-browser client sees the
+        # last value (plain SSE only reaches clients connected at emit time).
+        # ``set_sticky(name, event, payload, position=…)`` is the ONE place that
+        # does both; ``register_connection`` walks this dict to rebuild the
+        # snapshot. ``position`` controls placement: ``ready`` goes FIRST (the
+        # top-bar must populate before everything — fixes the stuck
+        # "connecting…" state), the rest append. All emit non-persistent (live
+        # only — ``_event_buffer`` keeps history, the slot keeps "latest" so the
+        # buffer doesn't accumulate one entry per turn). Members:
+        #   ready        — session info (model/session/workspace) for the top-bar
+        #   worker_state — {busy} send-button gating
+        #   token_usage  — per-turn token readout
+        #   queue        — pending user-message queue
+        #   auto_review  — {enabled} review toggle (shared across all browsers)
+        # NOT sticky: viewers (connection-set-derived, not a single latest
+        # value) / prompt snapshots (per-scope, on-demand pull).
+        # name → {"event", "payload", "position"}.
+        self._sticky: dict[str, dict[str, Any]] = {}
         # Per-thread delegate-task routing. Worker threads spawned by
         # ``_run_parallel`` register their ``task_id`` here via
         # ``begin_delegate_task``; ``_emit`` then auto-attaches
@@ -233,6 +219,27 @@ class WebRenderer(Renderer):
                 if not conn.closed.is_set():
                     conn.queue.put((event, data))
 
+    def set_sticky(
+        self,
+        name: str,
+        event: str,
+        payload: dict[str, Any],
+        *,
+        position: str = "append",
+    ) -> None:
+        """Set a sticky state: broadcast ``(event, payload)`` live AND cache it
+        so every NEW connection replays it in its snapshot (see ``_sticky``).
+        ``position`` ('prepend' | 'append') is where it lands in the snapshot —
+        ``ready`` prepends (top-bar first), the rest append. Always live
+        (non-persistent): the slot holds the latest, the buffer holds history."""
+        with self._lock:
+            self._sticky[name] = {
+                "event": event,
+                "payload": payload,
+                "position": position,
+            }
+        self._emit(event, payload, persistent=False)
+
     def register_connection(self, conn: WebConnection) -> list[tuple[str, dict]]:
         """Add ``conn`` as a subscriber. Every connection is equal — all may
         send input and queue messages (no controller/observer split).
@@ -247,16 +254,16 @@ class WebRenderer(Renderer):
             self._connections.append(conn)
 
             snapshot = list(self._event_buffer)
-            # Prepend the latest session-info ``ready`` so a client that opens
-            # the page mid-session populates its top bar immediately.
-            if self._latest_ready is not None:
-                snapshot.insert(0, self._latest_ready)
-            if self._latest_worker_state is not None:
-                snapshot.append(self._latest_worker_state)
-            if self._latest_token_usage is not None:
-                snapshot.append(self._latest_token_usage)
-            if self._latest_queue is not None:
-                snapshot.append(self._latest_queue)
+            # Replay sticky state into the new connection's snapshot so a
+            # late/refreshed/second-browser client sees the last value of each.
+            # ``prepend`` slots (ready → top-bar) go ahead of the buffer;
+            # ``append`` slots (worker_state/token_usage/queue/auto_review) after.
+            for slot in self._sticky.values():
+                entry = (slot["event"], slot["payload"])
+                if slot["position"] == "prepend":
+                    snapshot.insert(0, entry)
+                else:
+                    snapshot.append(entry)
             # ``identity`` first: the client needs its conn_id before anything.
             snapshot.insert(0, ("identity", {"conn_id": conn.id}))
             self._assign_nickname_locked(conn.id)
@@ -321,10 +328,7 @@ class WebRenderer(Renderer):
         ``{id, nickname, conn_id, text}``; the frontend renders the list and
         shows a cancel control on the viewer's own items. Cached so a
         reconnecting client sees the queue immediately."""
-        payload = {"pending": pending}
-        with self._lock:
-            self._latest_queue = ("queue", payload)
-        self._emit("queue", payload, persistent=False)
+        self.set_sticky("queue", "queue", {"pending": pending})
 
     def unregister_connection(self, conn: WebConnection) -> None:
         """Drop ``conn`` and wake any pending queue waiter.
@@ -580,12 +584,9 @@ class WebRenderer(Renderer):
         }
         if self._workspace:
             payload["workspace"] = self._workspace
-        # Live broadcast to active connections; snapshot replay for
-        # future connections happens via ``_latest_ready`` in
-        # ``register_connection``.
-        with self._lock:
-            self._latest_ready = ("ready", payload)
-        self._emit("ready", payload, persistent=False)
+        # Sticky + ``prepend`` so the top-bar populates before everything on a
+        # client that opens the page mid-session (fixes stuck "connecting…").
+        self.set_sticky("ready", "ready", payload, position="prepend")
 
     def turn_sep(self, turn: int) -> None:
         # No frontend event — turn number rides on each message event.
@@ -719,10 +720,7 @@ class WebRenderer(Renderer):
         readout. Raw stats go over the wire (the frontend formats); the
         latest is cached so a refresh repopulates the bar from snapshot.
         """
-        payload = {**stats, "turn": turn}
-        with self._lock:
-            self._latest_token_usage = ("token_usage", payload)
-        self._emit("token_usage", payload, persistent=False)
+        self.set_sticky("token_usage", "token_usage", {**stats, "turn": turn})
 
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str
@@ -773,25 +771,26 @@ class WebRenderer(Renderer):
         uses this to disable the chat ``Send`` button so the user
         doesn't queue a second message into an actively-running turn.
 
-        Latest state is cached in ``_latest_worker_state`` so a
-        refreshed / reconnected client gets the correct send-button
-        state immediately via the snapshot replay, without waiting
-        for the next transition.
+        Sticky (see ``set_sticky``) so a refreshed / reconnected client
+        gets the correct send-button state immediately via the snapshot
+        replay, without waiting for the next transition.
         """
-        payload = {"busy": True}
-        with self._lock:
-            self._latest_worker_state = ("worker_state", payload)
-        self._emit("worker_state", payload, persistent=False)
+        self.set_sticky("worker_state", "worker_state", {"busy": True})
 
     def worker_idle(self) -> None:
         """Signal that the chat worker is back at the top-level
         ``dequeue_blocking`` and ready to accept the next user message.
         Re-enables the frontend ``Send`` button. See ``worker_busy``
         for the persistence + reconnect semantics."""
-        payload = {"busy": False}
-        with self._lock:
-            self._latest_worker_state = ("worker_state", payload)
-        self._emit("worker_state", payload, persistent=False)
+        self.set_sticky("worker_state", "worker_state", {"busy": False})
+
+    def auto_review_state(self, enabled: bool) -> None:
+        """Broadcast the auto-review toggle state. Sticky so EVERY browser's
+        toggle button reflects the shared server state — toggling on one client
+        updates the others live, and a refreshed/new client sees it via the
+        snapshot. (The state itself lives on ``WebServer``; this just mirrors it
+        to all views.)"""
+        self.set_sticky("auto_review", "auto_review", {"enabled": bool(enabled)})
 
     def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
         """Keep the latest system-prompt snapshot for the Prompt Inspector.

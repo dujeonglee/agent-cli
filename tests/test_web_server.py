@@ -1625,3 +1625,22 @@ class TestAutoReviewToggle:
         assert server.auto_review_enabled() is True
         server.set_auto_review(0)
         assert server.auto_review_enabled() is False
+
+    def test_set_auto_review_broadcasts_to_renderer(self, server_and_client):
+        """Toggle change is broadcast (sticky) so every browser's button
+        syncs — not just the one that POSTed."""
+        from agent_cli.render.web import WebConnection
+
+        server, renderer, _ = server_and_client
+        c = WebConnection(id="c")
+        renderer.register_connection(c)
+        while not c.queue.empty():
+            c.queue.get_nowait()
+        server.set_auto_review(True)
+        seen = []
+        while not c.queue.empty():
+            seen.append(c.queue.get_nowait())
+        assert any(e == "auto_review" and d.get("enabled") is True for e, d in seen)
+        # and a reconnecting client sees it in the snapshot
+        snap = renderer.register_connection(WebConnection(id="late"))
+        assert any(e == "auto_review" for e, _ in snap)

@@ -446,6 +446,10 @@ class WebServer:
 
     def set_auto_review(self, enabled: bool) -> None:
         self._auto_review = bool(enabled)
+        # Broadcast as sticky state so EVERY browser's toggle button reflects
+        # the shared server value (not just the one that clicked) — and a
+        # refreshed/new client picks it up via the snapshot.
+        self.renderer.auto_review_state(self._auto_review)
 
     def _safe_workspace_path(self, rel: str) -> Path:
         """Resolve ``rel`` under the workspace root, rejecting traversal /
