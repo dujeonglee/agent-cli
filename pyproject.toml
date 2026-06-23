@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=61"]
+# >=62.3 for recursive ``**`` globs in [tool.setuptools.package-data]
+# (the bundled built-in agents/skills live in nested .md dirs).
+requires = ["setuptools>=62.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -59,7 +61,15 @@ version = { attr = "agent_cli.__version__" }
 include = ["agent_cli*"]
 
 [tool.setuptools.package-data]
-agent_cli = ["default_models.json", "web/static/*"]
+agent_cli = [
+    "default_models.json",
+    "web/static/*",
+    # Bundled built-in agents/skills are .md (+ nested reference dirs), not .py,
+    # so they need explicit inclusion or pip installs ship without them — the
+    # auto-review reviewer, explorer, and create-* skills would all go missing.
+    "agents/builtin/**/*.md",
+    "skills/builtin/**/*.md",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
