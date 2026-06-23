@@ -896,6 +896,27 @@ class TestPickPort:
         finally:
             holder.close()
 
+    def test_falls_back_when_live_server_holds_port_via_wildcard(self):
+        """The real bug: another instance listens on ``0.0.0.0:PORT``; a new
+        ``--host <ip>`` run must NOT pick the same PORT. ``SO_REUSEADDR`` alone
+        false-positives (a specific-IP bind coexists with the wildcard one on
+        macOS/BSD), so two servers fight for the port. A connect-based liveness
+        check catches the live listener → fall back to an ephemeral port."""
+        import socket as _s
+
+        holder = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+        try:
+            holder.bind(("0.0.0.0", 0))  # wildcard — covers all local IPs
+            holder.listen(1)
+            busy = holder.getsockname()[1]
+            # Pick for a SPECIFIC host (127.0.0.1) that the wildcard listener
+            # already serves — must detect it's taken and fall back.
+            picked = pick_port("127.0.0.1", busy)
+            assert picked != busy
+            assert picked > 0
+        finally:
+            holder.close()
+
 
 # ── SSE stream (async, ASGITransport) ─────────────
 

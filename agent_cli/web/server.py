@@ -145,23 +145,44 @@ class _NoCacheStaticFiles(StaticFiles):
         return response
 
 
+def _port_has_live_listener(host: str, port: int) -> bool:
+    """True if a process is ALREADY listening on ``(host, port)`` — distinct
+    from a stale ``TIME_WAIT`` remnant (which is safe to reuse).
+
+    Why a connect probe and not just a bind probe: the bind probe sets
+    ``SO_REUSEADDR`` (so a restart can reclaim its own port out of TIME_WAIT),
+    but on macOS/BSD that lets a SPECIFIC-IP bind silently COEXIST with another
+    process's ``0.0.0.0:port`` listener — the bind "succeeds" yet two servers
+    then fight for the port. Connecting reflects what a real client sees: a live
+    listener answers (port genuinely taken); a closed/TIME_WAIT port refuses.
+    For a wildcard ``host`` we connect via loopback (you can't connect to
+    ``0.0.0.0``)."""
+    target = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as c:
+        c.settimeout(0.25)
+        return c.connect_ex((target, port)) == 0
+
+
 def pick_port(host: str, preferred: int) -> int:
     """Pick a bindable port for the web server.
 
-    Prefer ``preferred`` (default 8080) when free; if it's bound by
-    another process, fall back to an OS-assigned ephemeral port. The
-    caller passes the result straight to ``uvicorn.Config(port=...)``,
-    so the URL printed before ``server_obj.run()`` shows whatever the
-    OS actually gave us.
+    Prefer ``preferred`` (default 8080) when free; if a live server already
+    holds it, fall back to an OS-assigned ephemeral port. The caller passes the
+    result straight to ``uvicorn.Config(port=...)``, so the URL printed before
+    ``server_obj.run()`` shows whatever the OS actually gave us.
 
-    Bind to ``host`` (not ``localhost``) so a port that's only free on
-    the loopback interface but bound LAN-wide doesn't fool the probe.
-    The socket is closed before returning — there's a tiny TOCTOU
-    window before uvicorn re-binds, but a same-host race in that
-    window is rare enough that handling it would cost more than it
-    saves.
+    Liveness is checked with a connect probe FIRST (``_port_has_live_listener``)
+    so a second instance (e.g. ``--host <ip>`` while another runs on
+    ``0.0.0.0:8080``) doesn't double-bind the same port — the bind probe's
+    ``SO_REUSEADDR`` alone false-positives there on macOS/BSD. The bind probe is
+    kept (with ``SO_REUSEADDR``) for the genuinely-free / TIME_WAIT cases so a
+    restart can still reclaim its own port. The socket is closed before
+    returning — a tiny TOCTOU window before uvicorn re-binds remains, but a
+    same-host race in that window is rare enough not to handle.
     """
     for candidate in (preferred, 0):
+        if candidate and _port_has_live_listener(host, candidate):
+            continue  # a live server already answers here — try the next
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
