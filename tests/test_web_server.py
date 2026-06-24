@@ -1524,6 +1524,99 @@ class TestWorkspaceDownload:
         assert "#download-drawer" in css
 
 
+class TestWorkspaceUpload:
+    """Workspace file upload (📎). Token-auth, WRITE — so the guards are
+    stricter than download: filename basename-only, target dir under the
+    workspace, a size cap, overwrite reported. Raw request body = file bytes
+    (no python-multipart dependency)."""
+
+    @staticmethod
+    def _setup(server, tmp_path):
+        (tmp_path / "src").mkdir()
+        server.workspace = tmp_path.resolve()
+
+    def _post(self, client, body, *, name, path="", token="testtoken"):
+        q = f"/api/workspace/upload?token={token}&name={name}"
+        if path:
+            q += f"&path={path}"
+        return client.post(q, content=body)
+
+    def test_requires_token(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        assert self._post(client, b"x", name="a.txt", token="wrong").status_code == 401
+
+    def test_uploads_to_root(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = self._post(client, b"hello\n", name="note.txt")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "note.txt"
+        assert body["rel"] == "note.txt"
+        assert body["overwritten"] is False
+        assert (tmp_path / "note.txt").read_bytes() == b"hello\n"
+
+    def test_uploads_to_subdir(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = self._post(client, b"int main(){}\n", name="m.c", path="src")
+        assert r.status_code == 200
+        assert r.json()["rel"] == "src/m.c"
+        assert (tmp_path / "src" / "m.c").exists()
+
+    def test_overwrite_reported(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        (tmp_path / "a.txt").write_text("old")
+        r = self._post(client, b"new", name="a.txt")
+        assert r.json()["overwritten"] is True
+        assert (tmp_path / "a.txt").read_bytes() == b"new"
+
+    def test_rejects_filename_traversal(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        # a filename with path components must be rejected (basename-only)
+        assert self._post(client, b"x", name="../escape.txt").status_code == 400
+        assert not (tmp_path.parent / "escape.txt").exists()
+
+    def test_rejects_dir_traversal(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        assert self._post(client, b"x", name="a.txt", path="../etc").status_code == 400
+
+    def test_rejects_empty_or_dotted_name(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        assert self._post(client, b"x", name="").status_code in (400, 422)
+        assert self._post(client, b"x", name="..").status_code == 400
+        assert self._post(client, b"x", name=".").status_code == 400
+
+    def test_rejects_oversize(self, server_and_client, tmp_path):
+        from agent_cli.web.server import _MAX_UPLOAD_BYTES
+
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        big = b"x" * (_MAX_UPLOAD_BYTES + 1)
+        assert self._post(client, big, name="big.bin").status_code == 413
+
+    def test_rejects_nonexistent_target_dir(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        # target dir must exist (we don't silently mkdir arbitrary trees)
+        assert self._post(client, b"x", name="a.txt", path="nope").status_code == 400
+
+    def test_frontend_assets_present(self, server_and_client):
+        _, _, client = server_and_client
+        html = client.get("/").text
+        for el_id in ("upload-btn", "upload-drawer", "ul-drop", "ul-dir"):
+            assert f'id="{el_id}"' in html, el_id
+        js = client.get("/static/app.js").text
+        assert "/api/workspace/upload" in js
+        css = client.get("/static/style.css").text
+        assert "#upload-drawer" in css and ".ul-drop" in css
+
+
 class TestViewerCount:
     """Viewer roster (count + fun nicknames) broadcast on join/leave + UI."""
 

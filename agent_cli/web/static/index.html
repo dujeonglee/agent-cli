@@ -14,6 +14,7 @@
     <button id="auto-review-btn" type="button" title="Auto-review: review each completion with a reviewer agent until it accepts" aria-pressed="false">🔍 Review: off</button>
     <button id="export-btn" type="button" title="Export conversation">📤</button>
     <button id="download-btn" type="button" title="Download workspace files">📥</button>
+    <button id="upload-btn" type="button" title="Upload files to workspace">📎</button>
     <span id="viewers" title="connected viewers"></span>
     <button id="rename-btn" type="button" title="닉네임 변경" hidden>✎</button>
     <span id="conn-status" title="connection status">●</span>
@@ -68,6 +69,23 @@
       <button id="dl-download" type="button" title="Download as zip">⬇ Download zip</button>
     </div>
     <div id="dl-msg" class="dl-msg"></div>
+  </aside>
+
+  <!-- Upload drawer (📎) -->
+  <div id="upload-backdrop" hidden></div>
+  <aside id="upload-drawer" aria-hidden="true">
+    <div class="dl-head">
+      <div class="dl-title">📎 Upload</div>
+      <button id="ul-close" type="button" title="Close">✕</button>
+    </div>
+    <label class="ul-field">대상 디렉토리 (비우면 워크스페이스 루트)
+      <input type="text" id="ul-dir" placeholder="예: src" autocomplete="off">
+    </label>
+    <div id="ul-drop" class="ul-drop">
+      <p>파일을 여기로 드래그하거나 <button id="ul-pick" type="button">선택</button></p>
+      <input type="file" id="ul-input" multiple hidden>
+    </div>
+    <div id="ul-msg" class="dl-msg"></div>
   </aside>
 
   <!-- Prompt Inspector drawer -->

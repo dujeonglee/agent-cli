@@ -2176,3 +2176,102 @@
 
   paint();
 })();
+
+// ── Upload drawer (📎 header button → separate IIFE) ────────────────
+// POST each picked/dropped file's raw bytes to /api/workspace/upload (one
+// request per file — no multipart). Target dir defaults to the workspace root;
+// an optional text field targets a subdir. Mirrors the download drawer's
+// open/close + backdrop pattern.
+(function () {
+  "use strict";
+
+  const token = new URLSearchParams(window.location.search).get("token");
+  const $btn = document.getElementById("upload-btn");
+  const $drawer = document.getElementById("upload-drawer");
+  const $backdrop = document.getElementById("upload-backdrop");
+  const $close = document.getElementById("ul-close");
+  const $dir = document.getElementById("ul-dir");
+  const $drop = document.getElementById("ul-drop");
+  const $pick = document.getElementById("ul-pick");
+  const $input = document.getElementById("ul-input");
+  const $msg = document.getElementById("ul-msg");
+  if (!$btn || !$drawer || !token) return;
+
+  function open() {
+    $drawer.classList.add("open");
+    $drawer.setAttribute("aria-hidden", "false");
+    $backdrop.hidden = false;
+  }
+  function close() {
+    $drawer.classList.remove("open");
+    $drawer.setAttribute("aria-hidden", "true");
+    $backdrop.hidden = true;
+  }
+
+  function uploadOne(file) {
+    const q =
+      "/api/workspace/upload?token=" +
+      encodeURIComponent(token) +
+      "&name=" +
+      encodeURIComponent(file.name) +
+      ($dir.value.trim()
+        ? "&path=" + encodeURIComponent($dir.value.trim())
+        : "");
+    return fetch(q, { method: "POST", body: file }).then(function (r) {
+      return r.json().then(function (d) {
+        return { ok: r.ok, status: r.status, d: d };
+      });
+    });
+  }
+
+  function uploadFiles(files) {
+    if (!files || !files.length) return;
+    const list = Array.prototype.slice.call(files);
+    $msg.textContent = "업로드 중… (" + list.length + ")";
+    let done = 0;
+    const results = [];
+    list.forEach(function (f) {
+      uploadOne(f)
+        .then(function (res) {
+          results.push(
+            res.ok
+              ? "✓ " + res.d.rel + (res.d.overwritten ? " (덮어씀)" : "")
+              : "✗ " + f.name + " — " + (res.d.detail || res.status),
+          );
+        })
+        .catch(function () {
+          results.push("✗ " + f.name + " — 네트워크 오류");
+        })
+        .then(function () {
+          done += 1;
+          if (done === list.length) $msg.innerHTML = results.join("<br>");
+        });
+    });
+  }
+
+  $btn.addEventListener("click", open);
+  $close.addEventListener("click", close);
+  $backdrop.addEventListener("click", close);
+  $pick.addEventListener("click", function () {
+    $input.click();
+  });
+  $input.addEventListener("change", function () {
+    uploadFiles($input.files);
+    $input.value = "";
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    $drop.addEventListener(ev, function (e) {
+      e.preventDefault();
+      $drop.classList.add("over");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    $drop.addEventListener(ev, function (e) {
+      e.preventDefault();
+      $drop.classList.remove("over");
+    });
+  });
+  $drop.addEventListener("drop", function (e) {
+    uploadFiles(e.dataTransfer.files);
+  });
+})();

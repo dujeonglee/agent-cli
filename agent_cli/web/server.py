@@ -128,6 +128,11 @@ def capture_startup_system_prompt(
 # bypassed cache manually.
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
+# Per-file cap for workspace uploads (POST /api/workspace/upload). A guard
+# against an accidental huge upload filling the on-prem disk — generous enough
+# for source trees / small assets, not for blobs.
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+
 
 class _NoCacheStaticFiles(StaticFiles):
     """``StaticFiles`` that stamps every response with ``no-cache``.
@@ -959,6 +964,60 @@ def create_app(server: WebServer) -> FastAPI:
             media_type="application/zip",
             filename=f"{name}.zip",
             background=BackgroundTask(os.unlink, tmp.name),
+        )
+
+    @app.post("/api/workspace/upload")
+    async def workspace_upload(
+        request: Request,
+        token: str = Query(...),
+        name: str = Query(..., min_length=1),
+        path: str = Query(""),
+    ):
+        """Upload one file into the workspace. Body = raw file bytes (no
+        python-multipart dep — the frontend loops one request per file).
+
+        Guards (this WRITES, so stricter than download):
+        - ``name`` is basename-only (``os.path.basename`` strips any path
+          components → no traversal via the filename); ``.``/``..`` rejected.
+        - target dir resolves under the workspace (``_safe_workspace_path``) and
+          must already exist (we don't mkdir arbitrary trees).
+        - size capped at ``_MAX_UPLOAD_BYTES`` (413 over).
+        Overwrites an existing file (the user's own workspace) but reports it.
+        """
+        server._require_token(token)
+        # Reject (don't silently sanitize) a name carrying path components — the
+        # browser sends a bare File.name, so a path here is unexpected and a
+        # silent basename ("a/b.txt"→"b.txt" in root) would surprise.
+        if (
+            not name
+            or name in (".", "..")
+            or "/" in name
+            or "\\" in name
+            or name != os.path.basename(name)
+        ):
+            raise HTTPException(status_code=400, detail="invalid filename")
+        safe_name = name
+        target_dir = server._safe_workspace_path(path)
+        if not target_dir.is_dir():
+            raise HTTPException(status_code=400, detail="target dir does not exist")
+        dest = server._safe_workspace_path(
+            os.path.join(path, safe_name) if path else safe_name
+        )
+        body = await request.body()
+        if len(body) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"file too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
+            )
+        overwritten = dest.exists()
+        dest.write_bytes(body)
+        return JSONResponse(
+            {
+                "name": safe_name,
+                "rel": str(dest.resolve().relative_to(server.workspace)),
+                "size": len(body),
+                "overwritten": overwritten,
+            }
         )
 
     @app.get("/api/stream")
