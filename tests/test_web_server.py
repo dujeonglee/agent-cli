@@ -1532,6 +1532,10 @@ class TestWorkspaceDownload:
         assert "/api/workspace/download" in js
         assert "/api/workspace/upload" in js  # upload merged in
         assert "webkitGetAsEntry" in js  # recursive directory drop walk
+        # upload target is clearable back to root (✕ button + same-folder
+        # re-click toggle)
+        assert "ul-target-clear" in js
+        assert "uploadDir === entry.rel" in js
         # open() must clear the All-applied dim/disable, or a prior All
         # download leaves the tree greyed + unclickable on reopen (regression)
         assert 'style.pointerEvents = ""' in js

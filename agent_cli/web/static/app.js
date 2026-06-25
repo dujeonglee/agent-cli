@@ -2000,7 +2000,16 @@
     if ($targetRow) $targetRow.classList.remove("target");
     $targetRow = rowEl || null;
     if ($targetRow) $targetRow.classList.add("target");
-    $target.innerHTML = "⬆ 업로드 대상: <b>" + (uploadDir ? esc(uploadDir) : "(루트)") + "</b>";
+    // Show a clear (✕) affordance to reset to root when a folder is selected.
+    $target.innerHTML =
+      "⬆ 업로드 대상: <b>" +
+      (uploadDir ? esc(uploadDir) : "(루트)") +
+      "</b>" +
+      (uploadDir
+        ? ' <button type="button" id="ul-target-clear" title="대상 해제(루트로)">✕</button>'
+        : "");
+    const clr = document.getElementById("ul-target-clear");
+    if (clr) clr.addEventListener("click", () => setUploadDir("", null));
   }
   const esc = (s) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2077,9 +2086,11 @@
       toggle.addEventListener("click", onToggle);
       label.style.cursor = "pointer";
       // Clicking a directory both expands it AND makes it the upload target
-      // ("this folder") — drops then land here.
+      // ("this folder"). Clicking the SAME folder again deselects it (back to
+      // root) — a quick toggle without reaching for the ✕.
       label.addEventListener("click", () => {
-        setUploadDir(entry.rel, row);
+        if (uploadDir === entry.rel) setUploadDir("", null);
+        else setUploadDir(entry.rel, row);
         onToggle();
       });
       wrap.appendChild(kids);
