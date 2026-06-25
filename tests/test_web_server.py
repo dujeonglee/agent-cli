@@ -428,6 +428,10 @@ class TestStaticUI:
         assert "/api/stream" in body
         assert "/api/input" in body
         assert "token" in body
+        # edit_file is flat-native (one op, no `edits` array) — the action card
+        # must NOT count a non-existent `edits` array (that always read 0 →
+        # "(0 edits)"); it shows the op/ref instead.
+        assert "editCount" not in body
 
     def test_export_ui_wired(self, server_and_client):
         # Frontend↔backend contract guard for the Export feature: the page has

@@ -655,16 +655,27 @@
     }
 
     if (toolName === "edit_file" && typeof parsed.path === "string") {
-      const editCount = Array.isArray(parsed.edits) ? parsed.edits.length : 0;
+      // edit_file is flat-native: one op = {path, op, pos, end?, lines?} — no
+      // `edits` array (that always read 0 → "(0 edits)"). Show the op + target
+      // ref instead, e.g. "app.py (replace 2#KT)". Legacy/batch `edits[]` (if it
+      // ever returns) still falls back to a count.
+      let detail;
+      if (Array.isArray(parsed.edits)) {
+        const n = parsed.edits.length;
+        detail = "(" + n + " edit" + (n === 1 ? "" : "s") + ")";
+      } else if (parsed.op) {
+        const ref = parsed.end
+          ? parsed.pos + ".." + parsed.end
+          : parsed.pos || "";
+        detail = "(" + parsed.op + (ref ? " " + ref : "") + ")";
+      } else {
+        detail = "";
+      }
       return el(
         "div",
         ["action-detail"],
         escapeHtml(parsed.path) +
-          ' <span class="muted">(' +
-          editCount +
-          " edit" +
-          (editCount === 1 ? "" : "s") +
-          ")</span>"
+          (detail ? ' <span class="muted">' + escapeHtml(detail) + "</span>" : "")
       );
     }
 
