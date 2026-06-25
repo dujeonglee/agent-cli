@@ -2248,8 +2248,20 @@
         .then(() => {
           done += 1;
           if (done === items.length) {
-            $msg.innerHTML = out.join("<br>");
-            if (out.some((s) => s[0] === "✓")) refreshTree();
+            const failed = out.filter((s) => s[0] === "✗");
+            const okCount = out.length - failed.length;
+            if (failed.length) {
+              // Keep failures visible — the user needs to see what didn't land.
+              $msg.innerHTML = out.join("<br>");
+            } else {
+              // All good: a brief confirmation that auto-clears, so the drawer
+              // doesn't keep a stale file list around.
+              $msg.textContent = "✓ " + okCount + "개 업로드 완료";
+              setTimeout(() => {
+                $msg.textContent = "";
+              }, 2500);
+            }
+            if (okCount) refreshTree();
           }
         });
     });
