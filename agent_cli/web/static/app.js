@@ -1965,10 +1965,13 @@
   });
 })();
 
-// ─── Workspace download (📥) — lazy file tree → zip selected paths ───
+// ─── Workspace files (📁) — one drawer: download (select → zip) + upload
+// (drag-drop into the drawer → uploads to the directory clicked in the tree,
+// or the workspace root). Drag-OUT download isn't done (browser-restricted to
+// Chromium single-files); the select + zip button is the universal path. ───
 (function () {
   const token = new URLSearchParams(window.location.search).get("token");
-  const $btn = document.getElementById("download-btn");
+  const $btn = document.getElementById("files-btn");
   const $drawer = document.getElementById("download-drawer");
   const $backdrop = document.getElementById("download-backdrop");
   const $close = document.getElementById("dl-close");
@@ -1977,10 +1980,26 @@
   const $count = document.getElementById("dl-count");
   const $go = document.getElementById("dl-download");
   const $msg = document.getElementById("dl-msg");
+  const $drop = document.getElementById("ul-drop");
+  const $pick = document.getElementById("ul-pick");
+  const $fileInput = document.getElementById("ul-input");
+  const $target = document.getElementById("ul-target");
   if (!$btn || !$drawer || !token) return;
 
   const qt = () => "token=" + encodeURIComponent(token);
   const selected = new Set();
+  // Upload target directory (rel path; "" = workspace root). Set by clicking a
+  // directory label in the tree; shown in the dropzone.
+  let uploadDir = "";
+  let $targetRow = null; // the highlighted dir row
+
+  function setUploadDir(rel, rowEl) {
+    uploadDir = rel || "";
+    if ($targetRow) $targetRow.classList.remove("target");
+    $targetRow = rowEl || null;
+    if ($targetRow) $targetRow.classList.add("target");
+    $target.innerHTML = "⬆ 업로드 대상: <b>" + (uploadDir ? esc(uploadDir) : "(루트)") + "</b>";
+  }
   const esc = (s) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const fmtSize = (n) =>
@@ -2055,7 +2074,12 @@
       toggle.style.cursor = "pointer";
       toggle.addEventListener("click", onToggle);
       label.style.cursor = "pointer";
-      label.addEventListener("click", onToggle);
+      // Clicking a directory both expands it AND makes it the upload target
+      // ("this folder") — drops then land here.
+      label.addEventListener("click", () => {
+        setUploadDir(entry.rel, row);
+        onToggle();
+      });
       wrap.appendChild(kids);
     }
     return wrap;
@@ -2068,6 +2092,7 @@
     $drawer.setAttribute("aria-hidden", "false");
     selected.clear();
     $all.checked = false;
+    setUploadDir("", null); // default upload target = root
     // reset the dim/disable that the All checkbox applies — otherwise a
     // prior All-download leaves the tree greyed out + unclickable on reopen
     $tree.style.opacity = "";
@@ -2139,10 +2164,87 @@
     }
   }
 
+  // ── Upload (drop into the drawer → POST each file's bytes) ──────────
+  function uploadOne(file) {
+    const q =
+      "/api/workspace/upload?" +
+      qt() +
+      "&name=" +
+      encodeURIComponent(file.name) +
+      (uploadDir ? "&path=" + encodeURIComponent(uploadDir) : "");
+    return fetch(q, { method: "POST", body: file }).then((r) =>
+      r.json().then((d) => ({ ok: r.ok, status: r.status, d: d }))
+    );
+  }
+
+  async function refreshTree() {
+    // re-render root so a newly uploaded file shows immediately
+    try {
+      const entries = await fetchTree("");
+      $tree.innerHTML = "";
+      entries.forEach((e) => $tree.appendChild(makeRow(e, 0)));
+      setUploadDir("", null);
+    } catch (e) {
+      /* leave the tree as-is on refresh failure */
+    }
+  }
+
+  function uploadFiles(files) {
+    const list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    const where = uploadDir ? uploadDir + "/" : "(루트)";
+    $msg.textContent = "업로드 중 → " + where + " (" + list.length + ")";
+    const out = [];
+    let done = 0;
+    list.forEach((f) => {
+      uploadOne(f)
+        .then((res) => {
+          out.push(
+            res.ok
+              ? "✓ " + res.d.rel + (res.d.overwritten ? " (덮어씀)" : "")
+              : "✗ " + esc(f.name) + " — " + (res.d.detail || res.status)
+          );
+        })
+        .catch(() => out.push("✗ " + esc(f.name) + " — 네트워크 오류"))
+        .then(() => {
+          done += 1;
+          if (done === list.length) {
+            $msg.innerHTML = out.join("<br>");
+            if (out.some((s) => s[0] === "✓")) refreshTree();
+          }
+        });
+    });
+  }
+
   $btn.addEventListener("click", open);
   $close.addEventListener("click", close);
   $backdrop.addEventListener("click", close);
   $go.addEventListener("click", download);
+  $pick.addEventListener("click", () => $fileInput.click());
+  $fileInput.addEventListener("change", () => {
+    uploadFiles($fileInput.files);
+    $fileInput.value = "";
+  });
+  // The whole drawer is a drop target; the dropzone shows the active state.
+  ["dragenter", "dragover"].forEach((ev) =>
+    $drawer.addEventListener(ev, (e) => {
+      if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, "Files") >= 0) {
+        e.preventDefault();
+        $drop.classList.add("over");
+      }
+    })
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    $drawer.addEventListener(ev, (e) => {
+      if (ev === "drop") e.preventDefault();
+      if (ev === "dragleave" && $drawer.contains(e.relatedTarget)) return;
+      $drop.classList.remove("over");
+    })
+  );
+  $drawer.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) uploadFiles(e.dataTransfer.files);
+  });
 })();
 
 // ── Auto-review toggle (header button → separate IIFE) ──────────────
@@ -2186,103 +2288,4 @@
   });
 
   paint();
-})();
-
-// ── Upload drawer (📎 header button → separate IIFE) ────────────────
-// POST each picked/dropped file's raw bytes to /api/workspace/upload (one
-// request per file — no multipart). Target dir defaults to the workspace root;
-// an optional text field targets a subdir. Mirrors the download drawer's
-// open/close + backdrop pattern.
-(function () {
-  "use strict";
-
-  const token = new URLSearchParams(window.location.search).get("token");
-  const $btn = document.getElementById("upload-btn");
-  const $drawer = document.getElementById("upload-drawer");
-  const $backdrop = document.getElementById("upload-backdrop");
-  const $close = document.getElementById("ul-close");
-  const $dir = document.getElementById("ul-dir");
-  const $drop = document.getElementById("ul-drop");
-  const $pick = document.getElementById("ul-pick");
-  const $input = document.getElementById("ul-input");
-  const $msg = document.getElementById("ul-msg");
-  if (!$btn || !$drawer || !token) return;
-
-  function open() {
-    $drawer.classList.add("open");
-    $drawer.setAttribute("aria-hidden", "false");
-    $backdrop.hidden = false;
-  }
-  function close() {
-    $drawer.classList.remove("open");
-    $drawer.setAttribute("aria-hidden", "true");
-    $backdrop.hidden = true;
-  }
-
-  function uploadOne(file) {
-    const q =
-      "/api/workspace/upload?token=" +
-      encodeURIComponent(token) +
-      "&name=" +
-      encodeURIComponent(file.name) +
-      ($dir.value.trim()
-        ? "&path=" + encodeURIComponent($dir.value.trim())
-        : "");
-    return fetch(q, { method: "POST", body: file }).then(function (r) {
-      return r.json().then(function (d) {
-        return { ok: r.ok, status: r.status, d: d };
-      });
-    });
-  }
-
-  function uploadFiles(files) {
-    if (!files || !files.length) return;
-    const list = Array.prototype.slice.call(files);
-    $msg.textContent = "업로드 중… (" + list.length + ")";
-    let done = 0;
-    const results = [];
-    list.forEach(function (f) {
-      uploadOne(f)
-        .then(function (res) {
-          results.push(
-            res.ok
-              ? "✓ " + res.d.rel + (res.d.overwritten ? " (덮어씀)" : "")
-              : "✗ " + f.name + " — " + (res.d.detail || res.status),
-          );
-        })
-        .catch(function () {
-          results.push("✗ " + f.name + " — 네트워크 오류");
-        })
-        .then(function () {
-          done += 1;
-          if (done === list.length) $msg.innerHTML = results.join("<br>");
-        });
-    });
-  }
-
-  $btn.addEventListener("click", open);
-  $close.addEventListener("click", close);
-  $backdrop.addEventListener("click", close);
-  $pick.addEventListener("click", function () {
-    $input.click();
-  });
-  $input.addEventListener("change", function () {
-    uploadFiles($input.files);
-    $input.value = "";
-  });
-  ["dragenter", "dragover"].forEach(function (ev) {
-    $drop.addEventListener(ev, function (e) {
-      e.preventDefault();
-      $drop.classList.add("over");
-    });
-  });
-  ["dragleave", "drop"].forEach(function (ev) {
-    $drop.addEventListener(ev, function (e) {
-      e.preventDefault();
-      $drop.classList.remove("over");
-    });
-  });
-  $drop.addEventListener("drop", function (e) {
-    uploadFiles(e.dataTransfer.files);
-  });
 })();

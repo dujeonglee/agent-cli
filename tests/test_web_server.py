@@ -1507,25 +1507,33 @@ class TestWorkspaceDownload:
         )
         assert r.status_code == 400
 
-    def test_download_ui_wired(self, server_and_client):
+    def test_files_ui_wired(self, server_and_client):
+        """One 📁 drawer now serves both download (select → zip) and upload
+        (drop into the drawer → uploads to the clicked dir)."""
         _, _, client = server_and_client
         html = client.get("/").text
+        # single 📁 button replaces the old 📥/📎 pair
         for el_id in (
-            "download-btn",
+            "files-btn",
             "download-drawer",
             "dl-all",
             "dl-tree",
             "dl-download",
+            "ul-drop",  # upload dropzone folded into the same drawer
+            "ul-target",  # active upload-target indicator
         ):
             assert f'id="{el_id}"' in html, el_id
+        assert 'id="download-btn"' not in html and 'id="upload-btn"' not in html
         js = client.get("/static/app.js").text
         assert "/api/workspace/tree" in js
         assert "/api/workspace/download" in js
+        assert "/api/workspace/upload" in js  # upload merged in
         # open() must clear the All-applied dim/disable, or a prior All
         # download leaves the tree greyed + unclickable on reopen (regression)
         assert 'style.pointerEvents = ""' in js
         css = client.get("/static/style.css").text
         assert "#download-drawer" in css
+        assert ".dl-row.target" in css  # upload-target highlight
 
 
 class TestWorkspaceUpload:
@@ -1610,15 +1618,9 @@ class TestWorkspaceUpload:
         # target dir must exist (we don't silently mkdir arbitrary trees)
         assert self._post(client, b"x", name="a.txt", path="nope").status_code == 400
 
-    def test_frontend_assets_present(self, server_and_client):
-        _, _, client = server_and_client
-        html = client.get("/").text
-        for el_id in ("upload-btn", "upload-drawer", "ul-drop", "ul-dir"):
-            assert f'id="{el_id}"' in html, el_id
-        js = client.get("/static/app.js").text
-        assert "/api/workspace/upload" in js
-        css = client.get("/static/style.css").text
-        assert "#upload-drawer" in css and ".ul-drop" in css
+    # NOTE: the upload frontend (📁 merged drawer) is asserted in
+    # TestWorkspaceDownload::test_files_ui_wired — upload + download share one
+    # drawer now, so the asset wiring lives in one place.
 
 
 class TestViewerCount:

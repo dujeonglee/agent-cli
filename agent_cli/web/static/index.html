@@ -13,8 +13,7 @@
     <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
     <button id="auto-review-btn" type="button" title="Auto-review: review each completion with a reviewer agent until it accepts" aria-pressed="false">🔍 Review: off</button>
     <button id="export-btn" type="button" title="Export conversation">📤</button>
-    <button id="download-btn" type="button" title="Download workspace files">📥</button>
-    <button id="upload-btn" type="button" title="Upload files to workspace">📎</button>
+    <button id="files-btn" type="button" title="Workspace files — download / upload">📁</button>
     <span id="viewers" title="connected viewers"></span>
     <button id="rename-btn" type="button" title="닉네임 변경" hidden>✎</button>
     <span id="conn-status" title="connection status">●</span>
@@ -55,37 +54,26 @@
     <span id="export-msg" class="exp-msg"></span>
   </div>
 
-  <!-- Workspace download drawer -->
+  <!-- Workspace files drawer (📁) — download (select + zip) + upload (drop) -->
   <div id="download-backdrop" hidden></div>
   <aside id="download-drawer" aria-hidden="true">
     <div class="dl-head">
-      <div class="dl-title">📥 Download</div>
+      <div class="dl-title">📁 Workspace files</div>
       <button id="dl-close" type="button" title="Close">✕</button>
     </div>
     <label class="dl-all"><input type="checkbox" id="dl-all"> All (whole workspace)</label>
     <div id="dl-tree" class="dl-tree"></div>
     <div class="dl-foot">
       <span id="dl-count">0 selected</span>
-      <button id="dl-download" type="button" title="Download as zip">⬇ Download zip</button>
+      <button id="dl-download" type="button" title="Download selected as zip">⬇ Download zip</button>
     </div>
-    <div id="dl-msg" class="dl-msg"></div>
-  </aside>
-
-  <!-- Upload drawer (📎) -->
-  <div id="upload-backdrop" hidden></div>
-  <aside id="upload-drawer" aria-hidden="true">
-    <div class="dl-head">
-      <div class="dl-title">📎 Upload</div>
-      <button id="ul-close" type="button" title="Close">✕</button>
-    </div>
-    <label class="ul-field">대상 디렉토리 (비우면 워크스페이스 루트)
-      <input type="text" id="ul-dir" placeholder="예: src" autocomplete="off">
-    </label>
     <div id="ul-drop" class="ul-drop">
-      <p>파일을 여기로 드래그하거나 <button id="ul-pick" type="button">선택</button></p>
+      <span id="ul-target" class="ul-target">⬆ 업로드 대상: <b>(루트)</b></span>
+      <span class="ul-hint">파일을 여기로 드래그하거나 <button id="ul-pick" type="button">선택</button>
+        — 트리에서 폴더를 클릭해 대상 변경</span>
       <input type="file" id="ul-input" multiple hidden>
     </div>
-    <div id="ul-msg" class="dl-msg"></div>
+    <div id="dl-msg" class="dl-msg"></div>
   </aside>
 
   <!-- Prompt Inspector drawer -->
