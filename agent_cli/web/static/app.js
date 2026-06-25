@@ -1996,20 +1996,14 @@
   let $targetRow = null; // the highlighted dir row
 
   function setUploadDir(rel, rowEl) {
+    // Target is any tree row, INCLUDING the synthetic root row — so "go back to
+    // root" is just clicking root (no ✕, no re-click toggle needed).
     uploadDir = rel || "";
     if ($targetRow) $targetRow.classList.remove("target");
     $targetRow = rowEl || null;
     if ($targetRow) $targetRow.classList.add("target");
-    // Show a clear (✕) affordance to reset to root when a folder is selected.
     $target.innerHTML =
-      "⬆ 업로드 대상: <b>" +
-      (uploadDir ? esc(uploadDir) : "(루트)") +
-      "</b>" +
-      (uploadDir
-        ? ' <button type="button" id="ul-target-clear" title="대상 해제(루트로)">✕</button>'
-        : "");
-    const clr = document.getElementById("ul-target-clear");
-    if (clr) clr.addEventListener("click", () => setUploadDir("", null));
+      "⬆ 업로드 대상: <b>" + (uploadDir ? esc(uploadDir) : "/ (루트)") + "</b>";
   }
   const esc = (s) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2086,16 +2080,32 @@
       toggle.addEventListener("click", onToggle);
       label.style.cursor = "pointer";
       // Clicking a directory both expands it AND makes it the upload target
-      // ("this folder"). Clicking the SAME folder again deselects it (back to
-      // root) — a quick toggle without reaching for the ✕.
+      // ("this folder"). To go back to root, click the root row.
       label.addEventListener("click", () => {
-        if (uploadDir === entry.rel) setUploadDir("", null);
-        else setUploadDir(entry.rel, row);
+        setUploadDir(entry.rel, row);
         onToggle();
       });
       wrap.appendChild(kids);
     }
     return wrap;
+  }
+
+  // Synthetic root row at the top of the tree — the upload target for the
+  // workspace root. Clicking it sets target back to root (no checkbox/toggle;
+  // download's "All" is the separate dl-all checkbox).
+  function makeRootRow() {
+    const row = document.createElement("div");
+    row.className = "dl-row";
+    const spacer = document.createElement("span");
+    spacer.className = "dl-toggle";
+    const label = document.createElement("span");
+    label.className = "dl-label";
+    label.style.cursor = "pointer";
+    label.innerHTML = "📁 / <span class='dl-size'>(워크스페이스 루트)</span>";
+    label.addEventListener("click", () => setUploadDir("", row));
+    row.appendChild(spacer);
+    row.appendChild(label);
+    return row;
   }
 
   async function open() {
@@ -2105,7 +2115,6 @@
     $drawer.setAttribute("aria-hidden", "false");
     selected.clear();
     $all.checked = false;
-    setUploadDir("", null); // default upload target = root
     // reset the dim/disable that the All checkbox applies — otherwise a
     // prior All-download leaves the tree greyed out + unclickable on reopen
     $tree.style.opacity = "";
@@ -2116,8 +2125,11 @@
     try {
       const entries = await fetchTree("");
       $tree.innerHTML = "";
-      entries.forEach((e) => $tree.appendChild(makeRow(e, 0)));
-      if (!entries.length) $tree.innerHTML = "<div class='dl-loading'>(empty)</div>";
+      const rootRow = makeRootRow();
+      $tree.appendChild(rootRow);
+      // top-level entries render at depth 1 so they nest visually under root
+      entries.forEach((e) => $tree.appendChild(makeRow(e, 1)));
+      setUploadDir("", rootRow); // root selected by default (highlighted)
     } catch (e) {
       $tree.innerHTML = "<div class='dl-loading'>로드 실패: " + esc(e.message) + "</div>";
     }
@@ -2222,8 +2234,10 @@
     try {
       const entries = await fetchTree("");
       $tree.innerHTML = "";
-      entries.forEach((e) => $tree.appendChild(makeRow(e, 0)));
-      setUploadDir("", null);
+      const rootRow = makeRootRow();
+      $tree.appendChild(rootRow);
+      entries.forEach((e) => $tree.appendChild(makeRow(e, 1)));
+      setUploadDir("", rootRow);
     } catch (e) {
       /* leave the tree as-is on refresh failure */
     }

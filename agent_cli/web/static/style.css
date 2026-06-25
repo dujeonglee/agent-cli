@@ -908,8 +908,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 }
 .ul-drop.over { border-color: #6366f1; background: rgba(99,102,241,.08); }
 .ul-target { font-weight: 500; color: #475569; }
-#ul-target-clear { margin-left: 4px; cursor: pointer; border: none; background: none; color: #94a3b8; font-size: 12px; padding: 0 3px; border-radius: 4px; }
-#ul-target-clear:hover { color: #ef4444; background: rgba(239,68,68,.1); }
 .ul-hint { font-size: 11.5px; }
 #ul-pick { cursor: pointer; padding: 3px 9px; border-radius: 8px; border: 1px solid #6366f1; background: #6366f1; color: #fff; font-weight: 500; }
 /* the tree row whose directory is the current upload target */

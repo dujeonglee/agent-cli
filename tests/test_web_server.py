@@ -1532,10 +1532,11 @@ class TestWorkspaceDownload:
         assert "/api/workspace/download" in js
         assert "/api/workspace/upload" in js  # upload merged in
         assert "webkitGetAsEntry" in js  # recursive directory drop walk
-        # upload target is clearable back to root (✕ button + same-folder
-        # re-click toggle)
-        assert "ul-target-clear" in js
-        assert "uploadDir === entry.rel" in js
+        # root is a tree row (the upload-target model is uniform: any row,
+        # incl. root, is selectable). The old ✕ / re-click toggle are gone.
+        assert "makeRootRow" in js
+        assert "ul-target-clear" not in js
+        assert "uploadDir === entry.rel" not in js
         # open() must clear the All-applied dim/disable, or a prior All
         # download leaves the tree greyed + unclickable on reopen (regression)
         assert 'style.pointerEvents = ""' in js
