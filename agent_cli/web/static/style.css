@@ -915,12 +915,14 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .dl-head { display: flex; align-items: center; justify-content: space-between; }
 .dl-title { font-weight: 600; }
 #dl-close { background: none; border: none; cursor: pointer; font-size: 16px; }
-.dl-all { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; }
 .dl-tree {
   flex: 1; min-height: 0; overflow: auto;
   border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
 }
+/* root checkbox = whole workspace → dim the child rows (root row stays active
+   so it can be unchecked). Root row is the tree's first child. */
+.dl-tree.all-selected > div:not(:first-child) { opacity: .4; pointer-events: none; }
 .dl-row { display: flex; align-items: center; gap: 4px; padding: 1px 0; white-space: nowrap; }
 .dl-toggle { display: inline-block; width: 14px; text-align: center; color: #64748b; font-size: 10px; }
 .dl-label { user-select: none; }

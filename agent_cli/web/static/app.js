@@ -1975,7 +1975,6 @@
   const $drawer = document.getElementById("download-drawer");
   const $backdrop = document.getElementById("download-backdrop");
   const $close = document.getElementById("dl-close");
-  const $all = document.getElementById("dl-all");
   const $tree = document.getElementById("dl-tree");
   const $count = document.getElementById("dl-count");
   const $go = document.getElementById("dl-download");
@@ -1994,6 +1993,10 @@
   // directory label in the tree; shown in the dropzone.
   let uploadDir = "";
   let $targetRow = null; // the highlighted dir row
+  // The root row's checkbox = "whole workspace" for download (replaces the old
+  // separate "All" checkbox). Re-created on each tree (re)render.
+  let $rootCb = null;
+  const allChecked = () => !!($rootCb && $rootCb.checked);
 
   function setUploadDir(rel, rowEl) {
     // Target is any tree row, INCLUDING the synthetic root row — so "go back to
@@ -2012,7 +2015,7 @@
       ? (n / 1024).toFixed(0) + "KB" : (n / 1048576).toFixed(1) + "MB";
 
   function updateCount() {
-    if ($all.checked) {
+    if (allChecked()) {
       $count.textContent = "whole workspace";
     } else {
       $count.textContent = selected.size + " selected";
@@ -2090,20 +2093,31 @@
     return wrap;
   }
 
-  // Synthetic root row at the top of the tree — the upload target for the
-  // workspace root. Clicking it sets target back to root (no checkbox/toggle;
-  // download's "All" is the separate dl-all checkbox).
+  // Synthetic root row at the top of the tree. Its CHECKBOX = "whole
+  // workspace" for download (replaces the old separate "All" checkbox); its
+  // LABEL click = set the upload target back to root. Both are just the
+  // root-level versions of what every dir row already does.
   function makeRootRow() {
     const row = document.createElement("div");
     row.className = "dl-row";
     const spacer = document.createElement("span");
     spacer.className = "dl-toggle";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.title = "워크스페이스 전체 다운로드";
+    cb.addEventListener("change", () => {
+      // checking root subsumes individual selection — dim the rest of the tree
+      $tree.classList.toggle("all-selected", cb.checked);
+      updateCount();
+    });
+    $rootCb = cb;
     const label = document.createElement("span");
     label.className = "dl-label";
     label.style.cursor = "pointer";
     label.innerHTML = "📁 / <span class='dl-size'>(워크스페이스 루트)</span>";
     label.addEventListener("click", () => setUploadDir("", row));
     row.appendChild(spacer);
+    row.appendChild(cb);
     row.appendChild(label);
     return row;
   }
@@ -2114,11 +2128,7 @@
     $drawer.classList.add("open");
     $drawer.setAttribute("aria-hidden", "false");
     selected.clear();
-    $all.checked = false;
-    // reset the dim/disable that the All checkbox applies — otherwise a
-    // prior All-download leaves the tree greyed out + unclickable on reopen
-    $tree.style.opacity = "";
-    $tree.style.pointerEvents = "";
+    $tree.classList.remove("all-selected"); // clear a prior whole-workspace dim
     $msg.textContent = "";
     $tree.innerHTML = "<div class='dl-loading'>loading…</div>";
     updateCount();
@@ -2142,17 +2152,12 @@
     setTimeout(() => { $backdrop.hidden = true; }, 200);
   }
 
-  $all.addEventListener("change", () => {
-    $tree.style.opacity = $all.checked ? "0.4" : "";
-    $tree.style.pointerEvents = $all.checked ? "none" : "";
-    updateCount();
-  });
 
   async function download() {
-    const payload = $all.checked
+    const payload = allChecked()
       ? { all: true }
       : { paths: Array.from(selected) };
-    if (!$all.checked && selected.size === 0) {
+    if (!allChecked() && selected.size === 0) {
       $msg.textContent = "선택된 항목이 없습니다";
       return;
     }

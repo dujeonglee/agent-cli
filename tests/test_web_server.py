@@ -1516,7 +1516,6 @@ class TestWorkspaceDownload:
         for el_id in (
             "files-btn",
             "download-drawer",
-            "dl-all",
             "dl-tree",
             "dl-download",
             "ul-drop",  # upload dropzone folded into the same drawer
@@ -1537,9 +1536,13 @@ class TestWorkspaceDownload:
         assert "makeRootRow" in js
         assert "ul-target-clear" not in js
         assert "uploadDir === entry.rel" not in js
-        # open() must clear the All-applied dim/disable, or a prior All
-        # download leaves the tree greyed + unclickable on reopen (regression)
-        assert 'style.pointerEvents = ""' in js
+        # "whole workspace" download is now the root row's checkbox, not a
+        # separate "All" control.
+        assert 'id="dl-all"' not in html
+        assert "all-selected" in js  # root-checkbox dims the rest
+        # open() must clear a prior whole-workspace dim (root checkbox), or a
+        # reopened drawer stays greyed out (regression)
+        assert 'classList.remove("all-selected")' in js
         css = client.get("/static/style.css").text
         assert "#download-drawer" in css
         assert ".dl-row.target" in css  # upload-target highlight
