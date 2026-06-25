@@ -190,6 +190,20 @@ class TestHandleSlashCommand:
         assert "Usage:" in data["content"]
         assert data["success"] is False
 
+    def test_slash_sh_non_utf8_output_does_not_crash(self):
+        # `/sh git show HEAD` etc. can emit non-UTF-8 bytes; text=True would
+        # raise UnicodeDecodeError. Must decode with replacement, not crash.
+        from agent_cli.web.server import handle_slash_command
+
+        renderer = WebRenderer()
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+
+        assert handle_slash_command(r"/sh printf '\xff\xfe hi'", renderer) is True
+        event, data = _qget(conn)
+        assert event == "observation"
+        assert "hi" in data["content"]
+
     def test_slash_compact_reports_before_after(self):
         from unittest.mock import MagicMock
         from agent_cli.web.server import handle_slash_command

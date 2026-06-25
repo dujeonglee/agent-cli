@@ -377,11 +377,13 @@ def _handle_sh(message: str, renderer: WebRenderer) -> bool:
         )
         return True
     try:
+        # Bytes + replace, not ``text=True``: strict UTF-8 decode raises
+        # UnicodeDecodeError mid-run on non-UTF-8 output (e.g. ``git show``,
+        # binary diffs), which TimeoutExpired wouldn't catch.
         result = subprocess.run(
             cmd,
             shell=True,
             capture_output=True,
-            text=True,
             timeout=SHELL_COMMAND_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -392,11 +394,13 @@ def _handle_sh(message: str, renderer: WebRenderer) -> bool:
             success=False,
         )
         return True
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace")
     parts: list[str] = []
-    if result.stdout:
-        parts.append(result.stdout)
-    if result.stderr:
-        parts.append(result.stderr)
+    if stdout:
+        parts.append(stdout)
+    if stderr:
+        parts.append(stderr)
     if result.returncode != 0:
         parts.append(f"[exit code: {result.returncode}]")
     output = "".join(parts) or "(no output)"

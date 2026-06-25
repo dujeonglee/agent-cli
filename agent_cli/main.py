@@ -60,17 +60,25 @@ def _run_shell_inline(cmd: str) -> None:
     """Run a shell command and print output directly. Shared by run and web."""
     console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
     try:
+        # Bytes + replace (not ``text=True``) so non-UTF-8 output (git show,
+        # binary diffs) doesn't raise UnicodeDecodeError mid-run.
         result = subprocess.run(
             cmd,
             shell=True,
             capture_output=True,
-            text=True,
             timeout=SHELL_COMMAND_TIMEOUT,
         )
         if result.stdout:
-            console.print(result.stdout, end="", highlight=False)
+            console.print(
+                result.stdout.decode("utf-8", errors="replace"),
+                end="",
+                highlight=False,
+            )
         if result.stderr:
-            console.print(f"[{C['error']}]{result.stderr}[/]", end="")
+            console.print(
+                f"[{C['error']}]{result.stderr.decode('utf-8', errors='replace')}[/]",
+                end="",
+            )
         if result.returncode != 0:
             console.print(f"[{C['muted']}][exit code: {result.returncode}][/]")
     except subprocess.TimeoutExpired:

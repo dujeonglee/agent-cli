@@ -269,6 +269,14 @@ class TestShellTool:
         assert not result.success
         assert "timed out" in result.error
 
+    def test_non_utf8_output_does_not_crash(self):
+        # `git show`, binary diffs, latin-1 commit messages etc. emit bytes that
+        # aren't valid UTF-8. ``text=True`` would raise UnicodeDecodeError mid-run
+        # (uncatchable by the timeout guard). Output must decode with replacement.
+        result = tool_shell({"command": r"printf '\xff\xfe hi'"})
+        assert result.success
+        assert "hi" in result.output  # the valid part survives; bad bytes → �
+
     def test_empty_command(self):
         result = tool_shell({"command": ""})
         assert not result.success

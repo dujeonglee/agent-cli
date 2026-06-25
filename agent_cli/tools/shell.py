@@ -148,15 +148,17 @@ def tool_shell(args: dict) -> ToolResult:
 
     timeout = int(args.get("timeout", 30))
     try:
+        # Capture bytes, not text: ``text=True`` decodes strict UTF-8 and
+        # raises UnicodeDecodeError mid-run on non-UTF-8 output (git show /
+        # binary diffs / latin-1 messages) — uncatchable by the timeout guard.
         result = subprocess.run(
             cmd,
             shell=True,
             capture_output=True,
-            text=True,
             timeout=timeout,
         )
-        out = result.stdout.strip()
-        err = result.stderr.strip()
+        out = result.stdout.decode("utf-8", errors="replace").strip()
+        err = result.stderr.decode("utf-8", errors="replace").strip()
         parts = []
         if out:
             parts.append(out)
