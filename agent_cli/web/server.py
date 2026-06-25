@@ -976,33 +976,34 @@ def create_app(server: WebServer) -> FastAPI:
         """Upload one file into the workspace. Body = raw file bytes (no
         python-multipart dep — the frontend loops one request per file).
 
+        ``name`` is the file's path RELATIVE to the target ``path`` — a bare
+        name (``a.txt``) for a single file, or a ``/``-joined path
+        (``mydir/sub/a.c``) for directory uploads. The nested dirs are created
+        under ``path``; intermediate ``..``/absolute/backslash segments are
+        rejected and the final path is re-checked under the workspace.
+
         Guards (this WRITES, so stricter than download):
-        - ``name`` is basename-only (``os.path.basename`` strips any path
-          components → no traversal via the filename); ``.``/``..`` rejected.
-        - target dir resolves under the workspace (``_safe_workspace_path``) and
-          must already exist (we don't mkdir arbitrary trees).
+        - every ``name`` segment is non-empty and not ``.``/``..``; no leading
+          ``/`` (absolute) or ``\\``.
+        - ``path`` (where the upload is rooted) resolves under the workspace
+          (``_safe_workspace_path``) and must already exist; the resolved final
+          destination must also be strictly under the workspace.
         - size capped at ``_MAX_UPLOAD_BYTES`` (413 over).
         Overwrites an existing file (the user's own workspace) but reports it.
         """
         server._require_token(token)
-        # Reject (don't silently sanitize) a name carrying path components — the
-        # browser sends a bare File.name, so a path here is unexpected and a
-        # silent basename ("a/b.txt"→"b.txt" in root) would surprise.
+        segments = name.split("/")
         if (
             not name
-            or name in (".", "..")
-            or "/" in name
+            or name.startswith("/")
             or "\\" in name
-            or name != os.path.basename(name)
+            or any(seg in ("", ".", "..") for seg in segments)
         ):
             raise HTTPException(status_code=400, detail="invalid filename")
-        safe_name = name
         target_dir = server._safe_workspace_path(path)
         if not target_dir.is_dir():
             raise HTTPException(status_code=400, detail="target dir does not exist")
-        dest = server._safe_workspace_path(
-            os.path.join(path, safe_name) if path else safe_name
-        )
+        dest = server._safe_workspace_path(os.path.join(path, name) if path else name)
         body = await request.body()
         if len(body) > _MAX_UPLOAD_BYTES:
             raise HTTPException(
@@ -1010,10 +1011,14 @@ def create_app(server: WebServer) -> FastAPI:
                 detail=f"file too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
             )
         overwritten = dest.exists()
+        # Create the nested dirs (under the already-validated target). Safe:
+        # ``_safe_workspace_path`` confirmed ``dest`` resolves under the
+        # workspace, so its parents do too.
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(body)
         return JSONResponse(
             {
-                "name": safe_name,
+                "name": segments[-1],
                 "rel": str(dest.resolve().relative_to(server.workspace)),
                 "size": len(body),
                 "overwritten": overwritten,

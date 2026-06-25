@@ -1982,7 +1982,9 @@
   const $msg = document.getElementById("dl-msg");
   const $drop = document.getElementById("ul-drop");
   const $pick = document.getElementById("ul-pick");
+  const $pickDir = document.getElementById("ul-pick-dir");
   const $fileInput = document.getElementById("ul-input");
+  const $dirInput = document.getElementById("ul-dir-input");
   const $target = document.getElementById("ul-target");
   if (!$btn || !$drawer || !token) return;
 
@@ -2164,21 +2166,48 @@
     }
   }
 
-  // ── Upload (drop into the drawer → POST each file's bytes) ──────────
-  function uploadOne(file) {
+  // ── Upload — items are {file, name} where name is the file's path relative
+  // to the target dir ("a.txt" for a single file, "mydir/sub/a.c" for a
+  // directory upload; the server creates the nested dirs). ─────────────
+  function uploadOne(item) {
     const q =
       "/api/workspace/upload?" +
       qt() +
       "&name=" +
-      encodeURIComponent(file.name) +
+      encodeURIComponent(item.name) +
       (uploadDir ? "&path=" + encodeURIComponent(uploadDir) : "");
-    return fetch(q, { method: "POST", body: file }).then((r) =>
+    return fetch(q, { method: "POST", body: item.file }).then((r) =>
       r.json().then((d) => ({ ok: r.ok, status: r.status, d: d }))
     );
   }
 
+  // Recursively walk a dropped FileSystemEntry (dir → its files, keeping the
+  // relative path). Entries must be captured synchronously in the drop event;
+  // the walk itself is async.
+  function readEntries(reader) {
+    return new Promise((res, rej) => reader.readEntries(res, rej));
+  }
+  async function walkEntry(entry, prefix, out) {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      out.push({ file: file, name: prefix + entry.name });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      // readEntries returns in chunks; loop until it yields none.
+      do {
+        batch = await readEntries(reader);
+        for (const e of batch) await walkEntry(e, prefix + entry.name + "/", out);
+      } while (batch.length);
+    }
+  }
+  async function collectEntries(entries) {
+    const out = [];
+    for (const ent of entries) await walkEntry(ent, "", out);
+    return out;
+  }
+
   async function refreshTree() {
-    // re-render root so a newly uploaded file shows immediately
     try {
       const entries = await fetchTree("");
       $tree.innerHTML = "";
@@ -2189,26 +2218,25 @@
     }
   }
 
-  function uploadFiles(files) {
-    const list = Array.prototype.slice.call(files || []);
-    if (!list.length) return;
+  function uploadItems(items) {
+    if (!items || !items.length) return;
     const where = uploadDir ? uploadDir + "/" : "(루트)";
-    $msg.textContent = "업로드 중 → " + where + " (" + list.length + ")";
+    $msg.textContent = "업로드 중 → " + where + " (" + items.length + ")";
     const out = [];
     let done = 0;
-    list.forEach((f) => {
-      uploadOne(f)
+    items.forEach((it) => {
+      uploadOne(it)
         .then((res) => {
           out.push(
             res.ok
               ? "✓ " + res.d.rel + (res.d.overwritten ? " (덮어씀)" : "")
-              : "✗ " + esc(f.name) + " — " + (res.d.detail || res.status)
+              : "✗ " + esc(it.name) + " — " + (res.d.detail || res.status)
           );
         })
-        .catch(() => out.push("✗ " + esc(f.name) + " — 네트워크 오류"))
+        .catch(() => out.push("✗ " + esc(it.name) + " — 네트워크 오류"))
         .then(() => {
           done += 1;
-          if (done === list.length) {
+          if (done === items.length) {
             $msg.innerHTML = out.join("<br>");
             if (out.some((s) => s[0] === "✓")) refreshTree();
           }
@@ -2216,14 +2244,27 @@
     });
   }
 
+  // <input> files → items. Folder picks carry webkitRelativePath ("dir/a.c").
+  function itemsFromInput(files) {
+    return Array.prototype.slice.call(files || []).map((f) => ({
+      file: f,
+      name: f.webkitRelativePath || f.name,
+    }));
+  }
+
   $btn.addEventListener("click", open);
   $close.addEventListener("click", close);
   $backdrop.addEventListener("click", close);
   $go.addEventListener("click", download);
   $pick.addEventListener("click", () => $fileInput.click());
+  $pickDir.addEventListener("click", () => $dirInput.click());
   $fileInput.addEventListener("change", () => {
-    uploadFiles($fileInput.files);
+    uploadItems(itemsFromInput($fileInput.files));
     $fileInput.value = "";
+  });
+  $dirInput.addEventListener("change", () => {
+    uploadItems(itemsFromInput($dirInput.files)); // webkitRelativePath = dir/...
+    $dirInput.value = "";
   });
   // The whole drawer is a drop target; the dropzone shows the active state.
   ["dragenter", "dragover"].forEach((ev) =>
@@ -2243,7 +2284,25 @@
   );
   $drawer.addEventListener("drop", (e) => {
     e.preventDefault();
-    if (e.dataTransfer) uploadFiles(e.dataTransfer.files);
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    // Capture FileSystemEntry objects SYNCHRONOUSLY (only valid during the
+    // event) so directories can be walked. Fall back to flat files if the
+    // entries API is unavailable.
+    let entries = [];
+    if (dt.items) {
+      entries = Array.prototype.slice
+        .call(dt.items)
+        .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
+        .filter(Boolean);
+    }
+    if (entries.length) {
+      collectEntries(entries).then(uploadItems);
+    } else {
+      uploadItems(
+        Array.prototype.slice.call(dt.files || []).map((f) => ({ file: f, name: f.name }))
+      );
+    }
   });
 })();
 

@@ -1524,10 +1524,14 @@ class TestWorkspaceDownload:
         ):
             assert f'id="{el_id}"' in html, el_id
         assert 'id="download-btn"' not in html and 'id="upload-btn"' not in html
+        # directory upload: folder-pick button + recursive drop walk
+        assert 'id="ul-pick-dir"' in html
+        assert "webkitdirectory" in html
         js = client.get("/static/app.js").text
         assert "/api/workspace/tree" in js
         assert "/api/workspace/download" in js
         assert "/api/workspace/upload" in js  # upload merged in
+        assert "webkitGetAsEntry" in js  # recursive directory drop walk
         # open() must clear the All-applied dim/disable, or a prior All
         # download leaves the tree greyed + unclickable on reopen (regression)
         assert 'style.pointerEvents = ""' in js
@@ -1588,9 +1592,38 @@ class TestWorkspaceUpload:
     def test_rejects_filename_traversal(self, server_and_client, tmp_path):
         server, _, client = server_and_client
         self._setup(server, tmp_path)
-        # a filename with path components must be rejected (basename-only)
+        # ``..`` segment in the name escapes — rejected (dir-upload allows "/"
+        # but not traversal).
         assert self._post(client, b"x", name="../escape.txt").status_code == 400
         assert not (tmp_path.parent / "escape.txt").exists()
+
+    def test_directory_upload_nested_path(self, server_and_client, tmp_path):
+        """Directory upload: ``name`` may be a relative path with ``/`` — the
+        nested dirs are created under the (existing) target ``path``."""
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = self._post(client, b"int main(){}\n", name="mydir/sub/a.c", path="src")
+        assert r.status_code == 200
+        assert r.json()["rel"] == "src/mydir/sub/a.c"
+        assert (
+            tmp_path / "src" / "mydir" / "sub" / "a.c"
+        ).read_bytes() == b"int main(){}\n"
+
+    def test_directory_upload_creates_under_root(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = self._post(client, b"y", name="pkg/mod.py")  # no path → root
+        assert r.status_code == 200
+        assert (tmp_path / "pkg" / "mod.py").exists()
+
+    def test_rejects_traversal_inside_nested_name(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        # a ``..`` segment anywhere in the relative path must be rejected
+        assert self._post(client, b"x", name="a/../../etc/passwd").status_code == 400
+        assert not (tmp_path.parent / "etc").exists()
+        # absolute path rejected
+        assert self._post(client, b"x", name="/etc/passwd").status_code == 400
 
     def test_rejects_dir_traversal(self, server_and_client, tmp_path):
         server, _, client = server_and_client
