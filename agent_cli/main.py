@@ -56,6 +56,18 @@ def _main(
     """AI agent CLI with ReAct pattern."""
 
 
+# Bind addresses for which auto-opening a browser on THIS machine makes sense:
+# loopback (local-only) and the wildcards (default `agent-cli web` on your own
+# machine, reachable at localhost). A specific non-loopback IP means a remote
+# bind — the operator browses from elsewhere, so don't auto-open there.
+_LOCAL_BIND_HOSTS = frozenset({"0.0.0.0", "::", "127.0.0.1", "localhost", "::1"})
+
+
+def _is_local_bind(host: str) -> bool:
+    """Whether `host` is a loopback/wildcard bind (browser auto-open is useful)."""
+    return host.strip().lower() in _LOCAL_BIND_HOSTS
+
+
 def _run_shell_inline(cmd: str) -> None:
     """Run a shell command and print output directly. Shared by run and web."""
     console.print(f"[{C['action']}]⚡ SHELL:[/] {cmd}")
@@ -1578,7 +1590,9 @@ def web(
     console.print(f"  Token:   [yellow]{server.token}[/]")
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
 
-    if not no_browser:
+    if no_browser:
+        pass
+    elif _is_local_bind(host):
         # Best-effort browser open. Quiet on failure (headless envs).
         try:
             import webbrowser
@@ -1586,6 +1600,13 @@ def web(
             webbrowser.open(ui_url)
         except Exception:  # noqa: BLE001
             pass
+    else:
+        # Remote bind (specific non-loopback IP): opening a browser on the
+        # server is useless — the operator browses from elsewhere. Just print
+        # the URL (already shown above) and skip the auto-open.
+        console.print(
+            f"  [{C['muted']}](원격 bind — 브라우저 자동 실행 생략; 위 URL 로 접속)[/]"
+        )
 
     app_obj = create_app(server)
     # ``uvicorn.Server(config).run()`` instead of ``uvicorn.run(...)``

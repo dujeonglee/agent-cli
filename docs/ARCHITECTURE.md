@@ -1356,7 +1356,7 @@ agent-cli run "task description" [options]
 
 ```bash
 agent-cli web [options]
-  (run 옵션 + --host/--port/--token/--no-browser/--resume)
+  (run 옵션 + --host/--port/--token/--no-browser/--resume). 브라우저 자동 오픈은 `_is_local_bind(host)`(loopback/wildcard) 일 때만 — 특정 IP(원격 bind)면 생략하고 URL 만 출력(서버에서 브라우저 무의미).
 
   # 웹 명령어 (handle_slash_command + 공유 dispatch):
   /help              명령어 안내
