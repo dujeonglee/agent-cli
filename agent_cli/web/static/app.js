@@ -2390,3 +2390,32 @@
 
   paint();
 })();
+
+// ── Theme toggle (🌗) ───────────────────────────────────────────────
+// Self-contained: the <head> inline script already set the initial
+// data-theme (saved choice, else system pref); this just flips + persists it.
+(function () {
+  var btn = document.getElementById("theme-btn");
+  if (!btn) return;
+  var root = document.documentElement;
+  function current() {
+    return root.getAttribute("data-theme") === "light" ? "light" : "dark";
+  }
+  function sync() {
+    var dark = current() === "dark";
+    // show the icon of the theme you'd switch TO
+    btn.textContent = dark ? "☀️" : "🌙";
+    btn.title = dark ? "라이트 테마로 전환" : "다크 테마로 전환";
+  }
+  btn.addEventListener("click", function () {
+    var next = current() === "dark" ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try {
+      localStorage.setItem("agentcli_theme", next);
+    } catch (e) {
+      /* private mode — theme just won't persist */
+    }
+    sync();
+  });
+  sync();
+})();

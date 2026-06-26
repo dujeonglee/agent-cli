@@ -5,11 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>agent-cli</title>
   <link rel="stylesheet" href="/static/style.css">
+  <!-- Set theme before first paint to avoid a flash: saved choice, else the
+       system preference (dark is the design default). -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("agentcli_theme");
+        if (t !== "light" && t !== "dark") {
+          t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
 </head>
 <body>
   <header>
     <span id="info">connecting…</span>
     <span id="token-usage" title="token usage"></span>
+    <button id="theme-btn" type="button" title="테마 전환 (다크/라이트)">🌗</button>
     <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
     <button id="auto-review-btn" type="button" title="Auto-review: review each completion with a reviewer agent until it accepts" aria-pressed="false">🔍 Review: off</button>
     <button id="export-btn" type="button" title="Export conversation">📤</button>

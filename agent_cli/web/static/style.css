@@ -2,27 +2,84 @@
    Designed to be readable on desktop + tablet without responsive-design
    gymnastics; phone form factors fall back to a usable single-column. */
 
+/* ── Design tokens — dark-first; light theme is the [data-theme="light"]
+   override. Set on <html> by app.js (localStorage 'agentcli_theme', else the
+   system preference). Every color resolves through these so a single block
+   re-themes the whole UI. ── */
+:root {
+  --bg: #0e0f13; --surface: #16181f; --surface-2: #20232e; --surface-3: #1a1d26;
+  --code-bg: #0a0b0f; --code-fg: #c9d1d9;
+  --text: #e6e8ee; --text-2: #a8afbd; --muted: #7d8595;
+  --border: #2a2e3a; --border-2: #363b49;
+  --accent: #7c6cf0; --accent-hover: #8e7ff5; --accent-2: #9d90f7;
+  --accent-soft-text: #b9b1f7; --accent-soft-bg: rgba(124,108,240,.14); --accent-soft-border: rgba(124,108,240,.32);
+  --on-accent: #ffffff;
+  --user-bg: #5b4fd6; --user-hover: #4f46e5; --user-time: #b9b1f7; --focus-ring: #818cf8;
+  --ok: #3fb950; --fail: #f85149; --warn: #d29922; --cyan: #3bc9db;
+  --fail-soft-bg: rgba(248,81,73,.10); --fail-soft-fg: #f3b0ac; --fail-soft-border: rgba(248,81,73,.40);
+  --warn-soft-bg: rgba(210,153,34,.14); --warn-soft-border: rgba(210,153,34,.32); --warn-soft-fg: #e3b341;
+  --overlay: rgba(0,0,0,.55); --shadow: rgba(0,0,0,.50);
+  --glass: rgba(20,22,29,.86); --glass-strong: rgba(20,22,29,.92);
+  --hairline: rgba(255,255,255,.06); --hairline-strong: rgba(255,255,255,.12); --ghost-border: rgba(255,255,255,.16);
+  --accent-shadow: rgba(124,108,240,.45); --accent-soft-bg2: rgba(124,108,240,.18); --accent-soft-bg3: rgba(124,108,240,.12);
+  --ok-soft-bg: rgba(63,185,80,.20); --ok-soft-border: rgba(63,185,80,.55);
+  --focus-ring-shadow: rgba(129,140,248,.30); --time-bg: rgba(22,24,31,.72);
+}
+:root[data-theme="light"] {
+  --bg: #f8fafc; --surface: #ffffff; --surface-2: #f3f4f6; --surface-3: #f9fafb;
+  --code-bg: #1f2937; --code-fg: #e5e7eb;
+  --text: #1f2937; --text-2: #6b7280; --muted: #9ca3af;
+  --border: #e5e7eb; --border-2: #d1d5db;
+  --accent: #6366f1; --accent-hover: #4f46e5; --accent-2: #818cf8;
+  --accent-soft-text: #4338ca; --accent-soft-bg: #eef2ff; --accent-soft-border: #c7d2fe;
+  --on-accent: #ffffff;
+  --user-bg: #2563eb; --user-hover: #1d4ed8; --user-time: #93c5fd; --focus-ring: #93c5fd;
+  --ok: #16a34a; --fail: #dc2626; --warn: #b45309; --cyan: #0891b2;
+  --fail-soft-bg: #fef2f2; --fail-soft-fg: #7f1d1d; --fail-soft-border: #fca5a5;
+  --warn-soft-bg: #fef3c7; --warn-soft-border: #fed7aa; --warn-soft-fg: #78350f;
+  --overlay: rgba(15,23,42,.25); --shadow: rgba(15,23,42,.18);
+  --glass: rgba(255,255,255,.92); --glass-strong: rgba(255,255,255,.95);
+  --hairline: rgba(15,23,42,.06); --hairline-strong: rgba(15,23,42,.12); --ghost-border: rgba(15,23,42,.14);
+  --accent-shadow: rgba(99,102,241,.35); --accent-soft-bg2: rgba(99,102,241,.12); --accent-soft-bg3: rgba(99,102,241,.08);
+  --ok-soft-bg: rgba(80,200,120,.22); --ok-soft-border: rgba(80,200,120,.6);
+  --focus-ring-shadow: rgba(129,140,248,.18); --time-bg: rgba(249,250,251,.78);
+}
+
+
 * { box-sizing: border-box; }
 html, body {
   height: 100%;
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
-  color: #1f2937;
+  color: var(--text);
 }
-body { display: flex; flex-direction: column; background: #f8fafc; }
+body { display: flex; flex-direction: column; background: var(--bg); }
+
+/* Form controls don't inherit `color`, so without this they fall back to the
+   browser default (black) — invisible on dark surfaces. Tokenize text +
+   surface + placeholder so inputs theme with everything else. */
+input, textarea, select {
+  color: var(--text);
+  background: var(--surface);
+}
+input::placeholder, textarea::placeholder { color: var(--muted); }
+/* Buttons don't inherit `color` either — give them the text token as a base;
+   colored buttons (#send, .confirm-btn.default, …) override via higher
+   specificity, emoji buttons are unaffected. */
+button { color: var(--text); }
 
 /* ── Header ─────────────────────────────────── */
 header {
   padding: 10px 16px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 #info {
-  color: #6b7280;
+  color: var(--text-2);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   overflow: hidden;
@@ -32,41 +89,41 @@ header {
   margin-right: 12px;
 }
 #token-usage {
-  color: #9ca3af;
+  color: var(--muted);
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   white-space: nowrap;
   margin-right: 12px;
   flex-shrink: 0;
 }
-#viewers { font-size: 12px; color: #64748b; margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
-#rename-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: #64748b; padding: 0 2px; flex-shrink: 0; }
+#viewers { font-size: 12px; color: var(--text-2); margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
+#rename-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: var(--text-2); padding: 0 2px; flex-shrink: 0; }
 #rename-btn[hidden] { display: none; }
 
 /* First-connect nickname bar */
 #name-bar {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px; background: #eef2ff; border-bottom: 1px solid #c7d2fe;
+  padding: 8px 16px; background: var(--accent-soft-bg); border-bottom: 1px solid var(--accent-soft-border);
   font-size: 13px;
 }
 #name-bar[hidden] { display: none; }
-.nb-label { color: #4338ca; font-weight: 600; }
+.nb-label { color: var(--accent-soft-text); font-weight: 600; }
 #nb-input {
-  flex: 0 1 220px; padding: 5px 9px; border: 1px solid #c7d2fe;
+  flex: 0 1 220px; padding: 5px 9px; border: 1px solid var(--accent-soft-border);
   border-radius: 6px; font-size: 13px;
 }
 #nb-set {
   padding: 5px 12px; border: none; border-radius: 6px;
-  background: #6366f1; color: #fff; font-weight: 600; cursor: pointer;
+  background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer;
 }
-#nb-set:hover { background: #4f46e5; }
+#nb-set:hover { background: var(--accent-hover); }
 #nb-skip {
-  border: none; background: none; color: #6366f1; cursor: pointer;
+  border: none; background: none; color: var(--accent); cursor: pointer;
   font-size: 14px; padding: 2px 6px;
 }
-#conn-status { font-size: 18px; color: #9ca3af; line-height: 1; }
-#conn-status.up { color: #16a34a; }
-#conn-status.down { color: #dc2626; }
+#conn-status { font-size: 18px; color: var(--muted); line-height: 1; }
+#conn-status.up { color: var(--ok); }
+#conn-status.down { color: var(--fail); }
 
 /* ── Messages ───────────────────────────────── */
 main#messages {
@@ -91,19 +148,19 @@ main#messages {
   right: 8px;
   font-size: 10px;
   line-height: 1;
-  color: #9ca3af;
+  color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
-  background: rgba(249, 250, 251, 0.78);
+  background: var(--time-bg);
   padding: 1px 3px;
   border-radius: 3px;
   z-index: 1;
 }
-.card-user .card-time { color: #93c5fd; background: transparent; }
+.card-user .card-time { color: var(--user-time); background: transparent; }
 
 .card-user { margin-left: auto; display: flex; justify-content: flex-end; padding-top: 20px; }
 .card-user .bubble {
-  background: #2563eb;
-  color: white;
+  background: var(--user-bg);
+  color: var(--on-accent);
   padding: 8px 12px;
   border-radius: 12px 12px 4px 12px;
   white-space: pre-wrap;
@@ -112,13 +169,13 @@ main#messages {
 }
 
 .card-assistant {
-  background: white;
-  border: 1px solid #e5e7eb;
+  background: var(--surface);
+  border: 1px solid var(--border);
   padding: 24px 12px 12px;
   border-radius: 8px;
 }
 .card-assistant .thought {
-  color: #6b7280;
+  color: var(--text-2);
   font-style: italic;
   margin-bottom: 8px;
   font-size: 13px;
@@ -132,12 +189,12 @@ main#messages {
 }
 .card-assistant .action { font-size: 13px; }
 .card-assistant .action .tool {
-  color: #047857;
+  color: var(--ok);
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .card-assistant .action .args {
-  background: #f3f4f6;
+  background: var(--surface-2);
   padding: 6px 8px;
   border-radius: 4px;
   margin: 4px 0 0 0;
@@ -149,18 +206,18 @@ main#messages {
 }
 
 .card-observation {
-  background: #f9fafb;
-  border-left: 3px solid #9ca3af;
+  background: var(--surface-3);
+  border-left: 3px solid var(--muted);
   padding: 22px 12px 8px;
   border-radius: 4px;
 }
-.card-observation.ok { border-left-color: #16a34a; }
-.card-observation.fail { border-left-color: #dc2626; }
+.card-observation.ok { border-left-color: var(--ok); }
+.card-observation.fail { border-left-color: var(--fail); }
 .card-observation .obs-head {
   font-weight: 600;
   font-size: 12px;
   margin-bottom: 4px;
-  color: #4b5563;
+  color: var(--text-2);
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .card-observation .obs-head .icon { margin-right: 4px; }
@@ -172,7 +229,7 @@ main#messages {
   max-height: 240px;
   overflow-y: auto;
   margin: 0;
-  color: #374151;
+  color: var(--text);
 }
 /* delegate result body is markdown-rendered (escapeAndFormat), not raw
    monospace — reset to the normal prose font so headings/lists/paragraphs
@@ -190,37 +247,37 @@ main#messages {
   justify-content: center;
   align-items: center;
   gap: 6px;
-  color: #6b7280;
+  color: var(--text-2);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   margin: 2px auto;
 }
 .card-sys .sys-icon { opacity: 0.7; }
-.card-sys.warn { color: #b45309; }
+.card-sys.warn { color: var(--warn); }
 /* Rich markup → HTML spans rendered by ``richMarkupToHtml``. Colours
    mirror what ``format_diff`` paints in the CLI so users moving
    between terminals and the web UI see the same shape — bold headers,
    cyan hunks, green/red add/remove, dim line numbers + context. */
 .rich-bold { font-weight: 600; }
-.rich-cyan { color: #0891b2; }
-.rich-dim  { color: #6b7280; }
-.rich-green { color: #16a34a; }
-.rich-red   { color: #dc2626; }
+.rich-cyan { color: var(--cyan); }
+.rich-dim  { color: var(--text-2); }
+.rich-green { color: var(--ok); }
+.rich-red   { color: var(--fail); }
 
 .card-error {
-  background: #fef2f2;
-  border-left: 3px solid #dc2626;
+  background: var(--fail-soft-bg);
+  border-left: 3px solid var(--fail);
   padding: 22px 12px 8px;
   border-radius: 4px;
-  color: #7f1d1d;
+  color: var(--fail-soft-fg);
   white-space: pre-wrap;
 }
 
 /* Streaming card — shown while raw chunks come in, replaced by the
    structured ``assistant_turn`` card when the LLM emission settles. */
 .card-streaming {
-  background: white;
-  border: 1px dashed #d1d5db;
+  background: var(--surface);
+  border: 1px dashed var(--border-2);
   padding: 12px;
   border-radius: 8px;
   opacity: 0.85;
@@ -231,14 +288,14 @@ main#messages {
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0;
-  color: #4b5563;
+  color: var(--text-2);
 }
 /* A rejected emission finalized in place (parse/validate failure). Solid
    red border distinguishes it from the dashed in-progress stream, and the
    reason badge names why it was rejected. */
 .card-failed {
-  background: #fef2f2;
-  border: 1px solid #fca5a5;
+  background: var(--fail-soft-bg);
+  border: 1px solid var(--fail-soft-border);
   padding: 12px;
   border-radius: 8px;
 }
@@ -248,19 +305,19 @@ main#messages {
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0;
-  color: #7f1d1d;
+  color: var(--fail-soft-fg);
 }
 .card-failed .fail-reason {
   margin-top: 6px;
   font-size: 11px;
   font-weight: 600;
-  color: #b91c1c;
+  color: var(--fail);
 }
 
 /* Inline code + code blocks inside markdown-ish text */
 .card pre.code {
-  background: #1f2937;
-  color: #e5e7eb;
+  background: var(--code-bg);
+  color: var(--code-fg);
   padding: 8px 12px;
   border-radius: 4px;
   overflow-x: auto;
@@ -268,7 +325,7 @@ main#messages {
   margin: 6px 0;
 }
 .card code {
-  background: #f3f4f6;
+  background: var(--surface-2);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.92em;
@@ -276,8 +333,8 @@ main#messages {
 }
 /* Reset inline-code styling when ``<code>`` lives inside a fenced
    block — the parent ``<pre class="code">`` already paints a dark
-   slab, and the inline ``background: #f3f4f6`` would otherwise
-   plate light-gray over it and collide with the ``#e5e7eb`` text
+   slab, and the inline ``background: var(--surface-2)`` would otherwise
+   plate light-gray over it and collide with the ``var(--border)`` text
    inherited from the parent (nearly-invisible light-on-light). */
 .card pre.code code {
   background: transparent;
@@ -288,8 +345,8 @@ main#messages {
 
 /* ── Footer / input ─────────────────────────── */
 footer {
-  background: white;
-  border-top: 1px solid #e5e7eb;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
   padding: 10px 16px;
 }
 
@@ -306,16 +363,16 @@ footer {
    child is present. */
 #input-mode-badge:not(:has(.mode-tag)) {
   padding: 2px 8px;
-  background: #fef3c7;
-  color: #78350f;
+  background: var(--warn-soft-bg);
+  color: var(--warn-soft-fg);
   border-radius: 4px;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
 #input-mode-badge .mode-tag {
   padding: 2px 8px;
-  background: #fef3c7;
-  color: #78350f;
+  background: var(--warn-soft-bg);
+  color: var(--warn-soft-fg);
   border-radius: 4px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -323,7 +380,7 @@ footer {
   line-height: 1.6;
 }
 #input-mode-badge .mode-context {
-  color: #4b5563;
+  color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12px;
@@ -338,46 +395,46 @@ footer {
   min-height: 60px;
   max-height: 240px;
   padding: 8px 10px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   font-family: inherit;
   font-size: 14px;
-  background: #fff;
+  background: var(--surface);
 }
-#input:focus { outline: 2px solid #93c5fd; outline-offset: 0; border-color: #60a5fa; }
-#input:disabled { background: #f3f4f6; color: #9ca3af; }
+#input:focus { outline: 2px solid var(--user-time); outline-offset: 0; border-color: var(--focus-ring); }
+#input:disabled { background: var(--surface-2); color: var(--muted); }
 
 #send, #abort, #chat-stop {
   padding: 8px 16px;
-  color: white;
+  color: var(--on-accent);
   border: none;
   border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
   font-size: 14px;
 }
-#send { background: #2563eb; }
-#send:hover { background: #1d4ed8; }
-#send:disabled { background: #d1d5db; cursor: not-allowed; }
-#abort, #chat-stop { background: #dc2626; }
-#abort:hover, #chat-stop:hover { background: #b91c1c; }
+#send { background: var(--user-bg); }
+#send:hover { background: var(--user-hover); }
+#send:disabled { background: var(--border-2); cursor: not-allowed; }
+#abort, #chat-stop { background: var(--fail); }
+#abort:hover, #chat-stop:hover { background: var(--fail); }
 #abort[hidden], #chat-stop[hidden] { display: none; }
-#chat-stop:disabled { background: #d1d5db; cursor: not-allowed; }
+#chat-stop:disabled { background: var(--border-2); cursor: not-allowed; }
 
 /* Pending message queue (live) */
 #queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
 #queue-list[hidden] { display: none; }
 .queue-item {
   display: flex; align-items: center; gap: 8px;
-  background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px;
-  padding: 5px 10px; font-size: 13px; color: #7c2d12;
+  background: var(--warn-soft-bg); border: 1px solid var(--warn-soft-border); border-radius: 6px;
+  padding: 5px 10px; font-size: 13px; color: var(--warn-soft-fg);
 }
 .queue-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
 .queue-cancel {
-  border: none; background: none; color: #9a3412; cursor: pointer;
+  border: none; background: none; color: var(--warn); cursor: pointer;
   font-size: 14px; line-height: 1; padding: 2px 4px;
 }
-.queue-cancel:hover { color: #dc2626; }
+.queue-cancel:hover { color: var(--fail); }
 
 /* Action card variants — distinct from the generic <pre class="args">
    fallback so per-tool renderings stand out and stay readable. */
@@ -386,17 +443,17 @@ footer {
   font-size: 12px;
   margin-top: 4px;
   padding: 6px 8px;
-  background: #f3f4f6;
+  background: var(--surface-2);
   border-radius: 4px;
 }
-.action-detail .muted { color: #9ca3af; }
+.action-detail .muted { color: var(--muted); }
 .action-shell {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   margin: 4px 0 0 0;
   padding: 8px 10px;
-  background: #1f2937;
-  color: #e5e7eb;
+  background: var(--code-bg);
+  color: var(--code-fg);
   border-radius: 4px;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -410,7 +467,7 @@ footer {
 .action-ask li, .action-delegate li {
   padding: 2px 0;
 }
-.action-delegate li .muted { color: #6b7280; font-size: 12px; }
+.action-delegate li .muted { color: var(--text-2); font-size: 12px; }
 
 #confirm-buttons {
   display: flex;
@@ -420,20 +477,20 @@ footer {
 }
 .confirm-btn {
   padding: 6px 12px;
-  background: white;
-  border: 1px solid #d1d5db;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   cursor: pointer;
   font-weight: 500;
   font-size: 13px;
 }
-.confirm-btn:hover { background: #f3f4f6; }
+.confirm-btn:hover { background: var(--surface-2); }
 .confirm-btn.default {
-  background: #2563eb;
-  color: white;
-  border-color: #2563eb;
+  background: var(--user-bg);
+  color: var(--on-accent);
+  border-color: var(--user-bg);
 }
-.confirm-btn.default:hover { background: #1d4ed8; }
+.confirm-btn.default:hover { background: var(--user-hover); }
 
 /* ── Prompt provenance (who/why/what behind a confirm or ask) ── */
 .prompt-meta {
@@ -441,19 +498,19 @@ footer {
   width: 100%;
   margin-bottom: 6px;
   padding: 6px 8px;
-  border-left: 3px solid #c7d2fe;
-  background: #f5f6ff;
+  border-left: 3px solid var(--accent-soft-border);
+  background: var(--accent-soft-bg);
   border-radius: 4px;
   font-size: 12px;
   line-height: 1.45;
 }
 .prompt-meta-agent {
   font-weight: 600;
-  color: #4f46e5;
+  color: var(--accent-hover);
 }
-.prompt-meta-reasoning { color: #4b5563; }
+.prompt-meta-reasoning { color: var(--text-2); }
 .prompt-meta-action {
-  color: #374151;
+  color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-all;
 }
@@ -467,13 +524,13 @@ footer {
   max-width: 520px;
   margin: 60px auto;
   padding: 24px;
-  background: white;
-  border: 1px solid #e5e7eb;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
-.setup-message h1 { margin-top: 0; font-size: 18px; color: #374151; }
+.setup-message h1 { margin-top: 0; font-size: 18px; color: var(--text); }
 .setup-message code {
-  background: #f3f4f6;
+  background: var(--surface-2);
   padding: 2px 6px;
   border-radius: 3px;
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -486,17 +543,17 @@ footer {
    stream_chunk pre block). Default collapsed — the user expands the
    one they want to inspect. */
 .card-task-group {
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-left: 3px solid #6b7280;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-2);
   border-radius: 8px;
   padding: 0;
   /* No ``overflow: hidden`` — when the body expands, nested cards
      (observation with its own max-height, long stream_chunk pre)
      would get clipped instead of pushing the outer scroll. */
 }
-.card-task-group.task-ok { border-left-color: #16a34a; }
-.card-task-group.task-fail { border-left-color: #dc2626; }
+.card-task-group.task-ok { border-left-color: var(--ok); }
+.card-task-group.task-fail { border-left-color: var(--fail); }
 
 .card-task-group .task-header {
   display: flex;
@@ -507,10 +564,10 @@ footer {
   font-size: 13px;
   user-select: none;
 }
-.card-task-group .task-header:hover { background: #f9fafb; }
+.card-task-group .task-header:hover { background: var(--surface-3); }
 .card-task-group .task-chevron {
   font-size: 10px;
-  color: #9ca3af;
+  color: var(--muted);
   width: 12px;
   flex: 0 0 auto;
 }
@@ -523,7 +580,7 @@ footer {
   text-overflow: ellipsis;
 }
 .card-task-group .task-status {
-  color: #6b7280;
+  color: var(--text-2);
   font-style: italic;
   font-size: 12px;
   flex: 0 1 auto;
@@ -543,17 +600,17 @@ footer {
   50% { opacity: 1; }
 }
 .card-task-group .task-meta {
-  color: #4b5563;
+  color: var(--text-2);
   font-size: 12px;
   flex: 0 0 auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
-.card-task-group.task-ok .task-meta { color: #16a34a; }
-.card-task-group.task-fail .task-meta { color: #dc2626; }
+.card-task-group.task-ok .task-meta { color: var(--ok); }
+.card-task-group.task-fail .task-meta { color: var(--fail); }
 
 .card-task-group .task-body {
   padding: 8px 12px 12px 12px;
-  border-top: 1px solid #f3f4f6;
+  border-top: 1px solid var(--surface-2);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -576,8 +633,8 @@ footer {
   overflow-y: visible;
 }
 .card-task-group .task-error {
-  color: #7f1d1d;
-  background: #fef2f2;
+  color: var(--fail-soft-fg);
+  background: var(--fail-soft-bg);
   padding: 8px 12px;
   border-radius: 4px;
   font-size: 12px;
@@ -586,7 +643,7 @@ footer {
 
 /* ── Prompt Inspector ───────────────────────── */
 /* header icon buttons — one consistent borderless-emoji style */
-#inspector-btn, #export-btn, #download-btn {
+#theme-btn, #inspector-btn, #export-btn, #files-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -597,12 +654,12 @@ footer {
   flex-shrink: 0;
   transition: transform .15s ease;
 }
-#inspector-btn:hover, #export-btn:hover, #download-btn:hover {
+#theme-btn:hover, #inspector-btn:hover, #export-btn:hover, #files-btn:hover {
   transform: scale(1.15);
 }
 #auto-review-btn {
   background: none;
-  border: 1px solid rgba(255,255,255,.25);
+  border: 1px solid var(--ghost-border);
   border-radius: 10px;
   color: inherit;
   cursor: pointer;
@@ -618,14 +675,14 @@ footer {
 #auto-review-btn:hover { opacity: 1; }
 #auto-review-btn.active {
   opacity: 1;
-  background: rgba(80,200,120,.22);
-  border-color: rgba(80,200,120,.6);
+  background: var(--ok-soft-bg);
+  border-color: var(--ok-soft-border);
 }
 
 #inspector-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15,23,42,.25);
+  background: var(--overlay);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
   opacity: 0;
@@ -640,11 +697,11 @@ footer {
   right: 0;
   height: 100%;
   width: min(560px, 92vw);
-  background: rgba(255,255,255,.92);
+  background: var(--glass);
   backdrop-filter: blur(14px) saturate(1.4);
   -webkit-backdrop-filter: blur(14px) saturate(1.4);
-  border-left: 1px solid #e5e7eb;
-  box-shadow: -12px 0 40px rgba(15,23,42,.18);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 40px var(--shadow);
   transform: translateX(105%);
   transition: transform .28s cubic-bezier(.32,.72,.28,1);
   z-index: 50;
@@ -666,15 +723,15 @@ footer {
 .insp-title { font-weight: 650; font-size: 15px; letter-spacing: .2px; }
 .insp-meta {
   flex: 1;
-  color: #6b7280;
+  color: var(--text-2);
   font-size: 11.5px;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 #insp-close {
   border: none; background: none; cursor: pointer;
-  font-size: 14px; color: #9ca3af; padding: 2px 6px; border-radius: 6px;
+  font-size: 14px; color: var(--muted); padding: 2px 6px; border-radius: 6px;
 }
-#insp-close:hover { background: #f1f5f9; color: #334155; }
+#insp-close:hover { background: var(--surface-2); color: var(--text); }
 
 /* Stacked budget bar — one colored span per section */
 .insp-budget {
@@ -682,7 +739,7 @@ footer {
   height: 14px;
   border-radius: 7px;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(15,23,42,.08);
+  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 .insp-budget span {
   display: block;
@@ -693,14 +750,14 @@ footer {
 .insp-budget span:hover { filter: brightness(1.15); }
 
 #insp-search {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 7px 10px;
   font-size: 13px;
   outline: none;
-  background: #fff;
+  background: var(--surface);
 }
-#insp-search:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(129,140,248,.18); }
+#insp-search:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); }
 
 /* Scope chip row — Main + one chip per delegate sub-agent */
 .insp-scopes {
@@ -717,18 +774,18 @@ footer {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 540;
-  color: #475569;
-  background: #f1f5f9;
-  box-shadow: inset 0 0 0 1px rgba(15,23,42,.06);
+  color: var(--text-2);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--hairline);
   cursor: pointer;
   user-select: none;
   transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 }
-.insp-chip:hover { background: #e2e8f0; }
+.insp-chip:hover { background: var(--surface-2); }
 .insp-chip.active {
-  color: #fff;
-  background: linear-gradient(135deg, #6366f1, #818cf8);
-  box-shadow: 0 1px 4px rgba(99,102,241,.35);
+  color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 1px 4px var(--accent-shadow);
 }
 .insp-chip-tok {
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -746,8 +803,8 @@ footer {
   opacity: .55;
   border-radius: 4px;
 }
-.insp-chip-del:hover { opacity: 1; background: rgba(15,23,42,.12); }
-.insp-chip.active .insp-chip-del:hover { background: rgba(255,255,255,.28); }
+.insp-chip-del:hover { opacity: 1; background: var(--hairline-strong); }
+.insp-chip.active .insp-chip-del:hover { background: var(--hairline-strong); }
 
 .insp-sections {
   flex: 1 1 auto;
@@ -765,9 +822,9 @@ footer {
   /* Never shrink cards in the flex column — on a short viewport flexbox would
      otherwise compress collapsed cards until their summary text is clipped. */
   flex: 0 0 auto;
-  border: 1px solid #e8ecf2;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
   overflow: hidden;
 }
 /* Divider between the static system prompt and the live dynamic context. */
@@ -775,14 +832,14 @@ footer {
   flex: 0 0 auto;
   text-align: center;
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
   margin: 6px 0 2px;
   letter-spacing: 0.02em;
 }
 /* Dynamic-context sections: tinted left edge so they read as "conversation",
    distinct from the system-prompt sections above the divider. */
-.insp-sec.insp-dynamic { border-left: 3px solid #c7d2fe; }
+.insp-sec.insp-dynamic { border-left: 3px solid var(--accent-soft-border); }
 .insp-sec > summary {
   list-style: none;
   cursor: pointer;
@@ -795,7 +852,7 @@ footer {
 .insp-sec > summary::-webkit-details-marker { display: none; }
 .insp-sec > summary::before {
   content: "▸";
-  color: #9ca3af;
+  color: var(--muted);
   font-size: 11px;
   transition: transform .15s ease;
 }
@@ -805,29 +862,29 @@ footer {
 .insp-tok {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
-  color: #6b7280;
-  background: #f1f5f9;
+  color: var(--text-2);
+  background: var(--surface-2);
   border-radius: 999px;
   padding: 1px 8px;
 }
-.insp-pct { font-size: 10.5px; color: #9ca3af; width: 38px; text-align: right; }
+.insp-pct { font-size: 10.5px; color: var(--muted); width: 38px; text-align: right; }
 .insp-body {
   margin: 0;
   padding: 10px 12px;
-  border-top: 1px dashed #e8ecf2;
+  border-top: 1px dashed var(--border);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 11.5px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #334155;
-  background: #fafbfd;
+  color: var(--text);
+  background: var(--surface-3);
   /* Cap an expanded body to the smaller of 420px / half the viewport so one
      long section can't dominate a short window — the outer list still scrolls. */
   max-height: min(420px, 50vh);
   overflow-y: auto;
 }
-.insp-empty { color: #9ca3af; font-size: 13px; text-align: center; margin-top: 40px; }
+.insp-empty { color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px; }
 
 /* ── Export selection mode ───────────────────── */
 .export-check { display: none; }
@@ -851,8 +908,8 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   gap: 0.75rem;
   flex-wrap: wrap;
   padding: 0.5rem 0.9rem;
-  border-top: 1px solid #8884;
-  background: #8881;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
   font-size: 0.9rem;
 }
 /* The `display: flex/inline-flex` ID rules above outweigh the UA
@@ -862,7 +919,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #export-bar[hidden] { display: none; }
 #export-jira-form[hidden] { display: none; }
 #export-bar .exp-all { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
-#export-count { color: #8889; min-width: 6rem; }
+#export-count { color: var(--muted); min-width: 6rem; }
 #export-bar .exp-actions { display: inline-flex; gap: 0.4rem; }
 #export-bar button { padding: 0.25rem 0.6rem; cursor: pointer; }
 #export-bar button:disabled { opacity: 0.45; cursor: default; }
@@ -872,15 +929,15 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #export-jira-url { width: 13rem; }
 #export-jira-user, #export-jira-secret { width: 9rem; }
 #export-jira-issue { width: 7rem; }
-.exp-hint { color: #8889; font-size: 0.78rem; cursor: help; }
-.exp-warn { color: #b45309; font-size: 0.78rem; }
+.exp-hint { color: var(--muted); font-size: 0.78rem; cursor: help; }
+.exp-warn { color: var(--warn); font-size: 0.78rem; }
 #export-jira-http-warn[hidden] { display: none; }
-.exp-msg { color: #8889; }
-.exp-msg a { color: #58f; }
+.exp-msg { color: var(--muted); }
+.exp-msg a { color: var(--accent); }
 
 /* ─── Workspace download drawer (📥) ─── */
 #download-backdrop {
-  position: fixed; inset: 0; background: rgba(15,23,42,.25);
+  position: fixed; inset: 0; background: var(--overlay);
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
   opacity: 0; transition: opacity .25s ease; z-index: 40;
 }
@@ -888,11 +945,11 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #download-drawer {
   position: fixed; top: 0; right: 0; height: 100%;
   width: min(460px, 92vw);
-  background: rgba(255,255,255,.95);
+  background: var(--glass-strong);
   backdrop-filter: blur(14px) saturate(1.4);
   -webkit-backdrop-filter: blur(14px) saturate(1.4);
-  border-left: 1px solid #e5e7eb;
-  box-shadow: -12px 0 40px rgba(15,23,42,.18);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 40px var(--shadow);
   transform: translateX(105%);
   transition: transform .28s cubic-bezier(.32,.72,.28,1);
   z-index: 50; display: flex; flex-direction: column;
@@ -901,36 +958,36 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #download-drawer.open { transform: translateX(0); }
 /* Upload: drop zone + active-target indicator (folder clicked in the tree) */
 .ul-drop {
-  flex: 0 0 auto; border: 2px dashed #cbd5e1; border-radius: 10px;
-  padding: 14px 16px; text-align: center; color: #64748b; font-size: 12.5px;
+  flex: 0 0 auto; border: 2px dashed var(--border-2); border-radius: 10px;
+  padding: 14px 16px; text-align: center; color: var(--text-2); font-size: 12.5px;
   display: flex; flex-direction: column; gap: 6px;
   transition: border-color .15s ease, background .15s ease;
 }
-.ul-drop.over { border-color: #6366f1; background: rgba(99,102,241,.08); }
-.ul-target { font-weight: 500; color: #475569; }
+.ul-drop.over { border-color: var(--accent); background: var(--accent-soft-bg3); }
+.ul-target { font-weight: 500; color: var(--text-2); }
 .ul-hint { font-size: 11.5px; }
-#ul-pick { cursor: pointer; padding: 3px 9px; border-radius: 8px; border: 1px solid #6366f1; background: #6366f1; color: #fff; font-weight: 500; }
+#ul-pick { cursor: pointer; padding: 3px 9px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 500; }
 /* the tree row whose directory is the current upload target */
-.dl-row.target { background: rgba(99,102,241,.12); border-radius: 6px; }
+.dl-row.target { background: var(--accent-soft-bg2); border-radius: 6px; }
 .dl-head { display: flex; align-items: center; justify-content: space-between; }
 .dl-title { font-weight: 600; }
 #dl-close { background: none; border: none; cursor: pointer; font-size: 16px; }
 .dl-tree {
   flex: 1; min-height: 0; overflow: auto;
-  border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
 }
 /* root checkbox = whole workspace → dim the child rows (root row stays active
    so it can be unchecked). Root row is the tree's first child. */
 .dl-tree.all-selected > div:not(:first-child) { opacity: .4; pointer-events: none; }
 .dl-row { display: flex; align-items: center; gap: 4px; padding: 1px 0; white-space: nowrap; }
-.dl-toggle { display: inline-block; width: 14px; text-align: center; color: #64748b; font-size: 10px; }
+.dl-toggle { display: inline-block; width: 14px; text-align: center; color: var(--text-2); font-size: 10px; }
 .dl-label { user-select: none; }
-.dl-size { color: #94a3b8; font-size: 11px; }
+.dl-size { color: var(--muted); font-size: 11px; }
 .dl-kids { }
-.dl-loading { color: #94a3b8; padding: 8px; }
+.dl-loading { color: var(--muted); padding: 8px; }
 .dl-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-#dl-count { font-size: 12.5px; color: #475569; }
-#dl-download { cursor: pointer; padding: 6px 12px; border-radius: 8px; border: 1px solid #6366f1; background: #6366f1; color: #fff; font-weight: 500; }
+#dl-count { font-size: 12.5px; color: var(--text-2); }
+#dl-download { cursor: pointer; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 500; }
 #dl-download:disabled { opacity: .5; cursor: default; }
-.dl-msg { font-size: 12px; color: #475569; min-height: 16px; }
+.dl-msg { font-size: 12px; color: var(--text-2); min-height: 16px; }
