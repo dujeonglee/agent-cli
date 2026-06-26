@@ -118,17 +118,20 @@ def _build_edit_file_inline(wire_format) -> str:
         examples = f"""\
   - one edit per op:
 {_indent(ex_single)}"""
-        # Honest same-file guidance: a ref is a line-number + hash from your
-        # last read; it does NOT track lines shifted by an earlier op. So
-        # several edits to the SAME file must span turns (re-read between),
-        # NOT several ops in one turn. Different files in separate ops is fine.
+        # Same-file batching: consecutive same-path edit_file ops in one turn
+        # are applied together against ONE original read (all refs resolved
+        # before any write, bottom-up, all-or-nothing), so a later op's ref does
+        # NOT go stale from an earlier op's line shift. Refs come from the read;
+        # the model must NOT pre-adjust line numbers for its sibling edits.
         same_file = """
-  - SEVERAL edits to the SAME file → do them across separate turns, NOT as
-    several edit_file ops in one turn. Each ref is anchored to a line number
-    + hash from your last read; once one op rewrites the file the later ops'
-    refs go stale (they do NOT follow shifted lines). Re-read the region
-    between edits — the observation shows the new state. Editing DIFFERENT
-    files in separate ops in the same turn is fine — they don't interact."""
+  - SEVERAL edits to the SAME file → emit them as consecutive edit_file ops in
+    ONE turn, each ref taken from your LAST read of the file. Do NOT pre-adjust
+    line numbers for your other edits: same-file ops in a turn are applied
+    together against that one read (bottom-up), so a later edit's ref does NOT
+    go stale from an earlier edit's line shift. Keep the same-file ops ADJACENT
+    — another tool between them breaks the group. OVERLAPPING ranges are
+    rejected as a batch (nothing is written); split those across turns. Editing
+    DIFFERENT files in separate ops is fine — they don't interact."""
     else:
         examples = f"""\
   - one edit per call:

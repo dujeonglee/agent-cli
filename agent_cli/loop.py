@@ -1039,6 +1039,29 @@ class AgentLoop:
             # always take the sequential per-op path — order is their
             # correctness guarantee (write→edit same file, mkdir→touch).
             tool = TOOLS.get(op.action) if op.action else None
+            # Same-file edit batch: a run of ≥2 consecutive edit_file ops on the
+            # SAME path is applied together against ONE original read (all refs
+            # resolved before any write, bottom-up, all-or-nothing) so a later
+            # op's hashline ref doesn't go stale from an earlier op's line shift.
+            # A lone edit_file, or edits on different paths, take the normal
+            # per-op path. Only consecutive same-path edits group — interleaving
+            # another tool (e.g. write→edit) breaks the run, preserving order.
+            if op.action == "edit_file" and isinstance(op.action_input, dict):
+                path = op.action_input.get("path")
+                j = i
+                while (
+                    j < len(ops)
+                    and ops[j].action == "edit_file"
+                    and isinstance(ops[j].action_input, dict)
+                    and ops[j].action_input.get("path") == path
+                ):
+                    j += 1
+                if j - i > 1:
+                    self._dispatch_edit_batch(
+                        llm_text, turn, ops[i:j], outcome, accumulate=results
+                    )
+                    i = j
+                    continue
             if tool is not None and tool.parallel_safe:
                 j = i
                 while j < len(ops) and ops[j].action == op.action:
@@ -1140,6 +1163,43 @@ class AgentLoop:
         accumulate.append(
             {
                 "tool_name": tool_name,
+                "observation": observation,
+                "success": result.success,
+            }
+        )
+
+    def _dispatch_edit_batch(self, llm_text, turn, batch_ops, outcome, *, accumulate):
+        """Apply a run of ≥2 consecutive same-path edit_file ops as ONE batch,
+        appending ONE combined result to *accumulate*.
+
+        Calls the pure ``apply_edits_batch`` (resolve all refs against one
+        original read → reject overlaps → bottom-up apply → one write,
+        all-or-nothing). Single-direction call: the loop hands it ``(path,
+        edits)`` and gets a ToolResult back — edit_file knows nothing of the
+        loop. Each op's flat input also gets rendered as its own action card,
+        matching the single-op render.
+        """
+        from agent_cli.tools.edit_file import apply_edits_batch
+
+        for op in batch_ops:
+            disp = op.action_input if isinstance(op.action_input, dict) else {}
+            render_step(
+                "action",
+                "",
+                self.turn,
+                tool_name="edit_file",
+                tool_input=json.dumps(disp, ensure_ascii=False),
+            )
+
+        path = batch_ops[0].action_input.get("path")
+        edits = [op.action_input for op in batch_ops]
+        result = apply_edits_batch(path, edits)
+        observation = self._tool_observation(
+            "edit_file", result, batch_ops[0].action_input
+        )
+        accumulate.append(
+            {
+                "tool_name": "edit_file",
                 "observation": observation,
                 "success": result.success,
             }

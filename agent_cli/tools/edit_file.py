@@ -62,6 +62,142 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
         )
 
 
+def _op_to_span(ed: dict, file_lines: list[str], on_fuzzy) -> tuple[int, int, list]:
+    """Map one edit op to the half-open ORIGINAL-line span it replaces:
+    ``(lo, hi, repl)`` where ``file_lines[lo:hi] = repl``. ``lo == hi`` is a pure
+    insertion. Refs are resolved against ``file_lines`` (the single original
+    read) via the shared ``fuzzy_verify_ref``; ``on_fuzzy(msg)`` collects warns.
+    Raises ``RuntimeError`` on a bad op / ref (caller turns it into a clean
+    Observation). Used by the batch path; the single-edit ``tool_edit_file``
+    keeps its own inline apply to preserve its exact model-facing messages."""
+    op = ed.get("op", "")
+    pos = ed.get("pos")
+    end = ed.get("end")
+    lines = ed.get("lines")
+    if isinstance(lines, str):
+        lines = lines.split("\n")
+    if lines is None:
+        lines = []
+
+    def resolve(ref):
+        idx, was_fuzzy = fuzzy_verify_ref(file_lines, ref)
+        if was_fuzzy:
+            on_fuzzy(
+                f"[warn] Fuzzy match used for ref '{ref}' — hash mismatch tolerated"
+            )
+        return idx
+
+    if op in ("replace", "delete"):
+        if not pos:
+            raise RuntimeError(f"{op} requires 'pos'.")
+        repl = [] if op == "delete" else lines
+        lo = resolve(pos)
+        hi = (resolve(end) + 1) if end else lo + 1
+        return lo, hi, repl
+    if op == "append":
+        if pos:
+            i = resolve(pos)
+            return i + 1, i + 1, lines
+        return len(file_lines), len(file_lines), lines
+    if op == "prepend":
+        if pos:
+            i = resolve(pos)
+            return i, i, lines
+        return 0, 0, lines
+    raise RuntimeError(f"Unknown edit op: '{op}'. Use replace|append|prepend|delete.")
+
+
+def _find_overlap(spans: list[tuple]) -> str | None:
+    """Return a human description of the first overlapping pair, or None.
+
+    Each span is ``(lo, hi, repl, emit_idx)``; ``[lo, hi)`` is half-open so
+    ADJACENT ranges (``[2,4)`` and ``[4,5)``) do NOT overlap (decision: reject
+    only on true overlap). A pure insert (``lo == hi``) conflicts only when it
+    lands STRICTLY inside a replace/delete range (its anchor line is removed);
+    inserts sharing a position with each other are fine."""
+    for a in range(len(spans)):
+        lo1, hi1, _, e1 = spans[a]
+        for b in range(a + 1, len(spans)):
+            lo2, hi2, _, e2 = spans[b]
+            ins1, ins2 = lo1 == hi1, lo2 == hi2
+            conflict = False
+            if not ins1 and not ins2:  # range vs range
+                conflict = lo1 < hi2 and lo2 < hi1
+            elif ins1 and not ins2:  # insert inside range?
+                conflict = lo2 < lo1 < hi2
+            elif ins2 and not ins1:
+                conflict = lo1 < lo2 < hi1
+            # insert vs insert: never a conflict
+            if conflict:
+                return f"edit #{e1 + 1} (lines {lo1 + 1}-{hi1}) and edit #{e2 + 1} (lines {lo2 + 1}-{hi2})"
+    return None
+
+
+def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
+    """Apply SEVERAL edits to ONE file against a single original read.
+
+    All refs resolve against the same original content, so a later edit's
+    hashline ref stays valid even if an earlier edit shifts lines; bottom-up
+    application (highest line first) keeps indices from drifting. ALL-OR-NOTHING:
+    any bad ref or overlapping pair → nothing is written and the model re-emits
+    the whole group (a partial write would re-introduce the drift it avoids).
+
+    Reuses ``fuzzy_verify_ref`` / ``format_diff`` / ``post_hook``; pure function
+    (path + edits → ToolResult), no loop/ctx/renderer coupling."""
+    try:
+        original_text = Path(path).read_text(encoding="utf-8")
+    except Exception as e:
+        return ToolResult(False, error=f"edit_file: cannot read '{path}': {e}")
+    file_lines = original_text.split("\n")
+    fuzzy_warnings: list[str] = []
+
+    # 1. Resolve EVERY op against the original (all-or-nothing on a bad ref).
+    spans: list[tuple] = []
+    try:
+        for i, ed in enumerate(edits):
+            lo, hi, repl = _op_to_span(ed, file_lines, fuzzy_warnings.append)
+            spans.append((lo, hi, repl, i))
+    except RuntimeError as e:
+        return ToolResult(
+            False, error=f"edit_file batch: {e} No changes written — re-read and retry."
+        )
+
+    # 2. Reject overlaps before mutating anything.
+    overlap = _find_overlap(spans)
+    if overlap:
+        return ToolResult(
+            False,
+            error=(
+                f"edit_file batch: overlapping edits — {overlap}. Split them across "
+                f"turns (re-read between). No changes written."
+            ),
+        )
+
+    # 3. Bottom-up apply: highest line first so lower indices don't shift.
+    #    Tie-break by emit index (descending) so same-position inserts keep
+    #    their emitted order in the result.
+    for lo, hi, repl, _ in sorted(spans, key=lambda s: (s[0], s[3]), reverse=True):
+        file_lines[lo:hi] = repl
+
+    # 4. One write.
+    result_text = "\n".join(file_lines)
+    try:
+        Path(path).write_text(result_text, encoding="utf-8")
+    except Exception as e:
+        return ToolResult(False, error=f"edit_file: cannot write '{path}': {e}")
+
+    msg = f"Edit complete: {path} ({len(edits)} edits, {len(file_lines)} lines)"
+    if fuzzy_warnings:
+        msg += "\n" + "\n".join(fuzzy_warnings)
+    diff = format_diff(original_text, result_text, path)
+    if diff:
+        msg += "\n\n" + diff
+    from agent_cli.tools.code_index import post_hook
+
+    post_hook(path)
+    return ToolResult(True, output=msg)
+
+
 def tool_edit_file(args: dict) -> ToolResult:
     """Apply a single hashline-based edit to a file (fuzzy matching support).
 

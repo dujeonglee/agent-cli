@@ -464,3 +464,132 @@ class TestMultiOpDelegateParallel:
         assert result.success
         # bad turn → recovery, then complete → end
         assert provider.call.call_count == 2
+
+
+# ─── Same-file edit batching (consecutive edit_file ops → one apply) ──
+
+
+class TestEditBatchGrouping:
+    """A run of >=2 consecutive edit_file ops on the SAME path is grouped and
+    applied via apply_edits_batch (one read, all refs against original,
+    bottom-up, all-or-nothing). Non-consecutive / different-path edits and lone
+    edits keep the normal per-op path."""
+
+    @staticmethod
+    def _ref(n, line):
+        from agent_cli.tools.read_file import compute_line_hash
+
+        return f"{n}#{compute_line_hash(n, line)}"
+
+    def test_line_shifting_edits_grouped(self, tmp_path):
+        # The case grouping is FOR: edit #1 inserts a line (shifting everything
+        # down), so edit #2's ref (line 5) would go stale under sequential apply
+        # — but grouped, both resolve against the ORIGINAL and land correctly.
+        f = tmp_path / "f.txt"
+        f.write_text("a\nb\nc\nd\ne\n")
+        result, ctx, _ = _run(
+            [
+                _turn(
+                    ops=[
+                        {
+                            "action": "edit_file",
+                            "path": str(f),
+                            "op": "append",
+                            "pos": self._ref(1, "a"),
+                            "lines": ["a2"],
+                        },  # shifts down
+                        {
+                            "action": "edit_file",
+                            "path": str(f),
+                            "op": "replace",
+                            "pos": self._ref(5, "e"),
+                            "lines": ["E"],
+                        },  # would go stale
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        assert result.success
+        assert f.read_text().splitlines() == ["a", "a2", "b", "c", "d", "E"]
+        # one combined observation, the batch unit succeeded
+        obs = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and m.get("tool")
+        ]
+        combined = [m for m in obs if "edit" in (m.get("tool") or "")]
+        assert combined and combined[0]["success"] is True
+
+    def test_overlap_batch_fails_file_untouched(self, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("a\nb\nc\nd\ne\n")
+        before = f.read_text()
+        result, ctx, _ = _run(
+            [
+                _turn(
+                    ops=[
+                        {
+                            "action": "edit_file",
+                            "path": str(f),
+                            "op": "replace",
+                            "pos": self._ref(2, "b"),
+                            "end": self._ref(4, "d"),
+                            "lines": ["X"],
+                        },
+                        {
+                            "action": "edit_file",
+                            "path": str(f),
+                            "op": "replace",
+                            "pos": self._ref(3, "c"),
+                            "lines": ["Y"],
+                        },
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        # batch rejected → file untouched (all-or-nothing)
+        assert f.read_text() == before
+        obs = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "overlap" in (m.get("content") or "")
+        ]
+        assert obs
+
+    def test_different_files_not_grouped(self, tmp_path):
+        f1 = tmp_path / "f1.txt"
+        f1.write_text("a\nb\n")
+        f2 = tmp_path / "f2.txt"
+        f2.write_text("x\ny\n")
+        result, ctx, _ = _run(
+            [
+                _turn(
+                    ops=[
+                        {
+                            "action": "edit_file",
+                            "path": str(f1),
+                            "op": "replace",
+                            "pos": self._ref(1, "a"),
+                            "lines": ["A"],
+                        },
+                        {
+                            "action": "edit_file",
+                            "path": str(f2),
+                            "op": "replace",
+                            "pos": self._ref(1, "x"),
+                            "lines": ["X"],
+                        },
+                    ]
+                ),
+                *_finish(),
+            ],
+            tmp_path,
+        )
+        assert result.success
+        # both applied (separate files, separate per-op edits)
+        assert f1.read_text().splitlines() == ["A", "b"]
+        assert f2.read_text().splitlines() == ["X", "y"]

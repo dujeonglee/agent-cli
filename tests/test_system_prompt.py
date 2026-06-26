@@ -442,25 +442,25 @@ class TestBuildSystemPrompt:
         # Recovery action is still spelled out.
         assert "re-read" in flat.lower() or "re-fetch" in flat.lower()
 
-    def test_hashline_guide_warns_same_file_multi_op_edits(self):
-        """Multi-op + flat-native edit_file (Step 3): each edit_file op is ONE
-        edit. The guide must warn against emitting several edit_file ops for the
-        SAME file in one turn — a ref is anchored to a line number + hash, so
-        once one op rewrites the file the later ops' refs go stale (they do NOT
-        follow shifted lines) — and point to separate turns with a re-read.
-        This is the multi-op form of the sequential-hash-reuse drift
-        (S25FE-kernel session 1776946589). Whitespace is collapsed because the
-        inline guide wraps across lines."""
+    def test_hashline_guide_allows_same_file_batched_edits(self):
+        """Multi-op + flat-native edit_file: consecutive same-path edit_file ops
+        in ONE turn are applied together against one original read (bottom-up,
+        all-or-nothing), so a later op's ref does NOT go stale from an earlier
+        op's shift. The guide must now INVITE same-file edits in one turn (refs
+        from the last read, no pre-adjusting line numbers) and state overlaps
+        are rejected — replacing the old "separate turns" guidance. Whitespace
+        is collapsed because the inline guide wraps across lines."""
         import re
 
         prompt = build_system_prompt(_make_caps(), ["edit_file"])
         flat = re.sub(r"\s+", " ", prompt)
-        # Warns against same-file multi-op edits in one turn …
+        # Invites same-file edits batched in one turn …
         assert "SAME file" in flat
-        assert "several edit_file ops in one turn" in flat
-        assert "stale" in flat
-        # … and points to separate turns instead.
-        assert "separate turns" in flat
+        assert "consecutive edit_file ops in ONE turn" in flat
+        # … refs from the read, applied together (not pre-adjusted) …
+        assert "does NOT go stale" in flat
+        # … and overlaps are rejected.
+        assert "OVERLAPPING" in flat
 
     def test_delegate_included(self):
         prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])

@@ -684,9 +684,9 @@ LLM이 사용할 수 있는 도구 목록:
 {"path": "app.py", "op": "append", "pos": "1#VR", "lines": ["    # comment"]}
 ```
 
-여러 편집은 멀티-op 으로 edit_file op 을 여러 개 보냅니다. 단 hashline ref 는 줄번호+해시 앵커라 앞 편집이 줄을 밀면 뒤 편집의 ref 가 어긋납니다 — **같은 파일 다중편집은 턴을 나눠** 사이에 re-read 하고, 다른 파일 편집은 같은 턴에 여러 op 로 보내도 됩니다.
+**같은 파일 다중편집**도 한 턴에 보낼 수 있습니다 — **연속된 같은-path edit_file op 들은 하나의 원본 read 기준으로 함께 적용**됩니다(모든 ref 를 mutate 전에 해석 → overlap 사전거부 → 줄번호 내림차순 bottom-up 적용 → 1회 쓰기). 그래서 앞 편집이 줄을 밀어도 뒤 편집의 ref 가 어긋나지 않습니다. ref 는 **마지막 read 기준 그대로** 쓰면 됩니다(다른 편집을 의식해 줄번호를 미리 보정하지 말 것). **all-or-nothing**: 한 편집이라도 overlap/해시불일치면 그 파일은 손대지 않고 배치 전체가 거부됩니다(모델이 전부 재시도). 겹치는 범위는 턴을 나눠 사이에 re-read 하세요. 다른 파일 편집은 같은 턴에 여러 op 로 보내도 됩니다(서로 독립).
 
-해시 불일치 시 퍼지 매칭으로 자동 보정합니다 (공백/따옴표/대시 정규화).
+해시 불일치 시 퍼지 매칭으로 자동 보정합니다 (공백/따옴표/대시 정규화 — 같은 줄번호 한정).
 
 `edit_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). `write_file` 성공 시엔 작성한 content 가 **hashline(LINE#HASH:content)** 포맷으로 반환되어, `read_file` 없이 방금 쓴 파일을 바로 `edit_file` 로 수정할 수 있습니다 (write→edit 직결 — 작은 변경 시 전체 재작성 대신 부분 edit 유도). 또한 `write_file` 이 **기존 파일을 덮어쓰는데 바뀐 줄이 30% 미만**이면(작은 overwrite), 관찰에 *"~N% of lines changed … edit_file costs only the changed lines"* 넛지가 붙고 **echo 가 파일 전체 hashline 대신 바뀐 줄만의 diff** 로 바뀝니다 — churn 케이스의 컨텍스트 점유를 줄이고 모델에게 "edit 했어야 할 줄"을 보여줍니다(쓰기는 정상 수행, 거부 아님). 신규 파일·전면 재작성(≥30%)은 hashline echo 를 유지합니다(write→edit 직결용).
 

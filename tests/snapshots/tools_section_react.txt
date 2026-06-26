@@ -184,12 +184,14 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
     file moved between your read and your edit. Re-read the region (or
     re-fetch the symbol) and retry with the fresh tags.
   - Use write_file only for creating new files, not for editing existing ones.
-  - SEVERAL edits to the SAME file → do them across separate turns, NOT as
-    several edit_file ops in one turn. Each ref is anchored to a line number
-    + hash from your last read; once one op rewrites the file the later ops'
-    refs go stale (they do NOT follow shifted lines). Re-read the region
-    between edits — the observation shows the new state. Editing DIFFERENT
-    files in separate ops in the same turn is fine — they don't interact.
+  - SEVERAL edits to the SAME file → emit them as consecutive edit_file ops in
+    ONE turn, each ref taken from your LAST read of the file. Do NOT pre-adjust
+    line numbers for your other edits: same-file ops in a turn are applied
+    together against that one read (bottom-up), so a later edit's ref does NOT
+    go stale from an earlier edit's line shift. Keep the same-file ops ADJACENT
+    — another tool between them breaks the group. OVERLAPPING ranges are
+    rejected as a batch (nothing is written); split those across turns. Editing
+    DIFFERENT files in separate ops is fine — they don't interact.
 - delegate: Delegate ONE task to a subagent. Emit several delegate ops in the same turn to run independent tasks in PARALLEL. Use context mode to control what the subagent knows.
   Input JSON: {"task": "string, required — Task description for the subagent", "context": "string — none (independent), fork (copy conversation history)", "tools": "array<string> — Allowed tools (omit for default set)", "agent": "string — Agent name to load role/config from .agent-cli/agents/{name}.md"}
   Each delegate op runs ONE subagent task. Several delegate ops in the
