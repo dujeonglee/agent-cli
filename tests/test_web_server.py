@@ -486,11 +486,10 @@ class TestStaticUI:
         assert resp.status_code == 200
         assert "text/css" in resp.headers["content-type"]
 
-    def test_theme_tokens_and_toggle_wired(self, server_and_client):
-        """Dark-first design tokens + light override + a working theme toggle.
-        Guards the token system so a future edit can't silently (a) reintroduce
-        raw colors in the body, (b) break the light theme, or (c) drop the
-        toggle / FOUC-prevention wiring."""
+    def test_theme_tokens_and_picker_wired(self, server_and_client):
+        """Multi-theme design-token system + a working theme picker. Guards that
+        a future edit can't silently (a) reintroduce raw colors in the body,
+        (b) drop a curated theme block, or (c) break the picker / FOUC wiring."""
         import re
 
         _, _, client = server_and_client
@@ -498,19 +497,25 @@ class TestStaticUI:
         html = client.get("/").text
         js = client.get("/static/app.js").text
 
-        # dark default (:root) + light override both define core tokens
-        assert ":root {" in css and "--bg: #0e0f13" in css
-        assert ':root[data-theme="light"]' in css and "--bg: #f8fafc" in css
+        # :root base (= slate) + every curated theme defines tokens
+        assert ":root {" in css
+        for theme in ("midnight", "terminal", "amber", "light"):
+            assert f':root[data-theme="{theme}"]' in css, f"missing theme: {theme}"
+        # borders are translucent hairlines in the dark base (the refined look)
+        assert "--border: rgba(255,255,255,.07)" in css
         # body is fully tokenized — no raw hex colors after the token block
         body = css[css.index("* { box-sizing") :]
         assert not re.findall(r"#[0-9a-fA-F]{3,8}\b", body), "raw hex leaked into body"
         # no token resolves to another var() (the self-reference bug)
         tok = css[css.index(":root {") : css.index("* { box-sizing")]
         assert not re.findall(r"--[\w-]+:\s*var\(", tok), "token self-reference"
-        # FOUC-prevention sets the theme before paint; toggle flips + persists
+        # FOUC-prevention applies a saved/default theme before paint
         assert "agentcli_theme" in html and "data-theme" in html
-        assert 'id="theme-btn"' in html
-        assert 'getElementById("theme-btn")' in js and "agentcli_theme" in js
+        assert '"amber"' in html  # default theme in the inline script
+        # picker: button + menu container + JS that builds it from the theme list
+        assert 'id="theme-btn"' in html and 'id="theme-menu"' in html
+        assert 'getElementById("theme-menu")' in js and "agentcli_theme" in js
+        assert 'id: "midnight"' in js and 'id: "terminal"' in js
 
     def test_pre_code_does_not_let_inline_code_bleed_through(self, server_and_client):
         # ``<pre class="code"><code>...</code></pre>`` is how the markdown

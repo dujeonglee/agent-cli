@@ -2,28 +2,62 @@
    Designed to be readable on desktop + tablet without responsive-design
    gymnastics; phone form factors fall back to a usable single-column. */
 
-/* ── Design tokens — dark-first; light theme is the [data-theme="light"]
-   override. Set on <html> by app.js (localStorage 'agentcli_theme', else the
-   system preference). Every color resolves through these so a single block
-   re-themes the whole UI. ── */
+/* ── Design tokens — multi-theme. `:root` is the shared dark base (= the
+   "slate" theme); each [data-theme="…"] block overrides only what differs
+   (surfaces + accent family; "light" is a full override). The theme is set on
+   <html> by app.js's picker (localStorage 'agentcli_theme', else 'slate').
+   Borders are translucent HAIRLINES (rgba white) so they read as soft edges,
+   not hard grey lines — the key to a refined dark look. ── */
 :root {
-  --bg: #0e0f13; --surface: #16181f; --surface-2: #20232e; --surface-3: #1a1d26;
-  --code-bg: #0a0b0f; --code-fg: #c9d1d9;
-  --text: #e6e8ee; --text-2: #a8afbd; --muted: #7d8595;
-  --border: #2a2e3a; --border-2: #363b49;
-  --accent: #7c6cf0; --accent-hover: #8e7ff5; --accent-2: #9d90f7;
-  --accent-soft-text: #b9b1f7; --accent-soft-bg: rgba(124,108,240,.14); --accent-soft-border: rgba(124,108,240,.32);
+  --bg: #0d0e11; --surface: #15171c; --surface-2: #1b1e25; --surface-3: #17191f;
+  --code-bg: #08090b; --code-fg: #c9d1d9;
+  --text: #dfe1e6; --text-2: #9aa1ad; --muted: #6b7280;
+  --border: rgba(255,255,255,.07); --border-2: rgba(255,255,255,.12);
+  --accent: #7e8db0; --accent-hover: #93a0bf; --accent-2: #9aa6c4;
+  --accent-soft-text: #aab4cc; --accent-soft-bg: rgba(126,141,176,.14); --accent-soft-border: rgba(126,141,176,.30);
   --on-accent: #ffffff;
-  --user-bg: #5b4fd6; --user-hover: #4f46e5; --user-time: #b9b1f7; --focus-ring: #818cf8;
+  --user-bg: #3c4456; --user-hover: #464f63; --user-time: #aab4cc; --focus-ring: #7e8db0;
   --ok: #3fb950; --fail: #f85149; --warn: #d29922; --cyan: #3bc9db;
   --fail-soft-bg: rgba(248,81,73,.10); --fail-soft-fg: #f3b0ac; --fail-soft-border: rgba(248,81,73,.40);
   --warn-soft-bg: rgba(210,153,34,.14); --warn-soft-border: rgba(210,153,34,.32); --warn-soft-fg: #e3b341;
   --overlay: rgba(0,0,0,.55); --shadow: rgba(0,0,0,.50);
-  --glass: rgba(20,22,29,.86); --glass-strong: rgba(20,22,29,.92);
-  --hairline: rgba(255,255,255,.06); --hairline-strong: rgba(255,255,255,.12); --ghost-border: rgba(255,255,255,.16);
-  --accent-shadow: rgba(124,108,240,.45); --accent-soft-bg2: rgba(124,108,240,.18); --accent-soft-bg3: rgba(124,108,240,.12);
+  --glass: rgba(19,21,26,.86); --glass-strong: rgba(19,21,26,.92);
+  --hairline: rgba(255,255,255,.06); --hairline-strong: rgba(255,255,255,.12); --ghost-border: rgba(255,255,255,.14);
+  --accent-shadow: rgba(126,141,176,.40); --accent-soft-bg2: rgba(126,141,176,.18); --accent-soft-bg3: rgba(126,141,176,.12);
   --ok-soft-bg: rgba(63,185,80,.20); --ok-soft-border: rgba(63,185,80,.55);
-  --focus-ring-shadow: rgba(129,140,248,.30); --time-bg: rgba(22,24,31,.72);
+  --focus-ring-shadow: rgba(126,141,176,.30); --time-bg: rgba(21,23,28,.72);
+}
+/* Midnight — deep blue-black, cool blue accent (Linear/Vercel vibe) */
+:root[data-theme="midnight"] {
+  --bg: #0a0e17; --surface: #111725; --surface-2: #182032; --surface-3: #131a29;
+  --accent: #4d8eff; --accent-hover: #6ba0ff; --accent-2: #74a6ff;
+  --accent-soft-text: #9cc0ff; --accent-soft-bg: rgba(77,142,255,.14); --accent-soft-border: rgba(77,142,255,.32);
+  --user-bg: #2f6fe0; --user-hover: #2860c8; --user-time: #9cc0ff; --focus-ring: #4d8eff;
+  --accent-shadow: rgba(77,142,255,.45); --accent-soft-bg2: rgba(77,142,255,.18); --accent-soft-bg3: rgba(77,142,255,.12);
+  --focus-ring-shadow: rgba(77,142,255,.30); --glass: rgba(17,23,37,.86); --glass-strong: rgba(17,23,37,.92);
+  --time-bg: rgba(17,23,37,.72);
+}
+/* Terminal — near-black, teal accent (Raycast / terminal vibe) */
+:root[data-theme="terminal"] {
+  --bg: #0a0c0b; --surface: #101413; --surface-2: #161c1a; --surface-3: #121716;
+  --accent: #2dd4bf; --accent-hover: #45e0cc; --accent-2: #5ee8d6;
+  --accent-soft-text: #7fe8da; --accent-soft-bg: rgba(45,212,191,.13); --accent-soft-border: rgba(45,212,191,.30);
+  --user-bg: #15897b; --user-hover: #12796c; --user-time: #7fe8da; --focus-ring: #2dd4bf;
+  --accent-shadow: rgba(45,212,191,.40); --accent-soft-bg2: rgba(45,212,191,.18); --accent-soft-bg3: rgba(45,212,191,.10);
+  --focus-ring-shadow: rgba(45,212,191,.28); --glass: rgba(16,20,19,.86); --glass-strong: rgba(16,20,19,.92);
+  --time-bg: rgba(16,20,19,.72);
+}
+/* Amber — warm charcoal, amber accent (cozy) */
+:root[data-theme="amber"] {
+  --bg: #100d0a; --surface: #18140f; --surface-2: #201a13; --surface-3: #1a1510;
+  --text: #e8e2d8; --text-2: #a89f90; --muted: #7a7264;
+  --border: rgba(255,248,235,.07); --border-2: rgba(255,248,235,.12);
+  --accent: #e0a458; --accent-hover: #ecb56c; --accent-2: #f0c084;
+  --accent-soft-text: #f0c890; --accent-soft-bg: rgba(224,164,88,.14); --accent-soft-border: rgba(224,164,88,.32);
+  --user-bg: #c0813a; --user-hover: #a8662b; --user-time: #f0c890; --focus-ring: #e0a458;
+  --accent-shadow: rgba(224,164,88,.42); --accent-soft-bg2: rgba(224,164,88,.18); --accent-soft-bg3: rgba(224,164,88,.12);
+  --focus-ring-shadow: rgba(224,164,88,.30); --hairline: rgba(255,248,235,.06);
+  --glass: rgba(24,20,15,.86); --glass-strong: rgba(24,20,15,.92); --time-bg: rgba(24,20,15,.72);
 }
 :root[data-theme="light"] {
   --bg: #f8fafc; --surface: #ffffff; --surface-2: #f3f4f6; --surface-3: #f9fafb;
@@ -657,6 +691,50 @@ footer {
 #theme-btn:hover, #inspector-btn:hover, #export-btn:hover, #files-btn:hover {
   transform: scale(1.15);
 }
+
+/* Theme picker dropdown — anchored under the 🎨 button. Items are built by
+   app.js (swatch + name); current theme is marked .active. */
+#theme-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+#theme-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 168px;
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px var(--shadow);
+  padding: 6px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#theme-menu[hidden] { display: none; }
+.theme-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  width: 100%;
+  transition: background .12s ease;
+}
+.theme-item:hover { background: var(--hairline-strong); }
+.theme-item.active { background: var(--accent-soft-bg); color: var(--accent-soft-text); }
+.theme-swatch {
+  width: 18px; height: 18px; border-radius: 6px; flex-shrink: 0;
+  border: 1px solid var(--hairline-strong);
+}
+.theme-item .theme-check { margin-left: auto; opacity: .9; font-size: 12px; }
 #auto-review-btn {
   background: none;
   border: 1px solid var(--ghost-border);
