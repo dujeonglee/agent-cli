@@ -885,8 +885,13 @@ def build_agent_descriptions(wire_format=None) -> str:
         return ""
 
     resources = _agent_loader.load_all()
+    # Exclude agents flagged ``disable-model-invocation: true`` (frontmatter) —
+    # parity with skills. Such agents (e.g. the auto-spawned ``reviewer``) are
+    # not advertised to the model, but remain user-listable via ``@agents``.
     agents = [
-        (name, res.meta.get("description", "")) for name, res in resources.items()
+        (name, res.meta.get("description", ""))
+        for name, res in resources.items()
+        if not res.meta.get("disable-model-invocation")
     ]
 
     if not agents:
@@ -919,7 +924,7 @@ def build_agent_descriptions(wire_format=None) -> str:
 def build_skill_descriptions(skills: dict | None = None, wire_format=None) -> str:
     """Build skill descriptions for system prompt injection.
 
-    Excludes skills with disable_model_invocation=True.
+    Excludes skills flagged ``disable-model-invocation: true`` (frontmatter).
     If skills is None, loads from disk.
 
     ``wire_format=None`` falls back to the default wire format (DEFAULT_WIRE_FORMAT)

@@ -229,8 +229,8 @@ class DispatchOutput:
     broken adapter cannot wedge the dispatch loop.
     """
 
-    def list_agents(self, names: list[str]) -> None:
-        """Render the available agent names. Empty list = "none found"."""
+    def list_agents(self, agents: list[tuple[str, str]]) -> None:
+        """Render available agents as ``(name, description)``. Empty = none."""
         raise NotImplementedError
 
     def list_skills(self, skills: dict) -> None:
@@ -262,13 +262,14 @@ class DispatchOutput:
 class _ConsoleDispatchOutput(DispatchOutput):
     """CLI-flavoured output — colour, Rich markup, plain ``console.print``."""
 
-    def list_agents(self, names: list[str]) -> None:
+    def list_agents(self, agents: list[tuple[str, str]]) -> None:
         console.print(f"\n[{C['accent']}]Available agents:[/]")
-        if not names:
+        if not agents:
             console.print(f"[{C['muted']}]No agents found.[/]")
         else:
-            for name in names:
-                console.print(f"  @{name}")
+            for name, desc in agents:
+                suffix = f"  — {desc}" if desc else ""
+                console.print(f"  @{name}{suffix}")
         console.print(f"\n[{C['muted']}]Usage: @agent-name <task>[/]")
 
     def list_skills(self, skills: dict) -> None:
@@ -311,27 +312,22 @@ class _ConsoleDispatchOutput(DispatchOutput):
         )
 
 
-def _collect_agent_names() -> list[str]:
-    """Sorted, deduped list of agent names from the delegate search paths.
+def _collect_agents() -> list[tuple[str, str]]:
+    """Sorted ``(name, description)`` for every available agent.
 
-    A single listing helper so every surface (web worker, run) walks the
-    same paths and applies the same dedup rule (first hit wins by
-    ``_AGENT_SEARCH_PATHS`` order).
+    Uses the same loader as the delegate path (``_agent_loader``) so the
+    ``@agents`` listing shows the same agents — now WITH their descriptions,
+    matching the ``/`` skill listing. Unlike the model's Agents prompt section,
+    this user listing does NOT hide ``disable-model-invocation`` agents (the
+    user may still inspect/@-dispatch them).
     """
-    from agent_cli.tools.delegate import _AGENT_SEARCH_PATHS
+    from agent_cli.tools.delegate import _agent_loader
 
-    seen: list[str] = []
-    seen_set: set[str] = set()
-    for search_dir in _AGENT_SEARCH_PATHS:
-        if not search_dir.is_dir():
-            continue
-        for md_file in sorted(search_dir.glob("*.md")):
-            name = md_file.stem
-            if name in seen_set:
-                continue
-            seen_set.add(name)
-            seen.append(name)
-    return seen
+    resources = _agent_loader.load_all()
+    return sorted(
+        ((name, res.meta.get("description", "")) for name, res in resources.items()),
+        key=lambda x: x[0].lower(),
+    )
 
 
 def try_dispatch_agent_or_skill(
@@ -381,7 +377,7 @@ def try_dispatch_agent_or_skill(
         # triggers a listing rather than an error. Typing ``@`` to
         # discover what's available is a documented UX pattern.
         if not name or name == "agents" or len(parts) < 2:
-            output.list_agents(_collect_agent_names())
+            output.list_agents(_collect_agents())
             return True
         result = _dispatch_agent(
             message,

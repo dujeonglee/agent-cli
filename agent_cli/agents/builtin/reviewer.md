@@ -1,6 +1,9 @@
 ---
 name: reviewer
 description: Independent completion reviewer. Spawned automatically after the main agent completes (when auto-review is on) to verify the work against the original request before the session ends. Reads the actual files/output and either accepts or returns concrete fixes.
+# Auto-spawned by the auto-review loop (direct delegate call) — not meant for the
+# model to delegate to manually, so keep it out of the model's Agents section.
+disable-model-invocation: true
 allowed-tools:
   - read_file
   - shell

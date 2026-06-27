@@ -286,8 +286,8 @@ class WebDispatchOutput:
     def __init__(self, renderer: WebRenderer) -> None:
         self.renderer = renderer
 
-    def list_agents(self, names: list[str]) -> None:
-        if not names:
+    def list_agents(self, agents: list[tuple[str, str]]) -> None:
+        if not agents:
             self.renderer.observation(
                 "No agents found.",
                 turn=0,
@@ -296,8 +296,9 @@ class WebDispatchOutput:
             )
             return
         lines = ["Available agents:"]
-        for name in names:
-            lines.append(f"  @{name}")
+        for name, desc in agents:
+            suffix = f" — {desc}" if desc else ""
+            lines.append(f"  @{name}{suffix}")
         lines.append("")
         lines.append("Invoke with ``@<agent> <task>``.")
         self.renderer.observation(

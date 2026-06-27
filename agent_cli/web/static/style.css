@@ -1072,3 +1072,14 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #dl-delete:hover { color: var(--fail); border-color: var(--fail); }
 #dl-delete:disabled { opacity: .5; cursor: default; }
 .dl-msg { font-size: 12px; color: var(--text-2); min-height: 16px; }
+
+/* ── narrow / mobile ─────────────────────────── */
+@media (max-width: 600px) {
+  /* the header tool bar (info + toggles + emoji buttons) overflowed the frame
+     on phones — let it wrap to multiple rows instead of spilling sideways */
+  header { flex-wrap: wrap; gap: 4px 6px; padding: 8px 12px; }
+  #info { flex-basis: 100%; margin-right: 0; }   /* model/workspace on its own row */
+  #token-usage { margin-right: auto; }            /* push the toggles to the right */
+  #auto-review-btn { font-size: 12px; padding: 2px 6px; }
+  #viewers { max-width: 50vw; }
+}

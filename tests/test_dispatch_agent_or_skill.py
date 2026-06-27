@@ -44,8 +44,9 @@ class _RecordingOutput(DispatchOutput):
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def list_agents(self, names):
-        self.calls.append(("list_agents", tuple(names)))
+    def list_agents(self, agents):
+        # agents = [(name, description), ...] → record just the names
+        self.calls.append(("list_agents", tuple(n for n, _ in agents)))
 
     def list_skills(self, skills):
         self.calls.append(("list_skills", tuple(sorted(skills.keys()))))
@@ -106,7 +107,8 @@ class TestDispatcherBranches:
         the agent listing. CLI parity: typing ``@`` to discover what's
         available is a documented UX pattern."""
         monkeypatch.setattr(
-            "agent_cli.main._collect_agent_names", lambda: ["alpha", "beta"]
+            "agent_cli.main._collect_agents",
+            lambda: [("alpha", "Alpha agent"), ("beta", "Beta agent")],
         )
         out = _RecordingOutput()
         handled = try_dispatch_agent_or_skill(message, out, **base_state)
@@ -311,12 +313,14 @@ class TestConsoleDispatchOutput:
         assert "No agents found." in text
         assert "Usage: @agent-name <task>" in text
 
-    def test_list_agents_with_names(self):
+    def test_list_agents_with_descriptions(self):
         out = _ConsoleDispatchOutput()
-        text = self._capture(lambda: out.list_agents(["alpha", "beta"]))
+        text = self._capture(
+            lambda: out.list_agents([("alpha", "does A"), ("beta", "")])
+        )
         assert "Available agents:" in text
-        assert "@alpha" in text
-        assert "@beta" in text
+        assert "@alpha  — does A" in text  # description shown, like /skills
+        assert "@beta" in text  # no description → name only
 
     def test_list_skills_filters_non_user_invocable(self):
         from agent_cli.skills.models import Skill
@@ -413,12 +417,12 @@ class TestWebDispatchOutput:
         assert data["success"] is True
         assert "No agents found" in data["content"]
 
-    def test_list_agents_with_names(self):
+    def test_list_agents_with_descriptions(self):
         out, conn = self._make()
-        out.list_agents(["alpha", "beta"])
+        out.list_agents([("alpha", "does A"), ("beta", "")])
         event, data = self._pop(conn)
         assert event == "observation"
-        assert "@alpha" in data["content"]
+        assert "@alpha — does A" in data["content"]  # description shown
         assert "@beta" in data["content"]
 
     def test_list_skills_filters_non_user_invocable(self):

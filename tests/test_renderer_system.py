@@ -239,6 +239,15 @@ class TestBuildAgentDescriptions:
         assert "explorer" in desc
         assert "Available Agents" in desc
 
+    def test_excludes_disable_model_invocation_agents(self):
+        # reviewer is auto-spawned (disable-model-invocation: true) — it must NOT
+        # be advertised to the model, parity with skills.
+        from agent_cli.prompts.system_prompt import build_agent_descriptions
+
+        desc = build_agent_descriptions()
+        assert "reviewer" not in desc
+        assert "explorer" in desc  # normal agents still shown
+
     def test_includes_delegate_usage(self):
         from agent_cli.prompts.system_prompt import build_agent_descriptions
 
