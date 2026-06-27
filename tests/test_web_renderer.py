@@ -142,6 +142,37 @@ class TestConnectionLifecycle:
         kinds = [event for event, _ in snapshot if event not in ("identity", "viewers")]
         assert kinds == ["assistant_turn", "observation"]
 
+    def test_pending_prompt_replays_to_reconnecting_client(self):
+        # A pending ``ask``/prompt must be sticky: a client that connects WHILE
+        # the worker waits (reconnect, second browser, board proxy) replays the
+        # prompt — else the worker blocks on an answer the UI never offered.
+        r = WebRenderer()
+        r.register_connection(WebConnection(id="live"))  # a connection exists
+        seen = {}
+
+        def fake_wait():
+            late = WebConnection(id="late")
+            seen["events"] = [e for e, _ in r.register_connection(late)]
+            return "answer"
+
+        r._wait_for_input = fake_wait
+        out = r.prompt_user("Q?", context="Agent asks:\n  무엇을?")
+        assert out == "answer"
+        assert "input_required" in seen["events"]  # replayed while pending
+
+        # Resolved → a freshly connecting client must NOT replay the stale prompt.
+        after = [e for e, _ in r.register_connection(WebConnection(id="after"))]
+        assert "input_required" not in after
+
+    def test_clear_sticky_removes_slot_from_snapshot(self):
+        r = WebRenderer()
+        r.set_sticky("input_required", "input_required", {"kind": "prompt"})
+        snap = [e for e, _ in r.register_connection(WebConnection(id="a"))]
+        assert "input_required" in snap
+        r.clear_sticky("input_required")
+        snap2 = [e for e, _ in r.register_connection(WebConnection(id="b"))]
+        assert "input_required" not in snap2
+
     def test_all_connections_receive_the_fanout(self):
         r = WebRenderer()
         a = WebConnection(id="a")

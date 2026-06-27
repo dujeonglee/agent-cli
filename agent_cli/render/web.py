@@ -243,6 +243,13 @@ class WebRenderer(Renderer):
             }
         self._emit(event, payload, persistent=False)
 
+    def clear_sticky(self, name: str) -> None:
+        """Drop a sticky slot so new connections no longer replay it — e.g.
+        once a pending ``input_required`` is answered, a late/reconnecting
+        client must NOT be handed the already-resolved prompt."""
+        with self._lock:
+            self._sticky.pop(name, None)
+
     def register_connection(self, conn: WebConnection) -> list[tuple[str, dict]]:
         """Add ``conn`` as a subscriber. Every connection is equal — all may
         send input and queue messages (no controller/observer split).
@@ -958,7 +965,12 @@ class WebRenderer(Renderer):
         meta = self.prompt_meta()
 
         def _do() -> str:
-            self._emit(
+            # Sticky (not bare emit): a pending prompt must replay into a
+            # late/reconnecting client's snapshot, else the worker waits for an
+            # answer the UI never offered (the prompt is invisible). Cleared on
+            # resolve so a fresh connection doesn't see the stale question.
+            self.set_sticky(
+                "input_required",
                 "input_required",
                 {
                     "kind": "prompt",
@@ -971,11 +983,11 @@ class WebRenderer(Renderer):
                     "agent": meta["agent"],
                     "reasoning": meta["reasoning"],
                 },
-                persistent=False,
             )
             try:
                 return self._wait_for_input()
             finally:
+                self.clear_sticky("input_required")
                 self._emit("input_resolved", {}, persistent=False)
 
         value = self._guarded_read(_do)
@@ -1010,7 +1022,10 @@ class WebRenderer(Renderer):
         meta = self.prompt_meta()
 
         def _do():
-            self._emit(
+            # Sticky like ``prompt_user`` so a reconnecting client replays the
+            # pending confirm dialog instead of leaving the worker blocked.
+            self.set_sticky(
+                "input_required",
                 "input_required",
                 {
                     "kind": "confirm",
@@ -1026,11 +1041,11 @@ class WebRenderer(Renderer):
                     "reasoning": meta["reasoning"],
                     "action": meta["action"],
                 },
-                persistent=False,
             )
             try:
                 return self._wait_for_input()
             finally:
+                self.clear_sticky("input_required")
                 self._emit("input_resolved", {}, persistent=False)
 
         try:
