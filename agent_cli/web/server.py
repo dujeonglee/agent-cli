@@ -799,8 +799,13 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.get("/api/health")
     async def health():
-        """Unauthenticated liveness probe."""
-        return {"status": "ok"}
+        """Unauthenticated liveness probe.
+
+        ``busy`` mirrors the worker state (True while the agent is processing a
+        turn / generating a response) so a front controller — e.g. a board that
+        spawns instances — can show "working" vs "idle" without subscribing to
+        the SSE stream."""
+        return {"status": "ok", "busy": server.renderer.worker_is_busy()}
 
     @app.get("/api/debug/prompt")
     async def debug_prompt(token: str = Query(...), task_id: str = Query("")):

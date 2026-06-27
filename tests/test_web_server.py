@@ -570,6 +570,15 @@ class TestAuth:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
+    def test_health_reports_worker_busy(self, server_and_client):
+        _, renderer, client = server_and_client
+        # idle by default
+        assert client.get("/api/health").json()["busy"] is False
+        renderer.worker_busy()
+        assert client.get("/api/health").json()["busy"] is True
+        renderer.worker_idle()
+        assert client.get("/api/health").json()["busy"] is False
+
     def test_stream_without_token_is_422(self, server_and_client):
         _, _, client = server_and_client
         # FastAPI's required Query param without a value → 422.
