@@ -1597,6 +1597,21 @@ def web(
     console.print(f"  Token:   [yellow]{server.token}[/]")
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
 
+    # Instance file: tell an external orchestrator where this session's web is
+    # (host/port/token/pid). Written on start, removed in finally on exit (and
+    # self-reaped via --idle-timeout), so the board can spawn-or-attach by
+    # reading one file. Lives next to history.jsonl in the session dir.
+    from agent_cli.web.instance_file import remove_instance_file, write_instance_file
+
+    _session_dir = Path(".agent-cli") / "sessions" / session.session_id
+    write_instance_file(
+        _session_dir,
+        session_id=session.session_id,
+        host=host,
+        port=resolved_port,
+        token=server.token,
+    )
+
     if no_browser:
         pass
     elif _is_local_bind(host):
@@ -1667,6 +1682,7 @@ def web(
             # finishes the teardown.
             pass
     finally:
+        remove_instance_file(_session_dir)  # board sees the instance is gone
         renderer.shutdown_all_connections()
         server.shutdown()
         worker.join(timeout=2.0)

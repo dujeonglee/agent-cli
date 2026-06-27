@@ -1356,7 +1356,7 @@ agent-cli run "task description" [options]
 
 ```bash
 agent-cli web [options]
-  (run 옵션 + --host/--port/--token/--no-browser/--resume/--idle-timeout). 브라우저 자동 오픈은 `_is_local_bind(host)`(loopback/wildcard) 일 때만 — 특정 IP(원격 bind)면 생략하고 URL 만 출력(서버에서 브라우저 무의미). **`--idle-timeout N`(self-reap)**: 외부 오케스트레이터(게시판류)가 인스턴스를 온디맨드로 띄우고 회수 안 하게 — N초 동안 비활성이면 스스로 종료(다음 접속 `--resume` 재기동). 순수 결정 로직 `web/idle.py::IdleMonitor`(clock 주입, 단위테스트) + web() 의 데몬 폴링 스레드가 `tick()` → `server_obj.should_exit=True`(기존 finally 가 teardown+세션저장). **활성(=안 죽임) = `renderer.has_live_connections()` OR `renderer.worker_is_busy()` OR `server.pending_count()>0`** — busy(작업/질문대기) 면 mid-task 회수 안 함. 기본 0=비활성(하위호환).
+  (run 옵션 + --host/--port/--token/--no-browser/--resume/--idle-timeout). 브라우저 자동 오픈은 `_is_local_bind(host)`(loopback/wildcard) 일 때만 — 특정 IP(원격 bind)면 생략하고 URL 만 출력(서버에서 브라우저 무의미). **`--idle-timeout N`(self-reap)**: 외부 오케스트레이터(게시판류)가 인스턴스를 온디맨드로 띄우고 회수 안 하게 — N초 동안 비활성이면 스스로 종료(다음 접속 `--resume` 재기동). 순수 결정 로직 `web/idle.py::IdleMonitor`(clock 주입, 단위테스트) + web() 의 데몬 폴링 스레드가 `tick()` → `server_obj.should_exit=True`(기존 finally 가 teardown+세션저장). **활성(=안 죽임) = `renderer.has_live_connections()` OR `renderer.worker_is_busy()` OR `server.pending_count()>0`** — busy(작업/질문대기) 면 mid-task 회수 안 함. 기본 0=비활성(하위호환). **인스턴스 파일 (`web/instance_file.py`)**: web 시작 시 `.agent-cli/sessions/<id>/web.json`(`{session_id, host, port, token, pid}`)을 기록하고 finally 에서 제거 — 외부 오케스트레이터가 "이 세션 web 떠 있나/어디로" 를 파일 하나로 알아 spawn-or-attach(pid 죽었으면 stale→재spawn). 순수 write/read/remove(서버 의존 0). idle-timeout(self-reap)+제거가 짝이라 오케스트레이터는 프로세스 추적·kill 불필요.
 
   # 웹 명령어 (handle_slash_command + 공유 dispatch):
   /help              명령어 안내
