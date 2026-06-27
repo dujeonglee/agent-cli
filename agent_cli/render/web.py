@@ -105,6 +105,9 @@ class WebRenderer(Renderer):
         # event_buffer entries: (event_name, data_dict)
         self._event_buffer: list[tuple[str, dict[str, Any]]] = []
         self._connections: list[WebConnection] = []
+        # Worker busy/idle mirror (set by worker_busy/worker_idle) — a plain
+        # queryable bool for the idle-reaper, independent of the sticky payload.
+        self._worker_busy = False
         # conn_id → fun nickname (assigned on register, shown to all viewers)
         self._nicknames: dict[str, str] = {}
         # Every connection is equal: all receive the fan-out AND may send
@@ -775,6 +778,7 @@ class WebRenderer(Renderer):
         gets the correct send-button state immediately via the snapshot
         replay, without waiting for the next transition.
         """
+        self._worker_busy = True
         self.set_sticky("worker_state", "worker_state", {"busy": True})
 
     def worker_idle(self) -> None:
@@ -782,7 +786,20 @@ class WebRenderer(Renderer):
         ``dequeue_blocking`` and ready to accept the next user message.
         Re-enables the frontend ``Send`` button. See ``worker_busy``
         for the persistence + reconnect semantics."""
+        self._worker_busy = False
         self.set_sticky("worker_state", "worker_state", {"busy": False})
+
+    def worker_is_busy(self) -> bool:
+        """Whether the chat worker is mid-message (LLM turn / tool / prompt
+        wait). Read by the idle-reaper so a running agent with no viewers is
+        never reaped mid-task."""
+        return self._worker_busy
+
+    def has_live_connections(self) -> bool:
+        """Whether at least one browser is still subscribed (not closed).
+        The idle-reaper's primary 'someone is here' signal."""
+        with self._lock:
+            return any(not c.closed.is_set() for c in self._connections)
 
     def auto_review_state(self, enabled: bool) -> None:
         """Broadcast the auto-review toggle state. Sticky so EVERY browser's
@@ -970,8 +987,7 @@ class WebRenderer(Renderer):
         channel carries it. Returns ``False`` when nothing is connected, so
         an interactive prompt is refused / defaulted with a clear path
         rather than blocking on an answer no one can give."""
-        with self._lock:
-            return any(not c.closed.is_set() for c in self._connections)
+        return self.has_live_connections()
 
     def confirm(
         self,

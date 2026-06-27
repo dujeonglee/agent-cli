@@ -576,6 +576,12 @@ class WebServer:
         with self._pending_cv:
             return [dict(it) for it in self._pending]
 
+    def pending_count(self) -> int:
+        """Number of queued-but-undelivered user messages — the idle-reaper's
+        'work is waiting' signal."""
+        with self._pending_cv:
+            return len(self._pending)
+
     def _broadcast_queue(self) -> None:
         """Push the live queue state to all clients (released the queue lock
         first — ``queue_state`` takes the renderer lock)."""

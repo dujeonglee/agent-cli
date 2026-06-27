@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -1258,6 +1259,12 @@ def web(
         "--resume",
         help="Resume a previous session by ID (use 'agent-cli sessions' to list).",
     ),
+    idle_timeout: int = typer.Option(
+        0,
+        "--idle-timeout",
+        help="Self-exit after N seconds with no viewers AND no running work "
+        "(0 = never; for orchestrators that spawn-on-demand and resume).",
+    ),
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -1623,6 +1630,34 @@ def web(
     # (sse-starlette cancels the stream task before the final body chunk).
     # The session still finalises normally; see the filter's docstring.
     suppress_incomplete_response_log()
+
+    # Idle self-reap (--idle-timeout): an orchestrator that spawns instances
+    # on demand wants them to exit on their own once nobody is using them, so
+    # it never has to track/kill processes (next click re-spawns with --resume).
+    # A daemon poll thread checks the idle predicate and trips uvicorn's
+    # should_exit → the finally block below does the normal teardown + save.
+    idle_thread: Optional[threading.Thread] = None
+    if idle_timeout and idle_timeout > 0:
+        from agent_cli.web.idle import IdleMonitor
+
+        monitor = IdleMonitor(
+            is_active=lambda: (
+                renderer.has_live_connections()
+                or renderer.worker_is_busy()
+                or server.pending_count() > 0
+            ),
+            timeout_s=idle_timeout,
+            on_idle=lambda: setattr(server_obj, "should_exit", True),
+        )
+
+        def _idle_loop() -> None:
+            while not server_obj.should_exit:
+                monitor.tick()
+                time.sleep(2.0)
+
+        idle_thread = threading.Thread(target=_idle_loop, daemon=True)
+        idle_thread.start()
+
     try:
         try:
             server_obj.run()
