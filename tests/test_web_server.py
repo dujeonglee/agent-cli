@@ -429,8 +429,8 @@ class TestStaticUI:
         body = resp.text
         # Sanity: the page must reference the SSE + input endpoints
         # so the token-from-URL flow can connect.
-        assert "/static/app.js" in body
-        assert "/static/style.css" in body
+        assert "static/app.js" in body
+        assert "static/style.css" in body
 
     def test_app_js_is_served(self, server_and_client):
         _, _, client = server_and_client
@@ -439,8 +439,8 @@ class TestStaticUI:
         body = resp.text
         # Critical wires must be present.
         assert "EventSource" in body
-        assert "/api/stream" in body
-        assert "/api/input" in body
+        assert "api/stream" in body
+        assert "api/input" in body
         assert "token" in body
         # edit_file is flat-native (one op, no `edits` array) — the action card
         # must NOT count a non-existent `edits` array (that always read 0 →
@@ -457,9 +457,9 @@ class TestStaticUI:
         for el_id in ("export-btn", "export-bar", "export-all", "export-jira-form"):
             assert f'id="{el_id}"' in html, el_id
         js = client.get("/static/app.js").text
-        assert "/api/export/html" in js
-        assert "/api/export/jira" in js
-        assert "/api/export/jira/targets" in js
+        assert "api/export/html" in js
+        assert "api/export/jira" in js
+        assert "api/export/jira/targets" in js
         # The action bar uses the `hidden` attribute to show/hide, but its
         # `display:flex` ID rule outweighs the UA `[hidden]` style — so an
         # explicit `#export-bar[hidden] { display:none }` is REQUIRED or ✕
@@ -839,7 +839,7 @@ class TestMessageQueue:
             assert f'id="{el_id}"' in html, el_id
         js = client.get("/static/app.js").text
         assert '"queue"' in js  # SSE handler
-        assert "/api/queue/cancel" in js
+        assert "api/queue/cancel" in js
 
 
 class TestAbortEndpoint:
@@ -1572,9 +1572,9 @@ class TestWorkspaceDownload:
         assert 'id="ul-pick-dir"' in html
         assert "webkitdirectory" in html
         js = client.get("/static/app.js").text
-        assert "/api/workspace/tree" in js
-        assert "/api/workspace/download" in js
-        assert "/api/workspace/upload" in js  # upload merged in
+        assert "api/workspace/tree" in js
+        assert "api/workspace/download" in js
+        assert "api/workspace/upload" in js  # upload merged in
         assert "webkitGetAsEntry" in js  # recursive directory drop walk
         # root is a tree row (the upload-target model is uniform: any row,
         # incl. root, is selectable). The old ✕ / re-click toggle are gone.
@@ -1799,7 +1799,7 @@ class TestNickname:
         html = client.get("/").text
         for el_id in ("name-bar", "nb-input", "nb-set"):
             assert f'id="{el_id}"' in html, el_id
-        assert "/api/nickname" in client.get("/static/app.js").text
+        assert "api/nickname" in client.get("/static/app.js").text
 
 
 class TestAutoReviewToggle:

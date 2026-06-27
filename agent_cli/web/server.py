@@ -35,7 +35,7 @@ from pathlib import Path
 from queue import Empty, SimpleQueue
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
@@ -433,11 +433,17 @@ class WebServer:
         token: str | None = None,
         ctx=None,
         trust_local: bool = False,
+        base_path: str = "",
     ) -> None:
         self.renderer = renderer
         # --trust-local: skip token auth for loopback requests (the gateway in
         # front of a 127.0.0.1-bound instance already authenticated the user).
         self.trust_local = trust_local
+        # --base-path: URL prefix when served under a reverse proxy
+        # (``/<prefix>/*`` → this instance). Stored without a trailing slash
+        # ("" = root). The served index.html gets ``<base href="<prefix>/">``
+        # and all frontend URLs are relative, so they resolve under the prefix.
+        self.base_path = (base_path or "").rstrip("/")
         # The live ContextManager (shared with the worker's run_loop) — read
         # by the Prompt Inspector to show the DYNAMIC context (conversation +
         # observations), not just the static system prompt. May be None
@@ -775,8 +781,14 @@ def create_app(server: WebServer) -> FastAPI:
     async def index():
         """Serve the static chat UI. JS reads ``?token=…`` from the
         URL — no auth gate here because the page itself contains no
-        secrets; the SSE / input endpoints are token-protected."""
-        return FileResponse(_STATIC_DIR / "index.html", headers=_NO_CACHE_HEADERS)
+        secrets; the SSE / input endpoints are token-protected.
+
+        Injects ``<base href="<prefix>/">`` so the page's RELATIVE asset/API
+        URLs resolve under ``--base-path`` (default ``/`` = root, unchanged)."""
+        html = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        base_href = f"{server.base_path}/"  # "" → "/", "/s/doom" → "/s/doom/"
+        html = html.replace("<head>", f'<head>\n  <base href="{base_href}">', 1)
+        return HTMLResponse(html, headers=_NO_CACHE_HEADERS)
 
     if _STATIC_DIR.exists():
         app.mount(

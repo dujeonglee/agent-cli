@@ -935,7 +935,7 @@
   function postInput(body) {
     body.conn_id = myConnId; // identifies the sender (queued-message ownership)
     return fetch(
-      "/api/input?token=" + encodeURIComponent(token),
+      "api/input?token=" + encodeURIComponent(token),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -967,7 +967,7 @@
     // feedback and can't double-fire /api/stop.
     stopRequested = true;
     updateSendEnabled();
-    fetch("/api/stop?token=" + encodeURIComponent(token), {
+    fetch("api/stop?token=" + encodeURIComponent(token), {
       method: "POST",
     }).catch(function () {
       /* network blip — ignore; the turn will end on its own anyway */
@@ -1021,7 +1021,7 @@
 
   // ── SSE connection ─────────────────────────
   const es = new EventSource(
-    "/api/stream?token=" + encodeURIComponent(token)
+    "api/stream?token=" + encodeURIComponent(token)
   );
 
   es.onopen = function () {
@@ -1178,7 +1178,7 @@
     $abort.hidden = !visible;
   }
   $abort.addEventListener("click", function () {
-    fetch("/api/abort?token=" + encodeURIComponent(token), {
+    fetch("api/abort?token=" + encodeURIComponent(token), {
       method: "POST",
     });
   });
@@ -1253,7 +1253,7 @@
   let myNickname = ""; // latest roster name, for prefill on rename
 
   function postNickname(name) {
-    fetch("/api/nickname?token=" + encodeURIComponent(token), {
+    fetch("api/nickname?token=" + encodeURIComponent(token), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conn_id: myConnId, name: name }),
@@ -1333,7 +1333,7 @@
         x.textContent = "✕";
         x.title = "Cancel this queued message";
         x.addEventListener("click", function () {
-          fetch("/api/queue/cancel?token=" + encodeURIComponent(token), {
+          fetch("api/queue/cancel?token=" + encodeURIComponent(token), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ conn_id: myConnId, id: it.id }),
@@ -1501,7 +1501,7 @@
   }
 
   function loadScopes() {
-    return fetch("/api/debug/prompt/scopes?" + qtoken())
+    return fetch("api/debug/prompt/scopes?" + qtoken())
       .then(function (r) { return r.json(); })
       .then(function (d) { renderChips((d && d.scopes) || []); })
       .catch(function () { renderChips([]); });
@@ -1511,7 +1511,7 @@
     const q = activeScope
       ? "?" + qtoken() + "&task_id=" + encodeURIComponent(activeScope)
       : "?" + qtoken();
-    return fetch("/api/debug/prompt" + q)
+    return fetch("api/debug/prompt" + q)
       .then(function (r) { return r.json(); })
       .then(render)
       .catch(function () {
@@ -1532,7 +1532,7 @@
 
   function deleteScope(id) {
     fetch(
-      "/api/debug/prompt?" + qtoken() + "&task_id=" + encodeURIComponent(id),
+      "api/debug/prompt?" + qtoken() + "&task_id=" + encodeURIComponent(id),
       { method: "DELETE" }
     )
       .then(function () {
@@ -1752,7 +1752,7 @@
   async function exportHtml() {
     $msg.textContent = "Exporting…";
     try {
-      const resp = await fetch("/api/export/html?" + qtoken(), {
+      const resp = await fetch("api/export/html?" + qtoken(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: document.title, entries: collectEntries() }),
@@ -1776,7 +1776,7 @@
 
   async function loadJiraTargets() {
     try {
-      const r = await fetch("/api/export/jira/targets?" + qtoken());
+      const r = await fetch("api/export/jira/targets?" + qtoken());
       const d = await r.json();
       return (d && d.targets) || [];
     } catch (_e) {
@@ -1899,7 +1899,7 @@
     $jiraSend.disabled = true;
     $msg.textContent = "Posting to Jira…";
     try {
-      const r = await fetch("/api/export/jira?" + qtoken(), {
+      const r = await fetch("api/export/jira?" + qtoken(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2023,7 +2023,7 @@
   }
 
   async function fetchTree(path) {
-    const r = await fetch("/api/workspace/tree?" + qt() + "&path=" + encodeURIComponent(path));
+    const r = await fetch("api/workspace/tree?" + qt() + "&path=" + encodeURIComponent(path));
     if (!r.ok) throw new Error("tree " + r.status);
     return (await r.json()).entries;
   }
@@ -2164,7 +2164,7 @@
     $go.disabled = true;
     $msg.textContent = "압축 중…";
     try {
-      const r = await fetch("/api/workspace/download?" + qt(), {
+      const r = await fetch("api/workspace/download?" + qt(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -2199,7 +2199,7 @@
   // directory upload; the server creates the nested dirs). ─────────────
   function uploadOne(item) {
     const q =
-      "/api/workspace/upload?" +
+      "api/workspace/upload?" +
       qt() +
       "&name=" +
       encodeURIComponent(item.name) +
@@ -2379,7 +2379,7 @@
   $btn.addEventListener("click", function () {
     // POST the intended next state; the button repaints from the resulting
     // ``auto_review`` broadcast (so all viewers converge on the server value).
-    fetch("/api/auto_review?token=" + encodeURIComponent(token), {
+    fetch("api/auto_review?token=" + encodeURIComponent(token), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: !enabled }),

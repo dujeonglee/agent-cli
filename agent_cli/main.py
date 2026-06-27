@@ -1272,6 +1272,13 @@ def web(
         "trusted local gateway/proxy that authenticates users itself. Only "
         "safe when bound to localhost (e.g. --host 127.0.0.1).",
     ),
+    base_path: str = typer.Option(
+        "",
+        "--base-path",
+        help="URL path prefix when served behind a reverse proxy that routes "
+        "/<prefix>/* to this instance and strips the prefix (e.g. /s/doom). "
+        "The UI's relative URLs resolve under it. Default '' = root.",
+    ),
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -1364,7 +1371,9 @@ def web(
     set_renderer(renderer)
     # Pass the live ctx so the Prompt Inspector can show the dynamic context
     # (conversation + observations), not just the static system prompt.
-    server = WebServer(renderer, token=token, ctx=ctx, trust_local=trust_local)
+    server = WebServer(
+        renderer, token=token, ctx=ctx, trust_local=trust_local, base_path=base_path
+    )
 
     # Prime the session-info ``ready`` so a client opening the page
     # before the first chat turn already sees the top-bar populated.
