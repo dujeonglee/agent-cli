@@ -454,6 +454,26 @@ class TestSanitizeAndDegenerate:
         s = WF.sanitize_thought("the ## Action section is next")
         assert "## Action" in s
 
+    def test_strips_orphan_thinking_close_tag(self):
+        # Thinking-trained models leak a lone </thinking> into the visible
+        # thought (the open tag was consumed by the reasoning channel). It is
+        # cosmetic noise that would re-inject into the next-turn prior, so the
+        # thought-sanitizer drops orphan thinking tags while keeping the text.
+        s = WF.sanitize_thought("Now I can see the issue. </thinking>")
+        assert "</thinking>" not in s
+        assert "Now I can see the issue." in s
+
+    def test_strips_orphan_thinking_tags_variants(self):
+        for tag in ("</think>", "<thinking>", "</reasoning>", "</reflection>"):
+            s = WF.sanitize_thought(f"reason {tag} more")
+            assert tag not in s, tag
+            assert "reason" in s and "more" in s
+
+    def test_thinking_tag_inside_word_preserved(self):
+        # only real tags (angle-bracketed) are stripped, not prose
+        s = WF.sanitize_thought("the thinking step matters")
+        assert "thinking" in s
+
     def test_degenerate_repeated_empty_headers(self):
         assert WF.is_degenerate("## Thought\n## Action\n## Thought\n## Action") is True
 

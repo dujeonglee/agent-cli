@@ -47,6 +47,16 @@ _ACTION_RE = re.compile(r"^##\s*Action\s*$", re.MULTILINE)
 # models' prefix_md prior leaking through (observed in Phase-2).
 _SENTINEL_LINE = re.compile(r"^\s*##\s*(?:Thought|Action|Input)\s*$", re.MULTILINE)
 
+# Orphan thinking/reasoning tags a thinking-trained model leaks into the
+# visible thought — most often a lone closing ``</thinking>`` whose opener was
+# consumed by the provider's reasoning channel (observed dominating NO_JSON
+# co-occurrence on Qwen3.6, session 1782027249). md_array splits on ``##``
+# headers, never on these tags, so they ride into the thought as cosmetic
+# noise (and into the next-turn prior). Drop the bare tags, keep the text.
+_ORPHAN_THINK_TAG = re.compile(
+    r"</?\s*(?:think|thinking|reasoning|reflection)\s*>", re.IGNORECASE
+)
+
 # Format runaway: an empty envelope section immediately followed by another
 # header (mirrors prefix_md's _DEGEN_RUNAWAY; Input included for the same
 # prior-leak reason as _SENTINEL_LINE).
@@ -498,6 +508,7 @@ class MdArrayFormat(WireFormat):
     def sanitize_thought(self, thought: str | None) -> str | None:
         if not thought:
             return thought
+        thought = _ORPHAN_THINK_TAG.sub("", thought)
         return _SENTINEL_LINE.sub("", thought).strip()
 
     # ─── History round-trip (multi-op record) ───────────────────

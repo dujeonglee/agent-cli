@@ -462,6 +462,17 @@ class TestBuildSystemPrompt:
         # … and overlaps are rejected.
         assert "OVERLAPPING" in flat
 
+    def test_write_guide_steers_off_shell_heredoc(self):
+        """NO_JSON failures were dominated by large code emitted as a shell
+        heredoc (`cat <<EOF`) — double-escaped (shell + JSON) and prone to
+        breaking the emission. The write guide must steer file CONTENT to
+        write_file/edit_file instead."""
+        import re
+
+        flat = re.sub(r"\s+", " ", build_system_prompt(_make_caps(), ["edit_file"]))
+        assert "NEVER a shell heredoc" in flat
+        assert "escaped TWICE" in flat
+
     def test_delegate_included(self):
         prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert "delegate" in prompt.lower()
