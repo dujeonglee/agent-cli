@@ -473,6 +473,26 @@ class TestBuildSystemPrompt:
         assert "NEVER a shell heredoc" in flat
         assert "escaped TWICE" in flat
 
+    def test_every_tool_intro_precedes_all_reference_examples(self):
+        """Available Tools is a two-tier layout: every tool's basic intro
+        (``- name:`` + Input JSON) comes first, THEN the detailed guides with
+        their ``{"action": ...}`` examples. This guarantees a tool is
+        introduced before any guide REFERENCES it across tools (e.g. the
+        code_index fetch guide points at edit_file, which used to be introduced
+        only afterward). Attention: establish the full tool roster before any
+        usage example."""
+        from agent_cli.prompts.system_prompt import _build_tools_section
+        from agent_cli.wire_formats import get as get_wf
+
+        section = _build_tools_section(
+            ["read_file", "code_index", "edit_file", "delegate", "shell"],
+            get_wf("md_array"),
+        )
+        first_example = section.index('{"action"')
+        for tool in ("read_file", "code_index", "edit_file", "delegate", "shell"):
+            intro = section.index(f"- {tool}:")
+            assert intro < first_example, f"{tool} intro is after the first example"
+
     def test_delegate_included(self):
         prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
         assert "delegate" in prompt.lower()

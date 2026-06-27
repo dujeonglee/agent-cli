@@ -256,7 +256,14 @@ def get_tool_descriptions(
     cond_names = [n for n in names if n in conditional]
     ordered = static_names + cond_names
 
-    lines = []
+    # Two-tier layout: the full tool ROSTER (one-line intro + Input JSON for
+    # every tool) first, then the detailed GUIDES (prose + examples). This puts
+    # every tool's basic introduction ahead of any reference example — including
+    # cross-tool references (the code_index fetch guide points at edit_file,
+    # which the old single-tier order introduced only afterward). Same text as
+    # before, just regrouped; guides self-identify in their first sentence.
+    roster: list[str] = []
+    guide_blocks: list[str] = []
     for name in ordered:
         schema = TOOL_SCHEMAS.get(name)
         if schema is None:
@@ -274,11 +281,12 @@ def get_tool_descriptions(
                 description = description.replace(old, new)
         else:
             description = schema.description
-        entry = f"- {name}: {description}\n  Input JSON: {params_str}"
+        roster.append(f"- {name}: {description}\n  Input JSON: {params_str}")
         if name in guides:
-            entry += guides[name]
-        lines.append(entry)
-    return "\n".join(lines)
+            guide_blocks.append(guides[name])
+    # Each guide already opens with leading newlines (it was appended inline),
+    # so joining them keeps a blank line between guides as a soft separator.
+    return "\n".join(roster) + "".join(guide_blocks)
 
 
 def validate_tool_input(

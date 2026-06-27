@@ -1,6 +1,30 @@
 ## Available Tools
 - read_file: Read a file. Lines are tagged as LINE#HASH:content for editing. Modes: stat=true (metadata + first 20 lines, NOT a read — follow up with a real read), search='regex' (matching regions with context, efficient for targeted lookups), line_start/line_end (partial read, 1-based inclusive), or none (full file).
   Input JSON: {"path": "string, required — File path to read", "line_start": "integer — Start line (1-based). Omit to read from beginning.", "line_end": "integer — End line (1-based, inclusive). Omit to read to end.", "search": "string — Regex pattern. Returns only matching lines with surrounding context.", "context": "integer — Lines of context before/after each search match (default 5).", "stat": "boolean — Metadata query only — line count, size, first 20 lines. Not a read."}
+- shell: Run a shell command and return stdout/stderr.
+  Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Timeout in seconds (default 30)"}
+- code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query with its own mode.
+Modes:
+  list      - file outline (defs + structural symbols, line ranges) [path]
+  fetch     - single symbol body, hashline format for edit_file [path, name]
+  lookup    - find symbol by name across the index [name, symbol_kind?]
+  kind      - list all symbols of a kind across the index [symbol_kind]
+  file      - all symbols in a single file (index lookup) [path]
+  refs      - all ref sites for a name [name, ref_kind?]
+  callers   - functions that call this one [name]
+  callees   - functions called by this one [name]
+  slice     - markdown LLM context: def body + optional callees/callers/types/macros [name, ...]
+  build     - force full rebuild (rare - lazy build handles normal cases)
+Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <project_root>/.agent-cli/code_index.db, lazy-built and incrementally refreshed. For 'list'/'fetch' on paths outside the indexed root: on-demand parse (no DB write). Other modes require the indexed root.
+  Input JSON: {"mode": "string, required — Operation. See tool description for per-mode params.", "path": "string — File path. Required for list/fetch/file.", "name": "string — Symbol name (exact, as shown by 'list'). Required for fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' also accepts the heading with marker (e.g. '## Setup').", "symbol_kind": "string — Symbol category filter. Optional for lookup. Required for kind. 'section' = markdown heading.", "ref_kind": "string — Reference site category. Optional for refs. call = invocation; name = bare identifier mention (callback, pointer); type = identifier in type position.", "search": "string — Optional regex (re.search) to filter symbol names. Applies to list and kind modes.", "with_callees": "boolean — slice mode: include callee bodies (transitive up to depth).", "with_callers": "boolean — slice mode: include caller bodies (transitive up to depth).", "with_types": "boolean — slice mode: include types/structs referenced inside target body.", "with_macros": "boolean — slice mode: include function-like macros invoked inside target body.", "depth": "integer — slice mode: transitive depth for callees/callers (default 1).", "max_bytes": "integer — slice mode: cap output bytes (default unlimited)."}
+- ask: Ask the user ONE question and WAIT for their reply. One question per op — to ask several, emit several `ask` ops in the array (each is answered in turn), the same way you batch read_file. Use only when you cannot proceed without specific input; otherwise end with `complete`.
+  Input JSON: {"question": "string, required — The question to ask the user."}
+- complete: Call this tool when the task is done. Provide the final result.
+  Input JSON: {"result": "string, required — The final result or answer"}
+- edit_file: Edit a file using a hashline ref from read_file. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
+  Input JSON: {"path": "string, required — File path", "op": "string, required — replace | append | prepend | delete", "pos": "string, required — Hashline ref (e.g. '5#VR') of the target line", "end": "string — Hashline ref ending an inclusive range (replace/delete)", "lines": "array<string> — Replacement / inserted lines"}
+- delegate: Delegate ONE task to a subagent. Emit several delegate ops in the same turn to run independent tasks in PARALLEL. Use context mode to control what the subagent knows.
+  Input JSON: {"task": "string, required — Task description for the subagent", "context": "string — none (independent), fork (copy conversation history)", "tools": "array<string> — Allowed tools (omit for default set)", "agent": "string — Agent name to load role/config from .agent-cli/agents/{name}.md"}
   Each read_file op targets ONE file. To read several files, emit one
   read_file op per file in the SAME turn (separate array elements — never
   a list inside one op); independent files belong together in one turn and
@@ -27,22 +51,6 @@
   Otherwise stat first to get its size, then pick one of modes 2–4.
   stat alone is never enough — if you stop after stat, you have only
   seen the first 20 lines.
-- shell: Run a shell command and return stdout/stderr.
-  Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Timeout in seconds (default 30)"}
-- code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query with its own mode.
-Modes:
-  list      - file outline (defs + structural symbols, line ranges) [path]
-  fetch     - single symbol body, hashline format for edit_file [path, name]
-  lookup    - find symbol by name across the index [name, symbol_kind?]
-  kind      - list all symbols of a kind across the index [symbol_kind]
-  file      - all symbols in a single file (index lookup) [path]
-  refs      - all ref sites for a name [name, ref_kind?]
-  callers   - functions that call this one [name]
-  callees   - functions called by this one [name]
-  slice     - markdown LLM context: def body + optional callees/callers/types/macros [name, ...]
-  build     - force full rebuild (rare - lazy build handles normal cases)
-Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <project_root>/.agent-cli/code_index.db, lazy-built and incrementally refreshed. For 'list'/'fetch' on paths outside the indexed root: on-demand parse (no DB write). Other modes require the indexed root.
-  Input JSON: {"mode": "string, required — Operation. See tool description for per-mode params.", "path": "string — File path. Required for list/fetch/file.", "name": "string — Symbol name (exact, as shown by 'list'). Required for fetch/lookup/refs/callers/callees/slice. Markdown 'fetch' also accepts the heading with marker (e.g. '## Setup').", "symbol_kind": "string — Symbol category filter. Optional for lookup. Required for kind. 'section' = markdown heading.", "ref_kind": "string — Reference site category. Optional for refs. call = invocation; name = bare identifier mention (callback, pointer); type = identifier in type position.", "search": "string — Optional regex (re.search) to filter symbol names. Applies to list and kind modes.", "with_callees": "boolean — slice mode: include callee bodies (transitive up to depth).", "with_callers": "boolean — slice mode: include caller bodies (transitive up to depth).", "with_types": "boolean — slice mode: include types/structs referenced inside target body.", "with_macros": "boolean — slice mode: include function-like macros invoked inside target body.", "depth": "integer — slice mode: transitive depth for callees/callers (default 1).", "max_bytes": "integer — slice mode: cap output bytes (default unlimited)."}
   Persistent code/markdown index backed by a SQLite store at
   ``<project_root>/.agent-cli/code_index.db``. Lazy-built on first
   query; sha1-incremental on every call after that, so it stays fresh
@@ -123,8 +131,6 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
   drivers) may parse as ERROR nodes and disappear from the index — if
   ``mode='lookup'`` returns only a declaration when you expected a
   definition, ask the user to add a defconfig.
-- ask: Ask the user ONE question and WAIT for their reply. One question per op — to ask several, emit several `ask` ops in the array (each is answered in turn), the same way you batch read_file. Use only when you cannot proceed without specific input; otherwise end with `complete`.
-  Input JSON: {"question": "string, required — The question to ask the user."}
   `ask` vs `complete` — pick by intent, not tone:
   - `ask`: you GENUINELY cannot proceed without information from the
     user. A real question with real alternatives where you don't know
@@ -149,10 +155,6 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
   Rule of thumb: if your "question" could be a statement and the
   conversation would still flow, it's not a real question — use
   `complete`.
-- complete: Call this tool when the task is done. Provide the final result.
-  Input JSON: {"result": "string, required — The final result or answer"}
-- edit_file: Edit a file using a hashline ref from read_file. Ops: replace, append, prepend, delete. delete removes the pos..end range and takes no lines; replace with lines=[] also deletes (legacy form).
-  Input JSON: {"path": "string, required — File path", "op": "string, required — replace | append | prepend | delete", "pos": "string, required — Hashline ref (e.g. '5#VR') of the target line", "end": "string — Hashline ref ending an inclusive range (replace/delete)", "lines": "array<string> — Replacement / inserted lines"}
 
   edit vs write — to change PART of an existing file, use edit_file, NOT
   write_file with the whole file. WHY THIS MATTERS TO YOU: re-writing a file
@@ -198,8 +200,6 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
     — another tool between them breaks the group. OVERLAPPING ranges are
     rejected as a batch (nothing is written); split those across turns. Editing
     DIFFERENT files in separate ops is fine — they don't interact.
-- delegate: Delegate ONE task to a subagent. Emit several delegate ops in the same turn to run independent tasks in PARALLEL. Use context mode to control what the subagent knows.
-  Input JSON: {"task": "string, required — Task description for the subagent", "context": "string — none (independent), fork (copy conversation history)", "tools": "array<string> — Allowed tools (omit for default set)", "agent": "string — Agent name to load role/config from .agent-cli/agents/{name}.md"}
   Each delegate op runs ONE subagent task. Several delegate ops in the
   same turn run in PARALLEL — emit several only when the tasks are
   independent.
