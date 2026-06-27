@@ -72,7 +72,8 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
     # functions we test don't touch them. The harness then exposes
     # the named helper via ``globalThis``.
     stub = (
-        "var window = { location: { search: '?token=t' } };\n"
+        "var window = { location: { search: '?token=t', reload: function(){} },\n"
+        "  addEventListener: function(){} };\n"
         "function _stubEl(){ return new Proxy({}, {\n"
         "  get: function(t, k){\n"
         "    if (k === 'classList') return { add: function(){}, remove: function(){}, "

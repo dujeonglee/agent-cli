@@ -1033,6 +1033,20 @@
     $status.classList.add("down");
   };
 
+  // Release the SSE when the page is hidden — navigation, tab close, or
+  // bfcache (back/forward cache). Browsers keep a bfcached page's connections
+  // open, so without this the server keeps counting a viewer that has left
+  // (roster grows on every revisit; idle-reap never fires). On bfcache restore
+  // reload to get a fresh connection rather than a frozen, already-closed one.
+  window.addEventListener("pagehide", function () {
+    es.close();
+  });
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted) {
+      location.reload();
+    }
+  });
+
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
     // ``workspace`` is the agent's working directory at session
