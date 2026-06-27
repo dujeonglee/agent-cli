@@ -1589,6 +1589,7 @@ def web(
                             spawn_reviewer=_spawn_reviewer,
                             resume_main=_resume_main,
                             render=_review_render,
+                            is_interrupted=stop_event.is_set,
                         )
                 except Exception as exc:  # noqa: BLE001 — worker boundary
                     # Push the error into the renderer so the frontend

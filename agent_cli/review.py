@@ -99,6 +99,7 @@ def run_auto_review(
     spawn_reviewer,
     resume_main,
     render=None,
+    is_interrupted=None,
 ) -> None:
     """Drive the post-completion review loop. Dependencies are injected so the
     loop logic is unit-testable; the web worker supplies the real ones:
@@ -114,19 +115,32 @@ def run_auto_review(
       only inside the delegate group card and the user never sees the outcome).
       Events: ``review_start`` (a round began), ``accept`` (passed),
       ``reject`` (detail = the feedback shown before the rework).
+    - ``is_interrupted() -> bool`` — optional; True once the user hits Stop. An
+      interrupt cancels the in-flight reviewer/resume, leaving a malformed
+      verdict that would parse as REJECT and loop forever — so we MUST break the
+      loop on interrupt rather than feed garbage back as feedback.
 
     Loop: review → accept stops; reject resumes the main agent with the
-    feedback and reviews again. No safety cap — the user stops it via the
-    toggle (decision: keep reviewing until accepted)."""
+    feedback and reviews again. No safety cap — the user stops it via the toggle
+    or an interrupt (decision: keep reviewing until accepted)."""
 
     def _emit(event, detail=""):
         if render:
             render(event, detail)
 
+    def _interrupted():
+        return bool(is_interrupted and is_interrupted())
+
     while is_enabled():
+        if _interrupted():
+            return
         _emit("review_start")
         reviewer_task = build_reviewer_task(task_text, final_answer, ctx)
         verdict_text = spawn_reviewer(reviewer_task)
+        # An interrupt during the reviewer run leaves verdict_text malformed;
+        # don't parse it as a reject and resume — stop the loop instead.
+        if _interrupted():
+            return
         accept, feedback = parse_review_verdict(verdict_text)
         if accept:
             _emit("accept")

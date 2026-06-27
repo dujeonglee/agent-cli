@@ -66,10 +66,11 @@ class TestRunAutoReview:
     parse verdict → accept stops, reject resumes the main agent with feedback →
     repeat until accept OR the toggle goes off. No safety cap (toggle controls)."""
 
-    def _run(self, *, enabled, reviews, resumes):
+    def _run(self, *, enabled, reviews, resumes, is_interrupted=None):
         """enabled: list of bools consumed per is_enabled() call.
         reviews: list of reviewer outputs consumed per spawn.
-        resumes: list of new final answers consumed per resume."""
+        resumes: list of new final answers consumed per resume.
+        is_interrupted: optional callable (Stop button mirror)."""
         from agent_cli.review import run_auto_review
 
         en = iter(enabled)
@@ -99,6 +100,7 @@ class TestRunAutoReview:
             spawn_reviewer=spawn_reviewer,
             resume_main=resume_main,
             render=render,
+            is_interrupted=is_interrupted,
         )
         self._rendered = rendered
         return spawned, resumed
@@ -132,6 +134,27 @@ class TestRunAutoReview:
         )
         assert len(spawned) == 1
         assert resumed == ["more work"]  # resumed once, then toggle stopped it
+
+    def test_interrupt_before_review_stops(self):
+        # Stop hit before the round even begins → no review at all.
+        spawned, resumed = self._run(
+            enabled=[True], reviews=[], resumes=[], is_interrupted=lambda: True
+        )
+        assert spawned == [] and resumed == []
+
+    def test_interrupt_during_review_stops_without_resume(self):
+        # Stop hit while the reviewer runs: its output is malformed (would parse
+        # as REJECT). Must break the loop, NOT resume with garbage feedback —
+        # otherwise it loops forever erroring (the reported bug).
+        seq = iter([False, True])  # top check: not yet; after spawn: interrupted
+        spawned, resumed = self._run(
+            enabled=[True, True],
+            reviews=["partial output, no verdict"],
+            resumes=["should-not-run"],
+            is_interrupted=lambda: next(seq, True),
+        )
+        assert len(spawned) == 1  # reviewed once
+        assert resumed == []  # did NOT resume → no infinite error loop
 
     def test_render_surfaces_accept_to_main(self):
         """The verdict must be surfaced to the main UI (it was invisible — the
