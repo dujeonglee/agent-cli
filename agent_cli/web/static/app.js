@@ -1978,6 +1978,7 @@
   const $tree = document.getElementById("dl-tree");
   const $count = document.getElementById("dl-count");
   const $go = document.getElementById("dl-download");
+  const $del = document.getElementById("dl-delete");
   const $msg = document.getElementById("dl-msg");
   const $drop = document.getElementById("ul-drop");
   const $pick = document.getElementById("ul-pick");
@@ -2097,7 +2098,7 @@
   // workspace" for download (replaces the old separate "All" checkbox); its
   // LABEL click = set the upload target back to root. Both are just the
   // root-level versions of what every dir row already does.
-  function makeRootRow() {
+  function makeRootRow(totalSize) {
     const row = document.createElement("div");
     row.className = "dl-row";
     const spacer = document.createElement("span");
@@ -2114,7 +2115,13 @@
     const label = document.createElement("span");
     label.className = "dl-label";
     label.style.cursor = "pointer";
-    label.innerHTML = "📁 / <span class='dl-size'>(워크스페이스 루트)</span>";
+    // total workspace size = sum of top-level entries (each already recursive)
+    const total =
+      totalSize != null
+        ? ` <span class="dl-size">${fmtSize(totalSize)}</span>`
+        : "";
+    label.innerHTML =
+      "📁 / <span class='dl-size'>(워크스페이스 루트)</span>" + total;
     label.addEventListener("click", () => setUploadDir("", row));
     row.appendChild(spacer);
     row.appendChild(cb);
@@ -2135,7 +2142,8 @@
     try {
       const entries = await fetchTree("");
       $tree.innerHTML = "";
-      const rootRow = makeRootRow();
+      const rootSize = entries.reduce((s, e) => s + (e.size || 0), 0);
+      const rootRow = makeRootRow(rootSize);
       $tree.appendChild(rootRow);
       // top-level entries render at depth 1 so they nest visually under root
       entries.forEach((e) => $tree.appendChild(makeRow(e, 1)));
@@ -2194,6 +2202,42 @@
     }
   }
 
+  async function deleteSelected() {
+    const paths = Array.from(selected);
+    if (!paths.length) {
+      $msg.textContent = "선택된 항목이 없습니다";
+      return;
+    }
+    // destructive + permanent → always confirm
+    const preview =
+      paths.length <= 3 ? paths.join(", ") : paths.length + "개 항목";
+    if (!confirm(`삭제할까요? (영구 삭제, 복구 불가)\n${preview}`)) return;
+    $del.disabled = true;
+    $msg.textContent = "삭제 중…";
+    try {
+      const r = await fetch("api/workspace/delete?" + qt(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: paths }),
+      });
+      if (!r.ok) {
+        let d = "";
+        try { d = (await r.json()).detail || ""; } catch (e) {}
+        throw new Error(d || "HTTP " + r.status);
+      }
+      const res = await r.json();
+      selected.clear();
+      const errs = (res.errors || []).length;
+      $msg.textContent =
+        "✓ " + res.deleted.length + "개 삭제" + (errs ? ` (실패 ${errs})` : "");
+      refreshTree();
+    } catch (e) {
+      $msg.textContent = "실패: " + e.message;
+    } finally {
+      $del.disabled = false;
+    }
+  }
+
   // ── Upload — items are {file, name} where name is the file's path relative
   // to the target dir ("a.txt" for a single file, "mydir/sub/a.c" for a
   // directory upload; the server creates the nested dirs). ─────────────
@@ -2239,7 +2283,8 @@
     try {
       const entries = await fetchTree("");
       $tree.innerHTML = "";
-      const rootRow = makeRootRow();
+      const rootSize = entries.reduce((s, e) => s + (e.size || 0), 0);
+      const rootRow = makeRootRow(rootSize);
       $tree.appendChild(rootRow);
       entries.forEach((e) => $tree.appendChild(makeRow(e, 1)));
       setUploadDir("", rootRow);
@@ -2298,6 +2343,7 @@
   $close.addEventListener("click", close);
   $backdrop.addEventListener("click", close);
   $go.addEventListener("click", download);
+  if ($del) $del.addEventListener("click", deleteSelected);
   $pick.addEventListener("click", () => $fileInput.click());
   $pickDir.addEventListener("click", () => $dirInput.click());
   $fileInput.addEventListener("change", () => {

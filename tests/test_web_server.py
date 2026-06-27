@@ -1593,6 +1593,118 @@ class TestWorkspaceDownload:
         assert ".dl-row.target" in css  # upload-target highlight
 
 
+class TestWorkspaceDelete:
+    """Workspace file/dir deletion (🗑). Token-auth, WRITE + DESTRUCTIVE — so
+    the guards are the strictest: under-workspace only, no traversal, and the
+    workspace root itself is never deletable."""
+
+    @staticmethod
+    def _setup(server, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.c").write_text("int main(){}\n")
+        (tmp_path / "src" / "nested").mkdir()
+        (tmp_path / "src" / "nested" / "deep.c").write_text("// deep\n")
+        (tmp_path / "README.md").write_text("# hi\n")
+        server.workspace = tmp_path.resolve()
+
+    def test_delete_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.post("/api/workspace/delete").status_code == 422
+        assert (
+            client.post(
+                "/api/workspace/delete?token=wrong", json={"paths": ["README.md"]}
+            ).status_code
+            == 401
+        )
+
+    def test_delete_file(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/workspace/delete?token=testtoken", json={"paths": ["README.md"]}
+        )
+        assert r.status_code == 200
+        assert r.json()["deleted"] == ["README.md"]
+        assert not (tmp_path / "README.md").exists()
+
+    def test_delete_dir_is_recursive(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/workspace/delete?token=testtoken", json={"paths": ["src"]}
+        )
+        assert r.status_code == 200
+        assert not (tmp_path / "src").exists()  # whole subtree gone
+
+    def test_delete_multiple(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/workspace/delete?token=testtoken",
+            json={"paths": ["README.md", "src/main.c"]},
+        )
+        assert r.status_code == 200
+        assert set(r.json()["deleted"]) == {"README.md", "src/main.c"}
+        assert not (tmp_path / "README.md").exists()
+        assert not (tmp_path / "src" / "main.c").exists()
+        assert (tmp_path / "src").exists()  # only the named file removed
+
+    def test_delete_rejects_traversal(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        outside = tmp_path.parent / "secret.txt"
+        outside.write_text("secret")
+        r = client.post(
+            "/api/workspace/delete?token=testtoken", json={"paths": ["../secret.txt"]}
+        )
+        assert r.status_code == 400
+        assert outside.exists()  # untouched
+
+    def test_delete_refuses_workspace_root(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        for root_rel in ("", ".", "./"):
+            r = client.post(
+                "/api/workspace/delete?token=testtoken", json={"paths": [root_rel]}
+            )
+            assert r.status_code == 400, root_rel
+        assert tmp_path.exists() and (tmp_path / "src").exists()
+
+    def test_delete_missing_path_reports_error_not_500(
+        self, server_and_client, tmp_path
+    ):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        r = client.post(
+            "/api/workspace/delete?token=testtoken", json={"paths": ["nope.txt"]}
+        )
+        assert r.status_code == 200
+        assert r.json()["deleted"] == []
+        assert r.json()["errors"]  # reported, not crashed
+
+    def test_delete_empty_list_400(self, server_and_client, tmp_path):
+        server, _, client = server_and_client
+        self._setup(server, tmp_path)
+        assert (
+            client.post(
+                "/api/workspace/delete?token=testtoken", json={"paths": []}
+            ).status_code
+            == 400
+        )
+
+    def test_delete_ui_wired(self, server_and_client):
+        _, _, client = server_and_client
+        html = client.get("/").text
+        js = client.get("/static/app.js").text
+        # 🗑 Delete button in the drawer foot + JS posts to the delete endpoint
+        assert 'id="dl-delete"' in html
+        assert "api/workspace/delete" in js
+        # destructive → must confirm before deleting
+        assert "confirm(" in js
+        # root row shows the total workspace size (sum of top-level entries)
+        assert "rootSize" in js or "totalSize" in js
+
+
 class TestWorkspaceUpload:
     """Workspace file upload (📎). Token-auth, WRITE — so the guards are
     stricter than download: filename basename-only, target dir under the

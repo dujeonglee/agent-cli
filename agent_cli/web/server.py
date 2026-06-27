@@ -1039,6 +1039,41 @@ def create_app(server: WebServer) -> FastAPI:
             background=BackgroundTask(os.unlink, tmp.name),
         )
 
+    @app.post("/api/workspace/delete")
+    async def workspace_delete(request: Request, token: str = Query(...)):
+        """Delete selected workspace paths. Body: ``{paths:[rel...]}``. A file
+        is unlinked, a directory removed recursively. WRITE + DESTRUCTIVE, so
+        the strictest guards: under-workspace only (``_safe_workspace_path``),
+        and the workspace ROOT itself is never deletable. Per-path errors are
+        reported (not fatal) so one bad path doesn't abort the rest."""
+        import shutil
+
+        server._require_token(token)
+        body = await request.json()
+        rels = body.get("paths") or []
+        if not rels:
+            raise HTTPException(status_code=400, detail="no paths given")
+        deleted: list[str] = []
+        errors: list[dict] = []
+        for rel in rels:
+            target = server._safe_workspace_path(rel)  # raises 400 on traversal
+            if target == server.workspace:
+                raise HTTPException(
+                    status_code=400, detail="refusing to delete the workspace root"
+                )
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+                else:
+                    errors.append({"path": rel, "error": "not found"})
+                    continue
+                deleted.append(str(target.relative_to(server.workspace)))
+            except OSError as e:
+                errors.append({"path": rel, "error": str(e)})
+        return JSONResponse({"deleted": deleted, "errors": errors})
+
     @app.post("/api/workspace/upload")
     async def workspace_upload(
         request: Request,
