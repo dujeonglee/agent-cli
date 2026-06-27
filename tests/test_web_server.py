@@ -579,6 +579,15 @@ class TestAuth:
         renderer.worker_idle()
         assert client.get("/api/health").json()["busy"] is False
 
+    def test_health_reports_awaiting_input(self, server_and_client):
+        _, renderer, client = server_and_client
+        assert client.get("/api/health").json()["awaiting_input"] is False
+        # a pending ask/confirm sets the input_required sticky
+        renderer.set_sticky("input_required", "input_required", {"kind": "prompt"})
+        assert client.get("/api/health").json()["awaiting_input"] is True
+        renderer.clear_sticky("input_required")
+        assert client.get("/api/health").json()["awaiting_input"] is False
+
     def test_stream_without_token_is_422(self, server_and_client):
         _, _, client = server_and_client
         # FastAPI's required Query param without a value → 422.

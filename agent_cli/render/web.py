@@ -802,6 +802,14 @@ class WebRenderer(Renderer):
         never reaped mid-task."""
         return self._worker_busy
 
+    def is_awaiting_input(self) -> bool:
+        """Whether an ``ask``/``confirm`` prompt is currently pending a user
+        reply (the ``input_required`` sticky is set between emit and resolve).
+        Lets a front controller flag "needs your answer" distinctly from a
+        busy-generating turn."""
+        with self._lock:
+            return "input_required" in self._sticky
+
     def has_live_connections(self) -> bool:
         """Whether at least one browser is still subscribed (not closed).
         The idle-reaper's primary 'someone is here' signal."""

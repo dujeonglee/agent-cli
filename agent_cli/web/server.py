@@ -802,10 +802,15 @@ def create_app(server: WebServer) -> FastAPI:
         """Unauthenticated liveness probe.
 
         ``busy`` mirrors the worker state (True while the agent is processing a
-        turn / generating a response) so a front controller — e.g. a board that
-        spawns instances — can show "working" vs "idle" without subscribing to
-        the SSE stream."""
-        return {"status": "ok", "busy": server.renderer.worker_is_busy()}
+        turn / generating a response) and ``awaiting_input`` is True while an
+        ask/confirm prompt waits for a reply — so a front controller (e.g. a
+        board that spawns instances) can show "working" vs "needs your answer"
+        vs "idle" without subscribing to the SSE stream."""
+        return {
+            "status": "ok",
+            "busy": server.renderer.worker_is_busy(),
+            "awaiting_input": server.renderer.is_awaiting_input(),
+        }
 
     @app.get("/api/debug/prompt")
     async def debug_prompt(token: str = Query(...), task_id: str = Query("")):
