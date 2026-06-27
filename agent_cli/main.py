@@ -1265,6 +1265,13 @@ def web(
         help="Self-exit after N seconds with no viewers AND no running work "
         "(0 = never; for orchestrators that spawn-on-demand and resume).",
     ),
+    trust_local: bool = typer.Option(
+        False,
+        "--trust-local",
+        help="Skip token auth for loopback (127.0.0.1/::1) requests — for a "
+        "trusted local gateway/proxy that authenticates users itself. Only "
+        "safe when bound to localhost (e.g. --host 127.0.0.1).",
+    ),
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -1357,7 +1364,7 @@ def web(
     set_renderer(renderer)
     # Pass the live ctx so the Prompt Inspector can show the dynamic context
     # (conversation + observations), not just the static system prompt.
-    server = WebServer(renderer, token=token, ctx=ctx)
+    server = WebServer(renderer, token=token, ctx=ctx, trust_local=trust_local)
 
     # Prime the session-info ``ready`` so a client opening the page
     # before the first chat turn already sees the top-bar populated.

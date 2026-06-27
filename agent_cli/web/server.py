@@ -432,8 +432,12 @@ class WebServer:
         renderer: WebRenderer,
         token: str | None = None,
         ctx=None,
+        trust_local: bool = False,
     ) -> None:
         self.renderer = renderer
+        # --trust-local: skip token auth for loopback requests (the gateway in
+        # front of a 127.0.0.1-bound instance already authenticated the user).
+        self.trust_local = trust_local
         # The live ContextManager (shared with the worker's run_loop) — read
         # by the Prompt Inspector to show the DYNAMIC context (conversation +
         # observations), not just the static system prompt. May be None
@@ -608,6 +612,12 @@ class WebServer:
         if token is None or not secrets.compare_digest(token, self.token):
             raise HTTPException(status_code=401, detail="invalid or missing token")
 
+    def is_trusted_client(self, host: str | None) -> bool:
+        """Whether a request from ``host`` may skip token auth — only when
+        ``--trust-local`` is on AND the peer is loopback (the trusted gateway).
+        """
+        return bool(self.trust_local) and host in ("127.0.0.1", "::1")
+
     # ─── Stream lifecycle ────────────────────────────────────
 
     async def stream_events(self, conn: WebConnection):
@@ -697,6 +707,43 @@ def suppress_incomplete_response_log() -> None:
 # ── FastAPI app factory ────────────────────────────────────
 
 
+def _with_token_query(query_string: bytes, token: str) -> bytes:
+    """Return ``query_string`` with any client ``token`` replaced by ``token``
+    (ours first). Used by the trust-local middleware to make per-endpoint token
+    checks pass for trusted loopback requests without the gateway plumbing it."""
+    from urllib.parse import parse_qsl, urlencode
+
+    pairs = [
+        (k, v)
+        for k, v in parse_qsl(query_string.decode(), keep_blank_values=True)
+        if k != "token"
+    ]
+    return urlencode([("token", token), *pairs]).encode()
+
+
+class _TrustLocalMiddleware:
+    """Pure-ASGI: for a trusted loopback request (``--trust-local`` on + peer is
+    127.0.0.1/::1 → only the local gateway can reach a loopback-bound instance,
+    and it already authenticated the user), inject the valid token into the
+    query string so the existing per-endpoint token checks pass. No-op when
+    ``--trust-local`` is off, so the default auth path is byte-identical."""
+
+    def __init__(self, app, server: WebServer):
+        self.app = app
+        self.server = server
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            client = scope.get("client")
+            host = client[0] if client else None
+            if self.server.is_trusted_client(host):
+                scope = dict(scope)
+                scope["query_string"] = _with_token_query(
+                    scope.get("query_string", b""), self.server.token
+                )
+        await self.app(scope, receive, send)
+
+
 def create_app(server: WebServer) -> FastAPI:
     """Build the FastAPI app over a ``WebServer`` instance.
 
@@ -719,6 +766,10 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.shutdown_all_connections()
 
     app = FastAPI(title="agent-cli web", lifespan=_lifespan)
+    # Trust-local auth bypass (no-op unless --trust-local). Pure-ASGI so the
+    # injected token reaches the per-endpoint check reliably (unlike a
+    # BaseHTTPMiddleware contextvar, which Starlette runs in a separate context).
+    app.add_middleware(_TrustLocalMiddleware, server=server)
 
     @app.get("/")
     async def index():
