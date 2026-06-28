@@ -1237,9 +1237,9 @@ def web(
         None,
         "--port",
         help=(
-            "Listen port. Omitted: prefer 8080, fall back to an OS-assigned "
-            "free port if 8080 is busy. Explicit: bind that port exactly "
-            "(uvicorn raises if it's in use)."
+            "Listen port. Omitted: prefer 0xC0DE (49374), fall back to an "
+            "OS-assigned free port if it's busy. Explicit: bind that port "
+            "exactly (uvicorn raises if it's in use)."
         ),
     ),
     token: Optional[str] = typer.Option(
@@ -1599,10 +1599,10 @@ def web(
     worker.start()
 
     # 4. Print URL + start uvicorn.
-    # When ``--port`` is omitted, prefer 8080 but fall back to an
-    # OS-assigned port if 8080 is busy. Explicit ``--port N`` skips the
+    # When ``--port`` is omitted, prefer 0xC0DE (49374, "CODE") but fall back
+    # to an OS-assigned port if it's busy. Explicit ``--port N`` skips the
     # probe — let uvicorn surface the bind error so the operator notices.
-    resolved_port = port if port is not None else pick_port(host, 8080)
+    resolved_port = port if port is not None else pick_port(host, 0xC0DE)
     display_host = "localhost" if host in ("0.0.0.0", "::") else host
     ui_url = f"http://{display_host}:{resolved_port}/?token={server.token}"
     console.print(f"\n[bright_cyan]agent-cli web[/]  ({provider} · {resolved_model})")

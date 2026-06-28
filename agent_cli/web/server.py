@@ -171,8 +171,8 @@ def _port_has_live_listener(host: str, port: int) -> bool:
 def pick_port(host: str, preferred: int) -> int:
     """Pick a bindable port for the web server.
 
-    Prefer ``preferred`` (default 8080) when free; if a live server already
-    holds it, fall back to an OS-assigned ephemeral port. The caller passes the
+    Prefer ``preferred`` (the web command passes 0xC0DE) when free; if a live
+    server already holds it, fall back to an OS-assigned ephemeral port. The caller passes the
     result straight to ``uvicorn.Config(port=...)``, so the URL printed before
     ``server_obj.run()`` shows whatever the OS actually gave us.
 

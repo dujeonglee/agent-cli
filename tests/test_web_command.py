@@ -29,3 +29,36 @@ class TestIsLocalBind:
         assert not _is_local_bind("192.168.1.5")
         assert not _is_local_bind("10.0.0.3")
         assert not _is_local_bind("203.0.113.7")
+
+
+class TestPickPort:
+    """``pick_port`` prefers the requested port, else falls back to a free one
+    (the dynamic collision avoidance the web command relies on)."""
+
+    def test_free_preferred_is_used(self):
+        import socket
+
+        from agent_cli.web.server import pick_port
+
+        # find a currently-free port, then ask pick_port for it
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            free = s.getsockname()[1]
+        assert pick_port("127.0.0.1", free) == free
+
+    def test_busy_preferred_falls_back(self):
+        import socket
+
+        from agent_cli.web.server import pick_port
+
+        # hold a port with a LIVE listener, then ask for it → must differ
+        srv = socket.socket()
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        busy = srv.getsockname()[1]
+        try:
+            got = pick_port("127.0.0.1", busy)
+            assert got != busy and got > 0  # OS-assigned fallback
+        finally:
+            srv.close()
