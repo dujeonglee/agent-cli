@@ -588,6 +588,19 @@ class TestAuth:
         renderer.clear_sticky("input_required")
         assert client.get("/api/health").json()["awaiting_input"] is False
 
+    def test_health_reports_viewers(self, server_and_client):
+        import threading
+        import types
+
+        _, renderer, client = server_and_client
+        assert client.get("/api/health").json()["viewers"] == 0
+        # a live (not-closed) subscriber counts; a closed one does not
+        live = types.SimpleNamespace(closed=threading.Event())
+        gone = types.SimpleNamespace(closed=threading.Event())
+        gone.closed.set()
+        renderer._connections.extend([live, gone])
+        assert client.get("/api/health").json()["viewers"] == 1
+
     def test_stream_without_token_is_422(self, server_and_client):
         _, _, client = server_and_client
         # FastAPI's required Query param without a value → 422.

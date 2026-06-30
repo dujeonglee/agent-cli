@@ -816,6 +816,14 @@ class WebRenderer(Renderer):
         with self._lock:
             return any(not c.closed.is_set() for c in self._connections)
 
+    def viewer_count(self) -> int:
+        """Number of live (not-closed) browser subscribers — the same predicate
+        as :meth:`has_live_connections`, as a count. Exposed via /api/health so a
+        front controller (e.g. a board) can tell 'someone is watching' from
+        'nobody here' before disrupting the session."""
+        with self._lock:
+            return sum(1 for c in self._connections if not c.closed.is_set())
+
     def auto_review_state(self, enabled: bool) -> None:
         """Broadcast the auto-review toggle state. Sticky so EVERY browser's
         toggle button reflects the shared server state — toggling on one client

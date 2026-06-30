@@ -806,11 +806,14 @@ def create_app(server: WebServer) -> FastAPI:
         turn / generating a response) and ``awaiting_input`` is True while an
         ask/confirm prompt waits for a reply — so a front controller (e.g. a
         board that spawns instances) can show "working" vs "needs your answer"
-        vs "idle" without subscribing to the SSE stream."""
+        vs "idle" without subscribing to the SSE stream. ``viewers`` is the live
+        browser-subscriber count, so the controller can tell 'someone is
+        watching' from 'nobody here' before disrupting the session."""
         return {
             "status": "ok",
             "busy": server.renderer.worker_is_busy(),
             "awaiting_input": server.renderer.is_awaiting_input(),
+            "viewers": server.renderer.viewer_count(),
         }
 
     @app.get("/api/debug/prompt")
