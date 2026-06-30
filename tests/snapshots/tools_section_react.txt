@@ -2,7 +2,7 @@
 - read_file: Read a file. Lines are tagged as LINE#HASH:content for editing. Modes: stat=true (metadata + first 20 lines, NOT a read — follow up with a real read), search='regex' (matching regions with context, efficient for targeted lookups), line_start/line_end (partial read, 1-based inclusive), or none (full file).
   Input JSON: {"path": "string, required — File path to read", "line_start": "integer — Start line (1-based). Omit to read from beginning.", "line_end": "integer — End line (1-based, inclusive). Omit to read to end.", "search": "string — Regex pattern. Returns only matching lines with surrounding context.", "context": "integer — Lines of context before/after each search match (default 5).", "stat": "boolean — Metadata query only — line count, size, first 20 lines. Not a read."}
 - shell: Run a shell command and return stdout/stderr.
-  Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Timeout in seconds (default 30)"}
+  Input JSON: {"command": "string, required — Shell command to run", "timeout": "integer — Max seconds before the command is killed (default 120). RAISE it for long-running commands — builds, installs (pip/npm), large git clone/pull, or test suites — e.g. 300-600; otherwise they're killed at the default."}
 - code_index: Code/markdown index query via persistent tree-sitter SQLite store (read-only). Each op runs one query with its own mode.
 Modes:
   list      - file outline (defs + structural symbols, line ranges) [path]

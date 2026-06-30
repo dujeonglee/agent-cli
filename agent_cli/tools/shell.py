@@ -146,7 +146,7 @@ def tool_shell(args: dict) -> ToolResult:
                     if decision == "a":
                         _session_allowlist.add(keyword)
 
-    timeout = int(args.get("timeout", 30))
+    timeout = int(args.get("timeout", 120))
     try:
         # Capture bytes, not text: ``text=True`` decodes strict UTF-8 and
         # raises UnicodeDecodeError mid-run on non-UTF-8 output (git show /
@@ -194,7 +194,12 @@ class ShellTool(Tool):
             "command": {"type": "string", "description": "Shell command to run"},
             "timeout": {
                 "type": "integer",
-                "description": "Timeout in seconds (default 30)",
+                "description": (
+                    "Max seconds before the command is killed (default 120). "
+                    "RAISE it for long-running commands — builds, installs "
+                    "(pip/npm), large git clone/pull, or test suites — e.g. "
+                    "300-600; otherwise they're killed at the default."
+                ),
             },
         },
         "required": ["command"],

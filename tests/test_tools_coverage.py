@@ -1443,3 +1443,34 @@ class TestRunSkillTool:
         assert "run_skill" in TOOL_SCHEMAS
         schema = TOOL_SCHEMAS["run_skill"]
         assert "name" in schema.parameters["required"]
+
+
+class TestShellTimeout:
+    """(A) LLM-set timeout + raised default (30→120) so builds/pulls don't die
+    at 30s; the model raises it further via the documented param."""
+
+    def _capture_timeout(self, monkeypatch, args):
+        import agent_cli.tools.shell as sh
+
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured.update(kw)
+
+            class _R:
+                stdout = b""
+                stderr = b""
+                returncode = 0
+
+            return _R()
+
+        monkeypatch.setattr(sh.subprocess, "run", fake_run)
+        sh.tool_shell(args)
+        return captured.get("timeout")
+
+    def test_default_timeout_is_120(self, monkeypatch):
+        assert self._capture_timeout(monkeypatch, {"command": "echo hi"}) == 120
+
+    def test_respects_explicit_timeout(self, monkeypatch):
+        got = self._capture_timeout(monkeypatch, {"command": "make", "timeout": 600})
+        assert got == 600
