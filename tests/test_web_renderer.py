@@ -1723,3 +1723,20 @@ class TestDirectivesDirtyFlag:
             assert render.consume_directives_reload() is False
         finally:
             render.set_renderer(prev)
+
+    def test_applied_broadcast_reaches_viewers(self):
+        # update-when-applied: notify_directives_applied → SSE event so open
+        # inspectors re-fetch the prompt view at the moment it takes effect.
+        from agent_cli import render
+        from agent_cli.render.web import WebConnection, WebRenderer
+
+        prev = render.get_renderer()
+        try:
+            r = WebRenderer()
+            render.set_renderer(r)
+            conn = WebConnection(id="c1")
+            r.register_connection(conn)
+            render.notify_directives_applied()
+            assert _qget(conn)[0] == "directives_changed"
+        finally:
+            render.set_renderer(prev)

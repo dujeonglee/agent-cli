@@ -383,6 +383,11 @@ class Renderer(ABC):
         system prompt. Only the web renderer tracks it; others never edit."""
         return False
 
+    def broadcast_directives_changed(self) -> None:
+        """Tell open Prompt Inspectors to re-fetch (editor + prompt view). Fired
+        on save (editor sync) and when the edit is actually applied (prompt
+        view reflects the now-live directive). No-op off the web renderer."""
+
     @abstractmethod
     def spinner_start(self, message: str = "") -> None:
         """Start a spinner animation (e.g. during LLM call)."""

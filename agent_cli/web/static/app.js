@@ -1607,8 +1607,10 @@
       .then(function (r) {
         if (!r.ok) throw new Error(r.status);
         dirDirty = false;
-        $dirStatus.textContent = "✓ 저장됨 — 다음 호출부터 적용";
-        loadPrompt(); // the prompt view will show the new Directives section
+        // Update-when-applied: don't optimistically refresh the prompt view —
+        // it shows the CURRENTLY-applied directive and refreshes via broadcast
+        // when the loop actually rebuilds (next LLM call).
+        $dirStatus.textContent = "✓ 저장됨 — 다음 LLM 호출에 적용";
       })
       .catch(function () { $dirStatus.textContent = "✗ 저장 실패"; })
       .finally(function () { $dirSave.disabled = false; });
@@ -1619,9 +1621,14 @@
       dirDirty = true;
       $dirStatus.textContent = "● 미저장";
     });
-  // Another viewer edited the directives → refresh (unless I'm mid-edit).
+  // Directives changed on disk (a save) OR were just applied by the loop:
+  // re-sync the editor and refresh the prompt view so its Directives section
+  // reflects the currently-applied directive (updates when applied, not on save).
   window.addEventListener("agentcli:directives-changed", function () {
-    if ($drawer.classList.contains("open")) loadDirectives();
+    if ($drawer.classList.contains("open")) {
+      loadDirectives();
+      loadPrompt();
+    }
   });
 
   function open() {

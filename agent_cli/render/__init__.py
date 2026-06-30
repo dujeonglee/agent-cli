@@ -193,6 +193,13 @@ def consume_directives_reload() -> bool:
     return _renderer.consume_directives_dirty()
 
 
+def notify_directives_applied() -> None:
+    """The loop just rebuilt the system prompt from an edited DIRECTIVE.md →
+    tell open Prompt Inspectors to re-fetch so the prompt view reflects the
+    now-applied directive (update-when-applied, not on save)."""
+    _renderer.broadcast_directives_changed()
+
+
 def render_spinner_start(message: str = "") -> None:
     _renderer.spinner_start(message)
 

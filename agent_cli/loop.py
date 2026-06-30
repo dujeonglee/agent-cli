@@ -49,6 +49,7 @@ from agent_cli.recovery.observability import (
 )
 from agent_cli.render import (
     consume_directives_reload,
+    notify_directives_applied,
     render_context_dump,
     render_system_prompt_snapshot,
     render_header,
@@ -638,6 +639,13 @@ class AgentLoop:
         # next LLM call; idle → next user query). Busts the KV cache prefix.
         if consume_directives_reload():
             self._rebuild_system_prompt()
+            # Update-when-applied: push the fresh snapshot + signal open
+            # inspectors so the prompt view shows the now-live directive at the
+            # moment it takes effect (not optimistically on save).
+            render_system_prompt_snapshot(
+                build_inspector_sections(self._system_sections, self.ctx), self.turn
+            )
+            notify_directives_applied()
         # PreLLMCall hook — can inject system sections and messages
         hook_ctx = self._fire_hook("PreLLMCall")
         self._apply_system_sections(hook_ctx)
