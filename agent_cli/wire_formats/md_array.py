@@ -56,6 +56,16 @@ _SENTINEL_LINE = re.compile(r"^\s*##\s*(?:Thought|Action|Input)\s*$", re.MULTILI
 _ORPHAN_THINK_TAG = re.compile(
     r"</?\s*(?:think|thinking|reasoning|reflection)\s*>", re.IGNORECASE
 )
+# Same leak, but TRAILING the op array (``[{...}</think>``): the closer that
+# repairs an unclosed array appends ``]`` at the very end — AFTER the tag — so
+# the result stays invalid (``[{...}</think>]``) and the op is lost → NO_JSON
+# retry loop (observed hang on Qwen3.6). A think tag past the array is never
+# part of the JSON, so strip trailing ones before the repair path. Anchored to
+# the end → never touches a ``<think>`` inside a string value (valid JSON parses
+# strictly first and is returned untouched).
+_TRAILING_THINK_TAG = re.compile(
+    r"(?:\s*</?\s*(?:think|thinking|reasoning|reflection)\s*>)+\s*$", re.IGNORECASE
+)
 
 # Format runaway: an empty envelope section immediately followed by another
 # header (mirrors prefix_md's _DEGEN_RUNAWAY; Input included for the same
@@ -258,6 +268,12 @@ def _extract_op_json(text: str):
     parsed = _extract_first_json(text)
     if parsed is not None:
         return parsed, False
+    # Strict parse failed: the JSON is broken. A reasoning model often leaks a
+    # trailing ``</think>`` after the array, which defeats the unclosed-array
+    # closer below (it appends ``]`` past the tag). Drop trailing think tags so
+    # the repair path sees clean JSON. Done only AFTER the strict parse, so valid
+    # JSON carrying ``<think>`` inside a string value is preserved.
+    text = _TRAILING_THINK_TAG.sub("", text)
     for drop_close in (True, False):
         fixed = _repair_anonymous_op_objects(text, drop_close=drop_close)
         if fixed != text:

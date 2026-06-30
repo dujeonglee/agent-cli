@@ -289,6 +289,53 @@ class TestLiteralControlCharRepair:
         assert t.parse_stage == 0 and t.ops == []
 
 
+class TestTrailingThinkTagRepair:
+    """A reasoning model (Qwen3.6) emits the op array INSIDE its think block and
+    forgets the array's ``]`` — leaving ``[{...}</think>``. The unclosed-array
+    closer appends ``]`` at the very end (past the tag → ``[{...}</think>]``,
+    still invalid), so the op was lost every turn → NO_JSON retry loop (a hang).
+    Trailing think tags are stripped before the repair so the array recovers."""
+
+    def test_unclosed_array_with_trailing_think_recovers(self):
+        t = WF.parse_turn(
+            _wire("x", '[{"action": "read_file", "path": "x.py"}\n</think>')
+        )
+        assert t.parse_stage == 2
+        assert len(t.ops) == 1 and t.ops[0].action == "read_file"
+        assert t.ops[0].action_input == {"path": "x.py"}
+
+    def test_unclosed_multi_op_with_trailing_think_recovers(self):
+        t = WF.parse_turn(
+            _wire(
+                "x",
+                '[{"action":"read_file","path":"a"},'
+                '{"action":"read_file","path":"b"}</think>',
+            )
+        )
+        assert t.parse_stage == 2
+        assert [o.action_input["path"] for o in t.ops] == ["a", "b"]
+
+    def test_closed_array_with_trailing_think_still_clean(self):
+        # Closed array + a stray trailing </think>: parses without repair.
+        t = WF.parse_turn(
+            _wire("x", '[{"action": "read_file", "path": "x.py"}]</think>')
+        )
+        assert len(t.ops) == 1 and t.ops[0].action == "read_file"
+
+    def test_think_tag_inside_string_value_preserved(self):
+        # A </think> INSIDE a content string is real data, not a leaked tag —
+        # valid JSON parses strictly first, so the trailing-strip never sees it.
+        t = WF.parse_turn(
+            _wire(
+                "x",
+                '[{"action":"write_file","path":"n.md",'
+                '"content":"docs about </think> tags"}]',
+            )
+        )
+        assert t.parse_stage == 1
+        assert t.ops[0].action_input["content"] == "docs about </think> tags"
+
+
 class TestCompletionAndNoAction:
     """md_array completes via an explicit `complete` op (DESIGN Exp 8) — NOT
     thought-only. A thought-only / empty / no-op emission is therefore NOT a
