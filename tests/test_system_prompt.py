@@ -1224,3 +1224,38 @@ class TestSystemSectionsSingleSource:
         sections, turn = snap.call_args.args
         assert sections == loop._system_sections
         assert isinstance(turn, int)
+
+
+class TestProjectDirectiveEditing:
+    """Inspector edits the PROJECT DIRECTIVE.md (not user-global)."""
+
+    def test_roundtrip_and_absent_is_empty(self, tmp_path, monkeypatch):
+        import agent_cli.prompts.system_prompt as sp
+
+        monkeypatch.setattr(
+            sp, "_DIRECTIVE_PATHS", [tmp_path / ".agent-cli", tmp_path / "home"]
+        )
+        assert sp.read_project_directive() == ""  # absent → empty (editor still shows)
+        assert sp.project_directive_file() == tmp_path / ".agent-cli" / "DIRECTIVE.md"
+        sp.write_project_directive("always be terse")
+        assert sp.read_project_directive() == "always be terse"
+
+    def test_edit_reflects_in_built_prompt(self, tmp_path, monkeypatch):
+        # the whole point: a saved directive shows up in the rebuilt system prompt
+        import agent_cli.prompts.system_prompt as sp
+
+        monkeypatch.setattr(
+            sp, "_DIRECTIVE_PATHS", [tmp_path / ".agent-cli", tmp_path / "home"]
+        )
+        sp.write_project_directive("SENTINEL_RULE_XYZ")
+        names = dict(_sections())
+        assert "Directives" in names
+        assert "SENTINEL_RULE_XYZ" in names["Directives"]
+
+
+def _sections():
+    from agent_cli.prompts.system_prompt import build_system_prompt_sections
+
+    return build_system_prompt_sections(
+        capabilities=_make_caps(), active_tools=["shell"]
+    )

@@ -1999,3 +1999,44 @@ class TestAutoReviewToggle:
         # and a reconnecting client sees it in the snapshot
         snap = renderer.register_connection(WebConnection(id="late"))
         assert any(e == "auto_review" for e, _ in snap)
+
+
+class TestDirectivesEndpoint:
+    def _patch_dir(self, tmp_path, monkeypatch):
+        import agent_cli.prompts.system_prompt as sp
+
+        monkeypatch.setattr(
+            sp, "_DIRECTIVE_PATHS", [tmp_path / ".agent-cli", tmp_path / "home"]
+        )
+
+    def test_get_empty_when_absent(self, server_and_client, tmp_path, monkeypatch):
+        self._patch_dir(tmp_path, monkeypatch)
+        _, _, client = server_and_client
+        r = client.get("/api/debug/directives?token=testtoken")
+        assert r.status_code == 200 and r.json()["content"] == ""
+
+    def test_post_writes_marks_dirty_then_get(
+        self, server_and_client, tmp_path, monkeypatch
+    ):
+        self._patch_dir(tmp_path, monkeypatch)
+        _, renderer, client = server_and_client
+        r = client.post(
+            "/api/debug/directives?token=testtoken", json={"content": "always Korean"}
+        )
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert (tmp_path / ".agent-cli" / "DIRECTIVE.md").read_text(
+            encoding="utf-8"
+        ) == "always Korean"
+        assert renderer.consume_directives_dirty() is True  # loop will rebuild
+        got = client.get("/api/debug/directives?token=testtoken").json()
+        assert got["content"] == "always Korean"
+
+    def test_requires_token(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/debug/directives?token=bad").status_code != 200
+        assert (
+            client.post(
+                "/api/debug/directives?token=bad", json={"content": "x"}
+            ).status_code
+            != 200
+        )

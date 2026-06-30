@@ -1079,6 +1079,12 @@
     );
   });
 
+  es.addEventListener("directives_changed", function () {
+    // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
+    // IIFE to re-fetch the editor so concurrent editors don't show stale text.
+    window.dispatchEvent(new CustomEvent("agentcli:directives-changed"));
+  });
+
   es.addEventListener("token_usage", function (e) {
     // Top-bar readout: context occupancy %, this turn's in/out, and the
     // cumulative session output. Server sends raw counts; we format here.
@@ -1376,6 +1382,10 @@
   const $budget = document.getElementById("insp-budget");
   const $search = document.getElementById("insp-search");
   const $sections = document.getElementById("insp-sections");
+  const $dirText = document.getElementById("insp-dir-text");
+  const $dirPath = document.getElementById("insp-dir-path");
+  const $dirSave = document.getElementById("insp-dir-save");
+  const $dirStatus = document.getElementById("insp-dir-status");
   if (!$btn || !$drawer || !token) return;
 
   // Which system-prompt scope the drawer is showing: "" = main loop, a
@@ -1570,6 +1580,50 @@
     if (chip) selectScope(chip.getAttribute("data-scope"));
   });
 
+  // ── Directives editor (project .agent-cli/DIRECTIVE.md) ──
+  // Always shown (even when the file is absent) so the user can create/edit it.
+  // Saving writes the file + the loop rebuilds its system prompt at the next
+  // LLM call (immediate; idle → next query). Broadcast keeps editors in sync.
+  let dirDirty = false; // user typed since last load → don't clobber on refetch
+  function loadDirectives() {
+    return fetch("api/debug/directives?" + qtoken())
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (dirDirty) return; // a concurrent edit shouldn't overwrite my typing
+        $dirText.value = (d && d.content) || "";
+        if ($dirPath) $dirPath.textContent = (d && d.path) || "";
+        $dirStatus.textContent = "";
+      })
+      .catch(function () {});
+  }
+  function saveDirectives() {
+    $dirSave.disabled = true;
+    $dirStatus.textContent = "저장 중…";
+    fetch("api/debug/directives?" + qtoken(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: $dirText.value }),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        dirDirty = false;
+        $dirStatus.textContent = "✓ 저장됨 — 다음 호출부터 적용";
+        loadPrompt(); // the prompt view will show the new Directives section
+      })
+      .catch(function () { $dirStatus.textContent = "✗ 저장 실패"; })
+      .finally(function () { $dirSave.disabled = false; });
+  }
+  if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
+  if ($dirText)
+    $dirText.addEventListener("input", function () {
+      dirDirty = true;
+      $dirStatus.textContent = "● 미저장";
+    });
+  // Another viewer edited the directives → refresh (unless I'm mid-edit).
+  window.addEventListener("agentcli:directives-changed", function () {
+    if ($drawer.classList.contains("open")) loadDirectives();
+  });
+
   function open() {
     $backdrop.hidden = false;
     requestAnimationFrame(function () {
@@ -1578,6 +1632,7 @@
     });
     $drawer.setAttribute("aria-hidden", "false");
     loadScopes().then(loadPrompt);
+    loadDirectives();
   }
 
   // Live chip refresh: when a delegate sub-agent spins up while the drawer is

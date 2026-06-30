@@ -377,6 +377,12 @@ class Renderer(ABC):
     def context_dump(self, messages: list[dict], turn: int) -> None:
         """Debug context window dump."""
 
+    def consume_directives_dirty(self) -> bool:
+        """Atomically read+clear the 'DIRECTIVE.md was edited via the web
+        Prompt Inspector' flag. The loop checks it each LLM call to rebuild its
+        system prompt. Only the web renderer tracks it; others never edit."""
+        return False
+
     @abstractmethod
     def spinner_start(self, message: str = "") -> None:
         """Start a spinner animation (e.g. during LLM call)."""

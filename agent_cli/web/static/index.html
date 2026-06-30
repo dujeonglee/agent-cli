@@ -110,6 +110,15 @@
     </div>
     <div id="insp-scopes" class="insp-scopes" title="System prompt scope — main loop or a delegate sub-agent"></div>
     <div id="insp-budget" class="insp-budget" title="per-section token share"></div>
+    <details id="insp-dir" class="insp-dir">
+      <summary>📝 Directives <span id="insp-dir-path" class="insp-dir-path"></span></summary>
+      <textarea id="insp-dir-text" class="insp-dir-text" spellcheck="false"
+        placeholder="이 프로젝트의 DIRECTIVE.md — 비어 있으면 새로 만들어집니다. 저장 시 다음 LLM 호출부터 적용(KV 캐시 리셋)."></textarea>
+      <div class="insp-dir-foot">
+        <span id="insp-dir-status" class="insp-dir-status"></span>
+        <button id="insp-dir-save" type="button">저장</button>
+      </div>
+    </details>
     <input id="insp-search" type="search" placeholder="Filter sections…" autocomplete="off">
     <div id="insp-sections" class="insp-sections"></div>
   </aside>

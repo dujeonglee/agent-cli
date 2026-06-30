@@ -44,6 +44,29 @@ _DIRECTIVE_PATHS = [
     Path.home() / ".agent-cli",
 ]
 
+
+def project_directive_file() -> Path:
+    """The PROJECT-scope ``DIRECTIVE.md`` (``cwd/.agent-cli``) — the one the web
+    Prompt Inspector editor reads/writes. The user-global file (``~/.agent-cli``)
+    is intentionally left out of editing (its blast radius is every project)."""
+    return _DIRECTIVE_PATHS[0] / "DIRECTIVE.md"
+
+
+def read_project_directive() -> str:
+    """Current project ``DIRECTIVE.md`` content ("" when the file is absent — the
+    inspector still shows an editor so the user can create it)."""
+    f = project_directive_file()
+    return f.read_text(encoding="utf-8") if f.is_file() else ""
+
+
+def write_project_directive(content: str) -> None:
+    """Write the project ``DIRECTIVE.md`` (creating ``.agent-cli/`` if needed).
+    The loop rebuilds its system prompt from this file on the next LLM call."""
+    f = project_directive_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(content, encoding="utf-8")
+
+
 # ── Section 1: Role ──────────────────────────────
 ROLE_PROMPT = """\
 You are an AI assistant that solves tasks step-by-step using available tools."""

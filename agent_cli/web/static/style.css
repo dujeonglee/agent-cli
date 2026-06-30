@@ -884,6 +884,25 @@ footer {
 .insp-chip-del:hover { opacity: 1; background: var(--hairline-strong); }
 .insp-chip.active .insp-chip-del:hover { background: var(--hairline-strong); }
 
+.insp-dir { margin: 0 0 8px; font-size: 12px; flex: 0 0 auto; }
+.insp-dir > summary { cursor: pointer; color: var(--text); user-select: none; padding: 2px 0; }
+.insp-dir-path { color: var(--text-2); font-size: 10px; margin-left: 6px; }
+.insp-dir-text {
+  width: 100%; box-sizing: border-box; height: 120px; resize: vertical;
+  margin-top: 6px; font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px; line-height: 1.5;
+  color: var(--text); background: var(--surface-3);
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+}
+.insp-dir-text:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
+.insp-dir-foot { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.insp-dir-status { flex: 1; color: var(--text-2); font-size: 11px; }
+.insp-dir-foot button {
+  font-size: 12px; padding: 3px 12px; border-radius: 6px; cursor: pointer;
+  color: var(--on-accent); background: var(--accent); border: 0;
+}
+.insp-dir-foot button:disabled { opacity: .5; cursor: default; }
+
 .insp-sections {
   flex: 1 1 auto;
   /* min-height:0 is required for a flex child to become a scroll container —

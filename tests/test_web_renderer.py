@@ -1698,3 +1698,28 @@ class TestStickyState:
             seen.append(a.queue.get_nowait())
         # _emit stamps a ``ts`` field, so check the enabled flag, not equality
         assert any(e == "auto_review" and d.get("enabled") is True for e, d in seen)
+
+
+class TestDirectivesDirtyFlag:
+    def test_mark_consume_clears(self):
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer()
+        assert r.consume_directives_dirty() is False
+        r.mark_directives_dirty()
+        assert r.consume_directives_dirty() is True
+        assert r.consume_directives_dirty() is False  # cleared after read
+
+    def test_render_module_dispatch(self):
+        from agent_cli import render
+        from agent_cli.render.web import WebRenderer
+
+        prev = render.get_renderer()
+        try:
+            r = WebRenderer()
+            render.set_renderer(r)
+            r.mark_directives_dirty()
+            assert render.consume_directives_reload() is True
+            assert render.consume_directives_reload() is False
+        finally:
+            render.set_renderer(prev)

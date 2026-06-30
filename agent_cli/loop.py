@@ -48,6 +48,7 @@ from agent_cli.recovery.observability import (
     TurnRecorder,
 )
 from agent_cli.render import (
+    consume_directives_reload,
     render_context_dump,
     render_system_prompt_snapshot,
     render_header,
@@ -367,6 +368,26 @@ class AgentLoop:
             **kwargs,
         )
 
+    def _rebuild_system_prompt(self) -> None:
+        """(Re)build the static system-prompt sections from scratch and derive
+        ``self.system``. Run once at setup, and again when DIRECTIVE.md is edited
+        via the Prompt Inspector (the build re-reads the directive files). Hook
+        sections are re-folded by the next ``_apply_system_sections``."""
+        session_dir = str(self.ctx.session_dir) if self.ctx else ""
+        self._system_sections = build_system_prompt_sections(
+            capabilities=self.capabilities,
+            active_tools=self.tools_list,
+            skill_stack=self.skill_stack,
+            agent_stack=self.agent_stack,
+            agent_role=self.agent_role,
+            session_dir=session_dir,
+            mcp_manager=self.mcp_manager,
+            wire_format=self.wire_format,
+            depth=self.depth,
+            max_depth=self.max_depth,
+        )
+        self.system = "\n\n".join(t for _, t in self._system_sections)
+
     def _apply_system_sections(self, hook_ctx) -> None:
         """Apply dynamic system prompt sections from hook context.
 
@@ -513,22 +534,7 @@ class AgentLoop:
         # Built as named sections — the joined string is what the LLM gets
         # (byte-identical to the old single-string build), and the section
         # list feeds the web Prompt Inspector via the renderer snapshot.
-        session_dir = ""
-        if self.ctx:
-            session_dir = str(self.ctx.session_dir)
-        self._system_sections = build_system_prompt_sections(
-            capabilities=self.capabilities,
-            active_tools=self.tools_list,
-            skill_stack=self.skill_stack,
-            agent_stack=self.agent_stack,
-            agent_role=self.agent_role,
-            session_dir=session_dir,
-            mcp_manager=self.mcp_manager,
-            wire_format=self.wire_format,
-            depth=self.depth,
-            max_depth=self.max_depth,
-        )
-        self.system = "\n\n".join(t for _, t in self._system_sections)
+        self._rebuild_system_prompt()
 
         render_header(
             self.provider_name,
@@ -627,6 +633,11 @@ class AgentLoop:
 
     def _execute_turn(self):
         """Single turn: hooks, LLM call, text parse, dispatch."""
+        # A web edit to DIRECTIVE.md (Prompt Inspector) → rebuild the system
+        # prompt so THIS call already reflects it (applies immediately at the
+        # next LLM call; idle → next user query). Busts the KV cache prefix.
+        if consume_directives_reload():
+            self._rebuild_system_prompt()
         # PreLLMCall hook — can inject system sections and messages
         hook_ctx = self._fire_hook("PreLLMCall")
         self._apply_system_sections(hook_ctx)

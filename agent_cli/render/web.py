@@ -108,6 +108,9 @@ class WebRenderer(Renderer):
         # Worker busy/idle mirror (set by worker_busy/worker_idle) — a plain
         # queryable bool for the idle-reaper, independent of the sticky payload.
         self._worker_busy = False
+        # Set when DIRECTIVE.md is edited via the Prompt Inspector; the loop
+        # consumes it each LLM call to rebuild its system prompt.
+        self._directives_dirty = False
         # conn_id → fun nickname (assigned on register, shown to all viewers)
         self._nicknames: dict[str, str] = {}
         # Every connection is equal: all receive the fan-out AND may send
@@ -815,6 +818,23 @@ class WebRenderer(Renderer):
         The idle-reaper's primary 'someone is here' signal."""
         with self._lock:
             return any(not c.closed.is_set() for c in self._connections)
+
+    def mark_directives_dirty(self) -> None:
+        """A web edit wrote DIRECTIVE.md → ask the loop to rebuild its system
+        prompt at the next LLM call (consumed by ``consume_directives_dirty``)."""
+        with self._lock:
+            self._directives_dirty = True
+
+    def consume_directives_dirty(self) -> bool:
+        with self._lock:
+            was = self._directives_dirty
+            self._directives_dirty = False
+            return was
+
+    def broadcast_directives_changed(self) -> None:
+        """Tell every open Prompt Inspector to re-fetch the directive editor
+        (so concurrent editors don't show stale content). Transient event."""
+        self._emit("directives_changed", {}, persistent=False)
 
     def viewer_count(self) -> int:
         """Number of live (not-closed) browser subscribers — the same predicate

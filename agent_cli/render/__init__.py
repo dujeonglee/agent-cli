@@ -186,6 +186,13 @@ def render_system_prompt_snapshot(sections: list[tuple[str, str]], turn: int) ->
     _renderer.note_system_prompt(sections, turn)
 
 
+def consume_directives_reload() -> bool:
+    """Whether DIRECTIVE.md was edited (web Prompt Inspector) since the last
+    check — the loop rebuilds its system prompt when True. Routed through the
+    renderer so the loop stays UI-agnostic (False for CLI renderers)."""
+    return _renderer.consume_directives_dirty()
+
+
 def render_spinner_start(message: str = "") -> None:
     _renderer.spinner_start(message)
 

@@ -856,6 +856,37 @@ def create_app(server: WebServer) -> FastAPI:
             "est_tokens": est_tokens,
         }
 
+    @app.get("/api/debug/directives")
+    async def debug_directives(token: str = Query(...)):
+        """Current PROJECT ``DIRECTIVE.md`` content for the inspector editor.
+        Always available (empty string when the file doesn't exist yet), so the
+        editor is shown even with no directives. Project scope only — the
+        user-global file is never edited here."""
+        server._require_token(token)
+        from agent_cli.prompts.system_prompt import (
+            project_directive_file,
+            read_project_directive,
+        )
+
+        return {
+            "content": read_project_directive(),
+            "path": str(project_directive_file()),
+        }
+
+    @app.post("/api/debug/directives")
+    async def debug_directives_save(body: dict, token: str = Query(...)):
+        """Write the project ``DIRECTIVE.md`` and flag the loop to rebuild its
+        system prompt at the next LLM call (applies immediately; idle → next
+        query). Broadcasts so other open inspectors re-fetch. KV cache prefix is
+        intentionally busted — the cost of a live directive edit."""
+        server._require_token(token)
+        from agent_cli.prompts.system_prompt import write_project_directive
+
+        write_project_directive(body.get("content") or "")
+        server.renderer.mark_directives_dirty()
+        server.renderer.broadcast_directives_changed()
+        return {"ok": True}
+
     @app.get("/api/debug/prompt/scopes")
     async def debug_prompt_scopes(token: str = Query(...)):
         """Scopes that currently have a captured system prompt — the main loop
