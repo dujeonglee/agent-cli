@@ -22,6 +22,46 @@ the parse failing → diagnostic+retry, never a forced bogus structure):
 import json
 
 _DELIMS = ",}]"
+# Valid single-char JSON string escapes (``\uXXXX`` handled separately).
+_VALID_ESCAPE = set('"\\/bfnrt')
+
+
+def fix_invalid_escapes(text: str) -> tuple[str, bool]:
+    """Double any backslash that does NOT begin a valid JSON escape, so the
+    model's under-escaped ``\\d`` / ``\\s`` / ``\\x`` / ``\\.`` (raw-string
+    regex, ``\\x00`` char classes, Windows paths) parse as the literal backslash
+    they meant. The measured dominant backslash-heavy failure: json.loads raises
+    ``Invalid \\escape`` on a regex ``[^\\s]`` the model wrote with one backslash.
+
+    Conservative + reversible: VALID escape pairs (``\\"`` ``\\\\`` ``\\n``
+    ``\\uXXXX``) are consumed as-is, so already-correct JSON is returned
+    unchanged (``changed=False``) and the caller only keeps the result if it now
+    validates. String-aware is unnecessary — a backslash outside a string is
+    already invalid JSON, so doubling it can't corrupt valid structure."""
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    changed = False
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            nxt = text[i + 1] if i + 1 < n else ""
+            is_u = nxt == "u" and _is_hex4(text[i + 2 : i + 6])
+            if nxt in _VALID_ESCAPE or is_u:
+                out.append(text[i : i + 2])  # valid escape → keep the pair
+                i += 2
+            else:
+                out.append("\\\\")  # invalid → escape the lone backslash
+                changed = True
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return ("".join(out), changed) if changed else (text, False)
+
+
+def _is_hex4(s: str) -> bool:
+    return len(s) == 4 and all(c in "0123456789abcdefABCDEF" for c in s)
 
 
 def close_unbalanced(text: str) -> tuple[str, bool]:

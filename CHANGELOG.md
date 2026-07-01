@@ -12,6 +12,20 @@
 
 ## [Unreleased]
 
+## [4.18.2] - 2026-07-02
+
+### Fixed
+
+- **md_array: under-escaped 백슬래시 JSON 복구 (`fix_invalid_escapes`)** — 작은 모델이
+  raw-string regex(`[^\s]`)·char class(`[\x00-\x1f]`)·Windows 경로(`C:\Users`)를 한 번만
+  이스케이프해 내면 `json.loads` 가 `Invalid \escape` 로 거부하는 **실측 지배 backslash-heavy
+  파싱 실패**를 복구한다. `_json_repair.fix_invalid_escapes` 를 추가 — 유효 JSON escape
+  (`" \ / b f n r t`·`\uXXXX`)를 시작하지 않는 고립 백슬래시를 두 배로 만들어(`\d`→`\\d`)
+  모델이 의도한 리터럴 백슬래시로 재파싱하고, `md_array._extract_op_json` 이 stage-2 폴백에서
+  `close_unbalanced` 와 합성(under-escape + `]` 누락 동시 복구)한다. 순수 파서 강화 — 프롬프트·
+  adherence 무변경, 정상 JSON 은 무변경(`changed=False`)이라 clean 경로 무영향, bail-if-invalid
+  로 틀린 추측은 채택 불가. 실측(Qwen3.6-35B-A3B-MLX): backslash-heavy 3/9 → 4/4, 회귀 0.
+
 ## [4.18.1] - 2026-06-30
 
 ### Changed

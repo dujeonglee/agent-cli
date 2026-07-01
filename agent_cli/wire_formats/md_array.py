@@ -35,7 +35,11 @@ import json
 import re
 
 from agent_cli.wire_formats._json_diag import describe_json_error
-from agent_cli.wire_formats._json_repair import close_unbalanced, repair_value_quotes
+from agent_cli.wire_formats._json_repair import (
+    close_unbalanced,
+    fix_invalid_escapes,
+    repair_value_quotes,
+)
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 _THOUGHT_RE = re.compile(r"^##\s*Thought\s*$", re.MULTILINE)
@@ -291,6 +295,21 @@ def _extract_op_json(text: str):
     parsed = _extract_first_json(text, strict=False)
     if parsed is not None:
         return parsed, True
+    # Invalid escapes: the model under-escaped a regex ``\s`` / ``\d`` / ``\x`` /
+    # ``\.`` (raw strings, char classes, Windows paths) → strict json.loads raises
+    # "Invalid \escape" (the measured dominant backslash-heavy failure). Double
+    # the lone backslashes and re-parse; compose with the unclosed-array closer so
+    # a payload that is BOTH under-escaped AND missing its ``]`` still recovers.
+    esc_fixed, changed = fix_invalid_escapes(text)
+    if changed:
+        parsed = _extract_first_json(esc_fixed, strict=False)
+        if parsed is not None:
+            return parsed, True
+        closed, ch2 = close_unbalanced(esc_fixed)
+        if ch2:
+            parsed = _extract_first_json(closed, strict=False)
+            if parsed is not None:
+                return parsed, True
     # Last resort: a well-formed op array the model finished but forgot to
     # close (measured dominant NO_JSON shape — session 1781336790, a 6-op
     # read_file batch missing its trailing `]`). `_extract_first_json` returns

@@ -684,3 +684,30 @@ class TestEndToEnd:
         result = loop.run()
         assert result.success
         assert result.output == "finished"
+
+
+class TestInvalidEscapeRecovery:
+    """Under-escaped backslashes in write_file content (raw-string regex, char
+    classes, Windows paths) recover at parse_stage 2 — the dominant measured
+    backslash-heavy failure on small models."""
+
+    def test_regex_content_recovers(self):
+        # what the tool should receive (literal \s regex + a trailing newline)
+        content = 'EMAIL = re.compile(r"[^\\s@]+")\n'
+        # what the model emits inline: quotes escaped (\"), newline as \n, but the
+        # regex backslash left single (\s) — an INVALID JSON escape that breaks
+        # strict json.loads. Written as a raw string = the exact wire text.
+        body = r'[{"action":"write_file","path":"v.py","content":"EMAIL = re.compile(r\"[^\s@]+\")\n"}]'
+        t = WF.parse_turn(_wire("regex", body))
+        assert t.parse_stage == 2
+        assert t.ops[0].action == "write_file"
+        assert t.ops[0].action_input["content"] == content
+
+    def test_windows_path_and_hex(self):
+        content = 'p = r"[\\x00-\\x1f]"\n'  # literal \x00 char-class regex
+        body = (
+            r'[{"action":"write_file","path":"a","content":"p = r\"[\x00-\x1f]\"\n"}]'
+        )
+        t = WF.parse_turn(_wire("x", body))
+        assert t.parse_stage == 2
+        assert t.ops[0].action_input["content"] == content

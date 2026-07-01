@@ -152,3 +152,35 @@ class TestSanitizeTruncatedEdit:
         sanitized, warning = _sanitize_truncated_edit(tool_input)
         assert sanitized["lines"] == []
         assert "truncated" in warning.lower()
+
+
+class TestFixInvalidEscapes:
+    """Under-escaped regex/paths (`\\s` `\\d` `\\x` `\\.`) → doubled so they
+    parse as the literal backslash the model meant (the measured backslash-heavy
+    md_array failure). Valid JSON is returned unchanged."""
+
+    def test_regex_backslash_s_recovers(self):
+        import json
+
+        from agent_cli.wire_formats._json_repair import fix_invalid_escapes
+
+        broken = r'{"content": "re.compile(r\"[^\s]+\")"}'  # \s invalid escape
+        fixed, changed = fix_invalid_escapes(broken)
+        assert changed
+        assert json.loads(fixed)["content"] == r're.compile(r"[^\s]+")'
+
+    def test_hex_and_dot_escapes(self):
+        import json
+
+        from agent_cli.wire_formats._json_repair import fix_invalid_escapes
+
+        broken = r'{"c": "[\x00-\x1f] and \d+\.\d+"}'
+        fixed, changed = fix_invalid_escapes(broken)
+        assert changed and json.loads(fixed)["c"] == r"[\x00-\x1f] and \d+\.\d+"
+
+    def test_valid_json_unchanged(self):
+        from agent_cli.wire_formats._json_repair import fix_invalid_escapes
+
+        for s in (r'{"a":"x\n\t\" \\ \/ é"}', r'{"p":"C:\\Users\\x"}', '{"n":1}'):
+            fixed, changed = fix_invalid_escapes(s)
+            assert changed is False and fixed == s
