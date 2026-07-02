@@ -184,3 +184,54 @@ class TestFixInvalidEscapes:
         for s in (r'{"a":"x\n\t\" \\ \/ é"}', r'{"p":"C:\\Users\\x"}', '{"n":1}'):
             fixed, changed = fix_invalid_escapes(s)
             assert changed is False and fixed == s
+
+
+class TestDropUnbalancedClosers:
+    """Mirror of close_unbalanced — drops closers that match no open frame
+    (over-closed payload). Measured shape: a doubled op close brace ``[{...}}]``
+    (session 1783001191). String-aware so content braces are safe; already
+    balanced JSON is returned unchanged."""
+
+    def test_doubled_close_brace_recovers(self):
+        import json
+
+        from agent_cli.wire_formats._json_repair import drop_unbalanced_closers
+
+        broken = '[{"action": "shell", "command": "ls /Users/x/DOOM/"}}]'  # }}]
+        fixed, changed = drop_unbalanced_closers(broken)
+        assert changed
+        assert json.loads(fixed) == [
+            {"action": "shell", "command": "ls /Users/x/DOOM/"}
+        ]
+
+    def test_multiple_extra_closers(self):
+        import json
+
+        from agent_cli.wire_formats._json_repair import drop_unbalanced_closers
+
+        fixed, changed = drop_unbalanced_closers(
+            '[{"action":"shell","command":"ls"}}}]'
+        )
+        assert changed and json.loads(fixed) == [{"action": "shell", "command": "ls"}]
+
+    def test_balanced_json_unchanged(self):
+        from agent_cli.wire_formats._json_repair import drop_unbalanced_closers
+
+        for s in (
+            '[{"action":"shell","command":"ls x"}]',
+            '[{"action":"read_file","path":"a"},{"action":"read_file","path":"b"}]',
+            '{"n":1}',
+        ):
+            fixed, changed = drop_unbalanced_closers(s)
+            assert changed is False and fixed == s
+
+    def test_content_braces_preserved(self):
+        import json
+
+        from agent_cli.wire_formats._json_repair import drop_unbalanced_closers
+
+        # Braces/brackets inside a string value must NOT be counted as closers.
+        s = '[{"action":"write_file","path":"x","content":"def f(): return {} # arr[0]} and }]"}]'
+        fixed, changed = drop_unbalanced_closers(s)
+        assert changed is False and fixed == s
+        assert json.loads(fixed)[0]["content"] == "def f(): return {} # arr[0]} and }]"

@@ -711,3 +711,25 @@ class TestInvalidEscapeRecovery:
         t = WF.parse_turn(_wire("x", body))
         assert t.parse_stage == 2
         assert t.ops[0].action_input["content"] == content
+
+
+class TestOverCloseRecovery:
+    """A doubled op close brace ``[{...}}]`` recovers at parse_stage 2 — the
+    real over-close NO_JSON shape captured from session 1783001191 (27B)."""
+
+    def test_doubled_close_brace_recovers(self):
+        # exact raw from session 1783001191/raw_failures.jsonl (over-close }}])
+        body = '[{"action": "shell", "command": "ls /Users/idujeong/workspace/DOOM/"}}]'
+        t = WF.parse_turn(_wire("Let me build a Doom-style FPS game.", body))
+        assert t.parse_stage == 2
+        assert len(t.ops) == 1
+        assert t.ops[0].action == "shell"
+        assert t.ops[0].action_input["command"] == "ls /Users/idujeong/workspace/DOOM/"
+
+    def test_over_close_content_braces_safe(self):
+        # over-close on an op whose content itself carries braces → still one op,
+        # content byte-preserved (string-aware drop must not touch inner braces).
+        body = '[{"action":"write_file","path":"x.py","content":"def f(): return {}"}}]'
+        t = WF.parse_turn(_wire("write", body))
+        assert t.parse_stage == 2
+        assert t.ops[0].action_input["content"] == "def f(): return {}"

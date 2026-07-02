@@ -4,14 +4,21 @@ Sibling to ``_json_diag``: same rationale for living off the ``WireFormat``
 base (a pure JSON concern, not wire-format behaviour, shared by every
 JSON-bearing format so each need not carry a private copy that can drift).
 
-Two fixes, both deliberately conservative + bail-if-invalid (the CALLER
+Four fixes, all deliberately conservative + bail-if-invalid (the CALLER
 re-parses and keeps the result only if it now validates; a wrong guess leaves
 the parse failing → diagnostic+retry, never a forced bogus structure):
 
+- :func:`fix_invalid_escapes` — doubles a lone backslash that does NOT begin a
+  valid JSON escape (``\\d`` ``\\s`` ``\\x`` ``\\.`` from raw-string regex / char
+  classes / Windows paths). The measured dominant backslash-heavy failure:
+  json.loads raises ``Invalid \\escape`` on a regex ``[^\\s]``.
 - :func:`close_unbalanced` — appends closers for brackets/braces opened and
   never closed (string-aware depth scan). The measured dominant NO_JSON shape:
   a multi-op array the model finished but forgot to close (session 1781336790
   — a 6-op read_file batch missing its `]`).
+- :func:`drop_unbalanced_closers` — the mirror: drops closers that match no
+  open frame (over-closed payload). Measured shape: a doubled op close brace
+  ``[{...}}]`` (session 1783001191 — a 27B shell op → NO_JSON).
 - :func:`repair_value_quotes` — a string value/key missing ONE quote (open OR
   close): ``"path": mgt.c"`` / ``"path": "mgt.c}``. Error-position guided, only
   fires on a clear missing-quote signal (a stray quote, or an unterminated
@@ -99,6 +106,57 @@ def close_unbalanced(text: str) -> tuple[str, bool]:
     if stack:
         return text + "".join(reversed(stack)), True
     return text, False
+
+
+def drop_unbalanced_closers(text: str) -> tuple[str, bool]:
+    """Drop closing brackets/braces that match no open frame — the mirror of
+    :func:`close_unbalanced` for OVER-closed payloads. String-aware depth stack:
+    a ``}``/``]`` is kept only when it closes the current open frame, else
+    dropped as spurious. The measured shape: a model doubling an op's close
+    brace, ``[{...}}]`` (session 1783001191 — a 27B shell op emitted with
+    ``}}]`` → NO_JSON). Braces inside string values are never counted, so
+    content like ``"return {}"`` is untouched, and already-balanced JSON is
+    returned unchanged (``changed=False``).
+
+    Returns ``(fixed_text, changed)``; ``changed`` iff at least one closer was
+    dropped. bail-if-invalid, same contract as :func:`close_unbalanced`.
+    """
+    out: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escape_next = False
+    changed = False
+
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            out.append(ch)
+            continue
+        if ch == "\\":
+            if in_string:
+                escape_next = True
+            out.append(ch)
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string:
+            out.append(ch)
+            continue
+        if ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in ("}", "]"):
+            if stack and stack[-1] == ch:
+                stack.pop()
+            else:
+                changed = True  # spurious closer (no matching open) → drop
+                continue
+        out.append(ch)
+
+    return ("".join(out), changed) if changed else (text, False)
 
 
 def repair_value_quotes(text: str) -> tuple[str, bool]:

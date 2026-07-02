@@ -12,6 +12,20 @@
 
 ## [Unreleased]
 
+## [4.18.3] - 2026-07-02
+
+### Fixed
+
+- **md_array: 여분 닫힘(over-close) JSON 복구 (`drop_unbalanced_closers`)** — 모델이
+  op 의 닫는 중괄호를 중복해 `[{...}}]` 로 내면 `json.loads` 가 `Expecting ',' delimiter`
+  로 거부해 op 배열 전체가 파싱 실패(NO_JSON)한다. 실전 세션 1783001191(Qwen3.6-27B)의
+  `raw_failures.jsonl` 에서 `[{"action":"shell",...}}]` 로 캡처된 shape. `_json_repair.
+  drop_unbalanced_closers` 를 추가 — `close_unbalanced`(미닫힘 복구)의 거울로, 열린
+  프레임과 매칭 안 되는 닫기(`}`/`]`)를 문자열-인식 깊이 스택으로 드롭하고, `md_array.
+  _extract_op_json` 이 `close_unbalanced` 와 합성(over-close + 미닫힘 동시 복구)한다.
+  content 속 `{}`/`]` 는 문자열 인식으로 보존, 정상 JSON 은 무변경(`changed=False`),
+  bail-if-invalid 로 틀린 드롭은 채택 불가. 순수 파서 강화 — 프롬프트·adherence 무변경.
+
 ## [4.18.2] - 2026-07-02
 
 ### Fixed

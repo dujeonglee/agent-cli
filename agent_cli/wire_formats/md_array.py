@@ -37,6 +37,7 @@ import re
 from agent_cli.wire_formats._json_diag import describe_json_error
 from agent_cli.wire_formats._json_repair import (
     close_unbalanced,
+    drop_unbalanced_closers,
     fix_invalid_escapes,
     repair_value_quotes,
 )
@@ -324,6 +325,19 @@ def _extract_op_json(text: str):
             parsed = _extract_first_json(closed, strict=strict)
             if parsed is not None:
                 return parsed, True
+    # Last resort: an OVER-closed payload — the model doubled an op's close
+    # brace (`[{...}}]`, session 1783001191 — a 27B shell op emitted `}}]` →
+    # NO_JSON). The mirror of close_unbalanced: drop the spurious closers
+    # (string-aware, so content braces are safe) and re-parse, composed with
+    # close_unbalanced so a payload BOTH over-closed early AND unclosed at EOF
+    # still recovers. bail-if-invalid: a wrong drop falls through to retry.
+    dropped, changed = drop_unbalanced_closers(text)
+    if changed:
+        for cand in (dropped, close_unbalanced(dropped)[0]):
+            for strict in (True, False):
+                parsed = _extract_first_json(cand, strict=strict)
+                if parsed is not None:
+                    return parsed, True
     # Last resort: a string value/key missing ONE quote (open or close) —
     # ``"path": mgt.c"`` / ``"path": "mgt.c}``. Error-position-guided requote
     # (string-aware), composed with close_unbalanced so a payload that is BOTH
