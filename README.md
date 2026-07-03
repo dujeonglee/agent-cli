@@ -363,6 +363,23 @@ Sessions for /path/to/project:
 
 LLM은 `read_context` 도구로 현재 또는 이전 세션의 이력을 **SQL 로 질의**할 수 있습니다 (history 테이블에 `SELECT` — kind/tools/files/author/turn/text 컬럼, 읽기전용).
 
+### 세션 메모리 (`memory` 도구)
+
+LLM 이 세션 중 **중대한 실패·중요한 발견·결정·메모**를 명시적으로 기록하고 필요할 때 꺼내
+쓰는 도구입니다. `read_context`(raw 이력 SQL 질의)와 달리 **LLM 이 큐레이션한 durable
+salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니다.**
+
+- **왜 필요한가**: 컨텍스트가 예산의 90% 를 넘으면 오래된 대화가 요약/드롭됩니다. "왜 이
+  빌드가 깨졌는지" 같은 중요한 정보가 이때 사라집니다. 메모리는 **롤링 컨텍스트 밖**
+  (`<session_dir>/memory.jsonl`)에 저장돼 압축 대상이 아니고, **`--resume` 로 복원**됩니다.
+- **상시 인덱스**: 기록된 메모리의 요약(id·타입·한 줄)이 시스템 프롬프트의 `## Session
+  Memory` 섹션에 **항상 노출**되어, LLM 이 "무엇을 기록했는지" 잊지 않습니다. 전체 내용은
+  `memory(mode=get, id=N)` 으로 필요할 때만 꺼냅니다(토큰 절약 + recall 보장).
+- **타입 4종**: `failure` ⚠(반복 회피) · `discovery` 💡(재사용) · `decision` 🔀(근거) ·
+  `note` 📝(일반).
+- **모드**: `add`(type+summary, 선택 detail/tags → id) · `get`(id) · `update`(id + 바꿀 필드)
+  · `delete`(id) · `list`(type/tag 필터). 발견이 나중에 틀리면 `update`/`delete` 로 정정.
+
 ## 스킬 (Prompt Skills)
 
 특정 작업에 최적화된 재사용 가능한 프롬프트 템플릿. Claude Code 스킬 포맷과 호환.
@@ -663,6 +680,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (한 op=한 task; 여러 delegate op = 병렬, 에이전트 역할 지정 가능) |
 | `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
+| `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
 | `complete` | 작업 완료 신호 (최종 결과 반환) |
 | `ask` | 사용자에게 질문하고 대기 (대화형; 질문 하나=op 하나, 여러 질문은 ask op 여러 개로 배치 — read_file 식) |

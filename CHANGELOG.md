@@ -12,6 +12,26 @@
 
 ## [Unreleased]
 
+## [4.22.0] - 2026-07-04
+
+### Added
+
+- **세션 메모리 (`memory` 도구)** — LLM 이 세션 중 **중대한 실패·중요한 발견·결정·메모**를
+  명시적으로 기록하고 필요할 때 꺼내 쓰는 도구. `read_context`(raw 이력 SQL)와 달리 LLM 이
+  큐레이션한 durable salience 로, **컨텍스트 압축(compaction)에도 유실되지 않는다.**
+  - **왜**: 컨텍스트 90% 초과 시 오래된 대화가 요약/드롭되며 중요한 정보가 유실된다. 메모리는
+    **롤링 컨텍스트 밖**(`<session_dir>/memory.jsonl`)에 저장돼 압축 대상이 아니고 `--resume`
+    로 복원된다.
+  - **상시 인덱스**: 기록된 메모리의 요약(id·타입·한 줄)이 시스템 프롬프트 `## Session Memory`
+    섹션에 항상 노출돼 LLM 이 "무엇을 기록했는지" 잊지 않는다(recall 보장). 전체 detail 은
+    `memory(mode=get, id=N)` 으로 필요할 때만 꺼낸다(토큰 절약).
+  - **타입 4종**: `failure` ⚠(반복 회피) · `discovery` 💡(재사용) · `decision` 🔀(근거) ·
+    `note` 📝(일반).
+  - **모드**: `add`/`get`/`update`/`delete`/`list`(type/tag 필터). 발견이 틀리면 update/delete
+    로 정정.
+  - 별도 저장소 설계 — 롤링 컨텍스트 통합은 (1) compaction 이 먹어버림 (2) role 오류
+    (3) 자기-출력 재공급 mimicry 위험 때문에 의도적으로 회피. 설계: `docs/session-memory/DESIGN.md`.
+
 ## [4.21.0] - 2026-07-04
 
 ### Added

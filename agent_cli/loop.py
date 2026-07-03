@@ -47,6 +47,7 @@ from agent_cli.recovery.observability import (
     FAILURE_UNKNOWN_TOOL,
     TurnRecorder,
 )
+from agent_cli.memory import consume_memory_reload
 from agent_cli.render import (
     consume_directives_reload,
     notify_directives_applied,
@@ -637,15 +638,22 @@ class AgentLoop:
         # A web edit to DIRECTIVE.md (Prompt Inspector) → rebuild the system
         # prompt so THIS call already reflects it (applies immediately at the
         # next LLM call; idle → next user query). Busts the KV cache prefix.
-        if consume_directives_reload():
+        # A memory add/update/delete (tool) or a web DIRECTIVE.md edit → rebuild
+        # so THIS call reflects it (busts the KV prefix). Memory's `## Session
+        # Memory` index is read from memory.jsonl at build time, so a rebuild is
+        # all it needs to refresh.
+        directives_changed = consume_directives_reload()
+        memory_changed = consume_memory_reload()
+        if directives_changed or memory_changed:
             self._rebuild_system_prompt()
             # Update-when-applied: push the fresh snapshot + signal open
-            # inspectors so the prompt view shows the now-live directive at the
-            # moment it takes effect (not optimistically on save).
+            # inspectors so the prompt view shows the now-live sections at the
+            # moment they take effect (not optimistically on save).
             render_system_prompt_snapshot(
                 build_inspector_sections(self._system_sections, self.ctx), self.turn
             )
-            notify_directives_applied()
+            if directives_changed:
+                notify_directives_applied()
         # PreLLMCall hook — can inject system sections and messages
         hook_ctx = self._fire_hook("PreLLMCall")
         self._apply_system_sections(hook_ctx)

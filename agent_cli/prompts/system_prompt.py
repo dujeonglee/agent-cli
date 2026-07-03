@@ -766,6 +766,18 @@ def build_system_prompt_sections(
     if directives:
         sections.append(("Directives", directives))
 
+    # Session Memory: an LLM-curated, compaction-immune index of salient notes
+    # (failures/discoveries/decisions). Read fresh from <session_dir>/memory.jsonl
+    # each build so a `memory add` (which flips the reload flag) shows next turn,
+    # and a resumed session restores its memory. Summaries only — full detail is
+    # pulled via memory(mode=get). Omitted when empty (like an absent directive).
+    if session_dir:
+        from agent_cli.memory import render_index
+
+        mem = render_index(session_dir)
+        if mem:
+            sections.append(("Session Memory", mem))
+
     # Execution context: tell LLM where it is in the call stack.
     # Last because it's the only Recency section that mutates within a
     # session — keeping it last leaves the preceding three as a stable

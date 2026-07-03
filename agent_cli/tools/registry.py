@@ -21,6 +21,7 @@ import json
 from agent_cli.tools.base import Tool
 from agent_cli.tools.code_index import CodeIndexTool
 from agent_cli.tools.context import ReadContextTool
+from agent_cli.tools.memory_tool import MemoryTool
 from agent_cli.tools.delegate import DelegateTool
 from agent_cli.tools.edit_file import EditFileTool
 from agent_cli.tools.fetch import FetchTool
@@ -45,6 +46,7 @@ _ALL_TOOLS: list[Tool] = [
     CodeIndexTool(),
     CompleteTool(),
     ReadContextTool(),
+    MemoryTool(),
     AskTool(),
     RunSkillTool(),
     FetchTool(),
