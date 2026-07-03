@@ -1368,7 +1368,17 @@ def web(
     # Pass the live ctx so the Prompt Inspector can show the dynamic context
     # (conversation + observations), not just the static system prompt.
     server = WebServer(
-        renderer, token=token, ctx=ctx, trust_local=trust_local, base_path=base_path
+        renderer,
+        token=token,
+        ctx=ctx,
+        trust_local=trust_local,
+        base_path=base_path,
+        # The session's LLM — reused by the Directives 🪄 enhance endpoint.
+        # (``provider`` here is the provider-name string; ``llm_provider`` is the
+        # actual LLMProvider object.)
+        provider=llm_provider,
+        model=resolved_model,
+        capabilities=capabilities,
     )
 
     # Prime the session-info ``ready`` so a client opening the page

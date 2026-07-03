@@ -2012,7 +2012,7 @@ class TestDirectivesEndpoint:
     def test_get_empty_when_absent(self, server_and_client, tmp_path, monkeypatch):
         self._patch_dir(tmp_path, monkeypatch)
         _, _, client = server_and_client
-        r = client.get("/api/debug/directives?token=testtoken")
+        r = client.get("/api/directives?token=testtoken")
         assert r.status_code == 200 and r.json()["content"] == ""
 
     def test_post_writes_marks_dirty_then_get(
@@ -2021,22 +2021,135 @@ class TestDirectivesEndpoint:
         self._patch_dir(tmp_path, monkeypatch)
         _, renderer, client = server_and_client
         r = client.post(
-            "/api/debug/directives?token=testtoken", json={"content": "always Korean"}
+            "/api/directives?token=testtoken", json={"content": "always Korean"}
         )
         assert r.status_code == 200 and r.json()["ok"] is True
         assert (tmp_path / ".agent-cli" / "DIRECTIVE.md").read_text(
             encoding="utf-8"
         ) == "always Korean"
         assert renderer.consume_directives_dirty() is True  # loop will rebuild
-        got = client.get("/api/debug/directives?token=testtoken").json()
+        got = client.get("/api/directives?token=testtoken").json()
         assert got["content"] == "always Korean"
 
     def test_requires_token(self, server_and_client):
         _, _, client = server_and_client
-        assert client.get("/api/debug/directives?token=bad").status_code != 200
+        assert client.get("/api/directives?token=bad").status_code != 200
+        assert (
+            client.post("/api/directives?token=bad", json={"content": "x"}).status_code
+            != 200
+        )
+
+
+class _Resp:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeProvider:
+    """Records the (system, messages) of each call, returns canned content."""
+
+    def __init__(self, content="GENERATED"):
+        self._content = content
+        self.calls = []
+
+    def call(self, messages, system, model, capabilities, **kwargs):
+        self.calls.append({"system": system, "messages": messages, "model": model})
+        return _Resp(self._content)
+
+
+class TestDirectivesEnhance:
+    """🪄 auto-generate: enhance an existing draft, or generate a starter from a
+    task preset. Reuses the session provider (injected fake here)."""
+
+    def _client(self, provider, content="GENERATED"):
+        server = WebServer(
+            WebRenderer(),
+            token="t",
+            provider=provider,
+            model="m",
+            capabilities=object(),
+        )
+        return server, TestClient(create_app(server))
+
+    def test_enhance_mode_uses_enhance_system_and_draft(self):
+        from agent_cli.web.server import _DIRECTIVE_ENHANCE_SYSTEM
+
+        fp = _FakeProvider("RICHER DIRECTIVE")
+        _, client = self._client(fp)
+        r = client.post(
+            "/api/directives/enhance?token=t", json={"content": "always korean"}
+        )
+        assert r.status_code == 200 and r.json()["content"] == "RICHER DIRECTIVE"
+        assert fp.calls[0]["system"] == _DIRECTIVE_ENHANCE_SYSTEM
+        assert fp.calls[0]["messages"][0]["content"] == "always korean"
+
+    def test_preset_mode_uses_starter_system_and_preset_text(self):
+        from agent_cli.web.server import _DIRECTIVE_PRESETS, _DIRECTIVE_STARTER_SYSTEM
+
+        fp = _FakeProvider("STARTER")
+        _, client = self._client(fp)
+        r = client.post(
+            "/api/directives/enhance?token=t", json={"preset": "driver_tdd"}
+        )
+        assert r.status_code == 200 and r.json()["content"] == "STARTER"
+        assert fp.calls[0]["system"] == _DIRECTIVE_STARTER_SYSTEM
+        # the driver_tdd instruction drove the user message
+        assert (
+            _DIRECTIVE_PRESETS["driver_tdd"][1] in fp.calls[0]["messages"][0]["content"]
+        )
+
+    def test_preset_with_existing_content_is_appended(self):
+        fp = _FakeProvider()
+        _, client = self._client(fp)
+        client.post(
+            "/api/directives/enhance?token=t",
+            json={"preset": "kunit", "content": "my draft"},
+        )
+        assert "my draft" in fp.calls[0]["messages"][0]["content"]
+
+    def test_unknown_preset_400(self):
+        _, client = self._client(_FakeProvider())
+        r = client.post("/api/directives/enhance?token=t", json={"preset": "nope"})
+        assert r.status_code == 400
+
+    def test_empty_request_400(self):
+        _, client = self._client(_FakeProvider())
+        r = client.post("/api/directives/enhance?token=t", json={})
+        assert r.status_code == 400
+
+    def test_no_provider_503(self):
+        server = WebServer(WebRenderer(), token="t")  # no provider wired
+        client = TestClient(create_app(server))
+        r = client.post("/api/directives/enhance?token=t", json={"content": "x"})
+        assert r.status_code == 503
+
+    def test_code_fences_stripped(self):
+        fp = _FakeProvider("```markdown\n# Directive\n- rule\n```")
+        _, client = self._client(fp)
+        r = client.post("/api/directives/enhance?token=t", json={"content": "x"})
+        assert r.json()["content"] == "# Directive\n- rule"
+
+    def test_presets_endpoint_lists_labels(self):
+        _, client = self._client(_FakeProvider())
+        r = client.get("/api/directives/presets?token=t")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is True
+        ids = {p["id"] for p in body["presets"]}
+        assert {"driver_tdd", "kunit", "issue_analysis", "code_review"} <= ids
+        assert all(p["label"] for p in body["presets"])
+
+    def test_presets_unavailable_without_provider(self):
+        server = WebServer(WebRenderer(), token="t")
+        client = TestClient(create_app(server))
+        r = client.get("/api/directives/presets?token=t")
+        assert r.status_code == 200 and r.json()["available"] is False
+
+    def test_requires_token(self):
+        _, client = self._client(_FakeProvider())
         assert (
             client.post(
-                "/api/debug/directives?token=bad", json={"content": "x"}
+                "/api/directives/enhance?token=bad", json={"content": "x"}
             ).status_code
             != 200
         )

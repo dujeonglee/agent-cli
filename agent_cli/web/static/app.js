@@ -1387,6 +1387,8 @@
   const $dirSave = document.getElementById("insp-dir-save");
   const $dirCancel = document.getElementById("insp-dir-cancel");
   const $dirStatus = document.getElementById("insp-dir-status");
+  const $dirWand = document.getElementById("insp-dir-wand");
+  const $dirMenu = document.getElementById("insp-dir-menu");
   if (!$btn || !$drawer || !token) return;
 
   // Which system-prompt scope the drawer is showing: "" = main loop, a
@@ -1587,7 +1589,7 @@
   // LLM call (immediate; idle → next query). Broadcast keeps editors in sync.
   let dirDirty = false; // user typed since last load → don't clobber on refetch
   function loadDirectives() {
-    return fetch("api/debug/directives?" + qtoken())
+    return fetch("api/directives?" + qtoken())
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (dirDirty) return; // a concurrent edit shouldn't overwrite my typing
@@ -1600,7 +1602,7 @@
   function saveDirectives() {
     $dirSave.disabled = true;
     $dirStatus.textContent = "저장 중…";
-    fetch("api/debug/directives?" + qtoken(), {
+    fetch("api/directives?" + qtoken(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: $dirText.value }),
@@ -1627,6 +1629,89 @@
   }
   if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
   if ($dirCancel) $dirCancel.addEventListener("click", cancelDirectives);
+
+  // ── 🪄 auto-generate ─────────────────────────────────────────────────
+  // A unified menu: "현재 내용 보강" (enhance the draft) + task-preset starters
+  // (shown when the editor is empty, but always available). The generated text
+  // lands in the editor UNSAVED (dirDirty) so it composes with 취소/저장.
+  let dirPresets = []; // [{id,label}] — backend is the single source
+  function loadDirPresets() {
+    return fetch("api/directives/presets?" + qtoken())
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        dirPresets = (d && d.presets) || [];
+        if ($dirWand) $dirWand.hidden = !(d && d.available); // no LLM → hide 🪄
+      })
+      .catch(function () {});
+  }
+  function closeWandMenu() { if ($dirMenu) $dirMenu.hidden = true; }
+  function buildWandMenu() {
+    if (!$dirMenu) return;
+    const hasText = $dirText.value.trim().length > 0;
+    let html =
+      '<button type="button" class="wand-item" data-act="enhance"' +
+      (hasText ? "" : " disabled") + ">✨ 현재 내용 보강</button>";
+    if (dirPresets.length) {
+      html += '<div class="wand-sep">스타터</div>';
+      html += dirPresets
+        .map(function (p) {
+          // labels are trusted backend constants; esc() belt-and-suspenders
+          return (
+            '<button type="button" class="wand-item" data-preset="' +
+            esc(p.id) + '">' + esc(p.label) + "</button>"
+          );
+        })
+        .join("");
+    }
+    $dirMenu.innerHTML = html;
+  }
+  function generateDirective(payload) {
+    closeWandMenu();
+    $dirStatus.textContent = "🪄 생성 중…";
+    if ($dirWand) $dirWand.disabled = true;
+    $dirSave.disabled = true;
+    fetch("api/directives/enhance?" + qtoken(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) {
+        $dirText.value = (d && d.content) || "";
+        dirDirty = true; // unsaved — review, then 저장 or 취소
+        $dirStatus.textContent = "🪄 생성됨 — 검토 후 저장";
+      })
+      .catch(function () { $dirStatus.textContent = "✗ 생성 실패"; })
+      .finally(function () {
+        if ($dirWand) $dirWand.disabled = false;
+        $dirSave.disabled = false;
+      });
+  }
+  if ($dirWand)
+    $dirWand.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!$dirMenu) return;
+      if ($dirMenu.hidden) {
+        buildWandMenu();
+        $dirMenu.hidden = false;
+      } else {
+        closeWandMenu();
+      }
+    });
+  if ($dirMenu)
+    $dirMenu.addEventListener("click", function (e) {
+      const btn = e.target.closest(".wand-item");
+      if (!btn || btn.disabled) return;
+      const payload = btn.dataset.preset
+        ? { preset: btn.dataset.preset, content: $dirText.value }
+        : { content: $dirText.value };
+      generateDirective(payload);
+    });
+  document.addEventListener("click", function (e) {
+    if ($dirMenu && !$dirMenu.hidden && !e.target.closest(".insp-dir-wandwrap"))
+      closeWandMenu();
+  });
+
   if ($dirText)
     $dirText.addEventListener("input", function () {
       dirDirty = true;
@@ -1651,6 +1736,7 @@
     $drawer.setAttribute("aria-hidden", "false");
     loadScopes().then(loadPrompt);
     loadDirectives();
+    loadDirPresets();
   }
 
   // Live chip refresh: when a delegate sub-agent spins up while the drawer is

@@ -128,6 +128,70 @@ def capture_startup_system_prompt(
 # bypassed cache manually.
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
+# ── Directives 🪄 auto-generate (POST /api/directives/enhance) ──
+# A one-off meta-call to the session's own LLM. Two modes: enhance an existing
+# draft, or generate a starter from a task preset (empty editor). The result is
+# returned unsaved for the user to review in the editor.
+_DIRECTIVE_ENHANCE_SYSTEM = (
+    "You are an expert at writing DIRECTIVE.md files — persistent operating "
+    "instructions that an AI coding agent reads every turn. The user gives a "
+    "rough draft. Rewrite it into a clearer, more detailed, well-structured "
+    "directive: preserve the user's intent AND language, make each instruction "
+    "specific and actionable, group related points under short Markdown headings "
+    "or bullets, and cut vagueness. Keep it a focused directive, not an essay. "
+    "Output ONLY the directive content in Markdown — no preamble, no explanation, "
+    "no surrounding code fences."
+)
+_DIRECTIVE_STARTER_SYSTEM = (
+    "You write DIRECTIVE.md files — persistent operating instructions for an AI "
+    "coding agent. Produce a concise, well-structured starter directive for the "
+    "task described. Use short Markdown headings and bullets, keep it practical "
+    "and specific, and write in Korean. Output ONLY the directive content — no "
+    "preamble, no explanation, no surrounding code fences."
+)
+# id → (label, generation instruction). Extend by adding an entry; the frontend
+# fetches the labels via GET /api/directives/presets so the menu stays in
+# sync with the backend (single source).
+_DIRECTIVE_PRESETS: dict[str, tuple[str, str]] = {
+    "driver_tdd": (
+        "🔧 드라이버 TDD 개발",
+        "리눅스/임베디드 디바이스 드라이버를 테스트 주도(TDD)로 개발하는 AI 에이전트를 위한 "
+        "DIRECTIVE.md 를 작성하라. 실패하는 테스트 먼저→최소 구현→리팩터 사이클, 레지스터/"
+        "하드웨어 접근 확인 습관, 커널 코딩 스타일, 빌드·정적분석 규율, 편집 전 확인사항을 포함하라.",
+    ),
+    "kunit": (
+        "🧪 KUnit 테스트",
+        "리눅스 커널 KUnit 테스트를 작성·실행하는 AI 에이전트를 위한 DIRECTIVE.md 를 작성하라. "
+        "KUnit suite/test case 구조, 커버리지 우선순위, `kunit.py run` 실행·해석, mocking/fixture "
+        "관례, 테스트 격리와 결정성을 포함하라.",
+    ),
+    "issue_analysis": (
+        "🐛 이슈 분석",
+        "버그/이슈를 분류하고 근본 원인을 분석하는 AI 에이전트를 위한 DIRECTIVE.md 를 작성하라. "
+        "재현 우선, 증거 수집(로그·git·history), 이해 없이 수정 금지, 가설-검증, 발견을 명확히 "
+        "보고하는 방식을 포함하라.",
+    ),
+    "code_review": (
+        "👓 코드 리뷰",
+        "코드 변경을 리뷰하는 AI 에이전트를 위한 DIRECTIVE.md 를 작성하라. 정확성 버그·보안·성능·"
+        "가독성 관점, 변경 범위 확인, 근거 있는 지적, 심각도 분류, 건설적 톤을 포함하라.",
+    ),
+}
+
+
+def _strip_code_fences(text: str) -> str:
+    """Drop a leading ```lang / trailing ``` fence the model may wrap the
+    directive in despite instructions, so the editor gets raw Markdown."""
+    t = text.strip()
+    if t.startswith("```"):
+        nl = t.find("\n")
+        if nl != -1:
+            t = t[nl + 1 :]
+        if t.rstrip().endswith("```"):
+            t = t.rstrip()[:-3]
+    return t.strip()
+
+
 # Per-file cap for workspace uploads (POST /api/workspace/upload). A guard
 # against an accidental huge upload filling the on-prem disk — generous enough
 # for source trees / small assets, not for blobs.
@@ -435,8 +499,18 @@ class WebServer:
         ctx=None,
         trust_local: bool = False,
         base_path: str = "",
+        provider=None,
+        model: str | None = None,
+        capabilities=None,
     ) -> None:
         self.renderer = renderer
+        # The session's LLM handle — reused by the Directives 🪄 enhance endpoint
+        # for a one-off meta-call (generate a richer DIRECTIVE.md). ``provider``
+        # is stateless per call (builds its own request), so a web-thread call is
+        # safe alongside the worker's loop. None (tests / no LLM) → feature 503s.
+        self.provider = provider
+        self.model = model
+        self.capabilities = capabilities
         # --trust-local: skip token auth for loopback requests (the gateway in
         # front of a 127.0.0.1-bound instance already authenticated the user).
         self.trust_local = trust_local
@@ -856,7 +930,7 @@ def create_app(server: WebServer) -> FastAPI:
             "est_tokens": est_tokens,
         }
 
-    @app.get("/api/debug/directives")
+    @app.get("/api/directives")
     async def debug_directives(token: str = Query(...)):
         """Current PROJECT ``DIRECTIVE.md`` content for the inspector editor.
         Always available (empty string when the file doesn't exist yet), so the
@@ -873,7 +947,7 @@ def create_app(server: WebServer) -> FastAPI:
             "path": str(project_directive_file()),
         }
 
-    @app.post("/api/debug/directives")
+    @app.post("/api/directives")
     async def debug_directives_save(body: dict, token: str = Query(...)):
         """Write the project ``DIRECTIVE.md`` and flag the loop to rebuild its
         system prompt at the next LLM call (applies immediately; idle → next
@@ -886,6 +960,62 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.mark_directives_dirty()
         server.renderer.broadcast_directives_changed()
         return {"ok": True}
+
+    @app.get("/api/directives/presets")
+    async def debug_directives_presets(token: str = Query(...)):
+        """Starter presets for the 🪄 menu — ``[{id, label}]`` (single source so
+        the menu matches the backend). Empty ``available`` when no LLM is wired
+        (feature disabled) so the frontend can hide 🪄."""
+        server._require_token(token)
+        return {
+            "available": server.provider is not None and server.model is not None,
+            "presets": [
+                {"id": pid, "label": label}
+                for pid, (label, _) in _DIRECTIVE_PRESETS.items()
+            ],
+        }
+
+    @app.post("/api/directives/enhance")
+    async def debug_directives_enhance(body: dict, token: str = Query(...)):
+        """Generate a richer DIRECTIVE.md with the session's own LLM (a one-off
+        meta-call; NOT the loop). ``preset`` set → a starter directive for that
+        task type; else ``content`` is enhanced. Returns ``{content}`` — the
+        frontend drops it into the editor UNSAVED for the user to review/save.
+        The blocking provider call runs in a threadpool so the async server
+        isn't blocked. 503 when no LLM is wired, 400 on empty request."""
+        server._require_token(token)
+        if server.provider is None or server.model is None:
+            raise HTTPException(status_code=503, detail="LLM not available")
+        preset = (body.get("preset") or "").strip()
+        content = (body.get("content") or "").strip()
+        if preset:
+            entry = _DIRECTIVE_PRESETS.get(preset)
+            if entry is None:
+                raise HTTPException(status_code=400, detail="unknown preset")
+            system = _DIRECTIVE_STARTER_SYSTEM
+            user = entry[1]
+            if content:  # feed any existing draft as extra context
+                user += f"\n\n참고할 기존 초안:\n{content}"
+        elif content:
+            system = _DIRECTIVE_ENHANCE_SYSTEM
+            user = content
+        else:
+            raise HTTPException(status_code=400, detail="empty content and no preset")
+
+        def _run() -> str:
+            resp = server.provider.call(
+                messages=[{"role": "user", "content": user}],
+                system=system,
+                model=server.model,
+                capabilities=server.capabilities,
+            )
+            return resp.content or ""
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(None, _run)
+        except Exception as e:  # network / provider error → surface as 502
+            raise HTTPException(status_code=502, detail=f"LLM call failed: {e}") from e
+        return {"content": _strip_code_fences(result)}
 
     @app.get("/api/debug/prompt/scopes")
     async def debug_prompt_scopes(token: str = Query(...)):

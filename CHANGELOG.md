@@ -12,6 +12,32 @@
 
 ## [Unreleased]
 
+## [4.19.0] - 2026-07-03
+
+### Added
+
+- **Prompt Inspector Directives 에디터에 🪄 자동 생성** — 세션의 LLM 으로 DIRECTIVE.md 를
+  더 상세·구조화해 만들어 준다. 통일 메뉴로 두 모드: **현재 내용 보강**(편집창의 초안을
+  확장) + **스타터 프리셋**(빈 편집창용 — 🔧 드라이버 TDD 개발 · 🧪 KUnit 테스트 ·
+  🐛 이슈 분석 · 👓 코드 리뷰). 생성 결과는 **미저장** 상태로 편집창에 들어가 사용자가
+  검토 후 저장/취소한다(방금 추가한 취소 버튼과 결합).
+  - `POST /api/directives/enhance` `{content, preset?}` → `{content}`. 세션
+    provider 를 재사용한 one-off 메타콜(루프 아님)이며, 블로킹 호출은 threadpool 에서
+    돌려 async 서버를 막지 않는다. provider 는 self 무변경이라 워커 루프와 동시 호출 안전.
+    `GET /api/directives/presets` 로 프리셋 라벨을 프론트에 제공(단일 출처).
+    LLM 미배선 시 503 / 🪄 자동 숨김.
+  - `WebServer(provider=, model=, capabilities=)` 배선(main.py). 모델 품질은 세션 모델
+    수준이라 검토-후-저장 전제. 프로젝트 파일 전용.
+
+### Changed
+
+- **Directive 엔드포인트를 `/api/debug/` 밖으로 이동** — directive 편집·생성은 debug
+  inspection 이 아니라 실사용 기능이므로 `/api/debug/directives*` → **`/api/directives*`**
+  로 옮겼다(`GET`/`POST /api/directives`, `/api/directives/presets`,
+  `/api/directives/enhance`). 소비자는 번들 프론트 하나뿐이라 외부 영향 0, 엔드포인트
+  경로는 서버 코드라 세션 resume 과 무관. `/api/debug/prompt*`(시스템 프롬프트 조회)는
+  진짜 inspection 이라 그대로 유지.
+
 ## [4.18.4] - 2026-07-03
 
 ### Added
