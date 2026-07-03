@@ -2145,6 +2145,97 @@ class TestDirectivesEnhance:
         r = client.get("/api/directives/presets?token=t")
         assert r.status_code == 200 and r.json()["available"] is False
 
+    # ── 🎭 personas ──
+
+    def test_persona_id_uses_persona_system_and_brief(self):
+        from agent_cli.web.server import (
+            _DIRECTIVE_PERSONA_SYSTEM,
+            _DIRECTIVE_PERSONAS,
+        )
+
+        fp = _FakeProvider("## 페르소나\n- '~냥' 을 붙인다")
+        _, client = self._client(fp)
+        r = client.post(
+            "/api/directives/enhance?token=t", json={"persona_id": "cat_butler"}
+        )
+        assert r.status_code == 200
+        assert fp.calls[0]["system"] == _DIRECTIVE_PERSONA_SYSTEM
+        # the cat_butler brief drove the user message
+        assert (
+            _DIRECTIVE_PERSONAS["cat_butler"][1]
+            in fp.calls[0]["messages"][0]["content"]
+        )
+        assert r.json()["content"].startswith("## 페르소나")
+
+    def test_persona_free_text_brief(self):
+        fp = _FakeProvider("## 페르소나\n- 해적처럼 말한다")
+        _, client = self._client(fp)
+        r = client.post(
+            "/api/directives/enhance?token=t", json={"persona": "우주 해적"}
+        )
+        assert r.status_code == 200
+        assert "우주 해적" in fp.calls[0]["messages"][0]["content"]
+        assert r.json()["content"].startswith("## 페르소나")
+
+    def test_persona_preserves_existing_task_content(self):
+        fp = _FakeProvider("## 페르소나\n- 도도하게 말한다")
+        _, client = self._client(fp)
+        task = "## 업무 지시\n- TDD 로 개발한다"
+        r = client.post(
+            "/api/directives/enhance?token=t",
+            json={"persona_id": "cat_butler", "content": task},
+        )
+        out = r.json()["content"]
+        # persona prepended, task directive preserved verbatim
+        assert out.startswith("## 페르소나")
+        assert "## 업무 지시" in out and "TDD 로 개발한다" in out
+        # the LLM never saw the task content (deterministic merge)
+        assert "TDD" not in fp.calls[0]["messages"][0]["content"]
+
+    def test_persona_regeneration_swaps_not_stacks(self):
+        fp = _FakeProvider("## 페르소나\n- 새 캐릭터")
+        _, client = self._client(fp)
+        existing = "## 페르소나\n- 옛 캐릭터\n\n## 업무 지시\n- 규칙"
+        r = client.post(
+            "/api/directives/enhance?token=t",
+            json={"persona_id": "robot_ai", "content": existing},
+        )
+        out = r.json()["content"]
+        assert out.count("## 페르소나") == 1  # old persona replaced, not stacked
+        assert "새 캐릭터" in out and "옛 캐릭터" not in out
+        assert "## 업무 지시" in out and "규칙" in out
+
+    def test_persona_missing_heading_is_added(self):
+        # LLM ignored the heading instruction → merge still yields a valid
+        # `## 페르소나` block (so a later regeneration can strip it).
+        fp = _FakeProvider("- 그냥 규칙만 있고 헤딩 없음")
+        _, client = self._client(fp)
+        r = client.post(
+            "/api/directives/enhance?token=t", json={"persona_id": "professor"}
+        )
+        assert r.json()["content"].startswith("## 페르소나")
+
+    def test_unknown_persona_400(self):
+        _, client = self._client(_FakeProvider())
+        r = client.post("/api/directives/enhance?token=t", json={"persona_id": "nope"})
+        assert r.status_code == 400
+
+    def test_personas_endpoint_lists_labels(self):
+        _, client = self._client(_FakeProvider())
+        r = client.get("/api/directives/personas?token=t")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is True
+        ids = {p["id"] for p in body["personas"]}
+        assert {"cat_butler", "joseon_king", "pro_programmer", "professor"} <= ids
+        assert all(p["label"] for p in body["personas"])
+
+    def test_personas_unavailable_without_provider(self):
+        server = WebServer(WebRenderer(), token="t")
+        client = TestClient(create_app(server))
+        r = client.get("/api/directives/personas?token=t")
+        assert r.status_code == 200 and r.json()["available"] is False
+
     def test_requires_token(self):
         _, client = self._client(_FakeProvider())
         assert (
@@ -2153,3 +2244,45 @@ class TestDirectivesEnhance:
             ).status_code
             != 200
         )
+
+
+class TestPersonaMergeHelpers:
+    """Deterministic persona ↔ task merge (no LLM)."""
+
+    def test_strip_no_persona_unchanged(self):
+        from agent_cli.web.server import _strip_persona_section
+
+        md = "## 업무 지시\n- 규칙 A\n- 규칙 B"
+        assert _strip_persona_section(md) == md
+
+    def test_strip_leading_persona_block(self):
+        from agent_cli.web.server import _strip_persona_section
+
+        md = "## 페르소나\n- 도도\n\n## 업무 지시\n- 규칙"
+        assert _strip_persona_section(md) == "## 업무 지시\n- 규칙"
+
+    def test_strip_persona_only_yields_empty(self):
+        from agent_cli.web.server import _strip_persona_section
+
+        assert _strip_persona_section("## 페르소나\n- 도도\n- 새침") == ""
+
+    def test_strip_persona_in_middle(self):
+        from agent_cli.web.server import _strip_persona_section
+
+        md = "## 업무\n- 규칙\n\n## 페르소나\n- 목소리\n\n## 기타\n- 끝"
+        out = _strip_persona_section(md)
+        assert "## 페르소나" not in out and "목소리" not in out
+        assert "## 업무" in out and "## 기타" in out
+
+    def test_merge_prepends_and_preserves(self):
+        from agent_cli.web.server import _merge_persona
+
+        out = _merge_persona("## 페르소나\n- 목소리", "## 업무\n- 규칙")
+        assert out.startswith("## 페르소나")
+        assert out.endswith("## 업무\n- 규칙")
+
+    def test_merge_adds_missing_heading(self):
+        from agent_cli.web.server import _merge_persona
+
+        out = _merge_persona("- 헤딩 없는 본문", "")
+        assert out == "## 페르소나\n- 헤딩 없는 본문"

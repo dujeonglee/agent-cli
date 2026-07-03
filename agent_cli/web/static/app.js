@@ -1644,6 +1644,13 @@
       })
       .catch(function () {});
   }
+  let dirPersonas = []; // [{id,label}] — fixed characters, backend single source
+  function loadDirPersonas() {
+    return fetch("api/directives/personas?" + qtoken())
+      .then(function (r) { return r.json(); })
+      .then(function (d) { dirPersonas = (d && d.personas) || []; })
+      .catch(function () {});
+  }
   function closeWandMenu() { if ($dirMenu) $dirMenu.hidden = true; }
   function buildWandMenu() {
     if (!$dirMenu) return;
@@ -1663,7 +1670,31 @@
         })
         .join("");
     }
+    if (dirPersonas.length) {
+      // 페르소나 = 목소리 축. 고정 캐릭터 + 직접 입력. 업무 내용은 보존됨.
+      html += '<div class="wand-sep">🎭 페르소나</div>';
+      html += dirPersonas
+        .map(function (p) {
+          return (
+            '<button type="button" class="wand-item" data-persona-id="' +
+            esc(p.id) + '">' + esc(p.label) + "</button>"
+          );
+        })
+        .join("");
+      html +=
+        '<div class="wand-custom">' +
+        '<input type="text" class="wand-persona-input" ' +
+        'placeholder="캐릭터 직접 입력…" />' +
+        '<button type="button" class="wand-item wand-custom-go" ' +
+        'data-act="persona-custom">적용</button></div>';
+    }
     $dirMenu.innerHTML = html;
+  }
+  function generatePersonaCustom() {
+    const inp = $dirMenu && $dirMenu.querySelector(".wand-persona-input");
+    const v = inp && inp.value.trim();
+    if (!v) { if (inp) inp.focus(); return; }
+    generateDirective({ persona: v, content: $dirText.value });
   }
   function generateDirective(payload) {
     closeWandMenu();
@@ -1698,15 +1729,27 @@
         closeWandMenu();
       }
     });
-  if ($dirMenu)
+  if ($dirMenu) {
     $dirMenu.addEventListener("click", function (e) {
       const btn = e.target.closest(".wand-item");
       if (!btn || btn.disabled) return;
-      const payload = btn.dataset.preset
-        ? { preset: btn.dataset.preset, content: $dirText.value }
-        : { content: $dirText.value };
+      if (btn.dataset.act === "persona-custom") { generatePersonaCustom(); return; }
+      let payload;
+      if (btn.dataset.personaId)
+        payload = { persona_id: btn.dataset.personaId, content: $dirText.value };
+      else if (btn.dataset.preset)
+        payload = { preset: btn.dataset.preset, content: $dirText.value };
+      else payload = { content: $dirText.value }; // enhance
       generateDirective(payload);
     });
+    // Enter in the direct-input field applies it (input isn't a .wand-item).
+    $dirMenu.addEventListener("keydown", function (e) {
+      if (e.target.classList.contains("wand-persona-input") && e.key === "Enter") {
+        e.preventDefault();
+        generatePersonaCustom();
+      }
+    });
+  }
   document.addEventListener("click", function (e) {
     if ($dirMenu && !$dirMenu.hidden && !e.target.closest(".insp-dir-wandwrap"))
       closeWandMenu();
@@ -1737,6 +1780,7 @@
     loadScopes().then(loadPrompt);
     loadDirectives();
     loadDirPresets();
+    loadDirPersonas();
   }
 
   // Live chip refresh: when a delegate sub-agent spins up while the drawer is

@@ -913,12 +913,21 @@ footer {
 .insp-dir-menu {
   position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 20;
   min-width: 170px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  max-height: 60vh; overflow-y: auto;  /* many personas → scroll, don't overflow */
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
 }
 /* the `display:flex` above overrides the UA [hidden]{display:none}, so the
    menu never hides on close — restore hiding with a higher-specificity rule. */
 .insp-dir-menu[hidden] { display: none; }
+/* 🎭 페르소나 직접-입력 row: text field + apply button on one line */
+.insp-dir-menu .wand-custom { display: flex; gap: 4px; padding: 4px 6px 2px; }
+.insp-dir-menu .wand-persona-input {
+  flex: 1 1 auto; min-width: 0; padding: 4px 6px; font-size: 12px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.insp-dir-menu .wand-custom-go { flex: 0 0 auto; padding: 4px 8px; }
 .insp-dir-menu .wand-item {
   text-align: left; background: transparent; color: var(--text); border: 0;
   border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer;

@@ -179,6 +179,124 @@ _DIRECTIVE_PRESETS: dict[str, tuple[str, str]] = {
 }
 
 
+# ── Directives 🎭 페르소나 (POST /api/directives/enhance, persona mode) ──
+# A persona is an ORTHOGONAL axis to the task presets above: it sets the agent's
+# VOICE, not what work it does. It lives as a `## 페르소나` section inside the
+# same DIRECTIVE.md so the two axes coexist in one file — the persona block is
+# merged in by deterministic code (not the LLM), preserving any task content
+# verbatim and SWAPPING (not stacking) on regeneration. The LLM only writes the
+# persona prose from a short character brief.
+_PERSONA_HEADING = "## 페르소나"
+_DIRECTIVE_PERSONA_SYSTEM = (
+    "You write the persona/voice section of a DIRECTIVE.md for an AI coding "
+    "agent. Given a character description, produce a concise Markdown section "
+    "that starts with the exact heading `## 페르소나` and lists the character's "
+    "speech style: tone, first-/second-person forms, verbal tics, catchphrases, "
+    "and honorifics — with concrete Korean examples. ALWAYS end with a rule that "
+    "the voice is cosmetic: the agent must still use tools and report facts "
+    "accurately and never let the character distort correctness. Write in Korean. "
+    "Output ONLY the `## 페르소나` section — no preamble, no other top-level "
+    "headings, no surrounding code fences."
+)
+# id → (label, character brief). The brief seeds the LLM, which expands it into a
+# full persona section. Extend by adding an entry; the frontend fetches labels
+# via GET /api/directives/personas so the 🪄 menu stays in sync (single source).
+_DIRECTIVE_PERSONAS: dict[str, tuple[str, str]] = {
+    "cat_butler": (
+        "🐱 고양이 집사",
+        "도도하고 고고한 고양이 집사. 문장 끝에 '~냥/~다냥'을 붙이고, 자신을 '이 몸', "
+        "사용자를 '집사'라 부른다. 새침하지만 유능하게 일은 확실히 해낸다.",
+    ),
+    "cursing_granny": (
+        "👵 욕쟁이 할머니",
+        "시장통 국밥집 욕쟁이 할머니. 걸쭉한 사투리와 정겨운 구박('이놈아','예끼','빌어먹을' "
+        "수준의 애정 어린 욕 — 심한 욕설·모욕은 금지). 겉은 툴툴대도 속은 정 많아 결국 "
+        "챙겨준다. 사용자를 '이놈아/아가'라 부른다.",
+    ),
+    "joseon_king": (
+        "📜 조선의 임금",
+        "조선을 다스리는 임금. 자신을 '과인', 신하인 사용자를 '경(卿)' 또는 '그대'라 부른다 "
+        "(임금이 신하를 부르는 호칭이니 '대감' 등으로 높이지 말 것). 위엄 있는 어명 말투 "
+        "'~하라/~하렷다/~이로다', 보고엔 '가상하도다' 같은 치하를 내린다.",
+    ),
+    "meoseum": (
+        "🌾 머슴",
+        "충직하고 넉살 좋은 옛 머슴. 자신을 '쇤네', 사용자를 '나리/주인님'이라 부른다. "
+        "'예이~ 나리', '쇤네가 냉큼 해오겠습니다요' 같이 굽신굽신하지만 일은 야무지게 해낸다.",
+    ),
+    "noir_detective": (
+        "🚬 하드보일드 탐정",
+        "비 내리는 도시의 하드보일드 느와르 탐정. 1인칭 독백체, 짧고 건조한 문장, 시니컬한 "
+        "어조. 사소한 것도 사건 현장처럼 과장된 은유로 묘사하고 담배·빗소리·위스키 클리셰를 "
+        "곁들인다.",
+    ),
+    "british_butler": (
+        "🎩 영국 집사",
+        "완벽하게 훈련된 정중한 영국 집사. 극존칭과 침착한 격식. '실례합니다만', "
+        "'분부대로 하겠습니다', '주인님' 어투. 감정을 절제하고 우아하게 응대한다.",
+    ),
+    "pirate_captain": (
+        "🏴‍☠️ 해적 선장",
+        "칠대양을 누비는 호탕한 해적 선장. '아하하!' 웃음, 자신을 '이 몸', 바다·보물·항해 "
+        "은유를 즐긴다. 거칠지만 의리 있고 임무는 보물찾기처럼 확실히 완수한다.",
+    ),
+    "robot_ai": (
+        "🤖 냉정한 로봇",
+        "감정을 배제한 기계적 로봇. 건조하고 간결한 보고체 '삐빅.', '처리 완료.', "
+        "'분석 결과:'. 군더더기 없이 정확하게만 답한다.",
+    ),
+    "sage_wizard": (
+        "🧙 판타지 현자",
+        "오랜 세월을 산 판타지 세계의 현자/마법사. 고풍스럽고 수수께끼 같은 어투 "
+        "'오랜 세월이 이르길…', '길은 스스로 드러나느니라'. 지혜로운 통찰을 곁들여 안내한다.",
+    ),
+    "pro_programmer": (
+        "👨‍💻 전문 프로그래머",
+        "경험 많은 시니어 소프트웨어 엔지니어. 간결하고 정확한 실무 말투. 결론부터 말하고 "
+        "트레이드오프를 짚으며 근거 있는 판단을 담백하게 전달한다. 과장·군더더기 없음.",
+    ),
+    "professor": (
+        "🎓 교수",
+        "차분하고 학구적인 대학 교수. '~입니다' 체로 개념과 원리를 짚어 설명하고 왜 그런지 "
+        "이유를 덧붙이며, 때때로 소크라테스식 질문으로 이해를 이끈다. 정중하고 명료하다.",
+    ),
+}
+
+
+def _strip_persona_section(md: str) -> str:
+    """Remove a ``## 페르소나`` section (its heading through just before the next
+    top-level ``## `` heading, or EOF) from ``md``, returning the remaining
+    task content stripped. Lets a persona regeneration SWAP the persona instead
+    of stacking, and lets deterministic code preserve the task directive (rather
+    than trusting the LLM to)."""
+    lines = md.splitlines()
+    out: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        if lines[i].strip().startswith(_PERSONA_HEADING):
+            i += 1  # skip the persona heading + its body up to the next `## `
+            while i < n and not (
+                lines[i].startswith("## ")
+                and not lines[i].strip().startswith(_PERSONA_HEADING)
+            ):
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out).strip()
+
+
+def _merge_persona(persona_block: str, existing: str) -> str:
+    """Prepend a freshly generated ``## 페르소나`` block to the task content of
+    ``existing`` (any old persona section stripped first). Deterministic — the
+    LLM never sees or rewrites the task directive."""
+    block = persona_block.strip()
+    if not block.startswith(_PERSONA_HEADING):
+        block = f"{_PERSONA_HEADING}\n{block}"
+    task = _strip_persona_section(existing)
+    return f"{block}\n\n{task}".strip() if task else block
+
+
 def _strip_code_fences(text: str) -> str:
     """Drop a leading ```lang / trailing ``` fence the model may wrap the
     directive in despite instructions, so the editor gets raw Markdown."""
@@ -975,20 +1093,50 @@ def create_app(server: WebServer) -> FastAPI:
             ],
         }
 
+    @app.get("/api/directives/personas")
+    async def debug_directives_personas(token: str = Query(...)):
+        """Fixed persona characters for the 🎭 menu — ``[{id, label}]`` (single
+        source so the menu matches the backend). Same availability gate as
+        presets (no LLM → feature hidden)."""
+        server._require_token(token)
+        return {
+            "available": server.provider is not None and server.model is not None,
+            "personas": [
+                {"id": pid, "label": label}
+                for pid, (label, _) in _DIRECTIVE_PERSONAS.items()
+            ],
+        }
+
     @app.post("/api/directives/enhance")
     async def debug_directives_enhance(body: dict, token: str = Query(...)):
-        """Generate a richer DIRECTIVE.md with the session's own LLM (a one-off
-        meta-call; NOT the loop). ``preset`` set → a starter directive for that
-        task type; else ``content`` is enhanced. Returns ``{content}`` — the
-        frontend drops it into the editor UNSAVED for the user to review/save.
-        The blocking provider call runs in a threadpool so the async server
-        isn't blocked. 503 when no LLM is wired, 400 on empty request."""
+        """Generate a DIRECTIVE.md with the session's own LLM (a one-off
+        meta-call; NOT the loop). Modes: ``persona_id``/``persona`` → generate a
+        ``## 페르소나`` voice section and merge it into ``content`` (task
+        directive preserved); ``preset`` → a task starter; else ``content`` is
+        enhanced. Returns ``{content}`` — dropped into the editor UNSAVED for
+        review/save. Blocking provider call runs in a threadpool. 503 when no LLM
+        is wired, 400 on empty request."""
         server._require_token(token)
         if server.provider is None or server.model is None:
             raise HTTPException(status_code=503, detail="LLM not available")
         preset = (body.get("preset") or "").strip()
+        persona_id = (body.get("persona_id") or "").strip()
+        persona = (body.get("persona") or "").strip()  # free-text character brief
         content = (body.get("content") or "").strip()
-        if preset:
+
+        merge_persona = False
+        if persona_id or persona:
+            if persona_id:
+                entry = _DIRECTIVE_PERSONAS.get(persona_id)
+                if entry is None:
+                    raise HTTPException(status_code=400, detail="unknown persona")
+                brief = entry[1]
+            else:
+                brief = persona
+            system = _DIRECTIVE_PERSONA_SYSTEM
+            user = f"캐릭터: {brief}"
+            merge_persona = True
+        elif preset:
             entry = _DIRECTIVE_PRESETS.get(preset)
             if entry is None:
                 raise HTTPException(status_code=400, detail="unknown preset")
@@ -1015,7 +1163,12 @@ def create_app(server: WebServer) -> FastAPI:
             result = await asyncio.get_event_loop().run_in_executor(None, _run)
         except Exception as e:  # network / provider error → surface as 502
             raise HTTPException(status_code=502, detail=f"LLM call failed: {e}") from e
-        return {"content": _strip_code_fences(result)}
+        result = _strip_code_fences(result)
+        if merge_persona:
+            # Deterministic merge: persona block + preserved task content (LLM
+            # only wrote the persona prose, never touching the task directive).
+            result = _merge_persona(result, content)
+        return {"content": result}
 
     @app.get("/api/debug/prompt/scopes")
     async def debug_prompt_scopes(token: str = Query(...)):
