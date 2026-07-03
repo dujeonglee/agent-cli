@@ -12,6 +12,16 @@
 
 ## [Unreleased]
 
+## [4.18.4] - 2026-07-03
+
+### Added
+
+- **Prompt Inspector Directives 에디터에 "취소" 버튼** — 📝 Directives 편집창에서
+  저장하지 않은 편집을 버리고 파일(`.agent-cli/DIRECTIVE.md`)의 현재 내용을 편집창에
+  다시 불러온다. `dirDirty` 플래그를 먼저 해제해 재로드가 편집 중 보호 가드를 통과하도록
+  한 뒤 기존 `GET /api/debug/directives` 로 원본을 다시 fetch → textarea 덮어쓰기.
+  프론트 전용(백엔드 무변경), 상태표시 "↩ 취소됨 — 원본 복원".
+
 ## [4.18.3] - 2026-07-02
 
 ### Fixed

@@ -1385,6 +1385,7 @@
   const $dirText = document.getElementById("insp-dir-text");
   const $dirPath = document.getElementById("insp-dir-path");
   const $dirSave = document.getElementById("insp-dir-save");
+  const $dirCancel = document.getElementById("insp-dir-cancel");
   const $dirStatus = document.getElementById("insp-dir-status");
   if (!$btn || !$drawer || !token) return;
 
@@ -1615,7 +1616,17 @@
       .catch(function () { $dirStatus.textContent = "✗ 저장 실패"; })
       .finally(function () { $dirSave.disabled = false; });
   }
+  // Cancel: discard unsaved edits by re-loading the file's current content back
+  // into the textarea. Clear dirDirty FIRST so loadDirectives (which bails while
+  // dirty to protect in-progress typing) actually overwrites, then note it.
+  function cancelDirectives() {
+    dirDirty = false;
+    loadDirectives().then(function () {
+      $dirStatus.textContent = "↩ 취소됨 — 원본 복원";
+    });
+  }
   if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
+  if ($dirCancel) $dirCancel.addEventListener("click", cancelDirectives);
   if ($dirText)
     $dirText.addEventListener("input", function () {
       dirDirty = true;
