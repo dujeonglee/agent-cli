@@ -916,6 +916,9 @@ footer {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
 }
+/* the `display:flex` above overrides the UA [hidden]{display:none}, so the
+   menu never hides on close — restore hiding with a higher-specificity rule. */
+.insp-dir-menu[hidden] { display: none; }
 .insp-dir-menu .wand-item {
   text-align: left; background: transparent; color: var(--text); border: 0;
   border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer;

@@ -12,6 +12,15 @@
 
 ## [Unreleased]
 
+## [4.19.1] - 2026-07-03
+
+### Fixed
+
+- **🪄 자동 생성 팝업 메뉴가 안 닫히던 버그** — `.insp-dir-menu` 의 `display:flex` 가
+  UA 스타일시트의 `[hidden]{display:none}` 을 오버라이드해, JS 가 `hidden` 으로 닫아도
+  메뉴가 그대로 떠 있었다. `.insp-dir-menu[hidden]{display:none}`(더 높은 특이도) 규칙을
+  추가해 정상적으로 닫히도록 수정.
+
 ## [4.19.0] - 2026-07-03
 
 ### Added
