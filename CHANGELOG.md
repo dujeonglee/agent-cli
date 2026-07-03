@@ -12,6 +12,24 @@
 
 ## [Unreleased]
 
+## [4.20.0] - 2026-07-04
+
+### Added
+
+- **워크스페이스 경로 봉쇄** (`agent_cli/tools/_confine.py`, 기본 on) — `write_file`·
+  `edit_file`·`shell` 이 워크스페이스(실행 디렉토리) *밖* 경로를 건드리면 사용자에게
+  `y`(이번만)/`n`(거부)/`a`(이 위치 세션 내 항상 허용) 확인을 받는다. 실수로 홈/시스템
+  파일을 덮어쓰는 사고 방지용 가드.
+  - **`read_file` 은 봉쇄하지 않는다** — 드라이버/커널 작업은 밖의 헤더·툴체인을 대량으로
+    읽으므로 읽기까지 물으면 프롬프트 폭풍이 된다.
+  - **shell** 은 명령에서 절대경로·`../` 탈출 토큰을 **best-effort** 추출해 검사한다.
+    `$(...)`·`python -c "…"`·셸 변수 안의 경로는 못 잡는다(사고 방지 speed bump 이지
+    샌드박스가 아님 — 진짜 격리는 OS 샌드박스 필요).
+  - `a` 는 해당 디렉토리 서브트리를 세션 allowlist 에 넣어 재프롬프트를 막는다.
+  - 비대화형(TTY 없음·클라이언트 미접속)에서 밖 경로 → **거부**(hang 아님). 배치/CI 는
+    `AGENT_CLI_WORKSPACE_CONFINE=0` 으로 끈다. 루트는 `AGENT_CLI_WORKSPACE_ROOT` 로 override.
+  - confirm/`can_prompt`/`interactive_lock` 인프라는 기존 위험명령 가드와 공유.
+
 ## [4.19.1] - 2026-07-03
 
 ### Fixed

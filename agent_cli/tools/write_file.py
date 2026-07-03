@@ -80,6 +80,11 @@ def tool_write_file(args: dict) -> ToolResult:
 
     path = args.get("path", "")
     content = args.get("content", "")
+    from agent_cli.tools import _confine
+
+    denial = _confine.guard([path], "write_file")
+    if denial:
+        return ToolResult(False, error=denial)
     try:
         p = Path(path)
         # Judge small-overwrite BEFORE writing — the old content is gone after.

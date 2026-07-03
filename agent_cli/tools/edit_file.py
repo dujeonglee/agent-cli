@@ -144,6 +144,11 @@ def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
 
     Reuses ``fuzzy_verify_ref`` / ``format_diff`` / ``post_hook``; pure function
     (path + edits → ToolResult), no loop/ctx/renderer coupling."""
+    from agent_cli.tools import _confine
+
+    denial = _confine.guard([path], "edit_file")
+    if denial:
+        return ToolResult(False, error=denial)
     try:
         original_text = Path(path).read_text(encoding="utf-8")
     except Exception as e:
@@ -217,6 +222,12 @@ def tool_edit_file(args: dict) -> ToolResult:
             False,
             error=f"Unknown edit op: '{op}'. Use replace|append|prepend|delete.",
         )
+
+    from agent_cli.tools import _confine
+
+    denial = _confine.guard([path], "edit_file")
+    if denial:
+        return ToolResult(False, error=denial)
 
     # ``pos`` / ``end`` MUST be hashline strings like ``"5#VR"`` — but smaller
     # models sometimes emit them as bare integers (``pos: 5``) or null-wrapped

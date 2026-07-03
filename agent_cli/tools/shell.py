@@ -146,6 +146,19 @@ def tool_shell(args: dict) -> ToolResult:
                     if decision == "a":
                         _session_allowlist.add(keyword)
 
+    # Workspace confinement: best-effort extract literal path tokens (absolute
+    # paths + ``..`` escapes) and gate any that fall outside the workspace. This
+    # is separate from the dangerous-keyword guard above (a command can be
+    # outside-workspace without being destructive, and vice-versa). Blind to
+    # paths inside $(...) / python -c / variables — documented in _confine.
+    from agent_cli.tools import _confine
+
+    denial = _confine.guard(
+        _confine.extract_shell_paths(cmd), f"shell command `{cmd[:60]}`"
+    )
+    if denial:
+        return ToolResult(False, error=denial)
+
     timeout = int(args.get("timeout", 120))
     try:
         # Capture bytes, not text: ``text=True`` decodes strict UTF-8 and

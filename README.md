@@ -174,8 +174,30 @@ agent-cli run "task" -m gpt-4o-mini
 | `ANTHROPIC_API_KEY` | — | Anthropic API 키 (기존 호환) |
 | `OPENAI_API_KEY` | — | OpenAI API 키 (기존 호환) |
 | `AGENT_CLI_NO_READLINE` | — | readline 비활성화 |
+| `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 (기본 on). `0` 으로 끄면 봉쇄 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
+| `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
+| `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. **스트리밍**: post timeout `(connect 30초, read 30초)` 로 **헤더 대기·헤더 구간 interrupt 를 30초로 바운드**(broken 서버의 ~20분 행 제거) → 헤더 수신 후 소켓을 patient 로 리셋해 body 는 느긋. body 가 **30초** 무토큰이면 UI 에 대기 알림(`응답 대기 중 — …`), **20틱(10분) 연속 침묵**이면 연결 끊고 재전송(최대 3회). 토큰 오면 카운터 리셋. **비스트리밍**: `(30, 1200)` (전체 생성 read). interrupt 는 body 구간 ~8초, 헤더 구간 ≤30초. |
 | `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
+
+### 워크스페이스 경로 봉쇄
+
+에이전트의 파일 **쓰기·수정·shell** 이 워크스페이스(실행 디렉토리) *밖* 경로를 건드리면
+**사용자에게 확인을 물어봅니다** (기본 on). 실수로 홈 디렉토리나 시스템 파일을 덮어쓰는
+사고를 막기 위한 가드입니다.
+
+- **대상**: `write_file`, `edit_file`, `shell`. **`read_file` 은 봉쇄하지 않습니다** —
+  드라이버/커널 작업은 커널 소스·툴체인·헤더를 워크스페이스 밖에서 대량으로 읽으므로,
+  읽기까지 물으면 프롬프트 폭풍이 되어 사용자가 "always" 를 남발하게 됩니다.
+- **shell**: 명령에서 절대경로·`../` 탈출 토큰을 **best-effort** 로 추출해 검사합니다.
+  `$(...)`·`python -c "..."`·셸 변수(`$FILE`) 안에 숨은 경로는 못 잡습니다 —
+  이건 사고 방지용 speed bump 이지 샌드박스가 아닙니다(진짜 격리는 OS 샌드박스 필요).
+- **응답**: `y`(이번만) / `n`(거부) / `a`(이 위치를 이번 세션 동안 항상 허용).
+  `a` 는 해당 디렉토리 서브트리를 세션 allowlist 에 넣어 이후 같은 곳은 재프롬프트하지 않습니다.
+- **비대화형**(TTY 없음·연결된 클라이언트 없음)에서 밖 경로를 건드리면 **거부**됩니다
+  (멈추지 않음). 배치/CI 에서는 `AGENT_CLI_WORKSPACE_CONFINE=0` 으로 끄세요.
+- **루트**: 기본은 프로세스 실행 디렉토리. `AGENT_CLI_WORKSPACE_ROOT` 로 override.
+  agent-board 는 각 인스턴스를 그 게시물 워크스페이스에서 spawn 하므로 그대로 맞습니다.
 
 ## 모델 권장 사양
 

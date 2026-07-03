@@ -34,6 +34,18 @@ def _default_wire_react(monkeypatch):
     monkeypatch.setattr("agent_cli.wire_formats.DEFAULT_WIRE_FORMAT", "react")
 
 
+@pytest.fixture(autouse=True)
+def _disable_workspace_confine(monkeypatch):
+    """Disable workspace confinement across the unit suite.
+
+    Confinement is default-ON in production, but tests write / edit under
+    ``tmp_path`` (outside the repo cwd = outside the workspace) and run without
+    a TTY, so the gate would refuse them. Off by default here; the dedicated
+    ``test_confine.py`` re-enables it explicitly and drives the prompt flow.
+    """
+    monkeypatch.setenv("AGENT_CLI_WORKSPACE_CONFINE", "0")
+
+
 # ── omlx integration connection ───────────────────────────
 OMLX_BASE_URL = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:8000/v1")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")
