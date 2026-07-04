@@ -904,27 +904,70 @@ footer {
   color: var(--on-accent); background: var(--accent); border: 0;
 }
 .insp-dir-foot button:disabled { opacity: .5; cursor: default; }
-/* 🪄 compose row: 성격/업무 dropdowns + subtle 🪄 icon button. The wrapper
-   wraps to a new line under the status text when the footer runs out of room. */
-.insp-dir-gen {
+/* Three axis rows (성격/업무/지침): each = label + dropdown + subtle icon
+   buttons. Each wraps to its own full-width line under the status text. */
+.insp-dir-axis {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   flex: 1 1 100%; order: 3; margin-top: 4px;
 }
-.insp-dir-gen[hidden] { display: none; }
-.insp-dir-sel, .insp-dir-custom {
+.insp-dir-axlabel {
+  flex: 0 0 auto; min-width: 30px; font-size: 11px; color: var(--text-2);
+  font-weight: 600;
+}
+.insp-dir-sel {
   font-size: 12px; padding: 3px 6px; border-radius: 6px;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  max-width: 130px;
+  flex: 1 1 auto; min-width: 90px; max-width: 150px;
 }
-.insp-dir-custom { flex: 1 1 110px; min-width: 90px; }
-#insp-dir-wand, #insp-dir-learn, #insp-dir-preset-save, #insp-dir-preset-del {
+.insp-dir-axis button {
   background: transparent; color: var(--text-2);
   border: 1px solid var(--border); padding: 3px 8px;
 }
-#insp-dir-wand:hover:not(:disabled), #insp-dir-learn:hover:not(:disabled),
-#insp-dir-preset-save:hover:not(:disabled), #insp-dir-preset-del:hover:not(:disabled) {
+.insp-dir-axis button:hover:not(:disabled) {
   color: var(--accent); border-color: var(--accent);
 }
+.insp-dir-axis button[hidden] { display: none; }
+
+/* 💾 preset save modal — fixed location (read-only) + name + existing chips. */
+.dir-modal {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .45);
+}
+.dir-modal[hidden] { display: none; }
+.dir-modal-box {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px 18px; width: min(420px, 92vw); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.dir-modal-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.dir-modal-box label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 11px; color: var(--text-2);
+}
+.dir-modal-box input {
+  font-size: 13px; padding: 5px 8px; border-radius: 6px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+}
+.dir-modal-loc input {
+  color: var(--muted); background: var(--surface-2, var(--bg)); cursor: not-allowed;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+}
+.dir-modal-existing { font-size: 11px; color: var(--text-2); display: flex;
+  flex-wrap: wrap; gap: 4px; align-items: center; }
+.dir-modal-chip {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+  background: transparent; color: var(--text-2); border: 1px solid var(--border);
+}
+.dir-modal-chip:hover { color: var(--accent); border-color: var(--accent); }
+.dir-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.dir-modal-foot button {
+  font-size: 12px; padding: 4px 14px; border-radius: 6px; cursor: pointer; border: 0;
+}
+#dir-preset-modal-cancel {
+  background: transparent; color: var(--text-2); border: 1px solid var(--border);
+}
+#dir-preset-modal-save { background: var(--accent); color: var(--on-accent); }
 
 .insp-sections {
   flex: 1 1 auto;

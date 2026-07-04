@@ -2060,226 +2060,6 @@ class _FakeProvider:
         return _Resp(self._by_system.get(system, self._content))
 
 
-class TestDirectivesCompose:
-    """🪄 compose: build a DIRECTIVE from two orthogonal axes chosen in the
-    editor — task (역할/작업) and persona (성격). Reuses the session provider."""
-
-    def _client(self, provider):
-        server = WebServer(
-            WebRenderer(),
-            token="t",
-            provider=provider,
-            model="m",
-            capabilities=object(),
-        )
-        return server, TestClient(create_app(server))
-
-    def _post(self, client, body):
-        return client.post("/api/directives/compose?token=t", json=body)
-
-    # ── task axis ──
-
-    def test_task_preset_uses_starter_system(self):
-        from agent_cli.web.server import _DIRECTIVE_PRESETS, _DIRECTIVE_STARTER_SYSTEM
-
-        fp = _FakeProvider("STARTER")
-        _, client = self._client(fp)
-        r = self._post(client, {"task": "driver_tdd"})
-        assert r.status_code == 200 and r.json()["content"] == "STARTER"
-        assert fp.calls[0]["system"] == _DIRECTIVE_STARTER_SYSTEM
-        assert (
-            _DIRECTIVE_PRESETS["driver_tdd"][1] in fp.calls[0]["messages"][0]["content"]
-        )
-
-    def test_task_enhance_refines_existing_task(self):
-        from agent_cli.web.server import _DIRECTIVE_ENHANCE_SYSTEM
-
-        fp = _FakeProvider("RICHER")
-        _, client = self._client(fp)
-        r = self._post(client, {"task": "enhance", "content": "always korean"})
-        assert r.json()["content"] == "RICHER"
-        assert fp.calls[0]["system"] == _DIRECTIVE_ENHANCE_SYSTEM
-        assert fp.calls[0]["messages"][0]["content"] == "always korean"
-
-    def test_task_enhance_empty_content_no_call(self):
-        fp = _FakeProvider("X")
-        _, client = self._client(fp)
-        r = self._post(client, {"task": "enhance", "content": ""})
-        assert r.json()["content"] == "" and fp.calls == []  # nothing to enhance
-
-    def test_task_none_and_persona_none_clears(self):
-        fp = _FakeProvider("X")
-        _, client = self._client(fp)
-        r = self._post(client, {"task": "", "content": "## 업무\n- old"})
-        assert r.json()["content"] == "" and fp.calls == []  # both none → clear, no LLM
-
-    def test_unknown_task_400(self):
-        _, client = self._client(_FakeProvider())
-        assert self._post(client, {"task": "nope"}).status_code == 400
-
-    # ── persona axis ──
-
-    def test_persona_id_uses_persona_system_and_brief(self):
-        from agent_cli.web.server import _DIRECTIVE_PERSONA_SYSTEM, _DIRECTIVE_PERSONAS
-
-        fp = _FakeProvider("## 페르소나\n- '~냥'")
-        _, client = self._client(fp)
-        r = self._post(client, {"persona_id": "cat_butler"})
-        assert r.status_code == 200
-        assert fp.calls[0]["system"] == _DIRECTIVE_PERSONA_SYSTEM
-        assert (
-            _DIRECTIVE_PERSONAS["cat_butler"][1]
-            in fp.calls[0]["messages"][0]["content"]
-        )
-        assert r.json()["content"].startswith("## 페르소나")
-
-    def test_persona_free_text_brief(self):
-        fp = _FakeProvider("## 페르소나\n- 해적")
-        _, client = self._client(fp)
-        r = self._post(client, {"persona": "우주 해적"})
-        assert "우주 해적" in fp.calls[0]["messages"][0]["content"]
-        assert r.json()["content"].startswith("## 페르소나")
-
-    def test_persona_system_specifies_surface_not_cosmetic(self):
-        # Regression guard: the persona generator must tell the model WHERE the
-        # voice applies (user-facing replies / final result) so it actually uses
-        # it in a tool-heavy coding loop. The old "the voice is cosmetic" framing
-        # made the model stay neutral everywhere (session 1783129061 — a defined
-        # 욕쟁이 할머니 persona produced 0 in-character output). Keep the
-        # surface-oriented framing and drop the suppressive "cosmetic" wording.
-        from agent_cli.web.server import _DIRECTIVE_PERSONA_SYSTEM
-
-        assert "user-facing" in _DIRECTIVE_PERSONA_SYSTEM
-        assert "cosmetic" not in _DIRECTIVE_PERSONA_SYSTEM.lower()
-
-    def test_unknown_persona_400(self):
-        _, client = self._client(_FakeProvider())
-        assert self._post(client, {"persona_id": "nope"}).status_code == 400
-
-    def test_persona_missing_heading_is_added(self):
-        fp = _FakeProvider("- 헤딩 없는 본문")
-        _, client = self._client(fp)
-        assert (
-            self._post(client, {"persona_id": "professor"})
-            .json()["content"]
-            .startswith("## 페르소나")
-        )
-
-    # ── both axes composed ──
-
-    def test_persona_plus_task_composes_both(self):
-        from agent_cli.web.server import (
-            _DIRECTIVE_PERSONA_SYSTEM,
-            _DIRECTIVE_STARTER_SYSTEM,
-        )
-
-        fp = _FakeProvider(
-            by_system={
-                _DIRECTIVE_PERSONA_SYSTEM: "## 페르소나\n- 도도",
-                _DIRECTIVE_STARTER_SYSTEM: "## 업무\n- TDD",
-            }
-        )
-        _, client = self._client(fp)
-        out = self._post(
-            client, {"persona_id": "cat_butler", "task": "driver_tdd"}
-        ).json()["content"]
-        # persona prepended, task below — two calls, deterministic merge
-        assert out.startswith("## 페르소나") and "- 도도" in out
-        assert "## 업무" in out and "- TDD" in out
-        assert len(fp.calls) == 2
-
-    def test_task_none_drops_existing_task(self):
-        # 업무=없음 is a DELETE: existing task content is dropped, leaving only
-        # the freshly chosen persona (confirmed design — safe because unsaved).
-        fp = _FakeProvider("## 페르소나\n- 도도")
-        _, client = self._client(fp)
-        out = self._post(
-            client,
-            {"persona_id": "cat_butler", "task": "", "content": "## 업무\n- 기존규칙"},
-        ).json()["content"]
-        assert out.startswith("## 페르소나")
-        assert "## 업무" not in out and "기존규칙" not in out  # task wiped
-        assert len(fp.calls) == 1  # only the persona call (task=none = no gen)
-
-    def test_persona_swap_keeps_task_when_task_enhance(self):
-        from agent_cli.web.server import (
-            _DIRECTIVE_ENHANCE_SYSTEM,
-            _DIRECTIVE_PERSONA_SYSTEM,
-        )
-
-        fp = _FakeProvider(
-            by_system={
-                _DIRECTIVE_PERSONA_SYSTEM: "## 페르소나\n- 새 캐릭터",
-                _DIRECTIVE_ENHANCE_SYSTEM: "## 업무\n- 정리된 규칙",
-            }
-        )
-        _, client = self._client(fp)
-        existing = "## 페르소나\n- 옛 캐릭터\n\n## 업무\n- 규칙"
-        out = self._post(
-            client, {"persona_id": "robot_ai", "task": "enhance", "content": existing}
-        ).json()["content"]
-        assert out.count("## 페르소나") == 1  # old persona replaced, not stacked
-        assert "새 캐릭터" in out and "옛 캐릭터" not in out
-        assert "## 업무" in out and "정리된 규칙" in out
-        # enhance saw the task only (persona section stripped before the call)
-        assert "옛 캐릭터" not in fp.calls[0]["messages"][0]["content"]
-
-    # ── plumbing ──
-
-    def test_code_fences_stripped(self):
-        fp = _FakeProvider("```markdown\n## 페르소나\n- rule\n```")
-        _, client = self._client(fp)
-        assert self._post(client, {"persona_id": "professor"}).json()["content"] == (
-            "## 페르소나\n- rule"
-        )
-
-    def test_no_provider_503(self):
-        server = WebServer(WebRenderer(), token="t")  # no provider wired
-        client = TestClient(create_app(server))
-        assert self._post(client, {"task": "kunit"}).status_code == 503
-
-    def test_requires_token(self):
-        _, client = self._client(_FakeProvider())
-        assert (
-            client.post(
-                "/api/directives/compose?token=bad", json={"task": "kunit"}
-            ).status_code
-            != 200
-        )
-
-    # ── label endpoints (dropdown sources) ──
-
-    def test_presets_endpoint_lists_labels(self):
-        _, client = self._client(_FakeProvider())
-        body = client.get("/api/directives/presets?token=t").json()
-        assert body["available"] is True
-        ids = {p["id"] for p in body["presets"]}
-        assert {"driver_tdd", "kunit", "issue_analysis", "code_review"} <= ids
-        assert all(p["label"] for p in body["presets"])
-
-    def test_presets_unavailable_without_provider(self):
-        server = WebServer(WebRenderer(), token="t")
-        client = TestClient(create_app(server))
-        assert (
-            client.get("/api/directives/presets?token=t").json()["available"] is False
-        )
-
-    def test_personas_endpoint_lists_labels(self):
-        _, client = self._client(_FakeProvider())
-        body = client.get("/api/directives/personas?token=t").json()
-        assert body["available"] is True
-        ids = {p["id"] for p in body["personas"]}
-        assert {"cat_butler", "joseon_king", "pro_programmer", "professor"} <= ids
-        assert all(p["label"] for p in body["personas"])
-
-    def test_personas_unavailable_without_provider(self):
-        server = WebServer(WebRenderer(), token="t")
-        client = TestClient(create_app(server))
-        assert (
-            client.get("/api/directives/personas?token=t").json()["available"] is False
-        )
-
-
 class TestManagedSectionHelpers:
     """Generic ``## <heading>`` section replace/strip — the substrate the
     persona merge and the learned-guidance merge both build on. Other content
@@ -2336,48 +2116,6 @@ class TestManagedSectionHelpers:
 
         out = _replace_managed_section("", "## 학습된 지침", "- L1")
         assert out == "## 학습된 지침\n- L1"
-
-
-class TestPersonaMergeHelpers:
-    """Deterministic persona ↔ task merge (no LLM)."""
-
-    def test_strip_no_persona_unchanged(self):
-        from agent_cli.web.server import _strip_persona_section
-
-        md = "## 업무 지시\n- 규칙 A\n- 규칙 B"
-        assert _strip_persona_section(md) == md
-
-    def test_strip_leading_persona_block(self):
-        from agent_cli.web.server import _strip_persona_section
-
-        md = "## 페르소나\n- 도도\n\n## 업무 지시\n- 규칙"
-        assert _strip_persona_section(md) == "## 업무 지시\n- 규칙"
-
-    def test_strip_persona_only_yields_empty(self):
-        from agent_cli.web.server import _strip_persona_section
-
-        assert _strip_persona_section("## 페르소나\n- 도도\n- 새침") == ""
-
-    def test_strip_persona_in_middle(self):
-        from agent_cli.web.server import _strip_persona_section
-
-        md = "## 업무\n- 규칙\n\n## 페르소나\n- 목소리\n\n## 기타\n- 끝"
-        out = _strip_persona_section(md)
-        assert "## 페르소나" not in out and "목소리" not in out
-        assert "## 업무" in out and "## 기타" in out
-
-    def test_merge_prepends_and_preserves(self):
-        from agent_cli.web.server import _merge_persona
-
-        out = _merge_persona("## 페르소나\n- 목소리", "## 업무\n- 규칙")
-        assert out.startswith("## 페르소나")
-        assert out.endswith("## 업무\n- 규칙")
-
-    def test_merge_adds_missing_heading(self):
-        from agent_cli.web.server import _merge_persona
-
-        out = _merge_persona("- 헤딩 없는 본문", "")
-        assert out == "## 페르소나\n- 헤딩 없는 본문"
 
 
 class TestLearnHelpers:
@@ -2495,6 +2233,66 @@ class TestLearnHelpers:
         )
 
 
+class TestZoneAccessors:
+    """The three directive axes — persona / task / learned — as independently
+    get/set-able zones. Setting one MUST leave the other two byte-identical.
+    Persona & learned are ``## `` sections; task is the remainder (which, like
+    all generated task content, carries its own ``## `` heading)."""
+
+    FULL = "## 페르소나\n- 도도\n\n## 업무\n- 규칙\n\n## 학습된 지침\n- 교훈"
+
+    def test_get_each_zone(self):
+        from agent_cli.web.server import _zone_get
+
+        assert _zone_get(self.FULL, "persona") == "- 도도"
+        assert _zone_get(self.FULL, "task") == "## 업무\n- 규칙"
+        assert _zone_get(self.FULL, "learned") == "- 교훈"
+
+    def test_task_zone_of_plain_directive_is_whole(self):
+        from agent_cli.web.server import _zone_get
+
+        assert _zone_get("그냥 수기 지시\n- A", "task") == "그냥 수기 지시\n- A"
+
+    def test_set_persona_preserves_task_and_learned(self):
+        from agent_cli.web.server import _zone_set
+
+        out = _zone_set(self.FULL, "persona", "- 냉정")
+        assert out.startswith("## 페르소나\n- 냉정")
+        assert "도도" not in out  # swapped
+        assert "## 업무\n- 규칙" in out and "## 학습된 지침\n- 교훈" in out
+
+    def test_set_task_preserves_persona_and_learned(self):
+        from agent_cli.web.server import _zone_set
+
+        out = _zone_set(self.FULL, "task", "## 새업무\n- 새규칙")
+        assert "## 페르소나\n- 도도" in out and "## 학습된 지침\n- 교훈" in out
+        assert "## 새업무\n- 새규칙" in out and "- 규칙\n" not in out
+
+    def test_set_learned_preserves_persona_and_task(self):
+        from agent_cli.web.server import _zone_set
+
+        out = _zone_set(self.FULL, "learned", "- 새교훈")
+        assert "## 페르소나\n- 도도" in out and "## 업무\n- 규칙" in out
+        assert "## 학습된 지침\n- 새교훈" in out
+
+    def test_set_empty_removes_section_zone(self):
+        from agent_cli.web.server import _zone_set
+
+        out = _zone_set(self.FULL, "persona", "")
+        assert "## 페르소나" not in out
+        assert "## 업무\n- 규칙" in out and "## 학습된 지침" in out
+
+    def test_zone_set_roundtrips_with_get(self):
+        from agent_cli.web.server import _zone_get, _zone_set
+
+        # setting a zone to its own current value leaves all three intact
+        for axis in ("persona", "task", "learned"):
+            same = _zone_set(self.FULL, axis, _zone_get(self.FULL, axis))
+            assert _zone_get(same, "persona") == "- 도도"
+            assert _zone_get(same, "task") == "## 업무\n- 규칙"
+            assert _zone_get(same, "learned") == "- 교훈"
+
+
 class _FakeCtx:
     """Minimal ContextManager stand-in for learn tests: a fixed message list and
     a session dir for the memory store."""
@@ -2595,70 +2393,169 @@ class TestDirectivesLearnEndpoint:
         )
 
 
+class TestTemplateEndpoint:
+    """📋 POST /api/directives/template — insert a static skeleton into one
+    axis's zone (deterministic, no LLM). The leak-free replacement for 🪄."""
+
+    def _client(self):
+        return TestClient(create_app(WebServer(WebRenderer(), token="t")))
+
+    def test_persona_template_inserts_heading_and_skeleton(self):
+        client = self._client()
+        out = client.post(
+            "/api/directives/template?axis=persona&token=t", json={"content": ""}
+        ).json()["content"]
+        assert out.startswith("## 페르소나")
+        assert "- 톤:" in out and "적용 범위" in out  # skeleton + hard-won guidance
+
+    def test_task_template_preserves_other_zones(self):
+        client = self._client()
+        existing = "## 페르소나\n- 도도\n\n## 학습된 지침\n- 교훈"
+        out = client.post(
+            "/api/directives/template?axis=task&token=t", json={"content": existing}
+        ).json()["content"]
+        assert "## 업무\n- 역할:" in out  # task skeleton inserted
+        assert "## 페르소나\n- 도도" in out and "## 학습된 지침\n- 교훈" in out  # kept
+
+    def test_learned_has_no_template_400(self):
+        assert (
+            self._client()
+            .post("/api/directives/template?axis=learned&token=t", json={"content": ""})
+            .status_code
+            == 400
+        )
+
+    def test_bad_axis_400(self):
+        client = self._client()
+        assert (
+            client.post(
+                "/api/directives/template?axis=bogus&token=t", json={"content": ""}
+            ).status_code
+            == 400
+        )
+
+    def test_requires_token(self):
+        client = self._client()
+        assert (
+            client.post(
+                "/api/directives/template?axis=persona&token=bad", json={"content": ""}
+            ).status_code
+            != 200
+        )
+
+
 class TestPresetLibraryEndpoints:
-    """GET/POST/GET-by-id/DELETE /api/directives/presets/library — the home
-    preset store, exercised over HTTP with the store pointed at a tmp dir."""
+    """Per-axis preset library over HTTP — save extracts ONE zone, apply merges
+    it back. Store pointed at a tmp dir (never the real home)."""
 
     @pytest.fixture(autouse=True)
     def _tmp_presets(self, tmp_path, monkeypatch):
         from agent_cli import directive_presets
 
         monkeypatch.setattr(
-            directive_presets, "_presets_dir", lambda: tmp_path / "presets"
+            directive_presets, "_presets_root", lambda: tmp_path / "presets"
         )
 
     def _client(self):
         server = WebServer(WebRenderer(), token="t")
         return TestClient(create_app(server))
 
-    def test_save_list_load_roundtrip(self):
+    FULL = "## 페르소나\n- 도도\n\n## 업무\n- 규칙\n\n## 학습된 지침\n- 교훈"
+
+    def test_save_extracts_zone_and_apply_merges_back(self):
         client = self._client()
+        # save the persona zone only
         r = client.post(
-            "/api/directives/presets/library?token=t",
-            json={"name": "라이브러리 작성", "content": "## 수기\n- 규칙"},
+            "/api/directives/presets/library?axis=persona&token=t",
+            json={"name": "냉정이", "content": self.FULL},
         )
         assert r.status_code == 200
         pid = r.json()["id"]
-        listed = client.get("/api/directives/presets/library?token=t").json()["presets"]
+        listed = client.get(
+            "/api/directives/presets/library?axis=persona&token=t"
+        ).json()["presets"]
         assert any(p["id"] == pid and p["source"] == "user" for p in listed)
-        got = client.get(f"/api/directives/presets/library/{pid}?token=t").json()
-        assert got["content"] == "## 수기\n- 규칙"
+        # apply it into a DIFFERENT editor content → only persona zone changes
+        target = "## 페르소나\n- 딴캐릭터\n\n## 업무\n- 다른규칙"
+        applied = client.post(
+            f"/api/directives/presets/library/{pid}/apply?axis=persona&token=t",
+            json={"content": target},
+        ).json()["content"]
+        assert applied.startswith("## 페르소나\n- 도도")  # preset persona applied
+        assert "## 업무\n- 다른규칙" in applied  # target's task kept
+
+    def test_save_empty_zone_400(self):
+        client = self._client()
+        r = client.post(
+            "/api/directives/presets/library?axis=learned&token=t",
+            json={"name": "x", "content": "## 페르소나\n- 도도"},  # no learned zone
+        )
+        assert r.status_code == 400
+
+    def test_axes_are_independent(self):
+        client = self._client()
+        client.post(
+            "/api/directives/presets/library?axis=task&token=t",
+            json={"name": "shared", "content": self.FULL},
+        )
+        # same name under a different axis doesn't exist
+        assert (
+            client.post(
+                "/api/directives/presets/library/shared/apply?axis=persona&token=t",
+                json={"content": ""},
+            ).status_code
+            == 404
+        )
 
     def test_delete_removes(self):
         client = self._client()
         client.post(
-            "/api/directives/presets/library?token=t",
-            json={"name": "tmp", "content": "x"},
+            "/api/directives/presets/library?axis=task&token=t",
+            json={"name": "tmp", "content": self.FULL},
         )
         assert (
-            client.delete("/api/directives/presets/library/tmp?token=t").status_code
+            client.delete(
+                "/api/directives/presets/library/tmp?axis=task&token=t"
+            ).status_code
             == 200
         )
         assert (
-            client.get("/api/directives/presets/library/tmp?token=t").status_code == 404
-        )
-        assert (
-            client.delete("/api/directives/presets/library/tmp?token=t").status_code
+            client.delete(
+                "/api/directives/presets/library/tmp?axis=task&token=t"
+            ).status_code
             == 404
         )
 
     def test_save_bad_name_400(self):
         client = self._client()
         r = client.post(
-            "/api/directives/presets/library?token=t",
-            json={"name": "../evil", "content": "x"},
+            "/api/directives/presets/library?axis=persona&token=t",
+            json={"name": "../evil", "content": self.FULL},
         )
         assert r.status_code == 400
 
-    def test_load_missing_404(self):
+    def test_bad_axis_400(self):
         client = self._client()
         assert (
-            client.get("/api/directives/presets/library/nope?token=t").status_code
+            client.get("/api/directives/presets/library?axis=bogus&token=t").status_code
+            == 400
+        )
+
+    def test_apply_missing_404(self):
+        client = self._client()
+        assert (
+            client.post(
+                "/api/directives/presets/library/nope/apply?axis=task&token=t",
+                json={"content": ""},
+            ).status_code
             == 404
         )
 
     def test_library_requires_token(self):
         client = self._client()
         assert (
-            client.get("/api/directives/presets/library?token=bad").status_code != 200
+            client.get(
+                "/api/directives/presets/library?axis=task&token=bad"
+            ).status_code
+            != 200
         )

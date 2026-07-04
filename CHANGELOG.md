@@ -12,6 +12,35 @@
 
 ## [Unreleased]
 
+## [4.25.0] - 2026-07-04
+
+### Changed
+
+- **Directives 드로어를 3축 대칭 프리셋 + 정적 템플릿으로 재편** — 번잡하던 🪄 자동생성
+  UI를 걷어내고, 성격·업무·지침 세 축을 **동일한 모양**(드롭다운[내 프리셋] + 액션 + 💾 저장
+  + 🗑 삭제)으로 통일. 각 축은 홈(`~/.agent-cli/directive-presets/<axis>/`)에 프리셋으로
+  저장/불러오기/삭제되며 **모든 방에서 공유**된다(프리셋 저장 시 위치 고정 모달, 같은 이름은
+  덮어쓰기 확인). 프리셋은 그 축의 **zone만** 저장/반영해 나머지 축은 바이트 그대로 보존.
+
+### Removed
+
+- **🪄 DIRECTIVE 자동생성(LLM) 전면 제거** — `POST /api/directives/compose`, 빌트인
+  캐릭터/스타터(`_DIRECTIVE_PERSONAS`/`_DIRECTIVE_PRESETS`), 페르소나/스타터 생성 프롬프트,
+  `GET /api/directives/personas`·`/presets` 라벨 엔드포인트. **이유(실증):** on-prem
+  Qwen3-27B가 standalone 프로세 메타-콜에서 chain-of-thought를 content로 흘리고(`/no_think`·
+  `enable_thinking:false` 모두 무효/모델 붕괴), 그 CoT가 리터럴 `## ` 헤딩을 echo해 섹션
+  파싱을 오염시켰다. 자동생성 대신 아래 결정적(무-LLM) 경로로 대체.
+
+### Added
+
+- **📋 축 템플릿** — 성격/업무에 **정적 fill-in 골격**을 편집창에 삽입(`POST
+  /api/directives/template`), 사용자가 손으로 채운다. LLM을 안 거쳐 누출이 원천 불가능한
+  🪄 대체. 성격 템플릿엔 "적용 범위" 규율(사용자 대면만 in-character, 사실 정확성 유지)이
+  기본 포함.
+- **성격·업무 프리셋** — 학습된 지침(v4.24.0)에 이어 성격·업무도 축별 프리셋 라이브러리로
+  저장/로드/삭제. `GET/POST/GET-by-id(apply)/DELETE /api/directives/presets/library?axis=`.
+- 📥 세션 학습(v4.24.0)은 그대로 — JSON 출력이라 누출 없이 `## 학습된 지침`을 채운다.
+
 ## [4.24.0] - 2026-07-04
 
 ### Added

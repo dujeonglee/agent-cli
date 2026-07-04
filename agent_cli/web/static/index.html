@@ -116,28 +116,58 @@
         placeholder="이 프로젝트의 DIRECTIVE.md — 비어 있으면 새로 만들어집니다. 저장 시 다음 LLM 호출부터 적용(KV 캐시 리셋)."></textarea>
       <div class="insp-dir-foot">
         <span id="insp-dir-status" class="insp-dir-status"></span>
-        <div id="insp-dir-gen" class="insp-dir-gen" hidden>
-          <select id="insp-dir-persona" class="insp-dir-sel" title="성격 (말투/캐릭터)"></select>
-          <input id="insp-dir-persona-text" class="insp-dir-custom" type="text"
-            placeholder="캐릭터 직접 입력…" hidden />
-          <select id="insp-dir-task" class="insp-dir-sel" title="업무 (역할/작업)"></select>
-          <button id="insp-dir-wand" type="button"
-            title="선택한 성격·업무로 DIRECTIVE 자동 생성 (세션 모델)">🪄 생성</button>
-          <button id="insp-dir-learn" type="button"
-            title="현재 세션 대화에서 재사용 가능한 지침을 학습해 '학습된 지침' 섹션에 반영 (미저장)">📥 학습</button>
+        <!-- Three symmetric axis rows: 성격 / 업무 / 지침. Each = label + dropdown
+             (내 프리셋) + action(📋 템플릿 / 📥 학습) + 💾 프리셋 저장 + 🗑 삭제.
+             No LLM generation (📋 inserts a static skeleton to fill by hand). -->
+        <div class="insp-dir-axis" data-axis="persona">
+          <span class="insp-dir-axlabel">성격</span>
+          <select id="insp-dir-persona" class="insp-dir-sel" title="성격 프리셋 (말투/캐릭터). 선택 시 반영."></select>
+          <button id="insp-dir-persona-tmpl" type="button"
+            title="성격 템플릿(빈 골격)을 편집창에 삽입 — 손으로 채웁니다">📋</button>
+          <button id="insp-dir-persona-save" type="button"
+            title="현재 성격을 프리셋으로 저장 (홈, 모든 방 공유)">💾</button>
+          <button id="insp-dir-persona-del" type="button" title="선택한 성격 프리셋 삭제">🗑</button>
         </div>
-        <div id="insp-dir-lib" class="insp-dir-gen">
-          <select id="insp-dir-preset" class="insp-dir-sel"
-            title="저장된 DIRECTIVE 프리셋 (홈 디렉토리 — 모든 방 공유). 선택 시 불러옵니다."></select>
-          <button id="insp-dir-preset-save" type="button"
-            title="현재 편집 내용을 프리셋으로 저장 (홈, 모든 방 공유)">💾 저장</button>
-          <button id="insp-dir-preset-del" type="button"
-            title="선택한 프리셋 삭제">🗑</button>
+        <div class="insp-dir-axis" data-axis="task">
+          <span class="insp-dir-axlabel">업무</span>
+          <select id="insp-dir-task" class="insp-dir-sel" title="업무 프리셋 (역할/작업). 선택 시 반영."></select>
+          <button id="insp-dir-task-tmpl" type="button"
+            title="업무 템플릿(빈 골격)을 편집창에 삽입 — 손으로 채웁니다">📋</button>
+          <button id="insp-dir-task-save" type="button"
+            title="현재 업무를 프리셋으로 저장 (홈, 모든 방 공유)">💾</button>
+          <button id="insp-dir-task-del" type="button" title="선택한 업무 프리셋 삭제">🗑</button>
+        </div>
+        <div class="insp-dir-axis" data-axis="learned">
+          <span class="insp-dir-axlabel">지침</span>
+          <select id="insp-dir-learned" class="insp-dir-sel"
+            title="학습된 지침 프리셋 (홈, 모든 방 공유). 선택 시 학습 섹션에 반영."></select>
+          <button id="insp-dir-learn" type="button" class="insp-dir-gen-btn"
+            title="현재 세션 대화에서 재사용 가능한 지침을 학습해 반영 (미저장)">📥</button>
+          <button id="insp-dir-learned-save" type="button"
+            title="현재 학습된 지침을 프리셋으로 저장 (홈, 모든 방 공유)">💾</button>
+          <button id="insp-dir-learned-del" type="button" title="선택한 지침 프리셋 삭제">🗑</button>
         </div>
         <button id="insp-dir-cancel" type="button" title="편집 취소 — 파일 원본으로 되돌림">취소</button>
         <button id="insp-dir-save" type="button">저장</button>
       </div>
     </details>
+    <!-- 💾 preset save modal — fixed location (read-only) + name + existing list. -->
+    <div id="dir-preset-modal" class="dir-modal" hidden>
+      <div class="dir-modal-box">
+        <div class="dir-modal-title" id="dir-preset-modal-title">프리셋 저장</div>
+        <label class="dir-modal-loc">저장 위치 (고정)
+          <input id="dir-preset-modal-loc" type="text" readonly tabindex="-1" />
+        </label>
+        <label class="dir-modal-name">이름
+          <input id="dir-preset-modal-name" type="text" placeholder="프리셋 이름…" />
+        </label>
+        <div class="dir-modal-existing" id="dir-preset-modal-existing"></div>
+        <div class="dir-modal-foot">
+          <button id="dir-preset-modal-cancel" type="button">취소</button>
+          <button id="dir-preset-modal-save" type="button">저장</button>
+        </div>
+      </div>
+    </div>
     <input id="insp-search" type="search" placeholder="Filter sections…" autocomplete="off">
     <div id="insp-sections" class="insp-sections"></div>
   </aside>

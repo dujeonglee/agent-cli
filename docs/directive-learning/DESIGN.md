@@ -1,9 +1,26 @@
 # DIRECTIVE 학습 (Directive Learning) — DESIGN
 
-> Status: **IMPLEMENTED (v4.24.0)** · 2026-07-04
-> 관련: `docs/session-memory/DESIGN.md`, `agent_cli/web/server.py`(compose/persona/learn),
-> `agent_cli/directive_presets.py`(프리셋 스토어), `agent_cli/memory.py`(store),
+> Status: **IMPLEMENTED (v4.24.0)** · **자동생성 제거 + 3축 프리셋/템플릿으로 개편 (v4.25.0)** · 2026-07-04
+> 관련: `docs/session-memory/DESIGN.md`, `agent_cli/web/server.py`(learn/template/축별-library),
+> `agent_cli/directive_presets.py`(축별 프리셋 스토어), `agent_cli/memory.py`(store),
 > `agent_cli/prompts/system_prompt.py`(directive 로드)
+
+## 0.5 v4.25.0 개편 — 🪄 자동생성 전면 제거 (CoT-leak)
+
+- **왜**: 성격/업무 축의 🪄 통짜 자동생성을 27B 실증한 결과 **CoT leak** — omlx/Qwen3 가
+  독립 산문 메타-호출에서 chain-of-thought 를 `reasoning_content` 채널이 아닌 **일반 `content`**
+  로 흘려서 directive 본문이 오염됨. 억제 시도 전부 사멸: `/no_think` 무시,
+  `enable_thinking:false`(chat_template_kwargs)는 모델 파손(`!!!!` garbage), JSON/센티넬 출력은
+  CoT 가 요청 구조를 그대로 에코해 누설. 메인 ReAct 루프는 wire-parser 로 관용하나
+  `_gen_directive` 산문 경로는 무방비.
+- **결정**: 🪄(compose/personas 전체) **제거**. 성격/업무/지침 3축 유지하되 자동생성 대신
+  - **📋 기본 템플릿**(`_AXIS_TEMPLATES`, 결정적·무LLM 골격을 `_zone_set` 으로 삽입) — 사용자가 직접 채움.
+  - **📥 learn**(지침 축만; JSON 배열 출력이라 leak 충분히 회피 — 유일하게 남은 LLM 경로).
+  - **💾 축별 프리셋**(persona/task/learned 각 서브디렉토리).
+- **제거된 것**: `/api/directives/compose`·`/presets`·`/personas`, `_DIRECTIVE_ENHANCE_SYSTEM`·
+  `_DIRECTIVE_STARTER_SYSTEM`·`_DIRECTIVE_PRESETS`·`_DIRECTIVE_PERSONA_SYSTEM`·`_DIRECTIVE_PERSONAS`·
+  `_strip_persona_section`·`_merge_persona`. 내부 디버그 드로어 전용이라 외부 소비자 없음(MINOR).
+- **아래 §0~§14 는 v4.24.0 시점 As-built** — 🪄 compose 유지를 전제한 서술은 본 절이 우선한다.
 
 ## 0. As-built (구현 시 확정된 편차)
 

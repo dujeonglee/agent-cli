@@ -128,141 +128,33 @@ def capture_startup_system_prompt(
 # bypassed cache manually.
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
-# ── Directives 🪄 auto-generate (POST /api/directives/compose) ──
-# A one-off meta-call to the session's own LLM. Two modes: enhance an existing
-# draft, or generate a starter from a task preset (empty editor). The result is
-# returned unsaved for the user to review in the editor.
-_DIRECTIVE_ENHANCE_SYSTEM = (
-    "You are an expert at writing DIRECTIVE.md files — persistent operating "
-    "instructions that an AI coding agent reads every turn. The user gives a "
-    "rough draft. Rewrite it into a clearer, more detailed, well-structured "
-    "directive: preserve the user's intent AND language, make each instruction "
-    "specific and actionable, group related points under short Markdown headings "
-    "or bullets, and cut vagueness. Keep it a focused directive, not an essay. "
-    "Output ONLY the directive content in Markdown — no preamble, no explanation, "
-    "no surrounding code fences."
-)
-_DIRECTIVE_STARTER_SYSTEM = (
-    "You write DIRECTIVE.md files — persistent operating instructions for an AI "
-    "coding agent. Produce a concise, well-structured starter directive for the "
-    "task described. Use short Markdown headings and bullets, keep it practical "
-    "and specific, and write in Korean. Output ONLY the directive content — no "
-    "preamble, no explanation, no surrounding code fences."
-)
-# id → (label, generation instruction). Extend by adding an entry; the frontend
-# fetches the labels via GET /api/directives/presets so the menu stays in
-# sync with the backend (single source).
-_DIRECTIVE_PRESETS: dict[str, tuple[str, str]] = {
-    "driver_tdd": (
-        "🔧 드라이버 TDD 개발",
-        "리눅스/임베디드 디바이스 드라이버를 테스트 주도(TDD)로 개발하는 AI 에이전트를 위한 "
-        "DIRECTIVE.md 를 작성하라. 실패하는 테스트 먼저→최소 구현→리팩터 사이클, 레지스터/"
-        "하드웨어 접근 확인 습관, 커널 코딩 스타일, 빌드·정적분석 규율, 편집 전 확인사항을 포함하라.",
-    ),
-    "kunit": (
-        "🧪 KUnit 테스트",
-        "리눅스 커널 KUnit 테스트를 작성·실행하는 AI 에이전트를 위한 DIRECTIVE.md 를 작성하라. "
-        "KUnit suite/test case 구조, 커버리지 우선순위, `kunit.py run` 실행·해석, mocking/fixture "
-        "관례, 테스트 격리와 결정성을 포함하라.",
-    ),
-    "issue_analysis": (
-        "🐛 이슈 분석",
-        "버그/이슈를 분류하고 근본 원인을 분석하는 AI 에이전트를 위한 DIRECTIVE.md 를 작성하라. "
-        "재현 우선, 증거 수집(로그·git·history), 이해 없이 수정 금지, 가설-검증, 발견을 명확히 "
-        "보고하는 방식을 포함하라.",
-    ),
-    "code_review": (
-        "👓 코드 리뷰",
-        "코드 변경을 리뷰하는 AI 에이전트를 위한 DIRECTIVE.md 를 작성하라. 정확성 버그·보안·성능·"
-        "가독성 관점, 변경 범위 확인, 근거 있는 지적, 심각도 분류, 건설적 톤을 포함하라.",
-    ),
-}
-
-
-# ── Directives 🎭 페르소나 (POST /api/directives/compose, persona axis) ──
-# A persona is an ORTHOGONAL axis to the task presets above: it sets the agent's
-# VOICE, not what work it does. It lives as a `## 페르소나` section inside the
-# same DIRECTIVE.md so the two axes coexist in one file — the persona block is
-# merged in by deterministic code (not the LLM), preserving any task content
-# verbatim and SWAPPING (not stacking) on regeneration. The LLM only writes the
-# persona prose from a short character brief.
+# ── Directive axis templates (📋) ──
+# Static fill-in skeletons the user drops into the persona / task zone and fills
+# by hand — the leak-free replacement for LLM auto-generation (real 27B leaked
+# chain-of-thought into standalone prose meta-calls; docs/directive-learning
+# DESIGN §14). No model is involved: a template is inserted verbatim by
+# deterministic code (``_zone_set``), so it can never corrupt the section model.
 _PERSONA_HEADING = "## 페르소나"
-_DIRECTIVE_PERSONA_SYSTEM = (
-    "You write the persona/voice section of a DIRECTIVE.md for an AI coding "
-    "agent. Given a character description, produce a concise Markdown section "
-    "that starts with the exact heading `## 페르소나` and lists the character's "
-    "speech style: tone, first-/second-person forms, verbal tics, catchphrases, "
-    "and honorifics — with concrete Korean examples. ALWAYS end with a rule that "
-    "says WHERE the voice applies, so the agent actually uses it: it speaks "
-    "fully in-character in every user-facing reply — its final result/summary "
-    "and any question it asks the user — while keeping its reasoning, tool "
-    "calls, file paths, commands, and code exactly correct, and never letting "
-    "the character distort a fact. Frame this as WHERE to be in-character (the "
-    "user-facing text), NOT as a reason to stay neutral or treat the voice as "
-    "optional. Write in Korean. Output ONLY the `## 페르소나` section — no "
-    "preamble, no other top-level headings, no surrounding code fences."
-)
-# id → (label, character brief). The brief seeds the LLM, which expands it into a
-# full persona section. Extend by adding an entry; the frontend fetches labels
-# via GET /api/directives/personas so the 🪄 menu stays in sync (single source).
-_DIRECTIVE_PERSONAS: dict[str, tuple[str, str]] = {
-    "cat_butler": (
-        "🐱 고양이 집사",
-        "도도하고 고고한 고양이 집사. 문장 끝에 '~냥/~다냥'을 붙이고, 자신을 '이 몸', "
-        "사용자를 '집사'라 부른다. 새침하지만 유능하게 일은 확실히 해낸다.",
+# Template BODIES per axis, matching what ``_zone_set`` expects: the persona zone
+# gets its ``## 페르소나`` heading prepended by ``_zone_set`` (so the body is
+# heading-less bullets); the task zone is placed verbatim (so it carries its own
+# ``## 업무`` heading). learned has no template — it is filled by 📥 learn.
+_AXIS_TEMPLATES = {
+    "persona": (
+        "- 톤:\n"
+        "- 1인칭/2인칭 호칭:\n"
+        "- 말버릇·캐치프레이즈:\n"
+        "- 존댓말/반말·종결어미:\n"
+        "- 적용 범위: 사용자 대면 답변(최종 결과·요약·질문)은 캐릭터 목소리로. 단, 추론·도구 "
+        "호출·파일 경로·명령어·코드·사실 정확성은 그대로 정확하게(캐릭터가 사실을 왜곡하지 않게)."
     ),
-    "cursing_granny": (
-        "👵 욕쟁이 할머니",
-        "시장통 국밥집 욕쟁이 할머니. 걸쭉한 사투리와 정겨운 구박('이놈아','예끼','빌어먹을' "
-        "수준의 애정 어린 욕 — 심한 욕설·모욕은 금지). 겉은 툴툴대도 속은 정 많아 결국 "
-        "챙겨준다. 사용자를 '이놈아/아가'라 부른다.",
-    ),
-    "joseon_king": (
-        "📜 조선의 임금",
-        "조선을 다스리는 임금. 자신을 '과인', 신하인 사용자를 '경(卿)' 또는 '그대'라 부른다 "
-        "(임금이 신하를 부르는 호칭이니 '대감' 등으로 높이지 말 것). 위엄 있는 어명 말투 "
-        "'~하라/~하렷다/~이로다', 보고엔 '가상하도다' 같은 치하를 내린다.",
-    ),
-    "meoseum": (
-        "🌾 머슴",
-        "충직하고 넉살 좋은 옛 머슴. 자신을 '쇤네', 사용자를 '나리/주인님'이라 부른다. "
-        "'예이~ 나리', '쇤네가 냉큼 해오겠습니다요' 같이 굽신굽신하지만 일은 야무지게 해낸다.",
-    ),
-    "noir_detective": (
-        "🚬 하드보일드 탐정",
-        "비 내리는 도시의 하드보일드 느와르 탐정. 1인칭 독백체, 짧고 건조한 문장, 시니컬한 "
-        "어조. 사소한 것도 사건 현장처럼 과장된 은유로 묘사하고 담배·빗소리·위스키 클리셰를 "
-        "곁들인다.",
-    ),
-    "british_butler": (
-        "🎩 영국 집사",
-        "완벽하게 훈련된 정중한 영국 집사. 극존칭과 침착한 격식. '실례합니다만', "
-        "'분부대로 하겠습니다', '주인님' 어투. 감정을 절제하고 우아하게 응대한다.",
-    ),
-    "pirate_captain": (
-        "🏴‍☠️ 해적 선장",
-        "칠대양을 누비는 호탕한 해적 선장. '아하하!' 웃음, 자신을 '이 몸', 바다·보물·항해 "
-        "은유를 즐긴다. 거칠지만 의리 있고 임무는 보물찾기처럼 확실히 완수한다.",
-    ),
-    "robot_ai": (
-        "🤖 냉정한 로봇",
-        "감정을 배제한 기계적 로봇. 건조하고 간결한 보고체 '삐빅.', '처리 완료.', "
-        "'분석 결과:'. 군더더기 없이 정확하게만 답한다.",
-    ),
-    "sage_wizard": (
-        "🧙 판타지 현자",
-        "오랜 세월을 산 판타지 세계의 현자/마법사. 고풍스럽고 수수께끼 같은 어투 "
-        "'오랜 세월이 이르길…', '길은 스스로 드러나느니라'. 지혜로운 통찰을 곁들여 안내한다.",
-    ),
-    "pro_programmer": (
-        "👨‍💻 전문 프로그래머",
-        "경험 많은 시니어 소프트웨어 엔지니어. 간결하고 정확한 실무 말투. 결론부터 말하고 "
-        "트레이드오프를 짚으며 근거 있는 판단을 담백하게 전달한다. 과장·군더더기 없음.",
-    ),
-    "professor": (
-        "🎓 교수",
-        "차분하고 학구적인 대학 교수. '~입니다' 체로 개념과 원리를 짚어 설명하고 왜 그런지 "
-        "이유를 덧붙이며, 때때로 소크라테스식 질문으로 이해를 이끈다. 정중하고 명료하다.",
+    "task": (
+        "## 업무\n"
+        "- 역할:\n"
+        "- 작업 원칙:\n"
+        "- 편집 전 확인:\n"
+        "- 빌드·테스트·정적분석 규율:\n"
+        "- 주의사항:"
     ),
 }
 
@@ -308,24 +200,6 @@ def _replace_managed_section(
     if not rest:
         return block
     return f"{block}\n\n{rest}" if prepend else f"{rest}\n\n{block}"
-
-
-def _strip_persona_section(md: str) -> str:
-    """Remove the ``## 페르소나`` section, returning the remaining task content.
-    Lets a persona regeneration SWAP the persona instead of stacking, and lets
-    deterministic code preserve the task directive (rather than trusting the
-    LLM to)."""
-    return _strip_section(md, _PERSONA_HEADING)
-
-
-def _merge_persona(persona_block: str, existing: str) -> str:
-    """Prepend a freshly generated ``## 페르소나`` block to the task content of
-    ``existing`` (any old persona section stripped first). Deterministic — the
-    LLM never sees or rewrites the task directive."""
-    body = persona_block.strip()
-    if body.startswith(_PERSONA_HEADING):
-        body = body[len(_PERSONA_HEADING) :].strip()
-    return _replace_managed_section(existing, _PERSONA_HEADING, body, prepend=True)
 
 
 def _strip_code_fences(text: str) -> str:
@@ -483,6 +357,48 @@ def _record_lessons(session_dir, lessons: list[dict]) -> int:
         seen.add(key)
         n += 1
     return n
+
+
+# ── Directive axis zones ──────────────────────────────────────────────
+# A directive has three axes the editor edits independently: persona (the
+# ``## 페르소나`` section), learned guidance (``## 학습된 지침`` section), and
+# task — everything else (the free-form body). Each 🪄/📥 generator and each
+# per-axis preset save/load targets exactly ONE zone, leaving the other two
+# byte-identical. All zone parsing lives here (Python) so the frontend never
+# re-implements section splitting.
+_AXIS_HEADINGS = {"persona": _PERSONA_HEADING, "learned": _LEARNED_HEADING}
+
+
+def _task_zone(content: str) -> str:
+    """The task zone = the directive minus the persona and learned sections
+    (the free-form body the user writes / the 업무 🪄 generates)."""
+    return _strip_section(_strip_section(content, _PERSONA_HEADING), _LEARNED_HEADING)
+
+
+def _zone_get(content: str, axis: str) -> str:
+    """Current body of one axis's zone within ``content`` (heading excluded for
+    the section axes; the whole remainder for task)."""
+    if axis == "task":
+        return _task_zone(content)
+    return _section_body(content, _AXIS_HEADINGS[axis])
+
+
+def _zone_set(content: str, axis: str, body: str) -> str:
+    """Replace one axis's zone in ``content`` with ``body`` (empty removes it),
+    leaving the other two zones byte-identical. Persona leads (prepend), learned
+    trails (append), task is the middle remainder."""
+    if axis == "persona":
+        return _replace_managed_section(content, _PERSONA_HEADING, body, prepend=True)
+    if axis == "learned":
+        return _replace_managed_section(content, _LEARNED_HEADING, body)
+    # task: rebuild as persona(prepend) + new task body + learned(append), so
+    # regenerating/loading the task never disturbs the two managed sections.
+    persona = _section_body(content, _PERSONA_HEADING)
+    learned = _section_body(content, _LEARNED_HEADING)
+    out = _replace_managed_section(
+        (body or "").strip(), _PERSONA_HEADING, persona, prepend=True
+    )
+    return _replace_managed_section(out, _LEARNED_HEADING, learned)
 
 
 # Per-file cap for workspace uploads (POST /api/workspace/upload). A guard
@@ -1254,34 +1170,6 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_directives_changed()
         return {"ok": True}
 
-    @app.get("/api/directives/presets")
-    async def debug_directives_presets(token: str = Query(...)):
-        """Starter presets for the 🪄 menu — ``[{id, label}]`` (single source so
-        the menu matches the backend). Empty ``available`` when no LLM is wired
-        (feature disabled) so the frontend can hide 🪄."""
-        server._require_token(token)
-        return {
-            "available": server.provider is not None and server.model is not None,
-            "presets": [
-                {"id": pid, "label": label}
-                for pid, (label, _) in _DIRECTIVE_PRESETS.items()
-            ],
-        }
-
-    @app.get("/api/directives/personas")
-    async def debug_directives_personas(token: str = Query(...)):
-        """Fixed persona characters for the 🎭 menu — ``[{id, label}]`` (single
-        source so the menu matches the backend). Same availability gate as
-        presets (no LLM → feature hidden)."""
-        server._require_token(token)
-        return {
-            "available": server.provider is not None and server.model is not None,
-            "personas": [
-                {"id": pid, "label": label}
-                for pid, (label, _) in _DIRECTIVE_PERSONAS.items()
-            ],
-        }
-
     async def _gen_directive(system: str, user: str) -> str:
         """One-off meta-call to the session LLM (NOT the loop), fences stripped.
         Blocking ``provider.call`` runs in a threadpool so the async server isn't
@@ -1302,55 +1190,19 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=502, detail=f"LLM call failed: {e}") from e
         return _strip_code_fences(result)
 
-    @app.post("/api/directives/compose")
-    async def debug_directives_compose(body: dict, token: str = Query(...)):
-        """Compose a DIRECTIVE.md from two orthogonal axes chosen in the editor:
-        ``task`` (역할/작업) and a persona (성격/말투). Body:
-        ``{task, persona_id?, persona?, content}`` where ``task`` ∈ ``""``(none) |
-        ``"enhance"``(정리 current task part) | a preset id, and persona is a
-        preset id (``persona_id``), free-text brief (``persona``), or absent.
-
-        Pipeline: (1) TASK part — preset → starter, ``enhance`` → refine the
-        existing task text (persona section stripped first), none → empty; (2)
-        PERSONA — generate a ``## 페르소나`` block and ``_merge_persona`` it onto
-        the task part (deterministic; the LLM never sees/rewrites the task). Both
-        axes ``none`` → empty (clears the editor). Returns ``{content}`` UNSAVED
-        for review. 503 when no LLM is wired."""
+    @app.post("/api/directives/template")
+    async def debug_directives_template(
+        body: dict, axis: str = Query(...), token: str = Query(...)
+    ):
+        """📋 Insert a static fill-in skeleton into one axis's zone (persona or
+        task), returned UNSAVED for the user to fill by hand. Deterministic — no
+        LLM (the leak-free replacement for 🪄). Body: ``{content}``. 400 on a bad
+        axis or an axis without a template (learned is filled by 📥 learn)."""
         server._require_token(token)
-        if server.provider is None or server.model is None:
-            raise HTTPException(status_code=503, detail="LLM not available")
-        task = (body.get("task") or "").strip()
-        persona_id = (body.get("persona_id") or "").strip()
-        persona = (body.get("persona") or "").strip()  # free-text character brief
-        content = (body.get("content") or "").strip()
-        if persona_id and persona_id not in _DIRECTIVE_PERSONAS:
-            raise HTTPException(status_code=400, detail="unknown persona")
-        if task and task != "enhance" and task not in _DIRECTIVE_PRESETS:
-            raise HTTPException(status_code=400, detail="unknown task")
-
-        # 1. Task part — the existing task is the editor content minus any persona
-        #    section (so a persona swap/removal never disturbs the task).
-        existing_task = _strip_persona_section(content)
-        if task in _DIRECTIVE_PRESETS:
-            user = _DIRECTIVE_PRESETS[task][1]
-            if existing_task:
-                user += f"\n\n참고할 기존 초안:\n{existing_task}"
-            task_part = await _gen_directive(_DIRECTIVE_STARTER_SYSTEM, user)
-        elif task == "enhance":
-            task_part = (
-                await _gen_directive(_DIRECTIVE_ENHANCE_SYSTEM, existing_task)
-                if existing_task
-                else ""
-            )
-        else:  # none → task removed
-            task_part = ""
-
-        # 2. Persona — generate the block and deterministically prepend it.
-        if persona_id or persona:
-            brief = _DIRECTIVE_PERSONAS[persona_id][1] if persona_id else persona
-            block = await _gen_directive(_DIRECTIVE_PERSONA_SYSTEM, f"캐릭터: {brief}")
-            return {"content": _merge_persona(block, task_part)}
-        return {"content": task_part}
+        tmpl = _AXIS_TEMPLATES.get(axis)
+        if tmpl is None:
+            raise HTTPException(status_code=400, detail=f"no template for axis: {axis}")
+        return {"content": _zone_set(body.get("content") or "", axis, tmpl)}
 
     @app.post("/api/directives/learn")
     async def debug_directives_learn(body: dict, token: str = Query(...)):
@@ -1384,57 +1236,83 @@ def create_app(server: WebServer) -> FastAPI:
         )
         return {"content": new_content, "learned": len(lessons)}
 
-    @app.get("/api/directives/presets/library")
-    async def directives_presets_library(token: str = Query(...)):
-        """User-saved DIRECTIVE presets (``~/.agent-cli/directive-presets/``) as
-        ``{presets: [{id, label, source}]}`` for the 업무 dropdown. Always
-        available (deterministic file store, no LLM needed)."""
-        server._require_token(token)
+    def _require_axis(axis: str) -> str:
+        """Validate the ``axis`` query param against the fixed enum → 400."""
         from agent_cli import directive_presets
 
-        return {"presets": directive_presets.list_presets()}
+        if axis not in directive_presets.AXES:
+            raise HTTPException(status_code=400, detail=f"unknown axis: {axis}")
+        return axis
+
+    @app.get("/api/directives/presets/library")
+    async def directives_presets_library(
+        axis: str = Query(...), token: str = Query(...)
+    ):
+        """User-saved presets for one axis (persona|task|learned) as
+        ``{presets: [{id, label, source}]}`` for that dropdown. Always available
+        (deterministic file store, no LLM)."""
+        server._require_token(token)
+        _require_axis(axis)
+        from agent_cli import directive_presets
+
+        return {"presets": directive_presets.list_presets(axis)}
 
     @app.post("/api/directives/presets/library")
-    async def directives_presets_library_save(body: dict, token: str = Query(...)):
-        """Save the current editor content as a named preset in the home library
-        (shared across all agent-cli instances). Body: ``{name, content}``.
-        Overwrites a same-name preset. 400 on an unsafe name (traversal)."""
+    async def directives_presets_library_save(
+        body: dict, axis: str = Query(...), token: str = Query(...)
+    ):
+        """Save ONE axis's zone of the current editor content as a named preset in
+        the home library (shared across all rooms). Body: ``{name, content}`` —
+        the server extracts that axis's zone from ``content`` and saves only it.
+        Overwrites a same-name preset. 400 on empty zone / unsafe name / bad
+        axis."""
         server._require_token(token)
+        _require_axis(axis)
         from agent_cli import directive_presets
 
-        try:
-            pid = directive_presets.save(
-                body.get("name") or "", body.get("content") or ""
+        zone = _zone_get(body.get("content") or "", axis).strip()
+        if not zone:
+            raise HTTPException(
+                status_code=400, detail="이 축에 저장할 내용이 없습니다"
             )
+        try:
+            pid = directive_presets.save(axis, body.get("name") or "", zone)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"ok": True, "id": pid}
 
-    @app.get("/api/directives/presets/library/{preset_id}")
-    async def directives_presets_library_load(preset_id: str, token: str = Query(...)):
-        """Body of one saved preset (for loading into the editor, unsaved). 404
-        when absent, 400 on an unsafe id."""
+    @app.post("/api/directives/presets/library/{preset_id}/apply")
+    async def directives_presets_library_apply(
+        preset_id: str, body: dict, axis: str = Query(...), token: str = Query(...)
+    ):
+        """Load a saved preset INTO the current editor: merge its body into that
+        axis's zone of ``content`` (leaving the other two zones byte-identical),
+        returned UNSAVED. Body: ``{content}``. 404 when absent, 400 on bad
+        axis/id."""
         server._require_token(token)
+        _require_axis(axis)
         from agent_cli import directive_presets
 
         try:
-            content = directive_presets.load(preset_id)
+            preset_body = directive_presets.load(axis, preset_id)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        if content is None:
+        if preset_body is None:
             raise HTTPException(status_code=404, detail="preset not found")
-        return {"content": content}
+        return {"content": _zone_set(body.get("content") or "", axis, preset_body)}
 
     @app.delete("/api/directives/presets/library/{preset_id}")
     async def directives_presets_library_delete(
-        preset_id: str, token: str = Query(...)
+        preset_id: str, axis: str = Query(...), token: str = Query(...)
     ):
-        """Delete a user preset. 404 when absent, 400 on an unsafe id."""
+        """Delete a user preset from one axis. 404 when absent, 400 on bad
+        axis/id."""
         server._require_token(token)
+        _require_axis(axis)
         from agent_cli import directive_presets
 
         try:
-            ok = directive_presets.delete(preset_id)
+            ok = directive_presets.delete(axis, preset_id)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         if not ok:
