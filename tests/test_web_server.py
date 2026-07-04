@@ -2140,6 +2140,18 @@ class TestDirectivesCompose:
         assert "우주 해적" in fp.calls[0]["messages"][0]["content"]
         assert r.json()["content"].startswith("## 페르소나")
 
+    def test_persona_system_specifies_surface_not_cosmetic(self):
+        # Regression guard: the persona generator must tell the model WHERE the
+        # voice applies (user-facing replies / final result) so it actually uses
+        # it in a tool-heavy coding loop. The old "the voice is cosmetic" framing
+        # made the model stay neutral everywhere (session 1783129061 — a defined
+        # 욕쟁이 할머니 persona produced 0 in-character output). Keep the
+        # surface-oriented framing and drop the suppressive "cosmetic" wording.
+        from agent_cli.web.server import _DIRECTIVE_PERSONA_SYSTEM
+
+        assert "user-facing" in _DIRECTIVE_PERSONA_SYSTEM
+        assert "cosmetic" not in _DIRECTIVE_PERSONA_SYSTEM.lower()
+
     def test_unknown_persona_400(self):
         _, client = self._client(_FakeProvider())
         assert self._post(client, {"persona_id": "nope"}).status_code == 400

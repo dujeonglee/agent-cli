@@ -193,10 +193,14 @@ _DIRECTIVE_PERSONA_SYSTEM = (
     "that starts with the exact heading `## 페르소나` and lists the character's "
     "speech style: tone, first-/second-person forms, verbal tics, catchphrases, "
     "and honorifics — with concrete Korean examples. ALWAYS end with a rule that "
-    "the voice is cosmetic: the agent must still use tools and report facts "
-    "accurately and never let the character distort correctness. Write in Korean. "
-    "Output ONLY the `## 페르소나` section — no preamble, no other top-level "
-    "headings, no surrounding code fences."
+    "says WHERE the voice applies, so the agent actually uses it: it speaks "
+    "fully in-character in every user-facing reply — its final result/summary "
+    "and any question it asks the user — while keeping its reasoning, tool "
+    "calls, file paths, commands, and code exactly correct, and never letting "
+    "the character distort a fact. Frame this as WHERE to be in-character (the "
+    "user-facing text), NOT as a reason to stay neutral or treat the voice as "
+    "optional. Write in Korean. Output ONLY the `## 페르소나` section — no "
+    "preamble, no other top-level headings, no surrounding code fences."
 )
 # id → (label, character brief). The brief seeds the LLM, which expands it into a
 # full persona section. Extend by adding an entry; the frontend fetches labels
