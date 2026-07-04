@@ -733,3 +733,141 @@ class TestOverCloseRecovery:
         t = WF.parse_turn(_wire("write", body))
         assert t.parse_stage == 2
         assert t.ops[0].action_input["content"] == "def f(): return {}"
+
+
+class TestAnonWrapMissingCloserRecovery:
+    """The anon-object shape (`{"action":X, {params}}`) combined with a MISSING
+    array `]` — and, in the worst case, the batch split into several separate
+    `[{...}` arrays. Captured from session 1783129061 (27B write_file batch):
+    three lines of `[{"action":"write_file", {params}}` with no trailing `]`.
+    The unwrap alone leaves `[{...}` (unclosed / multi-array) → still NO_JSON;
+    composing with merge + close_unbalanced recovers all ops at parse_stage 2."""
+
+    def test_anon_wrap_missing_close_bracket_single_op(self):
+        # {"action":X, {params}} with no `]` → unwrap then append the closer.
+        body = '[{"action": "write_file", {"path": "a.h", "content": "x"}}'
+        t = WF.parse_turn(_wire("one file", body))
+        assert t.parse_stage == 2
+        assert len(t.ops) == 1 and t.ops[0].action == "write_file"
+        assert t.ops[0].action_input == {"path": "a.h", "content": "x"}
+
+    def test_anon_wrap_reopened_arrays_recovers_all_ops(self):
+        # three separate `[{...}}` arrays, none closed — the exact session shape.
+        body = (
+            '[{"action": "write_file", {"path": "list.h", "content": "H"}}\n'
+            '[{"action": "write_file", {"path": "list.c", "content": "C"}}\n'
+            '[{"action": "write_file", {"path": "test.c", "content": "T"}}'
+        )
+        t = WF.parse_turn(_wire("linked list", body))
+        assert t.parse_stage == 2
+        assert [o.action for o in t.ops] == ["write_file"] * 3
+        assert [o.action_input["path"] for o in t.ops] == [
+            "list.h",
+            "list.c",
+            "test.c",
+        ]
+        assert [o.action_input["content"] for o in t.ops] == ["H", "C", "T"]
+
+    def test_reopened_arrays_content_braces_safe(self):
+        # a `}` `[{` sequence INSIDE a content string must not be merged — the
+        # merge is string-aware, so the C body is preserved and it stays one op.
+        body = (
+            '[{"action": "write_file", '
+            '{"path": "x.c", "content": "if (a) {}\\n[{bad}]"}}'
+        )
+        t = WF.parse_turn(_wire("c file", body))
+        assert t.parse_stage == 2
+        assert len(t.ops) == 1
+        assert t.ops[0].action_input["content"] == "if (a) {}\n[{bad}]"
+
+    def test_merge_helper_noop_on_single_array(self):
+        from agent_cli.wire_formats.md_array import _merge_reopened_op_arrays
+
+        one = '[{"action": "shell", "command": "ls"}]'
+        assert _merge_reopened_op_arrays(one) == (one, False)
+
+
+class TestMultiArrayHappyPathRecovery:
+    """The model emits several SEPARATE well-formed top-level arrays
+    (`[{op1}] [{op2}]`) instead of one. Each array is valid JSON, so the strict
+    parse succeeds — but `_extract_first_json` stops at the first and SILENTLY
+    drops the rest (no error, parse_stage would be 1). The merge now folds
+    whitespace-adjacent re-opened arrays and gathers every op at parse_stage 2.
+    Conservative: only fires on `}` …`[{`, only when it strictly gains ops, so
+    a normal single array and trailing `</think>`/prose are untouched."""
+
+    def test_wellformed_multi_array_gathers_all_ops(self):
+        body = (
+            '[{"action": "write_file", "path": "a.c"}]\n'
+            '[{"action": "write_file", "path": "b.c"}]\n'
+            '[{"action": "write_file", "path": "c.c"}]'
+        )
+        t = WF.parse_turn(_wire("three files", body))
+        assert t.parse_stage == 2  # drift recovery, not a clean stage-1
+        assert [o.action_input["path"] for o in t.ops] == ["a.c", "b.c", "c.c"]
+
+    def test_closed_arrays_no_whitespace_between(self):
+        # `}][{` directly adjacent (no newline) also folds.
+        body = '[{"action":"read_file","path":"a"}][{"action":"read_file","path":"b"}]'
+        t = WF.parse_turn(_wire("x", body))
+        assert t.parse_stage == 2
+        assert [o.action_input["path"] for o in t.ops] == ["a", "b"]
+
+    def test_single_valid_array_unchanged_stage1(self):
+        # The normal multi-op array (ops joined by `},{`) must NOT be flagged as
+        # a recovery — it parses clean at stage 1.
+        body = (
+            '[{"action": "write_file", "path": "a.c"}, '
+            '{"action": "write_file", "path": "b.c"}]'
+        )
+        t = WF.parse_turn(_wire("two files", body))
+        assert t.parse_stage == 1
+        assert [o.action_input["path"] for o in t.ops] == ["a.c", "b.c"]
+
+    def test_trailing_think_tag_defense_first_array_wins(self):
+        # A reasoning model leaking `</think>` after the array is NOT a second
+        # op-array → no merge, first array only, stage 1 preserved.
+        body = '[{"action": "complete", "result": "done"}]</think>'
+        t = WF.parse_turn(_wire("finish", body))
+        assert t.parse_stage == 1
+        assert [o.action for o in t.ops] == ["complete"]
+
+    def test_prose_between_arrays_defense(self):
+        # Non-whitespace text between the arrays → conservative, no merge (the
+        # boundary must be whitespace-adjacent). Only the first op is taken.
+        body = (
+            '[{"action": "write_file", "path": "a.c"}]\n'
+            "이제 다음 파일:\n"
+            '[{"action": "write_file", "path": "b.c"}]'
+        )
+        t = WF.parse_turn(_wire("x", body))
+        assert t.parse_stage == 1
+        assert [o.action_input["path"] for o in t.ops] == ["a.c"]
+
+    def test_brace_bracket_inside_content_string_not_merged(self):
+        # A `}[{` sequence INSIDE a content value must not trigger a fold — the
+        # merge is string-aware. One op, content byte-preserved.
+        body = '[{"action":"write_file","path":"x.c","content":"a}[{b"}]'
+        t = WF.parse_turn(_wire("c file", body))
+        assert t.parse_stage == 1
+        assert len(t.ops) == 1
+        assert t.ops[0].action_input["content"] == "a}[{b"
+
+    def test_headerless_multi_array_recovers(self):
+        # No `## Action` header, multiple op-arrays in raw prose+JSON.
+        raw = (
+            "Creating both files.\n\n"
+            '[{"action": "write_file", "path": "a.h"}]\n'
+            '[{"action": "write_file", "path": "b.h"}]'
+        )
+        t = WF.parse_turn(raw)
+        assert t.parse_stage == 2
+        assert [o.action_input["path"] for o in t.ops] == ["a.h", "b.h"]
+
+    def test_second_array_nonop_junk_filtered_not_crash(self):
+        # `[{op}]` then a bare `[1,2,3]` list: merge folds them, non-dict
+        # elements are filtered → the op survives, no crash, no bogus op.
+        body = '[{"action": "shell", "command": "ls"}]\n[1, 2, 3]'
+        t = WF.parse_turn(_wire("x", body))
+        assert [o.action for o in t.ops] == ["shell"]
+        assert t.ops[0].action_input["command"] == "ls"

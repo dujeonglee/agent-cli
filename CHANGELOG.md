@@ -12,6 +12,29 @@
 
 ## [Unreleased]
 
+## [4.23.1] - 2026-07-04
+
+### Fixed
+
+- **md_array JSON 복구: anon-wrap + 배열 `]` 누락 + 다중배열 동시 복구** — 27B 모델이
+  op params 를 익명 객체로 감싸면서(`[{"action":X, {params}}`) 배열 닫는 `]` 도 빠뜨리고,
+  배치를 여러 개의 별도 `[{...}` 배열로 쪼개 내는 실측 실패(세션 1783129061 — write_file 3개
+  배치)를 복구한다.
+  - **원인**: 기존 anon-object unwrap 은 `[{...}`(미닫힘)만 남겨 `_extract_first_json` 이
+    None 을 반환했다(다른 복구들은 `close_unbalanced` 와 합성하는데 이 경로만 누락). 게다가
+    모델이 배치를 3개의 별도 배열로 쪼개면 배열이 중간에 안 닫혀 병합도 필요했다.
+  - **수정**: unwrap 결과를 `_merge_reopened_op_arrays`(문자열-인식으로 재-오픈된 배열 경계
+    `}…[{` → `},{` 병합)와 `close_unbalanced`(EOF `]` 추가)에 합성. 문자열-인식이라 content
+    속 괄호는 안전.
+- **md_array JSON 복구: 정상(happy-path) 다중배열 op 유실 수정** — 모델이 배치를 여러 개의
+  **잘 닫힌** 별도 배열(`[{op1}] [{op2}] [{op3}]`)로 내면 각 배열이 유효 JSON 이라 strict
+  파싱은 성공하지만 `_extract_first_json` 이 **첫 배열만** 취하고 나머지를 **에러 없이 조용히
+  버렸다**(parse_stage 1=성공으로 보임 → 작업 일부 미실행이 신호 없이 지나감).
+  - **수정**: 첫 파싱 성공 후에도 `_merge_reopened_op_arrays` 로 공백-인접 재-오픈 배열을 접어
+    op 수가 **늘어날 때만** 병합 결과를 채택(drift → parse_stage 2). 보수적: `}…[{` 경계에서만
+    발화(정상 단일배열의 `},{` 는 불변), trailing `</think>`·배열 사이 설명 텍스트는 병합 안 함
+    (기존 "첫 배열 우선" 방어 유지).
+
 ## [4.23.0] - 2026-07-04
 
 ### Changed

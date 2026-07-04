@@ -182,6 +182,61 @@ def _extract_first_json(body: str, *, strict: bool = True):
     return None
 
 
+def _merge_reopened_op_arrays(text: str) -> tuple[str, bool]:
+    """Merge multiple top-level op-arrays the model emitted as SEPARATE arrays
+    instead of one. Measured shape: a 27B write_file batch split across three
+    lines, each its own ``[{...}`` (session 1783129061 — the model reopened the
+    array per op rather than emitting one ``[op, op, op]``).
+
+    The tell is a structural ``}`` (an op close) followed — outside any string —
+    by an optional array close ``]``, whitespace, then ``[{`` (a new op-array
+    open). In valid JSON a ``}`` is only ever followed by ``,`` ``]`` ``}``, so
+    ``}`` … ``[{`` at object level is unambiguously a spurious re-open →
+    rewrite the boundary to ``},{`` so the ops fold into one array. String-aware
+    (braces/brackets inside a ``content`` value never trigger it), and a no-op
+    when the pattern is absent (``changed=False``). Compose with
+    :func:`close_unbalanced` for the array's own missing ``]``.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    in_str = escape = False
+    changed = False
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "}":
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            if j < n and text[j] == "]":  # optional close of the prior array
+                j += 1
+                while j < n and text[j].isspace():
+                    j += 1
+            if j + 1 < n and text[j] == "[" and text[j + 1] == "{":
+                out.append("},{")  # fold the re-opened array into this one
+                i = j + 2
+                changed = True
+                continue
+        out.append(ch)
+        i += 1
+    return ("".join(out), changed) if changed else (text, False)
+
+
 def _repair_anonymous_op_objects(text: str, *, drop_close: bool) -> str:
     """Remove the spurious ``{`` the model inserts in object-KEY position when
     it wraps an op's params in an anonymous nested object (DESIGN Exp 8). Two
@@ -263,6 +318,13 @@ def _repair_anonymous_op_objects(text: str, *, drop_close: bool) -> str:
     return "".join(out)
 
 
+def _op_count(parsed) -> int:
+    """Number of dict-shaped ops in an extracted payload (bare object = 1)."""
+    if isinstance(parsed, list):
+        return sum(1 for x in parsed if isinstance(x, dict))
+    return 1 if isinstance(parsed, dict) else 0
+
+
 def _extract_op_json(text: str):
     """``_extract_first_json`` with an anonymous-nested-object repair fallback.
 
@@ -272,6 +334,20 @@ def _extract_op_json(text: str):
     and keeps whichever parses."""
     parsed = _extract_first_json(text)
     if parsed is not None:
+        # The first array parsed cleanly — but the model may have split the
+        # batch into several SEPARATE top-level arrays (`[{op1}] [{op2}]`), and
+        # `_extract_first_json` stops at the first, silently dropping the rest
+        # (measured happy-path op loss — no error, parse_stage would be 1). If
+        # folding whitespace-adjacent re-opened arrays yields MORE ops, take the
+        # merged parse as a drift recovery (parse_stage 2). Conservative: the
+        # fold only fires on `}` …`[{` (never a valid single array's `},{`), and
+        # only when it strictly gains ops — trailing `</think>`/prose never
+        # matches, so that defense (first-array-wins) is preserved.
+        merged, changed = _merge_reopened_op_arrays(text)
+        if changed:
+            remerged = _extract_first_json(merged)
+            if remerged is not None and _op_count(remerged) > _op_count(parsed):
+                return remerged, True
         return parsed, False
     # Strict parse failed: the JSON is broken. A reasoning model often leaks a
     # trailing ``</think>`` after the array, which defeats the unclosed-array
@@ -282,9 +358,24 @@ def _extract_op_json(text: str):
     for drop_close in (True, False):
         fixed = _repair_anonymous_op_objects(text, drop_close=drop_close)
         if fixed != text:
-            parsed = _extract_first_json(fixed)
-            if parsed is not None:
-                return parsed, True
+            # Compose with merge + close_unbalanced: the model often forgets BOTH
+            # the params-wrapping AND the array's ``]`` — and sometimes splits the
+            # batch into several separate ``[{...}`` arrays (measured — session
+            # 1783129061, a 27B write_file batch: three lines of
+            # `[{"action":X, {params}}` with no trailing `]`). The unwrap yields
+            # `[{...}` per op (still unclosed / multi-array), so fold re-opened
+            # arrays into one and append the missing closer before re-parsing.
+            merged = _merge_reopened_op_arrays(fixed)[0]
+            seen: set[str] = set()
+            for base in (fixed, merged):
+                for cand in (base, close_unbalanced(base)[0]):
+                    if cand in seen:
+                        continue
+                    seen.add(cand)
+                    for strict in (True, False):
+                        parsed = _extract_first_json(cand, strict=strict)
+                        if parsed is not None:
+                            return parsed, True
     # Last resort: the model emitted literal control chars (raw newlines/tabs)
     # inside a string value — common in big `result`/`content` markdown blobs
     # written without `\n` escaping — which strict json.loads rejects
