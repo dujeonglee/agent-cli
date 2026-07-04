@@ -51,6 +51,7 @@ from agent_cli.memory import consume_memory_reload
 from agent_cli.render import (
     consume_directives_reload,
     notify_directives_applied,
+    notify_memory_applied,
     render_context_dump,
     render_system_prompt_snapshot,
     render_header,
@@ -654,6 +655,8 @@ class AgentLoop:
             )
             if directives_changed:
                 notify_directives_applied()
+            if memory_changed:
+                notify_memory_applied()
         # PreLLMCall hook — can inject system sections and messages
         hook_ctx = self._fire_hook("PreLLMCall")
         self._apply_system_sections(hook_ctx)

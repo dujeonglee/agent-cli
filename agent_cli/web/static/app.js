@@ -1085,6 +1085,12 @@
     window.dispatchEvent(new CustomEvent("agentcli:directives-changed"));
   });
 
+  es.addEventListener("memory_changed", function () {
+    // A `memory` op updated the ## Session Memory index → refresh the prompt
+    // view (memory has no editor, so prompt-only).
+    window.dispatchEvent(new CustomEvent("agentcli:memory-changed"));
+  });
+
   es.addEventListener("token_usage", function (e) {
     // Top-bar readout: context occupancy %, this turn's in/out, and the
     // cumulative session output. Server sends raw counts; we format here.
@@ -1768,6 +1774,11 @@
       loadDirectives();
       loadPrompt();
     }
+  });
+
+  window.addEventListener("agentcli:memory-changed", function () {
+    // Memory index changed → refresh the prompt view only (no editor).
+    if ($drawer.classList.contains("open")) loadPrompt();
   });
 
   function open() {

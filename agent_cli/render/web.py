@@ -836,6 +836,11 @@ class WebRenderer(Renderer):
         (so concurrent editors don't show stale content). Transient event."""
         self._emit("directives_changed", {}, persistent=False)
 
+    def broadcast_memory_changed(self) -> None:
+        """Tell every open Prompt Inspector to re-fetch the prompt view after a
+        `memory` op updated the `## Session Memory` index. Transient event."""
+        self._emit("memory_changed", {}, persistent=False)
+
     def viewer_count(self) -> int:
         """Number of live (not-closed) browser subscribers — the same predicate
         as :meth:`has_live_connections`, as a count. Exposed via /api/health so a

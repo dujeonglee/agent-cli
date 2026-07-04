@@ -388,6 +388,11 @@ class Renderer(ABC):
         on save (editor sync) and when the edit is actually applied (prompt
         view reflects the now-live directive). No-op off the web renderer."""
 
+    def broadcast_memory_changed(self) -> None:
+        """Tell open Prompt Inspectors to re-fetch the prompt view after a
+        `memory` op changed the `## Session Memory` index. Memory has no editor
+        (unlike directives), so this refreshes the prompt only. No-op off web."""
+
     @abstractmethod
     def spinner_start(self, message: str = "") -> None:
         """Start a spinner animation (e.g. during LLM call)."""

@@ -200,6 +200,13 @@ def notify_directives_applied() -> None:
     _renderer.broadcast_directives_changed()
 
 
+def notify_memory_applied() -> None:
+    """The loop just rebuilt the system prompt after a `memory` op → tell open
+    Prompt Inspectors to re-fetch the prompt view so the ``## Session Memory``
+    index reflects the change at the moment it takes effect."""
+    _renderer.broadcast_memory_changed()
+
+
 def render_spinner_start(message: str = "") -> None:
     _renderer.spinner_start(message)
 

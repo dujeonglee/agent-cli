@@ -106,7 +106,7 @@ class TestIndexRender:
         memory.add(tmp_path, type="failure", summary="빌드 깨짐", detail="LONG DETAIL")
         memory.add(tmp_path, type="discovery", summary="probe 는 A")
         idx = memory.render_index(tmp_path)
-        assert "## Session Memory (2개)" in idx
+        assert "## Session Memory (2)" in idx  # English scaffolding
         assert "⚠ #1 [failure] 빌드 깨짐" in idx
         assert "💡 #2 [discovery] probe 는 A" in idx
         assert "LONG DETAIL" not in idx  # detail excluded from the index
@@ -115,7 +115,7 @@ class TestIndexRender:
         for i in range(memory._INDEX_CAP + 5):
             memory.add(tmp_path, type="note", summary=f"s{i}")
         idx = memory.render_index(tmp_path)
-        assert "오래된 5개 생략" in idx
+        assert "5 older entries hidden" in idx
         assert idx.count("[note]") == memory._INDEX_CAP  # only the cap shown
 
     def test_format_entry_includes_detail(self, tmp_path):

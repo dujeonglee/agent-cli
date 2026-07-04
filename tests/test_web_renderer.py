@@ -1740,3 +1740,20 @@ class TestDirectivesDirtyFlag:
             assert _qget(conn)[0] == "directives_changed"
         finally:
             render.set_renderer(prev)
+
+    def test_memory_applied_broadcast_reaches_viewers(self):
+        # A `memory` op → notify_memory_applied → SSE event so open inspectors
+        # re-fetch the prompt view (## Session Memory index) live.
+        from agent_cli import render
+        from agent_cli.render.web import WebConnection, WebRenderer
+
+        prev = render.get_renderer()
+        try:
+            r = WebRenderer()
+            render.set_renderer(r)
+            conn = WebConnection(id="c1")
+            r.register_connection(conn)
+            render.notify_memory_applied()
+            assert _qget(conn)[0] == "memory_changed"
+        finally:
+            render.set_renderer(prev)

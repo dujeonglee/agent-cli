@@ -192,11 +192,12 @@ def render_index(session_dir) -> str:
         return ""
     shown = entries[-_INDEX_CAP:]
     lines = [
-        f"## Session Memory ({len(entries)}개) — 전체 내용은 memory(mode=get, id=N)"
+        f"## Session Memory ({len(entries)}) — pull full detail with "
+        f"memory(mode=get, id=N)"
     ]
     hidden = len(entries) - len(shown)
     if hidden > 0:
-        lines.append(f"(오래된 {hidden}개 생략 — memory(mode=list) 로 조회)")
+        lines.append(f"({hidden} older entries hidden — see memory(mode=list))")
     for e in shown:
         icon = _TYPE_ICONS.get(e.get("type"), "•")
         lines.append(f"{icon} #{e.get('id')} [{e.get('type')}] {e.get('summary', '')}")

@@ -12,6 +12,17 @@
 
 ## [Unreleased]
 
+## [4.22.1] - 2026-07-04
+
+### Changed
+
+- **세션 메모리 인덱스가 Prompt Inspector 에 live 반영** — `memory` 도구로 기록/수정/삭제하면
+  이미 열려 있는 Prompt Inspector 의 prompt 뷰가 즉시 재fetch 되어 `## Session Memory`
+  섹션이 갱신된다(SSE `memory_changed` 브로드캐스트, Directives 의 update-when-applied 와
+  동일 방식 — 단 메모리는 에디터가 없어 prompt 뷰만).
+- **인덱스 스캐폴딩을 영어로** — `## Session Memory` 헤더·"hidden" 꼬리를 영어로 변경(시스템
+  프롬프트 나머지와 일관). 메모리 요약 본문은 LLM 이 쓴 언어 그대로.
+
 ## [4.22.0] - 2026-07-04
 
 ### Added
