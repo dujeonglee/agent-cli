@@ -917,11 +917,14 @@ footer {
   max-width: 130px;
 }
 .insp-dir-custom { flex: 1 1 110px; min-width: 90px; }
-#insp-dir-wand {
+#insp-dir-wand, #insp-dir-learn, #insp-dir-preset-save, #insp-dir-preset-del {
   background: transparent; color: var(--text-2);
   border: 1px solid var(--border); padding: 3px 8px;
 }
-#insp-dir-wand:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+#insp-dir-wand:hover:not(:disabled), #insp-dir-learn:hover:not(:disabled),
+#insp-dir-preset-save:hover:not(:disabled), #insp-dir-preset-del:hover:not(:disabled) {
+  color: var(--accent); border-color: var(--accent);
+}
 
 .insp-sections {
   flex: 1 1 auto;

@@ -1398,6 +1398,10 @@
   const $dirPersona = document.getElementById("insp-dir-persona");
   const $dirPersonaText = document.getElementById("insp-dir-persona-text");
   const $dirTask = document.getElementById("insp-dir-task");
+  const $dirLearn = document.getElementById("insp-dir-learn");
+  const $dirPreset = document.getElementById("insp-dir-preset");
+  const $dirPresetSave = document.getElementById("insp-dir-preset-save");
+  const $dirPresetDel = document.getElementById("insp-dir-preset-del");
   if (!$btn || !$drawer || !token) return;
 
   // Which system-prompt scope the drawer is showing: "" = main loop, a
@@ -1723,6 +1727,112 @@
   }
   if ($dirWand) $dirWand.addEventListener("click", composeDirective);
 
+  // ── 📥 learn-from-session ────────────────────────────────────────────
+  // Distill reusable lessons from the live conversation into the managed
+  // "## 학습된 지침" section (unsaved) + record them to the session memory
+  // store. Safe replacement for whole-cloth task auto-generation.
+  function learnDirective() {
+    $dirStatus.textContent = "📥 학습 중…";
+    if ($dirLearn) $dirLearn.disabled = true;
+    $dirSave.disabled = true;
+    fetch("api/directives/learn?" + qtoken(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: $dirText.value }),
+    })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) {
+        const n = (d && d.learned) || 0;
+        if (n === 0) { $dirStatus.textContent = "· 아직 배울 내용이 없어요"; return; }
+        $dirText.value = (d && d.content) || $dirText.value;
+        dirDirty = true; // unsaved — review, then 저장 or 취소
+        $dirStatus.textContent = "📥 " + n + "개 학습됨 — 검토 후 저장";
+      })
+      .catch(function () { $dirStatus.textContent = "✗ 학습 실패"; })
+      .finally(function () {
+        if ($dirLearn) $dirLearn.disabled = false;
+        $dirSave.disabled = false;
+      });
+  }
+  if ($dirLearn) $dirLearn.addEventListener("click", learnDirective);
+
+  // ── 💾 preset library (home, shared across rooms) ────────────────────
+  // Save the current editor content under a name, load a saved preset back in
+  // (unsaved → review), or delete one. Deterministic file store, no LLM.
+  // `dirPresetName` remembers the last loaded/saved preset so 💾 can default its
+  // name prompt to it — tracked SEPARATELY from the dropdown so it survives the
+  // dropdown de-selecting (e.g. after a 📥 learn). `dirPresetIds` is the current
+  // library id list, used to ask before overwriting a same-named preset.
+  let dirPresetName = "";
+  let dirPresetIds = [];
+  function loadPresetLibrary() {
+    return fetch("api/directives/presets/library?" + qtoken())
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        const presets = (d && d.presets) || [];
+        dirPresetIds = presets.map(function (p) { return p.id; });
+        fillSelect($dirPreset, "프리셋 불러오기…", presets, []);
+      })
+      .catch(function () {});
+  }
+  function onPresetPick() {
+    const id = $dirPreset ? $dirPreset.value : "";
+    if (!id) return;
+    fetch("api/directives/presets/library/" + encodeURIComponent(id) + "?" + qtoken())
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) {
+        $dirText.value = (d && d.content) || "";
+        dirDirty = true; // unsaved — review, then 저장 or 취소
+        dirPresetName = id; // remember for the 💾 save-name default
+        $dirStatus.textContent = "📂 '" + id + "' 불러옴 — 검토 후 저장";
+      })
+      .catch(function () { $dirStatus.textContent = "✗ 불러오기 실패"; });
+  }
+  function savePreset() {
+    // Default to the current preset's name (recall), so re-saving an edited
+    // preset is one Enter. A same-name preset → confirm before overwriting.
+    const name = (window.prompt("프리셋 이름 (홈에 저장, 모든 방 공유)", dirPresetName) || "").trim();
+    if (!name) return;
+    if (
+      dirPresetIds.indexOf(name) !== -1 &&
+      !window.confirm("'" + name + "' 프리셋이 이미 있어요. 덮어쓸까요?")
+    )
+      return;
+    $dirStatus.textContent = "💾 저장 중…";
+    fetch("api/directives/presets/library?" + qtoken(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, content: $dirText.value }),
+    })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) {
+        dirPresetName = (d && d.id) || name;
+        return loadPresetLibrary().then(function () {
+          if ($dirPreset && d && d.id) $dirPreset.value = d.id;
+          $dirStatus.textContent = "💾 프리셋 '" + dirPresetName + "' 저장됨";
+        });
+      })
+      .catch(function () { $dirStatus.textContent = "✗ 프리셋 저장 실패 (이름 확인)"; });
+  }
+  function deletePreset() {
+    const id = $dirPreset ? $dirPreset.value : "";
+    if (!id) { $dirStatus.textContent = "· 삭제할 프리셋을 먼저 선택"; return; }
+    if (!window.confirm("프리셋 '" + id + "' 을 삭제할까요?")) return;
+    fetch("api/directives/presets/library/" + encodeURIComponent(id) + "?" + qtoken(), {
+      method: "DELETE",
+    })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); })
+      .then(function () {
+        return loadPresetLibrary().then(function () {
+          $dirStatus.textContent = "🗑 프리셋 '" + id + "' 삭제됨";
+        });
+      })
+      .catch(function () { $dirStatus.textContent = "✗ 프리셋 삭제 실패"; });
+  }
+  if ($dirPreset) $dirPreset.addEventListener("change", onPresetPick);
+  if ($dirPresetSave) $dirPresetSave.addEventListener("click", savePreset);
+  if ($dirPresetDel) $dirPresetDel.addEventListener("click", deletePreset);
+
   if ($dirText)
     $dirText.addEventListener("input", function () {
       dirDirty = true;
@@ -1754,6 +1864,7 @@
     loadDirectives();
     loadDirPresets();
     loadDirPersonas();
+    loadPresetLibrary();
   }
 
   // Live chip refresh: when a delegate sub-agent spins up while the drawer is

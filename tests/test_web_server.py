@@ -2280,6 +2280,64 @@ class TestDirectivesCompose:
         )
 
 
+class TestManagedSectionHelpers:
+    """Generic ``## <heading>`` section replace/strip — the substrate the
+    persona merge and the learned-guidance merge both build on. Other content
+    (a user's hand-written directive) MUST stay byte-identical."""
+
+    def test_strip_absent_heading_unchanged(self):
+        from agent_cli.web.server import _strip_section
+
+        md = "## 수기 지시\n- A\n- B"
+        assert _strip_section(md, "## 학습된 지침") == md
+
+    def test_strip_named_section_preserves_rest(self):
+        from agent_cli.web.server import _strip_section
+
+        md = "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2\n\n## 기타\n- Z"
+        out = _strip_section(md, "## 학습된 지침")
+        assert "학습된 지침" not in out and "L1" not in out
+        assert "## 수기" in out and "## 기타" in out
+
+    def test_replace_appends_by_default(self):
+        from agent_cli.web.server import _replace_managed_section
+
+        md = "## 수기\n- A"
+        out = _replace_managed_section(md, "## 학습된 지침", "- L1\n- L2")
+        assert out == "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2"
+
+    def test_replace_prepend(self):
+        from agent_cli.web.server import _replace_managed_section
+
+        out = _replace_managed_section(
+            "## 업무\n- 규칙", "## 페르소나", "- 목소리", prepend=True
+        )
+        assert out.startswith("## 페르소나\n- 목소리")
+        assert out.endswith("## 업무\n- 규칙")
+
+    def test_replace_swaps_existing_not_stacks(self):
+        from agent_cli.web.server import _replace_managed_section
+
+        md = "## 수기\n- A\n\n## 학습된 지침\n- OLD"
+        out = _replace_managed_section(md, "## 학습된 지침", "- NEW")
+        assert "OLD" not in out and "- NEW" in out
+        assert out.count("## 학습된 지침") == 1  # swapped, not stacked
+        assert "## 수기\n- A" in out  # hand-written part untouched
+
+    def test_replace_empty_body_removes_section(self):
+        from agent_cli.web.server import _replace_managed_section
+
+        md = "## 수기\n- A\n\n## 학습된 지침\n- L1"
+        out = _replace_managed_section(md, "## 학습된 지침", "  ")
+        assert out == "## 수기\n- A"
+
+    def test_replace_into_empty_is_just_block(self):
+        from agent_cli.web.server import _replace_managed_section
+
+        out = _replace_managed_section("", "## 학습된 지침", "- L1")
+        assert out == "## 학습된 지침\n- L1"
+
+
 class TestPersonaMergeHelpers:
     """Deterministic persona ↔ task merge (no LLM)."""
 
@@ -2320,3 +2378,287 @@ class TestPersonaMergeHelpers:
 
         out = _merge_persona("- 헤딩 없는 본문", "")
         assert out == "## 페르소나\n- 헤딩 없는 본문"
+
+
+class TestLearnHelpers:
+    """📥 learn-from-session distillation helpers (pure, no LLM/HTTP)."""
+
+    def test_section_body_extracts_only_that_section(self):
+        from agent_cli.web.server import _section_body
+
+        md = "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2\n\n## 기타\n- Z"
+        assert _section_body(md, "## 학습된 지침") == "- L1\n- L2"
+
+    def test_section_body_absent_is_empty(self):
+        from agent_cli.web.server import _section_body
+
+        assert _section_body("## 수기\n- A", "## 학습된 지침") == ""
+
+    def test_render_input_includes_messages_and_existing(self):
+        from agent_cli.web.server import _render_learning_input
+
+        msgs = [
+            {"role": "user", "content": "AVL 지워줘"},
+            {"role": "assistant", "content": "됐어"},
+        ]
+        out = _render_learning_input(msgs, "- 기존 교훈")
+        assert "AVL 지워줘" in out and "[assistant] 됐어" in out
+        assert "기존 교훈" in out  # existing learned fed back for merge
+
+    def test_render_input_announces_truncation(self):
+        from agent_cli.web.server import _LEARN_MAX_MESSAGES, _render_learning_input
+
+        msgs = [
+            {"role": "user", "content": f"m{i}"} for i in range(_LEARN_MAX_MESSAGES + 5)
+        ]
+        out = _render_learning_input(msgs, "")
+        assert "생략" in out  # elision announced, not silent
+        assert (
+            "m0" not in out and f"m{_LEARN_MAX_MESSAGES + 4}" in out
+        )  # kept the recent
+
+    def test_render_input_serialises_nonstring_content(self):
+        from agent_cli.web.server import _render_learning_input
+
+        out = _render_learning_input([{"role": "tool", "content": [{"x": 1}]}], "")
+        assert '"x": 1' in out or '"x":1' in out
+
+    def test_parse_lessons_happy(self):
+        from agent_cli.web.server import _parse_lessons
+
+        raw = '[{"type":"failure","summary":"S1","detail":"D1"},{"type":"note","summary":"S2"}]'
+        got = _parse_lessons(raw)
+        assert got == [
+            {"type": "failure", "summary": "S1", "detail": "D1"},
+            {"type": "note", "summary": "S2", "detail": ""},
+        ]
+
+    def test_parse_lessons_strips_fences_and_prose(self):
+        from agent_cli.web.server import _parse_lessons
+
+        raw = 'Sure!\n```json\n[{"type":"discovery","summary":"S"}]\n```\n'
+        assert _parse_lessons(raw) == [
+            {"type": "discovery", "summary": "S", "detail": ""}
+        ]
+
+    def test_parse_lessons_unknown_type_becomes_note(self):
+        from agent_cli.web.server import _parse_lessons
+
+        assert _parse_lessons('[{"type":"bogus","summary":"S"}]')[0]["type"] == "note"
+
+    def test_parse_lessons_drops_empty_summary(self):
+        from agent_cli.web.server import _parse_lessons
+
+        assert _parse_lessons('[{"type":"note","summary":"  "},{"summary":"ok"}]') == [
+            {"type": "note", "summary": "ok", "detail": ""}
+        ]
+
+    def test_parse_lessons_garbage_is_empty(self):
+        from agent_cli.web.server import _parse_lessons
+
+        assert _parse_lessons("no json here") == []
+        assert _parse_lessons("[") == []
+        assert _parse_lessons('{"not":"a list"}') == []
+
+    def test_render_learned_block_is_summary_bullets(self):
+        from agent_cli.web.server import _render_learned_block
+
+        block = _render_learned_block(
+            [
+                {"type": "note", "summary": "S1", "detail": "X"},
+                {"type": "note", "summary": "S2"},
+            ]
+        )
+        assert block == "- S1\n- S2"  # summaries only; detail lives in memory
+
+    def test_record_lessons_writes_and_dedups(self, tmp_path):
+        from agent_cli import memory
+        from agent_cli.web.server import _record_lessons
+
+        lessons = [
+            {"type": "failure", "summary": "S1", "detail": "D1"},
+            {"type": "note", "summary": "S2", "detail": ""},
+        ]
+        assert _record_lessons(tmp_path, lessons) == 2
+        stored = memory.load(tmp_path)
+        assert {e["summary"] for e in stored} == {"S1", "S2"}
+        assert stored[0]["detail"] == "D1"
+        # re-recording the same lessons is a no-op (dedup by type+summary)
+        assert _record_lessons(tmp_path, lessons) == 0
+        assert len(memory.load(tmp_path)) == 2
+
+    def test_record_lessons_no_session_is_zero(self):
+        from agent_cli.web.server import _record_lessons
+
+        assert (
+            _record_lessons(None, [{"type": "note", "summary": "S", "detail": ""}]) == 0
+        )
+
+
+class _FakeCtx:
+    """Minimal ContextManager stand-in for learn tests: a fixed message list and
+    a session dir for the memory store."""
+
+    def __init__(self, messages, session_dir):
+        self._messages = messages
+        self.session_dir = session_dir
+
+    def get_messages(self):
+        return list(self._messages)
+
+
+class TestDirectivesLearnEndpoint:
+    """POST /api/directives/learn — distill lessons from the live session into
+    the ``## 학습된 지침`` section (unsaved) + record them to memory."""
+
+    def _client(self, provider, ctx):
+        server = WebServer(
+            WebRenderer(),
+            token="t",
+            provider=provider,
+            model="m",
+            capabilities=object(),
+            ctx=ctx,
+        )
+        return server, TestClient(create_app(server))
+
+    def _post(self, client, body):
+        return client.post("/api/directives/learn?token=t", json=body)
+
+    def test_learn_updates_section_and_records_memory(self, tmp_path):
+        from agent_cli import memory
+
+        ctx = _FakeCtx([{"role": "user", "content": "AVL 두 자식 삭제 주의"}], tmp_path)
+        fp = _FakeProvider(
+            '[{"type":"discovery","summary":"부모 포인터 갱신 후 free","detail":"why"}]'
+        )
+        _, client = self._client(fp, ctx)
+        r = self._post(client, {"content": "## 수기\n- 항상 한글"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["learned"] == 1
+        # managed section appended, hand-written part preserved
+        assert "## 수기\n- 항상 한글" in body["content"]
+        assert "## 학습된 지침\n- 부모 포인터 갱신 후 free" in body["content"]
+        # recorded to the session memory store (detail preserved there)
+        stored = memory.load(tmp_path)
+        assert len(stored) == 1 and stored[0]["detail"] == "why"
+        # distillation saw the conversation
+        assert "AVL 두 자식 삭제 주의" in fp.calls[0]["messages"][0]["content"]
+
+    def test_learn_merges_existing_learned_section(self, tmp_path):
+        ctx = _FakeCtx([{"role": "user", "content": "새 발견"}], tmp_path)
+        fp = _FakeProvider('[{"type":"note","summary":"통합된 규칙"}]')
+        _, client = self._client(fp, ctx)
+        existing = "## 수기\n- H\n\n## 학습된 지침\n- 옛 규칙"
+        out = self._post(client, {"content": existing}).json()["content"]
+        assert out.count("## 학습된 지침") == 1  # swapped, not stacked
+        assert "옛 규칙" not in out and "통합된 규칙" in out
+        # the old learned list was fed back for consolidation
+        assert "옛 규칙" in fp.calls[0]["messages"][0]["content"]
+
+    def test_learn_empty_context_no_call(self, tmp_path):
+        fp = _FakeProvider("[]")
+        _, client = self._client(fp, _FakeCtx([], tmp_path))
+        r = self._post(client, {"content": "## 수기\n- X"})
+        assert r.json() == {"content": "## 수기\n- X", "learned": 0}
+        assert fp.calls == []  # nothing to learn from → no LLM call
+
+    def test_learn_no_lessons_leaves_content(self, tmp_path):
+        fp = _FakeProvider("[]")
+        _, client = self._client(
+            fp, _FakeCtx([{"role": "user", "content": "hi"}], tmp_path)
+        )
+        r = self._post(client, {"content": "## 수기\n- X"})
+        assert r.json() == {"content": "## 수기\n- X", "learned": 0}
+
+    def test_learn_no_provider_503(self):
+        server = WebServer(WebRenderer(), token="t", ctx=_FakeCtx([], "/tmp"))
+        client = TestClient(create_app(server))
+        assert self._post(client, {"content": ""}).status_code == 503
+
+    def test_learn_no_ctx_503(self):
+        server = WebServer(
+            WebRenderer(),
+            token="t",
+            provider=_FakeProvider(),
+            model="m",
+            capabilities=object(),
+        )
+        client = TestClient(create_app(server))
+        assert self._post(client, {"content": ""}).status_code == 503
+
+    def test_learn_requires_token(self, tmp_path):
+        _, client = self._client(_FakeProvider("[]"), _FakeCtx([], tmp_path))
+        assert (
+            client.post("/api/directives/learn?token=bad", json={}).status_code != 200
+        )
+
+
+class TestPresetLibraryEndpoints:
+    """GET/POST/GET-by-id/DELETE /api/directives/presets/library — the home
+    preset store, exercised over HTTP with the store pointed at a tmp dir."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_presets(self, tmp_path, monkeypatch):
+        from agent_cli import directive_presets
+
+        monkeypatch.setattr(
+            directive_presets, "_presets_dir", lambda: tmp_path / "presets"
+        )
+
+    def _client(self):
+        server = WebServer(WebRenderer(), token="t")
+        return TestClient(create_app(server))
+
+    def test_save_list_load_roundtrip(self):
+        client = self._client()
+        r = client.post(
+            "/api/directives/presets/library?token=t",
+            json={"name": "라이브러리 작성", "content": "## 수기\n- 규칙"},
+        )
+        assert r.status_code == 200
+        pid = r.json()["id"]
+        listed = client.get("/api/directives/presets/library?token=t").json()["presets"]
+        assert any(p["id"] == pid and p["source"] == "user" for p in listed)
+        got = client.get(f"/api/directives/presets/library/{pid}?token=t").json()
+        assert got["content"] == "## 수기\n- 규칙"
+
+    def test_delete_removes(self):
+        client = self._client()
+        client.post(
+            "/api/directives/presets/library?token=t",
+            json={"name": "tmp", "content": "x"},
+        )
+        assert (
+            client.delete("/api/directives/presets/library/tmp?token=t").status_code
+            == 200
+        )
+        assert (
+            client.get("/api/directives/presets/library/tmp?token=t").status_code == 404
+        )
+        assert (
+            client.delete("/api/directives/presets/library/tmp?token=t").status_code
+            == 404
+        )
+
+    def test_save_bad_name_400(self):
+        client = self._client()
+        r = client.post(
+            "/api/directives/presets/library?token=t",
+            json={"name": "../evil", "content": "x"},
+        )
+        assert r.status_code == 400
+
+    def test_load_missing_404(self):
+        client = self._client()
+        assert (
+            client.get("/api/directives/presets/library/nope?token=t").status_code
+            == 404
+        )
+
+    def test_library_requires_token(self):
+        client = self._client()
+        assert (
+            client.get("/api/directives/presets/library?token=bad").status_code != 200
+        )

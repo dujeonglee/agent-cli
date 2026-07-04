@@ -267,22 +267,24 @@ _DIRECTIVE_PERSONAS: dict[str, tuple[str, str]] = {
 }
 
 
-def _strip_persona_section(md: str) -> str:
-    """Remove a ``## 페르소나`` section (its heading through just before the next
-    top-level ``## `` heading, or EOF) from ``md``, returning the remaining
-    task content stripped. Lets a persona regeneration SWAP the persona instead
-    of stacking, and lets deterministic code preserve the task directive (rather
-    than trusting the LLM to)."""
+# Managed DIRECTIVE sections — code-owned blocks (persona voice, learned
+# guidance) that generation SWAPS in/out deterministically while leaving the
+# user's hand-written directive byte-identical. Each is a ``## <heading>`` run
+# from its heading through just before the next top-level ``## `` (or EOF).
+_LEARNED_HEADING = "## 학습된 지침"
+
+
+def _strip_section(md: str, heading: str) -> str:
+    """Remove the ``heading`` section (heading line through just before the next
+    top-level ``## `` heading, or EOF) from ``md``; return the rest, stripped.
+    A no-op (other than trimming) when the section is absent."""
     lines = md.splitlines()
     out: list[str] = []
     i, n = 0, len(lines)
     while i < n:
-        if lines[i].strip().startswith(_PERSONA_HEADING):
-            i += 1  # skip the persona heading + its body up to the next `## `
-            while i < n and not (
-                lines[i].startswith("## ")
-                and not lines[i].strip().startswith(_PERSONA_HEADING)
-            ):
+        if lines[i].strip().startswith(heading):
+            i += 1  # skip the heading + its body up to the next `## `
+            while i < n and not lines[i].startswith("## "):
                 i += 1
             continue
         out.append(lines[i])
@@ -290,15 +292,40 @@ def _strip_persona_section(md: str) -> str:
     return "\n".join(out).strip()
 
 
+def _replace_managed_section(
+    md: str, heading: str, body: str, *, prepend: bool = False
+) -> str:
+    """Replace (or remove, when ``body`` is empty) the ``heading`` section in
+    ``md``, leaving all other content byte-identical. ``body`` is the section
+    body (heading added here). ``prepend`` places the block before the remaining
+    content (persona voice leads); default appends it after (learned guidance
+    trails the hand-written directive)."""
+    rest = _strip_section(md, heading)
+    body = (body or "").strip()
+    if not body:
+        return rest
+    block = f"{heading}\n{body}"
+    if not rest:
+        return block
+    return f"{block}\n\n{rest}" if prepend else f"{rest}\n\n{block}"
+
+
+def _strip_persona_section(md: str) -> str:
+    """Remove the ``## 페르소나`` section, returning the remaining task content.
+    Lets a persona regeneration SWAP the persona instead of stacking, and lets
+    deterministic code preserve the task directive (rather than trusting the
+    LLM to)."""
+    return _strip_section(md, _PERSONA_HEADING)
+
+
 def _merge_persona(persona_block: str, existing: str) -> str:
     """Prepend a freshly generated ``## 페르소나`` block to the task content of
     ``existing`` (any old persona section stripped first). Deterministic — the
     LLM never sees or rewrites the task directive."""
-    block = persona_block.strip()
-    if not block.startswith(_PERSONA_HEADING):
-        block = f"{_PERSONA_HEADING}\n{block}"
-    task = _strip_persona_section(existing)
-    return f"{block}\n\n{task}".strip() if task else block
+    body = persona_block.strip()
+    if body.startswith(_PERSONA_HEADING):
+        body = body[len(_PERSONA_HEADING) :].strip()
+    return _replace_managed_section(existing, _PERSONA_HEADING, body, prepend=True)
 
 
 def _strip_code_fences(text: str) -> str:
@@ -312,6 +339,150 @@ def _strip_code_fences(text: str) -> str:
         if t.rstrip().endswith("```"):
             t = t.rstrip()[:-3]
     return t.strip()
+
+
+# ── Directives 📥 learn-from-session (POST /api/directives/learn) ──
+# Distill REUSABLE lessons from the live conversation into the managed
+# ``## 학습된 지침`` section — the safe alternative to whole-cloth task
+# auto-generation (which hallucinated boilerplate). A dedicated one-off call
+# whose ONLY job is extraction is reliable, unlike the loop model which
+# empirically never self-records via the memory tool (docs/directive-learning
+# DESIGN §1.1). The system — not the model — then writes both the memory store
+# and the DIRECTIVE section (deterministic; §4).
+_LEARN_SYSTEM = (
+    "You extract REUSABLE operating lessons from a work session so the same kind "
+    "of task goes better next time. The session may be any kind of work — "
+    "coding, log/data analysis, research, ops, writing, and so on — so do not "
+    "assume a domain. Read the conversation and keep ONLY transferable guidance "
+    "— general working rules, gotchas, and decisions that would help on a "
+    "DIFFERENT instance of a similar task. EXCLUDE session-specific facts (a "
+    "particular error message, a specific file/line/record, a one-off value or "
+    "name). If an existing '## 학습된 지침' list is given, MERGE with it: "
+    "deduplicate and consolidate, regenerating the FULL set (accumulate but do "
+    "not bloat). Write lessons in the session's language (Korean if the session "
+    "is Korean). Output ONLY a JSON array — no prose, no code fences: "
+    '[{"type": "failure|discovery|decision|note", "summary": "one actionable '
+    'line", "detail": "optional context"}]. Output [] when there is nothing '
+    "durable to learn."
+)
+
+# Cap the conversation fed to distillation (keep the most recent) so a long
+# session can't blow the meta-call's context. Truncation is announced in the
+# input, never silent (the no-silent-caps rule).
+_LEARN_MAX_MESSAGES = 40
+
+
+def _section_body(md: str, heading: str) -> str:
+    """Return just the body of the ``heading`` section (its lines up to the next
+    top-level ``## `` or EOF), or ``""`` if absent — the inverse of
+    ``_strip_section``, used to feed the existing learned list back for merge."""
+    lines = md.splitlines()
+    i, n = 0, len(lines)
+    while i < n:
+        if lines[i].strip().startswith(heading):
+            i += 1
+            body: list[str] = []
+            while i < n and not lines[i].startswith("## "):
+                body.append(lines[i])
+                i += 1
+            return "\n".join(body).strip()
+        i += 1
+    return ""
+
+
+def _render_learning_input(messages: list, existing_learned: str) -> str:
+    """Build the distillation user prompt: the conversation (capped to the most
+    recent ``_LEARN_MAX_MESSAGES``, with any elision announced) plus any existing
+    learned section to merge against."""
+    total = len(messages)
+    recent = messages[-_LEARN_MAX_MESSAGES:]
+    parts: list[str] = []
+    if total > len(recent):
+        parts.append(
+            f"(앞부분 {total - len(recent)}개 메시지 생략, 최근 {len(recent)}개만 표시)"
+        )
+    for m in recent:
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False)
+        parts.append(f"[{role}] {content}")
+    convo = "\n".join(parts)
+    if existing_learned:
+        return (
+            f"기존 '## 학습된 지침' (중복 제거·통합 대상):\n{existing_learned}\n\n"
+            f"=== 세션 대화 ===\n{convo}"
+        )
+    return f"=== 세션 대화 ===\n{convo}"
+
+
+def _parse_lessons(raw: str) -> list[dict]:
+    """Parse the distillation output into validated ``{type, summary, detail}``
+    lessons. Tolerant: strips fences, takes the first JSON array, coerces an
+    unknown type to ``note``, drops empty-summary entries. Returns ``[]`` on
+    unrecoverable output so a bad meta-call degrades to "nothing learned" rather
+    than 500ing (distillation quality is tuned on real 27B in a later phase)."""
+    from agent_cli import memory as _mem
+
+    text = _strip_code_fences(raw or "")
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end <= start:
+        return []
+    try:
+        data = json.loads(text[start : end + 1])
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        typ = str(item.get("type", "note")).strip().lower()
+        if typ not in _mem.VALID_TYPES:
+            typ = "note"
+        summary = str(item.get("summary", "")).strip()
+        if not summary:
+            continue
+        out.append(
+            {
+                "type": typ,
+                "summary": summary,
+                "detail": str(item.get("detail", "")).strip(),
+            }
+        )
+    return out
+
+
+def _render_learned_block(lessons: list[dict]) -> str:
+    """Render the ``## 학습된 지침`` body — one concise bullet per lesson summary
+    (full detail lives in the memory store, per DESIGN §8.2)."""
+    return "\n".join(f"- {les['summary']}" for les in lessons)
+
+
+def _record_lessons(session_dir, lessons: list[dict]) -> int:
+    """Persist lessons to the session memory store (deterministic — the system
+    writes, not the model). Skips a lesson already stored (same type+summary) so
+    repeated 📥 presses don't spam the store. Returns the count newly recorded."""
+    from agent_cli import memory as _mem
+
+    if not session_dir:
+        return 0
+    seen = {(e["type"], e["summary"]) for e in _mem.load(session_dir)}
+    n = 0
+    for les in lessons:
+        key = (les["type"], les["summary"])
+        if key in seen:
+            continue
+        _mem.add(
+            session_dir,
+            type=les["type"],
+            summary=les["summary"],
+            detail=les["detail"] or None,
+        )
+        seen.add(key)
+        n += 1
+    return n
 
 
 # Per-file cap for workspace uploads (POST /api/workspace/upload). A guard
@@ -1180,6 +1351,95 @@ def create_app(server: WebServer) -> FastAPI:
             block = await _gen_directive(_DIRECTIVE_PERSONA_SYSTEM, f"캐릭터: {brief}")
             return {"content": _merge_persona(block, task_part)}
         return {"content": task_part}
+
+    @app.post("/api/directives/learn")
+    async def debug_directives_learn(body: dict, token: str = Query(...)):
+        """📥 Learn from the live session: distill REUSABLE lessons from the
+        conversation into the managed ``## 학습된 지침`` section, returned UNSAVED
+        for review. Also records each lesson to the session memory store
+        (deterministic — the system writes, not the model). Body: ``{content}``
+        (current editor text = hand-written + any learned section). Returns
+        ``{content, learned: N}``. ``learned: 0`` (content unchanged) when the
+        context is empty or nothing durable was found. 503 when no LLM / no
+        active session is wired."""
+        server._require_token(token)
+        if server.provider is None or server.model is None:
+            raise HTTPException(status_code=503, detail="LLM not available")
+        if server.ctx is None:
+            raise HTTPException(status_code=503, detail="no active session")
+        content = body.get("content") or ""
+        messages = list(server.ctx.get_messages())
+        if not messages:
+            return {"content": content, "learned": 0}
+        user = _render_learning_input(
+            messages, _section_body(content, _LEARNED_HEADING)
+        )
+        raw = await _gen_directive(_LEARN_SYSTEM, user)
+        lessons = _parse_lessons(raw)
+        if not lessons:
+            return {"content": content, "learned": 0}
+        _record_lessons(getattr(server.ctx, "session_dir", None), lessons)
+        new_content = _replace_managed_section(
+            content, _LEARNED_HEADING, _render_learned_block(lessons)
+        )
+        return {"content": new_content, "learned": len(lessons)}
+
+    @app.get("/api/directives/presets/library")
+    async def directives_presets_library(token: str = Query(...)):
+        """User-saved DIRECTIVE presets (``~/.agent-cli/directive-presets/``) as
+        ``{presets: [{id, label, source}]}`` for the 업무 dropdown. Always
+        available (deterministic file store, no LLM needed)."""
+        server._require_token(token)
+        from agent_cli import directive_presets
+
+        return {"presets": directive_presets.list_presets()}
+
+    @app.post("/api/directives/presets/library")
+    async def directives_presets_library_save(body: dict, token: str = Query(...)):
+        """Save the current editor content as a named preset in the home library
+        (shared across all agent-cli instances). Body: ``{name, content}``.
+        Overwrites a same-name preset. 400 on an unsafe name (traversal)."""
+        server._require_token(token)
+        from agent_cli import directive_presets
+
+        try:
+            pid = directive_presets.save(
+                body.get("name") or "", body.get("content") or ""
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"ok": True, "id": pid}
+
+    @app.get("/api/directives/presets/library/{preset_id}")
+    async def directives_presets_library_load(preset_id: str, token: str = Query(...)):
+        """Body of one saved preset (for loading into the editor, unsaved). 404
+        when absent, 400 on an unsafe id."""
+        server._require_token(token)
+        from agent_cli import directive_presets
+
+        try:
+            content = directive_presets.load(preset_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if content is None:
+            raise HTTPException(status_code=404, detail="preset not found")
+        return {"content": content}
+
+    @app.delete("/api/directives/presets/library/{preset_id}")
+    async def directives_presets_library_delete(
+        preset_id: str, token: str = Query(...)
+    ):
+        """Delete a user preset. 404 when absent, 400 on an unsafe id."""
+        server._require_token(token)
+        from agent_cli import directive_presets
+
+        try:
+            ok = directive_presets.delete(preset_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if not ok:
+            raise HTTPException(status_code=404, detail="preset not found")
+        return {"ok": True}
 
     @app.get("/api/debug/prompt/scopes")
     async def debug_prompt_scopes(token: str = Query(...)):

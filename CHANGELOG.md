@@ -12,6 +12,26 @@
 
 ## [Unreleased]
 
+## [4.24.0] - 2026-07-04
+
+### Added
+
+- **📥 DIRECTIVE 세션 학습 (Directive Learning)** — 위험한 업무 자동생성(근거 없는
+  일반론) 대신, **실제 세션 대화에서 재사용 가능한 교훈만** 추출해 관리 섹션
+  `## 학습된 지침`에 누적한다. Prompt Inspector 의 Directives 드로어에 **📥 학습** 버튼
+  추가: 현재 대화를 전용 distillation 호출(유일 임무=이식 가능 교훈 추출)로 요약해
+  에디터에 **미저장** 반영(검토 후 저장). 추출한 교훈은 세션 memory 스토어에도
+  결정적으로 기록(모델 자율 아님 — 실측상 27B는 memory 도구를 자율 사용 안 함). 기존
+  수기 지시 부분은 바이트 그대로 보존, 재학습 시 중복 제거·통합(누적하되 비대 금지).
+  `POST /api/directives/learn`.
+- **💾 DIRECTIVE 프리셋 라이브러리** — 현재 편집 내용을 홈(`~/.agent-cli/directive-presets/`)에
+  이름으로 저장/불러오기/삭제. **모든 agent-cli 인스턴스(방)에서 공유**되는 라이브러리로,
+  항상 적용되는 전역 `~/.agent-cli/DIRECTIVE.md`와 분리된 "골라 쓰는" 프리셋. Directives
+  드로어에 **프리셋 ▼** 드롭다운 + 💾 저장 + 🗑 삭제 추가. 저장 시 이름 입력창은 **현재
+  프리셋 이름을 기본값으로 recall**(📥 학습으로 dropdown 선택이 풀려도 유지)하고, **기존
+  프리셋과 이름이 같으면 덮어쓸지 확인**한다. 이름은 한글·공백 그대로 보존하되 경로
+  traversal 은 차단. `GET/POST/GET-by-id/DELETE /api/directives/presets/library`.
+
 ## [4.23.2] - 2026-07-04
 
 ### Fixed
