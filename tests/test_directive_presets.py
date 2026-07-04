@@ -7,6 +7,8 @@ the store at a tmp dir (never the real home).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agent_cli import directive_presets as dp
@@ -16,6 +18,9 @@ from agent_cli import directive_presets as dp
 def _tmp_presets(tmp_path, monkeypatch):
     root = tmp_path / "directive-presets"
     monkeypatch.setattr(dp, "_presets_root", lambda: root)
+    # Isolate the user-store tests from the shipped built-ins (point them at an
+    # empty dir); the built-in tests below re-point ``_BUILTIN_ROOT`` explicitly.
+    monkeypatch.setattr(dp, "_BUILTIN_ROOT", tmp_path / "builtin-empty")
     return root
 
 
@@ -101,3 +106,72 @@ class TestSafety:
     def test_backslash_rejected(self):
         with pytest.raises(ValueError):
             dp.save("task", "a\\b", "x")
+
+
+class TestBuiltinPresets:
+    """Built-ins merge in read-only; a same-name user preset shadows them."""
+
+    @pytest.fixture
+    def builtin(self, tmp_path, monkeypatch):
+        root = tmp_path / "builtin"
+        (root / "persona").mkdir(parents=True)
+        (root / "persona" / "간결한 전문가.md").write_text(
+            "- 톤: 간결", encoding="utf-8"
+        )
+        monkeypatch.setattr(dp, "_BUILTIN_ROOT", root)
+        return root
+
+    def test_builtin_listed_as_source_builtin(self, builtin):
+        assert dp.list_presets("persona") == [
+            {"id": "간결한 전문가", "label": "간결한 전문가", "source": "builtin"}
+        ]
+
+    def test_builtin_loads(self, builtin):
+        assert dp.load("persona", "간결한 전문가") == "- 톤: 간결"
+
+    def test_user_shadows_builtin(self, builtin):
+        dp.save("persona", "간결한 전문가", "USER-OVERRIDE")
+        assert dp.load("persona", "간결한 전문가") == "USER-OVERRIDE"
+        # one merged entry, now owned by the user
+        assert {p["id"]: p["source"] for p in dp.list_presets("persona")} == {
+            "간결한 전문가": "user"
+        }
+
+    def test_builtin_not_deletable(self, builtin):
+        assert dp.delete("persona", "간결한 전문가") is False  # read-only
+        assert dp.load("persona", "간결한 전문가") == "- 톤: 간결"  # still there
+
+    def test_user_and_builtin_merge_sorted(self, builtin):
+        dp.save("persona", "가나다", "u")
+        ids = [p["id"] for p in dp.list_presets("persona")]
+        assert ids == sorted(ids)
+        assert set(ids) == {"가나다", "간결한 전문가"}
+
+
+class TestShippedBuiltins:
+    """The actual .md files bundled in the package load and are well-formed
+    (guards packaging + the persona-headingless / task-heading contract)."""
+
+    @pytest.fixture(autouse=True)
+    def _real_builtin(self, monkeypatch):
+        real = Path(dp.__file__).resolve().parent / "directive_presets_builtin"
+        monkeypatch.setattr(dp, "_BUILTIN_ROOT", real)
+
+    def test_persona_builtins_headingless(self):
+        got = {p["id"]: p for p in dp.list_presets("persona")}
+        assert {"간결한 전문가", "친근한 페어 프로그래머"} <= set(got)
+        assert all(p["source"] == "builtin" for p in got.values())
+        # persona body is heading-less (_zone_set prepends ## 페르소나)
+        body = dp.load("persona", "간결한 전문가")
+        assert body and not body.lstrip().startswith("## 페르소나")
+
+    def test_task_builtins_have_heading_and_memory_principle(self):
+        got = {p["id"] for p in dp.list_presets("task")}
+        assert {"TDD 개발자", "코드 리뷰어", "로그 데이터 분석가"} <= got
+        for tid in ("TDD 개발자", "코드 리뷰어", "로그 데이터 분석가"):
+            body = dp.load("task", tid)
+            assert body.lstrip().startswith("## 업무")
+            assert "memory" in body  # 메모리 활용 원칙이 들어 있어야 한다
+
+    def test_learned_has_no_builtins(self):
+        assert dp.list_presets("learned") == []

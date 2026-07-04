@@ -2455,6 +2455,11 @@ class TestPresetLibraryEndpoints:
         monkeypatch.setattr(
             directive_presets, "_presets_root", lambda: tmp_path / "presets"
         )
+        # Isolate from shipped built-ins so these endpoint tests don't couple to
+        # built-in preset names/content.
+        monkeypatch.setattr(
+            directive_presets, "_BUILTIN_ROOT", tmp_path / "builtin-empty"
+        )
 
     def _client(self):
         server = WebServer(WebRenderer(), token="t")

@@ -16,6 +16,13 @@ The ``axis`` is a fixed enum (validated), and names double as filesystem ids —
 validated to block path traversal (no ``/`` ``\\``, no ``.``/``..``/dotfiles)
 while still allowing Unicode letters and spaces, so Korean preset names
 round-trip unchanged.
+
+A handful of **built-in** presets ship inside the package
+(``directive_presets_builtin/<axis>/<name>.md``) so every install starts with a
+few good persona/task fragments. They are read-only: ``list_presets`` merges
+them in as ``source:"builtin"``, ``load`` falls back to them, but ``save``/
+``delete`` only ever touch the user's home store — a same-name user preset
+simply shadows the built-in.
 """
 
 from __future__ import annotations
@@ -23,6 +30,10 @@ from __future__ import annotations
 from pathlib import Path
 
 _PRESETS_SUBDIR = "directive-presets"
+
+# Built-in presets bundled in the wheel (see pyproject ``package-data``). Read
+# from here as a fallback so a fresh install has presets with no home dir.
+_BUILTIN_ROOT = Path(__file__).resolve().parent / "directive_presets_builtin"
 
 # The three directive axes, each its own preset sub-library. A fixed set (not
 # user input) so an ``axis`` from a URL can never traverse outside the store.
@@ -44,6 +55,10 @@ def _safe_axis(axis: str) -> str:
 
 def _axis_dir(axis: str) -> Path:
     return _presets_root() / _safe_axis(axis)
+
+
+def _builtin_axis_dir(axis: str) -> Path:
+    return _BUILTIN_ROOT / _safe_axis(axis)
 
 
 def _safe_name(name: str) -> str:
@@ -73,24 +88,38 @@ def load(axis: str, preset_id: str) -> str | None:
     """Return an axis preset's body by id, or ``None`` if it doesn't exist.
 
     ``preset_id`` is re-validated (not just trusted from the URL) so a crafted
-    ``../…`` id raises instead of reading outside the presets dir."""
-    f = _axis_dir(axis) / f"{_safe_name(preset_id)}.md"
-    return f.read_text(encoding="utf-8") if f.is_file() else None
+    ``../…`` id raises instead of reading outside the presets dir. A user preset
+    wins over a built-in of the same id (the user file shadows it)."""
+    name = _safe_name(preset_id)
+    f = _axis_dir(axis) / f"{name}.md"
+    if f.is_file():
+        return f.read_text(encoding="utf-8")
+    bf = _builtin_axis_dir(axis) / f"{name}.md"
+    return bf.read_text(encoding="utf-8") if bf.is_file() else None
 
 
 def list_presets(axis: str) -> list[dict]:
-    """All user-saved presets for ``axis`` as ``[{id, label, source}]``, sorted."""
-    d = _axis_dir(axis)
-    if not d.is_dir():
-        return []
-    return [
-        {"id": f.stem, "label": f.stem, "source": "user"}
-        for f in sorted(d.glob("*.md"))
-    ]
+    """Built-in + user presets for ``axis`` as ``[{id, label, source}]``, sorted.
+
+    Built-ins (shipped in the package) come first as ``source:"builtin"``; a
+    same-id user preset shadows the built-in and is marked ``source:"user"``."""
+    by_id: dict[str, dict] = {}
+    bd = _builtin_axis_dir(axis)
+    if bd.is_dir():
+        for f in sorted(bd.glob("*.md")):
+            by_id[f.stem] = {"id": f.stem, "label": f.stem, "source": "builtin"}
+    ud = _axis_dir(axis)
+    if ud.is_dir():
+        for f in sorted(ud.glob("*.md")):
+            by_id[f.stem] = {"id": f.stem, "label": f.stem, "source": "user"}
+    return sorted(by_id.values(), key=lambda p: p["id"])
 
 
 def delete(axis: str, preset_id: str) -> bool:
-    """Remove an axis preset; return ``True`` if it existed, else ``False``."""
+    """Remove a USER axis preset; return ``True`` if it existed, else ``False``.
+
+    Only the home store is touched — built-ins are read-only, so deleting a
+    built-in id returns ``False`` (nothing to remove)."""
     f = _axis_dir(axis) / f"{_safe_name(preset_id)}.md"
     if not f.is_file():
         return False

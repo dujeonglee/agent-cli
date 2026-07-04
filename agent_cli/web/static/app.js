@@ -1671,11 +1671,13 @@
     if (!$sel) return;
     let html = '<option value="">' + esc(none) + "</option>";
     (presets || []).forEach(function (p) {
-      html += '<option value="preset:' + esc(p.id) + '">💾 ' + esc(p.label) + "</option>";
+      // 📦 = read-only built-in (shipped), 💾 = user's home preset.
+      const icon = p.source === "builtin" ? "📦 " : "💾 ";
+      html += '<option value="preset:' + esc(p.id) + '">' + icon + esc(p.label) + "</option>";
     });
     $sel.innerHTML = html;
   }
-  // (Re)load one axis's dropdown = user presets (home library).
+  // (Re)load one axis's dropdown = built-in + user presets (home library).
   function loadAxis(axis) {
     return fetch("api/directives/presets/library?axis=" + axis + "&" + qtoken())
       .then(function (r) { return r.json(); })
@@ -1787,7 +1789,10 @@
   function doSavePreset() {
     const name = ($presetModalName.value || "").trim();
     if (!name) { $presetModalName.focus(); return; }
-    const exists = (axisPresets[modalAxis] || []).some(function (p) { return p.id === name; });
+    // Only a USER preset is overwritten; a same-name built-in is just shadowed.
+    const exists = (axisPresets[modalAxis] || []).some(function (p) {
+      return p.id === name && p.source === "user";
+    });
     if (exists && !window.confirm("'" + name + "' 프리셋이 이미 있어요. 덮어쓸까요?")) return;
     fetch("api/directives/presets/library?axis=" + modalAxis + "&" + qtoken(), {
       method: "POST",
@@ -1814,6 +1819,11 @@
       return;
     }
     const id = sel.slice(7);
+    const meta = (axisPresets[axis] || []).find(function (p) { return p.id === id; });
+    if (meta && meta.source === "builtin") {
+      $dirStatus.textContent = "· 기본 제공(📦) 프리셋은 삭제할 수 없어요";
+      return;
+    }
     if (!window.confirm(AXIS[axis].label + " 프리셋 '" + id + "' 을 삭제할까요?")) return;
     fetch("api/directives/presets/library/" + encodeURIComponent(id) + "?axis=" + axis + "&" + qtoken(), {
       method: "DELETE",

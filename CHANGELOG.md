@@ -12,6 +12,19 @@
 
 ## [Unreleased]
 
+## [4.26.0] - 2026-07-05
+
+### Added
+
+- **기본 제공(built-in) DIRECTIVE 프리셋** — 패키지에 읽기전용 프리셋을 동봉해
+  새 설치도 바로 쓸 수 있는 성격·업무 조각을 제공한다. 성격 2(간결한 전문가·친근한
+  페어 프로그래머), 업무 3(TDD 개발자·코드 리뷰어·로그 데이터 분석가). 업무 프리셋에는
+  중요한 실패·발견·결정을 `memory` 도구로 적극 기록하는 원칙을 넣었다.
+  `agent_cli/directive_presets_builtin/<axis>/*.md` 로 배포되며(wheel 포함,
+  pyproject `package-data`), `list_presets` 가 `source:"builtin"` 로 병합하고
+  드롭다운에 📦 로 표시한다. **읽기전용**: `save`/`delete` 는 홈 스토어만 건드리고,
+  같은 이름 사용자 프리셋이 기본 제공분을 shadow 하며, 기본 제공 프리셋은 삭제할 수 없다.
+
 ## [4.25.0] - 2026-07-04
 
 ### Changed
