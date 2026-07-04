@@ -116,9 +116,13 @@
         placeholder="이 프로젝트의 DIRECTIVE.md — 비어 있으면 새로 만들어집니다. 저장 시 다음 LLM 호출부터 적용(KV 캐시 리셋)."></textarea>
       <div class="insp-dir-foot">
         <span id="insp-dir-status" class="insp-dir-status"></span>
-        <div class="insp-dir-wandwrap">
-          <button id="insp-dir-wand" type="button" title="Directive 자동 생성 (세션 모델)" hidden>🪄</button>
-          <div id="insp-dir-menu" class="insp-dir-menu" hidden></div>
+        <div id="insp-dir-gen" class="insp-dir-gen" hidden>
+          <select id="insp-dir-persona" class="insp-dir-sel" title="성격 (말투/캐릭터)"></select>
+          <input id="insp-dir-persona-text" class="insp-dir-custom" type="text"
+            placeholder="캐릭터 직접 입력…" hidden />
+          <select id="insp-dir-task" class="insp-dir-sel" title="업무 (역할/작업)"></select>
+          <button id="insp-dir-wand" type="button"
+            title="선택한 성격·업무로 DIRECTIVE 자동 생성 (세션 모델)">🪄 생성</button>
         </div>
         <button id="insp-dir-cancel" type="button" title="편집 취소 — 파일 원본으로 되돌림">취소</button>
         <button id="insp-dir-save" type="button">저장</button>

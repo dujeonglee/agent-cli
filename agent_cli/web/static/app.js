@@ -1394,7 +1394,10 @@
   const $dirCancel = document.getElementById("insp-dir-cancel");
   const $dirStatus = document.getElementById("insp-dir-status");
   const $dirWand = document.getElementById("insp-dir-wand");
-  const $dirMenu = document.getElementById("insp-dir-menu");
+  const $dirGen = document.getElementById("insp-dir-gen");
+  const $dirPersona = document.getElementById("insp-dir-persona");
+  const $dirPersonaText = document.getElementById("insp-dir-persona-text");
+  const $dirTask = document.getElementById("insp-dir-task");
   if (!$btn || !$drawer || !token) return;
 
   // Which system-prompt scope the drawer is showing: "" = main loop, a
@@ -1636,78 +1639,72 @@
   if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
   if ($dirCancel) $dirCancel.addEventListener("click", cancelDirectives);
 
-  // ── 🪄 auto-generate ─────────────────────────────────────────────────
-  // A unified menu: "현재 내용 보강" (enhance the draft) + task-preset starters
-  // (shown when the editor is empty, but always available). The generated text
-  // lands in the editor UNSAVED (dirDirty) so it composes with 취소/저장.
-  let dirPresets = []; // [{id,label}] — backend is the single source
+  // ── 🪄 compose ───────────────────────────────────────────────────────
+  // Two orthogonal dropdowns: 성격(persona/voice) + 업무(task/role). 🪄 composes
+  // the picked axes into a DIRECTIVE (persona block + task) via the backend and
+  // drops it into the editor UNSAVED (dirDirty) so it composes with 취소/저장.
+  // "없음" on an axis clears it — both 없음 empties the editor (a delete path).
+  const PERSONA_CUSTOM = "__custom__"; // sentinel option: 직접 입력
+  function fillSelect($sel, none, items, extra) {
+    if (!$sel) return;
+    let html = '<option value="">' + none + "</option>";
+    (extra || []).forEach(function (o) {
+      html += '<option value="' + esc(o.id) + '">' + esc(o.label) + "</option>";
+    });
+    html += items
+      .map(function (p) {
+        return '<option value="' + esc(p.id) + '">' + esc(p.label) + "</option>";
+      })
+      .join("");
+    $sel.innerHTML = html;
+  }
   function loadDirPresets() {
     return fetch("api/directives/presets?" + qtoken())
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        dirPresets = (d && d.presets) || [];
-        if ($dirWand) $dirWand.hidden = !(d && d.available); // no LLM → hide 🪄
+        if ($dirGen) $dirGen.hidden = !(d && d.available); // no LLM → hide the row
+        fillSelect($dirTask, "업무: 없음", (d && d.presets) || [], [
+          { id: "enhance", label: "✨ 현재 내용 정리" },
+        ]);
       })
       .catch(function () {});
   }
-  let dirPersonas = []; // [{id,label}] — fixed characters, backend single source
   function loadDirPersonas() {
     return fetch("api/directives/personas?" + qtoken())
       .then(function (r) { return r.json(); })
-      .then(function (d) { dirPersonas = (d && d.personas) || []; })
+      .then(function (d) {
+        fillSelect($dirPersona, "성격: 없음", (d && d.personas) || [], []);
+        if ($dirPersona)
+          $dirPersona.innerHTML +=
+            '<option value="' + PERSONA_CUSTOM + '">✏ 직접 입력…</option>';
+      })
       .catch(function () {});
   }
-  function closeWandMenu() { if ($dirMenu) $dirMenu.hidden = true; }
-  function buildWandMenu() {
-    if (!$dirMenu) return;
-    const hasText = $dirText.value.trim().length > 0;
-    let html =
-      '<button type="button" class="wand-item" data-act="enhance"' +
-      (hasText ? "" : " disabled") + ">✨ 현재 내용 보강</button>";
-    if (dirPresets.length) {
-      html += '<div class="wand-sep">스타터</div>';
-      html += dirPresets
-        .map(function (p) {
-          // labels are trusted backend constants; esc() belt-and-suspenders
-          return (
-            '<button type="button" class="wand-item" data-preset="' +
-            esc(p.id) + '">' + esc(p.label) + "</button>"
-          );
-        })
-        .join("");
-    }
-    if (dirPersonas.length) {
-      // 페르소나 = 목소리 축. 고정 캐릭터 + 직접 입력. 업무 내용은 보존됨.
-      html += '<div class="wand-sep">🎭 페르소나</div>';
-      html += dirPersonas
-        .map(function (p) {
-          return (
-            '<button type="button" class="wand-item" data-persona-id="' +
-            esc(p.id) + '">' + esc(p.label) + "</button>"
-          );
-        })
-        .join("");
-      html +=
-        '<div class="wand-custom">' +
-        '<input type="text" class="wand-persona-input" ' +
-        'placeholder="캐릭터 직접 입력…" />' +
-        '<button type="button" class="wand-item wand-custom-go" ' +
-        'data-act="persona-custom">적용</button></div>';
-    }
-    $dirMenu.innerHTML = html;
+  function syncPersonaCustom() {
+    if (!$dirPersonaText) return;
+    $dirPersonaText.hidden = !($dirPersona && $dirPersona.value === PERSONA_CUSTOM);
   }
-  function generatePersonaCustom() {
-    const inp = $dirMenu && $dirMenu.querySelector(".wand-persona-input");
-    const v = inp && inp.value.trim();
-    if (!v) { if (inp) inp.focus(); return; }
-    generateDirective({ persona: v, content: $dirText.value });
-  }
-  function generateDirective(payload) {
-    closeWandMenu();
+  if ($dirPersona) $dirPersona.addEventListener("change", syncPersonaCustom);
+  function composeDirective() {
+    const pv = $dirPersona ? $dirPersona.value : "";
+    const tv = $dirTask ? $dirTask.value : "";
+    const custom = ($dirPersonaText && $dirPersonaText.value.trim()) || "";
+    if (pv === PERSONA_CUSTOM && !custom) { $dirPersonaText.focus(); return; }
+    const personaNone = pv === "" || (pv === PERSONA_CUSTOM && !custom);
+    // Both axes 없음 → clear the editor without an LLM round-trip (delete path).
+    if (personaNone && tv === "") {
+      $dirText.value = "";
+      dirDirty = true;
+      $dirStatus.textContent = "🗑 비움 — 검토 후 저장";
+      return;
+    }
+    const payload = { task: tv, content: $dirText.value };
+    if (pv === PERSONA_CUSTOM) payload.persona = custom;
+    else if (pv) payload.persona_id = pv;
     $dirStatus.textContent = "🪄 생성 중…";
     if ($dirWand) $dirWand.disabled = true;
     $dirSave.disabled = true;
-    fetch("api/directives/enhance?" + qtoken(), {
+    fetch("api/directives/compose?" + qtoken(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1724,42 +1721,7 @@
         $dirSave.disabled = false;
       });
   }
-  if ($dirWand)
-    $dirWand.addEventListener("click", function (e) {
-      e.stopPropagation();
-      if (!$dirMenu) return;
-      if ($dirMenu.hidden) {
-        buildWandMenu();
-        $dirMenu.hidden = false;
-      } else {
-        closeWandMenu();
-      }
-    });
-  if ($dirMenu) {
-    $dirMenu.addEventListener("click", function (e) {
-      const btn = e.target.closest(".wand-item");
-      if (!btn || btn.disabled) return;
-      if (btn.dataset.act === "persona-custom") { generatePersonaCustom(); return; }
-      let payload;
-      if (btn.dataset.personaId)
-        payload = { persona_id: btn.dataset.personaId, content: $dirText.value };
-      else if (btn.dataset.preset)
-        payload = { preset: btn.dataset.preset, content: $dirText.value };
-      else payload = { content: $dirText.value }; // enhance
-      generateDirective(payload);
-    });
-    // Enter in the direct-input field applies it (input isn't a .wand-item).
-    $dirMenu.addEventListener("keydown", function (e) {
-      if (e.target.classList.contains("wand-persona-input") && e.key === "Enter") {
-        e.preventDefault();
-        generatePersonaCustom();
-      }
-    });
-  }
-  document.addEventListener("click", function (e) {
-    if ($dirMenu && !$dirMenu.hidden && !e.target.closest(".insp-dir-wandwrap"))
-      closeWandMenu();
-  });
+  if ($dirWand) $dirWand.addEventListener("click", composeDirective);
 
   if ($dirText)
     $dirText.addEventListener("input", function () {

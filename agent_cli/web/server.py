@@ -128,7 +128,7 @@ def capture_startup_system_prompt(
 # bypassed cache manually.
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
-# ── Directives 🪄 auto-generate (POST /api/directives/enhance) ──
+# ── Directives 🪄 auto-generate (POST /api/directives/compose) ──
 # A one-off meta-call to the session's own LLM. Two modes: enhance an existing
 # draft, or generate a starter from a task preset (empty editor). The result is
 # returned unsaved for the user to review in the editor.
@@ -179,7 +179,7 @@ _DIRECTIVE_PRESETS: dict[str, tuple[str, str]] = {
 }
 
 
-# ── Directives 🎭 페르소나 (POST /api/directives/enhance, persona mode) ──
+# ── Directives 🎭 페르소나 (POST /api/directives/compose, persona axis) ──
 # A persona is an ORTHOGONAL axis to the task presets above: it sets the agent's
 # VOICE, not what work it does. It lives as a `## 페르소나` section inside the
 # same DIRECTIVE.md so the two axes coexist in one file — the persona block is
@@ -1107,48 +1107,10 @@ def create_app(server: WebServer) -> FastAPI:
             ],
         }
 
-    @app.post("/api/directives/enhance")
-    async def debug_directives_enhance(body: dict, token: str = Query(...)):
-        """Generate a DIRECTIVE.md with the session's own LLM (a one-off
-        meta-call; NOT the loop). Modes: ``persona_id``/``persona`` → generate a
-        ``## 페르소나`` voice section and merge it into ``content`` (task
-        directive preserved); ``preset`` → a task starter; else ``content`` is
-        enhanced. Returns ``{content}`` — dropped into the editor UNSAVED for
-        review/save. Blocking provider call runs in a threadpool. 503 when no LLM
-        is wired, 400 on empty request."""
-        server._require_token(token)
-        if server.provider is None or server.model is None:
-            raise HTTPException(status_code=503, detail="LLM not available")
-        preset = (body.get("preset") or "").strip()
-        persona_id = (body.get("persona_id") or "").strip()
-        persona = (body.get("persona") or "").strip()  # free-text character brief
-        content = (body.get("content") or "").strip()
-
-        merge_persona = False
-        if persona_id or persona:
-            if persona_id:
-                entry = _DIRECTIVE_PERSONAS.get(persona_id)
-                if entry is None:
-                    raise HTTPException(status_code=400, detail="unknown persona")
-                brief = entry[1]
-            else:
-                brief = persona
-            system = _DIRECTIVE_PERSONA_SYSTEM
-            user = f"캐릭터: {brief}"
-            merge_persona = True
-        elif preset:
-            entry = _DIRECTIVE_PRESETS.get(preset)
-            if entry is None:
-                raise HTTPException(status_code=400, detail="unknown preset")
-            system = _DIRECTIVE_STARTER_SYSTEM
-            user = entry[1]
-            if content:  # feed any existing draft as extra context
-                user += f"\n\n참고할 기존 초안:\n{content}"
-        elif content:
-            system = _DIRECTIVE_ENHANCE_SYSTEM
-            user = content
-        else:
-            raise HTTPException(status_code=400, detail="empty content and no preset")
+    async def _gen_directive(system: str, user: str) -> str:
+        """One-off meta-call to the session LLM (NOT the loop), fences stripped.
+        Blocking ``provider.call`` runs in a threadpool so the async server isn't
+        blocked. Raises 502 on provider error."""
 
         def _run() -> str:
             resp = server.provider.call(
@@ -1163,12 +1125,57 @@ def create_app(server: WebServer) -> FastAPI:
             result = await asyncio.get_event_loop().run_in_executor(None, _run)
         except Exception as e:  # network / provider error → surface as 502
             raise HTTPException(status_code=502, detail=f"LLM call failed: {e}") from e
-        result = _strip_code_fences(result)
-        if merge_persona:
-            # Deterministic merge: persona block + preserved task content (LLM
-            # only wrote the persona prose, never touching the task directive).
-            result = _merge_persona(result, content)
-        return {"content": result}
+        return _strip_code_fences(result)
+
+    @app.post("/api/directives/compose")
+    async def debug_directives_compose(body: dict, token: str = Query(...)):
+        """Compose a DIRECTIVE.md from two orthogonal axes chosen in the editor:
+        ``task`` (역할/작업) and a persona (성격/말투). Body:
+        ``{task, persona_id?, persona?, content}`` where ``task`` ∈ ``""``(none) |
+        ``"enhance"``(정리 current task part) | a preset id, and persona is a
+        preset id (``persona_id``), free-text brief (``persona``), or absent.
+
+        Pipeline: (1) TASK part — preset → starter, ``enhance`` → refine the
+        existing task text (persona section stripped first), none → empty; (2)
+        PERSONA — generate a ``## 페르소나`` block and ``_merge_persona`` it onto
+        the task part (deterministic; the LLM never sees/rewrites the task). Both
+        axes ``none`` → empty (clears the editor). Returns ``{content}`` UNSAVED
+        for review. 503 when no LLM is wired."""
+        server._require_token(token)
+        if server.provider is None or server.model is None:
+            raise HTTPException(status_code=503, detail="LLM not available")
+        task = (body.get("task") or "").strip()
+        persona_id = (body.get("persona_id") or "").strip()
+        persona = (body.get("persona") or "").strip()  # free-text character brief
+        content = (body.get("content") or "").strip()
+        if persona_id and persona_id not in _DIRECTIVE_PERSONAS:
+            raise HTTPException(status_code=400, detail="unknown persona")
+        if task and task != "enhance" and task not in _DIRECTIVE_PRESETS:
+            raise HTTPException(status_code=400, detail="unknown task")
+
+        # 1. Task part — the existing task is the editor content minus any persona
+        #    section (so a persona swap/removal never disturbs the task).
+        existing_task = _strip_persona_section(content)
+        if task in _DIRECTIVE_PRESETS:
+            user = _DIRECTIVE_PRESETS[task][1]
+            if existing_task:
+                user += f"\n\n참고할 기존 초안:\n{existing_task}"
+            task_part = await _gen_directive(_DIRECTIVE_STARTER_SYSTEM, user)
+        elif task == "enhance":
+            task_part = (
+                await _gen_directive(_DIRECTIVE_ENHANCE_SYSTEM, existing_task)
+                if existing_task
+                else ""
+            )
+        else:  # none → task removed
+            task_part = ""
+
+        # 2. Persona — generate the block and deterministically prepend it.
+        if persona_id or persona:
+            brief = _DIRECTIVE_PERSONAS[persona_id][1] if persona_id else persona
+            block = await _gen_directive(_DIRECTIVE_PERSONA_SYSTEM, f"캐릭터: {brief}")
+            return {"content": _merge_persona(block, task_part)}
+        return {"content": task_part}
 
     @app.get("/api/debug/prompt/scopes")
     async def debug_prompt_scopes(token: str = Query(...)):

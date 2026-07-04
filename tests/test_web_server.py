@@ -2046,22 +2046,25 @@ class _Resp:
 
 
 class _FakeProvider:
-    """Records the (system, messages) of each call, returns canned content."""
+    """Records the (system, messages) of each call. Returns canned content —
+    optionally routed per system prompt so a 2-call compose (task + persona) can
+    be asserted distinctly."""
 
-    def __init__(self, content="GENERATED"):
+    def __init__(self, content="GENERATED", by_system=None):
         self._content = content
+        self._by_system = by_system or {}
         self.calls = []
 
     def call(self, messages, system, model, capabilities, **kwargs):
         self.calls.append({"system": system, "messages": messages, "model": model})
-        return _Resp(self._content)
+        return _Resp(self._by_system.get(system, self._content))
 
 
-class TestDirectivesEnhance:
-    """🪄 auto-generate: enhance an existing draft, or generate a starter from a
-    task preset. Reuses the session provider (injected fake here)."""
+class TestDirectivesCompose:
+    """🪄 compose: build a DIRECTIVE from two orthogonal axes chosen in the
+    editor — task (역할/작업) and persona (성격). Reuses the session provider."""
 
-    def _client(self, provider, content="GENERATED"):
+    def _client(self, provider):
         server = WebServer(
             WebRenderer(),
             token="t",
@@ -2071,69 +2074,172 @@ class TestDirectivesEnhance:
         )
         return server, TestClient(create_app(server))
 
-    def test_enhance_mode_uses_enhance_system_and_draft(self):
-        from agent_cli.web.server import _DIRECTIVE_ENHANCE_SYSTEM
+    def _post(self, client, body):
+        return client.post("/api/directives/compose?token=t", json=body)
 
-        fp = _FakeProvider("RICHER DIRECTIVE")
-        _, client = self._client(fp)
-        r = client.post(
-            "/api/directives/enhance?token=t", json={"content": "always korean"}
-        )
-        assert r.status_code == 200 and r.json()["content"] == "RICHER DIRECTIVE"
-        assert fp.calls[0]["system"] == _DIRECTIVE_ENHANCE_SYSTEM
-        assert fp.calls[0]["messages"][0]["content"] == "always korean"
+    # ── task axis ──
 
-    def test_preset_mode_uses_starter_system_and_preset_text(self):
+    def test_task_preset_uses_starter_system(self):
         from agent_cli.web.server import _DIRECTIVE_PRESETS, _DIRECTIVE_STARTER_SYSTEM
 
         fp = _FakeProvider("STARTER")
         _, client = self._client(fp)
-        r = client.post(
-            "/api/directives/enhance?token=t", json={"preset": "driver_tdd"}
-        )
+        r = self._post(client, {"task": "driver_tdd"})
         assert r.status_code == 200 and r.json()["content"] == "STARTER"
         assert fp.calls[0]["system"] == _DIRECTIVE_STARTER_SYSTEM
-        # the driver_tdd instruction drove the user message
         assert (
             _DIRECTIVE_PRESETS["driver_tdd"][1] in fp.calls[0]["messages"][0]["content"]
         )
 
-    def test_preset_with_existing_content_is_appended(self):
-        fp = _FakeProvider()
+    def test_task_enhance_refines_existing_task(self):
+        from agent_cli.web.server import _DIRECTIVE_ENHANCE_SYSTEM
+
+        fp = _FakeProvider("RICHER")
         _, client = self._client(fp)
-        client.post(
-            "/api/directives/enhance?token=t",
-            json={"preset": "kunit", "content": "my draft"},
+        r = self._post(client, {"task": "enhance", "content": "always korean"})
+        assert r.json()["content"] == "RICHER"
+        assert fp.calls[0]["system"] == _DIRECTIVE_ENHANCE_SYSTEM
+        assert fp.calls[0]["messages"][0]["content"] == "always korean"
+
+    def test_task_enhance_empty_content_no_call(self):
+        fp = _FakeProvider("X")
+        _, client = self._client(fp)
+        r = self._post(client, {"task": "enhance", "content": ""})
+        assert r.json()["content"] == "" and fp.calls == []  # nothing to enhance
+
+    def test_task_none_and_persona_none_clears(self):
+        fp = _FakeProvider("X")
+        _, client = self._client(fp)
+        r = self._post(client, {"task": "", "content": "## 업무\n- old"})
+        assert r.json()["content"] == "" and fp.calls == []  # both none → clear, no LLM
+
+    def test_unknown_task_400(self):
+        _, client = self._client(_FakeProvider())
+        assert self._post(client, {"task": "nope"}).status_code == 400
+
+    # ── persona axis ──
+
+    def test_persona_id_uses_persona_system_and_brief(self):
+        from agent_cli.web.server import _DIRECTIVE_PERSONA_SYSTEM, _DIRECTIVE_PERSONAS
+
+        fp = _FakeProvider("## 페르소나\n- '~냥'")
+        _, client = self._client(fp)
+        r = self._post(client, {"persona_id": "cat_butler"})
+        assert r.status_code == 200
+        assert fp.calls[0]["system"] == _DIRECTIVE_PERSONA_SYSTEM
+        assert (
+            _DIRECTIVE_PERSONAS["cat_butler"][1]
+            in fp.calls[0]["messages"][0]["content"]
         )
-        assert "my draft" in fp.calls[0]["messages"][0]["content"]
+        assert r.json()["content"].startswith("## 페르소나")
 
-    def test_unknown_preset_400(self):
-        _, client = self._client(_FakeProvider())
-        r = client.post("/api/directives/enhance?token=t", json={"preset": "nope"})
-        assert r.status_code == 400
+    def test_persona_free_text_brief(self):
+        fp = _FakeProvider("## 페르소나\n- 해적")
+        _, client = self._client(fp)
+        r = self._post(client, {"persona": "우주 해적"})
+        assert "우주 해적" in fp.calls[0]["messages"][0]["content"]
+        assert r.json()["content"].startswith("## 페르소나")
 
-    def test_empty_request_400(self):
+    def test_unknown_persona_400(self):
         _, client = self._client(_FakeProvider())
-        r = client.post("/api/directives/enhance?token=t", json={})
-        assert r.status_code == 400
+        assert self._post(client, {"persona_id": "nope"}).status_code == 400
+
+    def test_persona_missing_heading_is_added(self):
+        fp = _FakeProvider("- 헤딩 없는 본문")
+        _, client = self._client(fp)
+        assert (
+            self._post(client, {"persona_id": "professor"})
+            .json()["content"]
+            .startswith("## 페르소나")
+        )
+
+    # ── both axes composed ──
+
+    def test_persona_plus_task_composes_both(self):
+        from agent_cli.web.server import (
+            _DIRECTIVE_PERSONA_SYSTEM,
+            _DIRECTIVE_STARTER_SYSTEM,
+        )
+
+        fp = _FakeProvider(
+            by_system={
+                _DIRECTIVE_PERSONA_SYSTEM: "## 페르소나\n- 도도",
+                _DIRECTIVE_STARTER_SYSTEM: "## 업무\n- TDD",
+            }
+        )
+        _, client = self._client(fp)
+        out = self._post(
+            client, {"persona_id": "cat_butler", "task": "driver_tdd"}
+        ).json()["content"]
+        # persona prepended, task below — two calls, deterministic merge
+        assert out.startswith("## 페르소나") and "- 도도" in out
+        assert "## 업무" in out and "- TDD" in out
+        assert len(fp.calls) == 2
+
+    def test_task_none_drops_existing_task(self):
+        # 업무=없음 is a DELETE: existing task content is dropped, leaving only
+        # the freshly chosen persona (confirmed design — safe because unsaved).
+        fp = _FakeProvider("## 페르소나\n- 도도")
+        _, client = self._client(fp)
+        out = self._post(
+            client,
+            {"persona_id": "cat_butler", "task": "", "content": "## 업무\n- 기존규칙"},
+        ).json()["content"]
+        assert out.startswith("## 페르소나")
+        assert "## 업무" not in out and "기존규칙" not in out  # task wiped
+        assert len(fp.calls) == 1  # only the persona call (task=none = no gen)
+
+    def test_persona_swap_keeps_task_when_task_enhance(self):
+        from agent_cli.web.server import (
+            _DIRECTIVE_ENHANCE_SYSTEM,
+            _DIRECTIVE_PERSONA_SYSTEM,
+        )
+
+        fp = _FakeProvider(
+            by_system={
+                _DIRECTIVE_PERSONA_SYSTEM: "## 페르소나\n- 새 캐릭터",
+                _DIRECTIVE_ENHANCE_SYSTEM: "## 업무\n- 정리된 규칙",
+            }
+        )
+        _, client = self._client(fp)
+        existing = "## 페르소나\n- 옛 캐릭터\n\n## 업무\n- 규칙"
+        out = self._post(
+            client, {"persona_id": "robot_ai", "task": "enhance", "content": existing}
+        ).json()["content"]
+        assert out.count("## 페르소나") == 1  # old persona replaced, not stacked
+        assert "새 캐릭터" in out and "옛 캐릭터" not in out
+        assert "## 업무" in out and "정리된 규칙" in out
+        # enhance saw the task only (persona section stripped before the call)
+        assert "옛 캐릭터" not in fp.calls[0]["messages"][0]["content"]
+
+    # ── plumbing ──
+
+    def test_code_fences_stripped(self):
+        fp = _FakeProvider("```markdown\n## 페르소나\n- rule\n```")
+        _, client = self._client(fp)
+        assert self._post(client, {"persona_id": "professor"}).json()["content"] == (
+            "## 페르소나\n- rule"
+        )
 
     def test_no_provider_503(self):
         server = WebServer(WebRenderer(), token="t")  # no provider wired
         client = TestClient(create_app(server))
-        r = client.post("/api/directives/enhance?token=t", json={"content": "x"})
-        assert r.status_code == 503
+        assert self._post(client, {"task": "kunit"}).status_code == 503
 
-    def test_code_fences_stripped(self):
-        fp = _FakeProvider("```markdown\n# Directive\n- rule\n```")
-        _, client = self._client(fp)
-        r = client.post("/api/directives/enhance?token=t", json={"content": "x"})
-        assert r.json()["content"] == "# Directive\n- rule"
+    def test_requires_token(self):
+        _, client = self._client(_FakeProvider())
+        assert (
+            client.post(
+                "/api/directives/compose?token=bad", json={"task": "kunit"}
+            ).status_code
+            != 200
+        )
+
+    # ── label endpoints (dropdown sources) ──
 
     def test_presets_endpoint_lists_labels(self):
         _, client = self._client(_FakeProvider())
-        r = client.get("/api/directives/presets?token=t")
-        assert r.status_code == 200
-        body = r.json()
+        body = client.get("/api/directives/presets?token=t").json()
         assert body["available"] is True
         ids = {p["id"] for p in body["presets"]}
         assert {"driver_tdd", "kunit", "issue_analysis", "code_review"} <= ids
@@ -2142,89 +2248,13 @@ class TestDirectivesEnhance:
     def test_presets_unavailable_without_provider(self):
         server = WebServer(WebRenderer(), token="t")
         client = TestClient(create_app(server))
-        r = client.get("/api/directives/presets?token=t")
-        assert r.status_code == 200 and r.json()["available"] is False
-
-    # ── 🎭 personas ──
-
-    def test_persona_id_uses_persona_system_and_brief(self):
-        from agent_cli.web.server import (
-            _DIRECTIVE_PERSONA_SYSTEM,
-            _DIRECTIVE_PERSONAS,
-        )
-
-        fp = _FakeProvider("## 페르소나\n- '~냥' 을 붙인다")
-        _, client = self._client(fp)
-        r = client.post(
-            "/api/directives/enhance?token=t", json={"persona_id": "cat_butler"}
-        )
-        assert r.status_code == 200
-        assert fp.calls[0]["system"] == _DIRECTIVE_PERSONA_SYSTEM
-        # the cat_butler brief drove the user message
         assert (
-            _DIRECTIVE_PERSONAS["cat_butler"][1]
-            in fp.calls[0]["messages"][0]["content"]
+            client.get("/api/directives/presets?token=t").json()["available"] is False
         )
-        assert r.json()["content"].startswith("## 페르소나")
-
-    def test_persona_free_text_brief(self):
-        fp = _FakeProvider("## 페르소나\n- 해적처럼 말한다")
-        _, client = self._client(fp)
-        r = client.post(
-            "/api/directives/enhance?token=t", json={"persona": "우주 해적"}
-        )
-        assert r.status_code == 200
-        assert "우주 해적" in fp.calls[0]["messages"][0]["content"]
-        assert r.json()["content"].startswith("## 페르소나")
-
-    def test_persona_preserves_existing_task_content(self):
-        fp = _FakeProvider("## 페르소나\n- 도도하게 말한다")
-        _, client = self._client(fp)
-        task = "## 업무 지시\n- TDD 로 개발한다"
-        r = client.post(
-            "/api/directives/enhance?token=t",
-            json={"persona_id": "cat_butler", "content": task},
-        )
-        out = r.json()["content"]
-        # persona prepended, task directive preserved verbatim
-        assert out.startswith("## 페르소나")
-        assert "## 업무 지시" in out and "TDD 로 개발한다" in out
-        # the LLM never saw the task content (deterministic merge)
-        assert "TDD" not in fp.calls[0]["messages"][0]["content"]
-
-    def test_persona_regeneration_swaps_not_stacks(self):
-        fp = _FakeProvider("## 페르소나\n- 새 캐릭터")
-        _, client = self._client(fp)
-        existing = "## 페르소나\n- 옛 캐릭터\n\n## 업무 지시\n- 규칙"
-        r = client.post(
-            "/api/directives/enhance?token=t",
-            json={"persona_id": "robot_ai", "content": existing},
-        )
-        out = r.json()["content"]
-        assert out.count("## 페르소나") == 1  # old persona replaced, not stacked
-        assert "새 캐릭터" in out and "옛 캐릭터" not in out
-        assert "## 업무 지시" in out and "규칙" in out
-
-    def test_persona_missing_heading_is_added(self):
-        # LLM ignored the heading instruction → merge still yields a valid
-        # `## 페르소나` block (so a later regeneration can strip it).
-        fp = _FakeProvider("- 그냥 규칙만 있고 헤딩 없음")
-        _, client = self._client(fp)
-        r = client.post(
-            "/api/directives/enhance?token=t", json={"persona_id": "professor"}
-        )
-        assert r.json()["content"].startswith("## 페르소나")
-
-    def test_unknown_persona_400(self):
-        _, client = self._client(_FakeProvider())
-        r = client.post("/api/directives/enhance?token=t", json={"persona_id": "nope"})
-        assert r.status_code == 400
 
     def test_personas_endpoint_lists_labels(self):
         _, client = self._client(_FakeProvider())
-        r = client.get("/api/directives/personas?token=t")
-        assert r.status_code == 200
-        body = r.json()
+        body = client.get("/api/directives/personas?token=t").json()
         assert body["available"] is True
         ids = {p["id"] for p in body["personas"]}
         assert {"cat_butler", "joseon_king", "pro_programmer", "professor"} <= ids
@@ -2233,16 +2263,8 @@ class TestDirectivesEnhance:
     def test_personas_unavailable_without_provider(self):
         server = WebServer(WebRenderer(), token="t")
         client = TestClient(create_app(server))
-        r = client.get("/api/directives/personas?token=t")
-        assert r.status_code == 200 and r.json()["available"] is False
-
-    def test_requires_token(self):
-        _, client = self._client(_FakeProvider())
         assert (
-            client.post(
-                "/api/directives/enhance?token=bad", json={"content": "x"}
-            ).status_code
-            != 200
+            client.get("/api/directives/personas?token=t").json()["available"] is False
         )
 
 
