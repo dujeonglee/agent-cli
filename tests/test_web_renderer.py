@@ -22,6 +22,7 @@ import time
 
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebConnection, WebRenderer
+from agent_cli.web.instance_file import read_status_file
 
 
 def _qget(conn, timeout=0.5):
@@ -32,6 +33,51 @@ def _qget(conn, timeout=0.5):
         event, data = conn.queue.get(timeout=timeout)
         if event != "viewers":
             return event, data
+
+
+# ── status.json sidecar (board reads it instead of polling /api/health) ──
+
+
+class TestStatusPublishing:
+    """The renderer rewrites ``status.json`` on every viewer/busy/awaiting
+    change (Phase 1 of replacing the board's ``/api/health`` polling)."""
+
+    def test_no_write_without_session_dir(self, tmp_path):
+        # default renderer (CLI/tests) never touches disk
+        r = WebRenderer()
+        r.worker_busy()
+        assert read_status_file(tmp_path) is None
+
+    def test_busy_toggle_published(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.worker_busy()
+        assert read_status_file(tmp_path)["busy"] is True
+        r.worker_idle()
+        assert read_status_file(tmp_path)["busy"] is False
+
+    def test_awaiting_toggle_published(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.set_sticky("input_required", "input_required", {"q": "?"})
+        assert read_status_file(tmp_path)["awaiting_input"] is True
+        r.clear_sticky("input_required")
+        assert read_status_file(tmp_path)["awaiting_input"] is False
+
+    def test_viewers_tracked_on_register_and_unregister(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        c1, c2 = WebConnection(id="c1"), WebConnection(id="c2")
+        r.register_connection(c1)
+        assert read_status_file(tmp_path)["viewers"] == 1
+        r.register_connection(c2)
+        assert read_status_file(tmp_path)["viewers"] == 2
+        r.unregister_connection(c1)
+        assert read_status_file(tmp_path)["viewers"] == 1
+
+    def test_unrelated_sticky_does_not_flip_status(self, tmp_path):
+        # only worker_state/input_required stickies republish
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.worker_busy()  # seed a file
+        r.set_sticky("token_usage", "token_usage", {"n": 5})
+        assert read_status_file(tmp_path)["busy"] is True  # unchanged by token_usage
 
 
 # ── Event distribution ─────────────────────────────

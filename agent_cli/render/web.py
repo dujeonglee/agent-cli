@@ -38,6 +38,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import Any
 
@@ -48,6 +49,11 @@ from agent_cli.render.base import ConfirmOption, Renderer
 # loop (which has no task_id). Kept a constant so the renderer, server, and
 # tests agree on the sentinel.
 _MAIN_SCOPE = ""
+
+# Sticky slots whose change flips a field of ``status.json``: ``worker_state``
+# → busy, ``input_required`` → awaiting_input. A set_sticky/clear_sticky on
+# either republishes the status sidecar (viewers republish on register/unregister).
+_STATUS_STICKY_KEYS = frozenset({"worker_state", "input_required"})
 
 # Fun default nicknames assigned to viewers on connect (browsers can't read
 # the client's OS username, so a friendly auto-label is the practical
@@ -99,9 +105,14 @@ class WebRenderer(Renderer):
     buffer.
     """
 
-    def __init__(self, *, workspace: str = "") -> None:
+    def __init__(self, *, workspace: str = "", session_dir: str = "") -> None:
         super().__init__()
         self._lock = threading.Lock()
+        # Session dir for the live ``status.json`` sidecar (busy/awaiting/viewers)
+        # a front controller (the board) reads instead of polling /api/health.
+        # Resolved once (cwd is the workspace at startup) so later cwd changes
+        # can't misdirect the write. Empty (CLI / tests) → status writing is off.
+        self._status_dir = Path(session_dir).resolve() if session_dir else None
         # event_buffer entries: (event_name, data_dict)
         self._event_buffer: list[tuple[str, dict[str, Any]]] = []
         self._connections: list[WebConnection] = []
@@ -245,6 +256,8 @@ class WebRenderer(Renderer):
                 "position": position,
             }
         self._emit(event, payload, persistent=False)
+        if name in _STATUS_STICKY_KEYS:  # busy / awaiting flipped → refresh file
+            self._publish_status()
 
     def clear_sticky(self, name: str) -> None:
         """Drop a sticky slot so new connections no longer replay it — e.g.
@@ -252,6 +265,8 @@ class WebRenderer(Renderer):
         client must NOT be handed the already-resolved prompt."""
         with self._lock:
             self._sticky.pop(name, None)
+        if name in _STATUS_STICKY_KEYS:  # awaiting cleared → refresh file
+            self._publish_status()
 
     def register_connection(self, conn: WebConnection) -> list[tuple[str, dict]]:
         """Add ``conn`` as a subscriber. Every connection is equal — all may
@@ -288,7 +303,8 @@ class WebRenderer(Renderer):
             for c in self._connections:
                 if c is not conn and not c.closed.is_set():
                     c.queue.put(("viewers", payload))
-            return snapshot
+        self._publish_status()  # viewers changed (outside lock: does disk I/O)
+        return snapshot
 
     def _assign_nickname_locked(self, conn_id: str) -> None:
         used = set(self._nicknames.values())
@@ -357,6 +373,7 @@ class WebRenderer(Renderer):
             self._nicknames.pop(conn.id, None)
             # the leaver is already removed → broadcast the decremented count
             self._broadcast_viewers_locked()
+        self._publish_status()  # viewers changed (outside lock: does disk I/O)
         conn.queue.put(_CLOSE_SENTINEL)
 
     # ─── Parallel delegate visibility ───────────────
@@ -848,6 +865,30 @@ class WebRenderer(Renderer):
         'nobody here' before disrupting the session."""
         with self._lock:
             return sum(1 for c in self._connections if not c.closed.is_set())
+
+    def _publish_status(self) -> None:
+        """Write the live ``{busy, awaiting_input, viewers}`` to ``status.json``
+        so the board reads a file instead of polling ``GET /api/health``. No-op
+        unless a session dir was given. Snapshots under the lock, then writes
+        OUTSIDE it (never hold the lock across disk I/O). Callers must NOT hold
+        ``self._lock`` (this re-acquires it)."""
+        if self._status_dir is None:
+            return
+        with self._lock:
+            busy = self._worker_busy
+            awaiting = "input_required" in self._sticky
+            viewers = sum(1 for c in self._connections if not c.closed.is_set())
+        try:
+            from agent_cli.web.instance_file import write_status_file
+
+            write_status_file(
+                self._status_dir,
+                busy=busy,
+                awaiting_input=awaiting,
+                viewers=viewers,
+            )
+        except OSError:
+            pass  # best-effort: a status write must never break the session
 
     def auto_review_state(self, enabled: bool) -> None:
         """Broadcast the auto-review toggle state. Sticky so EVERY browser's

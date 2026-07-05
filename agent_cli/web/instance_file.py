@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 
 _NAME = "web.json"
+_STATUS_NAME = "status.json"
 
 
 def instance_file_path(session_dir: str | Path) -> Path:
@@ -64,5 +65,55 @@ def remove_instance_file(session_dir: str | Path) -> None:
     """Remove the instance file if present (idempotent, best-effort)."""
     try:
         instance_file_path(session_dir).unlink()
+    except (FileNotFoundError, OSError):
+        pass
+
+
+# ── Live status sidecar ────────────────────────────────────────────────
+# ``status.json`` holds the frequently-changing liveness the board used to poll
+# via ``GET /api/health`` — ``{busy, awaiting_input, viewers}``. Kept SEPARATE
+# from ``web.json`` (the quasi-static host/port/token/pid handshake) because it
+# is rewritten on every viewer/busy/awaiting change; the board reads this file
+# instead of an HTTP round-trip. Writes are atomic (temp + ``os.replace``) so a
+# concurrent reader never sees a half-written file.
+
+
+def status_file_path(session_dir: str | Path) -> Path:
+    return Path(session_dir) / _STATUS_NAME
+
+
+def write_status_file(
+    session_dir: str | Path,
+    *,
+    busy: bool,
+    awaiting_input: bool,
+    viewers: int,
+) -> Path:
+    """Atomically (over)write the live status sidecar. Returns the path."""
+    info = {
+        "busy": bool(busy),
+        "awaiting_input": bool(awaiting_input),
+        "viewers": int(viewers),
+    }
+    path = status_file_path(session_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (_STATUS_NAME + ".tmp")
+    tmp.write_text(json.dumps(info), encoding="utf-8")
+    os.replace(tmp, path)  # atomic swap — readers see all-or-nothing
+    return path
+
+
+def read_status_file(session_dir: str | Path) -> dict | None:
+    """Return the live status, or ``None`` if absent / unreadable / corrupt."""
+    try:
+        return json.loads(status_file_path(session_dir).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def remove_status_file(session_dir: str | Path) -> None:
+    """Remove the status sidecar if present (idempotent, best-effort)."""
+    try:
+        status_file_path(session_dir).unlink()
     except (FileNotFoundError, OSError):
         pass

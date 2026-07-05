@@ -12,6 +12,19 @@
 
 ## [Unreleased]
 
+## [4.27.0] - 2026-07-05
+
+### Added
+
+- **라이브 상태 사이드카 `status.json`** — 외부 오케스트레이터(agent-board)가 인스턴스
+  라이브니스를 `GET /api/health` 로 **폴링하는 대신 파일로** 읽게 하는 사이드카를
+  `.agent-cli/sessions/<id>/status.json`(`{busy, awaiting_input, viewers}`)에 기록한다.
+  `WebRenderer` 가 viewer 등록/해제·busy·awaiting 변화마다 **원자적**(temp+`os.replace`)으로
+  재기록하고, 시작 시 seed·종료 시 제거(web.json 핸드셰이크와 짝, 별도 파일). 스냅샷만
+  lock 으로 잡고 디스크 I/O 는 lock 밖(재진입·블로킹 회피). `web.json`(호스트/포트/토큰/pid,
+  준정적)은 무변경. (보드 폴링 제거 로드맵 1단계 — 보드 쪽에서 이 파일을 읽어 health 폴링을
+  대체한다.)
+
 ## [4.26.2] - 2026-07-05
 
 ### Changed

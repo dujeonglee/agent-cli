@@ -1363,7 +1363,10 @@ def web(
     )
 
     # 3. Renderer + server + worker thread.
-    renderer = WebRenderer(workspace=session.workspace)
+    renderer = WebRenderer(
+        workspace=session.workspace,
+        session_dir=str(get_session_dir(session)),  # writes status.json here
+    )
     set_renderer(renderer)
     # Pass the live ctx so the Prompt Inspector can show the dynamic context
     # (conversation + observations), not just the static system prompt.
@@ -1624,7 +1627,12 @@ def web(
     # (host/port/token/pid). Written on start, removed in finally on exit (and
     # self-reaped via --idle-timeout), so the board can spawn-or-attach by
     # reading one file. Lives next to history.jsonl in the session dir.
-    from agent_cli.web.instance_file import remove_instance_file, write_instance_file
+    from agent_cli.web.instance_file import (
+        remove_instance_file,
+        remove_status_file,
+        write_instance_file,
+        write_status_file,
+    )
 
     _session_dir = Path(".agent-cli") / "sessions" / session.session_id
     write_instance_file(
@@ -1634,6 +1642,10 @@ def web(
         port=resolved_port,
         token=server.token,
     )
+    # Seed the live status sidecar so the board can read it immediately (before
+    # the first viewer). The renderer rewrites it on each viewer/busy/awaiting
+    # change; it's removed on exit alongside web.json.
+    write_status_file(_session_dir, busy=False, awaiting_input=False, viewers=0)
 
     if no_browser:
         pass
@@ -1706,6 +1718,7 @@ def web(
             pass
     finally:
         remove_instance_file(_session_dir)  # board sees the instance is gone
+        remove_status_file(_session_dir)  # drop the live status sidecar too
         renderer.shutdown_all_connections()
         server.shutdown()
         worker.join(timeout=2.0)
