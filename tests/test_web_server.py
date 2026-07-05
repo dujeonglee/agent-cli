@@ -2406,7 +2406,9 @@ class TestTemplateEndpoint:
             "/api/directives/template?axis=persona&token=t", json={"content": ""}
         ).json()["content"]
         assert out.startswith("## 페르소나")
-        assert "- 톤:" in out and "적용 범위" in out  # skeleton + hard-won guidance
+        # lean 2-field skeleton (말투·톤 + 적용 범위 guardrail); old 5 fields dropped
+        assert "- 말투·톤:" in out and "적용 범위" in out
+        assert "1인칭" not in out and "말버릇" not in out
 
     def test_task_template_preserves_other_zones(self):
         client = self._client()
