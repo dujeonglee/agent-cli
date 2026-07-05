@@ -177,6 +177,9 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 (기본 on). `0` 으로 끄면 봉쇄 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
+| `AGENT_CLI_COMPACTION` | — | 컨텍스트 컴팩션(90% 예산 LLM 요약) 비활성 스위치. `off`/`false`/`0`/`disabled`/`no` 중 하나면 끔(플레인 FIFO drop). `--no-compaction` 과 동일 효과(env 가 flag 보다 우선). |
+| `AGENT_CLI_RECORD_RAW_FAILURES` | — | `1`/`true`/`on`/`yes` 면 파싱 실패 시 raw 페이로드를 `turns.jsonl` 에 기록(복구 분석용). 기본 off. |
+| `AGENT_CLI_UNIFDEF` | — | code_index 의 C/C++ 전처리 모드: `auto`(기본, unifdef 있으면 씀)·`system`(시스템 unifdef 강제)·`pure`(순수 파이썬 폴백). 프로세스 시작 시 1회 읽어 고정. |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. **스트리밍**: post timeout `(connect 30초, read 30초)` 로 **헤더 대기·헤더 구간 interrupt 를 30초로 바운드**(broken 서버의 ~20분 행 제거) → 헤더 수신 후 소켓을 patient 로 리셋해 body 는 느긋. body 가 **30초** 무토큰이면 UI 에 대기 알림(`응답 대기 중 — …`), **20틱(10분) 연속 침묵**이면 연결 끊고 재전송(최대 3회). 토큰 오면 카운터 리셋. **비스트리밍**: `(30, 1200)` (전체 생성 read). interrupt 는 body 구간 ~8초, 헤더 구간 ≤30초. |
 | `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
 
@@ -229,6 +232,7 @@ agent-cli run "task description" [options]
 | `--base-url` | API 엔드포인트 | 프로바이더 기본값 |
 | `--api-key` | API 키 (환경 변수 자동 감지) | |
 | `-n, --max-turns` | 최대 턴 (0=무제한) | `0` |
+| `--max-context-tokens` | 컨텍스트 윈도우 토큰 상한 (0=모델에서 자동 결정) | `0` |
 | `--max-depth` | 중첩 깊이 (delegate + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
@@ -262,7 +266,7 @@ agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토�
 | 옵션 | 설명 | 기본값 |
 |---|---|---|
 | `--host` | bind 주소 | `0.0.0.0` (LAN) |
-| `--port` | listen 포트. 생략 시 8080 우선 시도 후 사용 중이면 OS가 빈 포트 자동 할당. 명시(`--port 9090`) 시 그 포트로만 바인딩 (충돌 시 에러). 실제 URL은 시작 시 출력됨. | 자동 (8080 → 빈 포트) |
+| `--port` | listen 포트. 생략 시 `0xC0DE`(49374) 우선 시도 후 사용 중이면 OS가 빈 포트 자동 할당. 명시(`--port 9090`) 시 그 포트로만 바인딩 (충돌 시 에러). 실제 URL은 시작 시 출력됨. | 자동 (`0xC0DE`=49374 → 빈 포트) |
 | `--token` | 인증 토큰 | 자동 생성 (32 byte URL-safe) |
 | `--no-browser` | 브라우저 자동 open 비활성 | `false` |
 | `--idle-timeout` | N초 동안 **접속자 0 + 진행 중 작업 없음**이면 스스로 종료 (0 = 끄기). 온디맨드로 인스턴스를 띄우는 오케스트레이터용 — 다음 접속에 `--resume` 으로 재기동. **워커가 작업 중(LLM 턴·도구·질문 대기)이면 안 죽음**(긴 작업 끊김 방지). | `0` (끄기) |
@@ -316,8 +320,8 @@ CLI parity 명령어:
 
 curl로도 직접 사용 가능:
 ```bash
-curl -N "http://localhost:8080/api/stream?token=<TOKEN>"
-curl -X POST "http://localhost:8080/api/input?token=<TOKEN>" \
+curl -N "http://localhost:49374/api/stream?token=<TOKEN>"
+curl -X POST "http://localhost:49374/api/input?token=<TOKEN>" \
   -H 'Content-Type: application/json' \
   -d '{"kind":"chat","content":"hello"}'
 ```
