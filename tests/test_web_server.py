@@ -2415,6 +2415,10 @@ class TestTemplateEndpoint:
             "/api/directives/template?axis=task&token=t", json={"content": existing}
         ).json()["content"]
         assert "## 업무\n- 역할:" in out  # task skeleton inserted
+        # domain-neutral labels (not coding-specific 편집/빌드·테스트) + memory rule
+        assert "- 착수 전 확인:" in out and "- 검증·품질 규율:" in out
+        assert "편집 전 확인" not in out and "빌드·테스트" not in out
+        assert "메모리 활용" in out and "memory" in out
         assert "## 페르소나\n- 도도" in out and "## 학습된 지침\n- 교훈" in out  # kept
 
     def test_learned_has_no_template_400(self):

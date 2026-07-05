@@ -172,6 +172,9 @@ class TestShippedBuiltins:
             body = dp.load("task", tid)
             assert body.lstrip().startswith("## 업무")
             assert "memory" in body  # 메모리 활용 원칙이 들어 있어야 한다
+            # domain-neutral labels — no coding-specific shoehorning
+            assert "빌드·테스트·정적분석 규율" not in body
+            assert "검증·품질 규율" in body
 
     def test_learned_has_no_builtins(self):
         assert dp.list_presets("learned") == []
