@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 _NAME = "web.json"
@@ -97,9 +98,23 @@ def write_status_file(
     }
     path = status_file_path(session_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.parent / (_STATUS_NAME + ".tmp")
-    tmp.write_text(json.dumps(info), encoding="utf-8")
-    os.replace(tmp, path)  # atomic swap — readers see all-or-nothing
+    # Unique temp per write: this status is (re)written from BOTH the agent-loop
+    # thread (busy/awaiting via set_sticky) and the web thread (viewers via
+    # register_connection). A FIXED tmp name races — writer A's os.replace
+    # consumes the shared tmp, then writer B's os.replace hits FileNotFoundError
+    # and (unguarded) crashes the instance. mkstemp gives each writer its own
+    # tmp so the atomic swaps are independent (last writer wins, no crash).
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".status-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(info))
+        os.replace(tmp, path)  # atomic swap — readers see all-or-nothing
+    except BaseException:
+        try:
+            os.unlink(tmp)  # don't leak the temp on a failed write
+        except OSError:
+            pass
+        raise
     return path
 
 

@@ -96,9 +96,40 @@ class TestStatusFile:
         assert read_status_file(tmp_path)["busy"] is False
 
     def test_write_leaves_no_tmp_file(self, tmp_path):
-        # atomic write (temp + os.replace) must not leave the .tmp behind
+        # atomic write (unique temp + os.replace) must not leave any .tmp behind
         write_status_file(tmp_path, busy=False, awaiting_input=False, viewers=0)
+        assert list(tmp_path.glob(".status-*.tmp")) == []
         assert not (tmp_path / "status.json.tmp").exists()
+
+    def test_concurrent_writes_do_not_race(self, tmp_path):
+        # Regression (v4.27.0): a FIXED tmp name made two threads writing status
+        # collide — one os.replace consumed the shared tmp, the other raised
+        # FileNotFoundError and crashed the instance. Unique tmps must let many
+        # concurrent writers finish cleanly, leaving one valid status.json.
+        import threading
+
+        errors: list[BaseException] = []
+        barrier = threading.Barrier(8)
+
+        def worker(n: int) -> None:
+            try:
+                barrier.wait()  # maximise overlap on the tmp/replace window
+                for _ in range(25):
+                    write_status_file(
+                        tmp_path, busy=bool(n % 2), awaiting_input=False, viewers=n
+                    )
+            except BaseException as e:  # noqa: BLE001 — surface any thread failure
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []  # no FileNotFoundError from the tmp race
+        assert read_status_file(tmp_path) is not None  # ends valid, not corrupt
+        assert list(tmp_path.glob(".status-*.tmp")) == []  # no leaked temps
 
     def test_read_missing_returns_none(self, tmp_path):
         assert read_status_file(tmp_path) is None

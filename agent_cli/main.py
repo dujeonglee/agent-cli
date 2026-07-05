@@ -1644,8 +1644,12 @@ def web(
     )
     # Seed the live status sidecar so the board can read it immediately (before
     # the first viewer). The renderer rewrites it on each viewer/busy/awaiting
-    # change; it's removed on exit alongside web.json.
-    write_status_file(_session_dir, busy=False, awaiting_input=False, viewers=0)
+    # change; it's removed on exit alongside web.json. Best-effort: a status
+    # write must never break instance startup (matches _publish_status).
+    try:
+        write_status_file(_session_dir, busy=False, awaiting_input=False, viewers=0)
+    except OSError:
+        pass
 
     if no_browser:
         pass

@@ -12,6 +12,25 @@
 
 ## [Unreleased]
 
+## [4.27.1] - 2026-07-05
+
+### Fixed
+
+- **`status.json` 동시 쓰기 레이스로 인스턴스가 스타트업 중 크래시하던 회귀 수정**
+  (v4.27.0 에서 유입). `write_status_file` 이 **고정 tmp 파일명**(`status.json.tmp`)을
+  써서, 상태를 동시에 기록하는 두 경로 — 에이전트 루프 스레드(busy/awaiting via
+  `set_sticky`)와 웹 스레드(viewers via `register_connection`) — 가 같은 tmp 를 두고
+  경합했다. writer A 의 `os.replace` 가 공유 tmp 를 소비하면 writer B 의 `os.replace`
+  가 `FileNotFoundError` 를 던졌고, 스타트업 시드(`main.py`)의 호출은 감싸이지 않아
+  **치명적** → 인스턴스가 뜨다 죽어 오케스트레이터(agent-board)의 `await_ready` 가
+  타임아웃(`"did not become ready"`)나며 **열기가 실패**했다.
+  - 매 write 마다 `tempfile.mkstemp` 로 **유니크 tmp** 를 생성 → 원자적 스왑이 서로
+    독립(마지막 writer 승, 크래시 없음), 실패 시 tmp 정리.
+  - 스타트업 시드 write 를 best-effort(`try/except OSError`)로 감싸 `_publish_status`
+    의 "상태 쓰기가 세션을 절대 깨선 안 된다" 계약과 일치시킴.
+  - 회귀 가드: 8스레드×25회 동시 쓰기가 예외 없이 완료되고 유효한 `status.json` 하나만
+    남는지 검증(`test_concurrent_writes_do_not_race`).
+
 ## [4.27.0] - 2026-07-05
 
 ### Added
