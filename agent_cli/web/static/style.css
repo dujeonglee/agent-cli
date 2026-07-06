@@ -2,6 +2,33 @@
    Designed to be readable on desktop + tablet without responsive-design
    gymnastics; phone form factors fall back to a usable single-column. */
 
+/* ── Jetendard: JetBrains Mono + Pretendard Hangul, monospace (SIL OFL 1.1,
+   see fonts/OFL.txt). Self-hosted woff2 (no CDN) so the on-prem UI renders
+   Korean + code in one aligned monospace face. Only the 4 weights the UI uses
+   are bundled — 400/500/600/700; intermediate/italic snap to the nearest and
+   italic is synthesised. url() is relative to THIS stylesheet, so it resolves
+   under any --base-path. ── */
+@font-face {
+  font-family: "Jetendard";
+  src: url("fonts/Jetendard-Regular.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Jetendard";
+  src: url("fonts/Jetendard-Medium.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Jetendard";
+  src: url("fonts/Jetendard-SemiBold.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Jetendard";
+  src: url("fonts/Jetendard-Bold.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+
 /* ── Design tokens — multi-theme. `:root` is the shared dark base (= the
    "slate" theme); each [data-theme="…"] block overrides only what differs
    (surfaces + accent family; "light" is a full override). The theme is set on
@@ -115,7 +142,7 @@ header {
 #info {
   color: var(--text-2);
   font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -125,7 +152,7 @@ header {
 #token-usage {
   color: var(--muted);
   font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   white-space: nowrap;
   margin-right: 12px;
   flex-shrink: 0;
@@ -183,7 +210,7 @@ main#messages {
   font-size: 10px;
   line-height: 1;
   color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   background: var(--time-bg);
   padding: 1px 3px;
   border-radius: 3px;
@@ -225,7 +252,7 @@ main#messages {
 .card-assistant .action .tool {
   color: var(--ok);
   font-weight: 600;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
 .card-assistant .action .args {
   background: var(--surface-2);
@@ -233,7 +260,7 @@ main#messages {
   border-radius: 4px;
   margin: 4px 0 0 0;
   overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
@@ -252,11 +279,11 @@ main#messages {
   font-size: 12px;
   margin-bottom: 4px;
   color: var(--text-2);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
 .card-observation .obs-head .icon { margin-right: 4px; }
 .card-observation .obs-body {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -283,7 +310,7 @@ main#messages {
   gap: 6px;
   color: var(--text-2);
   font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   margin: 2px auto;
 }
 .card-sys .sys-icon { opacity: 0.7; }
@@ -317,7 +344,7 @@ main#messages {
   opacity: 0.85;
 }
 .card-streaming .streaming {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -334,7 +361,7 @@ main#messages {
   border-radius: 8px;
 }
 .card-failed .streaming {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -363,7 +390,7 @@ main#messages {
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.92em;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
 /* Reset inline-code styling when ``<code>`` lives inside a fenced
    block — the parent ``<pre class="code">`` already paints a dark
@@ -473,7 +500,7 @@ footer {
 /* Action card variants — distinct from the generic <pre class="args">
    fallback so per-tool renderings stand out and stay readable. */
 .action-detail {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   margin-top: 4px;
   padding: 6px 8px;
@@ -482,7 +509,7 @@ footer {
 }
 .action-detail .muted { color: var(--muted); }
 .action-shell {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   margin: 4px 0 0 0;
   padding: 8px 10px;
@@ -545,7 +572,7 @@ footer {
 .prompt-meta-reasoning { color: var(--text-2); }
 .prompt-meta-action {
   color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-all;
 }
 /* In the ANSWERING badge (ask), stack the meta under the tag. */
@@ -567,7 +594,7 @@ footer {
   background: var(--surface-2);
   padding: 2px 6px;
   border-radius: 3px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
 
 /* ── Delegate task groups (collapsible) ──────
@@ -637,7 +664,7 @@ footer {
   color: var(--text-2);
   font-size: 12px;
   flex: 0 0 auto;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
 .card-task-group.task-ok .task-meta { color: var(--ok); }
 .card-task-group.task-fail .task-meta { color: var(--fail); }
@@ -803,7 +830,7 @@ footer {
   flex: 1;
   color: var(--text-2);
   font-size: 11.5px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
 #insp-close {
   border: none; background: none; cursor: pointer;
@@ -866,7 +893,7 @@ footer {
   box-shadow: 0 1px 4px var(--accent-shadow);
 }
 .insp-chip-tok {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 10px;
   opacity: .7;
 }
@@ -889,7 +916,7 @@ footer {
 .insp-dir-path { color: var(--text-2); font-size: 10px; margin-left: 6px; }
 .insp-dir-text {
   width: 100%; box-sizing: border-box; height: 120px; resize: vertical;
-  margin-top: 6px; font-family: ui-monospace, SFMono-Regular, monospace;
+  margin-top: 6px; font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 12px; line-height: 1.5;
   color: var(--text); background: var(--surface-3);
   border: 1px solid var(--border); border-radius: 6px; padding: 8px;
@@ -951,7 +978,7 @@ footer {
 }
 .dir-modal-loc input {
   color: var(--muted); background: var(--surface-2, var(--bg)); cursor: not-allowed;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
 }
 .dir-modal-existing { font-size: 11px; color: var(--text-2); display: flex;
   flex-wrap: wrap; gap: 4px; align-items: center; }
@@ -996,7 +1023,7 @@ footer {
   text-align: center;
   font-size: 11px;
   color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   margin: 6px 0 2px;
   letter-spacing: 0.02em;
 }
@@ -1023,7 +1050,7 @@ footer {
 .insp-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .insp-name { font-weight: 560; font-size: 13px; flex: 1; }
 .insp-tok {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
   color: var(--text-2);
   background: var(--surface-2);
@@ -1035,7 +1062,7 @@ footer {
   margin: 0;
   padding: 10px 12px;
   border-top: 1px dashed var(--border);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
   font-size: 11.5px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -1138,7 +1165,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .dl-tree {
   flex: 1; min-height: 0; overflow: auto;
   border: 1px solid var(--border); border-radius: 8px; padding: 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
 }
 /* root checkbox = whole workspace → dim the child rows (root row stays active
    so it can be unchecked). Root row is the tree's first child. */
