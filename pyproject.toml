@@ -64,6 +64,10 @@ include = ["agent_cli*"]
 agent_cli = [
     "default_models.json",
     "web/static/*",
+    # Recursive so subdirs ship too — notably the bundled Jetendard woff2 fonts
+    # under web/static/fonts/ (a plain ``web/static/*`` misses them → the web UI
+    # 404s the font in a non-editable pip install).
+    "web/static/**/*",
     # Bundled built-in agents/skills are .md (+ nested reference dirs), not .py,
     # so they need explicit inclusion or pip installs ship without them — the
     # auto-review reviewer, explorer, and create-* skills would all go missing.
