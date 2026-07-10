@@ -706,3 +706,93 @@ class TestIterRecordOps:
         kind, tools, _ = _classify_record(rec)
         assert kind == "final"  # complete present
         assert [a for a, _ in iter_record_ops(rec)] == tools == ["shell", "complete"]
+
+
+# ── get_messages incremental render cache (B1: kills the per-turn O(n²)) ──
+
+
+class TestGetMessagesIncrementalCache:
+    """``get_messages`` renders each record ONCE (at ``add``) and serves the
+    dynamic slice from a mirror list; bulk cache mutations (compaction /
+    FIFO pops / resume restore) invalidate the mirror for a one-shot
+    re-render. Output must be indistinguishable from a full re-render."""
+
+    def _msgs(self):
+        return [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "question one"},
+            {
+                "role": "assistant",
+                "thought": "t",
+                "ops": [{"action": "shell", "action_input": {"command": "ls"}}],
+            },
+            {"role": "user", "tool": "shell", "success": True, "content": "out"},
+            {"role": "user", "content": "follow-up"},
+        ]
+
+    def _fresh_render(self, ctx):
+        """Ground truth: render every dynamic record from scratch."""
+        cache = ctx.get_raw_messages()
+        rest = cache[1:] if cache and cache[0].get("role") == "system" else cache
+        return [_to_natural_language(m, ctx.wire_format) for m in rest]
+
+    def test_matches_full_rerender_after_adds(self, ctx):
+        for m in self._msgs():
+            ctx.add(m)
+        out = ctx.get_messages()
+        assert out[0] == {"role": "system", "content": "sys"}
+        assert out[1:] == self._fresh_render(ctx)
+
+    def test_each_record_rendered_once_across_calls(self, ctx, monkeypatch):
+        import agent_cli.context.manager as mgr
+
+        calls = {"n": 0}
+        real = mgr._to_natural_language
+
+        def counting(msg, wf):
+            calls["n"] += 1
+            return real(msg, wf)
+
+        monkeypatch.setattr(mgr, "_to_natural_language", counting)
+        msgs = self._msgs()
+        for m in msgs:
+            ctx.add(m)
+        for _ in range(3):
+            ctx.get_messages()
+        # 4 dynamic records (system excluded), rendered once each at add() —
+        # the 3 get_messages calls add ZERO renders.
+        assert calls["n"] == 4
+
+    def test_fifo_eviction_invalidates_mirror(self, ctx):
+        for m in self._msgs():
+            ctx.add(m)
+        ctx._evict_fifo(target_tokens=1)  # pops all but one
+        out = ctx.get_messages()
+        rest = self._fresh_render(ctx)
+        # system anchor is cache[0] and never evicted below len>1 guard? —
+        # compare exactly against ground truth either way
+        head = (
+            [{"role": "system", "content": "sys"}]
+            if ctx.get_raw_messages()[0].get("role") == "system"
+            else []
+        )
+        assert out == head + rest
+
+    def test_resume_restore_renders_correctly(self, session_dir):
+        first = ContextManager(session_dir, max_context_tokens=10000)
+        for m in self._msgs():
+            first.add(m)
+        resumed = ContextManager(session_dir, max_context_tokens=10000, resume=True)
+        out = resumed.get_messages()
+        cache = resumed.get_raw_messages()
+        rest = cache[1:] if cache[0].get("role") == "system" else cache
+        expected = [_to_natural_language(m, resumed.wire_format) for m in rest]
+        assert out[-len(expected) :] == expected
+
+    def test_returned_list_is_independent(self, ctx):
+        for m in self._msgs():
+            ctx.add(m)
+        out1 = ctx.get_messages()
+        out1.append({"role": "user", "content": "INJECTED BY CALLER"})
+        out2 = ctx.get_messages()
+        assert all(m.get("content") != "INJECTED BY CALLER" for m in out2)

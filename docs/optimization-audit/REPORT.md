@@ -17,7 +17,7 @@
 
 | # | 항목 | 위치 | 비용 | 수리 방향 | 상태 |
 |---|---|---|---|---|---|
-| **B1** | **`get_messages()` O(n²)** — 매 턴 전체 히스토리를 `_to_natural_language`(assistant 는 wire render 포함)로 전량 재변환, 턴당 3-4회 호출. 유일한 초선형 패턴 ✅ | manager.py:233-276, loop.py:576/623/765/866 | 턴↑수록 악화 | 렌더 결과 증분 캐시(add 시 tail 만 변환, compaction 때만 재빌드) | ☐ |
+| **B1** | **`get_messages()` O(n²)** — 매 턴 전체 히스토리를 `_to_natural_language`(assistant 는 wire render 포함)로 전량 재변환, 턴당 3-4회 호출. 유일한 초선형 패턴 ✅ | manager.py:233-276, loop.py:576/623/765/866 | 턴↑수록 악화 | 렌더 결과 증분 캐시(add 시 tail 만 변환, compaction 때만 재빌드) | ✅ v4.37.0 |
 | **B2** | **web: async 핸들러 안 블로킹 I/O** — `workspace_tree` 요청마다 재귀 `rglob` 사이징, zip·rmtree·write 도 이벤트루프 위 → 모든 뷰어 SSE 정지 ✅ | server.py:1440,1477,1519,1554 | 요청당, 전 클라이언트 파급 | sync `def` 전환(FastAPI 스레드풀) 또는 `run_in_executor` | ✅ v4.36.0 |
 | **B3** | **web: `_event_buffer` 무한 성장** — trim 없는 plain list, 재접속마다 전체 스냅샷 재직렬화 ✅ | render/web.py:117,233,284 | 세션 길이 비례 | `deque(maxlen)` 또는 디스크 폴백 | ✅ v4.36.0 |
 | B4 | SSE 페이로드 뷰어당 재직렬화 (`json.dumps` × N viewers) | server.py:926,947 | 이벤트당×뷰어 | `_emit` 1회 직렬화 후 문자열 공유 | ✅ v4.36.0 |
@@ -52,12 +52,21 @@
 
 1. ✅ **A1 delegate 추출기 수리** (+A3 dead code 제거, +A4) — 버그 수리 (v4.35.1)
 2. ✅ **B2+B3+B4 web 안정성 묶음** — 사용자 체감 직결 (v4.36.0)
-3. ☐ **B1 get_messages 증분 캐시** — 유일한 O(n²) (C5 연계 설계)
+3. ✅ **B1 get_messages 증분 캐시** — 유일한 O(n²) (v4.37.0)
 4. ☐ **A2 fetch flatten** — 로드맵 완결
 5. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
 
+- **2026-07-11 · v4.37.0 · B1 완료**: `_nl_cache` 증분 렌더 미러 —
+  `add` 가 record 렌더를 1회 수행해 append, `get_messages` 는 head(system/
+  summary/file_list) 재조립 + 미러 포인터 복사. 벌크 변형 4곳(`_compact`
+  재할당·`_evict_fifo` pop·`force_fit` pop·`_restore_cache`) `None` 무효화 +
+  길이 불일치 backstop. 호출자(변형 없음 사전 전수 확인: loop 은 append 만,
+  provider 는 읽기 전용) 무변경 — 투명 최적화. 렌더=record 순수함수 전제를
+  코드 주석에 명시(미래 턴-의존 context view 는 무효화 필요). 테스트:
+  전량 재렌더 동등성/렌더 1회 카운팅(3×get 에 추가 렌더 0)/FIFO 무효화/
+  resume 복원/반환 리스트 독립성 5종.
 - **2026-07-11 · v4.36.0 · B2+B3+B4 완료**: (B2) `workspace_tree`(재귀 rglob
   사이징)·`download`(zip)·`delete`(rmtree, 경로검증은 사전)·`upload`(쓰기)·
   `export_html`(렌더) 블로킹 본문을 `run_in_executor` 오프로드 — async 핸들러가

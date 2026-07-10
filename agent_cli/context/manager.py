@@ -128,6 +128,19 @@ class ContextManager:
         )
         self._cache: list[dict] = []
         self._cache_tokens: int = 0
+        # Rendered (natural-language) mirror of the cache's dynamic slice —
+        # everything after the optional leading system message, in order.
+        # ``get_messages`` used to re-run ``_to_natural_language`` over the
+        # WHOLE cache on every call (3-4×/turn from the loop) — O(n) per turn,
+        # O(n²) per session. Now each record is rendered ONCE: ``add`` appends
+        # its rendered form here, and every bulk cache mutation (compaction
+        # rebuild, FIFO pops, resume restore) sets this to ``None`` (dirty) so
+        # the next ``get_messages`` re-renders from scratch. A length check in
+        # ``get_messages`` is the belt-and-braces backstop for any missed
+        # mutation site. VALIDITY ASSUMPTION: the render is a pure function of
+        # the record (true today — ``_context_view`` is per-record identity);
+        # a future TURN-DEPENDENT context view must invalidate this cache.
+        self._nl_cache: list[dict] | None = []
         self._history_path = self.session_dir / "history.jsonl"
         self._compaction_path = self.session_dir / "compaction.json"
         # Current LLM turn — stamped onto each history.jsonl record's retrieval
@@ -196,6 +209,13 @@ class ContextManager:
         """
         msg_tokens = _estimate_message_tokens(message)
         self._cache.append(message)
+        # Incremental render: keep the natural-language mirror in step so
+        # ``get_messages`` never re-renders old records. A leading system
+        # message is excluded (``get_messages`` passes it through verbatim).
+        if self._nl_cache is not None and not (
+            len(self._cache) == 1 and message.get("role") == "system"
+        ):
+            self._nl_cache.append(_to_natural_language(message, self.wire_format))
         self._cache_tokens += msg_tokens
         self._append_to_history(message)
         # Return the stored message so callers can render exactly what was
@@ -250,9 +270,9 @@ class ContextManager:
         # system entry through the assistant rendering path.
         if cache and cache[0].get("role") == "system":
             result.append(dict(cache[0]))
-            cache_rest = cache[1:]
+            rest_start = 1
         else:
-            cache_rest = cache
+            rest_start = 0
 
         if self._summary:
             result.append(
@@ -272,7 +292,16 @@ class ContextManager:
                 }
             )
 
-        result.extend(_to_natural_language(msg, self.wire_format) for msg in cache_rest)
+        # Dynamic slice: served from the incremental render mirror. ``None``
+        # (bulk mutation) or a length mismatch (backstop for any missed
+        # invalidation) → full re-render once; steady state is a pointer copy.
+        n_rest = len(cache) - rest_start
+        if self._nl_cache is None or len(self._nl_cache) != n_rest:
+            self._nl_cache = [
+                _to_natural_language(msg, self.wire_format)
+                for msg in cache[rest_start:]
+            ]
+        result.extend(self._nl_cache)
         return result
 
     def get_raw_messages(self) -> list[dict]:
@@ -419,6 +448,7 @@ class ContextManager:
             self._summary = new_summary[:_SUMMARY_CHAR_CAP]
             self._file_list = self._merge_file_lists(self._file_list, new_paths)
             self._cache = anchor + retained
+            self._nl_cache = None  # bulk rebuild → re-render on next get
             self._cache_tokens = _sum_message_tokens(self._cache)
             self._compaction_count += 1
             self._last_compacted_at = _now_iso()
@@ -544,6 +574,7 @@ class ContextManager:
         target = target_tokens if target_tokens is not None else self.max_context_tokens
         while self._cache_tokens > target and len(self._cache) > 1:
             removed = self._cache.pop(0)
+            self._nl_cache = None  # front pop → rendered mirror stale
             self._cache_tokens -= _estimate_message_tokens(removed)
             # The popped message came from the cache, which mirrors
             # history.jsonl — reflect the drop in the offset so
@@ -622,6 +653,7 @@ class ContextManager:
             # prompt. Pop one oldest message so the retry makes headway.
             if len(self._cache) >= before_len and len(self._cache) > 1:
                 removed = self._cache.pop(0)
+                self._nl_cache = None  # front pop → rendered mirror stale
                 self._cache_tokens = max(
                     self._cache_tokens - _estimate_message_tokens(removed), 0
                 )
@@ -717,6 +749,7 @@ class ContextManager:
         invalid for the current history), fall back to the legacy
         reverse-load-until-budget strategy.
         """
+        self._nl_cache = None  # cache rebuilt from disk → re-render on next get
         with open(self._history_path, "r", encoding="utf-8") as f:
             raw_lines = [line.strip() for line in f.readlines() if line.strip()]
 
