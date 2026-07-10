@@ -72,6 +72,7 @@ from agent_cli.render import (
     render_group_end,
 )
 from agent_cli.tools import TOOLS, _execute_tool, infer_action
+from agent_cli.tools.base import default_oversized_nudge
 from agent_cli.tools.delegate import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
@@ -1923,10 +1924,9 @@ class AgentLoop:
         An over-cap body is replaced with a narrow-it nudge. Tools not in the
         registry (none today) fall back to the default render + cap on."""
         tool = TOOLS.get(tool_name)
+        safe_args = args if isinstance(args, dict) else {}
         if tool is not None:
-            body = tool.render_observation(
-                result, args if isinstance(args, dict) else {}
-            )
+            body = tool.render_observation(result, safe_args)
             cap_on = tool.apply_oversized_cap
         else:
             body = result.output if result.success else result.error
@@ -1934,7 +1934,20 @@ class AgentLoop:
         if cap_on and self._oversized_cap:
             tokens = estimate_tokens(body)
             if tokens > self._oversized_cap:
-                return _render_oversized_nudge(tool_name, tokens, self._oversized_cap)
+                # Per-tool over-cap policy (default = generic narrow-it nudge).
+                # ``tools_available`` lets a tool tailor guidance to what the
+                # model can actually call (e.g. delegate fan-out only when
+                # delegate is not depth-stripped from this loop).
+                if tool is not None:
+                    return tool.render_oversized(
+                        result,
+                        safe_args,
+                        body=body,
+                        tokens=tokens,
+                        cap=self._oversized_cap,
+                        tools_available=frozenset(self.tools_list),
+                    )
+                return default_oversized_nudge(tool_name, tokens, self._oversized_cap)
         return body
 
     # ── 5. recent_tool_history append ──────────────────────────────
@@ -2563,22 +2576,6 @@ def _combined_tool_label(names: list[str]) -> str:
         out.append(names[i] if j - i == 1 else f"{names[i]}×{j - i}")
         i = j
     return "+".join(out)
-
-
-def _render_oversized_nudge(tool_name: str, tokens: int, cap: int) -> str:
-    """The observation body substituted for an over-cap tool output. The full
-    output is NOT added to context — oversized tool output crowds out reasoning
-    and lowers quality — so we steer the model to re-request a narrower slice.
-    Generic for now (tunable per-tool later via ``Tool.render_observation``)."""
-    return (
-        f"[{tool_name or 'tool'}: output too large — ~{tokens:,} tokens "
-        f"> cap {cap:,} (context_window/10). NOT added to context; the call "
-        f"itself succeeded. Large outputs crowd out reasoning and lower quality. "
-        f"Re-request a narrower slice: read a specific line range or symbols, add "
-        f"a LIMIT / tighter filter, or pipe through `head`/`grep`. To keep a full "
-        f"large result, write it to a file (e.g. `… | tee /tmp/out.txt`) then read "
-        f"specific parts with read_file.]"
-    )
 
 
 def _append_observation(

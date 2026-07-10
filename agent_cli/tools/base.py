@@ -33,6 +33,22 @@ from pathlib import Path
 from agent_cli.tools.result import ToolResult
 
 
+def default_oversized_nudge(tool_name: str, tokens: int, cap: int) -> str:
+    """The generic over-cap observation: the whole tool output is dropped and
+    the model is steered to re-request a narrower slice. Shared default behind
+    :meth:`Tool.render_oversized` (and the loop's no-tool fallback), so tools
+    that don't override the seam keep the historical behaviour byte-for-byte."""
+    return (
+        f"[{tool_name or 'tool'}: output too large — ~{tokens:,} tokens "
+        f"> cap {cap:,} (context_window/10). NOT added to context; the call "
+        f"itself succeeded. Large outputs crowd out reasoning and lower quality. "
+        f"Re-request a narrower slice: read a specific line range or symbols, add "
+        f"a LIMIT / tighter filter, or pipe through `head`/`grep`. To keep a full "
+        f"large result, write it to a file (e.g. `… | tee /tmp/out.txt`) then read "
+        f"specific parts with read_file.]"
+    )
+
+
 class Tool(ABC):
     """Base class for every dispatchable tool.
 
@@ -136,6 +152,31 @@ class Tool(ABC):
         ``args`` are the standard (prefix-stripped) action_input keys.
         """
         return result.output if result.success else result.error
+
+    def render_oversized(
+        self,
+        result: ToolResult,
+        args: dict,
+        *,
+        body: str,
+        tokens: int,
+        cap: int,
+        tools_available: frozenset[str],
+    ) -> str:
+        """Observation substituted when THIS tool's output exceeds the oversized
+        cap (``context_window / 10``). The tool OWNS the full over-cap policy.
+
+        Default: :func:`default_oversized_nudge` — the whole body is dropped and
+        the model is steered to re-request a narrower slice. An override may
+        return tool-specific recovery guidance, or a BOUNDED slice of ``body``
+        plus a pointer (``body`` is passed so a tool can show a head without
+        re-running). ``tools_available`` is the set of tool names callable in
+        the CURRENT loop (e.g. ``delegate`` is absent inside a depth-limited
+        subagent), so guidance can name only tools the model can actually use.
+        Fires only when :attr:`apply_oversized_cap` is True AND the body is over
+        cap — so an override never needs to re-check either condition.
+        """
+        return default_oversized_nudge(self.name, tokens, cap)
 
     def run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
         """Public dispatch: strip the tool-name prefix from ``action_input``

@@ -12,16 +12,19 @@ the cap applies, default True). ``ctx.add`` is therefore pure storage.
 import json
 
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.loop import AgentLoop, _render_oversized_nudge
+from agent_cli.loop import AgentLoop
 from agent_cli.tools import TOOLS
-from agent_cli.tools.base import Tool
+from agent_cli.tools.base import Tool, default_oversized_nudge
 from agent_cli.tools.result import ToolResult
 
 
-def _loop(cap: int) -> AgentLoop:
-    """A bare AgentLoop carrying only the cap — enough for _tool_observation."""
+def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
+    """A bare AgentLoop carrying the cap + tool list — enough for
+    _tool_observation (which now consults ``tools_list`` for per-tool
+    over-cap guidance, e.g. delegate fan-out only when delegate is callable)."""
     loop = AgentLoop.__new__(AgentLoop)
     loop._oversized_cap = cap
+    loop.tools_list = list(TOOLS.keys()) if tools is None else list(tools)
     return loop
 
 
@@ -43,6 +46,20 @@ class TestToolSurfaces:
         tool = TOOLS["read_file"]
         r = ToolResult(False, error="boom")
         assert tool.render_observation(r, {}) == "boom"
+
+    def test_render_oversized_default_is_generic_nudge(self):
+        # A tool that does NOT override the seam falls back to the shared
+        # default byte-for-byte (shell has no override).
+        tool = TOOLS["shell"]
+        out = tool.render_oversized(
+            ToolResult(True, output="x"),
+            {},
+            body="x",
+            tokens=9_000,
+            cap=4_000,
+            tools_available=frozenset(TOOLS.keys()),
+        )
+        assert out == default_oversized_nudge("shell", 9_000, 4_000)
 
 
 # ── _tool_observation: render + cap meet here ────────────────────────
@@ -129,11 +146,78 @@ class TestCapComputation:
 
 class TestNudge:
     def test_nudge_mentions_tool_size_and_recovery(self):
-        n = _render_oversized_nudge("read_context", 99_999, 5_000)
+        n = default_oversized_nudge("read_context", 99_999, 5_000)
         assert "read_context" in n
         assert "99,999" in n and "5,000" in n
         assert "too large" in n
         assert "read_file" in n  # points at a narrower path
+
+
+# ── read_file over-cap: pure nudge + delegate fan-out guidance ───────
+
+
+class TestReadFileOversized:
+    def test_read_file_overrides_render_oversized(self):
+        # The surface is actually wired for read_file (not the inherited default).
+        assert type(TOOLS["read_file"]).render_oversized is not Tool.render_oversized
+
+    def _nudge(self, tools, args=None):
+        return TOOLS["read_file"].render_oversized(
+            ToolResult(True, output="RAW_SECRET_BODY"),
+            args or {"path": "big_module.py"},
+            body="RAW_SECRET_BODY",
+            tokens=63_488,
+            cap=4_096,
+            tools_available=frozenset(tools),
+        )
+
+    def test_names_path_size_and_narrowing(self):
+        n = self._nudge(["read_file", "delegate"])
+        assert "big_module.py" in n  # the path
+        assert "63,488" in n and "4,096" in n  # size + cap
+        assert "range" in n and "read_symbols" in n  # cheap narrowing
+        assert "too large" in n and "read_file" in n
+        assert "RAW_SECRET_BODY" not in n  # raw body never echoed
+
+    def test_delegate_fanout_guidance_when_available(self):
+        n = self._nudge(["read_file", "delegate"])
+        assert "delegate" in n
+        assert "section" in n  # fan-out over sections
+        assert "distilled" in n
+
+    def test_delegate_omitted_when_unavailable(self):
+        # Depth-limited subagent: delegate is stripped from the toolset — the
+        # nudge must NOT point at a tool the model cannot call.
+        n = self._nudge(["read_file"])  # no delegate
+        assert "delegate" not in n
+        assert "range" in n  # cheap narrowing still offered
+
+    def test_missing_path_degrades_gracefully(self):
+        n = self._nudge(["read_file"], args={})
+        assert "the file" in n  # placeholder, no crash
+
+
+# ── through the loop seam (render_oversized + tools_available) ────────
+
+
+class TestReadFileOversizedThroughSeam:
+    def test_seam_emits_delegate_guidance_when_delegate_present(self):
+        loop = _loop(cap=50, tools=["read_file", "delegate"])
+        big = "line of source\n" * 500
+        out = loop._tool_observation(
+            "read_file", ToolResult(True, output=big), {"path": "m.py"}
+        )
+        assert "m.py" in out and "delegate" in out
+        assert "line of source" not in out  # raw dropped
+
+    def test_seam_omits_delegate_when_depth_stripped(self):
+        loop = _loop(cap=50, tools=["read_file"])  # delegate depth-stripped
+        big = "line of source\n" * 500
+        out = loop._tool_observation(
+            "read_file", ToolResult(True, output=big), {"path": "m.py"}
+        )
+        assert "delegate" not in out
+        assert "read_symbols" in out  # still steers to a narrower read
 
 
 # ── ctx.add is pure storage (no spill transform) ─────────────────────

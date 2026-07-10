@@ -785,7 +785,8 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 
 도구 관찰(observation)이 **컨텍스트 윈도우의 1/10** 을 넘으면, 그 전체 출력은 컨텍스트에 들어가지 않고 **"좁혀서 다시 받아라"는 nudge 로 대체**됩니다(도구 호출 자체는 성공). 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리기 때문에, 모델을 라인범위/심볼/`LIMIT`/`grep` 같은 surgical 회수로 자연스럽게 유도합니다. 전체가 꼭 필요하면 파일로 빼서(`… | tee /tmp/out.txt`) 부분만 `read_file` 하면 됩니다.
 
-- **도구별 제어 (`Tool` 추상화 표면)**: `Tool.render_observation(result, args)` 가 도구의 결과 → 관찰 본문 렌더(기본=성공 시 output, 실패 시 error). `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 도구별로 끌 수 있습니다. 모든 빌트인은 기본값을 따라 일관 적용.
+- **도구별 제어 (`Tool` 추상화 표면 3개)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 도구별로 끔; **`Tool.render_oversized(result, args, *, body, tokens, cap, tools_available)`** 가 **캡에 걸렸을 때 무엇을 낼지**를 도구가 소유(기본=제네릭 nudge). `tools_available`(현재 루프에서 호출 가능한 도구 집합)을 받아, 그 도구가 실제로 쓸 수 있는 복구만 안내합니다.
+- **read_file 오버라이드 (분산 처리 유도)**: 거대 파일 read 는 파일이 디스크에 온전하므로, (a) **특정 부분** → line range / `read_symbols`, (b) **파일 전체 분석/검색** → **`delegate` 팬아웃**(서브에이전트마다 한 섹션 read → 요약/추출만 반환, 부모는 distilled 결과만 수신)로 갈래를 제시합니다. `delegate` 팬아웃 안내는 delegate 가 실제 호출 가능할 때만 표시(depth 한계 서브에이전트에선 delegate 가 도구목록에서 제거되므로 자동 생략).
 - 사용자/어시스턴트 메시지는 캡 대상이 아닙니다(사람의 의도적 입력·모델 자신의 출력이라 거절/절단하지 않음).
 
 ### code_index — SQLite 코드 인덱스
