@@ -7,8 +7,6 @@ output format, persistence, iterations, and integration.
 from __future__ import annotations
 
 
-import json
-
 from agent_cli.tools.delegate import (
     DelegateResult,
     _extract_activity_log,
@@ -19,19 +17,41 @@ from agent_cli.tools.delegate import (
 
 
 # ── Test helpers ─────────────────────────────────────────────
+# Fixtures produce the REAL on-disk assistant record shapes the extractors
+# read (via ``iter_record_ops``): the multi-op ``ops`` record — what
+# md_array / react ``serialize_assistant_for_history`` writes today — and
+# the base singular ``{action, action_input}`` record (legacy sessions +
+# non-multi-op formats). The old fixture encoded the pre-423608e
+# JSON-in-``content`` shape, which production never writes anymore — the
+# extractors "passed" against a fiction while returning [] on every real
+# session (the A1 silent-feature-loss bug).
 
 
 def _make_action_msg(action: str, action_input: dict) -> dict:
-    """Create a mock assistant message with ReAct JSON."""
+    """Assistant record in the multi-op ``ops`` shape (current default)."""
     return {
         "role": "assistant",
-        "content": json.dumps(
-            {
-                "thought": "test thought",
-                "action": action,
-                "action_input": action_input,
-            }
-        ),
+        "thought": "test thought",
+        "ops": [{"action": action, "action_input": action_input}],
+    }
+
+
+def _make_singular_msg(action: str, action_input: dict) -> dict:
+    """Assistant record in the base singular shape (legacy / non-multi-op)."""
+    return {
+        "role": "assistant",
+        "thought": "test thought",
+        "action": action,
+        "action_input": action_input,
+    }
+
+
+def _make_multi_op_msg(*pairs: tuple[str, dict]) -> dict:
+    """Assistant record with SEVERAL ops in one turn."""
+    return {
+        "role": "assistant",
+        "thought": "test thought",
+        "ops": [{"action": a, "action_input": ai} for a, ai in pairs],
     }
 
 
@@ -96,8 +116,9 @@ class TestExtractActivityLog:
         assert "iter 1:" in log[0]
         assert "iter 2:" in log[1]
 
-    def test_malformed_json(self):
-        """DO-06: Malformed JSON assistant messages are skipped."""
+    def test_content_only_records_skipped(self):
+        """DO-06: Bare-content assistant records (prose drift / NO_JSON
+        fallback) carry no structured ops and are skipped."""
         messages = [
             {"role": "assistant", "content": "not json at all"},
             _make_action_msg("read_file", {"path": "/src/auth.py"}),
@@ -106,6 +127,59 @@ class TestExtractActivityLog:
         log = _extract_activity_log(messages)
         assert len(log) == 1
         assert log[0] == "iter 1: read_file auth.py"
+
+    def test_singular_legacy_shape(self):
+        """The base singular ``{action, action_input}`` record (legacy
+        sessions / non-multi-op formats) extracts identically."""
+        messages = [
+            _make_singular_msg("read_file", {"path": "/src/auth.py"}),
+            _make_obs_msg("content"),
+            _make_singular_msg("shell", {"command": "pytest"}),
+        ]
+        log = _extract_activity_log(messages)
+        assert log == ["iter 1: read_file auth.py", "iter 2: shell pytest"]
+
+    def test_multi_op_turn_joins_summaries(self):
+        """A multi-op turn is ONE iteration — its op summaries join with
+        '; ' instead of inflating the iteration count."""
+        messages = [
+            _make_multi_op_msg(
+                ("read_file", {"path": "/src/a.py"}),
+                ("read_file", {"path": "/src/b.py"}),
+            ),
+            _make_obs_msg("contents"),
+            _make_action_msg("shell", {"command": "pytest"}),
+        ]
+        log = _extract_activity_log(messages)
+        assert log == [
+            "iter 1: read_file a.py; read_file b.py",
+            "iter 2: shell pytest",
+        ]
+
+    def test_terminal_complete_op_counts(self):
+        """The terminal ``complete`` turn (stored as an ops record by
+        serialize_terminal_for_history) appears as an iteration."""
+        messages = [
+            _make_action_msg("shell", {"command": "ls"}),
+            _make_obs_msg("ok"),
+            _make_action_msg("complete", {"result": "done"}),
+        ]
+        log = _extract_activity_log(messages)
+        assert log == ["iter 1: shell ls", "iter 2: complete"]
+
+    def test_actionless_op_stub_skipped(self):
+        """Ops without an action name (dropped-action infer stubs) are
+        skipped; a record with ONLY such stubs is not an iteration."""
+        messages = [
+            {
+                "role": "assistant",
+                "thought": "t",
+                "ops": [{"action": "", "action_input": {"path": "x"}}],
+            },
+            _make_action_msg("shell", {"command": "ls"}),
+        ]
+        log = _extract_activity_log(messages)
+        assert log == ["iter 1: shell ls"]
 
 
 # ── DO-07 ~ DO-13: Action Summary ────────────────────────────
@@ -222,6 +296,30 @@ class TestExtractLastActions:
     def test_empty(self):
         """DO-18: Empty messages returns empty list."""
         assert _extract_last_actions([]) == []
+
+    def test_multi_op_turn_with_error_hint(self):
+        """A multi-op turn is one entry (joined summaries) and still scrapes
+        the following observation for the error hint."""
+        messages = [
+            _make_multi_op_msg(
+                ("edit_file", {"path": "/src/auth.py"}),
+                ("shell", {"command": "pytest"}),
+            ),
+            _make_obs_msg("FAIL: hash mismatch at line 5"),
+        ]
+        result = _extract_last_actions(messages)
+        assert len(result) == 1
+        assert "edit_file auth.py; shell pytest" in result[0]
+        assert "FAIL: hash mismatch" in result[0]
+
+    def test_singular_legacy_shape(self):
+        """Base singular records extract with observation scraping intact."""
+        messages = [
+            _make_singular_msg("shell", {"command": "pytest"}),
+            _make_obs_msg("ERROR: 2 tests failed"),
+        ]
+        result = _extract_last_actions(messages)
+        assert result == ["iter 1: shell pytest → ERROR: 2 tests failed"]
 
 
 # ── DO-19 ~ DO-21: Duration ──────────────────────────────────

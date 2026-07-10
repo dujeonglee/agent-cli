@@ -792,6 +792,39 @@ def _op_summary(action: str, action_input) -> str:
     return s[:_OP_SUMMARY_CAP]
 
 
+def iter_record_ops(record: dict) -> list[tuple[str, object]]:
+    """``(action, action_input)`` pairs from ONE assistant history record.
+
+    The single reader for both on-disk assistant shapes — the multi-op
+    ``{"ops": [{"action", "action_input"}, ...]}`` record (md_array / react
+    ``serialize_assistant_for_history`` / ``serialize_terminal_for_history``)
+    and the base singular ``{"action", "action_input"}`` record (legacy
+    sessions + non-multi-op formats). Bare-content records (prose drift, no
+    action) and non-assistant roles yield ``[]``. Ops without an action name
+    (actionless infer stubs) are skipped.
+
+    Public: consumed by delegate's activity-log extractors and the loop's
+    review tool-calls builder, so the record-shape knowledge stays in this
+    module (next to :func:`_classify_record`) instead of each consumer
+    re-guessing the shape — that re-guessing is exactly how the delegate
+    extractors silently broke when the shape moved from JSON-in-``content``
+    to structured fields (423608e).
+    """
+    if record.get("role") != "assistant":
+        return []
+    ops = record.get("ops")
+    if isinstance(ops, list):
+        return [
+            (o["action"], o.get("action_input") or {})
+            for o in ops
+            if isinstance(o, dict) and o.get("action")
+        ]
+    action = record.get("action")
+    if action:
+        return [(action, record.get("action_input") or {})]
+    return []
+
+
 def _classify_record(message: dict) -> tuple[str, list[str], str]:
     """Derive ``(kind, tools, text)`` retrieval fields from a record's shape.
 

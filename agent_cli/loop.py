@@ -2391,7 +2391,7 @@ def _handle_run_skill(
 
 # Virtual/terminal tools excluded from the "your tool calls" review listing —
 # they aren't real work, just loop control. (The review-context builders below
-# are retained for the auto-review feature; see _build_review_observation.)
+# serve the auto-review feature via agent_cli.review.)
 _REVIEW_VIRTUAL_TOOLS: frozenset[str] = frozenset({"complete", "ask"})
 
 
@@ -2446,15 +2446,18 @@ def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
     except Exception:
         return ""
 
+    # iter_record_ops reads BOTH assistant record shapes (multi-op ``ops``
+    # + legacy singular ``action``) — reading only the top-level ``action``
+    # here silently skipped every op turn once md_array/react started
+    # storing ``ops`` records, leaving this section permanently empty.
+    from agent_cli.context.manager import iter_record_ops
+
     calls = []
     for msg in raw:
-        if msg.get("role") != "assistant":
-            continue
-        action = msg.get("action")
-        if not action or action in _REVIEW_VIRTUAL_TOOLS:
-            continue
-        args = msg.get("action_input") or {}
-        calls.append(f"- {action}({_short_review_args(args)})")
+        for action, args in iter_record_ops(msg):
+            if action in _REVIEW_VIRTUAL_TOOLS:
+                continue
+            calls.append(f"- {action}({_short_review_args(args)})")
 
     if not calls:
         return ""
@@ -2467,57 +2470,6 @@ def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
         header = "--- YOUR TOOL CALLS ---"
 
     return "\n".join([header, *calls])
-
-
-def _build_review_observation(query: str, summary: str, ctx=None) -> str:
-    """Build a review-context block: original request + summary + tool calls.
-
-    Retained for the auto-review feature (PR2) — assembles the material a
-    reviewer needs. (Formerly the observation returned by the removed
-    ``ready_for_review`` tool.)
-
-    The block re-injects the original request (often pushed out of
-    recency by long transcripts), pairs it with the model's self-summary,
-    optionally appends a factual list of tool calls extracted from
-    ``ctx`` (so the review survives Observation eviction by context
-    FIFO), and asks the model to write out a per-requirement check
-    against its previous Observations. The structured "Format your
-    review like this" block forces the self-review to be *generated*
-    rather than asserted in one line — small models that follow output
-    templates also tend to follow the reasoning the template implies.
-    """
-    parts = [
-        "--- ORIGINAL REQUEST ---",
-        query,
-        "--- YOUR SUMMARY ---",
-        summary,
-    ]
-    tool_calls_block = _format_tool_calls_for_review(ctx)
-    if tool_calls_block:
-        parts.extend(["", tool_calls_block])
-    parts.extend(
-        [
-            "",
-            "--- REVIEW INSTRUCTIONS ---",
-            "Be adversarial. Try to find gaps, not confirm success.",
-            "",
-            "1. List each requirement from the ORIGINAL REQUEST.",
-            "2. For each requirement, check your previous Observations in this "
-            "conversation for evidence it was completed.",
-            "3. If a requirement is NOT met or evidence is missing, continue "
-            "working on it.",
-            "4. Only call complete if EVERY requirement has clear evidence of "
-            "completion.",
-            "",
-            "Format your review like this:",
-            "Requirement 1: <short paraphrase of the requirement>",
-            "  -> [DONE | MISSING]: <evidence from an Observation, or what "
-            "is still needed>",
-            "Requirement 2: ...",
-            "Decision: complete | continue",
-        ]
-    )
-    return "\n".join(parts)
 
 
 # Regex: simple echo with no pipes, redirects, subshells, or chaining

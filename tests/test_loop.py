@@ -3285,96 +3285,6 @@ class TestSkillStack:
         assert "recursive" not in output.lower()
 
 
-class TestBuildReviewObservation:
-    """Unit tests for the review-context observation builder.
-
-    These pin the exact prompt shape so any future tweak is intentional
-    and reviewed — small changes here can shift model self-review
-    behavior significantly.
-    """
-
-    def test_includes_original_request(self):
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("Fix the auth bug", "patched login.py")
-        assert "--- ORIGINAL REQUEST ---" in obs
-        assert "Fix the auth bug" in obs
-
-    def test_includes_summary(self):
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "I changed three files")
-        assert "--- YOUR SUMMARY ---" in obs
-        assert "I changed three files" in obs
-
-    def test_includes_review_instructions_header(self):
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "s")
-        assert "--- REVIEW INSTRUCTIONS ---" in obs
-        assert "Be adversarial" in obs
-
-    def test_terminology_says_previous_observations_not_work_log(self):
-        """(D) WORK LOG -> 'previous Observations' — small models
-        understand the concrete term but were silently dropping the
-        abstract 'WORK LOG' reference."""
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "s")
-        assert "previous Observations" in obs
-        assert "WORK LOG" not in obs
-
-    def test_includes_output_format_template(self):
-        """(A) Forces the self-review to be *generated*, not asserted."""
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "s")
-        assert "Format your review like this:" in obs
-        assert "Requirement 1:" in obs
-        assert "[DONE | MISSING]" in obs
-        assert "Decision: complete | continue" in obs
-
-    def test_numbered_steps_still_present(self):
-        """The 4-step checklist remains — A+D are additive, not a rewrite."""
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "s")
-        for step in (
-            "1. List each requirement",
-            "2. For each requirement",
-            "3. If a requirement is NOT met",
-            "4. Only call complete",
-        ):
-            assert step in obs
-
-    def test_decision_keywords_explicit(self):
-        """The terminal line forces a binary outcome word — prevents
-        ambiguous reviews like 'looks good' that don't commit to next
-        action."""
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "s")
-        last_line = obs.rstrip().splitlines()[-1]
-        assert last_line == "Decision: complete | continue"
-
-    def test_sections_appear_in_canonical_order(self):
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "s")
-        pos_req = obs.index("--- ORIGINAL REQUEST ---")
-        pos_sum = obs.index("--- YOUR SUMMARY ---")
-        pos_ins = obs.index("--- REVIEW INSTRUCTIONS ---")
-        pos_fmt = obs.index("Format your review like this:")
-        assert pos_req < pos_sum < pos_ins < pos_fmt
-
-    def test_omits_tool_calls_section_when_ctx_is_none(self):
-        """ctx=None path must not synthesize the section."""
-        from agent_cli.loop import _build_review_observation
-
-        obs = _build_review_observation("q", "s", ctx=None)
-        assert "--- YOUR TOOL CALLS" not in obs
-
-
 class _FakeCtx:
     """Minimal stand-in for ContextManager — exposes ``get_raw_messages``
     only. Real ctx is heavyweight; the helper under test only reads
@@ -3549,59 +3459,52 @@ class TestFormatToolCallsForReview:
 
         assert _format_tool_calls_for_review(_BrokenCtx()) == ""
 
-
-class TestBuildReviewObservationWithCtx:
-    """Verify the ctx injection path in _build_review_observation."""
-
-    def test_includes_tool_calls_section_when_ctx_has_real_calls(self):
-        from agent_cli.loop import _build_review_observation
-
-        ctx = _FakeCtx(
-            [
-                {
-                    "role": "assistant",
-                    "action": "shell",
-                    "action_input": {"command": "ls"},
-                }
-            ]
-        )
-        obs = _build_review_observation("q", "s", ctx=ctx)
-        assert "--- YOUR TOOL CALLS ---" in obs
-        assert "shell(" in obs
-
-    def test_omits_tool_calls_section_when_ctx_has_only_virtual_tools(self):
-        from agent_cli.loop import _build_review_observation
+    def test_multi_op_ops_records_are_listed(self):
+        """The CURRENT default formats (md_array / react) store assistant
+        turns as ``{ops: [...]}`` records — reading only the top-level
+        ``action`` key silently produced an empty section for every such
+        session (A1-class bug). Each op must appear, in order."""
+        from agent_cli.loop import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
                 {
                     "role": "assistant",
-                    "action": "complete",
-                    "action_input": {"result": "done"},
-                }
+                    "thought": "t",
+                    "ops": [
+                        {"action": "read_file", "action_input": {"path": "a.py"}},
+                        {"action": "shell", "action_input": {"command": "pytest"}},
+                    ],
+                },
+                {"role": "user", "tool": "read_file", "content": "Observation: ..."},
+                {
+                    "role": "assistant",
+                    "thought": "t",
+                    "ops": [{"action": "complete", "action_input": {"result": "done"}}],
+                },
             ]
         )
-        obs = _build_review_observation("q", "s", ctx=ctx)
-        assert "--- YOUR TOOL CALLS" not in obs
+        out = _format_tool_calls_for_review(ctx)
+        assert "--- YOUR TOOL CALLS ---" in out
+        assert out.index("read_file(") < out.index("shell(")
+        assert "complete(" not in out  # virtual filter applies per-op
 
-    def test_tool_calls_section_between_summary_and_instructions(self):
-        """REQ -> SUM -> CALLS -> INSTRUCTIONS order."""
-        from agent_cli.loop import _build_review_observation
+    def test_ops_records_only_virtual_yield_no_section(self):
+        from agent_cli.loop import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
                 {
                     "role": "assistant",
-                    "action": "shell",
-                    "action_input": {"command": "ls"},
-                }
+                    "ops": [{"action": "ask", "action_input": {"question": "?"}}],
+                },
+                {
+                    "role": "assistant",
+                    "ops": [{"action": "complete", "action_input": {"result": "x"}}],
+                },
             ]
         )
-        obs = _build_review_observation("q", "s", ctx=ctx)
-        pos_sum = obs.index("--- YOUR SUMMARY ---")
-        pos_calls = obs.index("--- YOUR TOOL CALLS ---")
-        pos_ins = obs.index("--- REVIEW INSTRUCTIONS ---")
-        assert pos_sum < pos_calls < pos_ins
+        assert _format_tool_calls_for_review(ctx) == ""
 
 
 class TestNoOutputTruncation:

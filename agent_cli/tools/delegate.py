@@ -6,7 +6,6 @@ Uses tasks array API: single item = sync, multiple items = parallel (threading).
 
 from __future__ import annotations
 
-import json
 import re
 import tempfile
 import threading
@@ -109,37 +108,29 @@ _LAST_ACTIONS_KEEP = 5
 
 
 def _extract_activity_log(messages: list[dict]) -> list[str]:
-    """Extract per-iteration action summaries from context messages.
+    """Extract per-iteration action summaries from raw history records.
 
-    Parses assistant messages for ReAct JSON (action/action_input),
-    formats each into a one-line summary. Capped at
-    ``_ACTIVITY_LOG_MAX_ENTRIES``; overflow surfaces as a single
+    Reads each assistant record's structured ops via
+    :func:`~agent_cli.context.manager.iter_record_ops` (multi-op ``ops``
+    records and the base singular ``action`` shape both) and formats one
+    line per TURN — a multi-op turn joins its op summaries with ``"; "``.
+    Capped at ``_ACTIVITY_LOG_MAX_ENTRIES``; overflow surfaces as a single
     ``... and N more`` footer so the parent knows the log was trimmed.
 
     Returns list of strings like:
       ["iter 1: read_file auth.py", "iter 2: shell pytest"]
     """
+    from agent_cli.context.manager import iter_record_ops
+
     log: list[str] = []
     iter_num = 0
 
     for msg in messages:
-        if msg.get("role") != "assistant":
+        pairs = iter_record_ops(msg)
+        if not pairs:
             continue
-
-        try:
-            data = json.loads(msg["content"])
-        except (json.JSONDecodeError, TypeError, KeyError):
-            continue
-        if not isinstance(data, dict):
-            continue
-
-        action = data.get("action", "")
-        if not action:
-            continue
-
         iter_num += 1
-        action_input = data.get("action_input", {})
-        summary = _summarize_action(action, action_input)
+        summary = "; ".join(_summarize_action(a, ai) for a, ai in pairs)
         log.append(f"iter {iter_num}: {summary}")
 
     if len(log) > _ACTIVITY_LOG_MAX_ENTRIES:
@@ -184,20 +175,16 @@ def _extract_last_actions(messages: list[dict]) -> list[str]:
       ["iter 4: shell pytest -> ERROR: 3 tests failed",
        "iter 5: edit_file test_auth.py -> hash mismatch"]
     """
+    from agent_cli.context.manager import iter_record_ops
+
     actions: list[tuple[int, int, str]] = []
     iter_num = 0
     for i, msg in enumerate(messages):
-        if msg.get("role") != "assistant":
+        pairs = iter_record_ops(msg)
+        if not pairs:
             continue
-        try:
-            data = json.loads(msg["content"])
-        except (json.JSONDecodeError, TypeError, KeyError):
-            continue
-        if not isinstance(data, dict) or not data.get("action"):
-            continue
-
         iter_num += 1
-        summary = _summarize_action(data["action"], data.get("action_input", {}))
+        summary = "; ".join(_summarize_action(a, ai) for a, ai in pairs)
         actions.append((i, iter_num, summary))
 
     last_n = actions[-_LAST_ACTIONS_KEEP:]

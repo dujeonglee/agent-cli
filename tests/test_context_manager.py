@@ -8,6 +8,7 @@ from agent_cli.context.manager import (
     ContextManager,
     _classify_record,
     _to_natural_language,
+    iter_record_ops,
 )
 
 
@@ -630,3 +631,78 @@ class TestHistoryEnrich:
         ctx.add({"role": "user", "content": "[Bob]: hi", "author": "Bob"})
         msgs = ctx.get_messages()
         assert all(set(m.keys()) <= {"role", "content"} for m in msgs)
+
+
+# ── iter_record_ops: the single reader for both assistant record shapes ──
+
+
+class TestIterRecordOps:
+    def test_multi_op_record(self):
+        rec = {
+            "role": "assistant",
+            "thought": "t",
+            "ops": [
+                {"action": "read_file", "action_input": {"path": "a.py"}},
+                {"action": "shell", "action_input": {"command": "ls"}},
+            ],
+        }
+        assert iter_record_ops(rec) == [
+            ("read_file", {"path": "a.py"}),
+            ("shell", {"command": "ls"}),
+        ]
+
+    def test_singular_legacy_record(self):
+        rec = {
+            "role": "assistant",
+            "thought": "t",
+            "action": "shell",
+            "action_input": {"command": "pytest"},
+        }
+        assert iter_record_ops(rec) == [("shell", {"command": "pytest"})]
+
+    def test_bare_content_record_yields_nothing(self):
+        # prose drift / NO_JSON fallback — no structured ops
+        assert iter_record_ops({"role": "assistant", "content": "hmm"}) == []
+
+    def test_non_assistant_roles_yield_nothing(self):
+        assert iter_record_ops({"role": "user", "content": "q"}) == []
+        assert iter_record_ops({"role": "system", "content": "s"}) == []
+        assert (
+            iter_record_ops({"role": "user", "tool": "shell", "content": "out"}) == []
+        )
+
+    def test_actionless_op_stubs_skipped(self):
+        rec = {
+            "role": "assistant",
+            "ops": [
+                {"action": "", "action_input": {"path": "x"}},
+                {"action": "shell", "action_input": {"command": "ls"}},
+                "not-a-dict",
+            ],
+        }
+        assert iter_record_ops(rec) == [("shell", {"command": "ls"})]
+
+    def test_missing_action_input_defaults_empty_dict(self):
+        assert iter_record_ops({"role": "assistant", "ops": [{"action": "shell"}]}) == [
+            ("shell", {})
+        ]
+        assert iter_record_ops({"role": "assistant", "action": "shell"}) == [
+            ("shell", {})
+        ]
+
+    def test_sees_actions_classify_record_calls_action_kind(self):
+        # For ops-shaped records the two readers of the record shape agree:
+        # _classify_record labels them action/final and iter_record_ops
+        # yields the same action names. (The singular legacy shape is
+        # broader here on purpose — classify is ops-only and files it
+        # under "raw", while extraction still needs its action.)
+        rec = {
+            "role": "assistant",
+            "ops": [
+                {"action": "shell", "action_input": {}},
+                {"action": "complete", "action_input": {"result": "ok"}},
+            ],
+        }
+        kind, tools, _ = _classify_record(rec)
+        assert kind == "final"  # complete present
+        assert [a for a, _ in iter_record_ops(rec)] == tools == ["shell", "complete"]
