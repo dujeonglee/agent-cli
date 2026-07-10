@@ -227,3 +227,56 @@ class TestToolFetch:
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
             result = tool_fetch({"url": "https://example.com"})
             assert "Fetched 1 page" in result.output
+
+
+# ── flat-native schema (Step 3 completion, v4.38.0) ──────────────────
+
+
+class TestFetchFlatNative:
+    """fetch was the LAST builtin still advertising prefixed keys
+    (`fetch_url`/`fetch_depth`) — flattening it makes the documented
+    "every builtin is flat-native" invariant actually true."""
+
+    def _tool(self):
+        from agent_cli.tools.fetch import FetchTool
+
+        return FetchTool()
+
+    def test_schema_is_flat(self):
+        t = self._tool()
+        props = t.parameters["properties"]
+        assert set(props) == {"url", "depth"}
+        assert t.parameters["required"] == ["url"]
+
+    def test_wrap_single_op_is_identity(self):
+        flat = {"url": "http://x", "depth": 1}
+        assert self._tool().wrap_single_op(flat) == flat
+
+    def test_claims_false_for_flat_payload(self):
+        # claims (prefix matching) must be latent for the flat shape —
+        # infer_action no longer resolves a bare {url} to fetch.
+        assert self._tool().claims({"url": "http://x"}) is False
+
+    def test_legacy_prefixed_keys_still_strip(self):
+        # Old sessions' re-fed priors may emit fetch_url — strip_prefix
+        # keeps translating them to standard keys at dispatch.
+        t = self._tool()
+        assert t.strip_prefix({"fetch_url": "http://x", "fetch_depth": 2}) == {
+            "url": "http://x",
+            "depth": 2,
+        }
+
+    def test_no_builtin_claims_any_flat_payload(self):
+        # The invariant the docs state: every builtin is flat-native, so
+        # claims() is False for every builtin against its own flat input.
+        from agent_cli.tools import TOOLS
+
+        samples = {
+            "fetch": {"url": "http://x"},
+            "read_file": {"path": "a.py"},
+            "shell": {"command": "ls"},
+            "write_file": {"path": "a", "content": "x"},
+            "delegate": {"task": "t"},
+        }
+        for name, payload in samples.items():
+            assert TOOLS[name].claims(payload) is False, name

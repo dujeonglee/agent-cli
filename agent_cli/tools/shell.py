@@ -201,12 +201,13 @@ class ShellTool(Tool):
     name = "shell"
     description = "Run a shell command and return stdout/stderr."
     # Flat-native (consolidation roadmap Step 3): the schema is the plain
-    # single-command shape — no `shell_` wire-key prefix. shell is the last
-    # builtin to flatten, so after this no builtin carries a prefix; the prefix
-    # machinery (strip/add/claims/infer/base wrap) is fully latent (it still
-    # serves MCP / future prefixed tools). `wrap_single_op` is identity;
-    # `key_prefix` is left at its default (strip a no-op on flat keys, `claims`
-    # False for a flat `{command}`).
+    # single-command shape — no `shell_` wire-key prefix. (fetch turned out to
+    # still carry its prefix after Step 3 and was flattened last, in v4.38.0 —
+    # since then no builtin carries a prefix and the prefix machinery
+    # (strip/add/claims/infer/base wrap) is fully latent; it still serves MCP /
+    # future prefixed tools.) `wrap_single_op` is identity; `key_prefix` is
+    # left at its default (strip a no-op on flat keys, `claims` False for a
+    # flat `{command}`).
     parameters = {
         "type": "object",
         "properties": {

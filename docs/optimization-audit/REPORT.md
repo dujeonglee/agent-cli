@@ -9,7 +9,7 @@
 | # | 발견 | 위치 | 검증 | 상태 |
 |---|---|---|---|---|
 | **A1** | **delegate activity-log 조용한 기능 상실** — `_extract_activity_log`/`_extract_last_actions` 가 `json.loads(msg["content"])` 로 파싱하나, wire-format 리팩터(423608e) 이후 assistant 레코드는 `action`/`ops` 최상위 필드 + `content` 키 부재 → 매번 skip. `[Subagent activity]`·`iterations`·`[Last actions before failure]` 항상 빈 값 | delegate.py:111-221, 486-494 | ✅ | ✅ v4.35.1 |
-| **A2** | **fetch 가 flat-native 아님** — `fetch_url`/`fetch_depth` prefix 잔존. "모든 builtin flat-native"(base.py:240, registry.py:94, 로드맵 ★완료) 문서와 모순. `claims`/`infer_action` 이 fetch 에만 live | fetch.py:250-263 | ✅ | ☐ |
+| **A2** | **fetch 가 flat-native 아님** — `fetch_url`/`fetch_depth` prefix 잔존. "모든 builtin flat-native"(base.py:240, registry.py:94, 로드맵 ★완료) 문서와 모순. `claims`/`infer_action` 이 fetch 에만 live | fetch.py:250-263 | ✅ | ✅ v4.38.0 |
 | A3 | `_build_review_observation` 프로덕션 dead (테스트만 호출) | loop.py:2472-2520 | ✅ | ✅ v4.35.1 |
 | A4 | *(A1 파생, 분석 중 추가 발견)* `_format_tool_calls_for_review` 도 top-level `action` 만 읽어 멀티-op `ops` 레코드 누락 — 현 기본 포맷에서 review "YOUR TOOL CALLS" 섹션 항상 빈 값 | loop.py:2453 | ✅ | ✅ v4.35.1 |
 
@@ -53,11 +53,19 @@
 1. ✅ **A1 delegate 추출기 수리** (+A3 dead code 제거, +A4) — 버그 수리 (v4.35.1)
 2. ✅ **B2+B3+B4 web 안정성 묶음** — 사용자 체감 직결 (v4.36.0)
 3. ✅ **B1 get_messages 증분 캐시** — 유일한 O(n²) (v4.37.0)
-4. ☐ **A2 fetch flatten** — 로드맵 완결
+4. ✅ **A2 fetch flatten** — 로드맵 완결 (v4.38.0)
 5. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
 
+- **2026-07-11 · v4.38.0 · A2 완료**: fetch 스키마 flat `{url, depth?}` 전환 —
+  마지막 prefixed builtin 제거로 "모든 builtin flat-native" 불변식이 실제로
+  참이 됨(`claims` 전 builtin False, prefix 머신러리 완전 latent).
+  `wrap_single_op`=identity 추가; `strip_prefix` 가 레거시 `fetch_url`
+  emission(구 세션 재공급 prior) 계속 관용 — 구 세션 resume 무해(재검증은
+  신규 emission 만 대상). over-cap nudge 문구 `fetch_depth`→`depth`.
+  테스트: flat 스키마/identity/claims False(전 builtin 불변식)/레거시
+  strip 관용/legacy-key render_oversized 관용 5종 + oversized 픽스처 flat 화.
 - **2026-07-11 · v4.37.0 · B1 완료**: `_nl_cache` 증분 렌더 미러 —
   `add` 가 record 렌더를 1회 수행해 append, `get_messages` 는 head(system/
   summary/file_list) 재조립 + 미러 포인터 복사. 벌크 변형 4곳(`_compact`

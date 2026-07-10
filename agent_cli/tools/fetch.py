@@ -243,24 +243,35 @@ class FetchTool(Tool):
     name = "fetch"
     description = (
         "Fetch a web page and return its content as markdown. "
-        "Supports recursive fetching of same-domain links via fetch_depth parameter. "
+        "Supports recursive fetching of same-domain links via the depth parameter. "
         "Full content returned inline; an over-cap result is saved to a file and "
         "replaced with a narrow-it / delegate-fan-out nudge (read it in ranges)."
     )
+    # Flat-native (consolidation roadmap Step 3 completion): the schema is the
+    # plain ``{url, depth?}`` shape — the ``fetch_`` wire-key prefix is gone.
+    # fetch was the LAST builtin still advertising prefixed keys, which kept
+    # ``claims``/``infer_action`` live for it alone and contradicted the
+    # "every builtin is flat-native" invariant documented in base/registry.
+    # ``wrap_single_op`` is identity; ``key_prefix`` stays at its default so
+    # ``strip_prefix`` still tolerates a legacy ``fetch_url`` emission (old
+    # sessions' re-fed priors) and ``claims`` is False for a flat ``{url}``.
     parameters = {
         "type": "object",
         "properties": {
-            "fetch_url": {
+            "url": {
                 "type": "string",
                 "description": "URL to fetch",
             },
-            "fetch_depth": {
+            "depth": {
                 "type": "integer",
                 "description": "Recursive depth: 0 = current page only (default), 1+ = follow same-domain links",
             },
         },
-        "required": ["fetch_url"],
+        "required": ["url"],
     }
+
+    def wrap_single_op(self, flat: dict) -> dict:
+        return flat
 
     def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for a large fetch: fetched content is ephemeral (like
@@ -292,7 +303,7 @@ class FetchTool(Tool):
                     nlines=body.count("\n") + 1,
                     part_extra=f"search it (read_file path='{path}', search='…')",
                     tail_bullets=(
-                        "Or re-fetch a more specific URL / shallower fetch_depth "
+                        "Or re-fetch a more specific URL / shallower depth "
                         "so the result is smaller.",
                     ),
                 )

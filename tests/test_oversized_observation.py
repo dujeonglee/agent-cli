@@ -399,10 +399,10 @@ class TestFetchOversized:
         return "# Section\n\nlots of fetched prose. " * 900
 
     def _call(self, tmp_path, tools, url="http://example.com/big"):
-        # fetch uses the fetch_ wire prefix: the raw action_input key is fetch_url.
+        # fetch is flat-native (v4.38.0): the action_input key is plain `url`.
         return TOOLS["fetch"].render_oversized(
             ToolResult(True, output=self._big()),
-            {"fetch_url": url},
+            {"url": url},
             body=self._big(),
             tokens=30_000,
             ctx=RunContext(
@@ -420,7 +420,25 @@ class TestFetchOversized:
         assert str(saved[0]) in n
         assert "fetched prose" not in n  # raw body not echoed
         assert "Fan out IN PARALLEL" in n
-        assert "fetch_depth" in n  # fetch-specific narrower-URL bullet
+        assert "shallower depth" in n  # fetch-specific narrower-URL bullet
+
+    def test_legacy_prefixed_key_still_tolerated(self, tmp_path):
+        # A resumed session's re-fed prior may still emit `fetch_url`;
+        # strip_prefix keeps accepting it (key_prefix machinery is latent,
+        # not deleted), so the nudge still names the file.
+        n = TOOLS["fetch"].render_oversized(
+            ToolResult(True, output=self._big()),
+            {"fetch_url": "http://example.com/legacy"},
+            body=self._big(),
+            tokens=30_000,
+            ctx=RunContext(
+                session_dir=tmp_path,
+                oversized_cap=4_096,
+                tools_available=frozenset({"fetch", "read_file"}),
+            ),
+        )
+        assert len(list(tmp_path.glob("fetch-output-*.txt"))) == 1
+        assert "too large" in n
 
     def test_no_delegate_no_fanout(self, tmp_path):
         n = self._call(tmp_path, ["fetch", "read_file"])
@@ -430,7 +448,7 @@ class TestFetchOversized:
     def test_headless_falls_back(self):
         n = TOOLS["fetch"].render_oversized(
             ToolResult(True, output=self._big()),
-            {"fetch_url": "http://x"},
+            {"url": "http://x"},
             body=self._big(),
             tokens=30_000,
             ctx=RunContext(
