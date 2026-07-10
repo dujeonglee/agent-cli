@@ -786,10 +786,11 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 도구 관찰(observation)이 **컨텍스트 윈도우의 1/10** 을 넘으면, 그 전체 출력은 컨텍스트에 들어가지 않고 **"좁혀서 다시 받아라"는 nudge 로 대체**됩니다(도구 호출 자체는 성공). 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리기 때문에, 모델을 라인범위/심볼/`LIMIT`/`grep` 같은 surgical 회수로 자연스럽게 유도합니다. 전체가 꼭 필요하면 파일로 빼서(`… | tee /tmp/out.txt`) 부분만 `read_file` 하면 됩니다.
 
 - **도구별 제어 (`Tool` 추상화 표면 3개)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 도구별로 끔; **`Tool.render_oversized(result, args, *, body, tokens, cap, tools_available)`** 가 **캡에 걸렸을 때 무엇을 낼지**를 도구가 소유(기본=제네릭 nudge). `tools_available`(현재 루프에서 호출 가능한 도구 집합)을 받아, 그 도구가 실제로 쓸 수 있는 복구만 안내합니다.
-- **디스크-기반 분산 유도 (`read_file`·`shell`·`delegate` 공통)**: 큰 내용이 파일 `<path>` 에 있으면 복구는 한 패턴으로 수렴합니다(공유 헬퍼 `on_disk_oversized_nudge`) — (a) **특정 부분** → `read_file '<path>'` line range/search, (b) **전체 분석/검색** → **`delegate` 팬아웃**(서브에이전트마다 `<path>` 한 섹션 read → 요약/추출만 반환, 부모는 distilled 만 수신). 팬아웃 줄은 delegate 가 실제 호출 가능할 때만 표시(depth 한계 서브에이전트에선 자동 생략).
+- **디스크-기반 분산 유도 (`read_file`·`shell`·`delegate`·`fetch` 공통)**: 큰 내용이 파일 `<path>` 에 있으면 복구는 한 패턴으로 수렴합니다(공유 헬퍼 `on_disk_oversized_nudge`) — (a) **특정 부분** → `read_file '<path>'` line range/search, (b) **전체 분석/검색** → **`delegate` 팬아웃**(서브에이전트마다 `<path>` 한 섹션 read → 요약/추출만 반환, 부모는 distilled 만 수신). 팬아웃 줄은 delegate 가 실제 호출 가능할 때만 표시(depth 한계 서브에이전트에선 자동 생략).
   - `read_file`: `<path>`=원본 파일(이미 디스크). 추가 갈래 `read_symbols`.
   - `shell`: over-cap 일 때만 출력을 `session_dir/shell-output-<hash>.txt` 로 **lazy 저장**(일반 shell 호출엔 디스크 쓰기 0) 후 그 파일을 가리킴. headless(세션 없음)면 `tee` 폴백.
   - `delegate`: 서브에이전트 답변은 이미 `<delegate_dir>/result.md` 에 저장돼 있어 그 파일을 가리킴 + **더 좁은 재위임**(근본 원인 교정) 옵션 추가.
+  - `fetch`: over-cap 일 때만 내용을 `session_dir/fetch-output-<hash>.txt` 로 lazy 저장 후 가리킴 + **더 좁은 URL/얕은 `fetch_depth`** 옵션 추가.
 - 사용자/어시스턴트 메시지는 캡 대상이 아닙니다(사람의 의도적 입력·모델 자신의 출력이라 거절/절단하지 않음).
 
 ### code_index — SQLite 코드 인덱스

@@ -358,6 +358,53 @@ class TestDelegateOversized:
         assert "too large" in n  # generic fallback still caps
 
 
+# ── fetch over-cap: persist content to file + on-disk nudge ──────────
+
+
+class TestFetchOversized:
+    def _big(self):
+        return "# Section\n\nlots of fetched prose. " * 900
+
+    def _call(self, tmp_path, tools, url="http://example.com/big"):
+        # fetch uses the fetch_ wire prefix: the raw action_input key is fetch_url.
+        return TOOLS["fetch"].render_oversized(
+            ToolResult(True, output=self._big()),
+            {"fetch_url": url},
+            body=self._big(),
+            tokens=30_000,
+            cap=4_096,
+            tools_available=frozenset(tools),
+            session_dir=tmp_path,
+        )
+
+    def test_persists_content_and_points_at_file(self, tmp_path):
+        n = self._call(tmp_path, ["fetch", "read_file", "delegate"])
+        saved = list(tmp_path.glob("fetch-output-*.txt"))
+        assert len(saved) == 1
+        assert saved[0].read_text() == self._big()  # full content on disk
+        assert str(saved[0]) in n
+        assert "fetched prose" not in n  # raw body not echoed
+        assert "Fan out with delegate" in n
+        assert "fetch_depth" in n  # fetch-specific narrower-URL bullet
+
+    def test_no_delegate_no_fanout(self, tmp_path):
+        n = self._call(tmp_path, ["fetch", "read_file"])
+        assert "Fan out with delegate" not in n
+        assert "read_file" in n
+
+    def test_headless_falls_back(self):
+        n = TOOLS["fetch"].render_oversized(
+            ToolResult(True, output=self._big()),
+            {"fetch_url": "http://x"},
+            body=self._big(),
+            tokens=30_000,
+            cap=4_096,
+            tools_available=frozenset({"fetch", "delegate"}),
+            session_dir=None,
+        )
+        assert "too large" in n  # generic fallback
+
+
 # ── ctx.add is pure storage (no spill transform) ─────────────────────
 
 

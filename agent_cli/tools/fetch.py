@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import requests
 
-from agent_cli.tools.base import Tool
+from agent_cli.tools.base import (
+    Tool,
+    default_oversized_nudge,
+    on_disk_oversized_nudge,
+)
 from agent_cli.tools.result import ToolResult
 
 # ── Configuration ──────────────────────────────
@@ -217,8 +223,10 @@ def tool_fetch(args: dict) -> ToolResult:
                     else:
                         pages.append({"url": gc_url, "content": gc_content})
 
-    # Build full content — no truncation, same as read_file.
-    # Context manager handles compaction; artifact stores full content.
+    # Build full content — no truncation here. If the result is over the
+    # oversized cap, ``FetchTool.render_oversized`` persists it to a file in the
+    # session dir and returns a narrow-it / fan-out nudge (same on-disk pattern
+    # as read_file / shell / delegate); otherwise it enters context verbatim.
     if len(pages) == 1:
         full_content = pages[0]["content"]
     else:
@@ -236,8 +244,8 @@ class FetchTool(Tool):
     description = (
         "Fetch a web page and return its content as markdown. "
         "Supports recursive fetching of same-domain links via fetch_depth parameter. "
-        "Full content returned inline; long pages are subject to the loop's "
-        "FIFO context-budget eviction like any other observation."
+        "Full content returned inline; an over-cap result is saved to a file and "
+        "replaced with a narrow-it / delegate-fan-out nudge (read it in ranges)."
     )
     parameters = {
         "type": "object",
@@ -253,6 +261,43 @@ class FetchTool(Tool):
         },
         "required": ["fetch_url"],
     }
+
+    def render_oversized(
+        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
+    ) -> str:
+        """Over-cap policy for a large fetch: fetched content is ephemeral (like
+        shell output), so persist it to a file in the session dir (LAZILY — only
+        here, over cap) and reuse the shared on-disk nudge — (a) read a specific
+        part / search the file, (b) delegate fan-out over its sections — plus a
+        fetch-specific option to re-fetch a narrower URL / shallower depth
+        (attack the root cause). Headless / write failure → generic fallback."""
+        url = (self.strip_prefix(args).get("url") or "").strip()
+        if session_dir:
+            digest = hashlib.sha1(
+                (url + "\x00" + body).encode("utf-8", "replace")
+            ).hexdigest()[:8]
+            out_path = Path(session_dir) / f"fetch-output-{digest}.txt"
+            try:
+                out_path.write_text(body, encoding="utf-8")
+            except OSError:
+                pass
+            else:
+                path = str(out_path)
+                return on_disk_oversized_nudge(
+                    "fetch",
+                    "fetched content",
+                    f"full content saved to '{path}'",
+                    path,
+                    tokens,
+                    cap,
+                    tools_available,
+                    part_extra=f"search it (read_file path='{path}', search='…')",
+                    tail_bullets=(
+                        "Or re-fetch a more specific URL / shallower fetch_depth "
+                        "so the result is smaller.",
+                    ),
+                )
+        return default_oversized_nudge("fetch", tokens, cap)
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return tool_fetch(args)
