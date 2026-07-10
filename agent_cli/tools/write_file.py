@@ -162,5 +162,5 @@ class WriteFileTool(Tool):
     # routing around write_file via ``shell`` heredocs). Reverted in v3.16.1;
     # the body stays verbatim on re-feed. See docs/ARCHITECTURE.md §5.4.
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_write_file(args)

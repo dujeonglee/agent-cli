@@ -13,12 +13,11 @@ expose the same ``.name`` / ``.description`` / ``.parameters`` attributes.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import json
 
-from agent_cli.tools.base import Tool
+from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.code_index import CodeIndexTool
 from agent_cli.tools.context import ReadContextTool
 from agent_cli.tools.memory_tool import MemoryTool
@@ -65,7 +64,7 @@ def _execute_tool(
     tool_name: str,
     action_input: dict,
     *,
-    session_dir: Path | None = None,
+    ctx: RunContext | None = None,
 ) -> ToolResult:
     """Dispatch primitive — run a registered tool.
 
@@ -73,10 +72,10 @@ def _execute_tool(
     recovery layer (``detect_unknown_tool``) is the single source of
     truth for that validation; bad names never reach this function from
     the live loop. A ``KeyError`` on a missing name is the intended
-    failure mode. ``session_dir`` is forwarded uniformly; tools that do
-    not need it ignore the keyword.
+    failure mode. ``ctx`` (:class:`RunContext`) is the per-call loop
+    context, forwarded uniformly; tools that do not need it ignore it.
     """
-    return TOOLS[tool_name].run(action_input, session_dir=session_dir)
+    return TOOLS[tool_name].run(action_input, ctx=ctx)
 
 
 def infer_action(action_input: Any) -> str | None:

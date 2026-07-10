@@ -13,7 +13,7 @@ import json
 
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop import AgentLoop
-from agent_cli.tools import TOOLS
+from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.base import (
     Tool,
     default_oversized_nudge,
@@ -62,8 +62,9 @@ class TestToolSurfaces:
             {},
             body="x",
             tokens=9_000,
-            cap=4_000,
-            tools_available=frozenset(TOOLS.keys()),
+            ctx=RunContext(
+                oversized_cap=4_000, tools_available=frozenset(TOOLS.keys())
+            ),
         )
         assert out == default_oversized_nudge("shell", 9_000, 4_000)
 
@@ -175,8 +176,7 @@ class TestReadFileOversized:
             args or {"path": "big_module.py"},
             body=body,
             tokens=63_488,
-            cap=4_096,
-            tools_available=frozenset(tools),
+            ctx=RunContext(oversized_cap=4_096, tools_available=frozenset(tools)),
         )
 
     def test_names_path_size_and_narrowing(self):
@@ -291,9 +291,11 @@ class TestShellOversized:
             {"command": "grep -r foo ."},
             body=self._big(),
             tokens=9_000,
-            cap=4_096,
-            tools_available=frozenset({"shell", "read_file", "delegate"}),
-            session_dir=tmp_path,
+            ctx=RunContext(
+                session_dir=tmp_path,
+                oversized_cap=4_096,
+                tools_available=frozenset({"shell", "read_file", "delegate"}),
+            ),
         )
         saved = list(tmp_path.glob("shell-output-*.txt"))
         assert len(saved) == 1, "output must be persisted exactly once"
@@ -308,9 +310,11 @@ class TestShellOversized:
             {"command": "ls -R /"},
             body=self._big(),
             tokens=9_000,
-            cap=4_096,
-            tools_available=frozenset({"shell", "read_file"}),
-            session_dir=tmp_path,
+            ctx=RunContext(
+                session_dir=tmp_path,
+                oversized_cap=4_096,
+                tools_available=frozenset({"shell", "read_file"}),
+            ),
         )
         assert "Fan out IN PARALLEL" not in n
         assert "read_file" in n  # still steers to a ranged read of the file
@@ -322,9 +326,11 @@ class TestShellOversized:
             {"command": "ls"},
             body=self._big(),
             tokens=9_000,
-            cap=4_096,
-            tools_available=frozenset({"shell", "delegate"}),
-            session_dir=None,
+            ctx=RunContext(
+                session_dir=None,
+                oversized_cap=4_096,
+                tools_available=frozenset({"shell", "delegate"}),
+            ),
         )
         assert "tee" in n  # generic default nudge advises tee→read_file
         assert "shell" in n
@@ -337,9 +343,11 @@ class TestShellOversized:
                 {"command": "dup"},
                 body=self._big(),
                 tokens=9_000,
-                cap=4_096,
-                tools_available=frozenset({"shell"}),
-                session_dir=tmp_path,
+                ctx=RunContext(
+                    session_dir=tmp_path,
+                    oversized_cap=4_096,
+                    tools_available=frozenset({"shell"}),
+                ),
             )
         assert len(list(tmp_path.glob("shell-output-*.txt"))) == 1
 
@@ -357,9 +365,11 @@ class TestDelegateOversized:
             {"task": "analyse everything"},
             body="x" * 50_000,
             tokens=25_000,
-            cap=4_096,
-            tools_available=frozenset({"delegate", "read_file"}),
-            session_dir=tmp_path,
+            ctx=RunContext(
+                session_dir=tmp_path,
+                oversized_cap=4_096,
+                tools_available=frozenset({"delegate", "read_file"}),
+            ),
         )
         assert "task-abc/result.md" in n.replace(str(tmp_path) + "/", "")
         assert "result.md" in n
@@ -372,9 +382,11 @@ class TestDelegateOversized:
             {"task": "t"},
             body="x" * 50_000,
             tokens=25_000,
-            cap=4_096,
-            tools_available=frozenset({"delegate"}),
-            session_dir=tmp_path,
+            ctx=RunContext(
+                session_dir=tmp_path,
+                oversized_cap=4_096,
+                tools_available=frozenset({"delegate"}),
+            ),
         )
         assert "too large" in n  # generic fallback still caps
 
@@ -393,9 +405,11 @@ class TestFetchOversized:
             {"fetch_url": url},
             body=self._big(),
             tokens=30_000,
-            cap=4_096,
-            tools_available=frozenset(tools),
-            session_dir=tmp_path,
+            ctx=RunContext(
+                session_dir=tmp_path,
+                oversized_cap=4_096,
+                tools_available=frozenset(tools),
+            ),
         )
 
     def test_persists_content_and_points_at_file(self, tmp_path):
@@ -419,9 +433,11 @@ class TestFetchOversized:
             {"fetch_url": "http://x"},
             body=self._big(),
             tokens=30_000,
-            cap=4_096,
-            tools_available=frozenset({"fetch", "delegate"}),
-            session_dir=None,
+            ctx=RunContext(
+                session_dir=None,
+                oversized_cap=4_096,
+                tools_available=frozenset({"fetch", "delegate"}),
+            ),
         )
         assert "too large" in n  # generic fallback
 
@@ -449,8 +465,7 @@ class TestContextOversized:
             {"read_context_query": "SELECT * FROM history"},
             body="…" * 10,
             tokens=30_000,
-            cap=4_096,
-            tools_available=frozenset(tools),
+            ctx=RunContext(oversized_cap=4_096, tools_available=frozenset(tools)),
         )
 
     def test_overrides_and_steers_to_sql_narrowing(self):
@@ -477,8 +492,10 @@ class TestCodeIndexOversized:
             {"mode": "kind", "symbol_kind": "function"},
             body="…" * 10,
             tokens=30_000,
-            cap=4_096,
-            tools_available=frozenset({"code_index", "read_file"}),
+            ctx=RunContext(
+                oversized_cap=4_096,
+                tools_available=frozenset({"code_index", "read_file"}),
+            ),
         )
 
     def test_overrides_and_steers_to_index_params(self):
@@ -594,3 +611,129 @@ class TestReadContextVerbatim:
         )
         # the spill-era 'content' column is gone → querying it is an error
         assert not res.success
+
+
+# ── RunContext: the per-call bundle threaded to both tool surfaces ────
+
+
+class TestRunContext:
+    def test_defaults_are_empty(self):
+        c = RunContext()
+        assert c.session_dir is None
+        assert c.oversized_cap == 0
+        assert c.tools_available == frozenset()
+
+    def test_frozen(self):
+        c = RunContext(oversized_cap=10)
+        import dataclasses
+
+        try:
+            c.oversized_cap = 20  # type: ignore[misc]
+        except dataclasses.FrozenInstanceError:
+            pass
+        else:  # pragma: no cover - guards the invariant
+            raise AssertionError("RunContext must be frozen (shared-safe)")
+
+    def test_loop_run_ctx_bundles_the_three_fields(self, tmp_path):
+        # _run_ctx is the single construction point handed to BOTH seams.
+        loop = _loop(cap=4_096, tools=["read_file", "delegate"])
+
+        class _C:
+            session_dir = tmp_path
+
+        loop.ctx = _C()
+        c = loop._run_ctx()
+        assert isinstance(c, RunContext)
+        assert c.session_dir == tmp_path
+        assert c.oversized_cap == 4_096
+        assert c.tools_available == frozenset({"read_file", "delegate"})
+
+    def test_loop_run_ctx_headless_session_dir_none(self):
+        loop = _loop(cap=0, tools=["read_file"])  # loop.ctx is None
+        c = loop._run_ctx()
+        assert c.session_dir is None and c.oversized_cap == 0
+
+
+# ── read_file stat hint is cap-aware, threaded via RunContext, and the
+#    over-cap decision agrees with the loop's real capping ─────────────
+
+
+class TestStatHintCapAwareThreading:
+    def _bigfile(self, tmp_path):
+        f = tmp_path / "huge.py"
+        f.write_text(
+            "\n".join(f"line number {i} with some content" for i in range(4000))
+        )
+        return f
+
+    def test_run_threads_cap_into_stat_hint(self, tmp_path):
+        # End-to-end through the public Tool.run → _run → _stat path: a cap in
+        # the RunContext makes the stat hint cap-aware.
+        f = self._bigfile(tmp_path)
+        out = (
+            TOOLS["read_file"]
+            .run(
+                {"path": str(f), "stat": True},
+                ctx=RunContext(
+                    oversized_cap=4_096,
+                    tools_available=frozenset({"read_file", "delegate"}),
+                ),
+            )
+            .output
+        )
+        assert "would exceed the context cap" in out
+        assert "for a full read" not in out
+        assert "Fan out" in out  # delegate available
+
+    def test_run_without_ctx_keeps_plain_hint(self, tmp_path):
+        # A direct/test caller that omits ctx (ctx=None) → plain hint, no crash.
+        f = self._bigfile(tmp_path)
+        out = TOOLS["read_file"].run({"path": str(f), "stat": True}).output
+        assert "for a full read" in out
+        assert "would exceed" not in out
+
+    def test_est_tokens_is_upper_bound_of_real_body(self, tmp_path):
+        # The cheap estimate must not UNDER-count the real formatted body (that
+        # would let a full read slip past the stat warning and then get capped).
+        from agent_cli.tools.read_file import _full_read_est_tokens, format_hashlines
+
+        f = self._bigfile(tmp_path)
+        text = f.read_text()
+        total = text.count("\n") + 1
+        est = _full_read_est_tokens(text, total)
+        real = estimate_tokens(format_hashlines(text))
+        assert est >= real  # conservative: warns at or before the real cap
+
+    def test_stat_over_cap_decision_matches_seam_capping(self, tmp_path):
+        # The invariant the whole change rests on: stat says "would exceed the
+        # cap" for exactly the caps at which a real full read is dropped by the
+        # loop seam. Check one cap on each side of the boundary.
+        from agent_cli.tools.read_file import _full_read_est_tokens
+
+        f = self._bigfile(tmp_path)
+        text = f.read_text()
+        total = text.count("\n") + 1
+        est = _full_read_est_tokens(text, total)
+        over_cap = est // 2  # full read clearly over
+        under_cap = est * 4  # full read clearly under
+
+        full_body = TOOLS["read_file"].run({"path": str(f)}).output
+
+        for cap, expect_over in ((over_cap, True), (under_cap, False)):
+            stat_out = (
+                TOOLS["read_file"]
+                .run(
+                    {"path": str(f), "stat": True},
+                    ctx=RunContext(oversized_cap=cap),
+                )
+                .output
+            )
+            says_over = "would exceed the context cap" in stat_out
+            # the loop's real decision for a FULL read at the same cap
+            loop = _loop(cap=cap, tools=["read_file"])
+            seam_out = loop._tool_observation(
+                "read_file", ToolResult(True, output=full_body), {"path": str(f)}
+            )
+            really_capped = "too large" in seam_out
+            assert says_over == expect_over
+            assert says_over == really_capped  # stat prediction == reality

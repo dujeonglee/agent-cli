@@ -140,5 +140,5 @@ class MemoryTool(Tool):
         std = self.strip_prefix(action_input)
         return f"{std.get('mode', '')} {std.get('summary', std.get('id', ''))}".strip()
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
-        return _dispatch(args, session_dir)
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        return _dispatch(args, ctx.session_dir if ctx else None)

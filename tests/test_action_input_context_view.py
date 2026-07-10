@@ -92,7 +92,7 @@ class _ElidingTool(Tool):
     description = ""
     parameters: dict = {}
 
-    def _run(self, args, *, session_dir=None):  # pragma: no cover - unused
+    def _run(self, args, *, ctx=None):  # pragma: no cover - unused
         raise NotImplementedError
 
     def render_action_input_for_context(self, action_input: dict) -> dict:

@@ -815,9 +815,7 @@ class DelegateTool(Tool):
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
 
-    def render_oversized(
-        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
-    ) -> str:
+    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for a large subagent answer: ``tool_delegate`` already
         persisted the full formatted answer to ``<delegate_dir>/result.md`` (the
         relative dir is ``result.artifact``), so point at that file and reuse the
@@ -827,16 +825,16 @@ class DelegateTool(Tool):
         artifact / session dir is missing (e.g. the parallel path, or headless)
         fall back to the generic nudge."""
         artifact = getattr(result, "artifact", "") or ""
-        if session_dir and artifact:
-            path = str(Path(session_dir) / artifact / "result.md")
+        if ctx.session_dir and artifact:
+            path = str(Path(ctx.session_dir) / artifact / "result.md")
             return on_disk_oversized_nudge(
                 "delegate",
                 "subagent answer",
                 f"full answer saved to '{path}'",
                 path,
                 tokens,
-                cap,
-                tools_available,
+                ctx.oversized_cap,
+                ctx.tools_available,
                 nlines=body.count("\n") + 1,
                 tail_bullets=(
                     "Or re-delegate a NARROWER task so the subagent returns a "
@@ -844,9 +842,9 @@ class DelegateTool(Tool):
                     "broad).",
                 ),
             )
-        return default_oversized_nudge("delegate", tokens, cap)
+        return default_oversized_nudge("delegate", tokens, ctx.oversized_cap)
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # delegate is intercepted by the loop (it needs parent context,
         # provider, capabilities) before execute_tool — this placeholder
         # only fires for direct/test callers.

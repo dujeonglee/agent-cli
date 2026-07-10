@@ -262,9 +262,7 @@ class FetchTool(Tool):
         "required": ["fetch_url"],
     }
 
-    def render_oversized(
-        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
-    ) -> str:
+    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for a large fetch: fetched content is ephemeral (like
         shell output), so persist it to a file in the session dir (LAZILY — only
         here, over cap) and reuse the shared on-disk nudge — (a) read a specific
@@ -272,11 +270,11 @@ class FetchTool(Tool):
         fetch-specific option to re-fetch a narrower URL / shallower depth
         (attack the root cause). Headless / write failure → generic fallback."""
         url = (self.strip_prefix(args).get("url") or "").strip()
-        if session_dir:
+        if ctx.session_dir:
             digest = hashlib.sha1(
                 (url + "\x00" + body).encode("utf-8", "replace")
             ).hexdigest()[:8]
-            out_path = Path(session_dir) / f"fetch-output-{digest}.txt"
+            out_path = Path(ctx.session_dir) / f"fetch-output-{digest}.txt"
             try:
                 out_path.write_text(body, encoding="utf-8")
             except OSError:
@@ -289,8 +287,8 @@ class FetchTool(Tool):
                     f"full content saved to '{path}'",
                     path,
                     tokens,
-                    cap,
-                    tools_available,
+                    ctx.oversized_cap,
+                    ctx.tools_available,
                     nlines=body.count("\n") + 1,
                     part_extra=f"search it (read_file path='{path}', search='…')",
                     tail_bullets=(
@@ -298,7 +296,7 @@ class FetchTool(Tool):
                         "so the result is smaller.",
                     ),
                 )
-        return default_oversized_nudge("fetch", tokens, cap)
+        return default_oversized_nudge("fetch", tokens, ctx.oversized_cap)
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_fetch(args)

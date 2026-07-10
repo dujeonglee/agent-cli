@@ -14,7 +14,6 @@ path with no special-casing.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from agent_cli.mcp.client import McpClientManager
@@ -63,8 +62,8 @@ class McpTool(Tool):
         # input would then fail validate. Override to identity.
         return flat
 
-    def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
-        # session_dir is accepted for the uniform Tool.run signature; MCP
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        # ctx (RunContext) is accepted for the uniform Tool.run signature; MCP
         # dispatch is location-independent and ignores it.
         try:
             result = self._manager.call_tool(self._server, self._tool_name, args)

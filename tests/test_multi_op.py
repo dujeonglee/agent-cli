@@ -72,7 +72,7 @@ class TestWrapSingleOp:
             description = "x"
             parameters = {"type": "object", "properties": {"command": {}}}
 
-            def _run(self, args, *, session_dir=None):
+            def _run(self, args, *, ctx=None):
                 return ToolResult(True, output="")
 
         assert _Prefixed().wrap_single_op({"command": "ls"}) == {

@@ -740,9 +740,7 @@ class CodeIndexTool(Tool):
         std = self.strip_prefix(action_input)
         return f"{std.get('mode', '')} {std.get('path', '')}".strip()
 
-    def render_oversized(
-        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
-    ) -> str:
+    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for an index query: the fix is a NARROWER query in
         place (fetch one symbol, filter, or scope a mode), not a file read —
         steer to code_index's own params instead of the generic default."""
@@ -750,7 +748,7 @@ class CodeIndexTool(Tool):
             "code_index",
             "result",
             tokens,
-            cap,
+            ctx.oversized_cap,
             bullets=(
                 "Narrow the query: fetch ONE symbol (mode=fetch, path, name), "
                 "or filter list/kind with search='regex'.",
@@ -759,5 +757,5 @@ class CodeIndexTool(Tool):
             ),
         )
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return _dispatch_one(args)

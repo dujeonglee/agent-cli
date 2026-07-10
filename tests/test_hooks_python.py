@@ -551,11 +551,13 @@ class TestLoopHookIntegration:
         with patch("agent_cli.loop._execute_tool") as mock_exec:
             mock_exec.return_value = ToolResult(True, output="ok")
             loop._dispatch_tool_with_hooks("shell", {"command": "rm -rf /"})
-            # The modified input should have been used; session_dir
-            # defaults to None when ctx is not provided.
-            mock_exec.assert_called_once_with(
-                "shell", {"command": "ls"}, session_dir=None
-            )
+            # The modified input should have been used, forwarded via a
+            # RunContext whose session_dir defaults to None (loop has no ctx).
+            mock_exec.assert_called_once()
+            name, tool_input = mock_exec.call_args.args
+            assert name == "shell"
+            assert tool_input == {"command": "ls"}
+            assert mock_exec.call_args.kwargs["ctx"].session_dir is None
 
     def test_dispatch_tool_with_hooks_post_hook_fires(self, tmp_path):
         """PostToolUse hook fires after tool execution."""

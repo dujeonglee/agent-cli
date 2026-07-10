@@ -12,8 +12,6 @@ validation treat them uniformly with executable tools.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -29,7 +27,7 @@ class CompleteTool(Tool):
         "required": ["result"],
     }
 
-    def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return ToolResult(
             True,
             output=args.get(
@@ -63,7 +61,7 @@ class AskTool(Tool):
         "required": ["question"],
     }
 
-    def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # Placeholder for direct/test callers — the loop intercepts `ask`
         # before dispatch. ``question`` is the flat single-question field; the
         # legacy ``questions`` list is still tolerated (loop's _extract_questions
@@ -95,5 +93,5 @@ class RunSkillTool(Tool):
         "required": ["name"],
     }
 
-    def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return ToolResult(True, output="(run_skill: intercepted by loop)")

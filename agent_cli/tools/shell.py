@@ -230,9 +230,7 @@ class ShellTool(Tool):
     def summary_arg(self, action_input: dict) -> str:
         return (self.strip_prefix(action_input).get("command") or "")[:60]
 
-    def render_oversized(
-        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
-    ) -> str:
+    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for a large shell result: shell output is ephemeral,
         so persist it to a file in the session dir (LAZILY — only here, when it
         is actually over cap, so ordinary shell calls never touch disk) and then
@@ -240,11 +238,11 @@ class ShellTool(Tool):
         file, (b) delegate fan-out over its sections. Headless / no session dir
         (or a write failure) → the generic ``tee``-to-file fallback."""
         cmd = (args.get("command") or "").strip()
-        if session_dir:
+        if ctx.session_dir:
             digest = hashlib.sha1(
                 (cmd + "\x00" + body).encode("utf-8", "replace")
             ).hexdigest()[:8]
-            out_path = Path(session_dir) / f"shell-output-{digest}.txt"
+            out_path = Path(ctx.session_dir) / f"shell-output-{digest}.txt"
             try:
                 out_path.write_text(body, encoding="utf-8")
             except OSError:
@@ -257,12 +255,12 @@ class ShellTool(Tool):
                     f"full output saved to '{path}'",
                     path,
                     tokens,
-                    cap,
-                    tools_available,
+                    ctx.oversized_cap,
+                    ctx.tools_available,
                     nlines=body.count("\n") + 1,
                     part_extra=f"search it (read_file path='{path}', search='…')",
                 )
-        return default_oversized_nudge("shell", tokens, cap)
+        return default_oversized_nudge("shell", tokens, ctx.oversized_cap)
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_shell(args)

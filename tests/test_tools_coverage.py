@@ -19,7 +19,7 @@ from agent_cli.tools.delegate import (
     _format_parallel_results,
     DelegateResult,
 )
-from agent_cli.tools import TOOLS, _execute_tool as execute_tool
+from agent_cli.tools import RunContext, TOOLS, _execute_tool as execute_tool
 
 
 class TestToolResult:
@@ -1002,6 +1002,64 @@ class TestReadFileStat:
         result = _read_one({"path": str(f), "stat": True})
         assert "have NOT read" in result.output or "not read" in result.output.lower()
         assert "line_start" in result.output
+
+    # ── stat guidance is cap-aware (does not bait a full read that
+    #    the loop would only cap and drop) ───────────────────────────
+
+    def _bigfile(self, tmp_path):
+        f = tmp_path / "huge.py"
+        f.write_text(
+            "\n".join(f"line number {i} with some content" for i in range(4000))
+        )
+        return f
+
+    def test_stat_default_offers_full_read(self, tmp_path):
+        """No cap context (cap=0, headless) → the plain hint keeps the
+        'full read' option byte-for-byte (unchanged behaviour)."""
+        f = self._bigfile(tmp_path)
+        result = _read_one({"path": str(f), "stat": True})  # oversized_cap defaults 0
+        assert "for a full read" in result.output
+        assert "would exceed the context cap" not in result.output
+
+    def test_stat_small_file_keeps_full_read_hint_even_with_cap(self, tmp_path):
+        """A file that fits under the cap still offers a full read."""
+        f = tmp_path / "small.py"
+        f.write_text("a\nb\nc")
+        result = _read_one({"path": str(f), "stat": True}, oversized_cap=25_000)
+        assert "for a full read" in result.output
+        assert "would exceed" not in result.output
+
+    def test_stat_large_file_over_cap_drops_full_read_bait(self, tmp_path):
+        """A file whose full read would exceed the cap: the hint must NOT
+        offer a full read (it would only be capped) — it leads with a slice
+        / search instead."""
+        f = self._bigfile(tmp_path)
+        result = _read_one({"path": str(f), "stat": True}, oversized_cap=4_096)
+        assert "for a full read" not in result.output  # bait removed
+        assert "would exceed the context cap" in result.output
+        assert "do not full-read" in result.output
+        assert "line_start=N" in result.output  # range still offered
+        assert 'search="keyword"' in result.output
+
+    def test_stat_over_cap_offers_fanout_when_delegate_available(self, tmp_path):
+        f = self._bigfile(tmp_path)
+        result = _read_one(
+            {"path": str(f), "stat": True},
+            oversized_cap=4_096,
+            tools_available=frozenset({"read_file", "delegate"}),
+        )
+        assert "Fan out" in result.output
+        assert "concurrently" in result.output
+
+    def test_stat_over_cap_no_fanout_without_delegate(self, tmp_path):
+        f = self._bigfile(tmp_path)
+        result = _read_one(
+            {"path": str(f), "stat": True},
+            oversized_cap=4_096,
+            tools_available=frozenset({"read_file"}),  # delegate depth-stripped
+        )
+        assert "Fan out" not in result.output
+        assert "line_start=N" in result.output  # still steers to a ranged read
         assert "search" in result.output
 
 
@@ -1417,7 +1475,7 @@ class TestReadContextTool:
         assert result.success
         assert "No rows" in result.output
 
-    # ── Plumbing: execute_tool passes session_dir ──────────────
+    # ── Plumbing: execute_tool forwards RunContext.session_dir ──────────
 
     def test_execute_tool_forwards_session_dir(self, tmp_path, monkeypatch):
         base = self._patch_base(monkeypatch, tmp_path)
@@ -1425,7 +1483,7 @@ class TestReadContextTool:
         result = execute_tool(
             "read_context",
             {"query": "SELECT text FROM history"},
-            session_dir=cur,
+            ctx=RunContext(session_dir=cur),
         )
         assert result.success
         assert "plumbing" in result.output

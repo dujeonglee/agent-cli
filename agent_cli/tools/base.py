@@ -28,9 +28,42 @@ fall through to the normal NO_ACTION recovery rather than being inferred.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 
 from agent_cli.tools.result import ToolResult
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Per-invocation LOOP context threaded to a tool's two surfaces.
+
+    The loop knows a handful of values *per tool call* — the session
+    directory, the oversized-observation cap, and which tools are callable
+    in the current loop. Rather than growing the keyword list on
+    :meth:`Tool.run` / :meth:`Tool._run` and :meth:`Tool.render_oversized`
+    every time a new such value appears, they take ONE frozen object; a new
+    per-call value becomes a field here, not another parameter on 13+7
+    signatures. Frozen + shared-safe (the same instance can be handed to
+    concurrent parallel-delegate loops), which is why this is per-CALL data,
+    never stored on the shared ``TOOLS`` singletons.
+
+    SCOPE DISCIPLINE — keep this from becoming a god-object: only per-call
+    LOOP context belongs here. Per-RESULT data (a specific result's body /
+    token count) stays an explicit argument on ``render_oversized``;
+    unrelated machinery (parser, provider, history) does NOT go here.
+
+    Fields:
+        session_dir: current session dir, or None in headless / no-ctx runs.
+        oversized_cap: the over-cap threshold (context_window/10), 0 = off.
+        tools_available: tool names callable in THIS loop (``delegate`` is
+            absent inside a depth-limited subagent), so guidance never names
+            a tool the model cannot invoke.
+    """
+
+    session_dir: Path | None = None
+    oversized_cap: int = 0
+    tools_available: frozenset[str] = frozenset()
 
 
 def default_oversized_nudge(tool_name: str, tokens: int, cap: int) -> str:
@@ -246,9 +279,7 @@ class Tool(ABC):
         *,
         body: str,
         tokens: int,
-        cap: int,
-        tools_available: frozenset[str],
-        session_dir: "str | Path | None" = None,
+        ctx: RunContext,
     ) -> str:
         """Observation substituted when THIS tool's output exceeds the oversized
         cap (``context_window / 10``). The tool OWNS the full over-cap policy.
@@ -256,24 +287,27 @@ class Tool(ABC):
         Default: :func:`default_oversized_nudge` — the whole body is dropped and
         the model is steered to re-request a narrower slice. An override may
         return tool-specific recovery guidance, or a BOUNDED slice of ``body``
-        plus a pointer (``body`` is passed so a tool can show a head without
-        re-running). ``tools_available`` is the set of tool names callable in
-        the CURRENT loop (e.g. ``delegate`` is absent inside a depth-limited
-        subagent), so guidance can name only tools the model can actually use.
-        ``session_dir`` is the current session directory (or None in headless /
-        no-ctx runs) — a tool whose output is not already on disk (shell) can
-        persist ``body`` there and point at it, uniform with tools whose output
-        already is a file (read_file, delegate's ``result.md``). Fires only when
+        plus a pointer (``body`` and ``tokens`` are the per-RESULT payload, so a
+        tool can show a head without re-running). Per-CALL loop context arrives
+        in ``ctx`` (:class:`RunContext`): ``ctx.oversized_cap`` is the threshold,
+        ``ctx.tools_available`` names the tools callable in the CURRENT loop
+        (e.g. ``delegate`` is absent inside a depth-limited subagent) so guidance
+        never points at an uncallable tool, and ``ctx.session_dir`` lets a tool
+        whose output is not already on disk (shell/fetch) persist ``body`` there
+        and point at it — uniform with tools whose output already is a file
+        (read_file, delegate's ``result.md``). Fires only when
         :attr:`apply_oversized_cap` is True AND the body is over cap — so an
         override never needs to re-check either condition.
         """
-        return default_oversized_nudge(self.name, tokens, cap)
+        return default_oversized_nudge(self.name, tokens, ctx.oversized_cap)
 
-    def run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
+    def run(self, args: dict, *, ctx: RunContext | None = None) -> ToolResult:
         """Public dispatch: strip the tool-name prefix from ``action_input``
-        keys, then hand standard keys to :meth:`_run`. ``session_dir`` is
-        forwarded uniformly; tools that do not need it ignore it."""
-        return self._run(self.strip_prefix(args), session_dir=session_dir)
+        keys, then hand standard keys to :meth:`_run`. ``ctx`` carries the
+        per-call loop context (:class:`RunContext`); tools that do not need it
+        ignore it. ``None`` (a direct/test caller that omits it) is forwarded
+        as-is — consumers of a ``ctx`` field guard for it."""
+        return self._run(self.strip_prefix(args), ctx=ctx)
 
     def wrap_single_op(self, flat: dict) -> dict:
         """Convert a multi-op format's flat single-target op into this tool's
@@ -321,5 +355,7 @@ class Tool(ABC):
         return ""
 
     @abstractmethod
-    def _run(self, args: dict, *, session_dir: Path | None = None) -> ToolResult:
-        """Execute the tool with standard (un-prefixed) keys."""
+    def _run(self, args: dict, *, ctx: RunContext | None = None) -> ToolResult:
+        """Execute the tool with standard (un-prefixed) keys. ``ctx`` is the
+        per-call loop context (:class:`RunContext`), or ``None`` for a
+        direct/test caller — consumers that read a field guard for ``None``."""

@@ -401,9 +401,7 @@ class ReadContextTool(Tool):
         "required": [],
     }
 
-    def render_oversized(
-        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
-    ) -> str:
+    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for a SQL query result: the fix is a NARROWER query
         in place (not a file — the history is queryable), so steer to SQL
         narrowing (LIMIT / projection / substr) instead of the generic
@@ -412,7 +410,7 @@ class ReadContextTool(Tool):
             "read_context",
             "query result",
             tokens,
-            cap,
+            ctx.oversized_cap,
             bullets=(
                 "Re-run a NARROWER SQL query: add or lower LIMIT, project fewer "
                 "columns, or preview long text with substr(text,1,200).",
@@ -422,5 +420,5 @@ class ReadContextTool(Tool):
             ),
         )
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
-        return tool_read_context(args, session_dir=session_dir)
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        return tool_read_context(args, session_dir=ctx.session_dir if ctx else None)

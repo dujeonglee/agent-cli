@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from agent_cli import memory
+from agent_cli.tools import RunContext
 from agent_cli.tools.memory_tool import MemoryTool
 
 
@@ -142,7 +143,7 @@ class TestDirtyFlag:
 
 class TestTool:
     def _run(self, args, session_dir):
-        return MemoryTool()._run(args, session_dir=session_dir)
+        return MemoryTool()._run(args, ctx=RunContext(session_dir=session_dir))
 
     def test_add_then_get(self, tmp_path):
         r = self._run(

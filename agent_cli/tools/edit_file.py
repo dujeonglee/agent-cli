@@ -451,5 +451,5 @@ class EditFileTool(Tool):
     # NOTE: no ``render_action_input_for_context`` override — see WriteFileTool
     # (action-body re-feed elision caused marker mimicry; reverted in v3.16.1).
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_edit_file(args)

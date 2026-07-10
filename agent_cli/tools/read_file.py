@@ -104,12 +104,38 @@ def format_hashlines_range(all_lines: list[str], start_idx: int, end_idx: int) -
     return "\n".join(out)
 
 
-def _stat(path: str, text: str, all_lines: list[str]) -> ToolResult:
+def _full_read_est_tokens(text: str, total: int) -> int:
+    """Estimate the token count of a FULL hashline read without building it.
+
+    A full read returns ``format_hashlines(text)`` — each line gains an
+    ``N#HH:`` prefix (the 1-based number's digits + ``#`` + 2 hash chars +
+    ``:`` = ``len(str(i)) + 4`` chars) and lines are ``\\n``-joined. Rather
+    than format the whole (large) file just to size it, approximate with an
+    upper bound on the per-line number width (``len(str(total))``), so the
+    estimate errs slightly HIGH — the stat hint would rather warn a touch
+    early than bait a full read that then gets capped. Mirrors the loop's
+    ``estimate_tokens`` (chars / 4)."""
+    est_chars = len(text) + total * (4 + len(str(total)))
+    return est_chars // 4
+
+
+def _stat(
+    path: str,
+    text: str,
+    all_lines: list[str],
+    *,
+    oversized_cap: int = 0,
+    tools_available: frozenset[str] = frozenset(),
+) -> ToolResult:
     """Return file metadata + first N lines + follow-up guidance.
 
     stat is a metadata query (like Unix `stat`), not a read — the caller
     is expected to pick one of the real read modes (full /
-    line_start+line_end / search) as a follow-up.
+    line_start+line_end / search) as a follow-up. When ``oversized_cap`` is
+    set and a full read would exceed it, the follow-up guidance is
+    cap-aware: it drops the "full read" option (which the loop would only
+    cap and drop) and leads with a slice / search / delegate fan-out, so the
+    model never spends a round trip on a read that cannot land.
     """
     total = len(all_lines)
     size_bytes = len(text.encode("utf-8"))
@@ -122,14 +148,36 @@ def _stat(path: str, text: str, all_lines: list[str]) -> ToolResult:
     head_end = min(_STAT_HEAD_LINES, total)
     head = format_hashlines_range(all_lines, 0, head_end)
 
-    hint = (
-        f"\n\n[File has {total} total lines. stat returned metadata + the "
-        f"first {head_end} lines only — you have NOT read the file yet. "
-        f"Pick a follow-up read mode:\n"
-        f"  - read_file(path) for a full read (if the file is small or central to the task)\n"
-        f"  - read_file(path, line_start=N, line_end=M) for a specific range\n"
-        f'  - read_file(path, search="keyword") to hunt for specific content]'
-    )
+    est_tokens = _full_read_est_tokens(text, total)
+    if oversized_cap > 0 and est_tokens > oversized_cap:
+        fan = ""
+        if "delegate" in tools_available:
+            fan = (
+                "\n  - analyse the WHOLE file? Fan out: split the line range "
+                "into several contiguous sections and emit one delegate op per "
+                "section in the SAME turn (they run concurrently), each "
+                "returning a short summary; then merge them — no single context "
+                "holds the whole file."
+            )
+        hint = (
+            f"\n\n[File has {total:,} total lines (~{est_tokens:,} tokens). stat "
+            f"returned metadata + the first {head_end} lines only — you have NOT "
+            f"read the file yet. A FULL read would exceed the context cap "
+            f"({oversized_cap:,} tokens) and be DROPPED, so do not full-read. "
+            f"Read a slice instead:\n"
+            f"  - read_file(path, line_start=N, line_end=M) for a specific range\n"
+            f'  - read_file(path, search="keyword") to hunt for specific content'
+            f"{fan}]"
+        )
+    else:
+        hint = (
+            f"\n\n[File has {total} total lines. stat returned metadata + the "
+            f"first {head_end} lines only — you have NOT read the file yet. "
+            f"Pick a follow-up read mode:\n"
+            f"  - read_file(path) for a full read (if the file is small or central to the task)\n"
+            f"  - read_file(path, line_start=N, line_end=M) for a specific range\n"
+            f'  - read_file(path, search="keyword") to hunt for specific content]'
+        )
     return ToolResult(
         True,
         output=f"[stat] {path}: {total} lines, {size_label}\n{head}{hint}",
@@ -167,7 +215,12 @@ def _search(path: str, all_lines: list[str], pattern: str, context: int) -> Tool
     return ToolResult(True, output="\n".join(parts))
 
 
-def _read_one(spec: dict) -> ToolResult:
+def _read_one(
+    spec: dict,
+    *,
+    oversized_cap: int = 0,
+    tools_available: frozenset[str] = frozenset(),
+) -> ToolResult:
     """Read a single file with optional stat, search, or partial read modes.
 
     Modes (mutually exclusive, picked by keys present):
@@ -175,6 +228,10 @@ def _read_one(spec: dict) -> ToolResult:
     - search="pattern", context=N: grep-style matches with surrounding lines
     - line_start/line_end: partial read (1-based inclusive)
     - no mode: full file
+
+    ``oversized_cap`` / ``tools_available`` are the loop's per-call context
+    (the over-cap threshold + callable tools), used ONLY to make the stat-mode
+    follow-up guidance cap-aware; they don't affect the actual read bytes.
     """
     if not isinstance(spec, dict):
         return ToolResult(
@@ -203,7 +260,13 @@ def _read_one(spec: dict) -> ToolResult:
         total = len(all_lines)
 
         if stat:
-            return _stat(path, text, all_lines)
+            return _stat(
+                path,
+                text,
+                all_lines,
+                oversized_cap=oversized_cap,
+                tools_available=tools_available,
+            )
 
         if search:
             return _search(path, all_lines, search, context)
@@ -275,9 +338,7 @@ class ReadFileTool(Tool):
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")
 
-    def render_oversized(
-        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
-    ) -> str:
+    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for a whole-file read: the file is intact on disk, so
         drop the body and steer by NEED via the shared on-disk nudge — (a) a
         SPECIFIC part is a cheap ranged re-read (range / read_symbols), (b) the
@@ -290,11 +351,18 @@ class ReadFileTool(Tool):
             "the file is intact on disk",
             path,
             tokens,
-            cap,
-            tools_available,
+            ctx.oversized_cap,
+            ctx.tools_available,
             nlines=body.count("\n") + 1,
             part_extra="read_symbols for one function/class",
         )
 
-    def _run(self, args: dict, *, session_dir=None) -> ToolResult:
-        return _read_one(args)
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        # stat mode uses the loop's over-cap threshold (from ctx) to steer a
+        # LARGE file toward a slice/fan-out instead of baiting a full read that
+        # would blow the cap; 0 (headless / no ctx) keeps the plain hint.
+        return _read_one(
+            args,
+            oversized_cap=ctx.oversized_cap if ctx else 0,
+            tools_available=ctx.tools_available if ctx else frozenset(),
+        )

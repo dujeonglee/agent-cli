@@ -9,6 +9,7 @@ _execute_tool``) keep working.
 
 from __future__ import annotations
 
+from agent_cli.tools.base import RunContext
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     TOOLS,
@@ -23,6 +24,7 @@ __all__ = [
     "TOOLS",
     "TOOL_SCHEMAS",
     "ToolResult",
+    "RunContext",
     "validate_tool_input",
     "get_tool_descriptions",
     "infer_action",

@@ -71,7 +71,7 @@ from agent_cli.render import (
     render_group_start,
     render_group_end,
 )
-from agent_cli.tools import TOOLS, _execute_tool, infer_action
+from agent_cli.tools import TOOLS, RunContext, _execute_tool, infer_action
 from agent_cli.tools.base import default_oversized_nudge
 from agent_cli.tools.delegate import tool_delegate
 
@@ -1871,6 +1871,19 @@ class AgentLoop:
             )
         return result
 
+    # ── per-call loop context (execute + render seams share it) ─────
+    def _run_ctx(self) -> RunContext:
+        """Build the :class:`RunContext` for the CURRENT tool call — the single
+        per-call bundle handed to both tool surfaces (``run``/``_run`` and
+        ``render_oversized``): the session dir, the oversized cap, and the tool
+        names callable in this loop. One construction point keeps the two seams
+        from drifting on what "this call's context" is."""
+        return RunContext(
+            session_dir=self.ctx.session_dir if self.ctx else None,
+            oversized_cap=self._oversized_cap,
+            tools_available=frozenset(self.tools_list),
+        )
+
     # ── 3. Regular tool dispatch ───────────────────────────────────
     def _invoke_regular(self, tool_name: str, tool_input) -> ToolResult:
         """Dispatch a non-delegate tool via the registry.
@@ -1880,8 +1893,7 @@ class AgentLoop:
         ``_execute_tool`` trusts that contract and would raise KeyError
         on a missing name.
         """
-        session_dir = self.ctx.session_dir if self.ctx else None
-        return _execute_tool(tool_name, tool_input, session_dir=session_dir)
+        return _execute_tool(tool_name, tool_input, ctx=self._run_ctx())
 
     # ── 4. PostToolUse hooks ───────────────────────────────────────
     def _run_post_hooks(
@@ -1944,9 +1956,7 @@ class AgentLoop:
                         safe_args,
                         body=body,
                         tokens=tokens,
-                        cap=self._oversized_cap,
-                        tools_available=frozenset(self.tools_list),
-                        session_dir=self.ctx.session_dir if self.ctx else None,
+                        ctx=self._run_ctx(),
                     )
                 return default_oversized_nudge(tool_name, tokens, self._oversized_cap)
         return body
