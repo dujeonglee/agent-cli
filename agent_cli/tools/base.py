@@ -58,21 +58,26 @@ def on_disk_oversized_nudge(
     cap: int,
     tools_available: frozenset[str],
     *,
+    nlines: int = 0,
     part_extra: str = "",
     tail_bullets: tuple[str, ...] = (),
 ) -> str:
     """Shared over-cap nudge for tools whose large output is ON DISK.
 
-    The invariant behind read_file / shell / delegate: once the bulky content
-    is a file at ``read_path``, recovery is the same shape — (a) read a SPECIFIC
-    part (range / search), or (b) fan out with delegate over SECTIONS of that
-    file (each subagent returns only the distilled result, so the parent never
-    holds the raw bulk). The fan-out bullet is emitted only when ``delegate`` is
-    callable in the current loop (``tools_available``), so it never points at a
-    tool the model cannot invoke. ``subject`` names the thing (``'big.py'`` /
-    ``command output`` / ``subagent answer``); ``location`` is the on-disk
-    clause; ``part_extra`` appends a tool-specific narrowing to bullet (a);
-    ``tail_bullets`` adds extra options (e.g. delegate's re-delegate-narrower)."""
+    The invariant behind read_file / shell / delegate / fetch: once the bulky
+    content is a file at ``read_path``, recovery is the same shape — (a) read a
+    SPECIFIC part (range / search), or (b) fan out over SECTIONS of that file
+    with delegate. The fan-out bullet steers to **N-way PARALLEL** — several
+    delegate ops in ONE turn (which agent-cli runs concurrently), each reading a
+    distinct line range and returning only a short summary, so no single
+    subagent (nor the parent) ever holds the raw bulk and the sections finish in
+    parallel. ``nlines`` (the file's line count, from the caller's ``body``)
+    lets the nudge propose concrete line-range sections; without it the bullet
+    falls back to a generic parallel-split wording. Emitted only when
+    ``delegate`` is callable (``tools_available``), so it never points at a tool
+    the model cannot invoke. ``subject`` names the thing; ``location`` is the
+    on-disk clause; ``part_extra`` appends a tool-specific narrowing to bullet
+    (a); ``tail_bullets`` adds extra options (e.g. re-delegate-narrower)."""
     lines = [
         f"[{tool_name}: {subject} is ~{tokens:,} tokens — too large for one "
         f"context (cap {cap:,}). NOT added to context; {location}.",
@@ -81,12 +86,29 @@ def on_disk_oversized_nudge(
         + ".",
     ]
     if "delegate" in tools_available:
-        lines.append(
-            "· Need the WHOLE thing analysed/searched? Fan out with delegate: "
-            f"subagents each read_file a section of '{read_path}' and return "
-            "only what you need (matches / a summary / the answer) — you get "
-            f"the distilled results, not the raw {tokens:,} tokens."
-        )
+        if nlines and nlines > 1:
+            # Split so each section stays well under cap; boundaries by line.
+            k = max(2, min(8, (tokens + cap - 1) // cap + 1))
+            step = max(1, (nlines + k - 1) // k)
+            lines.append(
+                "· Need the WHOLE thing analysed/searched? Fan out IN PARALLEL: "
+                f"'{read_path}' is {nlines:,} lines — split into ~{k} sections "
+                f"and emit {k} delegate ops in ONE turn (same-turn delegate ops "
+                "run concurrently), each like:\n"
+                f"    delegate(task=\"read_file '{read_path}' lines 1-{step} and "
+                'return a 3-line summary + anything about <your question>")\n'
+                f"    delegate(task=\"read_file '{read_path}' lines {step + 1}-"
+                f'{2 * step} …")   … (and so on, through line {nlines:,})\n'
+                f"  Merge the {k} summaries. One subagent doing it all is slower "
+                "and larger; parallel sections stay small and fast."
+            )
+        else:
+            lines.append(
+                "· Need the WHOLE thing analysed/searched? Fan out IN PARALLEL: "
+                f"split '{read_path}' into several contiguous line-range sections "
+                "and emit one delegate op per section in the SAME turn (they run "
+                "concurrently), each returning a short summary; then merge them."
+            )
     lines.extend(f"· {b}" for b in tail_bullets)
     return "\n".join(lines) + "]"
 

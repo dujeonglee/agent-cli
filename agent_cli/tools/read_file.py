@@ -292,6 +292,7 @@ class ReadFileTool(Tool):
             tokens,
             cap,
             tools_available,
+            nlines=body.count("\n") + 1,
             part_extra="read_symbols for one function/class",
         )
 

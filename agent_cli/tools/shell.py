@@ -259,6 +259,7 @@ class ShellTool(Tool):
                     tokens,
                     cap,
                     tools_available,
+                    nlines=body.count("\n") + 1,
                     part_extra=f"search it (read_file path='{path}', search='…')",
                 )
         return default_oversized_nudge("shell", tokens, cap)

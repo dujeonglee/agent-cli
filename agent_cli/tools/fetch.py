@@ -291,6 +291,7 @@ class FetchTool(Tool):
                     tokens,
                     cap,
                     tools_available,
+                    nlines=body.count("\n") + 1,
                     part_extra=f"search it (read_file path='{path}', search='…')",
                     tail_bullets=(
                         "Or re-fetch a more specific URL / shallower fetch_depth "

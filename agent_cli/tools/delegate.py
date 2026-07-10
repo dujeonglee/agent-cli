@@ -837,6 +837,7 @@ class DelegateTool(Tool):
                 tokens,
                 cap,
                 tools_available,
+                nlines=body.count("\n") + 1,
                 tail_bullets=(
                     "Or re-delegate a NARROWER task so the subagent returns a "
                     "focused result (attack the root cause: the task was too "

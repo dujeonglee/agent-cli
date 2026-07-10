@@ -168,10 +168,12 @@ class TestReadFileOversized:
         assert type(TOOLS["read_file"]).render_oversized is not Tool.render_oversized
 
     def _nudge(self, tools, args=None):
+        # A multi-line body so the fan-out bullet proposes concrete line ranges.
+        body = "\n".join(f"RAW_SECRET_BODY line {i}" for i in range(900))
         return TOOLS["read_file"].render_oversized(
-            ToolResult(True, output="RAW_SECRET_BODY"),
+            ToolResult(True, output=body),
             args or {"path": "big_module.py"},
-            body="RAW_SECRET_BODY",
+            body=body,
             tokens=63_488,
             cap=4_096,
             tools_available=frozenset(tools),
@@ -185,11 +187,14 @@ class TestReadFileOversized:
         assert "too large" in n and "read_file" in n
         assert "RAW_SECRET_BODY" not in n  # raw body never echoed
 
-    def test_delegate_fanout_guidance_when_available(self):
+    def test_delegate_fanout_is_n_way_parallel(self):
         n = self._nudge(["read_file", "delegate"])
-        assert "delegate" in n
-        assert "section" in n  # fan-out over sections
-        assert "distilled" in n
+        assert "Fan out IN PARALLEL" in n
+        # N-way: several delegate ops in ONE turn, with concrete line ranges
+        assert "delegate ops in ONE turn" in n
+        assert "concurrently" in n
+        assert n.count("delegate(task=") >= 2  # a copyable multi-op pattern
+        assert "lines 1-" in n  # concrete section boundary
 
     def test_delegate_omitted_when_unavailable(self):
         # Depth-limited subagent: delegate is stripped from the toolset — the
@@ -249,8 +254,23 @@ class TestOnDiskNudgeHelper:
         assert "saved to '/s/out.txt'" in n
 
     def test_fanout_bullet_only_when_delegate_available(self):
-        assert "Fan out with delegate" in self._n(["toolx", "delegate"])
-        assert "Fan out with delegate" not in self._n(["toolx"])
+        assert "Fan out IN PARALLEL" in self._n(["toolx", "delegate"])
+        assert "Fan out IN PARALLEL" not in self._n(["toolx"])
+
+    def test_fanout_concrete_ranges_with_nlines(self):
+        # With a line count, the fan-out bullet proposes concrete parallel ops.
+        n = self._n(["toolx", "delegate"], nlines=2_483)
+        assert "2,483 lines" in n
+        assert "delegate ops in ONE turn" in n and "concurrently" in n
+        assert n.count("delegate(task=") >= 2
+        assert "lines 1-" in n
+
+    def test_fanout_generic_without_nlines(self):
+        # No line count → still parallel, but generic (no concrete ranges).
+        n = self._n(["toolx", "delegate"])  # nlines defaults to 0
+        assert "Fan out IN PARALLEL" in n
+        assert "one delegate op per section" in n
+        assert "delegate(task=" not in n  # no concrete op examples
 
     def test_part_extra_and_tail_bullets(self):
         n = self._n(["toolx"], part_extra="read_symbols", tail_bullets=("do X.",))
@@ -280,7 +300,7 @@ class TestShellOversized:
         assert saved[0].read_text() == self._big()  # full body on disk
         assert str(saved[0]) in n  # nudge points at the file
         assert "row of output" not in n  # raw body not echoed
-        assert "Fan out with delegate" in n  # fan-out offered
+        assert "Fan out IN PARALLEL" in n  # fan-out offered
 
     def test_no_delegate_no_fanout_bullet(self, tmp_path):
         n = TOOLS["shell"].render_oversized(
@@ -292,7 +312,7 @@ class TestShellOversized:
             tools_available=frozenset({"shell", "read_file"}),
             session_dir=tmp_path,
         )
-        assert "Fan out with delegate" not in n
+        assert "Fan out IN PARALLEL" not in n
         assert "read_file" in n  # still steers to a ranged read of the file
 
     def test_headless_falls_back_to_tee_nudge(self):
@@ -343,7 +363,7 @@ class TestDelegateOversized:
         )
         assert "task-abc/result.md" in n.replace(str(tmp_path) + "/", "")
         assert "result.md" in n
-        assert "Fan out with delegate" in n  # split result.md across subagents
+        assert "Fan out IN PARALLEL" in n  # split result.md across subagents
         assert "re-delegate a NARROWER task" in n.lower() or "narrower" in n.lower()
 
     def test_falls_back_without_artifact(self, tmp_path):
@@ -385,12 +405,12 @@ class TestFetchOversized:
         assert saved[0].read_text() == self._big()  # full content on disk
         assert str(saved[0]) in n
         assert "fetched prose" not in n  # raw body not echoed
-        assert "Fan out with delegate" in n
+        assert "Fan out IN PARALLEL" in n
         assert "fetch_depth" in n  # fetch-specific narrower-URL bullet
 
     def test_no_delegate_no_fanout(self, tmp_path):
         n = self._call(tmp_path, ["fetch", "read_file"])
-        assert "Fan out with delegate" not in n
+        assert "Fan out IN PARALLEL" not in n
         assert "read_file" in n
 
     def test_headless_falls_back(self):
@@ -440,7 +460,7 @@ class TestContextOversized:
         assert "LIMIT" in n and "substr(text,1,200)" in n  # SQL-native recovery
         # no irrelevant generic advice / no file/fan-out for a SQL result
         assert "line range" not in n
-        assert "tee" not in n and "Fan out with delegate" not in n
+        assert "tee" not in n and "Fan out IN PARALLEL" not in n
 
     def test_seam_produces_sql_nudge(self):
         loop = _loop(cap=50)
