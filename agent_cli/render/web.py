@@ -23,12 +23,15 @@ Multi-viewer, all equal: every authenticated connection is kept in
 The worker thread is unaware of clients — it just emits, the renderer fans
 out to all.
 
-Buffer / replay: ``_event_buffer`` holds every persistent event since
-session start (or since session resume on ``--resume <id>``). When a new
-client connects, the server first replays the buffer in order, then
-forwards live events from its dedicated queue. Transient events
-(``stream_chunk``, ``status``, ``spinner``) are not replayed — they are
-runtime UX, not state.
+Buffer / replay: ``_event_buffer`` holds the most recent persistent events
+since session start (or since session resume on ``--resume <id>``), bounded
+at ``_EVENT_BUFFER_MAX`` so a long-lived session cannot grow memory (and
+reconnect cost) without limit. When a new client connects, the server first
+replays the buffer in order — prefixed by a ``transcript_truncated`` notice
+when older events have been dropped (the full record stays in the session's
+``history.jsonl``) — then forwards live events from its dedicated queue.
+Transient events (``stream_chunk``, ``status``, ``spinner``) are not
+replayed — they are runtime UX, not state.
 """
 
 from __future__ import annotations
@@ -37,12 +40,35 @@ import json
 import random
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, SimpleQueue
 from typing import Any
 
 from agent_cli.render.base import ConfirmOption, Renderer
+
+# Replay-buffer bound (persistent events). ~3-4 persistent events per turn →
+# roughly a thousand turns of transcript; beyond that a reconnecting client
+# gets a ``transcript_truncated`` notice + the most recent window. Live
+# delivery is unaffected (connected clients received everything as it
+# happened); only the mid-session reconnect replay is windowed. Full history
+# survives on disk (history.jsonl → --resume replays from there).
+_EVENT_BUFFER_MAX = 5000
+
+
+class _JsonReady(dict):
+    """A fan-out payload dict carrying its own serialized form.
+
+    ``_emit`` serializes each event ONCE at the single fan-out point and
+    caches the string here; the SSE generator (one per viewer) sends the
+    cached string instead of re-``json.dumps``-ing the same dict per viewer
+    per event — and buffer replay on reconnect reuses it too. Still a real
+    dict, so tests and in-process consumers read fields normally.
+    """
+
+    __slots__ = ("json_str",)
+
 
 # Prompt Inspector scope key for the main loop's system prompt. Delegate
 # sub-agents are keyed by their ``task_id``; the empty string is the main
@@ -113,8 +139,13 @@ class WebRenderer(Renderer):
         # Resolved once (cwd is the workspace at startup) so later cwd changes
         # can't misdirect the write. Empty (CLI / tests) → status writing is off.
         self._status_dir = Path(session_dir).resolve() if session_dir else None
-        # event_buffer entries: (event_name, data_dict)
-        self._event_buffer: list[tuple[str, dict[str, Any]]] = []
+        # event_buffer entries: (event_name, data_dict) — bounded deque; the
+        # oldest events fall off past _EVENT_BUFFER_MAX (reconnect replay is
+        # windowed, disk history is complete). _persistent_count keeps the
+        # TOTAL ever emitted so register_connection can report the gap.
+        self._event_buffer: deque[tuple[str, dict[str, Any]]] = deque(
+            maxlen=_EVENT_BUFFER_MAX
+        )
         self._connections: list[WebConnection] = []
         # Worker busy/idle mirror (set by worker_busy/worker_idle) — a plain
         # queryable bool for the idle-reaper, independent of the sticky payload.
@@ -228,13 +259,18 @@ class WebRenderer(Renderer):
                 **data,
                 "ts": self._replay_ts if self._replay_ts is not None else time.time(),
             }
+        # Serialize ONCE here (the single fan-out point) — every viewer's SSE
+        # generator and every future reconnect replay reuses the cached string
+        # instead of re-dumping the same dict (N viewers × M replays).
+        ready = _JsonReady(data)
+        ready.json_str = json.dumps(ready, ensure_ascii=False)
         with self._lock:
             if persistent:
-                self._event_buffer.append((event, data))
+                self._event_buffer.append((event, ready))
                 self._persistent_count += 1
             for conn in self._connections:
                 if not conn.closed.is_set():
-                    conn.queue.put((event, data))
+                    conn.queue.put((event, ready))
 
     def set_sticky(
         self,
@@ -282,6 +318,12 @@ class WebRenderer(Renderer):
             self._connections.append(conn)
 
             snapshot = list(self._event_buffer)
+            # Bounded buffer: when older events have been dropped, tell the
+            # joining client HOW MANY are missing (rendered as a small notice
+            # card) — the windowed replay must not read as the full story.
+            omitted = self._persistent_count - len(snapshot)
+            if omitted > 0:
+                snapshot.insert(0, ("transcript_truncated", {"omitted": omitted}))
             # Replay sticky state into the new connection's snapshot so a
             # late/refreshed/second-browser client sees the last value of each.
             # ``prepend`` slots (ready → top-bar) go ahead of the buffer;

@@ -1110,7 +1110,7 @@ class TestReplayFromHistory:
         ctx.add({"role": "user", "content": ""})
         r = WebRenderer()
         r.replay_from_history(ctx)
-        assert r._event_buffer == []
+        assert list(r._event_buffer) == []
 
     def test_snapshot_includes_replayed_events_for_first_connection(self, tmp_path):
         """After resume + replay, the FIRST SSE client connecting must
@@ -1803,3 +1803,82 @@ class TestDirectivesDirtyFlag:
             assert _qget(conn)[0] == "memory_changed"
         finally:
             render.set_renderer(prev)
+
+
+# ── Bounded replay buffer + one-shot serialization (B2/B3/B4 web bundle) ──
+
+
+class TestBoundedEventBuffer:
+    """``_event_buffer`` is a ``deque(maxlen=_EVENT_BUFFER_MAX)`` — long
+    sessions stop growing memory, and a reconnecting client gets a
+    ``transcript_truncated`` notice ahead of the windowed replay."""
+
+    def _small_buffer_renderer(self, monkeypatch, maxlen):
+        import agent_cli.render.web as web_mod
+
+        monkeypatch.setattr(web_mod, "_EVENT_BUFFER_MAX", maxlen)
+        return WebRenderer()
+
+    def test_buffer_capped_and_truncation_notice(self, monkeypatch):
+        r = self._small_buffer_renderer(monkeypatch, maxlen=5)
+        for i in range(8):
+            r.push_user_message(f"m{i}")  # persistent event per call
+        assert len(r._event_buffer) == 5  # oldest 3 fell off
+        assert r.persistent_count == 8  # total ever emitted survives
+
+        conn = WebConnection(id="c1")
+        snapshot = r.register_connection(conn)
+        events = [e for e, _ in snapshot]
+        assert "transcript_truncated" in events
+        idx = events.index("transcript_truncated")
+        payload = snapshot[idx][1]
+        assert payload["omitted"] == 3
+        # identity always first; notice precedes the replayed window
+        assert events[0] == "identity"
+        assert idx < events.index("user_message")
+        # windowed replay holds ONLY the newest 5
+        replayed = [d for e, d in snapshot if e == "user_message"]
+        assert [d["content"] for d in replayed] == [f"m{i}" for i in range(3, 8)]
+
+    def test_no_notice_under_cap(self, monkeypatch):
+        r = self._small_buffer_renderer(monkeypatch, maxlen=5)
+        r.push_user_message("only one")
+        conn = WebConnection(id="c1")
+        snapshot = r.register_connection(conn)
+        assert "transcript_truncated" not in [e for e, _ in snapshot]
+
+
+class TestEmitSerializesOnce:
+    """``_emit`` dumps each payload ONCE and caches it (``json_str``); the
+    SSE generator and reconnect replay reuse the cached string instead of
+    re-serializing per viewer per event. Payloads stay real dicts."""
+
+    def test_queue_payload_carries_cached_json(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.push_user_message("hello")
+        event, data = _qget(conn)
+        assert event == "user_message"
+        assert isinstance(data, dict) and data["content"] == "hello"
+        cached = getattr(data, "json_str", None)
+        assert isinstance(cached, str)
+        assert json.loads(cached) == dict(data)  # cache matches the dict
+
+    def test_buffer_replay_reuses_cached_json(self):
+        r = WebRenderer()
+        r.push_user_message("hello")
+        conn = WebConnection(id="c1")
+        snapshot = r.register_connection(conn)
+        replayed = [d for e, d in snapshot if e == "user_message"]
+        assert len(replayed) == 1
+        assert isinstance(getattr(replayed[0], "json_str", None), str)
+
+    def test_synthetic_snapshot_entries_are_plain_dicts(self):
+        # identity / viewers are per-connection synthetics — no cache needed;
+        # the server falls back to json.dumps for them (a handful per connect).
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        snapshot = r.register_connection(conn)
+        ident = [d for e, d in snapshot if e == "identity"][0]
+        assert getattr(ident, "json_str", None) is None

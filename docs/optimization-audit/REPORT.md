@@ -18,9 +18,9 @@
 | # | 항목 | 위치 | 비용 | 수리 방향 | 상태 |
 |---|---|---|---|---|---|
 | **B1** | **`get_messages()` O(n²)** — 매 턴 전체 히스토리를 `_to_natural_language`(assistant 는 wire render 포함)로 전량 재변환, 턴당 3-4회 호출. 유일한 초선형 패턴 ✅ | manager.py:233-276, loop.py:576/623/765/866 | 턴↑수록 악화 | 렌더 결과 증분 캐시(add 시 tail 만 변환, compaction 때만 재빌드) | ☐ |
-| **B2** | **web: async 핸들러 안 블로킹 I/O** — `workspace_tree` 요청마다 재귀 `rglob` 사이징, zip·rmtree·write 도 이벤트루프 위 → 모든 뷰어 SSE 정지 ✅ | server.py:1440,1477,1519,1554 | 요청당, 전 클라이언트 파급 | sync `def` 전환(FastAPI 스레드풀) 또는 `run_in_executor` | ☐ |
-| **B3** | **web: `_event_buffer` 무한 성장** — trim 없는 plain list, 재접속마다 전체 스냅샷 재직렬화 ✅ | render/web.py:117,233,284 | 세션 길이 비례 | `deque(maxlen)` 또는 디스크 폴백 | ☐ |
-| B4 | SSE 페이로드 뷰어당 재직렬화 (`json.dumps` × N viewers) | server.py:926,947 | 이벤트당×뷰어 | `_emit` 1회 직렬화 후 문자열 공유 | ☐ |
+| **B2** | **web: async 핸들러 안 블로킹 I/O** — `workspace_tree` 요청마다 재귀 `rglob` 사이징, zip·rmtree·write 도 이벤트루프 위 → 모든 뷰어 SSE 정지 ✅ | server.py:1440,1477,1519,1554 | 요청당, 전 클라이언트 파급 | sync `def` 전환(FastAPI 스레드풀) 또는 `run_in_executor` | ✅ v4.36.0 |
+| **B3** | **web: `_event_buffer` 무한 성장** — trim 없는 plain list, 재접속마다 전체 스냅샷 재직렬화 ✅ | render/web.py:117,233,284 | 세션 길이 비례 | `deque(maxlen)` 또는 디스크 폴백 | ✅ v4.36.0 |
+| B4 | SSE 페이로드 뷰어당 재직렬화 (`json.dumps` × N viewers) | server.py:926,947 | 이벤트당×뷰어 | `_emit` 1회 직렬화 후 문자열 공유 | ✅ v4.36.0 |
 | B5 | react 단일-op 턴 이중 파싱 — 3-stage 파스 후 classic 이면 `super().parse_turn`→`parse_react` 재파싱 ✅ | react.py:558-598→93 | LLM 턴당 1회 | 파싱된 `data` 로 Op 직조 | ☐ |
 | B6 | `ctx.add` 당 `mkdir`+open/close 동기 I/O(턴당 ≥2) + 같은 페이로드 `json.dumps` 2회 | manager.py:645-648,197 | 턴당 | 세션 파일핸들 유지, 직렬화 1회 | ☐ |
 | B7 | 도구 호출마다 `frozenset`+`RunContext` 재생성(oversized 경로 2회) — 입력 불변 | loop.py:_run_ctx | 호출당 소액 | init 1회 캐시 | ☐ |
@@ -51,13 +51,25 @@
 ## D. 실행 순서 & 진행 로그
 
 1. ✅ **A1 delegate 추출기 수리** (+A3 dead code 제거, +A4) — 버그 수리 (v4.35.1)
-2. ☐ **B2+B3+B4 web 안정성 묶음** — 사용자 체감 직결
+2. ✅ **B2+B3+B4 web 안정성 묶음** — 사용자 체감 직결 (v4.36.0)
 3. ☐ **B1 get_messages 증분 캐시** — 유일한 O(n²) (C5 연계 설계)
 4. ☐ **A2 fetch flatten** — 로드맵 완결
 5. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
 
+- **2026-07-11 · v4.36.0 · B2+B3+B4 완료**: (B2) `workspace_tree`(재귀 rglob
+  사이징)·`download`(zip)·`delete`(rmtree, 경로검증은 사전)·`upload`(쓰기)·
+  `export_html`(렌더) 블로킹 본문을 `run_in_executor` 오프로드 — async 핸들러가
+  이벤트루프를 막아 전 뷰어 SSE 가 정지하던 문제 해소(`_gen_directive` 선례 패턴).
+  (B3) `_event_buffer` → `deque(maxlen=_EVENT_BUFFER_MAX=5000)`; 재접속 재생이
+  넘치면 snapshot 에 `transcript_truncated {omitted:N}` + app.js 노티스 카드
+  (전체 기록은 history.jsonl 보존, `_persistent_count` 는 총계 유지). (B4)
+  `_emit` 이 payload 를 1회 직렬화해 dict 서브클래스 `_JsonReady.json_str` 에
+  캐시 — SSE generator·재접속 replay 가 재사용, queue/buffer 의 (event, dict)
+  shape 은 보존이라 테스트 churn 0(합성 identity/sticky/viewers 는 fallback
+  dumps). 테스트: 버퍼 캡+notice/캡 미만 무notice/캐시 일치/replay 캐시/합성
+  plain-dict 5종 신규, deque 비교 단언 1건 조정.
 - **2026-07-11 · v4.35.1 · A1+A3+A4 완료**: `manager.iter_record_ops(record)` 신설
   (멀티-op `ops` + 단수 legacy `action` 양쪽 shape 의 단일 reader, `_classify_record`
   옆) → delegate 추출기 2종과 loop `_format_tool_calls_for_review` 가 소비.

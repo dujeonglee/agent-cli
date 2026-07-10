@@ -1152,6 +1152,24 @@
     renderError(d);
   });
 
+  // Bounded replay buffer: on reconnect to a very long session the server
+  // replays only the most recent window and says how many events fell off.
+  // Full history is still on disk (history.jsonl / --resume).
+  es.addEventListener("transcript_truncated", function (e) {
+    const d = JSON.parse(e.data);
+    const line = el("div", ["card", "card-sys"]);
+    line.appendChild(el("span", ["sys-icon"], "⋯"));
+    line.appendChild(
+      el(
+        "span",
+        ["sys-text"],
+        "이전 이벤트 " + d.omitted + "개 생략 (재접속 리플레이 한도 — 전체 기록은 세션 히스토리에 보존)"
+      )
+    );
+    appendToTimeline(line);
+    scrollToBottom();
+  });
+
   es.addEventListener("stream_chunk", function (e) {
     const d = JSON.parse(e.data);
     if (d.task_id && taskGroups[d.task_id]) {

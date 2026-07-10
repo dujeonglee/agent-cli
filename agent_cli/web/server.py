@@ -923,7 +923,14 @@ class WebServer:
         """
         snapshot = self.renderer.register_connection(conn)
         for event, data in snapshot:
-            yield {"event": event, "data": json.dumps(data, ensure_ascii=False)}
+            # ``_emit`` payloads carry a pre-serialized ``json_str`` (dumped
+            # once at the fan-out point); per-connection synthetics (identity /
+            # sticky / viewers) are plain dicts — dump those here (a handful
+            # per connect, vs. the whole buffer per reconnect before).
+            payload = getattr(data, "json_str", None)
+            if payload is None:
+                payload = json.dumps(data, ensure_ascii=False)
+            yield {"event": event, "data": payload}
 
         loop = asyncio.get_event_loop()
         try:
@@ -944,7 +951,10 @@ class WebServer:
                     # Sentinel from unregister — leave the loop without
                     # serialising to the client.
                     break
-                yield {"event": event, "data": json.dumps(data, ensure_ascii=False)}
+                payload = getattr(data, "json_str", None)
+                if payload is None:
+                    payload = json.dumps(data, ensure_ascii=False)
+                yield {"event": event, "data": payload}
         finally:
             self.renderer.unregister_connection(conn)
 
@@ -1368,7 +1378,10 @@ def create_app(server: WebServer) -> FastAPI:
         if not isinstance(entries, list):
             raise HTTPException(status_code=400, detail="entries must be a list")
         title = body.get("title") or ""
-        doc = export_mod.entries_to_html(entries, title=str(title))
+        # Rendering a long transcript to HTML is CPU-bound — off the loop.
+        doc = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: export_mod.entries_to_html(entries, title=str(title))
+        )
         return Response(
             content=doc,
             media_type="text/html; charset=utf-8",
@@ -1456,21 +1469,31 @@ def create_app(server: WebServer) -> FastAPI:
                     pass
             return total
 
-        entries = []
-        for child in sorted(d.iterdir(), key=lambda c: (c.is_file(), c.name.lower())):
-            is_dir = child.is_dir()
-            try:
-                size = _dir_size(child) if is_dir else child.stat().st_size
-            except OSError:
-                size = 0
-            entries.append(
-                {
-                    "name": child.name,
-                    "rel": str(child.resolve().relative_to(server.workspace)),
-                    "type": "dir" if is_dir else "file",
-                    "size": size,
-                }
-            )
+        def _scan() -> list[dict]:
+            entries = []
+            for child in sorted(
+                d.iterdir(), key=lambda c: (c.is_file(), c.name.lower())
+            ):
+                is_dir = child.is_dir()
+                try:
+                    size = _dir_size(child) if is_dir else child.stat().st_size
+                except OSError:
+                    size = 0
+                entries.append(
+                    {
+                        "name": child.name,
+                        "rel": str(child.resolve().relative_to(server.workspace)),
+                        "type": "dir" if is_dir else "file",
+                        "size": size,
+                    }
+                )
+            return entries
+
+        # Recursive dir sizing walks the whole subtree (node_modules/.git …) —
+        # run it in the executor so the asyncio thread (and every viewer's SSE
+        # delivery) is not stalled for the duration. Same offload pattern as
+        # _gen_directive's provider.call.
+        entries = await asyncio.get_event_loop().run_in_executor(None, _scan)
         return JSONResponse({"path": path, "entries": entries})
 
     @app.post("/api/workspace/download")
@@ -1490,7 +1513,8 @@ def create_app(server: WebServer) -> FastAPI:
         targets = [server._safe_workspace_path(r) for r in rels]
         tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
         tmp.close()
-        try:
+
+        def _build_zip() -> None:
             with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
                 seen: set[Path] = set()
                 for p in targets:
@@ -1504,6 +1528,11 @@ def create_app(server: WebServer) -> FastAPI:
                             continue
                         seen.add(f)
                         zf.write(f, f.relative_to(server.workspace))
+
+        try:
+            # CPU-bound deflate + recursive walk — keep it off the event loop
+            # (a large workspace download must not freeze SSE for all viewers).
+            await asyncio.get_event_loop().run_in_executor(None, _build_zip)
         except Exception:
             os.unlink(tmp.name)
             raise
@@ -1529,25 +1558,36 @@ def create_app(server: WebServer) -> FastAPI:
         rels = body.get("paths") or []
         if not rels:
             raise HTTPException(status_code=400, detail="no paths given")
-        deleted: list[str] = []
-        errors: list[dict] = []
+        # Validate ALL paths up front (raises 400 before anything is deleted);
+        # the recursive rmtree work then runs in the executor so a big delete
+        # doesn't stall the event loop.
+        checked: list[tuple[str, Path]] = []
         for rel in rels:
             target = server._safe_workspace_path(rel)  # raises 400 on traversal
             if target == server.workspace:
                 raise HTTPException(
                     status_code=400, detail="refusing to delete the workspace root"
                 )
-            try:
-                if target.is_dir():
-                    shutil.rmtree(target)
-                elif target.exists():
-                    target.unlink()
-                else:
-                    errors.append({"path": rel, "error": "not found"})
-                    continue
-                deleted.append(str(target.relative_to(server.workspace)))
-            except OSError as e:
-                errors.append({"path": rel, "error": str(e)})
+            checked.append((rel, target))
+
+        def _delete() -> tuple[list[str], list[dict]]:
+            deleted: list[str] = []
+            errors: list[dict] = []
+            for rel, target in checked:
+                try:
+                    if target.is_dir():
+                        shutil.rmtree(target)
+                    elif target.exists():
+                        target.unlink()
+                    else:
+                        errors.append({"path": rel, "error": "not found"})
+                        continue
+                    deleted.append(str(target.relative_to(server.workspace)))
+                except OSError as e:
+                    errors.append({"path": rel, "error": str(e)})
+            return deleted, errors
+
+        deleted, errors = await asyncio.get_event_loop().run_in_executor(None, _delete)
         return JSONResponse({"deleted": deleted, "errors": errors})
 
     @app.post("/api/workspace/upload")
@@ -1595,11 +1635,16 @@ def create_app(server: WebServer) -> FastAPI:
                 detail=f"file too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
             )
         overwritten = dest.exists()
-        # Create the nested dirs (under the already-validated target). Safe:
-        # ``_safe_workspace_path`` confirmed ``dest`` resolves under the
-        # workspace, so its parents do too.
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(body)
+
+        def _write() -> None:
+            # Create the nested dirs (under the already-validated target).
+            # Safe: ``_safe_workspace_path`` confirmed ``dest`` resolves under
+            # the workspace, so its parents do too. Runs in the executor — a
+            # multi-MB write on slow storage must not stall the event loop.
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+
+        await asyncio.get_event_loop().run_in_executor(None, _write)
         return JSONResponse(
             {
                 "name": segments[-1],
