@@ -49,6 +49,48 @@ def default_oversized_nudge(tool_name: str, tokens: int, cap: int) -> str:
     )
 
 
+def on_disk_oversized_nudge(
+    tool_name: str,
+    subject: str,
+    location: str,
+    read_path: str,
+    tokens: int,
+    cap: int,
+    tools_available: frozenset[str],
+    *,
+    part_extra: str = "",
+    tail_bullets: tuple[str, ...] = (),
+) -> str:
+    """Shared over-cap nudge for tools whose large output is ON DISK.
+
+    The invariant behind read_file / shell / delegate: once the bulky content
+    is a file at ``read_path``, recovery is the same shape — (a) read a SPECIFIC
+    part (range / search), or (b) fan out with delegate over SECTIONS of that
+    file (each subagent returns only the distilled result, so the parent never
+    holds the raw bulk). The fan-out bullet is emitted only when ``delegate`` is
+    callable in the current loop (``tools_available``), so it never points at a
+    tool the model cannot invoke. ``subject`` names the thing (``'big.py'`` /
+    ``command output`` / ``subagent answer``); ``location`` is the on-disk
+    clause; ``part_extra`` appends a tool-specific narrowing to bullet (a);
+    ``tail_bullets`` adds extra options (e.g. delegate's re-delegate-narrower)."""
+    lines = [
+        f"[{tool_name}: {subject} is ~{tokens:,} tokens — too large for one "
+        f"context (cap {cap:,}). NOT added to context; {location}.",
+        f"· Need a SPECIFIC part? read_file '{read_path}' with a line range"
+        + (f", or {part_extra}" if part_extra else "")
+        + ".",
+    ]
+    if "delegate" in tools_available:
+        lines.append(
+            "· Need the WHOLE thing analysed/searched? Fan out with delegate: "
+            f"subagents each read_file a section of '{read_path}' and return "
+            "only what you need (matches / a summary / the answer) — you get "
+            f"the distilled results, not the raw {tokens:,} tokens."
+        )
+    lines.extend(f"· {b}" for b in tail_bullets)
+    return "\n".join(lines) + "]"
+
+
 class Tool(ABC):
     """Base class for every dispatchable tool.
 
@@ -162,6 +204,7 @@ class Tool(ABC):
         tokens: int,
         cap: int,
         tools_available: frozenset[str],
+        session_dir: "str | Path | None" = None,
     ) -> str:
         """Observation substituted when THIS tool's output exceeds the oversized
         cap (``context_window / 10``). The tool OWNS the full over-cap policy.
@@ -173,8 +216,12 @@ class Tool(ABC):
         re-running). ``tools_available`` is the set of tool names callable in
         the CURRENT loop (e.g. ``delegate`` is absent inside a depth-limited
         subagent), so guidance can name only tools the model can actually use.
-        Fires only when :attr:`apply_oversized_cap` is True AND the body is over
-        cap — so an override never needs to re-check either condition.
+        ``session_dir`` is the current session directory (or None in headless /
+        no-ctx runs) — a tool whose output is not already on disk (shell) can
+        persist ``body`` there and point at it, uniform with tools whose output
+        already is a file (read_file, delegate's ``result.md``). Fires only when
+        :attr:`apply_oversized_cap` is True AND the body is over cap — so an
+        override never needs to re-check either condition.
         """
         return default_oversized_nudge(self.name, tokens, cap)
 

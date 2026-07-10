@@ -20,7 +20,11 @@ from agent_cli.constants import DELEGATE_DEFAULT_TIMEOUT
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.resource_loader import ResourceLoader
-from agent_cli.tools.base import Tool
+from agent_cli.tools.base import (
+    Tool,
+    default_oversized_nudge,
+    on_disk_oversized_nudge,
+)
 from agent_cli.tools.result import ToolResult
 
 if TYPE_CHECKING:
@@ -810,6 +814,36 @@ class DelegateTool(Tool):
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
+
+    def render_oversized(
+        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
+    ) -> str:
+        """Over-cap policy for a large subagent answer: ``tool_delegate`` already
+        persisted the full formatted answer to ``<delegate_dir>/result.md`` (the
+        relative dir is ``result.artifact``), so point at that file and reuse the
+        shared on-disk nudge — (a) read a specific part / search ``result.md``,
+        (b) delegate fan-out over its sections — plus a re-delegate-narrower
+        option that attacks the root cause (the task was too broad). If the
+        artifact / session dir is missing (e.g. the parallel path, or headless)
+        fall back to the generic nudge."""
+        artifact = getattr(result, "artifact", "") or ""
+        if session_dir and artifact:
+            path = str(Path(session_dir) / artifact / "result.md")
+            return on_disk_oversized_nudge(
+                "delegate",
+                "subagent answer",
+                f"full answer saved to '{path}'",
+                path,
+                tokens,
+                cap,
+                tools_available,
+                tail_bullets=(
+                    "Or re-delegate a NARROWER task so the subagent returns a "
+                    "focused result (attack the root cause: the task was too "
+                    "broad).",
+                ),
+            )
+        return default_oversized_nudge("delegate", tokens, cap)
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         # delegate is intercepted by the loop (it needs parent context,

@@ -9,7 +9,7 @@ import re
 import zlib
 from pathlib import Path
 
-from agent_cli.tools.base import Tool
+from agent_cli.tools.base import Tool, on_disk_oversized_nudge
 from agent_cli.tools.result import ToolResult
 
 # Hashline constants: 16-char alphabet for CRC32-to-2-char hash encoding
@@ -276,35 +276,24 @@ class ReadFileTool(Tool):
         return self.strip_prefix(action_input).get("path", "")
 
     def render_oversized(
-        self, result, args, *, body, tokens, cap, tools_available
+        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
     ) -> str:
-        """Over-cap policy for a whole-file read: the file is intact on disk,
-        so drop the body and steer by NEED.
-
-        A SPECIFIC part is a cheap ranged re-read (range / read_symbols). The
-        WHOLE file digested is a delegate fan-out — several subagents each read
-        a section and return only the distilled result (matches / a summary /
-        the answer), so the parent never holds the raw file. The delegate line
-        is emitted only when delegate is actually callable (it is stripped from
-        a depth-limited subagent's toolset), so we never point at a tool the
-        model cannot invoke."""
+        """Over-cap policy for a whole-file read: the file is intact on disk, so
+        drop the body and steer by NEED via the shared on-disk nudge — (a) a
+        SPECIFIC part is a cheap ranged re-read (range / read_symbols), (b) the
+        WHOLE file is a delegate fan-out over sections. Same pattern shell and
+        delegate use once their bulk output is a file."""
         path = args.get("path") or "the file"
-        lines = [
-            f"[read_file: '{path}' is ~{tokens:,} tokens — too large for one "
-            f"context (cap {cap:,}). NOT added to context; the file is intact "
-            f"on disk.",
-            "· Need a SPECIFIC part? read_file with a line range, or "
-            "read_symbols for one function/class.",
-        ]
-        if "delegate" in tools_available:
-            lines.append(
-                "· Need the WHOLE file analysed/searched? Fan out with "
-                "delegate: several subagents, each read_file'ing a section (a "
-                "line range) and returning only what you need (matches / a "
-                "summary / the answer) — you get the distilled results, not "
-                f"the raw {tokens:,} tokens."
-            )
-        return "\n".join(lines) + "]"
+        return on_disk_oversized_nudge(
+            "read_file",
+            f"'{path}'",
+            "the file is intact on disk",
+            path,
+            tokens,
+            cap,
+            tools_available,
+            part_extra="read_symbols for one function/class",
+        )
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return _read_one(args)

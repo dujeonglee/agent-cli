@@ -14,7 +14,11 @@ import json
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop import AgentLoop
 from agent_cli.tools import TOOLS
-from agent_cli.tools.base import Tool, default_oversized_nudge
+from agent_cli.tools.base import (
+    Tool,
+    default_oversized_nudge,
+    on_disk_oversized_nudge,
+)
 from agent_cli.tools.result import ToolResult
 
 
@@ -25,6 +29,7 @@ def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
     loop = AgentLoop.__new__(AgentLoop)
     loop._oversized_cap = cap
     loop.tools_list = list(TOOLS.keys()) if tools is None else list(tools)
+    loop.ctx = None  # seam reads self.ctx.session_dir if self.ctx else None
     return loop
 
 
@@ -218,6 +223,139 @@ class TestReadFileOversizedThroughSeam:
         )
         assert "delegate" not in out
         assert "read_symbols" in out  # still steers to a narrower read
+
+
+# ── shared on-disk nudge (read_file / shell / delegate invariant) ────
+
+
+class TestOnDiskNudgeHelper:
+    def _n(self, tools, **kw):
+        return on_disk_oversized_nudge(
+            "toolx",
+            "the thing",
+            "saved to '/s/out.txt'",
+            "/s/out.txt",
+            12_345,
+            4_096,
+            frozenset(tools),
+            **kw,
+        )
+
+    def test_specific_part_bullet_always_present(self):
+        n = self._n(["toolx"])
+        assert "read_file '/s/out.txt' with a line range" in n
+        assert "12,345" in n and "4,096" in n
+        assert "saved to '/s/out.txt'" in n
+
+    def test_fanout_bullet_only_when_delegate_available(self):
+        assert "Fan out with delegate" in self._n(["toolx", "delegate"])
+        assert "Fan out with delegate" not in self._n(["toolx"])
+
+    def test_part_extra_and_tail_bullets(self):
+        n = self._n(["toolx"], part_extra="read_symbols", tail_bullets=("do X.",))
+        assert "read_symbols" in n
+        assert "· do X." in n
+
+
+# ── shell over-cap: persist output to file + on-disk nudge ───────────
+
+
+class TestShellOversized:
+    def _big(self):
+        return "row of output\n" * 800
+
+    def test_persists_output_and_points_at_file(self, tmp_path):
+        n = TOOLS["shell"].render_oversized(
+            ToolResult(True, output=self._big()),
+            {"command": "grep -r foo ."},
+            body=self._big(),
+            tokens=9_000,
+            cap=4_096,
+            tools_available=frozenset({"shell", "read_file", "delegate"}),
+            session_dir=tmp_path,
+        )
+        saved = list(tmp_path.glob("shell-output-*.txt"))
+        assert len(saved) == 1, "output must be persisted exactly once"
+        assert saved[0].read_text() == self._big()  # full body on disk
+        assert str(saved[0]) in n  # nudge points at the file
+        assert "row of output" not in n  # raw body not echoed
+        assert "Fan out with delegate" in n  # fan-out offered
+
+    def test_no_delegate_no_fanout_bullet(self, tmp_path):
+        n = TOOLS["shell"].render_oversized(
+            ToolResult(True, output=self._big()),
+            {"command": "ls -R /"},
+            body=self._big(),
+            tokens=9_000,
+            cap=4_096,
+            tools_available=frozenset({"shell", "read_file"}),
+            session_dir=tmp_path,
+        )
+        assert "Fan out with delegate" not in n
+        assert "read_file" in n  # still steers to a ranged read of the file
+
+    def test_headless_falls_back_to_tee_nudge(self):
+        # No session dir → cannot save a file → generic tee-to-file fallback.
+        n = TOOLS["shell"].render_oversized(
+            ToolResult(True, output=self._big()),
+            {"command": "ls"},
+            body=self._big(),
+            tokens=9_000,
+            cap=4_096,
+            tools_available=frozenset({"shell", "delegate"}),
+            session_dir=None,
+        )
+        assert "tee" in n  # generic default nudge advises tee→read_file
+        assert "shell" in n
+
+    def test_identical_output_dedups_filename(self, tmp_path):
+        # Same command+output → same hash → same file (no proliferation).
+        for _ in range(3):
+            TOOLS["shell"].render_oversized(
+                ToolResult(True, output=self._big()),
+                {"command": "dup"},
+                body=self._big(),
+                tokens=9_000,
+                cap=4_096,
+                tools_available=frozenset({"shell"}),
+                session_dir=tmp_path,
+            )
+        assert len(list(tmp_path.glob("shell-output-*.txt"))) == 1
+
+
+# ── delegate over-cap: point at result.md + fan-out + re-delegate ────
+
+
+class TestDelegateOversized:
+    def test_points_at_result_md_with_fanout_and_redelegate(self, tmp_path):
+        # tool_delegate persisted the answer at <session>/<artifact>result.md.
+        (tmp_path / "task-abc").mkdir()
+        (tmp_path / "task-abc" / "result.md").write_text("BIG ANSWER")
+        n = TOOLS["delegate"].render_oversized(
+            ToolResult(True, output="STATUS: success…", artifact="task-abc/"),
+            {"task": "analyse everything"},
+            body="x" * 50_000,
+            tokens=25_000,
+            cap=4_096,
+            tools_available=frozenset({"delegate", "read_file"}),
+            session_dir=tmp_path,
+        )
+        assert "task-abc/result.md" in n.replace(str(tmp_path) + "/", "")
+        assert "result.md" in n
+        assert "Fan out with delegate" in n  # split result.md across subagents
+        assert "re-delegate a NARROWER task" in n.lower() or "narrower" in n.lower()
+
+    def test_falls_back_without_artifact(self, tmp_path):
+        n = TOOLS["delegate"].render_oversized(
+            ToolResult(True, output="…", artifact=""),
+            {"task": "t"},
+            body="x" * 50_000,
+            tokens=25_000,
+            cap=4_096,
+            tools_available=frozenset({"delegate"}),
+            session_dir=tmp_path,
+        )
+        assert "too large" in n  # generic fallback still caps
 
 
 # ── ctx.add is pure storage (no spill transform) ─────────────────────

@@ -1946,6 +1946,7 @@ class AgentLoop:
                         tokens=tokens,
                         cap=self._oversized_cap,
                         tools_available=frozenset(self.tools_list),
+                        session_dir=self.ctx.session_dir if self.ctx else None,
                     )
                 return default_oversized_nudge(tool_name, tokens, self._oversized_cap)
         return body
