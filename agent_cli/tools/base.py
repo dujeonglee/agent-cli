@@ -91,6 +91,28 @@ def on_disk_oversized_nudge(
     return "\n".join(lines) + "]"
 
 
+def narrow_oversized_nudge(
+    tool_name: str,
+    subject: str,
+    tokens: int,
+    cap: int,
+    *,
+    bullets: tuple[str, ...],
+) -> str:
+    """Over-cap nudge for tools whose output is NOT a file — the model re-issues
+    a NARROWER call in place (SQL ``LIMIT`` / ``substr``, a single symbol fetch)
+    rather than reading a saved slice. Sibling of :func:`on_disk_oversized_nudge`
+    (which points at a persisted file); ``bullets`` are the tool-specific
+    narrowing options, so the advice fits the tool instead of the generic
+    line-range / head / grep default."""
+    lines = [
+        f"[{tool_name}: {subject} is ~{tokens:,} tokens — too large for one "
+        f"context (cap {cap:,}). NOT added to context; the call succeeded.",
+    ]
+    lines.extend(f"· {b}" for b in bullets)
+    return "\n".join(lines) + "]"
+
+
 class Tool(ABC):
     """Base class for every dispatchable tool.
 

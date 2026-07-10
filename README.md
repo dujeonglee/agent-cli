@@ -791,6 +791,7 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
   - `shell`: over-cap 일 때만 출력을 `session_dir/shell-output-<hash>.txt` 로 **lazy 저장**(일반 shell 호출엔 디스크 쓰기 0) 후 그 파일을 가리킴. headless(세션 없음)면 `tee` 폴백.
   - `delegate`: 서브에이전트 답변은 이미 `<delegate_dir>/result.md` 에 저장돼 있어 그 파일을 가리킴 + **더 좁은 재위임**(근본 원인 교정) 옵션 추가.
   - `fetch`: over-cap 일 때만 내용을 `session_dir/fetch-output-<hash>.txt` 로 lazy 저장 후 가리킴 + **더 좁은 URL/얕은 `fetch_depth`** 옵션 추가.
+- **비-파일 도구 (`read_context`·`code_index`)**: 출력이 파일이 아니라(SQL 결과·심볼 목록) **제자리 재-narrow** 가 정답이므로 별도 헬퍼(`narrow_oversized_nudge`)로 그 도구 파라미터만 안내 — `read_context` → `LIMIT`/컬럼 projection/`substr(text,1,200)` 재쿼리, `code_index` → `mode=fetch` 단일 심볼/`search` 필터/`max_bytes`. (파일·팬아웃 얘기 없음.)
 - 사용자/어시스턴트 메시지는 캡 대상이 아닙니다(사람의 의도적 입력·모델 자신의 출력이라 거절/절단하지 않음).
 
 ### code_index — SQLite 코드 인덱스

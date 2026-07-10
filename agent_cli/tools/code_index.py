@@ -43,7 +43,7 @@ from agent_cli.code_index import (
 from agent_cli.code_index.builder import get_parser
 from agent_cli.code_index.languages import LANGUAGES, language_of
 from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
-from agent_cli.tools.base import Tool
+from agent_cli.tools.base import Tool, narrow_oversized_nudge
 from agent_cli.tools.read_file import format_hashlines_range
 from agent_cli.tools.result import ToolResult
 
@@ -739,6 +739,25 @@ class CodeIndexTool(Tool):
     def summary_arg(self, action_input: dict) -> str:
         std = self.strip_prefix(action_input)
         return f"{std.get('mode', '')} {std.get('path', '')}".strip()
+
+    def render_oversized(
+        self, result, args, *, body, tokens, cap, tools_available, session_dir=None
+    ) -> str:
+        """Over-cap policy for an index query: the fix is a NARROWER query in
+        place (fetch one symbol, filter, or scope a mode), not a file read —
+        steer to code_index's own params instead of the generic default."""
+        return narrow_oversized_nudge(
+            "code_index",
+            "result",
+            tokens,
+            cap,
+            bullets=(
+                "Narrow the query: fetch ONE symbol (mode=fetch, path, name), "
+                "or filter list/kind with search='regex'.",
+                "Scope to a specific path/name instead of a broad dump (kind / "
+                "a big file's list); for slice mode, lower max_bytes.",
+            ),
+        )
 
     def _run(self, args: dict, *, session_dir=None) -> ToolResult:
         return _dispatch_one(args)

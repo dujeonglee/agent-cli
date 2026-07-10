@@ -17,6 +17,7 @@ from agent_cli.tools import TOOLS
 from agent_cli.tools.base import (
     Tool,
     default_oversized_nudge,
+    narrow_oversized_nudge,
     on_disk_oversized_nudge,
 )
 from agent_cli.tools.result import ToolResult
@@ -403,6 +404,77 @@ class TestFetchOversized:
             session_dir=None,
         )
         assert "too large" in n  # generic fallback
+
+
+# ── narrow (not-on-disk) nudge: context / code_index ─────────────────
+
+
+class TestNarrowNudgeHelper:
+    def test_preamble_and_bullets(self):
+        n = narrow_oversized_nudge(
+            "toolx", "the result", 30_000, 4_096, bullets=("do A.", "do B.")
+        )
+        assert "toolx: the result is ~30,000 tokens" in n
+        assert "cap 4,096" in n
+        assert "the call succeeded" in n
+        assert "· do A." in n and "· do B." in n
+        # narrow nudge is in-place: it must NOT drag in file/tee/read_file advice
+        assert "tee" not in n and "read_file" not in n
+
+
+class TestContextOversized:
+    def _n(self, tools=("read_context", "read_file", "delegate")):
+        return TOOLS["read_context"].render_oversized(
+            ToolResult(True, output="…"),
+            {"read_context_query": "SELECT * FROM history"},
+            body="…" * 10,
+            tokens=30_000,
+            cap=4_096,
+            tools_available=frozenset(tools),
+        )
+
+    def test_overrides_and_steers_to_sql_narrowing(self):
+        assert type(TOOLS["read_context"]).render_oversized is not Tool.render_oversized
+        n = self._n()
+        assert "read_context" in n and "30,000" in n
+        assert "LIMIT" in n and "substr(text,1,200)" in n  # SQL-native recovery
+        # no irrelevant generic advice / no file/fan-out for a SQL result
+        assert "line range" not in n
+        assert "tee" not in n and "Fan out with delegate" not in n
+
+    def test_seam_produces_sql_nudge(self):
+        loop = _loop(cap=50)
+        big = "x" * 100_000
+        out = loop._tool_observation("read_context", ToolResult(True, output=big), {})
+        assert "LIMIT" in out and "substr" in out
+        assert "x" * 50 not in out  # raw dropped
+
+
+class TestCodeIndexOversized:
+    def _n(self):
+        return TOOLS["code_index"].render_oversized(
+            ToolResult(True, output="…"),
+            {"mode": "kind", "symbol_kind": "function"},
+            body="…" * 10,
+            tokens=30_000,
+            cap=4_096,
+            tools_available=frozenset({"code_index", "read_file"}),
+        )
+
+    def test_overrides_and_steers_to_index_params(self):
+        assert type(TOOLS["code_index"]).render_oversized is not Tool.render_oversized
+        n = self._n()
+        assert "code_index" in n and "30,000" in n
+        # real code_index params, not generic advice
+        assert "mode=fetch" in n and "search=" in n and "max_bytes" in n
+        assert "line range" not in n and "tee" not in n
+
+    def test_seam_produces_index_nudge(self):
+        loop = _loop(cap=50)
+        big = "y" * 100_000
+        out = loop._tool_observation("code_index", ToolResult(True, output=big), {})
+        assert "mode=fetch" in out
+        assert "y" * 50 not in out
 
 
 # ── ctx.add is pure storage (no spill transform) ─────────────────────
