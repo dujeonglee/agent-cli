@@ -17,6 +17,7 @@ See ``docs/robust-harness/DESIGN.md`` §3.3.
 """
 
 from __future__ import annotations
+from agent_cli.fsio import append_line
 
 import json
 from dataclasses import asdict, dataclass, field
@@ -148,9 +149,7 @@ class TurnRecorder:
         # delegate workers crash on the first recorded turn — see the
         # matching defensive mkdir in
         # ``ContextManager._append_to_history``.
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        append_line(self._path, line)
 
         # Debug-only raw capture: failed turns' raw response → separate file.
         if self._raw_path is not None and failure_signal and raw is not None:
@@ -160,9 +159,7 @@ class TurnRecorder:
                 "failure_signal": failure_signal,
                 "raw": raw,
             }
-            self._raw_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._raw_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(raw_rec, ensure_ascii=False) + "\n")
+            append_line(self._raw_path, json.dumps(raw_rec, ensure_ascii=False))
 
     def record_compaction(
         self,
@@ -201,7 +198,4 @@ class TurnRecorder:
             "failure_signal": failure_signal,
             "duration_ms": duration_ms,
         }
-        line = json.dumps(rec, ensure_ascii=False)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        append_line(self._path, json.dumps(rec, ensure_ascii=False))

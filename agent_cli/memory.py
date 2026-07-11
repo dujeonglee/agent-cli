@@ -20,6 +20,7 @@ consumes to rebuild the system-prompt index (mirrors DIRECTIVE.md reload).
 """
 
 from __future__ import annotations
+from agent_cli.fsio import atomic_write_text
 
 import json
 import threading
@@ -88,10 +89,10 @@ def load(session_dir) -> list[dict]:
 
 def _write_all(session_dir, entries: list[dict]) -> None:
     p = _path(session_dir)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(
-        "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries),
-        encoding="utf-8",
+    # read-modify-write 전체 교체 — 크래시 중간상태가 남지 않도록 원자
+    # 교체 (fsio 패턴; _io_lock 이 writer 직렬화, 이건 crash-safety).
+    atomic_write_text(
+        p, "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries)
     )
 
 

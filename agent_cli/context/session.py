@@ -11,6 +11,7 @@ File layout:
 """
 
 from __future__ import annotations
+from agent_cli.fsio import atomic_write_text
 
 import json
 import os
@@ -71,7 +72,9 @@ def save_meta(meta: SessionMeta) -> None:
         },
         ensure_ascii=False,
     )
-    path.write_text(header + "\n", encoding="utf-8")
+    # 단일-라인 meta rewrite — 다른 프로세스(보드 sessions 조회·resume
+    # preview)가 읽는 상태 파일이라 원자 교체 (fsio 패턴).
+    atomic_write_text(path, header + "\n")
 
 
 def list_sessions(workspace: str | None = None) -> list[SessionMeta]:

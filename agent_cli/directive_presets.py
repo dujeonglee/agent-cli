@@ -26,6 +26,7 @@ simply shadows the built-in.
 """
 
 from __future__ import annotations
+from agent_cli.fsio import atomic_write_text
 
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def save(axis: str, name: str, content: str) -> str:
     d = _axis_dir(axis)
     n = _safe_name(name)
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{n}.md").write_text(content, encoding="utf-8")
+    atomic_write_text(d / f"{n}.md", content)  # 상태 파일 — fsio 패턴
     return n
 
 

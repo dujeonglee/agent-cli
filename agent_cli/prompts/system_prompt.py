@@ -16,6 +16,7 @@ a stable prefix for KV cache reuse across turns.
 """
 
 from __future__ import annotations
+from agent_cli.fsio import atomic_write_text
 
 import platform
 from pathlib import Path
@@ -63,8 +64,8 @@ def write_project_directive(content: str) -> None:
     """Write the project ``DIRECTIVE.md`` (creating ``.agent-cli/`` if needed).
     The loop rebuilds its system prompt from this file on the next LLM call."""
     f = project_directive_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(content, encoding="utf-8")
+    # 루프가 다음 LLM 콜에서 읽는 상태 파일 — 원자 교체 (fsio 패턴).
+    atomic_write_text(f, content)
 
 
 # ── Section 1: Role ──────────────────────────────

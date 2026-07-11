@@ -123,7 +123,7 @@ def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
     # + legacy singular ``action``) — reading only the top-level ``action``
     # here silently skipped every op turn once md_array/react started
     # storing ``ops`` records, leaving this section permanently empty.
-    from agent_cli.context.manager import iter_record_ops
+    from agent_cli.context.records import iter_record_ops
 
     calls = []
     for msg in raw:

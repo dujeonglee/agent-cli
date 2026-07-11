@@ -31,15 +31,23 @@ reverts to the historical plain-FIFO behaviour.
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
+# C5: 관심사 분리 — record 계약은 records, LLM 표현은 render, 디스크
+# I/O primitive 는 store 소유. manager 는 캐시 + 압축 정책만.
+from agent_cli.context import store
+from agent_cli.context.records import _classify_record
+from agent_cli.context.render import (
+    _estimate_message_tokens,
+    _sum_message_tokens,
+    _to_natural_language,
+    _to_summary_text,
+)
 from agent_cli.context._file_extract import extract_file_paths
-from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.render import render_compaction_progress
 from agent_cli.wire_formats import get as _get_wire_format
 
@@ -48,7 +56,6 @@ from agent_cli.wire_formats import get as _get_wire_format
 DEFAULT_TOKEN_BUDGET = 100_000
 _COMPACTION_THRESHOLD_RATIO = 0.9  # trigger when cache > 90% of budget
 _SUMMARY_CHAR_CAP = 8000  # ≈ 2000 tokens at 4 chars/token
-_COMPACTION_JSON_VERSION = 1
 
 # NOTE: oversized single-output protection lives in the loop now, not here.
 # A tool observation larger than ``context_window / 10`` is replaced with a
@@ -667,28 +674,11 @@ class ContextManager:
     # ── Persistence ──────────────────────────────────
 
     def _append_to_history(self, message: dict) -> None:
-        """Append a single JSON line to history.jsonl.
-
-        Defensively recreates the parent directory ON FAILURE — the session
-        dir is created in ``__init__`` but can disappear between construction
-        and a write if an external process (user cleanup, parallel `rm -rf
-        .agent-cli/sessions/`, etc.) wipes the tree mid-run. Without this
-        guard, parallel delegate workers would crash on the first turn's
-        history flush. The mkdir lives in the exception path (not before
-        every open) so the common case pays one ``open`` instead of a
-        ``mkdir`` stat + ``open`` per add (≥2 adds per turn). Open-per-add is
-        deliberate — a persistent handle would keep writing into an unlinked
-        inode after an external wipe (silent data loss instead of recovery).
-        """
-        record = self._enrich_record(message)
-        line = json.dumps(record, ensure_ascii=False) + "\n"
-        try:
-            with open(self._history_path, "a", encoding="utf-8") as f:
-                f.write(line)
-        except FileNotFoundError:
-            self._history_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._history_path, "a", encoding="utf-8") as f:
-                f.write(line)
+        """enrich(turn 은 manager 소유) 후 history.jsonl 에 append.
+        가드/패턴 근거는 :mod:`agent_cli.fsio` 모듈 docstring 참조."""
+        # C5: 디스크 접촉은 store primitive 로 — 외부-정리 복구 가드
+        # (mkdir-on-failure) 는 fsio.append_line 에 일반화돼 있다.
+        store.append_record(self._history_path, self._enrich_record(message))
 
     def _enrich_record(self, message: dict) -> dict:
         """Build the history.jsonl record: the round-trip message + retrieval
@@ -717,30 +707,22 @@ class ContextManager:
         """Serialise compaction state next to history.jsonl. Idempotent
         — written atomically (temp + rename) so a crash mid-write
         leaves the previous version intact."""
-        data = {
-            "version": _COMPACTION_JSON_VERSION,
-            "summary": self._summary,
-            "file_list": list(self._file_list),
-            "compaction_count": self._compaction_count,
-            "last_compacted_at": self._last_compacted_at,
-            "dynamic_start_index": self._dynamic_start_index,
-        }
-        tmp = self._compaction_path.with_suffix(".json.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        tmp.replace(self._compaction_path)
+        store.save_compaction(
+            self._compaction_path,
+            {
+                "summary": self._summary,
+                "file_list": list(self._file_list),
+                "compaction_count": self._compaction_count,
+                "last_compacted_at": self._last_compacted_at,
+                "dynamic_start_index": self._dynamic_start_index,
+            },
+        )
 
     def _load_compaction_json(self) -> None:
         """Restore compaction state from disk on resume. Forward-compat:
         unknown ``version`` is silently ignored (cleared state)."""
-        if not self._compaction_path.is_file():
-            return
-        try:
-            with open(self._compaction_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return
-        if data.get("version") != _COMPACTION_JSON_VERSION:
+        data = store.load_compaction(self._compaction_path)
+        if data is None:
             return
         self._summary = data.get("summary", "") or ""
         self._file_list = list(data.get("file_list", []) or [])
@@ -761,15 +743,7 @@ class ContextManager:
         reverse-load-until-budget strategy.
         """
         self._nl_cache = None  # cache rebuilt from disk → re-render on next get
-        with open(self._history_path, "r", encoding="utf-8") as f:
-            raw_lines = [line.strip() for line in f.readlines() if line.strip()]
-
-        messages: list[dict] = []
-        for line in raw_lines:
-            try:
-                messages.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+        messages = store.load_records(self._history_path)
 
         use_offset = self._dynamic_start_index > 0 and self._dynamic_start_index <= len(
             messages
@@ -806,325 +780,8 @@ class ContextManager:
 
     def fork_history_to(self, target_dir: Path) -> Path:
         """Copy this context's history.jsonl to target_dir for fork mode."""
-        import shutil
-
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / "history.jsonl"
-        if self._history_path.is_file():
-            shutil.copy2(self._history_path, target_path)
-        return target_path
-
-
-# ── Helpers ─────────────────────────────────────────
+        return store.fork_history(self._history_path, target_dir)
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-_OBSERVATION_PREFIX = "Observation: "
-_OP_SUMMARY_CAP = 200
-
-
-def _op_summary(action: str, action_input) -> str:
-    """Flatten one op to a compact ``action {args}`` search string (capped)."""
-    try:
-        args = json.dumps(action_input, ensure_ascii=False)
-    except (TypeError, ValueError):
-        args = str(action_input)
-    s = f"{action} {args}".strip()
-    return s[:_OP_SUMMARY_CAP]
-
-
-def iter_record_ops(record: dict) -> list[tuple[str, object]]:
-    """``(action, action_input)`` pairs from ONE assistant history record.
-
-    The single reader for both on-disk assistant shapes — the multi-op
-    ``{"ops": [{"action", "action_input"}, ...]}`` record (md_array / react
-    ``serialize_assistant_for_history`` / ``serialize_terminal_for_history``)
-    and the base singular ``{"action", "action_input"}`` record (legacy
-    sessions + non-multi-op formats). Bare-content records (prose drift, no
-    action) and non-assistant roles yield ``[]``. Ops without an action name
-    (actionless infer stubs) are skipped.
-
-    Public: consumed by delegate's activity-log extractors and the loop's
-    review tool-calls builder, so the record-shape knowledge stays in this
-    module (next to :func:`_classify_record`) instead of each consumer
-    re-guessing the shape — that re-guessing is exactly how the delegate
-    extractors silently broke when the shape moved from JSON-in-``content``
-    to structured fields (423608e).
-    """
-    if record.get("role") != "assistant":
-        return []
-    ops = record.get("ops")
-    if isinstance(ops, list):
-        return [
-            (o["action"], o.get("action_input") or {})
-            for o in ops
-            if isinstance(o, dict) and o.get("action")
-        ]
-    action = record.get("action")
-    if action:
-        return [(action, record.get("action_input") or {})]
-    return []
-
-
-def _classify_record(message: dict) -> tuple[str, list[str], str]:
-    """Derive ``(kind, tools, text)`` retrieval fields from a record's shape.
-
-    ``kind``  — query | observation | action | final | raw | system | <role>
-    ``tools`` — tool names involved (list; empty for query/final/raw)
-    ``text``  — flat searchable surface (prefix-stripped query/observation,
-                thought+op summaries for actions, the result for a final)
-
-    Pure function of the record shape — no prefix-convention guessing leaks
-    into read_context; this is the single place that encodes it.
-    """
-    role = message.get("role")
-    content = str(message.get("content") or "")
-
-    if role == "system":
-        return "system", [], content
-
-    if role == "user":
-        if "tool" in message:  # tool observation
-            text = (
-                content[len(_OBSERVATION_PREFIX) :]
-                if content.startswith(_OBSERVATION_PREFIX)
-                else content
-            )
-            return "observation", [str(message.get("tool") or "")], text
-        # human query — strip the "[author]: " label for the search surface
-        author = message.get("author")
-        text = content
-        if author and content.startswith(f"[{author}]: "):
-            text = content[len(f"[{author}]: ") :]
-        return "query", [], text
-
-    if role == "assistant":
-        ops = message.get("ops")
-        if isinstance(ops, list) and ops:
-            actions = [
-                o.get("action") for o in ops if isinstance(o, dict) and o.get("action")
-            ]
-            is_final = "complete" in actions
-            thought = str(message.get("thought") or "")
-            parts: list[str] = [thought] if thought else []
-            for o in ops:
-                if not isinstance(o, dict):
-                    continue
-                action = o.get("action") or ""
-                ai = o.get("action_input")
-                if action == "complete":
-                    result = ai.get("result") if isinstance(ai, dict) else ai
-                    parts.append(str(result or ""))
-                else:
-                    parts.append(_op_summary(action, ai))
-            text = " | ".join(p for p in parts if p)
-            return ("final" if is_final else "action"), actions, text
-        # raw assistant content (e.g. NO_JSON fallback stored verbatim)
-        return "raw", [], content
-
-    return str(role or "?"), [], content
-
-
-def _context_view(message: dict) -> dict:
-    """An assistant turn as it should appear in RE-FED context: each op's
-    ``action_input`` passed through its tool's
-    ``render_action_input_for_context`` (default identity — so this is a no-op
-    for every tool today; the seam is consulted by both the render path
-    (:func:`_to_natural_language`) and the budget path
-    (:func:`_estimate_message_tokens`) so the two always agree).
-
-    Returns ``message`` unchanged (same object) when nothing is elided, else a
-    shallow copy with rewritten ops — the source record (history.jsonl + cache)
-    is never mutated.
-    """
-    if message.get("role") != "assistant":
-        return message
-    from agent_cli.tools import TOOLS  # lazy: registry → context.manager cycle
-
-    def _view(action: str, ai):
-        if not action or not isinstance(ai, dict):
-            return ai
-        tool = TOOLS.get(action)
-        return tool.render_action_input_for_context(ai) if tool else ai
-
-    ops = message.get("ops")
-    if isinstance(ops, list):
-        new_ops = list(ops)
-        changed = False
-        for i, op in enumerate(ops):
-            if not isinstance(op, dict):
-                continue
-            ai = op.get("action_input")
-            view = _view(op.get("action"), ai)
-            if view is not ai:
-                new_ops[i] = {**op, "action_input": view}
-                changed = True
-        return {**message, "ops": new_ops} if changed else message
-
-    ai = message.get("action_input")
-    view = _view(message.get("action"), ai)
-    return {**message, "action_input": view} if view is not ai else message
-
-
-def _estimate_message_tokens(msg: dict) -> int:
-    """Estimate tokens for a single message dict."""
-    msg = _context_view(msg)  # count what is actually re-fed (elided body)
-    total = 4  # role + formatting overhead
-    for key in ("content", "thought", "action_input"):
-        val = msg.get(key)
-        if val is None:
-            continue
-        if isinstance(val, str):
-            total += estimate_tokens(val)
-        elif isinstance(val, dict):
-            total += estimate_tokens(json.dumps(val, ensure_ascii=False))
-    action = msg.get("action", "")
-    if action:
-        total += estimate_tokens(action)
-    # Multi-op (md_array / react default) assistant records carry their
-    # action(s) + action_input + complete result inside ``ops`` — count them,
-    # else every assistant turn is undercounted to just its ``thought`` (a
-    # large write_file content arg / complete result would be invisible to the
-    # budget estimator).
-    ops = msg.get("ops")
-    if isinstance(ops, list):
-        for op in ops:
-            if not isinstance(op, dict):
-                continue
-            op_action = op.get("action")
-            if op_action:
-                total += estimate_tokens(op_action)
-            op_input = op.get("action_input")
-            if isinstance(op_input, str):
-                total += estimate_tokens(op_input)
-            elif isinstance(op_input, dict):
-                total += estimate_tokens(json.dumps(op_input, ensure_ascii=False))
-    artifact = msg.get("artifact", "")
-    if artifact:
-        total += estimate_tokens(artifact)
-    return total
-
-
-def _sum_message_tokens(messages) -> int:
-    """Estimated token total for a message list — the single expression for
-    ``sum(_estimate_message_tokens(...))`` used across the cache (re)builds
-    (resume restore, compaction evict, force_fit)."""
-    return sum(_estimate_message_tokens(m) for m in messages)
-
-
-def _to_natural_language(msg: dict, wire_format) -> dict:
-    """Convert a JSON history record to a natural-language message for the LLM.
-
-    Input formats (from history.jsonl):
-        User input:     {"role":"user", "content":"..."}
-        Tool result:    {"role":"user", "tool":"...", "args":{...}, "content":"...", "artifact":"..."}
-        Assistant act:  {"role":"assistant", "thought":"...", "action":"...", "action_input":{...}}
-        Complete:       {"role":"assistant", "thought":"...", "action":"complete", "action_input":{"result":"..."}}
-
-    Output format (for chat completion):
-        {"role": "user"|"assistant", "content": "...natural language..."}
-
-    Assistant records are handed off to ``wire_format.render_assistant_
-    from_history`` so each plugin owns the on-disk → message conversion
-    for its own format. The user / tool branches live here because they
-    are format-agnostic.
-    """
-    role = msg.get("role", "user")
-
-    if role == "user":
-        tool = msg.get("tool")
-        if tool:
-            return _convert_observation(msg)
-        return {"role": "user", "content": msg.get("content", "")}
-
-    # Re-feed the context view (bulky action_input bodies elided per-tool;
-    # default identity → unchanged today). History/cache stay faithful.
-    return wire_format.render_assistant_from_history(_context_view(msg))
-
-
-_SUMMARY_CONTENT_EXCERPT = 200  # chars of tool-result content kept per line
-
-
-def _to_summary_text(msg: dict) -> str:
-    """Render one history record as a single natural-language line for the
-    summarisation transcript.
-
-    Unlike ``_to_natural_language`` (which round-trips assistant turns back
-    to the wire shape — ReAct JSON — for resume/recovery self-reinforcement),
-    this is for the *summariser's* input: assistant turns become prose and
-    tool args are summarised (``write_file`` → path only, no file body), so
-    the model sees a transcript to summarise rather than a ReAct conversation
-    to continue. Keeping the wire shape here made a small model emit another
-    ``write_file`` action instead of a summary.
-    """
-    role = msg.get("role", "user")
-
-    if role == "user":
-        tool = msg.get("tool")
-        if not tool:
-            return f"User: {msg.get('content', '')}"
-        header = f"[{tool}]"
-        content = str(msg.get("content", "") or "").strip()
-        if content:
-            excerpt = content[:_SUMMARY_CONTENT_EXCERPT]
-            if len(content) > _SUMMARY_CONTENT_EXCERPT:
-                excerpt += "…"
-            header += f" → {excerpt}"
-        artifact = msg.get("artifact", "")
-        if artifact:
-            header += f" → {artifact}"
-        return header
-
-    # assistant
-    ops = msg.get("ops")
-    if not ops and "action" not in msg and "thought" not in msg:
-        return f"Assistant: {msg.get('content', '')}"
-    thought = (msg.get("thought") or "").strip()
-    # Normalize single-op ({action, action_input}) and multi-op ({ops:[...]})
-    # records to one op list. Multi-op formats (md_array, react) store `ops`,
-    # so reading only the top-level `action` here lost EVERY tool label for
-    # them — the summariser saw thought-only prose with no record of which
-    # tools ran.
-    op_list = ops if isinstance(ops, list) else ([msg] if msg.get("action") else [])
-    # Delegate the per-action label to the tool itself (sibling of
-    # touched_paths): each tool reads its OWN prefixed/array action_input
-    # shape. Lazy import avoids the module-load cycle (registry →
-    # context-tool → context.manager).
-    from agent_cli.tools.registry import TOOLS
-
-    action_lines: list[str] = []
-    for op in op_list:
-        if not isinstance(op, dict):
-            continue
-        action = op.get("action") or ""
-        if not action:
-            continue
-        tool = TOOLS.get(action)
-        # Stored ops are FLAT (the model's emission, e.g. read_file `{path}`);
-        # summary_arg reads the tool's CANONICAL shape (`read_file_reads[]`).
-        # Normalize flat → canonical (idempotent on already-canonical input).
-        ai = op.get("action_input") or {}
-        arg_summary = tool.summary_arg(tool.wrap_single_op(ai)) if tool else ""
-        action_lines.append(f"  → action: {action}({arg_summary})")
-    head = f"Assistant: {thought}" if thought else "Assistant:"
-    return head + "\n" + "\n".join(action_lines) if action_lines else head
-
-
-def _convert_observation(msg: dict) -> dict:
-    """Convert a tool result message to natural language."""
-    tool = msg.get("tool", "")
-    content = msg.get("content", "")
-    artifact = msg.get("artifact", "")
-
-    # Tool-result records carry no args (history.jsonl stores only
-    # {role, tool, success, content}), so there is nothing to label here.
-    parts = [f"[{tool}]"]
-    if content:
-        parts.append(content)
-    if artifact:
-        parts.append(f"→ {artifact}")
-
-    return {"role": "user", "content": "\n".join(parts)}

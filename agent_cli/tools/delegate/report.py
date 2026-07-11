@@ -57,7 +57,7 @@ def _extract_activity_log(messages: list[dict]) -> list[str]:
     Returns list of strings like:
       ["iter 1: read_file auth.py", "iter 2: shell pytest"]
     """
-    from agent_cli.context.manager import iter_record_ops
+    from agent_cli.context.records import iter_record_ops
 
     log: list[str] = []
     iter_num = 0
@@ -112,7 +112,7 @@ def _extract_last_actions(messages: list[dict]) -> list[str]:
       ["iter 4: shell pytest -> ERROR: 3 tests failed",
        "iter 5: edit_file test_auth.py -> hash mismatch"]
     """
-    from agent_cli.context.manager import iter_record_ops
+    from agent_cli.context.records import iter_record_ops
 
     actions: list[tuple[int, int, str]] = []
     iter_num = 0

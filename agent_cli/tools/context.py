@@ -172,7 +172,7 @@ def _load_rows(target_dirs: list[Path]) -> list[tuple]:
     read so any record shape works); ``turn``/``ts``/``author`` from the record.
     """
     from agent_cli.context._file_extract import extract_file_paths
-    from agent_cli.context.manager import _classify_record
+    from agent_cli.context.records import _classify_record
 
     rows: list[tuple] = []
     for sdir in target_dirs:

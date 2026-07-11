@@ -59,6 +59,16 @@
 
 ### 진행 로그
 
+- **2026-07-11 · v4.47.0 · C5 완료 (+fsio 저장 패턴 통일)**: manager
+  1,130→787줄 — records(121, shape 계약)/render(219, 무상태 실측 확인)/
+  store(95, I/O primitive). store 경계는 A/B 상세 비교로 함수형 확정
+  (_dynamic_start_index 소유권 역전 → 상태-소유 클래스 성립 불가).
+  **fsio.py 신설**로 전 저장 지점 3패턴 수렴: 원자 교체(compaction 고정
+  tmp 교정·web.json 비원자 결함 발견-수리·status 수렴·config/memory/
+  meta/DIRECTIVE/presets) + 가드 append(turns.jsonl 사전 mkdir 제거) +
+  직접 쓰기(도구 산출물, 의도적 비수렴). 동시 4-writer 레이스 회귀
+  테스트 포함 fsio 9종 + 분리 증명. 전체 2835 passed.
+
 - **2026-07-11 · v4.46.0 · C4 완료**: 실측이 드러낸 결함 3건 수리 —
   ① web MCP 미배선(단순 누락 확정) → run 동형 배선(_setup_mcp/TOOLS.update/
   run_loop·capture_startup mcp_manager/shutdown disconnect), ② 예산 폴백

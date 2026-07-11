@@ -228,12 +228,12 @@ class TestSummaryTextRendering:
     which round-trips assistant turns back to the wire shape for resume."""
 
     def test_user_message(self):
-        from agent_cli.context.manager import _to_summary_text
+        from agent_cli.context.render import _to_summary_text
 
         assert _to_summary_text({"role": "user", "content": "hi"}) == "User: hi"
 
     def test_observation_drops_body_keeps_header(self):
-        from agent_cli.context.manager import _to_summary_text
+        from agent_cli.context.render import _to_summary_text
 
         # A tool-result record carries NO args (history.jsonl stores only
         # {role, tool, success, content}). The file label comes from the
@@ -253,7 +253,7 @@ class TestSummaryTextRendering:
         assert "File saved: a.py" in line
 
     def test_assistant_action_is_prose_not_react_json(self):
-        from agent_cli.context.manager import _to_summary_text
+        from agent_cli.context.render import _to_summary_text
 
         line = _to_summary_text(
             {
@@ -272,7 +272,7 @@ class TestSummaryTextRendering:
         assert "Z" * 200 not in line  # NO file body
 
     def test_assistant_bare_content(self):
-        from agent_cli.context.manager import _to_summary_text
+        from agent_cli.context.render import _to_summary_text
 
         assert (
             _to_summary_text({"role": "assistant", "content": "done"})
@@ -280,7 +280,7 @@ class TestSummaryTextRendering:
         )
 
     def test_complete_action(self):
-        from agent_cli.context.manager import _to_summary_text
+        from agent_cli.context.render import _to_summary_text
 
         line = _to_summary_text(
             {
@@ -302,7 +302,7 @@ class TestSummaryTextRendering:
         Mirror of ``TestFileExtractHelper.test_uses_real_serialized_shape``.
         """
         from agent_cli import wire_formats
-        from agent_cli.context.manager import _to_summary_text
+        from agent_cli.context.render import _to_summary_text
 
         plugin = wire_formats.get("react")
         rec = plugin.serialize_assistant_for_history(
@@ -320,7 +320,7 @@ class TestSummaryTextRendering:
         2026-06-11), losing every record of which tools ran. Each flat op also
         needs flat→canonical normalization so read_file's ``{path}`` shows."""
         from agent_cli import wire_formats
-        from agent_cli.context.manager import _to_summary_text
+        from agent_cli.context.render import _to_summary_text
 
         plugin = wire_formats.get("md_array")
         rec = plugin.serialize_assistant_for_history(
@@ -1210,10 +1210,8 @@ class TestEstimateMessageTokensOps:
     a long complete result was invisible to the budget estimator)."""
 
     def test_counts_ops_action_input_and_result(self):
-        from agent_cli.context.manager import (
-            _estimate_message_tokens,
-            estimate_tokens,
-        )
+        from agent_cli.context.token_estimator import estimate_tokens
+        from agent_cli.context.render import _estimate_message_tokens
 
         big = "X" * 4000  # ≈ 1000 tokens each
         rec = {
@@ -1229,10 +1227,8 @@ class TestEstimateMessageTokensOps:
         assert est >= 2 * estimate_tokens(big)
 
     def test_single_op_legacy_shape_still_counted(self):
-        from agent_cli.context.manager import (
-            _estimate_message_tokens,
-            estimate_tokens,
-        )
+        from agent_cli.context.token_estimator import estimate_tokens
+        from agent_cli.context.render import _estimate_message_tokens
 
         big = "Y" * 4000
         rec = {
@@ -1246,7 +1242,7 @@ class TestEstimateMessageTokensOps:
 
 class TestSumMessageTokens:
     def test_sum_matches_manual(self):
-        from agent_cli.context.manager import (
+        from agent_cli.context.render import (
             _estimate_message_tokens,
             _sum_message_tokens,
         )
@@ -1260,6 +1256,6 @@ class TestSumMessageTokens:
         )
 
     def test_empty(self):
-        from agent_cli.context.manager import _sum_message_tokens
+        from agent_cli.context.render import _sum_message_tokens
 
         assert _sum_message_tokens([]) == 0

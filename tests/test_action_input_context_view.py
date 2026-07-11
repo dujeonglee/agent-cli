@@ -15,8 +15,8 @@ stay faithful.
 
 import json
 
-from agent_cli.context.manager import (
-    ContextManager,
+from agent_cli.context.manager import ContextManager
+from agent_cli.context.render import (
     _context_view,
     _estimate_message_tokens,
     _to_natural_language,

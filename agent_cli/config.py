@@ -12,6 +12,7 @@ Models.json search paths (project local takes priority):
 """
 
 from __future__ import annotations
+from agent_cli.fsio import atomic_write_json
 
 import json
 import os
@@ -120,11 +121,7 @@ def save_model_entry(model: str, entry: dict) -> bool:
 
     # Save
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(existing, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        atomic_write_json(target, existing, indent=2)  # 상태 파일 — fsio
     except Exception as e:
         print(f"[warn] Cannot save to {target}: {e}", file=sys.stderr)
         return False
@@ -194,11 +191,7 @@ def load_config(use_cache: bool = True) -> dict[str, str]:
 
 def save_config(config: dict, path: Path) -> None:
     """Save config dict to a JSON file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    atomic_write_json(path, config, indent=2)  # 상태 파일 — fsio
 
 
 def has_config() -> bool:

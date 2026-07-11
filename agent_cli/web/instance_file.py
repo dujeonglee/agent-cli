@@ -16,10 +16,10 @@ Pure read/write/remove — no server dependency, no global state.
 """
 
 from __future__ import annotations
+from agent_cli.fsio import atomic_write_json
 
 import json
 import os
-import tempfile
 from pathlib import Path
 
 _NAME = "web.json"
@@ -49,8 +49,9 @@ def write_instance_file(
         "pid": os.getpid() if pid is None else pid,
     }
     path = instance_file_path(session_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(info), encoding="utf-8")
+    # 보드가 읽는 상태 파일 — 원자 교체 (fsio 패턴; 이전엔 비원자라
+    # 보드가 half-write 를 읽을 수 있었음).
+    atomic_write_json(path, info)
     return path
 
 
@@ -97,25 +98,10 @@ def write_status_file(
         "viewers": int(viewers),
     }
     path = status_file_path(session_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Unique temp per write: this status is (re)written from BOTH the agent-loop
-    # thread (busy/awaiting via set_sticky) and the web thread (viewers via
-    # register_connection). A FIXED tmp name races — writer A's os.replace
-    # consumes the shared tmp, then writer B's os.replace hits FileNotFoundError
-    # and (unguarded) crashes the instance. mkstemp gives each writer its own
-    # tmp so the atomic swaps are independent (last writer wins, no crash).
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".status-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(info))
-        os.replace(tmp, path)  # atomic swap — readers see all-or-nothing
-    except BaseException:
-        try:
-            os.unlink(tmp)  # don't leak the temp on a failed write
-        except OSError:
-            pass
-        raise
-    return path
+    # fsio.atomic_write_json 이 같은 의미론(유니크 tmp + replace + 부모
+    # 소실 가드)을 소유 — 자체 mkstemp 구현을 수렴 (v4.27.1 레이스 교훈은
+    # fsio 모듈 docstring 으로 이주).
+    atomic_write_json(path, info)
 
 
 def read_status_file(session_dir: str | Path) -> dict | None:
