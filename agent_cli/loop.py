@@ -92,6 +92,13 @@ _MAX_OVERFLOW_RETRIES = 5
 _COMPACTION_TARGET_RATIO = 0.8
 
 
+# Loop-control sentinels: distinct from None (failure) and str (answer).
+# 모듈 상수 (C1 PR-3) — AgentLoop._execute_turn 과 TurnDispatcher 가 공유.
+_CONTINUE = object()  # keep looping
+_NOT_HANDLED = object()  # dispatch 헬퍼: 이 분기가 처리 안 함 → 폴스루
+_RETRY = object()  # overflow retry
+
+
 @dataclass(frozen=True)
 class LoopConfig:
     """AgentLoop 의 불변 배선 — ``__init__`` 에서 1회 조립되는 세션-수명 설정.
@@ -562,6 +569,1090 @@ class ToolBridge:
         )
 
 
+class LLMCaller:
+    """LLM 콜 소유자 (C1 PR-3 승격 클러스터) — 스트리밍 호출, 예방 압축
+    (ensure_within)·오버플로 재시도 카운터, 압축 요약 콜.
+
+    의존은 명시 주입 5종: cfg/state/ctx/provider/prompt(SystemPromptSvc).
+    전유 상태 ``overflow_retries`` 소유. 턴 오케스트레이션(_execute_turn:
+    훅 발화·truncation 처리·dispatch 진입)은 AgentLoop 에 남는다 — 이
+    객체는 "한 번의 호출"만 안다.
+    """
+
+    def __init__(
+        self,
+        config: LoopConfig,
+        state: LoopState,
+        ctx,
+        provider,
+        prompt: SystemPromptSvc,
+    ) -> None:
+        self.cfg = config
+        self.state = state
+        self.ctx = ctx
+        self.provider = provider
+        self.prompt = prompt
+        # Reactive context-overflow recovery (flow 2) 카운터 — 현재 턴에서
+        # 축소-재시도한 횟수. _MAX_OVERFLOW_RETRIES 로 유계.
+        self.overflow_retries = 0
+
+    def _interrupt_check(self) -> bool:
+        """Zero-arg predicate the provider polls per chunk to break a
+        mid-generation stream (Ctrl+C / web stop)."""
+        ev = self.state.stop_event
+        return bool(ev and ev.is_set())
+
+    def _call_llm(self):
+        """LLM call with overflow retry and streaming. Returns response or sentinel."""
+        # flow 1 — preventive compaction before the call. The threshold
+        # uses the live system-prompt size and the model's window, so it
+        # reflects real headroom (not a fixed budget). ``sys_tokens`` is
+        # reused below to reconcile the cache against the server's actual
+        # input count once the call succeeds.
+        sys_tokens = estimate_tokens(self.prompt.system) if self.ctx else 0
+        if self.ctx:
+            target = max(
+                int(
+                    (
+                        self.cfg.capabilities.context_window
+                        - sys_tokens
+                        - self.cfg.capabilities.max_output_tokens
+                    )
+                    * _COMPACTION_TARGET_RATIO
+                ),
+                1,
+            )
+            self.ctx.ensure_within(target)
+            self.state.messages = self.ctx.get_messages()
+
+        # Context dump (verbose only)
+        if self.cfg.verbose:
+            render_context_dump(self.state.messages, self.state.turn)
+        _debug_log(
+            f"LLM_CALL turn={self.state.turn} skill={self.cfg.skill_name or 'main'} msg_count={len(self.state.messages)}"
+        )
+
+        # Build streaming callback: stops spinner on first chunk, then streams
+        spinner_active = True
+
+        def on_chunk(text: str) -> None:
+            nonlocal spinner_active
+            if spinner_active:
+                render_spinner_stop()
+                spinner_active = False
+            render_stream_chunk(text)
+
+        if self.cfg.skill_name:
+            render_spinner_start(f"skill:{self.cfg.skill_name}")
+        else:
+            render_spinner_start()
+        # Prompt Inspector snapshot: what THIS call's system prompt looks
+        # like, as named sections. No-op for CLI renderers (store-only on
+        # web), so per-turn cost is negligible.
+        render_system_prompt_snapshot(
+            build_inspector_sections(self.prompt.sections, self.ctx), self.state.turn
+        )
+
+        # Plugin-defined provider hints. The wire plugin decides them from
+        # the model's capabilities — e.g. ``json_mode``: ReAct requests it
+        # iff the model supports structured output, md_array never does
+        # (markdown shape). This is the single wire ⨯ capability decision
+        # point, so the provider never combines the two itself.
+        extra_call_kwargs = self.cfg.wire_format.provider_call_kwargs(
+            self.cfg.capabilities
+        )
+
+        # Plugin-defined prefill: a string the provider sees as the start
+        # of an assistant turn. Forces the model to continue from there,
+        # producing the wire format from the very first generated token.
+        # ReAct returns "" (no prefill — its prior already produces ReAct
+        # shape). Envelope plugins return e.g. ``<tool_use id="r1" action="``
+        # so the model emits the tool name next. Empty string => behaviour
+        # is identical to the pre-plugin path.
+        prefill = self.cfg.wire_format.prefill()
+        call_messages = self.state.messages
+        if prefill:
+            call_messages = [
+                *self.state.messages,
+                {"role": "assistant", "content": prefill},
+            ]
+        try:
+            response = self.provider.call(
+                messages=call_messages,
+                system=self.prompt.system,
+                model=self.cfg.model,
+                capabilities=self.cfg.capabilities,
+                on_chunk=on_chunk,
+                degeneration_check=self.cfg.wire_format.is_degenerate,
+                interrupt_check=self._interrupt_check,
+                **extra_call_kwargs,
+            )
+            # Stitch the prefill back onto the response so downstream
+            # parsers see a complete emission. Use dataclasses.replace
+            # to keep usage / thinking / stop_reason intact.
+            if prefill:
+                from dataclasses import replace as _replace
+
+                response = _replace(response, content=prefill + response.content)
+            # flow 1 (part B) — re-anchor the cache to the server's actual
+            # input count so the chars/4 estimate can't compound across
+            # turns. usage covers system+messages; ctx subtracts the same
+            # sys_tokens used for the threshold above. No-op without usage.
+            if self.ctx and response.usage:
+                self.ctx.reconcile_actual_tokens(
+                    response.usage.total_input_tokens, system_tokens=sys_tokens
+                )
+            # A successful call means we're no longer in overflow for this
+            # turn — reset the counter so a later turn gets a fresh budget
+            # of shrink-and-retry attempts.
+            self.overflow_retries = 0
+            return response
+        except Exception as e:
+            if (
+                is_context_overflow(str(e))
+                and self.ctx
+                and self.overflow_retries < _MAX_OVERFLOW_RETRIES
+            ):
+                # Reactive recovery (flow 2): the server rejected the
+                # prompt as too long. Trust its count over our local
+                # estimate, shrink the cache toward the limit, and retry.
+                actual, limit = parse_overflow_amounts(str(e))
+                budget = self.ctx.max_context_tokens
+                target = int((limit or budget) * _COMPACTION_TARGET_RATIO)
+                if self.ctx.force_fit(target, actual_tokens=actual):
+                    self.overflow_retries += 1
+                    render_status(
+                        "running",
+                        f"Context overflow — shrinking and retrying "
+                        f"({self.overflow_retries}/{_MAX_OVERFLOW_RETRIES})...",
+                    )
+                    self.state.messages = self.ctx.get_messages()
+                    self.state.turn -= 1
+                    return _RETRY
+                # force_fit could not shrink further (only the anchor
+                # remains) — fall through to a clean failure.
+            _debug_log(
+                f"LLM call failed: model={self.cfg.model} iter={self.state.turn} skill={self.cfg.skill_name} error={e}"
+            )
+            render_step(
+                "error",
+                f"LLM call failed (model={self.cfg.model}, iter={self.state.turn}): {e}",
+                self.state.turn,
+            )
+
+            return ToolResult(False, error=f"LLM call failed: {e}")
+        finally:
+            if spinner_active:
+                render_spinner_stop()
+            else:
+                render_stream_end()
+
+    # ── C1 PR-3: 턴 디스패치는 TurnDispatcher 소유 — 기존 호출면 위임.
+
+    def _llm_compact_summarize(self, messages: list[dict]) -> str:
+        """Compactor callback: call the main provider with a
+        summarisation system prompt + the evicted messages, return
+        the summary text. Raised exceptions are converted to
+        ``CompactionError`` inside ContextManager._summarize_messages.
+
+        ``messages`` arrives in chat-ready ``{role, content}`` form —
+        ContextManager._compact does the natural-language conversion
+        via the wire_format plugin before calling here.
+
+        Capabilities are overridden for this one call:
+          - ``supports_structured_output=False`` — we want a plain text
+            summary, not a JSON object. The agent-loop's normal ReAct
+            calls force JSON; here we explicitly opt out.
+          - ``supports_thinking=False`` — summarisation doesn't benefit
+            from a reasoning trace, and the thinking tokens would
+            consume the response budget without ending up in the
+            persisted summary.
+        """
+        from dataclasses import replace
+
+        summarisation_prompt = (
+            "You are compacting an agent's working transcript so it can "
+            "continue the task with this summary in place of the raw "
+            "history. Write a plain-text summary under these headings "
+            "(omit a heading if it has no content):\n\n"
+            "TASK — the user's original request(s) and intent.\n"
+            "STATE — what is currently true: progress so far, what works.\n"
+            "DONE — actions taken: tools used and exact file paths / "
+            "symbols touched, and what changed.\n"
+            "PENDING — work not yet finished and the next step that was "
+            "about to run.\n"
+            "DECISIONS — choices made and why, including alternatives "
+            "rejected.\n"
+            "FAILURES — approaches that failed or errors encountered, so "
+            "they are not retried.\n"
+            "FACTS — keep verbatim: paths, identifiers, commands, config "
+            "values, signatures, error strings, and any user "
+            "correction/preference.\n\n"
+            "Rules: use ONLY information present in the transcript — do not "
+            "invent or assume. Keep exact identifiers verbatim (paths, "
+            "names, numbers, commands). Be concise; stay under 2000 tokens. "
+            "Plain text only — no JSON, no code fences except to quote a "
+            "short critical snippet."
+        )
+        summary_capabilities = replace(
+            self.cfg.capabilities,
+            supports_structured_output=False,
+            supports_thinking=False,
+        )
+        response = self.provider.call(
+            messages=messages,
+            system=summarisation_prompt,
+            model=self.cfg.model,
+            capabilities=summary_capabilities,
+        )
+        return response.content if hasattr(response, "content") else str(response)
+
+
+class TurnDispatcher:
+    """턴/op 디스패치 소유자 (C1 PR-3 승격 클러스터).
+
+    wire 파싱 결과(ParsedTurn)를 받아 op 순회·가드(B1/A4/A5)·배치(병렬
+    delegate / 같은-파일 edit)·관찰 조립·recovery 를 담당한다. 의존은
+    명시 주입 5종: cfg/state/ctx/tools(ToolBridge)/recorder. 전유 상태
+    ``loop_detector`` 는 이 객체가 소유. 도구 실행·관찰 캡은 전부
+    ``self.tools`` 경유 — 브리지 뒤의 것을 직접 만지지 않는다.
+    """
+
+    def __init__(
+        self, config: LoopConfig, state: LoopState, ctx, tools: ToolBridge, recorder
+    ) -> None:
+        self.cfg = config
+        self.state = state
+        self.ctx = ctx
+        self.tools = tools
+        self.recorder = recorder
+        # B1 (action loop) detector. Threshold=2 fires on the second
+        # consecutive identical (action, args).
+        self.loop_detector = ActionLoopDetector(threshold=2)
+
+    def _task_text(self) -> str:
+        """All user requests this run (first query + injected), for recovery /
+        review anchoring. Falls back to the raw query if the log is empty."""
+        return (
+            "\n".join(self.state.task_log) if self.state.task_log else self.state.query
+        )
+
+    def _handle_text_path(self, llm_text: str):
+        """Handle text parsing response (non-JSON fallback).
+
+        Recovery primitives consume only the emitted text (``llm_text``)
+        — the thinking channel is intentionally excluded from the
+        recovery path (see ``docs/robust-harness/DESIGN.md`` §2.2).
+
+        TurnRecord is emitted exactly once per call, regardless of which
+        terminal branch is taken (success/retry/exception). Branches
+        that fire an Intervention mutate ``outcome`` (failure_signal +
+        primitives) before returning, and the trailing finally writes
+        the record.
+        """
+        turn = self.cfg.wire_format.parse_turn(llm_text)
+
+        # Recover dropped action names (parse_stage 3) — the dropped-action
+        # recovery SEAM: an op's action slot is empty but its action_input
+        # survived (parse-preservation invariant), so ``infer_action`` tries to
+        # resolve the tool from the input shape. A successful inference is
+        # flagged so the observation step rewrites the prior + history to the
+        # corrected shape (no raw-drift mimicry) and the TurnRecorder logs it.
+        #
+        # As of consolidation Step 3 every builtin tool is flat-native, so the
+        # current prefix-based resolver returns None for builtin payloads (this
+        # hook + infer_action stay live for a FUTURE prefixed tool/format; a
+        # flat action-less payload like ``{path}`` is ambiguous → NO_ACTION,
+        # the documented extension point for a future schema-based resolver).
+        # Ambiguous/none leaves it to the NO_ACTION recovery below.
+        #
+        # Gated on ``action_required``: when the wire format requires an
+        # explicit action (action_required=True), a dropped action is a
+        # drift to be corrected by the model, so we skip inference and fall
+        # through to the NO_ACTION recovery below. When False (the namespaced
+        # format — react), the action is recoverable from the
+        # preserved action_input, so we infer it. Mirror of how
+        # ``thought_required`` gates the NO_THOUGHT recovery.
+        action_inferred = False
+        if not self.cfg.wire_format.action_required:
+            for op in turn.ops:
+                if not op.action and isinstance(op.action_input, dict):
+                    inferred = infer_action(op.action_input)
+                    if inferred:
+                        op.action = inferred
+                        action_inferred = True
+
+        # Classify outcome early; the dispatch body may mutate this
+        # dict to reflect a B1 (action loop) detection that is only
+        # known after we see the chosen action.
+        # Degeneration is a GENERATION-level pathology — the stream ran away
+        # repeating the wire shape instead of terminating — so it is logically
+        # PRIOR to, and a more specific cause than, the parse-level symptom (a
+        # runaway naturally fails to parse and would otherwise be mislabeled
+        # NO_JSON). Checked FIRST. Recovery is driven by ``turn.parse_stage``
+        # (in ``_recover_unparsed``), NOT by this label, so relabeling a
+        # stage-0 runaway DEGENERATE changes only the telemetry signal
+        # (turns.jsonl) — the recovery path is unchanged. Empty output is not a
+        # runaway (``is_degenerate("")`` is False) so it still falls through to
+        # NO_OUTPUT below.
+        if self.cfg.wire_format.is_degenerate(llm_text):
+            initial_signal = FAILURE_DEGENERATE
+        elif turn.parse_stage == 0:
+            # Split A1 into two sub-modes — empty/whitespace-only output
+            # vs non-empty content that drifted from JSON. The recovery
+            # path is identical (RETRY_HINT_NO_JSON fallback in both),
+            # but the labels separate two operationally different
+            # failure shapes for analysis (DESIGN.md §1, A1a vs A1b).
+            if not (llm_text or "").strip():
+                initial_signal = FAILURE_NO_OUTPUT
+            else:
+                initial_signal = FAILURE_NO_JSON
+        elif not any(op.action for op in turn.ops):
+            initial_signal = FAILURE_NO_ACTION
+        else:
+            initial_signal = None
+        outcome: dict = {
+            "failure_signal": initial_signal,
+            "primitives": ["action_inferred"] if action_inferred else [],
+            "action_inferred": action_inferred,
+        }
+
+        try:
+            return self._dispatch_turn(llm_text, turn, outcome)
+        finally:
+            self.recorder.record(
+                model=self.cfg.model,
+                parse_stage=turn.parse_stage,
+                failure_signal=outcome["failure_signal"],
+                primitives_applied=outcome["primitives"],
+                raw=llm_text,
+            )
+
+    def _dispatch_turn(self, llm_text: str, turn, outcome: dict):
+        """Turn-level dispatch: guards, then the ops in array order.
+
+        ``turn`` is a ``ParsedTurn``. Single-action formats produce 0 or 1
+        ops (the default ``parse_turn`` wrapper), so for them this reproduces
+        the pre-multi-op behaviour exactly. ``outcome`` is a mutable dict
+        owned by the caller (``_handle_text_path``); branches that fire an
+        Intervention update it before returning so the trailing finally
+        records what happened.
+        """
+        first_action = next((op.action for op in turn.ops if op.action), None)
+
+        # A7 NO_THOUGHT — action present but thought missing. Retry
+        # before dispatch so the omission does not enter the transcript
+        # as a precedent for future turns (mimicry-strengthening loop:
+        # the raw response is mirrored back on the next turn and
+        # crowds out the system prompt's Format Rule 1).
+        if self.cfg.wire_format.thought_required and detect_thought_missing(
+            turn.thought, first_action
+        ):
+            # ``thought_required`` is False on plugins where the thought
+            # is preceding free text rather than a schema field — for
+            # those, missing thought is not a drift signal.
+            _debug_log(f"NO_THOUGHT: action={first_action!r}, thought={turn.thought!r}")
+            # ReAct-only: format_no_thought_retry lives on the plugin,
+            # not in recovery/builders, because it has no meaning when
+            # ``thought_required`` is False (envelope plugins).
+            intervention = self.cfg.wire_format.format_no_thought_retry(
+                prior_content=llm_text
+            )
+            render_recovery(
+                llm_text, intervention.message, "no thought", self.state.turn
+            )
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.wire_format,
+                llm_text,
+                intervention.message,
+                tool_name="",
+                success=False,
+                turn=self.state.turn,
+                render=False,  # render_recovery already surfaced it
+            )
+            outcome["failure_signal"] = FAILURE_NO_THOUGHT
+            outcome["primitives"] = list(intervention.primitives)
+            self.state.turn -= 1
+            return _CONTINUE
+
+        # 6. Thought
+        if turn.thought:
+            render_step("thought", turn.thought, self.state.turn)
+
+        # No usable ops at all (parse failure / no action recovered, including
+        # a thought-only turn) — straight to recovery. md_array completes via
+        # an explicit `complete` op, so a thought-only emission is a NO_ACTION
+        # nudge, not a silent completion.
+        if not turn.ops:
+            return self._recover_unparsed(llm_text, turn, outcome)
+
+        # Dispatch ops in array order (sequential — observations append in
+        # order). Single-action formats have exactly ONE op and take the
+        # legacy path (accumulate=None → _dispatch_op appends its own
+        # observation and returns, byte-identical to pre-multi-op).
+        #
+        # N ops (multi-op formats): regular tool ops execute and ACCUMULATE
+        # into one combined observation (run-all; any-fail ⇒ the combined
+        # observation is marked failed so the model retries the failed op).
+        # A turn-ending branch (complete / run_skill / guard
+        # intervention / recovery) flushes whatever already ran first so
+        # executed work isn't lost, then returns. ``ask`` is NOT turn-ending —
+        # it produces an observation (the user's reply) and accumulates like a
+        # normal tool, so several ``ask`` ops batch (each prompts in turn) just
+        # like a read/shell batch.
+        if len(turn.ops) == 1:
+            return self._dispatch_op(llm_text, turn, turn.ops[0], outcome)
+
+        results: list[dict] = []
+        ops = turn.ops
+        i = 0
+        while i < len(ops):
+            op = ops[i]
+            # Turn-ending special actions: flush accumulated results BEFORE
+            # the branch runs so its observation lands after the work done
+            # so far (chronological order for the model).
+            if op.action in ("complete", "run_skill"):
+                self._flush_op_results(llm_text, results)
+                results = []
+                return self._dispatch_op(llm_text, turn, op, outcome)
+            # Parallel batch: a run of ≥2 consecutive ops of the SAME
+            # parallel_safe tool dispatches concurrently into one combined
+            # observation (delegate: independent subagents). A lone
+            # parallel_safe op falls through to the normal per-op path so it
+            # keeps its B1/A4/A5 guards. Mutating tools (parallel_safe=False)
+            # always take the sequential per-op path — order is their
+            # correctness guarantee (write→edit same file, mkdir→touch).
+            tool = TOOLS.get(op.action) if op.action else None
+            # Same-file edit batch: a run of ≥2 consecutive edit_file ops on the
+            # SAME path is applied together against ONE original read (all refs
+            # resolved before any write, bottom-up, all-or-nothing) so a later
+            # op's hashline ref doesn't go stale from an earlier op's line shift.
+            # A lone edit_file, or edits on different paths, take the normal
+            # per-op path. Only consecutive same-path edits group — interleaving
+            # another tool (e.g. write→edit) breaks the run, preserving order.
+            if op.action == "edit_file" and isinstance(op.action_input, dict):
+                path = op.action_input.get("path")
+                j = i
+                while (
+                    j < len(ops)
+                    and ops[j].action == "edit_file"
+                    and isinstance(ops[j].action_input, dict)
+                    and ops[j].action_input.get("path") == path
+                ):
+                    j += 1
+                if j - i > 1:
+                    self._dispatch_edit_batch(
+                        llm_text, turn, ops[i:j], outcome, accumulate=results
+                    )
+                    i = j
+                    continue
+            if tool is not None and tool.parallel_safe:
+                j = i
+                while j < len(ops) and ops[j].action == op.action:
+                    j += 1
+                if j - i > 1:
+                    self._dispatch_parallel_batch(
+                        llm_text, turn, ops[i:j], outcome, accumulate=results
+                    )
+                    i = j
+                    continue
+            r = self._dispatch_op(llm_text, turn, op, outcome, accumulate=results)
+            if r is not None:
+                # Guard/recovery fired inside the op (B1/A4/A5/no-action):
+                # its intervention observation is already appended; flush the
+                # accumulated work after it (rare mid-array edge — order is
+                # intervention-first, results still preserved).
+                self._flush_op_results(llm_text, results)
+                return r
+            i += 1
+        self._flush_op_results(llm_text, results)
+        return _CONTINUE
+
+    def _flush_op_results(self, llm_text: str, results: list[dict]) -> None:
+        """Append ONE combined observation for accumulated op results.
+
+        Per-op header lines (``[i/N] tool — OK/FAILED``) frame each op's
+        output; turn success = all ops succeeded (any-fail ⇒ failed so the
+        model retries the failed op next turn). No-op when nothing ran.
+        """
+        if not results:
+            return
+        n = len(results)
+        parts = []
+        for i, r in enumerate(results, start=1):
+            status = "OK" if r["success"] else "FAILED"
+            parts.append(f"[{i}/{n}] {r['tool_name']} — {status}\n{r['observation']}")
+        combined = "\n\n".join(parts)
+        all_ok = all(r["success"] for r in results)
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            f"Observation: {combined}",
+            tool_name=_combined_tool_label([r["tool_name"] for r in results]),
+            success=all_ok,
+            turn=self.state.turn,
+        )
+
+    def _dispatch_parallel_batch(
+        self, llm_text, turn, batch_ops, outcome, *, accumulate
+    ):
+        """Dispatch a run of ≥2 consecutive parallel_safe ops concurrently,
+        appending ONE combined result to *accumulate*.
+
+        Only ``delegate`` is wired today (the sole ``parallel_safe`` tool): each
+        op's flat input becomes one task spec → ``tool_delegate({tasks:[...]})``
+        → ``_run_parallel`` (real threading). This is what makes the prompt's
+        "several delegate ops in one turn run in parallel" actually true (the
+        N-op loop is otherwise sequential).
+
+        A future read-only ``parallel_safe`` tool with no internal concurrent
+        engine would fan its ops over a thread-pool of per-op ``run()`` calls
+        in the extension slot below — not wired (no other tool opts in).
+        """
+        tool_name = batch_ops[0].action
+        # Render one action card per op (the model's flat emission, pre-wrap),
+        # matching the single-op render so the UI shows every delegate op.
+        for op in batch_ops:
+            disp = op.action_input if op.action_input is not None else {}
+            render_step(
+                "action",
+                "",
+                self.state.turn,
+                tool_name=tool_name,
+                tool_input=json.dumps(disp, ensure_ascii=False)
+                if isinstance(disp, dict)
+                else str(disp),
+            )
+
+        if tool_name != "delegate":
+            # Extension slot: a parallel_safe tool with no internal concurrent
+            # engine (e.g. a future read-only read_file/code_index opt-in) would
+            # fan its ops out over a thread-pool of per-op run() calls here.
+            raise NotImplementedError(
+                f"parallel_safe batch dispatch not wired for {tool_name!r}; only "
+                "delegate has an internal concurrent engine (_run_parallel)."
+            )
+
+        # delegate: assemble each flat op into one task spec and run the batch
+        # through the existing parallel engine (one combined observation).
+        specs = [
+            TOOLS["delegate"].strip_prefix(op.action_input or {}) for op in batch_ops
+        ]
+        result = self.tools._dispatch_tool_with_hooks("delegate", {"tasks": specs})
+        observation = self.tools._tool_observation("delegate", result, {"tasks": specs})
+        # Rendered from storage by _flush_op_results' _append_observation
+        # (combined card), matching ctx + resume — no separate pre-render.
+        accumulate.append(
+            {
+                "tool_name": tool_name,
+                "observation": observation,
+                "success": result.success,
+            }
+        )
+
+    def _dispatch_edit_batch(self, llm_text, turn, batch_ops, outcome, *, accumulate):
+        """Apply a run of ≥2 consecutive same-path edit_file ops as ONE batch,
+        appending ONE combined result to *accumulate*.
+
+        Calls the pure ``apply_edits_batch`` (resolve all refs against one
+        original read → reject overlaps → bottom-up apply → one write,
+        all-or-nothing). Single-direction call: the loop hands it ``(path,
+        edits)`` and gets a ToolResult back — edit_file knows nothing of the
+        loop. Each op's flat input also gets rendered as its own action card,
+        matching the single-op render.
+        """
+        from agent_cli.tools.edit_file import apply_edits_batch
+
+        for op in batch_ops:
+            disp = op.action_input if isinstance(op.action_input, dict) else {}
+            render_step(
+                "action",
+                "",
+                self.state.turn,
+                tool_name="edit_file",
+                tool_input=json.dumps(disp, ensure_ascii=False),
+            )
+
+        path = batch_ops[0].action_input.get("path")
+        edits = [op.action_input for op in batch_ops]
+        result = apply_edits_batch(path, edits)
+        observation = self.tools._tool_observation(
+            "edit_file", result, batch_ops[0].action_input
+        )
+        accumulate.append(
+            {
+                "tool_name": "edit_file",
+                "observation": observation,
+                "success": result.success,
+            }
+        )
+
+    def _dispatch_op(self, llm_text: str, turn, op, outcome: dict, accumulate=None):
+        """Dispatch ONE op of a turn. Returns a ToolResult or a sentinel.
+
+        Carries the pre-multi-op per-action body unchanged: special actions
+        (complete / ask / run_skill), then B1/A4/A5 guards
+        and tool execution, then the no-action fall-through recovery.
+
+        ``accumulate`` (multi-op N-op path only): a list to collect this op's
+        execution record into instead of appending its own observation —
+        the caller combines all records into one observation. Returns
+        ``None`` in that case ("executed, keep going"); every other branch
+        returns a ToolResult/sentinel as before.
+        """
+        # 7. Complete tool (text parsing path)
+        _debug_log(f"PARSED iter={self.state.turn} action={op.action}")
+        if op.action == "complete":
+            return self._op_complete(turn, op, outcome)
+
+        # 9. Detect echo-as-final-answer (common small model pattern)
+        echo_answer = _try_echo_as_final(op.action, op.action_input)
+        if echo_answer:
+            if self.ctx:
+                self.ctx.add(
+                    self.cfg.wire_format.serialize_terminal_for_history(
+                        turn.thought or "", echo_answer
+                    )
+                )
+            render_step("final", echo_answer, self.state.turn)
+
+            return ToolResult(True, output=echo_answer)
+
+        if op.action == "ask":
+            handled = self._op_ask(llm_text, turn, op, accumulate)
+            if handled is not _NOT_HANDLED:
+                return handled
+
+        if op.action == "run_skill":
+            return self._op_run_skill(llm_text, turn, op)
+
+        if op.action:
+            return self._op_execute_tool(llm_text, turn, op, outcome, accumulate)
+
+        return self._recover_unparsed(llm_text, turn, outcome)
+
+    def _op_complete(self, turn, op, outcome: dict):
+        """terminal ``complete`` op — 최종 답 언랩(A6)·history 기록·final 렌더."""
+        if isinstance(op.action_input, dict):
+            raw = op.action_input.get("result")
+            answer = (
+                str(raw)
+                if raw
+                else "(Completed without result — model may lack capability for this task)"
+            )
+        elif isinstance(op.action_input, str):
+            raw = op.action_input
+            answer = (
+                op.action_input
+                or "(Completed without result — model may lack capability for this task)"
+            )
+        else:
+            raw = None
+            answer = (
+                str(op.action_input)
+                if op.action_input
+                else "(Completed without result — model may lack capability for this task)"
+            )
+
+        # A6 (Nested envelope) — detection records the signal for
+        # observability AND we unwrap one level so the user-facing
+        # answer doesn't carry a literal ``{"result": "..."}`` prefix.
+        # Single-level only (recursive nesting indicates a different
+        # bug worth surfacing). ``raw`` may be from ``op.action_
+        # input`` (dict path) or the input itself (str path); both
+        # surface as the same artifact, so we re-derive ``answer``
+        # from the unwrapped value.
+        if detect_nested_envelope(raw):
+            outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE
+            unwrapped = unwrap_nested_envelope(raw)
+            if unwrapped != raw:
+                answer = unwrapped or answer
+
+        if self.ctx:
+            self.ctx.add(
+                self.cfg.wire_format.serialize_terminal_for_history(
+                    turn.thought or "", answer
+                )
+            )
+        render_step("final", answer, self.state.turn)
+
+        return ToolResult(True, output=answer)
+
+    def _op_ask(self, llm_text: str, turn, op, accumulate):
+        """``ask`` op — 질문 추출·사용자 응답을 관찰로. 질문이 없으면
+        ``_NOT_HANDLED`` 를 반환해 일반 도구 실행 경로로 폴스루(기존 제어
+        흐름 보존 — None 은 N-op 누적 의미라 센티널 분리)."""
+        questions = _extract_questions(op.action_input)
+        if questions:
+            # Emit the action step so out-of-band renderers (web)
+            # replace their streaming card with a structured
+            # ``assistant_turn``. Without this, the raw-JSON
+            # streaming card stays on screen and the next turn's
+            # stream chunks visually append to it — the user sees
+            # consecutive assistant emissions glued together.
+            render_step(
+                "action",
+                "",
+                self.state.turn,
+                tool_name="ask",
+                tool_input=json.dumps(op.action_input, ensure_ascii=False)
+                if isinstance(op.action_input, dict)
+                else str(op.action_input),
+            )
+            user_response = _handle_ask(questions)
+            # ``ask`` is a normal observation-producing op (the user's
+            # reply is the observation), not a terminal. In a multi-op turn
+            # it accumulates like read/shell so consecutive asks batch into
+            # the one combined observation; alone it appends its own.
+            if accumulate is not None:
+                accumulate.append(
+                    {
+                        "tool_name": "ask",
+                        "observation": f"User responded:\n{user_response}",
+                        "success": True,
+                    }
+                )
+                return None
+            obs_msg = f"Observation: User responded:\n{user_response}"
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.wire_format,
+                llm_text,
+                obs_msg,
+                tool_name="ask",
+                success=True,
+                turn=self.state.turn,
+                render=False,  # the answer is surfaced by the input UI
+            )
+            return _CONTINUE
+
+        return _NOT_HANDLED
+
+    def _op_run_skill(self, llm_text: str, turn, op):
+        """``run_skill`` op — 루프 레벨 인터셉트(깊이/사이클 가드는
+        _handle_run_skill 내부)."""
+        skill_input = op.action_input if isinstance(op.action_input, dict) else {}
+        # Same reason as ``ask`` above — close out the streaming
+        # card before the (often long-running) skill subprocess
+        # starts emitting its own events.
+        render_step(
+            "action",
+            "",
+            self.state.turn,
+            tool_name="run_skill",
+            tool_input=json.dumps(skill_input, ensure_ascii=False),
+        )
+        skill_tool_result = _handle_run_skill(
+            skill_input,
+            self.cfg.provider_name,
+            self.cfg.base_url,
+            self.cfg.api_key,
+            self.cfg.capabilities,
+            self.cfg.model,
+            self.ctx,
+            self.cfg.session,
+            self.cfg.skill_name,
+            skill_stack=self.cfg.skill_stack,
+            graceful_interrupt=self.cfg.graceful_interrupt,
+            stop_event=self.state.stop_event,
+            hook_runner=self.cfg.hook_runner,
+            mcp_manager=self.cfg.mcp_manager,
+            parent_hooks_config=self.cfg.hooks_config,
+            parent_depth=self.cfg.depth,
+            max_depth=self.cfg.max_depth,
+            compaction_enabled=self.cfg.compaction_enabled,
+        )
+        obs = skill_tool_result.output or skill_tool_result.error
+        obs_msg = f"Observation: {obs}"
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            obs_msg,
+            tool_name="run_skill",
+            success=skill_tool_result.success,
+            artifact=skill_tool_result.artifact,
+            turn=self.state.turn,
+        )
+        return _CONTINUE
+
+    def _op_execute_tool(self, llm_text: str, turn, op, outcome: dict, accumulate):
+        """일반 도구 op — wrap→truncation 가드→B1/A4/A5→실행→관찰 조립
+        (단독이면 자체 append, N-op 이면 accumulate)."""
+        tool_name = op.action
+        tool_input = op.action_input or {}
+
+        # Multi-op formats emit flat single-target ops (one file / edit /
+        # query / task per op); the tool re-wraps that into its canonical
+        # prefixed input so the validate → strip → run pipeline below is
+        # unchanged. Single-action formats bypass this (their input is
+        # already canonical).
+        if (
+            getattr(self.cfg.wire_format, "multi_op", False)
+            and tool_name in TOOLS
+            and isinstance(tool_input, dict)
+        ):
+            tool_input = TOOLS[tool_name].wrap_single_op(tool_input)
+
+        # Truncation guard: if JSON was repaired (truncated response),
+        # strip the last element from edit_file's lines arrays
+        truncation_warning = ""
+        if op.truncated and tool_name == "edit_file":
+            tool_input, truncation_warning = _sanitize_truncated_edit(tool_input)
+
+        # B1 (action loop) detection — observe BEFORE dispatch so a
+        # repeated call doesn't pay the cost of the redundant tool
+        # run. Counter resets after a tool error so legitimate
+        # retries don't false-positive.
+        prev_was_error = bool(
+            self.tools.recent_tool_history
+            and self.tools.recent_tool_history[-1].get("tool") == tool_name
+            and self.tools.recent_tool_history[-1].get("success") is False
+        )
+        loop_level = self.loop_detector.observe(
+            tool_name, tool_input, prev_was_error=prev_was_error
+        )
+        if loop_level >= 1:
+            outcome["failure_signal"] = FAILURE_ACTION_LOOP
+            args_repr = (
+                json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
+                if isinstance(tool_input, dict)
+                else str(tool_input)
+            )
+            intervention = format_action_loop_intervention(
+                level=loop_level,
+                action=tool_name,
+                args_repr=args_repr,
+                repeat_count=self.loop_detector.consecutive_count,
+                task=self._task_text(),
+            )
+            if intervention is None:
+                # Level ≥3: recovery exhausted — hard fail with a
+                # message that cites which primitives were already
+                # tried so the user knows we did not give up early.
+                _debug_log(
+                    f"Loop hard-fail: {tool_name} input={args_repr[:100]} "
+                    f"level={loop_level} skill_name={self.cfg.skill_name}"
+                )
+                render_status(
+                    "error",
+                    f"Action loop unresolved: {tool_name} repeated; "
+                    "tried probe_progress and restate_task without "
+                    "recovery. Stopping.",
+                )
+                return ToolResult(
+                    False,
+                    error=(
+                        "Action loop unresolved: probe_progress and "
+                        "restate_task did not break the repetition."
+                    ),
+                )
+            # Level 1 or 2: inject Intervention, skip dispatch,
+            # let the next turn try again with the new context.
+            render_recovery(
+                llm_text,
+                intervention.message,
+                f"action loop ({tool_name}, level {loop_level})",
+                self.state.turn,
+            )
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.wire_format,
+                llm_text,
+                intervention.message,
+                tool_name=tool_name,
+                success=False,
+                turn=self.state.turn,
+                render=False,  # render_recovery already surfaced it
+            )
+            outcome["primitives"] = list(intervention.primitives)
+            self.state.turn -= 1  # Don't count loop nudges as user-facing turns
+            return _CONTINUE
+
+        # Render the model's ACTUAL emission, not the dispatch-canonical
+        # form. `wrap_single_op` above re-wrapped the flat op into the
+        # tool's prefixed/batch shape (e.g. read_file `{path}` →
+        # `{read_file_reads:[...]}`) so the validate→strip→run pipeline is
+        # unchanged — but showing THAT misrepresents what the model wrote
+        # and diverges from history.jsonl / resume-replay (which store the
+        # raw op). The dispatch keeps `tool_input` (wrapped); only the card
+        # shows `op.action_input` (pre-wrap).
+        display_input = op.action_input if op.action_input is not None else {}
+        render_step(
+            "action",
+            "",
+            self.state.turn,
+            tool_name=tool_name,
+            tool_input=json.dumps(display_input, ensure_ascii=False)
+            if isinstance(display_input, dict)
+            else str(display_input),
+        )
+
+        # A4 (Unknown tool) — pre-dispatch detection. Skips _dispatch_tool_with_hooks
+        # entirely so the recovery layer is the single source of truth for
+        # this failure mode (DESIGN.md §4 invariant: same primitive shape
+        # across reused failures). The error message is the same one the
+        # leaf-level dispatch would have produced — primitive extraction
+        # for "did you mean" suggestions is deferred to Step 4b once
+        # observability data shows whether it improves recovery.
+        if detect_unknown_tool(tool_name, self.cfg.tools_list):
+            outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
+            avail = ", ".join(self.cfg.tools_list)
+            err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
+            render_recovery(
+                llm_text, f"Observation: {err_msg}", "unknown tool", self.state.turn
+            )
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.wire_format,
+                llm_text,
+                f"Observation: {err_msg}",
+                tool_name=tool_name,
+                success=False,
+                turn=self.state.turn,
+                render=False,  # render_recovery already surfaced it
+            )
+            return _CONTINUE
+
+        # A5 (Schema mismatch) — pre-dispatch detection. Same rationale
+        # as A4: single source of truth in the recovery layer. The
+        # detector also normalizes the input (string→dict promotion)
+        # when valid; we use the normalized value if present.
+        mismatched, schema_err, normalized = detect_schema_mismatch(
+            tool_name, tool_input
+        )
+        if mismatched:
+            outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
+            err_msg = f"{schema_err} Fix action_input and retry."
+            render_recovery(
+                llm_text, f"Observation: {err_msg}", "schema mismatch", self.state.turn
+            )
+            _append_observation(
+                self.state.messages,
+                self.ctx,
+                self.cfg.wire_format,
+                llm_text,
+                f"Observation: {err_msg}",
+                tool_name=tool_name,
+                success=False,
+                turn=self.state.turn,
+                render=False,  # render_recovery already surfaced it
+            )
+            return _CONTINUE
+        tool_input = normalized  # use post-normalization input for dispatch
+
+        # Execute tool (method tracks self.tools.recent_tool_history,
+        # uses self.* for provider/ctx/hooks/etc.)
+        tool_result = self.tools._dispatch_tool_with_hooks(tool_name, tool_input)
+
+        observation = self.tools._tool_observation(tool_name, tool_result, tool_input)
+        if truncation_warning:
+            observation = f"{observation}\n{truncation_warning}"
+
+        # N-op accumulate mode: record the execution for the caller's
+        # combined observation instead of appending one here. The render
+        # happens once, from storage, in _append_observation (single-op
+        # below, or _flush_op_results for the combined) — so the live card
+        # matches ctx + resume. Oversized bodies are already nudge-capped
+        # by _tool_observation above.
+        if accumulate is not None:
+            accumulate.append(
+                {
+                    "tool_name": tool_name,
+                    "observation": observation,
+                    "success": tool_result.success,
+                }
+            )
+            return None
+
+        # Inject observation with structured artifact. On an
+        # action-name correction, rewrite the assistant prior + history
+        # to the corrected wire shape so neither the next turn nor a
+        # resume re-feeds the raw drift (mimicry-strengthening).
+        obs_msg = f"Observation: {observation}"
+        corrected = None
+        if outcome.get("action_inferred"):
+            corrected = {
+                "role": "assistant",
+                "thought": turn.thought or "",
+                "action": op.action,
+                "action_input": op.action_input,
+            }
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            obs_msg,
+            tool_name=tool_name,
+            success=tool_result.success,
+            artifact=tool_result.artifact,
+            corrected_record=corrected,
+            turn=self.state.turn,
+        )
+        return _CONTINUE
+
+    # No usable action on this op — fall through to recovery.
+    def _recover_unparsed(self, llm_text: str, turn, outcome: dict):
+        """Missing action or parse failure — retry with the appropriate hint.
+
+        Echoes the model's failed output back as failure grounding (content
+        shows structural drift: YAML-style keys, function-call syntax,
+        bare prose). Thinking-channel echo is excluded from v1 — see
+        docs/robust-harness/DESIGN.md §2.2.
+        """
+        if turn.parse_stage > 0:
+            # Parsed OK but no action -- LLM forgot to include the action
+            _debug_log(
+                f"No action in parsed JSON (stage={turn.parse_stage}):\n{llm_text}"
+            )
+            intervention = format_no_action_retry(
+                prior_content=llm_text, wire_format=self.cfg.wire_format
+            )
+            recovery_reason = "no action"
+        else:
+            # JSON parse failed entirely
+            _debug_log(f"JSON parse failed (stage={turn.parse_stage}):\n{llm_text}")
+            syntax_error = self.cfg.wire_format.diagnose_syntax_error(llm_text)
+            intervention = format_no_json_retry(
+                prior_content=llm_text,
+                wire_format=self.cfg.wire_format,
+                syntax_error=syntax_error,
+            )
+            recovery_reason = "invalid JSON"
+        render_recovery(
+            llm_text, intervention.message, recovery_reason, self.state.turn
+        )
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            intervention.message,
+            tool_name="",
+            success=False,
+            turn=self.state.turn,
+            render=False,  # render_recovery already surfaced it
+        )
+        # Surface composed primitive names to the enclosing _handle_text_path
+        # so the trailing finally-block records them.
+        outcome["primitives"] = list(intervention.primitives)
+        self.state.turn -= 1  # Don't count format retries
+        return _CONTINUE
+
+    # ── C1 PR-2: 도구 호출은 ToolBridge 소유 — 아래는 기존 호출면 유지용
+    #    위임 (dispatch 클러스터가 PR-3 에서 승격되면 bridge 를 직접 주입받아
+    #    이 위임들도 소멸).
+
+
 class AgentLoop:
     """Encapsulates the ReAct agent loop state and execution."""
 
@@ -684,12 +1775,6 @@ class AgentLoop:
             query_author=query_author,
             stop_event=stop_event if stop_event is not None else threading.Event(),
         )
-        # Reactive context-overflow recovery (flow 2): how many times we
-        # have shrunk-and-retried for the CURRENT turn. Bounded by
-        # ``_MAX_OVERFLOW_RETRIES`` so a pathological case (the cache
-        # cannot shrink enough, or the server keeps rejecting) fails
-        # cleanly instead of looping forever.
-        self.overflow_retries = 0
         # Cumulative output tokens across this loop's turns — fed to the
         # renderer's per-turn token-usage line / web top-bar so the user
         # sees a running session total alongside the per-turn numbers.
@@ -698,11 +1783,14 @@ class AgentLoop:
         # C1 PR-2: 시스템 프롬프트는 SystemPromptSvc 소유 — self.system /
         # self._system_sections 는 property 브리지.
         self._prompt = SystemPromptSvc(self._config, ctx)
+        # C1 PR-3: LLM 콜은 LLMCaller 소유(overflow_retries 포함) — 위임/
+        # property 가 기존 표면 유지.
+        self._llm = LLMCaller(self._config, self._state, ctx, provider, self._prompt)
         # C1 PR-2: 도구 호출 브리지 — cfg/state/ctx/provider 명시 주입.
         self._tools = ToolBridge(self._config, self._state, ctx, provider)
-        # Sentinels: distinct from None (failure) and str (answer)
-        self._CONTINUE = object()  # keep looping
-        self._RETRY = object()  # overflow retry
+        # Sentinels — 모듈 상수 별칭 (C1 PR-3: dispatcher/LLM 콜과 공유)
+        self._CONTINUE = _CONTINUE
+        self._RETRY = _RETRY
 
         # Observability — per-turn record. Disabled when no session
         # (headless / subagent) or when user opted out.
@@ -723,11 +1811,10 @@ class AgentLoop:
             record_raw=record_raw_failures,
         )
 
-        # B1 (action loop) detector. Threshold=2 fires on the second
-        # consecutive identical (action, args). Escalation count
-        # selects the playbook column (1=probe_progress,
-        # 2=restate_task, 3+=hard fail).
-        self.loop_detector = ActionLoopDetector(threshold=2)
+        # C1 PR-3: 턴 디스패치는 TurnDispatcher 소유(loop_detector 포함).
+        self._dispatch = TurnDispatcher(
+            self._config, self._state, ctx, self._tools, self.recorder
+        )
 
         # Context compaction wiring (RFC docs/context-compaction/).
         # The compactor callback and the TurnRecorder are injected
@@ -908,62 +1995,20 @@ class AgentLoop:
         return self.compaction_enabled
 
     def _llm_compact_summarize(self, messages: list[dict]) -> str:
-        """Compactor callback: call the main provider with a
-        summarisation system prompt + the evicted messages, return
-        the summary text. Raised exceptions are converted to
-        ``CompactionError`` inside ContextManager._summarize_messages.
+        """LLMCaller.compact-summarize 위임 (ctx.set_compactor 등록 대상)."""
+        return self._llm._llm_compact_summarize(messages)
 
-        ``messages`` arrives in chat-ready ``{role, content}`` form —
-        ContextManager._compact does the natural-language conversion
-        via the wire_format plugin before calling here.
+    def _call_llm(self):
+        """LLMCaller 위임 (기존 호출면 유지 — 테스트의 인스턴스 모킹 호환)."""
+        return self._llm._call_llm()
 
-        Capabilities are overridden for this one call:
-          - ``supports_structured_output=False`` — we want a plain text
-            summary, not a JSON object. The agent-loop's normal ReAct
-            calls force JSON; here we explicitly opt out.
-          - ``supports_thinking=False`` — summarisation doesn't benefit
-            from a reasoning trace, and the thinking tokens would
-            consume the response budget without ending up in the
-            persisted summary.
-        """
-        from dataclasses import replace
+    @property
+    def overflow_retries(self):
+        return self._llm.overflow_retries
 
-        summarisation_prompt = (
-            "You are compacting an agent's working transcript so it can "
-            "continue the task with this summary in place of the raw "
-            "history. Write a plain-text summary under these headings "
-            "(omit a heading if it has no content):\n\n"
-            "TASK — the user's original request(s) and intent.\n"
-            "STATE — what is currently true: progress so far, what works.\n"
-            "DONE — actions taken: tools used and exact file paths / "
-            "symbols touched, and what changed.\n"
-            "PENDING — work not yet finished and the next step that was "
-            "about to run.\n"
-            "DECISIONS — choices made and why, including alternatives "
-            "rejected.\n"
-            "FAILURES — approaches that failed or errors encountered, so "
-            "they are not retried.\n"
-            "FACTS — keep verbatim: paths, identifiers, commands, config "
-            "values, signatures, error strings, and any user "
-            "correction/preference.\n\n"
-            "Rules: use ONLY information present in the transcript — do not "
-            "invent or assume. Keep exact identifiers verbatim (paths, "
-            "names, numbers, commands). Be concise; stay under 2000 tokens. "
-            "Plain text only — no JSON, no code fences except to quote a "
-            "short critical snippet."
-        )
-        summary_capabilities = replace(
-            self.capabilities,
-            supports_structured_output=False,
-            supports_thinking=False,
-        )
-        response = self.provider.call(
-            messages=messages,
-            system=summarisation_prompt,
-            model=self.model,
-            capabilities=summary_capabilities,
-        )
-        return response.content if hasattr(response, "content") else str(response)
+    @overflow_retries.setter
+    def overflow_retries(self, v):
+        self._llm.overflow_retries = v
 
     def _fire_hook(self, event: str, **kwargs):
         """Fire a hook event if runner is available. Returns HookContext or None."""
@@ -1162,11 +2207,6 @@ class AgentLoop:
             return False
         return self.max_turns <= 0 or self.turn < self.max_turns
 
-    def _task_text(self) -> str:
-        """All user requests this run (first query + injected), for recovery /
-        review anchoring. Falls back to the raw query if the log is empty."""
-        return "\n".join(self.task_log) if self.task_log else self.query
-
     def _inject_queued_messages(self) -> None:
         """Turn boundary (web): pull ONE queued user message and process it the
         SAME way a run-starter is processed. No-op when no callback (CLI) or the
@@ -1320,938 +2360,11 @@ class AgentLoop:
         )
         return self._CONTINUE
 
-    def _call_llm(self):
-        """LLM call with overflow retry and streaming. Returns response or sentinel."""
-        # flow 1 — preventive compaction before the call. The threshold
-        # uses the live system-prompt size and the model's window, so it
-        # reflects real headroom (not a fixed budget). ``sys_tokens`` is
-        # reused below to reconcile the cache against the server's actual
-        # input count once the call succeeds.
-        sys_tokens = estimate_tokens(self.system) if self.ctx else 0
-        if self.ctx:
-            target = max(
-                int(
-                    (
-                        self.capabilities.context_window
-                        - sys_tokens
-                        - self.capabilities.max_output_tokens
-                    )
-                    * _COMPACTION_TARGET_RATIO
-                ),
-                1,
-            )
-            self.ctx.ensure_within(target)
-            self.messages = self.ctx.get_messages()
-
-        # Context dump (verbose only)
-        if self.verbose:
-            render_context_dump(self.messages, self.turn)
-        _debug_log(
-            f"LLM_CALL turn={self.turn} skill={self.skill_name or 'main'} msg_count={len(self.messages)}"
-        )
-
-        # Build streaming callback: stops spinner on first chunk, then streams
-        spinner_active = True
-
-        def on_chunk(text: str) -> None:
-            nonlocal spinner_active
-            if spinner_active:
-                render_spinner_stop()
-                spinner_active = False
-            render_stream_chunk(text)
-
-        if self.skill_name:
-            render_spinner_start(f"skill:{self.skill_name}")
-        else:
-            render_spinner_start()
-        # Prompt Inspector snapshot: what THIS call's system prompt looks
-        # like, as named sections. No-op for CLI renderers (store-only on
-        # web), so per-turn cost is negligible.
-        render_system_prompt_snapshot(
-            build_inspector_sections(self._system_sections, self.ctx), self.turn
-        )
-
-        # Plugin-defined provider hints. The wire plugin decides them from
-        # the model's capabilities — e.g. ``json_mode``: ReAct requests it
-        # iff the model supports structured output, md_array never does
-        # (markdown shape). This is the single wire ⨯ capability decision
-        # point, so the provider never combines the two itself.
-        extra_call_kwargs = self.wire_format.provider_call_kwargs(self.capabilities)
-
-        # Plugin-defined prefill: a string the provider sees as the start
-        # of an assistant turn. Forces the model to continue from there,
-        # producing the wire format from the very first generated token.
-        # ReAct returns "" (no prefill — its prior already produces ReAct
-        # shape). Envelope plugins return e.g. ``<tool_use id="r1" action="``
-        # so the model emits the tool name next. Empty string => behaviour
-        # is identical to the pre-plugin path.
-        prefill = self.wire_format.prefill()
-        call_messages = self.messages
-        if prefill:
-            call_messages = [
-                *self.messages,
-                {"role": "assistant", "content": prefill},
-            ]
-        try:
-            response = self.provider.call(
-                messages=call_messages,
-                system=self.system,
-                model=self.model,
-                capabilities=self.capabilities,
-                on_chunk=on_chunk,
-                degeneration_check=self.wire_format.is_degenerate,
-                interrupt_check=self._interrupt_check,
-                **extra_call_kwargs,
-            )
-            # Stitch the prefill back onto the response so downstream
-            # parsers see a complete emission. Use dataclasses.replace
-            # to keep usage / thinking / stop_reason intact.
-            if prefill:
-                from dataclasses import replace as _replace
-
-                response = _replace(response, content=prefill + response.content)
-            # flow 1 (part B) — re-anchor the cache to the server's actual
-            # input count so the chars/4 estimate can't compound across
-            # turns. usage covers system+messages; ctx subtracts the same
-            # sys_tokens used for the threshold above. No-op without usage.
-            if self.ctx and response.usage:
-                self.ctx.reconcile_actual_tokens(
-                    response.usage.total_input_tokens, system_tokens=sys_tokens
-                )
-            # A successful call means we're no longer in overflow for this
-            # turn — reset the counter so a later turn gets a fresh budget
-            # of shrink-and-retry attempts.
-            self.overflow_retries = 0
-            return response
-        except Exception as e:
-            if (
-                is_context_overflow(str(e))
-                and self.ctx
-                and self.overflow_retries < _MAX_OVERFLOW_RETRIES
-            ):
-                # Reactive recovery (flow 2): the server rejected the
-                # prompt as too long. Trust its count over our local
-                # estimate, shrink the cache toward the limit, and retry.
-                actual, limit = parse_overflow_amounts(str(e))
-                budget = self.ctx.max_context_tokens
-                target = int((limit or budget) * _COMPACTION_TARGET_RATIO)
-                if self.ctx.force_fit(target, actual_tokens=actual):
-                    self.overflow_retries += 1
-                    render_status(
-                        "running",
-                        f"Context overflow — shrinking and retrying "
-                        f"({self.overflow_retries}/{_MAX_OVERFLOW_RETRIES})...",
-                    )
-                    self.messages = self.ctx.get_messages()
-                    self.turn -= 1
-                    return self._RETRY
-                # force_fit could not shrink further (only the anchor
-                # remains) — fall through to a clean failure.
-            _debug_log(
-                f"LLM call failed: model={self.model} iter={self.turn} skill={self.skill_name} error={e}"
-            )
-            render_step(
-                "error",
-                f"LLM call failed (model={self.model}, iter={self.turn}): {e}",
-                self.turn,
-            )
-
-            return ToolResult(False, error=f"LLM call failed: {e}")
-        finally:
-            if spinner_active:
-                render_spinner_stop()
-            else:
-                render_stream_end()
-
     def _handle_text_path(self, llm_text: str):
-        """Handle text parsing response (non-JSON fallback).
+        return self._dispatch._handle_text_path(llm_text)
 
-        Recovery primitives consume only the emitted text (``llm_text``)
-        — the thinking channel is intentionally excluded from the
-        recovery path (see ``docs/robust-harness/DESIGN.md`` §2.2).
-
-        TurnRecord is emitted exactly once per call, regardless of which
-        terminal branch is taken (success/retry/exception). Branches
-        that fire an Intervention mutate ``outcome`` (failure_signal +
-        primitives) before returning, and the trailing finally writes
-        the record.
-        """
-        turn = self.wire_format.parse_turn(llm_text)
-
-        # Recover dropped action names (parse_stage 3) — the dropped-action
-        # recovery SEAM: an op's action slot is empty but its action_input
-        # survived (parse-preservation invariant), so ``infer_action`` tries to
-        # resolve the tool from the input shape. A successful inference is
-        # flagged so the observation step rewrites the prior + history to the
-        # corrected shape (no raw-drift mimicry) and the TurnRecorder logs it.
-        #
-        # As of consolidation Step 3 every builtin tool is flat-native, so the
-        # current prefix-based resolver returns None for builtin payloads (this
-        # hook + infer_action stay live for a FUTURE prefixed tool/format; a
-        # flat action-less payload like ``{path}`` is ambiguous → NO_ACTION,
-        # the documented extension point for a future schema-based resolver).
-        # Ambiguous/none leaves it to the NO_ACTION recovery below.
-        #
-        # Gated on ``action_required``: when the wire format requires an
-        # explicit action (action_required=True), a dropped action is a
-        # drift to be corrected by the model, so we skip inference and fall
-        # through to the NO_ACTION recovery below. When False (the namespaced
-        # format — react), the action is recoverable from the
-        # preserved action_input, so we infer it. Mirror of how
-        # ``thought_required`` gates the NO_THOUGHT recovery.
-        action_inferred = False
-        if not self.wire_format.action_required:
-            for op in turn.ops:
-                if not op.action and isinstance(op.action_input, dict):
-                    inferred = infer_action(op.action_input)
-                    if inferred:
-                        op.action = inferred
-                        action_inferred = True
-
-        # Classify outcome early; the dispatch body may mutate this
-        # dict to reflect a B1 (action loop) detection that is only
-        # known after we see the chosen action.
-        # Degeneration is a GENERATION-level pathology — the stream ran away
-        # repeating the wire shape instead of terminating — so it is logically
-        # PRIOR to, and a more specific cause than, the parse-level symptom (a
-        # runaway naturally fails to parse and would otherwise be mislabeled
-        # NO_JSON). Checked FIRST. Recovery is driven by ``turn.parse_stage``
-        # (in ``_recover_unparsed``), NOT by this label, so relabeling a
-        # stage-0 runaway DEGENERATE changes only the telemetry signal
-        # (turns.jsonl) — the recovery path is unchanged. Empty output is not a
-        # runaway (``is_degenerate("")`` is False) so it still falls through to
-        # NO_OUTPUT below.
-        if self.wire_format.is_degenerate(llm_text):
-            initial_signal = FAILURE_DEGENERATE
-        elif turn.parse_stage == 0:
-            # Split A1 into two sub-modes — empty/whitespace-only output
-            # vs non-empty content that drifted from JSON. The recovery
-            # path is identical (RETRY_HINT_NO_JSON fallback in both),
-            # but the labels separate two operationally different
-            # failure shapes for analysis (DESIGN.md §1, A1a vs A1b).
-            if not (llm_text or "").strip():
-                initial_signal = FAILURE_NO_OUTPUT
-            else:
-                initial_signal = FAILURE_NO_JSON
-        elif not any(op.action for op in turn.ops):
-            initial_signal = FAILURE_NO_ACTION
-        else:
-            initial_signal = None
-        outcome: dict = {
-            "failure_signal": initial_signal,
-            "primitives": ["action_inferred"] if action_inferred else [],
-            "action_inferred": action_inferred,
-        }
-
-        try:
-            return self._dispatch_turn(llm_text, turn, outcome)
-        finally:
-            self.recorder.record(
-                model=self.model,
-                parse_stage=turn.parse_stage,
-                failure_signal=outcome["failure_signal"],
-                primitives_applied=outcome["primitives"],
-                raw=llm_text,
-            )
-
-    def _dispatch_turn(self, llm_text: str, turn, outcome: dict):
-        """Turn-level dispatch: guards, then the ops in array order.
-
-        ``turn`` is a ``ParsedTurn``. Single-action formats produce 0 or 1
-        ops (the default ``parse_turn`` wrapper), so for them this reproduces
-        the pre-multi-op behaviour exactly. ``outcome`` is a mutable dict
-        owned by the caller (``_handle_text_path``); branches that fire an
-        Intervention update it before returning so the trailing finally
-        records what happened.
-        """
-        first_action = next((op.action for op in turn.ops if op.action), None)
-
-        # A7 NO_THOUGHT — action present but thought missing. Retry
-        # before dispatch so the omission does not enter the transcript
-        # as a precedent for future turns (mimicry-strengthening loop:
-        # the raw response is mirrored back on the next turn and
-        # crowds out the system prompt's Format Rule 1).
-        if self.wire_format.thought_required and detect_thought_missing(
-            turn.thought, first_action
-        ):
-            # ``thought_required`` is False on plugins where the thought
-            # is preceding free text rather than a schema field — for
-            # those, missing thought is not a drift signal.
-            _debug_log(f"NO_THOUGHT: action={first_action!r}, thought={turn.thought!r}")
-            # ReAct-only: format_no_thought_retry lives on the plugin,
-            # not in recovery/builders, because it has no meaning when
-            # ``thought_required`` is False (envelope plugins).
-            intervention = self.wire_format.format_no_thought_retry(
-                prior_content=llm_text
-            )
-            render_recovery(llm_text, intervention.message, "no thought", self.turn)
-            _append_observation(
-                self.messages,
-                self.ctx,
-                self.wire_format,
-                llm_text,
-                intervention.message,
-                tool_name="",
-                success=False,
-                turn=self.turn,
-                render=False,  # render_recovery already surfaced it
-            )
-            outcome["failure_signal"] = FAILURE_NO_THOUGHT
-            outcome["primitives"] = list(intervention.primitives)
-            self.turn -= 1
-            return self._CONTINUE
-
-        # 6. Thought
-        if turn.thought:
-            render_step("thought", turn.thought, self.turn)
-
-        # No usable ops at all (parse failure / no action recovered, including
-        # a thought-only turn) — straight to recovery. md_array completes via
-        # an explicit `complete` op, so a thought-only emission is a NO_ACTION
-        # nudge, not a silent completion.
-        if not turn.ops:
-            return self._recover_unparsed(llm_text, turn, outcome)
-
-        # Dispatch ops in array order (sequential — observations append in
-        # order). Single-action formats have exactly ONE op and take the
-        # legacy path (accumulate=None → _dispatch_op appends its own
-        # observation and returns, byte-identical to pre-multi-op).
-        #
-        # N ops (multi-op formats): regular tool ops execute and ACCUMULATE
-        # into one combined observation (run-all; any-fail ⇒ the combined
-        # observation is marked failed so the model retries the failed op).
-        # A turn-ending branch (complete / run_skill / guard
-        # intervention / recovery) flushes whatever already ran first so
-        # executed work isn't lost, then returns. ``ask`` is NOT turn-ending —
-        # it produces an observation (the user's reply) and accumulates like a
-        # normal tool, so several ``ask`` ops batch (each prompts in turn) just
-        # like a read/shell batch.
-        if len(turn.ops) == 1:
-            return self._dispatch_op(llm_text, turn, turn.ops[0], outcome)
-
-        results: list[dict] = []
-        ops = turn.ops
-        i = 0
-        while i < len(ops):
-            op = ops[i]
-            # Turn-ending special actions: flush accumulated results BEFORE
-            # the branch runs so its observation lands after the work done
-            # so far (chronological order for the model).
-            if op.action in ("complete", "run_skill"):
-                self._flush_op_results(llm_text, results)
-                results = []
-                return self._dispatch_op(llm_text, turn, op, outcome)
-            # Parallel batch: a run of ≥2 consecutive ops of the SAME
-            # parallel_safe tool dispatches concurrently into one combined
-            # observation (delegate: independent subagents). A lone
-            # parallel_safe op falls through to the normal per-op path so it
-            # keeps its B1/A4/A5 guards. Mutating tools (parallel_safe=False)
-            # always take the sequential per-op path — order is their
-            # correctness guarantee (write→edit same file, mkdir→touch).
-            tool = TOOLS.get(op.action) if op.action else None
-            # Same-file edit batch: a run of ≥2 consecutive edit_file ops on the
-            # SAME path is applied together against ONE original read (all refs
-            # resolved before any write, bottom-up, all-or-nothing) so a later
-            # op's hashline ref doesn't go stale from an earlier op's line shift.
-            # A lone edit_file, or edits on different paths, take the normal
-            # per-op path. Only consecutive same-path edits group — interleaving
-            # another tool (e.g. write→edit) breaks the run, preserving order.
-            if op.action == "edit_file" and isinstance(op.action_input, dict):
-                path = op.action_input.get("path")
-                j = i
-                while (
-                    j < len(ops)
-                    and ops[j].action == "edit_file"
-                    and isinstance(ops[j].action_input, dict)
-                    and ops[j].action_input.get("path") == path
-                ):
-                    j += 1
-                if j - i > 1:
-                    self._dispatch_edit_batch(
-                        llm_text, turn, ops[i:j], outcome, accumulate=results
-                    )
-                    i = j
-                    continue
-            if tool is not None and tool.parallel_safe:
-                j = i
-                while j < len(ops) and ops[j].action == op.action:
-                    j += 1
-                if j - i > 1:
-                    self._dispatch_parallel_batch(
-                        llm_text, turn, ops[i:j], outcome, accumulate=results
-                    )
-                    i = j
-                    continue
-            r = self._dispatch_op(llm_text, turn, op, outcome, accumulate=results)
-            if r is not None:
-                # Guard/recovery fired inside the op (B1/A4/A5/no-action):
-                # its intervention observation is already appended; flush the
-                # accumulated work after it (rare mid-array edge — order is
-                # intervention-first, results still preserved).
-                self._flush_op_results(llm_text, results)
-                return r
-            i += 1
-        self._flush_op_results(llm_text, results)
-        return self._CONTINUE
-
-    def _flush_op_results(self, llm_text: str, results: list[dict]) -> None:
-        """Append ONE combined observation for accumulated op results.
-
-        Per-op header lines (``[i/N] tool — OK/FAILED``) frame each op's
-        output; turn success = all ops succeeded (any-fail ⇒ failed so the
-        model retries the failed op next turn). No-op when nothing ran.
-        """
-        if not results:
-            return
-        n = len(results)
-        parts = []
-        for i, r in enumerate(results, start=1):
-            status = "OK" if r["success"] else "FAILED"
-            parts.append(f"[{i}/{n}] {r['tool_name']} — {status}\n{r['observation']}")
-        combined = "\n\n".join(parts)
-        all_ok = all(r["success"] for r in results)
-        _append_observation(
-            self.messages,
-            self.ctx,
-            self.wire_format,
-            llm_text,
-            f"Observation: {combined}",
-            tool_name=_combined_tool_label([r["tool_name"] for r in results]),
-            success=all_ok,
-            turn=self.turn,
-        )
-
-    def _dispatch_parallel_batch(
-        self, llm_text, turn, batch_ops, outcome, *, accumulate
-    ):
-        """Dispatch a run of ≥2 consecutive parallel_safe ops concurrently,
-        appending ONE combined result to *accumulate*.
-
-        Only ``delegate`` is wired today (the sole ``parallel_safe`` tool): each
-        op's flat input becomes one task spec → ``tool_delegate({tasks:[...]})``
-        → ``_run_parallel`` (real threading). This is what makes the prompt's
-        "several delegate ops in one turn run in parallel" actually true (the
-        N-op loop is otherwise sequential).
-
-        A future read-only ``parallel_safe`` tool with no internal concurrent
-        engine would fan its ops over a thread-pool of per-op ``run()`` calls
-        in the extension slot below — not wired (no other tool opts in).
-        """
-        tool_name = batch_ops[0].action
-        # Render one action card per op (the model's flat emission, pre-wrap),
-        # matching the single-op render so the UI shows every delegate op.
-        for op in batch_ops:
-            disp = op.action_input if op.action_input is not None else {}
-            render_step(
-                "action",
-                "",
-                self.turn,
-                tool_name=tool_name,
-                tool_input=json.dumps(disp, ensure_ascii=False)
-                if isinstance(disp, dict)
-                else str(disp),
-            )
-
-        if tool_name != "delegate":
-            # Extension slot: a parallel_safe tool with no internal concurrent
-            # engine (e.g. a future read-only read_file/code_index opt-in) would
-            # fan its ops out over a thread-pool of per-op run() calls here.
-            raise NotImplementedError(
-                f"parallel_safe batch dispatch not wired for {tool_name!r}; only "
-                "delegate has an internal concurrent engine (_run_parallel)."
-            )
-
-        # delegate: assemble each flat op into one task spec and run the batch
-        # through the existing parallel engine (one combined observation).
-        specs = [
-            TOOLS["delegate"].strip_prefix(op.action_input or {}) for op in batch_ops
-        ]
-        result = self._dispatch_tool_with_hooks("delegate", {"tasks": specs})
-        observation = self._tool_observation("delegate", result, {"tasks": specs})
-        # Rendered from storage by _flush_op_results' _append_observation
-        # (combined card), matching ctx + resume — no separate pre-render.
-        accumulate.append(
-            {
-                "tool_name": tool_name,
-                "observation": observation,
-                "success": result.success,
-            }
-        )
-
-    def _dispatch_edit_batch(self, llm_text, turn, batch_ops, outcome, *, accumulate):
-        """Apply a run of ≥2 consecutive same-path edit_file ops as ONE batch,
-        appending ONE combined result to *accumulate*.
-
-        Calls the pure ``apply_edits_batch`` (resolve all refs against one
-        original read → reject overlaps → bottom-up apply → one write,
-        all-or-nothing). Single-direction call: the loop hands it ``(path,
-        edits)`` and gets a ToolResult back — edit_file knows nothing of the
-        loop. Each op's flat input also gets rendered as its own action card,
-        matching the single-op render.
-        """
-        from agent_cli.tools.edit_file import apply_edits_batch
-
-        for op in batch_ops:
-            disp = op.action_input if isinstance(op.action_input, dict) else {}
-            render_step(
-                "action",
-                "",
-                self.turn,
-                tool_name="edit_file",
-                tool_input=json.dumps(disp, ensure_ascii=False),
-            )
-
-        path = batch_ops[0].action_input.get("path")
-        edits = [op.action_input for op in batch_ops]
-        result = apply_edits_batch(path, edits)
-        observation = self._tool_observation(
-            "edit_file", result, batch_ops[0].action_input
-        )
-        accumulate.append(
-            {
-                "tool_name": "edit_file",
-                "observation": observation,
-                "success": result.success,
-            }
-        )
-
-    def _dispatch_op(self, llm_text: str, turn, op, outcome: dict, accumulate=None):
-        """Dispatch ONE op of a turn. Returns a ToolResult or a sentinel.
-
-        Carries the pre-multi-op per-action body unchanged: special actions
-        (complete / ask / run_skill), then B1/A4/A5 guards
-        and tool execution, then the no-action fall-through recovery.
-
-        ``accumulate`` (multi-op N-op path only): a list to collect this op's
-        execution record into instead of appending its own observation —
-        the caller combines all records into one observation. Returns
-        ``None`` in that case ("executed, keep going"); every other branch
-        returns a ToolResult/sentinel as before.
-        """
-        # 7. Complete tool (text parsing path)
-        _debug_log(f"PARSED iter={self.turn} action={op.action}")
-        if op.action == "complete":
-            if isinstance(op.action_input, dict):
-                raw = op.action_input.get("result")
-                answer = (
-                    str(raw)
-                    if raw
-                    else "(Completed without result — model may lack capability for this task)"
-                )
-            elif isinstance(op.action_input, str):
-                raw = op.action_input
-                answer = (
-                    op.action_input
-                    or "(Completed without result — model may lack capability for this task)"
-                )
-            else:
-                raw = None
-                answer = (
-                    str(op.action_input)
-                    if op.action_input
-                    else "(Completed without result — model may lack capability for this task)"
-                )
-
-            # A6 (Nested envelope) — detection records the signal for
-            # observability AND we unwrap one level so the user-facing
-            # answer doesn't carry a literal ``{"result": "..."}`` prefix.
-            # Single-level only (recursive nesting indicates a different
-            # bug worth surfacing). ``raw`` may be from ``op.action_
-            # input`` (dict path) or the input itself (str path); both
-            # surface as the same artifact, so we re-derive ``answer``
-            # from the unwrapped value.
-            if detect_nested_envelope(raw):
-                outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE
-                unwrapped = unwrap_nested_envelope(raw)
-                if unwrapped != raw:
-                    answer = unwrapped or answer
-
-            if self.ctx:
-                self.ctx.add(
-                    self.wire_format.serialize_terminal_for_history(
-                        turn.thought or "", answer
-                    )
-                )
-            render_step("final", answer, self.turn)
-
-            return ToolResult(True, output=answer)
-
-        # 9. Detect echo-as-final-answer (common small model pattern)
-        echo_answer = _try_echo_as_final(op.action, op.action_input)
-        if echo_answer:
-            if self.ctx:
-                self.ctx.add(
-                    self.wire_format.serialize_terminal_for_history(
-                        turn.thought or "", echo_answer
-                    )
-                )
-            render_step("final", echo_answer, self.turn)
-
-            return ToolResult(True, output=echo_answer)
-
-        # 10. Ask tool -- prompt user for input (text parsing path)
-        if op.action == "ask":
-            questions = _extract_questions(op.action_input)
-            if questions:
-                # Emit the action step so out-of-band renderers (web)
-                # replace their streaming card with a structured
-                # ``assistant_turn``. Without this, the raw-JSON
-                # streaming card stays on screen and the next turn's
-                # stream chunks visually append to it — the user sees
-                # consecutive assistant emissions glued together.
-                render_step(
-                    "action",
-                    "",
-                    self.turn,
-                    tool_name="ask",
-                    tool_input=json.dumps(op.action_input, ensure_ascii=False)
-                    if isinstance(op.action_input, dict)
-                    else str(op.action_input),
-                )
-                user_response = _handle_ask(questions)
-                # ``ask`` is a normal observation-producing op (the user's
-                # reply is the observation), not a terminal. In a multi-op turn
-                # it accumulates like read/shell so consecutive asks batch into
-                # the one combined observation; alone it appends its own.
-                if accumulate is not None:
-                    accumulate.append(
-                        {
-                            "tool_name": "ask",
-                            "observation": f"User responded:\n{user_response}",
-                            "success": True,
-                        }
-                    )
-                    return None
-                obs_msg = f"Observation: User responded:\n{user_response}"
-                _append_observation(
-                    self.messages,
-                    self.ctx,
-                    self.wire_format,
-                    llm_text,
-                    obs_msg,
-                    tool_name="ask",
-                    success=True,
-                    turn=self.turn,
-                    render=False,  # the answer is surfaced by the input UI
-                )
-                return self._CONTINUE
-
-        # 10b. run_skill -- intercept at loop level (text parsing path)
-        if op.action == "run_skill":
-            skill_input = op.action_input if isinstance(op.action_input, dict) else {}
-            # Same reason as ``ask`` above — close out the streaming
-            # card before the (often long-running) skill subprocess
-            # starts emitting its own events.
-            render_step(
-                "action",
-                "",
-                self.turn,
-                tool_name="run_skill",
-                tool_input=json.dumps(skill_input, ensure_ascii=False),
-            )
-            skill_tool_result = _handle_run_skill(
-                skill_input,
-                self.provider_name,
-                self.base_url,
-                self.api_key,
-                self.capabilities,
-                self.model,
-                self.ctx,
-                self.session,
-                self.skill_name,
-                skill_stack=self.skill_stack,
-                graceful_interrupt=self.graceful_interrupt,
-                stop_event=self.stop_event,
-                hook_runner=self.hook_runner,
-                mcp_manager=self.mcp_manager,
-                parent_hooks_config=self.hooks_config,
-                parent_depth=self.depth,
-                max_depth=self.max_depth,
-                compaction_enabled=self.compaction_enabled,
-            )
-            obs = skill_tool_result.output or skill_tool_result.error
-            obs_msg = f"Observation: {obs}"
-            _append_observation(
-                self.messages,
-                self.ctx,
-                self.wire_format,
-                llm_text,
-                obs_msg,
-                tool_name="run_skill",
-                success=skill_tool_result.success,
-                artifact=skill_tool_result.artifact,
-                turn=self.turn,
-            )
-            return self._CONTINUE
-
-        # 11. Tool execution (text parsing path)
-        if op.action:
-            tool_name = op.action
-            tool_input = op.action_input or {}
-
-            # Multi-op formats emit flat single-target ops (one file / edit /
-            # query / task per op); the tool re-wraps that into its canonical
-            # prefixed input so the validate → strip → run pipeline below is
-            # unchanged. Single-action formats bypass this (their input is
-            # already canonical).
-            if (
-                getattr(self.wire_format, "multi_op", False)
-                and tool_name in TOOLS
-                and isinstance(tool_input, dict)
-            ):
-                tool_input = TOOLS[tool_name].wrap_single_op(tool_input)
-
-            # Truncation guard: if JSON was repaired (truncated response),
-            # strip the last element from edit_file's lines arrays
-            truncation_warning = ""
-            if op.truncated and tool_name == "edit_file":
-                tool_input, truncation_warning = _sanitize_truncated_edit(tool_input)
-
-            # B1 (action loop) detection — observe BEFORE dispatch so a
-            # repeated call doesn't pay the cost of the redundant tool
-            # run. Counter resets after a tool error so legitimate
-            # retries don't false-positive.
-            prev_was_error = bool(
-                self.recent_tool_history
-                and self.recent_tool_history[-1].get("tool") == tool_name
-                and self.recent_tool_history[-1].get("success") is False
-            )
-            loop_level = self.loop_detector.observe(
-                tool_name, tool_input, prev_was_error=prev_was_error
-            )
-            if loop_level >= 1:
-                outcome["failure_signal"] = FAILURE_ACTION_LOOP
-                args_repr = (
-                    json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
-                    if isinstance(tool_input, dict)
-                    else str(tool_input)
-                )
-                intervention = format_action_loop_intervention(
-                    level=loop_level,
-                    action=tool_name,
-                    args_repr=args_repr,
-                    repeat_count=self.loop_detector.consecutive_count,
-                    task=self._task_text(),
-                )
-                if intervention is None:
-                    # Level ≥3: recovery exhausted — hard fail with a
-                    # message that cites which primitives were already
-                    # tried so the user knows we did not give up early.
-                    _debug_log(
-                        f"Loop hard-fail: {tool_name} input={args_repr[:100]} "
-                        f"level={loop_level} skill_name={self.skill_name}"
-                    )
-                    render_status(
-                        "error",
-                        f"Action loop unresolved: {tool_name} repeated; "
-                        "tried probe_progress and restate_task without "
-                        "recovery. Stopping.",
-                    )
-                    return ToolResult(
-                        False,
-                        error=(
-                            "Action loop unresolved: probe_progress and "
-                            "restate_task did not break the repetition."
-                        ),
-                    )
-                # Level 1 or 2: inject Intervention, skip dispatch,
-                # let the next turn try again with the new context.
-                render_recovery(
-                    llm_text,
-                    intervention.message,
-                    f"action loop ({tool_name}, level {loop_level})",
-                    self.turn,
-                )
-                _append_observation(
-                    self.messages,
-                    self.ctx,
-                    self.wire_format,
-                    llm_text,
-                    intervention.message,
-                    tool_name=tool_name,
-                    success=False,
-                    turn=self.turn,
-                    render=False,  # render_recovery already surfaced it
-                )
-                outcome["primitives"] = list(intervention.primitives)
-                self.turn -= 1  # Don't count loop nudges as user-facing turns
-                return self._CONTINUE
-
-            # Render the model's ACTUAL emission, not the dispatch-canonical
-            # form. `wrap_single_op` above re-wrapped the flat op into the
-            # tool's prefixed/batch shape (e.g. read_file `{path}` →
-            # `{read_file_reads:[...]}`) so the validate→strip→run pipeline is
-            # unchanged — but showing THAT misrepresents what the model wrote
-            # and diverges from history.jsonl / resume-replay (which store the
-            # raw op). The dispatch keeps `tool_input` (wrapped); only the card
-            # shows `op.action_input` (pre-wrap).
-            display_input = op.action_input if op.action_input is not None else {}
-            render_step(
-                "action",
-                "",
-                self.turn,
-                tool_name=tool_name,
-                tool_input=json.dumps(display_input, ensure_ascii=False)
-                if isinstance(display_input, dict)
-                else str(display_input),
-            )
-
-            # A4 (Unknown tool) — pre-dispatch detection. Skips _dispatch_tool_with_hooks
-            # entirely so the recovery layer is the single source of truth for
-            # this failure mode (DESIGN.md §4 invariant: same primitive shape
-            # across reused failures). The error message is the same one the
-            # leaf-level dispatch would have produced — primitive extraction
-            # for "did you mean" suggestions is deferred to Step 4b once
-            # observability data shows whether it improves recovery.
-            if detect_unknown_tool(tool_name, self.tools_list):
-                outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
-                avail = ", ".join(self.tools_list)
-                err_msg = f"Unknown tool '{tool_name}'. Available: {avail}"
-                render_recovery(
-                    llm_text, f"Observation: {err_msg}", "unknown tool", self.turn
-                )
-                _append_observation(
-                    self.messages,
-                    self.ctx,
-                    self.wire_format,
-                    llm_text,
-                    f"Observation: {err_msg}",
-                    tool_name=tool_name,
-                    success=False,
-                    turn=self.turn,
-                    render=False,  # render_recovery already surfaced it
-                )
-                return self._CONTINUE
-
-            # A5 (Schema mismatch) — pre-dispatch detection. Same rationale
-            # as A4: single source of truth in the recovery layer. The
-            # detector also normalizes the input (string→dict promotion)
-            # when valid; we use the normalized value if present.
-            mismatched, schema_err, normalized = detect_schema_mismatch(
-                tool_name, tool_input
-            )
-            if mismatched:
-                outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
-                err_msg = f"{schema_err} Fix action_input and retry."
-                render_recovery(
-                    llm_text, f"Observation: {err_msg}", "schema mismatch", self.turn
-                )
-                _append_observation(
-                    self.messages,
-                    self.ctx,
-                    self.wire_format,
-                    llm_text,
-                    f"Observation: {err_msg}",
-                    tool_name=tool_name,
-                    success=False,
-                    turn=self.turn,
-                    render=False,  # render_recovery already surfaced it
-                )
-                return self._CONTINUE
-            tool_input = normalized  # use post-normalization input for dispatch
-
-            # Execute tool (method tracks self.recent_tool_history,
-            # uses self.* for provider/ctx/hooks/etc.)
-            tool_result = self._dispatch_tool_with_hooks(tool_name, tool_input)
-
-            observation = self._tool_observation(tool_name, tool_result, tool_input)
-            if truncation_warning:
-                observation = f"{observation}\n{truncation_warning}"
-
-            # N-op accumulate mode: record the execution for the caller's
-            # combined observation instead of appending one here. The render
-            # happens once, from storage, in _append_observation (single-op
-            # below, or _flush_op_results for the combined) — so the live card
-            # matches ctx + resume. Oversized bodies are already nudge-capped
-            # by _tool_observation above.
-            if accumulate is not None:
-                accumulate.append(
-                    {
-                        "tool_name": tool_name,
-                        "observation": observation,
-                        "success": tool_result.success,
-                    }
-                )
-                return None
-
-            # Inject observation with structured artifact. On an
-            # action-name correction, rewrite the assistant prior + history
-            # to the corrected wire shape so neither the next turn nor a
-            # resume re-feeds the raw drift (mimicry-strengthening).
-            obs_msg = f"Observation: {observation}"
-            corrected = None
-            if outcome.get("action_inferred"):
-                corrected = {
-                    "role": "assistant",
-                    "thought": turn.thought or "",
-                    "action": op.action,
-                    "action_input": op.action_input,
-                }
-            _append_observation(
-                self.messages,
-                self.ctx,
-                self.wire_format,
-                llm_text,
-                obs_msg,
-                tool_name=tool_name,
-                success=tool_result.success,
-                artifact=tool_result.artifact,
-                corrected_record=corrected,
-                turn=self.turn,
-            )
-            return self._CONTINUE
-
-        # No usable action on this op — fall through to recovery.
-        return self._recover_unparsed(llm_text, turn, outcome)
-
-    def _recover_unparsed(self, llm_text: str, turn, outcome: dict):
-        """Missing action or parse failure — retry with the appropriate hint.
-
-        Echoes the model's failed output back as failure grounding (content
-        shows structural drift: YAML-style keys, function-call syntax,
-        bare prose). Thinking-channel echo is excluded from v1 — see
-        docs/robust-harness/DESIGN.md §2.2.
-        """
-        if turn.parse_stage > 0:
-            # Parsed OK but no action -- LLM forgot to include the action
-            _debug_log(
-                f"No action in parsed JSON (stage={turn.parse_stage}):\n{llm_text}"
-            )
-            intervention = format_no_action_retry(
-                prior_content=llm_text, wire_format=self.wire_format
-            )
-            recovery_reason = "no action"
-        else:
-            # JSON parse failed entirely
-            _debug_log(f"JSON parse failed (stage={turn.parse_stage}):\n{llm_text}")
-            syntax_error = self.wire_format.diagnose_syntax_error(llm_text)
-            intervention = format_no_json_retry(
-                prior_content=llm_text,
-                wire_format=self.wire_format,
-                syntax_error=syntax_error,
-            )
-            recovery_reason = "invalid JSON"
-        render_recovery(llm_text, intervention.message, recovery_reason, self.turn)
-        _append_observation(
-            self.messages,
-            self.ctx,
-            self.wire_format,
-            llm_text,
-            intervention.message,
-            tool_name="",
-            success=False,
-            turn=self.turn,
-            render=False,  # render_recovery already surfaced it
-        )
-        # Surface composed primitive names to the enclosing _handle_text_path
-        # so the trailing finally-block records them.
-        outcome["primitives"] = list(intervention.primitives)
-        self.turn -= 1  # Don't count format retries
-        return self._CONTINUE
-
-    # ── C1 PR-2: 도구 호출은 ToolBridge 소유 — 아래는 기존 호출면 유지용
-    #    위임 (dispatch 클러스터가 PR-3 에서 승격되면 bridge 를 직접 주입받아
-    #    이 위임들도 소멸).
+    def _task_text(self) -> str:
+        return self._dispatch._task_text()
 
     def _dispatch_tool_with_hooks(self, tool_name: str, tool_input):
         return self._tools._dispatch_tool_with_hooks(tool_name, tool_input)
@@ -2688,89 +2801,6 @@ def _handle_run_skill(
     obs = OBS_SUCCESS.format(result=f"{skill_header}{body}")
 
     return ToolResult(skill_result.success, output=obs, artifact=skill_result.artifact)
-
-
-# Virtual/terminal tools excluded from the "your tool calls" review listing —
-# they aren't real work, just loop control. (The review-context builders below
-# serve the auto-review feature via agent_cli.review.)
-_REVIEW_VIRTUAL_TOOLS: frozenset[str] = frozenset({"complete", "ask"})
-
-
-def _short_review_args(args, max_len: int = 80) -> str:
-    """Render a tool's action_input as a compact one-liner for review injection.
-
-    Long strings are head-truncated to 40 chars; non-scalar values
-    (list / dict) collapse to ``<type>`` markers so the line stays
-    short. The combined render is then capped at ``max_len``. The goal
-    is "model can recognize what was called and on what target" — not
-    a faithful replay.
-    """
-    if not isinstance(args, dict):
-        s = repr(args)
-        return s if len(s) <= max_len else s[: max_len - 3] + "..."
-    pairs = []
-    for k, v in args.items():
-        if isinstance(v, str):
-            v_show = v if len(v) <= 40 else v[:37] + "..."
-            pairs.append(f"{k}={v_show!r}")
-        elif isinstance(v, (int, float, bool)) or v is None:
-            pairs.append(f"{k}={v!r}")
-        else:
-            pairs.append(f"{k}=<{type(v).__name__}>")
-    line = ", ".join(pairs)
-    if len(line) > max_len:
-        line = line[: max_len - 3] + "..."
-    return line
-
-
-def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
-    """Build the ``--- YOUR TOOL CALLS ---`` section for review injection.
-
-    Returns "" (no section emitted) when ctx is None, has no
-    assistant tool calls, or only virtual tools were used. Virtual
-    tools (``complete`` / ``ask``) are filtered — they don't
-    represent work the model has done.
-
-    The section gives the model a *factual* list of what it actually
-    invoked, independent of whether the corresponding Observations
-    have been evicted by context FIFO. The model can then dispute or
-    confirm its summary against this list before calling ``complete``.
-
-    When the count exceeds ``max_calls``, the most recent
-    ``max_calls`` entries are kept (most relevant to "is the work
-    done?") and a header note records the omission.
-    """
-    if ctx is None:
-        return ""
-    try:
-        raw = ctx.get_raw_messages()
-    except Exception:
-        return ""
-
-    # iter_record_ops reads BOTH assistant record shapes (multi-op ``ops``
-    # + legacy singular ``action``) — reading only the top-level ``action``
-    # here silently skipped every op turn once md_array/react started
-    # storing ``ops`` records, leaving this section permanently empty.
-    from agent_cli.context.manager import iter_record_ops
-
-    calls = []
-    for msg in raw:
-        for action, args in iter_record_ops(msg):
-            if action in _REVIEW_VIRTUAL_TOOLS:
-                continue
-            calls.append(f"- {action}({_short_review_args(args)})")
-
-    if not calls:
-        return ""
-
-    total = len(calls)
-    if total > max_calls:
-        calls = calls[-max_calls:]
-        header = f"--- YOUR TOOL CALLS (last {max_calls} of {total}) ---"
-    else:
-        header = "--- YOUR TOOL CALLS ---"
-
-    return "\n".join([header, *calls])
 
 
 # Regex: simple echo with no pipes, redirects, subshells, or chaining

@@ -3301,12 +3301,12 @@ class TestFormatToolCallsForReview:
     """Unit tests for the ctx -> tool-calls section helper."""
 
     def test_returns_empty_when_ctx_is_none(self):
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         assert _format_tool_calls_for_review(None) == ""
 
     def test_returns_empty_when_no_assistant_messages(self):
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
@@ -3318,7 +3318,7 @@ class TestFormatToolCallsForReview:
 
     def test_returns_empty_when_only_virtual_tools(self):
         """complete / ask should not produce a section."""
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
@@ -3337,7 +3337,7 @@ class TestFormatToolCallsForReview:
         assert _format_tool_calls_for_review(ctx) == ""
 
     def test_lists_real_tool_calls_in_order(self):
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
@@ -3362,7 +3362,7 @@ class TestFormatToolCallsForReview:
 
     def test_filters_virtual_tools_when_mixed(self):
         """A mix of real + virtual: only real ones appear."""
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
@@ -3395,7 +3395,7 @@ class TestFormatToolCallsForReview:
         assert "complete(" not in out
 
     def test_truncates_to_last_N_when_too_many(self):
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         msgs = [
             {
@@ -3412,7 +3412,7 @@ class TestFormatToolCallsForReview:
         assert "'echo 0'" not in out
 
     def test_long_string_args_are_truncated(self):
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         long_cmd = "x" * 200
         ctx = _FakeCtx(
@@ -3430,7 +3430,7 @@ class TestFormatToolCallsForReview:
 
     def test_non_scalar_args_collapse_to_type_marker(self):
         """Lists and dicts should render as <list>/<dict>, not full JSON."""
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
@@ -3451,7 +3451,7 @@ class TestFormatToolCallsForReview:
 
     def test_get_raw_messages_failure_returns_empty(self):
         """Helper must not raise if ctx.get_raw_messages() blows up."""
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         class _BrokenCtx:
             def get_raw_messages(self):
@@ -3464,7 +3464,7 @@ class TestFormatToolCallsForReview:
         turns as ``{ops: [...]}`` records — reading only the top-level
         ``action`` key silently produced an empty section for every such
         session (A1-class bug). Each op must appear, in order."""
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
@@ -3490,7 +3490,7 @@ class TestFormatToolCallsForReview:
         assert "complete(" not in out  # virtual filter applies per-op
 
     def test_ops_records_only_virtual_yield_no_section(self):
-        from agent_cli.loop import _format_tool_calls_for_review
+        from agent_cli.review import _format_tool_calls_for_review
 
         ctx = _FakeCtx(
             [
@@ -4141,3 +4141,92 @@ class TestCollaboratorsStandalone:
         r = bridge._dispatch_tool_with_hooks("shell", {"command": "echo standalone"})
         assert r.success and "standalone" in r.output
         assert bridge._run_ctx().tools_available == frozenset({"shell"})
+
+
+class TestPR3Collaborators:
+    """C1 PR-3 승격 보상: TurnDispatcher/LLMCaller 는 AgentLoop 없이
+    cfg/state(+bridge) 만으로 단독 생성·구동 가능. _dispatch_op 분해
+    헬퍼(_op_complete/_op_ask/_op_run_skill/_op_execute_tool)의 라우팅
+    동등성도 여기서 고정."""
+
+    def _dispatcher(self, tools_list=("shell", "complete")):
+        from agent_cli.loop import (
+            LoopConfig,
+            LoopState,
+            ToolBridge,
+            TurnDispatcher,
+        )
+
+        cfg = LoopConfig(tools_list=list(tools_list))
+        st = LoopState(query="q")
+        bridge = ToolBridge(cfg, st, ctx=None, provider=None)
+        return TurnDispatcher(cfg, st, ctx=None, tools=bridge, recorder=None), st
+
+    def test_dispatcher_standalone_complete_op(self):
+        from agent_cli.tools.result import ToolResult
+        from agent_cli.wire_formats.base import Op, ParsedTurn
+
+        d, st = self._dispatcher()
+        turn = ParsedTurn(
+            thought="t",
+            ops=[Op("complete", {"result": "final answer"})],
+            raw="",
+            parse_stage=1,
+        )
+        r = d._dispatch_op("raw", turn, turn.ops[0], {})
+        assert isinstance(r, ToolResult) and r.success
+        assert r.output == "final answer"
+
+    def test_dispatcher_standalone_tool_op_continues(self):
+        from agent_cli.loop import _CONTINUE
+        from agent_cli.wire_formats.base import Op, ParsedTurn
+
+        d, st = self._dispatcher()
+        turn = ParsedTurn(
+            thought="t",
+            ops=[Op("shell", {"command": "echo pr3"})],
+            raw="",
+            parse_stage=1,
+        )
+        r = d._dispatch_op("raw", turn, turn.ops[0], {})
+        # 단일-op 도구 실행은 ToolResult 반환(레거시 경로 보존) — 루프 계속
+        # 여부는 _execute_turn 이 판단. _CONTINUE 는 ask/run_skill 경로 소관.
+        assert r is not _CONTINUE and r.success and r.output.strip() == "pr3"
+        # 1-op 경로의 관찰 append 는 상위(_handle_text_path) 소관 — 여기선
+        # 디스패처가 브리지 경유로 실제 도구를 실행했다는 사실만 고정.
+
+    def test_dispatcher_owns_loop_detector(self):
+        d, _ = self._dispatcher()
+        assert d.loop_detector is not None
+        assert d.loop_detector.threshold == 2
+
+    def test_op_ask_without_questions_falls_through(self):
+        from agent_cli.loop import _NOT_HANDLED
+        from agent_cli.wire_formats.base import Op, ParsedTurn
+
+        d, _ = self._dispatcher()
+        turn = ParsedTurn(thought="t", ops=[Op("ask", {})], raw="", parse_stage=1)
+        assert d._op_ask("raw", turn, turn.ops[0], None) is _NOT_HANDLED
+
+    def test_llm_caller_standalone_interrupt_check(self):
+        from agent_cli.loop import LLMCaller, LoopConfig, LoopState, SystemPromptSvc
+
+        cfg = LoopConfig()
+        st = LoopState()
+        llm = LLMCaller(
+            cfg, st, ctx=None, provider=None, prompt=SystemPromptSvc(cfg, None)
+        )
+        assert llm._interrupt_check() is False
+        st.stop_event.set()
+        assert llm._interrupt_check() is True
+        assert llm.overflow_retries == 0
+
+    def test_sentinels_are_module_constants_shared_via_loop(self):
+        from agent_cli.loop import _CONTINUE, _RETRY, AgentLoop
+
+        loop = AgentLoop(query="q", provider=None, capabilities=None, model="m")
+        assert loop._CONTINUE is _CONTINUE and loop._RETRY is _RETRY
+        # 위임 표면: loop 의 브리지/디스패처/LLM 콜러가 같은 cfg/state 공유
+        assert loop._dispatch.cfg is loop._config and loop._llm.cfg is loop._config
+        assert loop._dispatch.state is loop._state is loop._llm.state
+        assert loop._dispatch.tools is loop._tools

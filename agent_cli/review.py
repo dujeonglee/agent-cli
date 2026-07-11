@@ -62,6 +62,89 @@ def record_review_observation(ctx, content: str, *, success: bool) -> None:
     )
 
 
+# Virtual/terminal tools excluded from the "your tool calls" review listing —
+# they aren't real work, just loop control. (The review-context builders below
+# serve the auto-review feature via agent_cli.review.)
+_REVIEW_VIRTUAL_TOOLS: frozenset[str] = frozenset({"complete", "ask"})
+
+
+def _short_review_args(args, max_len: int = 80) -> str:
+    """Render a tool's action_input as a compact one-liner for review injection.
+
+    Long strings are head-truncated to 40 chars; non-scalar values
+    (list / dict) collapse to ``<type>`` markers so the line stays
+    short. The combined render is then capped at ``max_len``. The goal
+    is "model can recognize what was called and on what target" — not
+    a faithful replay.
+    """
+    if not isinstance(args, dict):
+        s = repr(args)
+        return s if len(s) <= max_len else s[: max_len - 3] + "..."
+    pairs = []
+    for k, v in args.items():
+        if isinstance(v, str):
+            v_show = v if len(v) <= 40 else v[:37] + "..."
+            pairs.append(f"{k}={v_show!r}")
+        elif isinstance(v, (int, float, bool)) or v is None:
+            pairs.append(f"{k}={v!r}")
+        else:
+            pairs.append(f"{k}=<{type(v).__name__}>")
+    line = ", ".join(pairs)
+    if len(line) > max_len:
+        line = line[: max_len - 3] + "..."
+    return line
+
+
+def _format_tool_calls_for_review(ctx, max_calls: int = 30) -> str:
+    """Build the ``--- YOUR TOOL CALLS ---`` section for review injection.
+
+    Returns "" (no section emitted) when ctx is None, has no
+    assistant tool calls, or only virtual tools were used. Virtual
+    tools (``complete`` / ``ask``) are filtered — they don't
+    represent work the model has done.
+
+    The section gives the model a *factual* list of what it actually
+    invoked, independent of whether the corresponding Observations
+    have been evicted by context FIFO. The model can then dispute or
+    confirm its summary against this list before calling ``complete``.
+
+    When the count exceeds ``max_calls``, the most recent
+    ``max_calls`` entries are kept (most relevant to "is the work
+    done?") and a header note records the omission.
+    """
+    if ctx is None:
+        return ""
+    try:
+        raw = ctx.get_raw_messages()
+    except Exception:
+        return ""
+
+    # iter_record_ops reads BOTH assistant record shapes (multi-op ``ops``
+    # + legacy singular ``action``) — reading only the top-level ``action``
+    # here silently skipped every op turn once md_array/react started
+    # storing ``ops`` records, leaving this section permanently empty.
+    from agent_cli.context.manager import iter_record_ops
+
+    calls = []
+    for msg in raw:
+        for action, args in iter_record_ops(msg):
+            if action in _REVIEW_VIRTUAL_TOOLS:
+                continue
+            calls.append(f"- {action}({_short_review_args(args)})")
+
+    if not calls:
+        return ""
+
+    total = len(calls)
+    if total > max_calls:
+        calls = calls[-max_calls:]
+        header = f"--- YOUR TOOL CALLS (last {max_calls} of {total}) ---"
+    else:
+        header = "--- YOUR TOOL CALLS ---"
+
+    return "\n".join([header, *calls])
+
+
 def build_reviewer_task(task_text: str, final_answer: str, ctx=None) -> str:
     """Assemble the reviewer delegate's task prompt: WHAT to review.
 
@@ -71,8 +154,6 @@ def build_reviewer_task(task_text: str, final_answer: str, ctx=None) -> str:
     (the reviewer reads the actual files to verify). Reuses
     ``_format_tool_calls_for_review`` (kept across the ready_for_review
     removal). Lazy import — review is a leaf module and loop.py is heavy."""
-    from agent_cli.loop import _format_tool_calls_for_review
-
     parts = [
         "Another agent has finished the task below and called complete. Review "
         "whether the delivered work actually fulfills it, then return your "
