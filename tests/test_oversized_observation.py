@@ -12,7 +12,7 @@ the cap applies, default True). ``ctx.add`` is therefore pure storage.
 import json
 
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.loop import AgentLoop, LoopConfig, LoopState
+from agent_cli.loop import AgentLoop, LoopConfig, LoopState, ToolBridge
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.base import (
     Tool,
@@ -30,12 +30,14 @@ def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
     C1 PR-1: ``tools_list`` 는 LoopConfig 소유(재할당 불가 property)라 바로
     config/state 를 조립해 단다."""
     loop = AgentLoop.__new__(AgentLoop)
-    loop._oversized_cap = cap
     loop._config = LoopConfig(
         tools_list=list(TOOLS.keys()) if tools is None else list(tools)
     )
     loop._state = LoopState()
     loop.ctx = None  # seam reads self.ctx.session_dir if self.ctx else None
+    # C1 PR-2: 도구 seam 은 ToolBridge 소유 — cap 은 브리지에 직접 단다.
+    loop._tools = ToolBridge(loop._config, loop._state, ctx=None, provider=None)
+    loop._oversized_cap = cap  # property → bridge 로 관통
     return loop
 
 
@@ -664,7 +666,9 @@ class TestRunContext:
         class _C:
             session_dir = tmp_path
 
+        # C1 PR-2: RunContext 조립은 ToolBridge 소유 — ctx 도 브리지에 주입
         loop.ctx = _C()
+        loop._tools.ctx = _C()
         c = loop._run_ctx()
         assert isinstance(c, RunContext)
         assert c.session_dir == tmp_path

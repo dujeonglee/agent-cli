@@ -33,7 +33,7 @@
 
 | # | 항목 | 근거 | 방향 | 상태 |
 |---|---|---|---|---|
-| **C1** | loop.py god-module(2671줄) — `_dispatch_op` ~390줄, `__init__` ~190줄, action-card 렌더 5중복, `_append_observation` 8곳 동일 인자. (정정: 순환의 뿌리는 registry eager TOOLS — delegate→run_loop 지연은 유지 필수, lazy registry 재시도 금지) | loop.py:1239-1626 | **Option 3 협력객체 3단 PR 확정** — PR-1 State/Config ✅ v4.40.0 → PR-2 SystemPromptSvc·ToolBridge → PR-3 LLMCaller·TurnDispatcher | ◐ 1/3 |
+| **C1** | loop.py god-module(2671줄) — `_dispatch_op` ~390줄, `__init__` ~190줄, action-card 렌더 5중복, `_append_observation` 8곳 동일 인자. (정정: 순환의 뿌리는 registry eager TOOLS — delegate→run_loop 지연은 유지 필수, lazy registry 재시도 금지) | loop.py:1239-1626 | **Option 3 협력객체 3단 PR 확정** — PR-1 State/Config ✅ v4.40.0 → PR-2 SystemPromptSvc·ToolBridge ✅ v4.41.0 → PR-3 LLMCaller·TurnDispatcher | ◐ 2/3 |
 | **C2** | delegate.py 8책임(851줄) — agent 로딩/추출기/persist/포맷팅/단일·병렬 실행/dispatch/Tool | delegate.py | `delegate/` 패키지 분할 | ☐ |
 | **C3** | web/server.py 전송·비즈니스 뒤엉킴(1727줄, 27라우트) — directive 조작·lesson 학습·slash ~440줄 | server.py:168-408,493-687 | `directives_service.py`/`slash.py` 추출 | ☐ |
 | **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | `bootstrap_session()` 공용 추출 | ☐ |
@@ -58,6 +58,15 @@
 6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
+
+- **2026-07-11 · v4.41.0 · C1 PR-2 (2/3)**: 교차호출-0 실측 클러스터 2종 승격 —
+  `SystemPromptSvc`(sections/system 소유, rebuild/apply_hook_sections)·
+  `ToolBridge`(hooks·invoke·RunContext·관찰 seam + `_oversized_cap`/
+  `_run_ctx_cache`/`recent_tool_history` 전유). 의존은 cfg/state/ctx/provider
+  명시 주입 — 이동 블록 321줄의 self 참조를 필드 지도 기반 기계 재배선(잔여 0
+  확인). AgentLoop 는 thin 위임+property 로 표면 유지(호출부·테스트 patch
+  무변경 — `agent_cli.loop._execute_tool` 등 모듈 전역이 같은 모듈이라 유효).
+  단독 생성 단위테스트 2종(승격 보상 증명). bare 헬퍼 1곳 브리지 조립 이관.
 
 - **2026-07-11 · v4.40.0 · C1 PR-1 (1/3)**: Option 3(협력 객체) 확정 후 1단계 —
   `LoopConfig`(frozen, 불변 배선 ~24필드)·`LoopState`(공유 가변 7필드) 도입,

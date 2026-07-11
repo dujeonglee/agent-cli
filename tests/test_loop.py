@@ -4118,3 +4118,26 @@ class TestLoopConfigStateOwnership:
         assert "run_skill" not in loop._config.tools_list
         assert loop._state.query == "do it" and loop._state.turn == 0
         assert loop.stop_event is loop._state.stop_event  # 브리지 동일 객체
+
+
+class TestCollaboratorsStandalone:
+    """C1 PR-2 승격 보상: SystemPromptSvc/ToolBridge 는 AgentLoop 없이
+    cfg/state 만으로 단독 생성·테스트 가능."""
+
+    def test_prompt_svc_rebuild_without_loop(self):
+        from agent_cli.loop import LoopConfig, SystemPromptSvc
+
+        svc = SystemPromptSvc(LoopConfig(tools_list=["shell"]), ctx=None)
+        svc.rebuild()
+        assert svc.system  # 시스템 프롬프트 생성됨
+        assert svc.sections and svc.system == "\n\n".join(t for _, t in svc.sections)
+
+    def test_tool_bridge_invoke_without_loop(self):
+        from agent_cli.loop import LoopConfig, LoopState, ToolBridge
+
+        bridge = ToolBridge(
+            LoopConfig(tools_list=["shell"]), LoopState(), ctx=None, provider=None
+        )
+        r = bridge._dispatch_tool_with_hooks("shell", {"command": "echo standalone"})
+        assert r.success and "standalone" in r.output
+        assert bridge._run_ctx().tools_available == frozenset({"shell"})
