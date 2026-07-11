@@ -60,9 +60,18 @@ def _run_single(
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
 ) -> ToolResult:
-    """Execute a single delegate task."""
-    # Inline import: circular dependency — loop.py imports tool_delegate from this module
-    from agent_cli.loop import run_loop
+    """Execute a single delegate task.
+
+    P0(teammate, v4.53.0): 실행 몸통(역할 config 오버레이·ctx 생성·
+    run_loop 1회)은 :mod:`agent_cli.subagent.runner` 로 추출 — teammate
+    와 공유. 이 함수는 delegate 고유분(가드·디렉토리 명명·리포트 조립)
+    만 남긴 thin wrapper 다. 관찰 문구·result.md 는 바이트 불변.
+    """
+    from agent_cli.subagent.runner import (
+        apply_role_overrides,
+        create_subagent_ctx,
+        run_subagent_message,
+    )
 
     if not task.strip():
         return ToolResult(False, error="Delegation rejected: empty task")
@@ -109,82 +118,39 @@ def _run_single(
         agent_role = role_prompt
 
         # Agent config overrides (lower priority than explicit task params)
-        if allowed_tools is None and agent_config.get("allowed-tools"):
-            allowed_tools = agent_config["allowed-tools"]
-
-        agent_model = agent_config.get("model")
-        if agent_model and isinstance(agent_model, str):
-            model = agent_model
-
-        # Agent-local shell hooks — merged on top of the caller's
-        # hooks_config so parent matchers still apply. Mirrors Skill.hooks
-        # semantics: the overlay only applies while this agent is running.
-        raw_agent_hooks = agent_config.get("hooks")
-        if isinstance(raw_agent_hooks, dict):
-            from agent_cli.hooks import merge_hooks_configs, parse_hooks_config
-
-            agent_hooks = parse_hooks_config(raw_agent_hooks) or None
-            hooks_config = merge_hooks_configs(hooks_config, agent_hooks)
+        allowed_tools, model, hooks_config = apply_role_overrides(
+            agent_config,
+            allowed_tools=allowed_tools,
+            model=model,
+            hooks_config=hooks_config,
+        )
 
     # Resolve parent session dir and create delegate subdir
     parent_session_dir = _resolve_session_dir(session, parent_ctx)
     delegate_dir_name = _generate_delegate_dir_name(agent_name or "task")
     delegate_dir = parent_session_dir / delegate_dir_name
 
-    # Create context based on mode
-    # Inherit parent's wire_format so delegate ctx renders history with
-    # the same plugin the parent uses. Falls back to ContextManager's
-    # own default (react) when there's no parent.
-    inherited_wire_format = parent_ctx.wire_format if parent_ctx else None
+    # Context + run_loop — 공용 러너 (subagent/runner.py). wire_format·
+    # 예산 상속, fork 히스토리 복사, 인스펙터 스코프 등록(v4.52.0)이
+    # 전부 러너 안이다.
+    ctx, ctx_error = create_subagent_ctx(context_mode, parent_ctx, delegate_dir)
+    if ctx is None:
+        return ToolResult(False, error=f"Delegation rejected: {ctx_error}")
 
-    from agent_cli.context.manager import ContextManager
-
-    if context_mode == "fork":
-        if parent_ctx is None:
-            return ToolResult(
-                False, error="Delegation rejected: fork requires parent context"
-            )
-        # Fork: copy parent history.jsonl to delegate dir
-        parent_ctx.fork_history_to(delegate_dir)
-        budget = parent_ctx.max_context_tokens
-        ctx = ContextManager(
-            session_dir=delegate_dir,
-            max_context_tokens=budget,
-            resume=True,
-            wire_format=inherited_wire_format,
-        )
-    else:
-        # none: fresh context (inherit parent budget if available)
-        budget = parent_ctx.max_context_tokens if parent_ctx else 0
-        ctx = ContextManager(
-            session_dir=delegate_dir,
-            max_context_tokens=budget,
-            wire_format=inherited_wire_format,
-        )
-
-    # v4.52.0: 인스펙터 동적 컨텍스트 — 이 워커의 스코프(begin_delegate_task
-    # 가 push 한 task_id)에 live ctx 등록. CLI(minimal)는 no-op.
-    from agent_cli.render import get_renderer as _get_renderer
-
-    _get_renderer().note_scope_ctx(ctx)
-
-    t0 = time.monotonic()
-
-    loop_result = run_loop(
-        query=task,
+    loop_result, duration = run_subagent_message(
+        task,
+        ctx,
         provider=provider,
         capabilities=capabilities,
         model=model,
+        timeout=timeout,
         provider_name=provider_name,
         base_url=base_url,
         api_key=api_key,
         max_turns=max_turns,
-        verbose=False,
-        depth=depth + 1,
+        depth=depth,
         max_depth=max_depth,
-        delegate_timeout=timeout,
         active_tools=allowed_tools,
-        ctx=ctx,
         session=session,
         skill_stack=skill_stack,
         agent_stack=agent_stack,
@@ -194,8 +160,6 @@ def _run_single(
         hooks_config=hooks_config,
         compaction_enabled=compaction_enabled,
     )
-
-    duration = time.monotonic() - t0
 
     result_str = loop_result.output if loop_result.success else None
     delegate_result = DelegateResult(output=result_str, duration_secs=duration)
