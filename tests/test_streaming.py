@@ -387,3 +387,151 @@ class TestTTFTMeasurement:
     def test_token_usage_verbose_omits_hint(self):
         """Verbose mode shows the raw response panel, so no hint here."""
         assert "--verbose" not in self._minimal_render_to_string(verbose=True)
+
+
+# ── C6: 공용 SSE 골격 + provider 매퍼 (v4.48.0) ───────────────────────
+
+
+class _FakeStream:
+    """iter_lines 가능한 가짜 SSE 응답 (bytes 라인)."""
+
+    def __init__(self, lines):
+        self._lines = [line.encode() for line in lines]
+        self.closed = False
+
+    def iter_lines(self):
+        yield from self._lines
+
+    def close(self):
+        self.closed = True
+
+
+class TestRunSseStreamSkeleton:
+    def _run(self, lines, **kw):
+        from agent_cli.providers.http import run_sse_stream
+        from agent_cli.providers.openai import _map_openai_payload
+
+        chunks = []
+        acc = run_sse_stream(
+            _FakeStream(lines),
+            chunks.append,
+            map_payload=kw.pop("map_payload", _map_openai_payload),
+            **kw,
+        )
+        return acc, chunks
+
+    def test_accumulates_and_times(self):
+        acc, chunks = self._run(
+            [
+                'data: {"choices":[{"delta":{"content":"헬"}}]}',
+                'data: {"choices":[{"delta":{"content":"로"}}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+                '"usage":{"prompt_tokens":10,"completion_tokens":2}}',
+                "data: [DONE]",
+            ]
+        )
+        assert acc.content == "헬로" and chunks == ["헬", "로"]
+        assert acc.stop_reason == "stop"
+        assert acc.usage_fields == {"input_tokens": 10, "output_tokens": 2}
+        assert acc.ttft_ns > 0 and acc.decode_ns >= 0
+
+    def test_broken_json_line_tolerated(self):
+        # C6 대칭화: JSONDecodeError 관용은 이제 양 provider 골격 공통
+        acc, chunks = self._run(
+            [
+                "data: {NOT JSON",
+                'data: {"choices":[{"delta":{"content":"ok"}}]}',
+            ]
+        )
+        assert acc.content == "ok"
+
+    def test_degeneration_gate_closes_early(self):
+        acc, _ = self._run(
+            [
+                'data: {"choices":[{"delta":{"content":"## Thought\\n"}}]}',
+                'data: {"choices":[{"delta":{"content":"## Thought\\n"}}]}',
+                'data: {"choices":[{"delta":{"content":"NEVER"}}]}',
+            ],
+            degeneration_check=lambda text: text.count("## Thought") >= 2,
+        )
+        assert acc.stop_reason == "degenerate_runaway"
+        assert "NEVER" not in acc.content
+
+    def test_interrupt_labels_partial(self):
+        acc, _ = self._run(
+            ['data: {"choices":[{"delta":{"content":"부분"}}]}'],
+            interrupt_check=lambda: True,
+        )
+        assert acc.stop_reason == "interrupted"
+
+
+class TestAnthropicMapper:
+    def test_event_shapes(self):
+        from agent_cli.providers.anthropic import _map_anthropic_payload as m
+
+        start = m(
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 5, "cache_read_input_tokens": 3}},
+            }
+        )
+        assert start.usage_fields["input_tokens"] == 5
+        assert start.usage_fields["cache_read_input_tokens"] == 3
+        text = m(
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "안"},
+            }
+        )
+        assert text.text == "안"
+        think = m(
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "thinking_delta", "thinking": "hmm"},
+            }
+        )
+        assert think.thinking == "hmm" and think.text == ""
+        end = m(
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 9},
+            }
+        )
+        assert end.stop_reason == "end_turn"
+        assert end.usage_fields == {"output_tokens": 9}
+        assert m({"type": "ping"}) is None
+
+    def test_skeleton_with_anthropic_mapper_end_to_end(self):
+        from agent_cli.providers.anthropic import _map_anthropic_payload
+        from agent_cli.providers.http import run_sse_stream
+
+        lines = [
+            'data: {"type":"message_start","message":{"usage":{"input_tokens":7}}}',
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"하이"}}',
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+        ]
+        chunks = []
+        acc = run_sse_stream(
+            _FakeStream(lines), chunks.append, map_payload=_map_anthropic_payload
+        )
+        assert acc.content == "하이" and acc.stop_reason == "end_turn"
+        assert acc.usage_fields["input_tokens"] == 7
+        assert acc.usage_fields["output_tokens"] == 1
+
+
+class TestC6Symmetry:
+    def test_both_providers_share_the_skeleton(self):
+        # 스트림 골격(idle/관용/게이트)이 단일 지점임을 소스로 고정 —
+        # provider 파일에 interruptible_lines 직접 순회가 남으면 회귀.
+        for mod in ("openai", "anthropic"):
+            src = open(f"agent_cli/providers/{mod}.py").read()
+            assert "run_sse_stream(" in src, mod
+            assert "for line in interruptible_lines" not in src, mod
+
+    def test_both_calls_have_idle_reconnect(self):
+        # C6 대칭화: StreamIdleTimeout 재연결 래퍼가 양 call() 에 존재
+        for mod in ("openai", "anthropic"):
+            src = open(f"agent_cli/providers/{mod}.py").read()
+            assert "except StreamIdleTimeout" in src, mod
+            assert "STREAM_MAX_RECONNECTS" in src, mod

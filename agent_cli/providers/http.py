@@ -49,10 +49,12 @@ Config (env)
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
 import requests
@@ -305,3 +307,137 @@ def interruptible_lines(
                 raise err[0]
             return
         yield item
+
+
+# ── 공용 SSE 스트림 러너 (C6, v4.48.0) ─────────────────────────────
+# openai/anthropic 두 provider 가 ~70% 동일한 스트림 골격(라인 순회·idle
+# notice/타임아웃·"data:" 파싱·누산·타이밍·degeneration 조기종료·interrupt
+# 라벨링)을 복제하고 있었고, idle 처리·JSONDecodeError 관용은 openai/
+# anthropic 한쪽에만 있는 비대칭까지 있었다. 골격을 여기(이미
+# post_with_retry 를 공유하는 인프라 계층)로 수렴 — provider 는 자기
+# 이벤트 shape 해석(map_payload)만 소유한다. wire-format self-contained
+# 규율과 같은 정신: 독립 진화가 필요한 부분(이벤트 shape)만 provider 에.
+
+
+@dataclass
+class StreamEvent:
+    """``map_payload`` 가 payload dict 하나를 정규화해 돌려주는 이벤트.
+
+    text/thinking 은 델타(누산은 골격 소유), usage_fields 는 provider 별
+    usage 키 dict(골격이 누적 merge — 나중 값이 이김), stop_reason 은
+    발견 시 설정, done=True 는 명시 종료.
+    """
+
+    text: str = ""
+    thinking: str = ""
+    stop_reason: str | None = None
+    usage_fields: dict | None = None
+    done: bool = False
+
+
+@dataclass
+class StreamAccum:
+    """골격의 누산 결과 — provider 가 usage/LLMResponse 로 조립한다."""
+
+    content: str = ""
+    thinking: str = ""
+    stop_reason: str | None = None
+    usage_fields: dict = field(default_factory=dict)
+    ttft_ns: int = 0
+    decode_ns: int = 0
+
+
+def run_sse_stream(
+    r,
+    on_chunk,
+    *,
+    map_payload,
+    degeneration_check=None,
+    interrupt_check=None,
+) -> StreamAccum:
+    """SSE 스트림 공용 골격 — 양 provider 동형 보장 지점.
+
+    소유: ``interruptible_lines`` 순회(**idle notice + StreamIdleTimeout
+    을 양 provider 에 동일 적용** — 이전엔 openai 만), ``data: `` 프리픽스
+    파싱, ``[DONE]`` 관용(SSE 관례), **JSONDecodeError 관용(스킵)** —
+    이전엔 anthropic 만, content/thinking 누산, t_first/ttft 타이밍,
+    degeneration ``'#'`` 게이트 조기종료(``r.close()``), 루프 후
+    interrupt 재확인 라벨링.
+
+    ``map_payload(data: dict) -> StreamEvent | None`` 이 provider 몫 —
+    None 은 "이 payload 무시".
+    """
+    import time as _time
+
+    from agent_cli.constants import STREAM_IDLE_MAX_TICKS, STREAM_IDLE_THRESHOLD
+
+    acc = StreamAccum()
+    t0 = _time.perf_counter_ns()
+    t_first = 0
+
+    def _on_idle(tick: int, seconds: float) -> None:
+        from agent_cli.render import render_status
+
+        render_status(
+            "running",
+            f"응답 대기 중 — 토큰 없음 {int(seconds)}s "
+            f"({tick}/{STREAM_IDLE_MAX_TICKS}, "
+            f"{STREAM_IDLE_MAX_TICKS * STREAM_IDLE_THRESHOLD // 60}분 후 재연결)",
+        )
+
+    for line in interruptible_lines(
+        r,
+        interrupt_check,
+        idle_threshold=STREAM_IDLE_THRESHOLD,
+        max_idle_ticks=STREAM_IDLE_MAX_TICKS,
+        on_idle=_on_idle,
+    ):
+        if not line:
+            continue
+        line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+        if not line_str.startswith("data: "):
+            continue
+        payload = line_str[6:]
+        if payload == "[DONE]":  # SSE 관례 종료 (openai 계열)
+            break
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue  # 깨진 라인 관용 — 스트림 전체를 죽이지 않는다
+
+        ev = map_payload(data)
+        if ev is None:
+            continue
+        if ev.usage_fields:
+            acc.usage_fields.update(ev.usage_fields)
+        if ev.thinking:
+            acc.thinking += ev.thinking
+        if ev.text:
+            if not t_first:
+                t_first = _time.perf_counter_ns()
+            acc.content += ev.text
+            on_chunk(ev.text)
+            # Early-stop format runaway. '#' 게이트로 predicate(regex)를
+            # 새 헤더 가능 시점에만 실행 — O(headers) not O(chunks).
+            if (
+                degeneration_check is not None
+                and "#" in ev.text
+                and degeneration_check(acc.content)
+            ):
+                acc.stop_reason = "degenerate_runaway"
+                r.close()
+                break
+        if ev.stop_reason:
+            acc.stop_reason = ev.stop_reason
+        if ev.done:
+            break
+
+    # Reader stopped early because the user interrupted; flag still set →
+    # (폐기될) partial 에 라벨.
+    if interrupt_check is not None and interrupt_check():
+        acc.stop_reason = "interrupted"
+
+    t_end = _time.perf_counter_ns()
+    acc.ttft_ns = (t_first - t0) if t_first else 0
+    acc.decode_ns = (t_end - t_first) if t_first else 0
+    return acc

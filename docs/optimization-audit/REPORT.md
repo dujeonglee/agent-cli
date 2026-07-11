@@ -38,7 +38,7 @@
 | **C3** | web/server.py 전송·비즈니스 뒤엉킴(1727줄, 27라우트) — directive 조작·lesson 학습·slash ~440줄 | server.py:168-408,493-687 | directives/inspector/slash 3모듈 추출 | ✅ v4.45.0 |
 | **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | 공용 추출 + 실측서 발견 3결함 수리 | ✅ v4.46.0 |
 | **C5** | ContextManager 8관심사(1053줄) — 캐시+압축+요약+2종 영속화+분류+NL렌더 | manager.py | records/render/store 분리 + fsio 저장 패턴 통일 | ✅ v4.47.0 |
-| C6 | providers 스트리밍 파서 중복 — 양 어댑터 `_handle_stream` 각 ~130줄 (retry 는 공유됨) | anthropic.py:96, openai.py:122 | SSE 이터레이터+델타 누산기 http.py 공유 | ☐ |
+| C6 | providers 스트리밍 파서 중복 — 양 어댑터 `_handle_stream` 각 ~130줄 (retry 는 공유됨) | anthropic.py:96, openai.py:122 | run_sse_stream 골격 공유 + 비대칭 2건 수리 | ✅ v4.48.0 |
 | C7 | 이중 검증층 — registry 중앙 + 도구 내부 재검증 | registry.py:293-377 | `Tool.validate(args)` 훅 1-pass | ☐ |
 | C8 | Renderer ABC 50메서드/17추상 — fat 아님, 신규 renderer 진입장벽만 | render/base.py | 코어+mixin 분리 (낮은 우선순위) | ☐ |
 
@@ -58,6 +58,15 @@
 6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
+
+- **2026-07-11 · v4.48.0 · C6 완료**: 공용 SSE 골격 `http.run_sse_stream`
+  (+StreamEvent/StreamAccum) — provider 는 `map_payload` 이벤트 해석만.
+  두 파일 합계 ~260→~130줄, 스트리밍 버그 수리 지점 1곳. **대칭화 2건**:
+  idle notice/StreamIdleTimeout+재연결 래퍼(+make_stream_patient·
+  LLM_STREAM_TIMEOUT)를 anthropic 에도 — 이전엔 침묵 시 무한 대기;
+  JSONDecodeError 관용을 openai 에도. 골격 유닛 4종+anthropic 매퍼
+  2종+대칭성 소스 가드 2종, 실기동 스모크(omlx 실 스트리밍) 통과.
+  전체 2843 passed.
 
 - **2026-07-11 · v4.47.0 · C5 완료 (+fsio 저장 패턴 통일)**: manager
   1,130→787줄 — records(121, shape 계약)/render(219, 무상태 실측 확인)/

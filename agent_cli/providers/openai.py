@@ -19,9 +19,10 @@ from agent_cli.constants import (
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
+    StreamEvent,
+    run_sse_stream,
     StreamIdleTimeout,
     raise_for_status_with_body,
-    interruptible_lines,
     make_stream_patient,
     post_with_retry,
 )
@@ -122,135 +123,32 @@ class OpenAIProvider:
     def _handle_stream(
         self, r, on_chunk, degeneration_check=None, interrupt_check=None
     ) -> LLMResponse:
-        """Process SSE streaming response.
-
-        ``degeneration_check`` (optional): a predicate on the accumulated
-        text. When it returns True the stream is closed early — the model has
-        started looping the wire shape (format runaway) and the rest is just
-        repetition, so generating to max_tokens would waste tokens/latency.
-        The truncated text is still parsed/recorded downstream.
-
-        ``interrupt_check`` (optional): a zero-arg predicate for user interrupt
-        (Ctrl+C / web stop). The line read goes through ``interruptible_lines``,
-        which polls this during no-data gaps — including the TTFT window before
-        the first token — so the interrupt isn't stuck behind a blocking read.
-        When it fires the stream is closed and the partial returned with
-        ``stop_reason="interrupted"``; unlike the degeneration partial, the
-        loop DISCARDS this text (the user is redirecting) — not parsed/recorded.
-        """
-        import time
-
-        content = ""
-        thinking = ""
-        usage = None
-        stop_reason = None
-        t0 = time.perf_counter_ns()
-        t_first = 0
-
-        # interruptible_lines runs the blocking read in a reader thread and
-        # polls interrupt_check during no-data gaps (TTFT, stalls), so a user
-        # interrupt breaks even before the first token. Per-line is the SSE
-        # equivalent of per-chunk, so no separate in-loop interrupt check is
-        # needed; the interrupt is detected by re-checking interrupt_check()
-        # after the loop (the partial is discarded by the loop, not parsed).
-        #
-        # Idle handling: every STREAM_IDLE_THRESHOLD seconds with no token
-        # renders a "still waiting" notice (on_idle); after STREAM_IDLE_MAX_TICKS
-        # of silence interruptible_lines raises StreamIdleTimeout for call() to
-        # reconnect. The counter resets when a token arrives.
-        from agent_cli.constants import STREAM_IDLE_MAX_TICKS, STREAM_IDLE_THRESHOLD
-
-        def _on_idle(tick: int, seconds: float) -> None:
-            from agent_cli.render import render_status
-
-            render_status(
-                "running",
-                f"응답 대기 중 — 토큰 없음 {int(seconds)}s "
-                f"({tick}/{STREAM_IDLE_MAX_TICKS}, {STREAM_IDLE_MAX_TICKS * STREAM_IDLE_THRESHOLD // 60}분 후 재연결)",
-            )
-
-        for line in interruptible_lines(
+        """OpenAI-호환 SSE 스트림 — 골격(idle/파싱/누산/조기종료/interrupt)은
+        ``http.run_sse_stream`` 공용, 여기는 이벤트 shape 해석과 usage 조립만
+        (C6, v4.48.0). ``degeneration_check``/``interrupt_check`` 의미는 골격
+        docstring 참조."""
+        acc = run_sse_stream(
             r,
-            interrupt_check,
-            idle_threshold=STREAM_IDLE_THRESHOLD,
-            max_idle_ticks=STREAM_IDLE_MAX_TICKS,
-            on_idle=_on_idle,
-        ):
-            if not line:
-                continue
-            line_str = line.decode("utf-8") if isinstance(line, bytes) else line
-            if not line_str.startswith("data: "):
-                continue
-            payload = line_str[6:]
-            if payload == "[DONE]":
-                break
-
-            data = json.loads(payload)
-
-            # Usage in final chunk (stream_options.include_usage)
-            usage_data = data.get("usage")
-            if usage_data:
-                usage = TokenUsage(
-                    input_tokens=usage_data.get("prompt_tokens", 0),
-                    output_tokens=usage_data.get("completion_tokens", 0),
-                )
-
-            choices = data.get("choices", [])
-            if not choices:
-                continue
-
-            delta = choices[0].get("delta", {})
-            # `reasoning_content` is the vLLM convention for exposing
-            # the model's reasoning channel through OpenAI-compatible
-            # endpoints (qwen3 / DeepSeek-R1 served via vLLM, etc.).
-            # OpenAI's hosted reasoning models do not expose it via
-            # Chat Completions, so this stays empty there — graceful.
-            thinking_chunk = delta.get("reasoning_content", "")
-            if thinking_chunk:
-                thinking += thinking_chunk
-            chunk = delta.get("content", "")
-            if chunk:
-                if not t_first:
-                    t_first = time.perf_counter_ns()
-                content += chunk
-                on_chunk(chunk)
-                # Early-stop format runaway. Gate on '#' so the predicate
-                # (regex) only runs when a new header could have arrived,
-                # keeping this O(headers) not O(chunks).
-                if (
-                    degeneration_check is not None
-                    and "#" in chunk
-                    and degeneration_check(content)
-                ):
-                    stop_reason = "degenerate_runaway"
-                    r.close()
-                    break
-
-            finish = choices[0].get("finish_reason")
-            if finish:
-                stop_reason = finish
-
-        # The reader thread stopped early because the user interrupted; the
-        # flag is still set, so label the (discarded) partial accordingly.
-        if interrupt_check is not None and interrupt_check():
-            stop_reason = "interrupted"
-
-        t_end = time.perf_counter_ns()
-        ttft_ns = (t_first - t0) if t_first else 0
-        decode_ns = (t_end - t_first) if t_first else 0
-
-        # Enrich usage with client-measured timing
-        if usage:
-            usage.prompt_eval_ns = ttft_ns
-            usage.eval_ns = decode_ns
-            usage.ttft_ns = ttft_ns
-
+            on_chunk,
+            map_payload=_map_openai_payload,
+            degeneration_check=degeneration_check,
+            interrupt_check=interrupt_check,
+        )
+        usage = None
+        if acc.usage_fields:
+            usage = TokenUsage(
+                input_tokens=acc.usage_fields.get("input_tokens", 0),
+                output_tokens=acc.usage_fields.get("output_tokens", 0),
+                prompt_eval_ns=acc.ttft_ns,
+                eval_ns=acc.decode_ns,
+                ttft_ns=acc.ttft_ns,
+            )
         return LLMResponse(
-            content=content,
+            content=acc.content,
             tool_calls=None,
             usage=usage,
-            stop_reason=stop_reason,
-            thinking=thinking,
+            stop_reason=acc.stop_reason,
+            thinking=acc.thinking,
         )
 
     def _parse_response(self, data: dict) -> LLMResponse:
@@ -295,3 +193,32 @@ class OpenAIProvider:
             stop_reason=choice.get("finish_reason"),
             thinking=thinking,
         )
+
+
+def _map_openai_payload(data: dict) -> StreamEvent | None:
+    """OpenAI-호환 chunk 하나 → 정규화 StreamEvent (provider 고유 부분 전부).
+
+    - 최종 chunk 의 ``usage``(stream_options.include_usage) → usage_fields
+    - ``choices[0].delta.content`` → text
+    - ``delta.reasoning_content`` → thinking (vLLM 관례 — qwen3/R1 계열;
+      OpenAI 호스티드는 미노출이라 자연 무시)
+    - ``finish_reason`` → stop_reason
+    """
+    ev = StreamEvent()
+    usage_data = data.get("usage")
+    if usage_data:
+        ev.usage_fields = {
+            "input_tokens": usage_data.get("prompt_tokens", 0),
+            "output_tokens": usage_data.get("completion_tokens", 0),
+        }
+    choices = data.get("choices", [])
+    if choices:
+        delta = choices[0].get("delta", {})
+        ev.thinking = delta.get("reasoning_content", "") or ""
+        ev.text = delta.get("content", "") or ""
+        finish = choices[0].get("finish_reason")
+        if finish:
+            ev.stop_reason = finish
+    if not (ev.text or ev.thinking or ev.stop_reason or ev.usage_fields):
+        return None
+    return ev

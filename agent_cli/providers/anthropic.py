@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
-import json
 
 import requests
 
-from agent_cli.constants import LLM_API_TIMEOUT
+from agent_cli.constants import (
+    LLM_API_TIMEOUT,
+    LLM_READ_TIMEOUT,
+    LLM_STREAM_TIMEOUT,
+    STREAM_MAX_RECONNECTS,
+)
 
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
-    interruptible_lines,
+    StreamEvent,
+    StreamIdleTimeout,
+    make_stream_patient,
     post_with_retry,
     raise_for_status_with_body,
+    run_sse_stream,
 )
 
 
@@ -71,21 +78,37 @@ class AnthropicProvider:
 
         if on_chunk:
             body["stream"] = True
-            r = post_with_retry(
-                requests.post,
-                url,
-                headers=headers,
-                json=body,
-                timeout=LLM_API_TIMEOUT,
-                stream=True,
-            )
-            raise_for_status_with_body(r)
-            return self._handle_stream(
-                r,
-                on_chunk,
-                kwargs.get("degeneration_check"),
-                kwargs.get("interrupt_check"),
-            )
+            # openai 동형 idle-재연결 래퍼 (C6): 골격이 침묵 시
+            # StreamIdleTimeout 을 올리면 재연결+재전송 — 이전엔 anthropic
+            # 만 이 래퍼가 없어 무한 대기했다.
+            for attempt in range(STREAM_MAX_RECONNECTS + 1):
+                r = post_with_retry(
+                    requests.post,
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=LLM_STREAM_TIMEOUT,
+                    stream=True,
+                )
+                raise_for_status_with_body(r)
+                make_stream_patient(r, LLM_READ_TIMEOUT)
+                try:
+                    return self._handle_stream(
+                        r,
+                        on_chunk,
+                        kwargs.get("degeneration_check"),
+                        kwargs.get("interrupt_check"),
+                    )
+                except StreamIdleTimeout:
+                    if attempt >= STREAM_MAX_RECONNECTS:
+                        raise
+                    from agent_cli.render import render_status
+
+                    render_status(
+                        "running",
+                        "스트림 무응답 — 재연결 후 재전송 "
+                        f"({attempt + 1}/{STREAM_MAX_RECONNECTS})",
+                    )
 
         r = post_with_retry(
             requests.post, url, headers=headers, json=body, timeout=LLM_API_TIMEOUT
@@ -96,124 +119,43 @@ class AnthropicProvider:
     def _handle_stream(
         self, r, on_chunk, degeneration_check=None, interrupt_check=None
     ) -> LLMResponse:
-        """Process Anthropic SSE streaming response.
-
-        ``degeneration_check`` (optional): a predicate on the accumulated text
-        (= the wire format's ``is_degenerate``, so provider-independent). When
-        it returns True the model has started looping the wire shape (format
-        runaway); the stream is closed early and the truncated text returned
-        with ``stop_reason="degenerate_runaway"`` for the loop to label/recover.
-        Mirrors the openai provider so the early-break optimization is uniform
-        across providers (the loop hands both the same predicate).
-
-        ``interrupt_check`` (optional): a zero-arg predicate for user interrupt
-        (Ctrl+C / web stop). The line read goes through ``interruptible_lines``,
-        which polls this during no-data gaps — including the TTFT window before
-        the first token — so the interrupt isn't stuck behind a blocking read.
-        When it fires the stream is closed and the partial returned with
-        ``stop_reason="interrupted"`` — the loop discards it (not parsed)."""
-        import time
-
-        content = ""
-        thinking = ""
-        stop_reason = None
-        input_tokens = 0
-        output_tokens = 0
-        cache_creation_input_tokens = 0
-        cache_read_input_tokens = 0
-        t0 = time.perf_counter_ns()
-        t_first = 0
-
-        # interruptible_lines polls interrupt_check during no-data gaps (TTFT,
-        # stalls) so a user interrupt breaks even before the first token; the
-        # interrupt is detected by re-checking interrupt_check() after the loop.
-        for line in interruptible_lines(r, interrupt_check):
-            if not line:
-                continue
-            line_str = line.decode("utf-8") if isinstance(line, bytes) else line
-
-            if line_str.startswith("data: "):
-                payload = line_str[6:]
-                try:
-                    data = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-
-                event_type = data.get("type", "")
-
-                if event_type == "message_start":
-                    usage = data.get("message", {}).get("usage", {})
-                    input_tokens = usage.get("input_tokens", 0)
-                    cache_creation_input_tokens = usage.get(
-                        "cache_creation_input_tokens", 0
-                    )
-                    cache_read_input_tokens = usage.get("cache_read_input_tokens", 0)
-
-                elif event_type == "content_block_delta":
-                    delta = data.get("delta", {})
-                    delta_type = delta.get("type")
-                    if delta_type == "text_delta":
-                        chunk = delta.get("text", "")
-                        if chunk:
-                            if not t_first:
-                                t_first = time.perf_counter_ns()
-                            content += chunk
-                            on_chunk(chunk)
-                            # Early-stop format runaway. Gate on '#' so the
-                            # predicate (regex) only runs when a new header
-                            # could have arrived — O(headers) not O(chunks),
-                            # same as the openai provider.
-                            if (
-                                degeneration_check is not None
-                                and "#" in chunk
-                                and degeneration_check(content)
-                            ):
-                                stop_reason = "degenerate_runaway"
-                                r.close()
-                                break
-                    elif delta_type == "thinking_delta":
-                        # Extended-thinking deltas: accumulate but do
-                        # not stream to on_chunk — thinking is internal
-                        # reasoning, not user-facing output.
-                        thinking += delta.get("thinking", "")
-
-                elif event_type == "message_delta":
-                    stop_reason = data.get("delta", {}).get("stop_reason")
-                    usage = data.get("usage", {})
-                    output_tokens = usage.get("output_tokens", output_tokens)
-
-        # Reader stopped early because the user interrupted; flag still set, so
-        # label the (discarded) partial accordingly.
-        if interrupt_check is not None and interrupt_check():
-            stop_reason = "interrupted"
-
-        t_end = time.perf_counter_ns()
-        ttft_ns = (t_first - t0) if t_first else 0
-        decode_ns = (t_end - t_first) if t_first else 0
-
+        """Anthropic SSE 스트림 — 골격은 ``http.run_sse_stream`` 공용 (C6,
+        v4.48.0). 이로써 idle notice/StreamIdleTimeout·JSONDecodeError 관용이
+        openai 와 **동일 적용**(이전엔 양쪽에 한 조각씩만 있던 비대칭).
+        여기는 이벤트 shape 해석과 캐시-토큰 포함 usage 조립만."""
+        acc = run_sse_stream(
+            r,
+            on_chunk,
+            map_payload=_map_anthropic_payload,
+            degeneration_check=degeneration_check,
+            interrupt_check=interrupt_check,
+        )
+        f = acc.usage_fields
         usage = None
-        if (
-            input_tokens
-            or output_tokens
-            or cache_creation_input_tokens
-            or cache_read_input_tokens
+        if any(
+            f.get(k)
+            for k in (
+                "input_tokens",
+                "output_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            )
         ):
             usage = TokenUsage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                prompt_eval_ns=ttft_ns,
-                eval_ns=decode_ns,
-                ttft_ns=ttft_ns,
-                cache_creation_input_tokens=cache_creation_input_tokens,
-                cache_read_input_tokens=cache_read_input_tokens,
+                input_tokens=f.get("input_tokens", 0),
+                output_tokens=f.get("output_tokens", 0),
+                prompt_eval_ns=acc.ttft_ns,
+                eval_ns=acc.decode_ns,
+                ttft_ns=acc.ttft_ns,
+                cache_creation_input_tokens=f.get("cache_creation_input_tokens", 0),
+                cache_read_input_tokens=f.get("cache_read_input_tokens", 0),
             )
-
         return LLMResponse(
-            content=content,
+            content=acc.content,
             tool_calls=None,
             usage=usage,
-            stop_reason=stop_reason,
-            thinking=thinking,
+            stop_reason=acc.stop_reason,
+            thinking=acc.thinking,
         )
 
     def _parse_response(self, data: dict) -> LLMResponse:
@@ -260,3 +202,39 @@ class AnthropicProvider:
             stop_reason=data.get("stop_reason"),
             thinking=thinking,
         )
+
+
+def _map_anthropic_payload(data: dict) -> StreamEvent | None:
+    """Anthropic 이벤트 하나 → 정규화 StreamEvent (provider 고유 부분 전부).
+
+    - message_start → input + 캐시 2종 usage_fields
+    - content_block_delta.text_delta → text / .thinking_delta → thinking
+      (thinking 은 on_chunk 로 스트리밍하지 않음 — 골격이 text 만 스트림)
+    - message_delta → stop_reason + output_tokens
+    """
+    event_type = data.get("type", "")
+    if event_type == "message_start":
+        usage = data.get("message", {}).get("usage", {})
+        return StreamEvent(
+            usage_fields={
+                "input_tokens": usage.get("input_tokens", 0),
+                "cache_creation_input_tokens": usage.get(
+                    "cache_creation_input_tokens", 0
+                ),
+                "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+            }
+        )
+    if event_type == "content_block_delta":
+        delta = data.get("delta", {})
+        if delta.get("type") == "text_delta":
+            return StreamEvent(text=delta.get("text", "") or "")
+        if delta.get("type") == "thinking_delta":
+            return StreamEvent(thinking=delta.get("thinking", "") or "")
+        return None
+    if event_type == "message_delta":
+        usage = data.get("usage", {})
+        ev = StreamEvent(stop_reason=data.get("delta", {}).get("stop_reason"))
+        if usage.get("output_tokens"):
+            ev.usage_fields = {"output_tokens": usage["output_tokens"]}
+        return ev
+    return None
