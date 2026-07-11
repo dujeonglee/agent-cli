@@ -33,7 +33,7 @@
 
 | # | 항목 | 근거 | 방향 | 상태 |
 |---|---|---|---|---|
-| **C1** | loop.py god-module(2671줄) — 순환 import 뿌리(지연 9곳 + delegate/skills/review 역-import), `_dispatch_op` ~390줄, `__init__` ~190줄, action-card 렌더 5중복, `_append_observation` 8곳 동일 인자 | loop.py:1239-1626 | 턴 실행 코어 분리; 헬퍼 추출은 저위험 선행 | ☐ |
+| **C1** | loop.py god-module(2671줄) — `_dispatch_op` ~390줄, `__init__` ~190줄, action-card 렌더 5중복, `_append_observation` 8곳 동일 인자. (정정: 순환의 뿌리는 registry eager TOOLS — delegate→run_loop 지연은 유지 필수, lazy registry 재시도 금지) | loop.py:1239-1626 | **Option 3 협력객체 3단 PR 확정** — PR-1 State/Config ✅ v4.40.0 → PR-2 SystemPromptSvc·ToolBridge → PR-3 LLMCaller·TurnDispatcher | ◐ 1/3 |
 | **C2** | delegate.py 8책임(851줄) — agent 로딩/추출기/persist/포맷팅/단일·병렬 실행/dispatch/Tool | delegate.py | `delegate/` 패키지 분할 | ☐ |
 | **C3** | web/server.py 전송·비즈니스 뒤엉킴(1727줄, 27라우트) — directive 조작·lesson 학습·slash ~440줄 | server.py:168-408,493-687 | `directives_service.py`/`slash.py` 추출 | ☐ |
 | **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | `bootstrap_session()` 공용 추출 | ☐ |
@@ -58,6 +58,13 @@
 6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
+
+- **2026-07-11 · v4.40.0 · C1 PR-1 (1/3)**: Option 3(협력 객체) 확정 후 1단계 —
+  `LoopConfig`(frozen, 불변 배선 ~24필드)·`LoopState`(공유 가변 7필드) 도입,
+  `__init__` 이 두 객체를 조립하고 기존 `self.X` 표면은 property 브리지
+  (config=읽기전용/state=RW)로 유지 → 메서드 본문 무변경, 테스트 이관은
+  bare-`__new__` 헬퍼 1곳뿐. 상태 실측 지도(공유 6+2 / 전유 / 불변)가 근거.
+  다음: PR-2 교차호출-0 클러스터(SystemPromptSvc·ToolBridge) 승격.
 
 - **2026-07-11 · v4.39.0 · B5+B6(부분)+B7+B8 완료**: (B5) react classic 경로가
   parse_turn 자신의 3-stage 파스 결과 dict 로 Op 직조 — 같은 텍스트 2회 파싱

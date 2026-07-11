@@ -6,7 +6,9 @@ import json
 import re
 import signal
 import sys
+import threading
 import time
+from dataclasses import dataclass, field
 
 from agent_cli.constants import (
     DELEGATE_DEFAULT_TIMEOUT,
@@ -90,6 +92,64 @@ _MAX_OVERFLOW_RETRIES = 5
 _COMPACTION_TARGET_RATIO = 0.8
 
 
+@dataclass(frozen=True)
+class LoopConfig:
+    """AgentLoop 의 불변 배선 — ``__init__`` 에서 1회 조립되는 세션-수명 설정.
+
+    C1(Option 3, PR-1): god-object 의 ~40개 ``self.*`` 중 실측상 "생성 후
+    아무도 재할당하지 않는" 설정군을 한 객체로 격리. PR-2/PR-3 에서 승격되는
+    협력 객체(SystemPromptSvc/ToolBridge/LLMCaller/TurnDispatcher)들은 이
+    객체를 읽기 전용으로 주입받는다 — 각자가 ``self.model`` 류를 직접 헤집는
+    무경계 공유를 구조적으로 차단하는 것이 목적. frozen 이므로 협력자/스레드
+    간 공유 안전. (컨테이너 필드의 내용 불변은 관례로 지킨다 — ``tools_list``
+    등은 ``__init__`` 확정 후 아무도 mutate 하지 않음을 전제.)
+    """
+
+    model: str = ""
+    provider_name: str = "openai"
+    base_url: str = ""
+    api_key: str = ""
+    depth: int = 0
+    max_depth: int = 2
+    max_turns: int = 0
+    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT
+    tools_list: list = field(default_factory=list)
+    skill_name: str = ""
+    skill_args: str = ""
+    skill_stack: list = field(default_factory=list)
+    agent_stack: list = field(default_factory=list)
+    capabilities: object = None
+    wire_format: object = None
+    mcp_manager: object = None
+    hook_runner: object = None
+    hooks_config: dict | None = None
+    session: object = None
+    agent_role: str = ""
+    graceful_interrupt: bool = False
+    compaction_enabled: bool = True
+    verbose: bool = False
+
+
+@dataclass
+class LoopState:
+    """AgentLoop 의 per-run 가변 공유 상태 — 실측상 여러 클러스터가 함께
+    읽고 쓰는 필드는 정확히 이 6종(+query 정체성 2종)뿐이다.
+
+    C1(Option 3, PR-1): 협력 객체들이 이 단일 인스턴스를 참조 공유한다 —
+    "무엇이 진짜 공유 상태인가"를 타입으로 못박아, 이후 추가되는 상태가
+    아무 데나 ``self.X`` 로 스며드는 것을 막는다. 여기 없는 가변 필드는
+    한 클러스터의 전유물이며 그 소유 객체(PR-2/3)로 이동한다.
+    """
+
+    query: str = ""
+    query_author: str | None = None
+    messages: list = field(default_factory=list)
+    turn: int = 0
+    task_log: list = field(default_factory=list)
+    interrupted: bool = False
+    stop_event: threading.Event = field(default_factory=threading.Event)
+
+
 class AgentLoop:
     """Encapsulates the ReAct agent loop state and execution."""
 
@@ -136,9 +196,6 @@ class AgentLoop:
         # ``--response-format <name>``.
         if wire_format is None:
             wire_format = _get_wire_format()
-        self.wire_format = wire_format
-
-        self.query = query
         # Web multi-user intake. ``query_author`` = nickname of whoever sent the
         # run-STARTING message (None for CLI / single user). ``dequeue_user_message``
         # pulls ONE queued message at each turn boundary; ``route_message(text)``
@@ -149,12 +206,9 @@ class AgentLoop:
         # message (route_message returns False / None) is injected as a steering
         # user turn. ``task_log`` accumulates EVERY user request (starter +
         # injected) so recovery / review reference the full set of asks.
-        self.query_author = query_author
         self.dequeue_user_message = dequeue_user_message
         self.route_message = route_message
-        self.task_log: list[str] = []
         self.provider = provider
-        self.capabilities = capabilities
         # Oversized-observation cap: a single tool observation larger than
         # this many tokens is replaced (at the result→observation seam) with
         # a narrow-it nudge instead of crowding out the context. context_window
@@ -169,32 +223,11 @@ class AgentLoop:
         # Lazy one-shot cache for _run_ctx() — see its docstring. None until
         # the first tool call (ctx/tools_list are final well before then).
         self._run_ctx_cache: RunContext | None = None
-        self.model = model
-        self.provider_name = provider_name
-        self.base_url = base_url
-        self.api_key = api_key
-        self.max_turns = max_turns
-        self.verbose = verbose
         self.ctx = ctx
-        self.depth = depth
-        self.max_depth = max_depth
-        self.delegate_timeout = delegate_timeout
-        self.session = session
-        self.hooks_config = hooks_config
-        self.skill_name = skill_name
-        self.skill_args = skill_args
-        self.mcp_manager = mcp_manager
-        self.hook_runner = hook_runner
-        # Create stop_event if not provided (for Ctrl+C propagation to nested loops)
-        if stop_event is None:
-            import threading
-
-            stop_event = threading.Event()
-        self.stop_event = stop_event
         self.agent_role = agent_role
 
-        # Derived state
-        self.tools_list = active_tools or list(TOOLS.keys())
+        # Derived wiring (finalized below, then frozen into LoopConfig)
+        tools_list = active_tools or list(TOOLS.keys())
         # Remove both 'delegate' and 'run_skill' when the combined
         # call depth has reached its ceiling. Skills now count
         # toward depth (parity with delegate), so the ceiling treats
@@ -204,27 +237,55 @@ class AgentLoop:
         # belt-and-suspenders layer for direct callers that built a
         # custom ``active_tools`` list.
         if depth >= max_depth:
-            self.tools_list = [
-                t for t in self.tools_list if t not in ("delegate", "run_skill")
-            ]
+            tools_list = [t for t in tools_list if t not in ("delegate", "run_skill")]
         # Remove "ask" in non-interactive mode (no ctx)
-        if not ctx and "ask" in self.tools_list:
-            self.tools_list = [t for t in self.tools_list if t != "ask"]
+        if not ctx and "ask" in tools_list:
+            tools_list = [t for t in tools_list if t != "ask"]
         # Build skill stack for recursive call prevention
         if skill_stack is None:
             skill_stack = []
         if skill_name:
             skill_stack = [*skill_stack, skill_name]
-        self.skill_stack = skill_stack
         # Build agent stack for recursive call prevention
         if agent_stack is None:
             agent_stack = []
         if agent_name:
             agent_stack = [*agent_stack, agent_name]
-        self.agent_stack = agent_stack
 
-        # Loop state
-        self.turn = 0
+        # C1 PR-1: 불변 배선은 LoopConfig 로, 공유 가변 상태는 LoopState 로.
+        # 기존 ``self.X`` 표면은 아래 property 브리지가 유지한다 — 메서드
+        # 본문/테스트 무변경. PR-2/3 에서 협력 객체가 이 두 객체를 직접
+        # 주입받으면 해당 메서드의 브리지 의존이 자연 소멸한다.
+        self._config = LoopConfig(
+            model=model,
+            provider_name=provider_name,
+            base_url=base_url,
+            api_key=api_key,
+            depth=depth,
+            max_depth=max_depth,
+            max_turns=max_turns,
+            delegate_timeout=delegate_timeout,
+            tools_list=tools_list,
+            skill_name=skill_name,
+            skill_args=skill_args,
+            skill_stack=skill_stack,
+            agent_stack=agent_stack,
+            capabilities=capabilities,
+            wire_format=wire_format,
+            mcp_manager=mcp_manager,
+            hook_runner=hook_runner,
+            hooks_config=hooks_config,
+            session=session,
+            agent_role=agent_role,
+            graceful_interrupt=graceful_interrupt,
+            compaction_enabled=compaction_enabled,
+            verbose=verbose,
+        )
+        self._state = LoopState(
+            query=query,
+            query_author=query_author,
+            stop_event=stop_event if stop_event is not None else threading.Event(),
+        )
         # Reactive context-overflow recovery (flow 2): how many times we
         # have shrunk-and-retried for the CURRENT turn. Bounded by
         # ``_MAX_OVERFLOW_RETRIES`` so a pathological case (the cache
@@ -235,11 +296,8 @@ class AgentLoop:
         # renderer's per-turn token-usage line / web top-bar so the user
         # sees a running session total alongside the per-turn numbers.
         self._total_output_tokens = 0
-        self._interrupted = False
         self._prev_sigint_handler = None
-        self.graceful_interrupt = graceful_interrupt
         self.recent_tool_history: list[dict] = []
-        self.messages: list[dict] = []
         # Named system-prompt sections — single source of truth for
         # ``self.system`` (always derived via join) and the web Prompt
         # Inspector snapshot. Populated by _setup; updated by
@@ -282,11 +340,160 @@ class AgentLoop:
         # events for measurement. ``compaction_enabled=False`` (CLI
         # ``--no-compaction``) skips the callback registration so the
         # manager reverts to plain FIFO drop.
-        self.compaction_enabled = compaction_enabled
         if self.ctx is not None:
             self.ctx.set_recorder(self.recorder)
             if self._compaction_enabled():
                 self.ctx.set_compactor(self._llm_compact_summarize)
+
+    # ── C1 PR-1 property 브리지 ──────────────────────────────────
+    # 기존 ``self.X`` 접근 표면을 유지한 채 소유권만 LoopConfig/LoopState 로
+    # 옮기는 호환 shim. PR-2/3 에서 메서드가 협력 객체로 이주하며 그 객체가
+    # config/state 를 직접 읽게 되면, 이주분의 브리지 의존은 소멸한다.
+    # (config 필드는 재할당 금지 — setter 없음이 의도. state 필드는 가변.)
+
+    @property
+    def model(self):
+        return self._config.model
+
+    @property
+    def provider_name(self):
+        return self._config.provider_name
+
+    @property
+    def base_url(self):
+        return self._config.base_url
+
+    @property
+    def api_key(self):
+        return self._config.api_key
+
+    @property
+    def depth(self):
+        return self._config.depth
+
+    @property
+    def max_depth(self):
+        return self._config.max_depth
+
+    @property
+    def max_turns(self):
+        return self._config.max_turns
+
+    @property
+    def delegate_timeout(self):
+        return self._config.delegate_timeout
+
+    @property
+    def tools_list(self):
+        return self._config.tools_list
+
+    @property
+    def skill_name(self):
+        return self._config.skill_name
+
+    @property
+    def skill_args(self):
+        return self._config.skill_args
+
+    @property
+    def skill_stack(self):
+        return self._config.skill_stack
+
+    @property
+    def agent_stack(self):
+        return self._config.agent_stack
+
+    @property
+    def capabilities(self):
+        return self._config.capabilities
+
+    @property
+    def wire_format(self):
+        return self._config.wire_format
+
+    @property
+    def mcp_manager(self):
+        return self._config.mcp_manager
+
+    @property
+    def hook_runner(self):
+        return self._config.hook_runner
+
+    @property
+    def hooks_config(self):
+        return self._config.hooks_config
+
+    @property
+    def session(self):
+        return self._config.session
+
+    @property
+    def graceful_interrupt(self):
+        return self._config.graceful_interrupt
+
+    @property
+    def compaction_enabled(self):
+        return self._config.compaction_enabled
+
+    @property
+    def verbose(self):
+        return self._config.verbose
+
+    @property
+    def query(self):
+        return self._state.query
+
+    @query.setter
+    def query(self, v):
+        self._state.query = v
+
+    @property
+    def query_author(self):
+        return self._state.query_author
+
+    @query_author.setter
+    def query_author(self, v):
+        self._state.query_author = v
+
+    @property
+    def messages(self):
+        return self._state.messages
+
+    @messages.setter
+    def messages(self, v):
+        self._state.messages = v
+
+    @property
+    def turn(self):
+        return self._state.turn
+
+    @turn.setter
+    def turn(self, v):
+        self._state.turn = v
+
+    @property
+    def task_log(self):
+        return self._state.task_log
+
+    @task_log.setter
+    def task_log(self, v):
+        self._state.task_log = v
+
+    @property
+    def _interrupted(self):
+        return self._state.interrupted
+
+    @_interrupted.setter
+    def _interrupted(self, v):
+        self._state.interrupted = v
+
+    @property
+    def stop_event(self):
+        return self._state.stop_event
+
+    @stop_event.setter
+    def stop_event(self, v):
+        self._state.stop_event = v
 
     def _compaction_enabled(self) -> bool:
         """Resolve the effective compaction-enabled flag (NFR-CC-5).

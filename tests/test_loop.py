@@ -4049,3 +4049,72 @@ class TestCombinedToolLabel:
         from agent_cli.loop import _combined_tool_label
 
         assert _combined_tool_label([]) == ""
+
+
+# ── C1 PR-1: LoopConfig/LoopState 소유권 + property 브리지 ────────────
+
+
+class TestLoopConfigStateOwnership:
+    """god-object 분해 1단계: 불변 배선은 LoopConfig(frozen), 공유 가변
+    상태는 LoopState 로 — 기존 ``self.X`` 표면은 property 브리지가 유지."""
+
+    def _bare(self):
+        from agent_cli.loop import AgentLoop, LoopConfig, LoopState
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._config = LoopConfig(model="m1", tools_list=["shell"], depth=1)
+        loop._state = LoopState(query="q")
+        return loop
+
+    def test_config_is_frozen(self):
+        import dataclasses
+
+        from agent_cli.loop import LoopConfig
+
+        cfg = LoopConfig(model="m")
+        try:
+            cfg.model = "other"  # type: ignore[misc]
+        except dataclasses.FrozenInstanceError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("LoopConfig must be frozen")
+
+    def test_config_properties_are_read_only(self):
+        loop = self._bare()
+        assert loop.model == "m1" and loop.tools_list == ["shell"]
+        try:
+            loop.model = "other"
+        except AttributeError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("config-backed attrs must not be reassignable")
+
+    def test_state_properties_read_write_through(self):
+        loop = self._bare()
+        loop.turn = 7
+        loop._interrupted = True
+        loop.messages = [{"role": "user", "content": "x"}]
+        assert loop._state.turn == 7
+        assert loop._state.interrupted is True
+        assert loop._state.messages == [{"role": "user", "content": "x"}]
+        # 역방향: state 직접 변경이 property 로 보임
+        loop._state.turn = 9
+        assert loop.turn == 9
+
+    def test_real_init_assembles_config_and_state(self, tmp_path):
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="do it",
+            provider=None,
+            capabilities=None,
+            model="m",
+            max_turns=3,
+            depth=2,
+            max_depth=2,  # depth ceiling → delegate/run_skill stripped
+        )
+        assert loop._config.model == "m" and loop._config.max_turns == 3
+        assert "delegate" not in loop._config.tools_list
+        assert "run_skill" not in loop._config.tools_list
+        assert loop._state.query == "do it" and loop._state.turn == 0
+        assert loop.stop_event is loop._state.stop_event  # 브리지 동일 객체

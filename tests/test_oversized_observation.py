@@ -12,7 +12,7 @@ the cap applies, default True). ``ctx.add`` is therefore pure storage.
 import json
 
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.loop import AgentLoop
+from agent_cli.loop import AgentLoop, LoopConfig, LoopState
 from agent_cli.tools import TOOLS, RunContext
 from agent_cli.tools.base import (
     Tool,
@@ -26,10 +26,15 @@ from agent_cli.tools.result import ToolResult
 def _loop(cap: int, tools: list[str] | None = None) -> AgentLoop:
     """A bare AgentLoop carrying the cap + tool list — enough for
     _tool_observation (which now consults ``tools_list`` for per-tool
-    over-cap guidance, e.g. delegate fan-out only when delegate is callable)."""
+    over-cap guidance, e.g. delegate fan-out only when delegate is callable).
+    C1 PR-1: ``tools_list`` 는 LoopConfig 소유(재할당 불가 property)라 바로
+    config/state 를 조립해 단다."""
     loop = AgentLoop.__new__(AgentLoop)
     loop._oversized_cap = cap
-    loop.tools_list = list(TOOLS.keys()) if tools is None else list(tools)
+    loop._config = LoopConfig(
+        tools_list=list(TOOLS.keys()) if tools is None else list(tools)
+    )
+    loop._state = LoopState()
     loop.ctx = None  # seam reads self.ctx.session_dir if self.ctx else None
     return loop
 
