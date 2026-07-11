@@ -283,9 +283,11 @@ class Renderer(ABC):
         text: str,
         seq: int = 0,
         success: bool = True,
+        to: str = "main",
     ) -> None:
         """teammate 대화 창의 메시지 1건 (P4). direction: "in"(요청/답변
-        수신) | "out"(회신) | "question"(ask). 기본 no-op."""
+        수신) | "out"(회신) | "question"(ask). ``to`` = 수신자("main" 또는
+        "user:닉네임" 등 — @agt 명령/창 개입 문답의 라우팅 표시). 기본 no-op."""
 
     # ── Abstract render methods ──────────────────────
 

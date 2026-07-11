@@ -998,6 +998,27 @@ class MinimalRenderer(Renderer):
         self.stop_capture()  # 캡처 폐기 — 전문은 teammate 세션 디렉토리에
         self.set_thread_agent("")
 
+    def teammate_message(
+        self,
+        *,
+        key: str,
+        direction: str,
+        author: str,
+        text: str,
+        seq: int = 0,
+        success: bool = True,
+        to: str = "main",
+    ) -> None:
+        """CLI 의 teammate 문답 수신 창 — @agt-<key> 명령(사용자 발신)의
+        회신/질문은 main 관찰로 배달되지 않으므로(D8) 콘솔 라인이 유일한
+        수신 표면이다. main 발신 문답은 관찰 배달과 이중 표시되지 않게
+        건너뛴다."""
+        if to == "main" or direction == "in":
+            return
+        icon = "❓" if direction == "question" else ("🤝" if success else "🤝✗")
+        self.con.print(f"\n{icon} [{key} → {to}]", style="bold cyan", markup=False)
+        self.con.print(text, highlight=False, markup=False)
+
     # ── Ask-tool announcement ────────────────────────
 
     def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:

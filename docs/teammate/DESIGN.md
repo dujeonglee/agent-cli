@@ -307,16 +307,14 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
    frontmatter(auto-spawn 등)가 자랄 자리를 처음부터 분리. 파싱은
    resource_loader 공유 — 포맷 복제 없음.
 
-## 대기 중인 후속 아이디어
-
-- **`@teammates` / `@agt-<key> <메시지>` 명령** (2026-07-11 설계 합의, 미착수):
-  `@agents` 대칭의 roster 목록 + 채팅박스/CLI 에서 teammate 직접 지목
-  request. 회신 라우팅 D8 유지(main ctx 비오염) — 웹은 창, **CLI 는
-  MinimalRenderer.teammate_message 를 콘솔 라인으로 구현**해 수신 (비-main
-  화자 문답만 — 이중 표시 방지용 `to` 필드 추가 필요). 사용자 직접 스폰
-  명령은 delegate 네임스페이스 혼동으로 보류 (범위 B 채택).
-
 ## 후속 확장 로그 (로드맵 완결 이후)
+
+- 2026-07-11 **@명령 구현 (v4.62.0, 범위 B)**: `@teammates` roster ·
+  `@agt-<key>` 상태 · `@agt-<key> <msg>` 직접 request (author="user" —
+  D8 비배달). 사용자가 `@teammates` 를 쳤다가 agents 폴백을 본 것이 착수
+  계기. CLI 수신 = MinimalRenderer.teammate_message 콘솔 라인 + `to`
+  필드(worker 가 수신자 태깅 — main 발신분 이중 표시 방지), run 경로는
+  @agt 후 quiescence 대기. 직접 스폰 명령은 보류 유지.
 
 - 2026-07-11 **전문가 역할 확장 (v4.59.0)**: ①역할 발견 — 시스템 프롬프트
   Teammate Roles 섹션(agents 광고와 동형, teammate 도구 게이트) ②내장

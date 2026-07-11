@@ -630,6 +630,7 @@ class WebRenderer(Renderer):
         text: str,
         seq: int = 0,
         success: bool = True,
+        to: str = "main",
     ) -> None:
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
         창 내용이 복원된다 (버퍼 윈도우 내에서)."""
@@ -642,6 +643,7 @@ class WebRenderer(Renderer):
                 "text": text,
                 "seq": seq,
                 "success": success,
+                "to": to,
             },
             persistent=True,
         )

@@ -260,9 +260,73 @@ class DispatchOutput:
         """
         raise NotImplementedError
 
+    def list_teammates(self, status_text: str) -> None:
+        """``@teammates`` — 상주 teammate roster (기본: 무시)."""
+
+    def teammate_dispatch_result(self, text: str, success: bool) -> None:
+        """``@agt-<key> ...`` 의 결과/에러 (기본: 무시)."""
+
+
+def _try_dispatch_teammate_command(
+    message: str, output: DispatchOutput, teammate_registry
+) -> bool:
+    """``@teammates`` / ``@agt-<key> [메시지]`` 사용자 명령 (범위 B).
+
+    ``@agents`` 대칭의 직접 조작 표면 — 회신 라우팅은 D8 그대로: 사용자
+    발신이므로 main LLM 컨텍스트에 들어가지 않고, 웹은 🤝 창으로, CLI 는
+    MinimalRenderer.teammate_message 콘솔 라인으로 받는다. 처리했으면
+    True (호출자는 LLM 경로를 건너뜀).
+    """
+    if not message.startswith("@"):
+        return False
+    parts = message.split(maxsplit=1)
+    name = parts[0][1:]
+
+    if name == "teammates":
+        if teammate_registry is None:
+            output.list_teammates("(teammate 레지스트리가 없는 모드입니다)")
+        else:
+            output.list_teammates(teammate_registry.format_status())
+        return True
+
+    if name.startswith("agt-"):
+        if teammate_registry is None:
+            output.teammate_dispatch_result(
+                "(teammate 레지스트리가 없는 모드입니다)", False
+            )
+            return True
+        if len(parts) < 2:
+            # 메시지 없음 → 그 teammate 의 상태
+            output.teammate_dispatch_result(teammate_registry.format_status(name), True)
+            return True
+        error = teammate_registry.request(name, parts[1], author="user")
+        if error:
+            output.teammate_dispatch_result(f"@{name}: {error}", False)
+        else:
+            output.teammate_dispatch_result(
+                f"@{name} 에 전송됨 — 회신은 🤝 창(웹) / 콘솔 라인(CLI)으로 "
+                f"도착합니다 (main LLM 대화에는 섞이지 않음).",
+                True,
+            )
+        return True
+
+    return False
+
 
 class _ConsoleDispatchOutput(DispatchOutput):
     """CLI-flavoured output — colour, Rich markup, plain ``console.print``."""
+
+    def list_teammates(self, status_text: str) -> None:
+        console.print(f"\n[{C['accent']}]Teammates:[/]")
+        console.print(status_text)
+        console.print(
+            f"\n[{C['muted']}]Usage: @agt-<key> <메시지> (직접 전송) · "
+            f"@agt-<key> (상태)[/]"
+        )
+
+    def teammate_dispatch_result(self, text: str, success: bool) -> None:
+        color = C["final"] if success else C["error"]
+        console.print(f"[{color}]{text}[/]")
 
     def list_agents(self, agents: list[tuple[str, str]]) -> None:
         console.print(f"\n[{C['accent']}]Available agents:[/]")
@@ -381,6 +445,7 @@ def try_dispatch_agent_or_skill(
     session,
     graceful_interrupt: bool = True,
     stop_event=None,
+    teammate_registry=None,
 ) -> bool:
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
 
@@ -404,6 +469,10 @@ def try_dispatch_agent_or_skill(
     from agent_cli.context.session import save_meta
 
     if message.startswith("@"):
+        # teammate 명령이 먼저 — ``@teammates`` 목록 / ``@agt-<key>`` 직접
+        # 조작 (agents 폴백에 가려지던 것을 전용 처리, 범위 B).
+        if _try_dispatch_teammate_command(message, output, teammate_registry):
+            return True
         parts = message.split(maxsplit=1)
         name = parts[0][1:]
         # Any ``@<x>`` with no task — including unknown agent names —
@@ -1008,29 +1077,6 @@ def run(
             _finalize_run(session, ctx)
             return
 
-    # Agent dispatch: @agent-name task
-    if query.startswith("@"):
-        answer = _dispatch_agent(
-            query,
-            llm_provider,
-            capabilities,
-            resolved_model,
-            provider,
-            resolved_url,
-            resolved_key,
-            max_turns=max_turns,
-            verbose=verbose,
-            max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
-            ctx=ctx,
-            session=session,
-        )
-        if answer is not _AGENT_NOT_FOUND:
-            if answer is not None:
-                console.print(f"\n[{C['final']}]{answer}[/]")
-            _finalize_run(session, ctx)
-            return
-
     from agent_cli.hooks import load_hooks as _load_hooks
 
     _disk_hooks = _load_hooks() or None
@@ -1083,6 +1129,46 @@ def run(
     auto = teammate_registry.auto_spawn(parent_ctx=ctx)
     if auto:
         console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
+
+    # teammate 직접 명령 (범위 B): @teammates / @agt-<key> [메시지].
+    # --resume 세션에서 재생성된 teammate 에게 CLI 로 직접 말 걸기.
+    if query.startswith("@") and _try_dispatch_teammate_command(
+        query, _ConsoleDispatchOutput(), teammate_registry
+    ):
+        # 회신까지 대기 — MinimalRenderer.teammate_message 가 콘솔로 출력.
+        try:
+            while teammate_registry.has_active_work():
+                time.sleep(0.3)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            teammate_registry.shutdown_all()
+        _finalize_run(session, ctx, mcp_manager)
+        return
+
+    # Agent dispatch: @agent-name task
+    if query.startswith("@"):
+        answer = _dispatch_agent(
+            query,
+            llm_provider,
+            capabilities,
+            resolved_model,
+            provider,
+            resolved_url,
+            resolved_key,
+            max_turns=max_turns,
+            verbose=verbose,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
+            ctx=ctx,
+            session=session,
+        )
+        if answer is not _AGENT_NOT_FOUND:
+            if answer is not None:
+                console.print(f"\n[{C['final']}]{answer}[/]")
+            teammate_registry.shutdown_all()
+            _finalize_run(session, ctx)
+            return
 
     answer = None
 
@@ -1774,6 +1860,7 @@ def web(
                     return try_dispatch_agent_or_skill(
                         text,
                         web_output,
+                        teammate_registry=_registry,
                         llm_provider=llm_provider,
                         capabilities=capabilities,
                         resolved_model=resolved_model,

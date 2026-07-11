@@ -1832,3 +1832,120 @@ class TestResumeGuidance:
         r = tool_teammate({"mode": "spawn"}, registry=reg)
         assert "NO memory" not in r.output
         reg.shutdown_all()
+
+
+# ── @teammates / @agt-<key> 사용자 명령 (범위 B, v4.62.0) ──
+
+
+class TestAtCommand:
+    class _Out:
+        def __init__(self):
+            self.calls = []
+
+        def list_teammates(self, status_text):
+            self.calls.append(("list", status_text))
+
+        def teammate_dispatch_result(self, text, success):
+            self.calls.append(("result", text, success))
+
+    def _dispatch(self, message, registry):
+        from agent_cli.main import _try_dispatch_teammate_command
+
+        out = self._Out()
+        handled = _try_dispatch_teammate_command(message, out, registry)
+        return handled, out.calls
+
+    def test_at_teammates_lists_roster(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn(name="ui")
+        wait_until(lambda: reg.get(key).state == "idle")
+        handled, calls = self._dispatch("@teammates", reg)
+        assert handled and calls[0][0] == "list"
+        assert key in calls[0][1] and "ui" in calls[0][1]
+        reg.shutdown_all()
+
+    def test_at_teammates_without_registry(self):
+        handled, calls = self._dispatch("@teammates", None)
+        assert handled and "레지스트리가 없는" in calls[0][1]
+
+    def test_at_key_message_requests_as_user(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        handled, calls = self._dispatch(f"@{key} 이전에 뭐 했었지?", reg)
+        assert handled and calls[0][2] is True  # success
+        assert "main LLM 대화에는 섞이지 않음" in calls[0][1]
+        # user 발신 → 처리되지만 main pending 비오염 (D8)
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        assert not reg.has_pending_replies()
+        # 회신 out 메시지에 to=user 태깅 (CLI 콘솔 수신 근거)
+        outs = [
+            c for c in renderer.named("teammate_message") if c[1]["direction"] == "out"
+        ]
+        assert outs and outs[0][1]["to"] == "user"
+        reg.shutdown_all()
+
+    def test_at_key_without_message_shows_status(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        handled, calls = self._dispatch(f"@{key}", reg)
+        assert handled and key in calls[0][1] and "idle" in calls[0][1]
+        reg.shutdown_all()
+
+    def test_at_key_unknown_is_error(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        handled, calls = self._dispatch("@agt-nope hello", reg)
+        assert handled and calls[0][2] is False and "unknown" in calls[0][1]
+
+    def test_non_teammate_at_falls_through(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        handled, calls = self._dispatch("@explorer 조사해줘", reg)
+        assert handled is False and calls == []  # 기존 agent 경로로 폴스루
+
+
+class TestMinimalConsoleReception:
+    def _minimal(self):
+        import io
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = io.StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=False))
+        return r, buf
+
+    def test_prints_user_directed_reply(self):
+        r, buf = self._minimal()
+        r.teammate_message(
+            key="agt-1",
+            direction="out",
+            author="agt-1",
+            text="답변입니다",
+            to="user",
+        )
+        out = buf.getvalue()
+        assert "agt-1 → user" in out and "답변입니다" in out
+
+    def test_skips_main_directed_and_inbound(self):
+        r, buf = self._minimal()
+        r.teammate_message(
+            key="agt-1", direction="out", author="agt-1", text="X", to="main"
+        )
+        r.teammate_message(
+            key="agt-1", direction="in", author="user", text="Y", to="agt-1"
+        )
+        assert buf.getvalue() == ""  # 이중 표시/자기 메시지 방지
+
+    def test_prints_user_directed_question(self):
+        r, buf = self._minimal()
+        r.teammate_message(
+            key="agt-1",
+            direction="question",
+            author="agt-1",
+            text="어느 파일요?",
+            to="user:bob",
+        )
+        out = buf.getvalue()
+        assert "❓" in out and "어느 파일요?" in out

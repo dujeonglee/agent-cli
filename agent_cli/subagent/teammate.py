@@ -813,6 +813,7 @@ class TeammateRegistry:
                     text=output,
                     seq=seq,
                     success=success,
+                    to=author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
                 )
                 if author == "main":
                     # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
@@ -877,6 +878,7 @@ class TeammateRegistry:
                 direction="question",
                 author=tm.key,
                 text=question,
+                to=tm.current_author,  # 인간 발신 작업의 질문은 그 사람에게
             )
             if tm.current_author == "main":
                 # main 발신 작업의 질문만 main mailbox 로 (D8 대칭).
