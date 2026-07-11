@@ -324,24 +324,11 @@ class TestRegistryLifecycle:
 
 
 class TestWaitAndScope:
-    def test_wait_reply_returns_matching_only(self, tmp_path, renderer):
+    def test_wait_reply_removed(self, tmp_path, renderer):
+        # U-A (v4.63.0): wait 모드 제거 — stop_event 미감시 결함의 자연 해소.
+        # 회신 수령은 turn-boundary drain 이 유일 경로다.
         reg = make_registry(tmp_path)
-        k1, _ = reg.spawn()
-        k2, _ = reg.spawn()
-        reg.request(k2, "other")  # 다른 teammate 의 회신이 먼저 도착해도
-        assert wait_until(reg.has_pending_replies)
-        reg.request(k1, "mine")
-        got = reg.wait_reply(k1, timeout=3)
-        assert got is not None and got["key"] == k1
-        # k2 의 회신은 pending 에 남아 다음 턴 경계에 정상 배달된다
-        leftover = reg.drain_replies()
-        assert [r["key"] for r in leftover] == [k2]
-        reg.shutdown_all()
-
-    def test_wait_reply_timeout(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        key, _ = reg.spawn()
-        assert reg.wait_reply(key, timeout=0.1) is None
+        assert not hasattr(reg, "wait_reply")
         reg.shutdown_all()
 
     def test_worker_owns_persistent_scope(self, tmp_path, renderer):
@@ -402,25 +389,28 @@ class TestToolTeammate:
         assert wait_until(reg.has_pending_replies)
         reg.shutdown_all()
 
-    def test_request_and_wait_flow(self, tmp_path, renderer):
+    def test_request_then_delivery_flow(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         r = tool_teammate(
             {"mode": "request", "key": key, "message": "go"}, registry=reg
         )
         assert r.success and "queued" in r.output
-        w = tool_teammate({"mode": "wait", "key": key}, registry=reg)
-        assert w.success and "done:go" in w.output
-        assert w.artifact.endswith("reply-1.md")
+        assert "DELIVERED" not in r.output  # 안내는 도구 설명이 담당
+        assert "wait" not in r.output  # U-A: wait 유도 문구 소멸
+        assert wait_until(reg.has_pending_replies)
+        reply = reg.drain_replies()[0]
+        assert "done:go" in reply["output"]
         reg.shutdown_all()
 
-    def test_wait_timeout_is_actionable_failure(self, tmp_path, renderer):
+    def test_wait_mode_rejected(self, tmp_path, renderer):
+        # 스키마 밖 모드 — 의미론 검증과 디스패치 양쪽에서 거부.
+        from agent_cli.tools.registry import TOOLS
+
+        assert "unknown mode" in TOOLS["teammate"].validate({"mode": "wait"})
         reg = make_registry(tmp_path)
-        reg.runtime["timeout"] = 0.1
-        key, _ = reg.spawn()
-        r = tool_teammate({"mode": "wait", "key": key}, registry=reg)
-        assert not r.success and "still" in r.error
-        reg.shutdown_all()
+        r = tool_teammate({"mode": "wait", "key": "agt-x"}, registry=reg)
+        assert not r.success and "unknown mode" in r.error
 
     def test_status_and_kill_modes(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
@@ -460,7 +450,7 @@ class TestTeammateToolValidate:
         assert "requires" in t.validate({"mode": "request", "key": "agt-1"})
         assert "requires" in t.validate({"mode": "request", "message": "x"})
         assert t.validate({"mode": "request", "key": "agt-1", "message": "x"}) is None
-        assert "requires" in t.validate({"mode": "wait"})
+        assert "requires" in t.validate({"mode": "resume"})
         assert "requires" in t.validate({"mode": "kill", "key": "  "})
 
 
@@ -715,17 +705,17 @@ class TestAskRouting:
         assert reply["output"] == "resumed with: [user:bob]: the blue one"
         reg.shutdown_all()
 
-    def test_wait_returns_question_first(self, tmp_path, renderer):
-        # 교착 방지: wait 중 질문이 먼저 오면 그걸 반환해야 main 이 답할
-        # 기회를 얻는다 (질문을 건너뛰면 상호 대기).
+    def test_question_delivered_via_drain(self, tmp_path, renderer):
+        # wait 제거 후에도 질문 왕복은 성립: 질문은 턴 경계 drain 으로
+        # main 에 배달되고, main 이 request 로 답하면 재개된다.
         reg = make_registry(tmp_path, runner=make_asking_runner())
         key, _ = reg.spawn()
         reg.request(key, "task")
         assert wait_until(lambda: reg.get(key).state == "waiting_ask")
-        r = tool_teammate({"mode": "wait", "key": key}, registry=reg)
-        assert r.success
-        assert "STATUS: question" in r.output and "which branch?" in r.output
-        assert '"mode":"request"' in r.output  # 답변 방법 안내
+        q = next(r for r in reg.drain_replies() if r.get("kind") == "question")
+        assert "which branch?" in q["output"]
+        reg.request(key, "main branch")  # 답변 → 재개
+        assert wait_until(lambda: reg.get(key).handled == 1)
         reg.shutdown_all()
 
     def test_status_shows_waiting_ask(self, tmp_path, renderer):
@@ -1979,3 +1969,82 @@ class TestRosterInitialIdle:
         entry = next(e for e in last if e["key"] == key)
         assert entry["state"] == "idle"  # starting 고착 없음
         reg2.shutdown_all()
+
+
+# ── instant-agent: instructions 인라인 프로파일 (U-A, v4.63.0) ──
+
+
+class TestInstantAgent:
+    def test_compose_rules(self):
+        from agent_cli.subagent.teammate import compose_role_prompt
+
+        both = compose_role_prompt("FILE BODY", "INLINE")
+        assert both.startswith("FILE BODY")
+        assert "## Additional instructions\nINLINE" in both  # 파일→인라인 순
+        assert compose_role_prompt("", "ONLY INLINE") == "ONLY INLINE"
+        assert compose_role_prompt("ONLY FILE", "") == "ONLY FILE"
+        assert compose_role_prompt("", "") == ""
+
+    def test_instructions_only_spawn_becomes_role(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, err = reg.spawn(instructions="너는 wire-format 전문가다.")
+        assert err == ""
+        tm = reg.get(key)
+        assert tm.role_prompt == "너는 wire-format 전문가다."
+        assert tm.instructions == "너는 wire-format 전문가다."
+        reg.shutdown_all()
+
+    def test_profile_plus_instructions_overlay(self, tmp_path, renderer, monkeypatch):
+        import agent_cli.subagent.roles as roles_mod
+
+        d = tmp_path / "roles"
+        d.mkdir()
+        (d / "coder.md").write_text(
+            "---\ndescription: builds\n---\nYou build things.", encoding="utf-8"
+        )
+        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn(role="coder", instructions="이 세션에선 테스트만 담당.")
+        tm = reg.get(key)
+        assert tm.role_prompt.startswith("You build things.")
+        assert tm.role_prompt.endswith("이 세션에선 테스트만 담당.")
+        assert "## Additional instructions" in tm.role_prompt
+        reg.shutdown_all()
+
+    def test_instructions_survive_resume_and_revival(self, tmp_path, renderer):
+        # 요구 핵심: resume/부활 시 동일 system prompt (manifest 영속).
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn(instructions="INSTANT ROLE")
+        wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.shutdown_all()
+
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1
+        tm = reg2.get(key)
+        assert tm.role_prompt == "INSTANT ROLE" and tm.instructions == "INSTANT ROLE"
+        wait_until(lambda: tm.state == "idle")
+        reg2.kill(key)
+        assert reg2.resume_teammate(key) == ""  # 부활도 동일 정체성
+        assert reg2.get(key).role_prompt == "INSTANT ROLE"
+        reg2.shutdown_all()
+
+    def test_tool_spawn_threads_instructions(self, tmp_path, renderer):
+        # spy 러너를 처음부터 주입 — worker 가 실제로 합성 역할(agent_role)
+        # 로 도는지 러너 수신 kwargs 로 검증 (교체 타이밍 레이스 없음).
+        captured = {}
+
+        def spy_runner(query, ctx, **kw):
+            captured.update(kw)
+            return _FakeLoopResult(output="ok"), 0.01
+
+        reg = make_registry(tmp_path, runner=spy_runner)
+        r = tool_teammate(
+            {"mode": "spawn", "instructions": "ad-hoc 전문가", "task": "일해"},
+            registry=reg,
+        )
+        assert r.success
+        key = next(iter(reg._teammates))
+        assert reg.get(key).role_prompt == "ad-hoc 전문가"
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        assert captured.get("agent_role") == "ad-hoc 전문가"
+        reg.shutdown_all()

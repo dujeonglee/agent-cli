@@ -10,13 +10,7 @@ teammate 안 teammate 금지).
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from agent_cli.tools.base import (
-    Tool,
-    default_oversized_nudge,
-    on_disk_oversized_nudge,
-)
+from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 
@@ -36,13 +30,12 @@ class TeammateTool(Tool):
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["spawn", "request", "wait", "status", "resume", "kill"],
+                "enum": ["spawn", "request", "status", "resume", "kill"],
                 "description": (
                     "spawn: create a teammate (returns its key). "
-                    "request: send it a message — returns immediately, the "
-                    "reply arrives later as an observation. "
-                    "wait: block until its next reply (only when you have "
-                    "nothing else to do). "
+                    "request: send it a message — returns immediately; the "
+                    "reply is DELIVERED to you automatically when ready "
+                    "(never poll, never wait — keep working or complete). "
                     "status: list teammates and their state. "
                     "resume: bring a DEAD teammate back to life with its full "
                     "prior context (it remembers everything). "
@@ -73,11 +66,21 @@ class TeammateTool(Tool):
                     "spawn/resume: optional initial request queued right away"
                 ),
             },
+            "instructions": {
+                "type": "string",
+                "description": (
+                    "spawn: inline role text (instant-agent) — becomes part of "
+                    "the teammate's system prompt for its WHOLE life and "
+                    "survives resume. Use alone for an ad-hoc specialist, or "
+                    "with `role` to append session-specific directions to a "
+                    "profile."
+                ),
+            },
             "key": {
                 "type": "string",
                 "description": (
-                    "teammate key returned by spawn (required for request/wait/"
-                    "kill; optional filter for status)"
+                    "teammate key returned by spawn (required for request/"
+                    "resume/kill; optional filter for status)"
                 ),
             },
             "message": {
@@ -104,14 +107,13 @@ class TeammateTool(Tool):
     # mode 별 조건부 필수 필드 — C7 의미론 검증 훅 (shape 는 중앙 1~5단계).
     _MODE_REQUIRED = {
         "request": ("key", "message"),
-        "wait": ("key",),
         "resume": ("key",),
         "kill": ("key",),
     }
 
     def validate(self, args: dict) -> str | None:
         mode = args.get("mode")
-        valid = ("spawn", "request", "wait", "status", "resume", "kill")
+        valid = ("spawn", "request", "status", "resume", "kill")
         if mode not in valid:
             return f"unknown mode '{mode}' — must be one of {', '.join(valid)}"
         for field in self._MODE_REQUIRED.get(mode, ()):
@@ -134,28 +136,6 @@ class TeammateTool(Tool):
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
-
-    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
-        """mode:"wait" 의 큰 회신: worker 가 이미 전문을
-        ``teammates/<key>/replies/reply-<seq>.md``(=``result.artifact``)에
-        영속했으므로 그 파일을 가리키는 on-disk nudge 로 치환."""
-        artifact = getattr(result, "artifact", "") or ""
-        if artifact and Path(artifact).is_file():
-            return on_disk_oversized_nudge(
-                "teammate",
-                "teammate reply",
-                f"full reply saved to '{artifact}'",
-                artifact,
-                tokens,
-                ctx.oversized_cap,
-                ctx.tools_available,
-                nlines=body.count("\n") + 1,
-                tail_bullets=(
-                    "Or send the teammate a NARROWER follow-up request so it "
-                    "returns a focused reply.",
-                ),
-            )
-        return default_oversized_nudge("teammate", tokens, ctx.oversized_cap)
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # 루프가 인터셉트 (registry/provider 필요) — 직접/테스트 호출자용.

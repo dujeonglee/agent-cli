@@ -88,6 +88,18 @@ def consume_teammates_reload() -> bool:
     return False
 
 
+def compose_role_prompt(profile_body: str, instructions: str) -> str:
+    """instant-agent 합성 규칙 (U4): 파일(일반) → 인라인(구체) 순.
+
+    인라인이 뒤(recency)라 세션-특정 지시가 우선 효과를 갖는다. 둘 중
+    하나만 있으면 그것만, 둘 다 없으면 빈 문자열(익명 generalist).
+    """
+    parts = [p for p in (profile_body.strip(), instructions.strip()) if p]
+    if len(parts) == 2:
+        return f"{parts[0]}\n\n## Additional instructions\n{parts[1]}"
+    return parts[0] if parts else ""
+
+
 def format_teammate_label(key: str, role: str = "", name: str = "") -> str:
     """표시 라벨 — 다중 인스턴스 구분: "agt-x (coder · ui)"."""
     parts = [p for p in (role, name) if p]
@@ -202,6 +214,7 @@ class Teammate:
         home_dir: Path,
         instance_name: str = "",
         description: str = "",
+        instructions: str = "",
     ):
         self.key = key
         self.role_name = role_name
@@ -211,6 +224,10 @@ class Teammate:
         self.instance_name = instance_name
         # 역할 md 의 description — Live Teammates 광고의 전문영역 요약.
         self.description = description
+        # instant-agent (U4): spawn 시 인라인으로 받은 추가 지시 원본 —
+        # 합성 결과는 role_prompt 에 이미 들어있고, 이 필드는 manifest
+        # 영속·인스펙터 가시성용.
+        self.instructions = instructions
         self.allowed_tools = allowed_tools
         self.model = model
         self.hooks_config = hooks_config
@@ -329,6 +346,7 @@ class TeammateRegistry:
         *,
         role: str = "",
         name: str = "",
+        instructions: str = "",
         allowed_tools: list[str] | None = None,
         context_mode: str = "none",
         parent_ctx=None,
@@ -371,6 +389,10 @@ class TeammateRegistry:
                 hooks_config=hooks_config,
             )
 
+        # instant-agent (U4): 인라인 지시를 파일 본문 뒤에 합성 —
+        # 합성본이 이 개체의 정체성(role_prompt)이 되어 manifest 로 영속.
+        role_prompt = compose_role_prompt(role_prompt, instructions)
+
         if context_mode == "fork" and parent_ctx is None:
             return "", "fork requires parent context"
 
@@ -389,6 +411,7 @@ class TeammateRegistry:
             home_dir=self.session_dir / "teammates" / key,
             instance_name=name,
             description=description,
+            instructions=instructions,
         )
         self._teammates[key] = tm
         tm.worker = threading.Thread(
@@ -445,27 +468,6 @@ class TeammateRegistry:
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
         return out
-
-    def wait_reply(self, key: str, timeout: float) -> dict | None:
-        """``key`` 의 mailbox 아이템 1건을 블록 대기 (mode:"wait").
-
-        해당 key 의 것만 꺼내고 다른 teammate 의 것은 pending 에 남긴다
-        (다음 턴 경계에 정상 배달). **kind 불문** — 질문(P2)이 먼저
-        도착하면 그걸 반환한다: wait 가 질문을 건너뛰면 main(회신 대기)과
-        teammate(답변 대기)가 서로를 기다리는 교착이 된다.
-        """
-        deadline = time.monotonic() + timeout
-        with self._cv:
-            while True:
-                for i, r in enumerate(self._pending):
-                    if r.get("key") == key:
-                        item = self._pending.pop(i)
-                        self._save_state()  # 소비 반영 (_cv 는 RLock — 재진입 안전)
-                        return item
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return None
-                self._cv.wait(remaining)
 
     # ── status / kill / 종료 ────────────────────
 
@@ -561,6 +563,7 @@ class TeammateRegistry:
             home_dir=tm.home_dir,
             instance_name=tm.instance_name,
             description=tm.description,
+            instructions=tm.instructions,
         )
         # seq 이어가기 — 이전 생의 replies/reply-N.md 를 덮지 않는다.
         fresh.handled = tm.handled
@@ -608,7 +611,7 @@ class TeammateRegistry:
     def _save_state(self) -> None:
         """teammates.json 원자 저장 (fsio) — manifest + 미배달 pending 미러.
 
-        갱신 시점: spawn/kill/worker 종료(상태) + push/drain/wait(pending).
+        갱신 시점: spawn/kill/worker 종료(상태) + push/drain(pending).
         상태 파일은 best-effort — 디스크 문제로 세션 진행을 막지 않는다.
         """
         path = self._state_path()
@@ -622,6 +625,7 @@ class TeammateRegistry:
                     "role": tm.role_name,
                     "name": tm.instance_name,
                     "description": tm.description,
+                    "instructions": tm.instructions,
                     # role_prompt 를 통째로 저장 — resume 시 역할 md 파일이
                     # 지워졌어도 teammate 는 갖고 있던 역할 그대로 살아난다.
                     "role_prompt": tm.role_prompt,
@@ -700,6 +704,7 @@ class TeammateRegistry:
                 home_dir=self.session_dir / "teammates" / key,
                 instance_name=e.get("name", ""),
                 description=e.get("description", ""),
+                instructions=e.get("instructions", ""),
             )
             tm.handled = int(e.get("handled", 0) or 0)
             tm.queued = tm.handled  # seq 이어가기 (reply-N.md 충돌 방지)
@@ -1021,6 +1026,7 @@ def tool_teammate(
         key, error = registry.spawn(
             role=args.get("role", ""),
             name=args.get("name", ""),
+            instructions=args.get("instructions", ""),
             allowed_tools=args.get("tools"),
             context_mode=args.get("context", "none"),
             parent_ctx=parent_ctx,
@@ -1084,53 +1090,11 @@ def tool_teammate(
         return ToolResult(
             True,
             output=(
-                f"queued to {key} — the reply will be delivered automatically "
-                f"at a later turn. Keep working on other things, or block for "
-                f'it with {{"mode":"wait","key":"{key}"}}.'
+                f"queued to {key} — the reply will be delivered to you "
+                f"automatically at a later turn (even while you are idle). "
+                f"Keep working on other things, or complete if nothing else "
+                f"remains — you will be woken when it arrives."
             ),
-        )
-
-    if mode == "wait":
-        key = args.get("key", "")
-        tm = registry.get(key)
-        if tm is None:
-            return ToolResult(False, error=f"unknown teammate '{key}'")
-        if tm.state == "dead" and not registry.has_pending_replies():
-            return ToolResult(
-                False, error=f"teammate '{key}' is dead — nothing to wait for"
-            )
-        timeout = float(registry.runtime.get("timeout", 300))
-        reply = registry.wait_reply(key, timeout)
-        if reply is None:
-            return ToolResult(
-                False,
-                error=(
-                    f"no reply from {key} within {int(timeout)}s — it is still "
-                    f"working. Wait again, keep doing other work (the reply "
-                    f"will be delivered automatically), or kill it."
-                ),
-            )
-        if reply.get("kind") == "question":
-            # P2: 회신 대신 질문이 먼저 도착 — wait 가 이걸 삼키지 않으면
-            # main(대기)과 teammate(답변 대기)가 서로를 기다리는 교착.
-            return ToolResult(
-                True,
-                output=(
-                    f"STATUS: question\nQUESTION from {key}:\n"
-                    f"{reply.get('output', '')}\n"
-                    f"(The teammate is BLOCKED until answered. Answer via "
-                    f'{{"mode":"request","key":"{key}","message":"<answer>"}}, '
-                    f"then wait again for the actual reply.)"
-                ),
-            )
-        status = "success" if reply.get("success") else "error"
-        return ToolResult(
-            bool(reply.get("success")),
-            output=(
-                f"STATUS: {status}\nREPLY from {key} (seq {reply.get('seq')}):\n"
-                f"{reply.get('output', '')}"
-            ),
-            artifact=reply.get("reply_path", ""),
         )
 
     if mode == "resume":
@@ -1171,8 +1135,5 @@ def tool_teammate(
 
     return ToolResult(
         False,
-        error=(
-            f"unknown mode '{mode}' — use spawn / request / wait / status / "
-            f"resume / kill"
-        ),
+        error=(f"unknown mode '{mode}' — use spawn / request / status / resume / kill"),
     )

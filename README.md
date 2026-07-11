@@ -690,7 +690,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (한 op=한 task; 여러 delegate op = 병렬, 에이전트 역할 지정 가능) |
-| `teammate` | **상주 팀원 에이전트** — delegate 와 달리 답변 후에도 컨텍스트를 유지한 채 살아있어 이어서 문답 가능. `spawn`(key 반환, `role`=`.agent-cli/teammates/{name}.md`)/`request`(비동기 전송 — 회신은 준비되는 대로 관찰로 **자동 배달**, 폴링 불필요)/`wait`/`status`/`kill`. main 세션 전용 (서브에이전트 안에서는 비노출) |
+| `teammate` | **상주 팀원 에이전트** — delegate 와 달리 답변 후에도 컨텍스트를 유지한 채 살아있어 이어서 문답 가능. `spawn`(key 반환, `role`=`.agent-cli/teammates/{name}.md` 또는 `instructions`=인라인 즉석 역할)/`request`(비동기 전송 — 회신은 준비되는 대로 관찰로 **자동 배달**, 폴링·대기 불필요)/`status`/`resume`/`kill`. main 세션 전용 (서브에이전트 안에서는 비노출) |
 | `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
@@ -1036,7 +1036,8 @@ delegate 가 "일회성 파견"(답변 → 소멸)이라면 `teammate` 는 **상
 {"action": "teammate", "action_input": {"mode": "kill", "key": "agt-3f2a1b9c"}}
 ```
 
-- **비동기 + 자동 배달**: `request` 는 즉시 반환되고, teammate 는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링할 필요가 없습니다. 회신만 기다리면 되는 상황엔 `wait`(블록) 를 씁니다.
+- **비동기 + 자동 배달**: `request` 는 즉시 반환되고, teammate 는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링하거나 블록할 필요가 없습니다 (main 이 idle 이어도 자동 재기동으로 배달; `wait` 모드는 v4.63.0 에서 제거 — Stop 불응 결함이 있었고 자동 배달이 완전 대체).
+- **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}`. 인라인 지시는 그 teammate 의 시스템 프롬프트가 되어 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속). `role` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시).
 - **양방향 문답 (ask 라우팅)**: teammate 가 작업 중 막혀서 `ask` 를 부르면 질문이 **main 의 mailbox 로** 옵니다 (사용자가 아니라 main LLM 이 teammate 의 "사용자"). main 은 같은 `request` 로 답하고, teammate 는 답을 받을 때까지 `waiting_ask` 상태로 대기합니다. `wait` 중에 질문이 먼저 도착하면 질문을 반환해 교착을 방지합니다. delegate 서브에이전트의 `ask` 는 종전대로 사용자에게 갑니다.
 - **역할 정의 (`role`) — 전문가 팀**: `.agent-cli/teammates/{name}.md` (프로젝트) → `~/.agent-cli/teammates/` (전역) → 패키지 내장 순으로 검색. agent 파일과 같은 포맷 — YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — teammate 시스템 프롬프트의 Role 섹션을 통째로 교체, 상주라 세션 내내 지속). delegate 의 `agents/` 와는 **별도 디렉토리**입니다.
   - **역할 발견**: 사용 가능한 역할 목록(이름+description)이 시스템 프롬프트에 광고되어 **모델이 스스로 적합한 전문가를 골라 소집**합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
