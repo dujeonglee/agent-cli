@@ -1008,8 +1008,9 @@ def tool_agent(
         return ToolResult(
             False,
             error=(
-                "teammate is unavailable in this loop (main session only — "
-                "teammates cannot spawn teammates)"
+                "persistent agent modes (spawn/request/status/resume/kill) are "
+                'main-session only — in this loop use {"mode":"run","task":...} '
+                "for a one-shot sub-agent instead"
             ),
         )
 

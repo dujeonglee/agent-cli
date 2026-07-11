@@ -16,23 +16,35 @@ from agent_cli.tools.result import ToolResult
 
 class AgentTool(Tool):
     name = "agent"
+    # 서브루프(레지스트리 없는 루프)용 축소 설명 — run 만 문서화 (설계
+    # §3.2 모드 축소 노출: 도구 인스턴스는 하나, 프롬프트 렌더만 분기).
+    SUBLOOP_DESCRIPTION = (
+        "Run ONE task in a fresh sub-agent and get the result back in this "
+        'turn (mode:"run" only here). Emit several run ops in the same '
+        "turn to fan out independent tasks in PARALLEL. Optional profile/"
+        "instructions give the sub-agent a role."
+    )
     description = (
-        "Manage persistent teammate agents that KEEP their context between "
-        "requests. Unlike `delegate` (one-shot: the subagent answers once and "
-        "vanishes), a teammate stays alive — spawn it once, send follow-up "
-        "requests any time, and its replies are delivered to you automatically "
-        "as observations when ready (no polling). Use delegate for independent "
-        "one-shot tasks; use teammate for iterative collaboration on evolving "
-        "work."
+        'Work with sub-agents, one-shot or persistent. mode:"run" executes '
+        "ONE task in a fresh sub-agent and returns its result in this turn — "
+        "emit several run ops in the same turn to fan out independent tasks "
+        'in PARALLEL. mode:"spawn" creates a PERSISTENT agent that keeps '
+        'its context between requests: send follow-ups with mode:"request" '
+        "any time and its replies are delivered to you automatically as "
+        "observations (no polling). Use run for independent one-shot tasks; "
+        "use spawn/request for iterative collaboration on evolving work."
     )
     parameters = {
         "type": "object",
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["spawn", "request", "status", "resume", "kill"],
+                "enum": ["run", "spawn", "request", "status", "resume", "kill"],
                 "description": (
-                    "spawn: create a teammate (returns its key). "
+                    "run: execute ONE task in a fresh one-shot sub-agent "
+                    "(blocking — result returns in this turn; several run ops "
+                    "in one turn execute in parallel). "
+                    "spawn: create a PERSISTENT teammate (returns its key). "
                     "request: send it a message — returns immediately; the "
                     "reply is DELIVERED to you automatically when ready "
                     "(never poll, never wait — keep working or complete). "
@@ -63,6 +75,7 @@ class AgentTool(Tool):
             "task": {
                 "type": "string",
                 "description": (
+                    "run: the task to execute (required). "
                     "spawn/resume: optional initial request queued right away"
                 ),
             },
@@ -105,7 +118,11 @@ class AgentTool(Tool):
     }
 
     # mode 별 조건부 필수 필드 — C7 의미론 검증 훅 (shape 는 중앙 1~5단계).
+    # run fan-out 용 — 배치 합류 여부는 parallel_batchable(mode-aware)이 결정.
+    parallel_safe = True
+
     _MODE_REQUIRED = {
+        "run": ("task",),
         "request": ("key", "message"),
         "resume": ("key",),
         "kill": ("key",),
@@ -113,7 +130,7 @@ class AgentTool(Tool):
 
     def validate(self, args: dict) -> str | None:
         mode = args.get("mode")
-        valid = ("spawn", "request", "status", "resume", "kill")
+        valid = ("run", "spawn", "request", "status", "resume", "kill")
         if mode not in valid:
             return f"unknown mode '{mode}' — must be one of {', '.join(valid)}"
         for field in self._MODE_REQUIRED.get(mode, ()):
@@ -121,6 +138,12 @@ class AgentTool(Tool):
             if not isinstance(value, str) or not value.strip():
                 return f"mode '{mode}' requires a non-empty '{field}'"
         return None
+
+    def parallel_batchable(self, action_input: dict) -> bool:
+        # mode-aware 배칭 (설계 §3.6): run 연속 op 만 병렬 — 상주 모드가
+        # 섞인 턴은 순차 (spawn/request 는 즉시 반환이라 병렬 이득도 없음).
+        args = self.strip_prefix(action_input) if isinstance(action_input, dict) else {}
+        return args.get("mode") == "run"
 
     def touched_paths(self, action_input: dict) -> list[str]:
         # 파일 경로가 없는 도구 — compaction file-list 에 스폰/요청 흔적 마커.

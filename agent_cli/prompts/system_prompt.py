@@ -610,15 +610,26 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
     }
 
 
-def _build_tools_section(active_tools: list[str], wire_format) -> str:
+def _build_tools_section(
+    active_tools: list[str], wire_format, *, has_agent_registry: bool = True
+) -> str:
     """Build Available Tools section with inline guides.
 
     Static tools come first (stable for KV cache), conditional tools last.
+    ``has_agent_registry=False``(서브루프)면 agent 도구 설명을 run 전용
+    축소판으로 스왑 — 모드 축소 노출 (설계 §3.2: 스키마 사본 없이 렌더만
+    분기).
     """
+    overrides = None
+    if not has_agent_registry and "agent" in active_tools:
+        from agent_cli.tools.agent_tool import AgentTool
+
+        overrides = {"agent": AgentTool.SUBLOOP_DESCRIPTION}
     tool_block = get_tool_descriptions(
         active_tools,
         inline_guides=_build_tool_inline_guides(active_tools, wire_format),
         wire_format=wire_format,
+        description_overrides=overrides,
     )
     return f"## Available Tools\n{tool_block}"
 
@@ -737,7 +748,14 @@ def build_system_prompt_sections(
 
     # ── Middle: reference material ──
     sections.append(
-        ("Available Tools", _build_tools_section(active_tools, wire_format))
+        (
+            "Available Tools",
+            _build_tools_section(
+                active_tools,
+                wire_format,
+                has_agent_registry=agent_registry is not None,
+            ),
+        )
     )
 
     # MCP tools (if manager provided)

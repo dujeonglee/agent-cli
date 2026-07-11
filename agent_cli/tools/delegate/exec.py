@@ -42,6 +42,7 @@ def _run_single(
     context_mode: str = "none",
     allowed_tools: list[str] | None = None,
     agent_name: str = "",
+    instructions: str = "",
     parent_ctx: ContextManager | None = None,
     provider: LLMProvider | None = None,
     model: str = "",
@@ -67,6 +68,7 @@ def _run_single(
     와 공유. 이 함수는 delegate 고유분(가드·디렉토리 명명·리포트 조립)
     만 남긴 thin wrapper 다. 관찰 문구·result.md 는 바이트 불변.
     """
+    from agent_cli.subagent.agents_live import compose_role_prompt
     from agent_cli.subagent.runner import (
         apply_role_overrides,
         create_subagent_ctx,
@@ -124,6 +126,10 @@ def _run_single(
             model=model,
             hooks_config=hooks_config,
         )
+
+    # instant (5.0.0 run 모드): 인라인 지시를 프로파일 본문 뒤에 합성 —
+    # 상주 spawn 과 동일 규칙 (파일=일반, 인라인=세션 특정).
+    agent_role = compose_role_prompt(agent_role, instructions)
 
     # Resolve parent session dir and create delegate subdir
     parent_session_dir = _resolve_session_dir(session, parent_ctx)
@@ -262,6 +268,7 @@ def _run_parallel(
                 context_mode=spec.get("context", "none"),
                 allowed_tools=spec.get("tools"),
                 agent_name=spec.get("agent", ""),
+                instructions=spec.get("instructions", ""),
                 parent_ctx=parent_ctx,
                 provider=provider,
                 model=model,
@@ -417,6 +424,7 @@ def tool_delegate(
                 context_mode=spec.get("context", "none"),
                 allowed_tools=spec.get("tools"),
                 agent_name=agent_name,
+                instructions=spec.get("instructions", ""),
                 stop_event=stop_event,
                 **common_kwargs,
             )

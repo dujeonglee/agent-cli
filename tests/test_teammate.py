@@ -71,6 +71,12 @@ class RecordingRenderer:
         with self.lock:
             return [c for c in self.calls if c[0] == name]
 
+    def __getattr__(self, name):
+        # run 모드(일회성 엔진)가 부르는 그 외 렌더 표면(group_start,
+        # begin_delegate_task, start_capture...)은 조용한 no-op — 없으면
+        # AttributeError 가 도구 안전망에 잡혀 가짜 도구 에러가 된다.
+        return lambda *a, **k: None
+
 
 @pytest.fixture
 def renderer(monkeypatch):
@@ -375,8 +381,10 @@ class TestWaitAndScope:
 
 class TestToolTeammate:
     def test_no_registry_rejected(self):
+        # 5.0.0 모드 축소: 상주 모드는 main 전용 — run 안내와 함께 거부.
         r = tool_agent({"mode": "spawn"}, registry=None)
-        assert not r.success and "unavailable" in r.error
+        assert not r.success and "main-session only" in r.error
+        assert '"mode":"run"' in r.error
 
     def test_spawn_with_initial_task(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
@@ -456,12 +464,30 @@ class TestAgentToolValidate:
 
 
 class TestLoopWiring:
-    def test_tool_stripped_without_registry(self):
+    def test_tool_present_without_registry_mode_reduced(self):
+        # 5.0.0 모드 축소: 레지스트리 없어도 agent 는 존재 (run 용) —
+        # 상주 모드는 디스패치 거부 + 설명 축소가 담당.
         from unittest.mock import MagicMock
 
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
+        assert "agent" in loop._config.tools_list
+
+    def test_tool_stripped_at_depth_ceiling(self):
+        # depth 상한 = run 도 불가 → 도구째 strip (delegate/run_skill 동형).
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+
+        loop = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=None,
+            model="m",
+            depth=2,
+            max_depth=2,
+        )
         assert "agent" not in loop._config.tools_list
 
     def test_tool_present_with_registry(self, tmp_path):
@@ -593,25 +619,18 @@ class TestFullLoopIntegration:
         )
         reg.shutdown_all()
 
-    def test_teammate_invisible_in_subagent_prompt(self, tmp_path):
-        # P1 경계: 레지스트리 없는 루프의 시스템 프롬프트에 teammate 부재.
+    def test_subloop_gets_reduced_agent_description(self, tmp_path):
+        # 5.0.0 모드 축소: 서브루프(레지스트리 없음)의 Available Tools 는
+        # run 전용 축소 설명, main 은 상주 모드 포함 전체 설명.
+        from agent_cli.prompts.system_prompt import _build_tools_section
+        from agent_cli.wire_formats import get as get_wf
 
-        from unittest.mock import MagicMock
-
-        from agent_cli.loop import AgentLoop
-
-        loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
-        assert "agent" not in loop._config.tools_list
-
-        reg = AgentRegistry(tmp_path, runner=make_runner())
-        loop2 = AgentLoop(
-            query="Q",
-            provider=MagicMock(),
-            capabilities=None,
-            model="m",
-            agent_registry=reg,
-        )
-        assert "agent" in loop2._config.tools_list
+        wf = get_wf("react")
+        sub = _build_tools_section(["agent"], wf, has_agent_registry=False)
+        main = _build_tools_section(["agent"], wf, has_agent_registry=True)
+        assert 'mode:"run" only here' in sub
+        assert "PERSISTENT" not in sub.split("Input JSON")[0]
+        assert "spawn" in main and "PERSISTENT" in main
 
 
 # ── P2: ask→main 양방향 라우팅 ──────────────────
@@ -2046,3 +2065,160 @@ class TestInstantAgent:
         assert wait_until(lambda: reg.get(key).handled == 1)
         assert captured.get("agent_role") == "ad-hoc 전문가"
         reg.shutdown_all()
+
+
+# ── mode:"run" — 일회성 흡수 + mode-aware 배칭 (PR-3b, 5.0.0) ──
+
+
+class TestRunMode:
+    def _caps(self):
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        return ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+    def test_parallel_batchable_is_mode_aware(self):
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["agent"]
+        assert tool.parallel_safe is True
+        assert tool.parallel_batchable({"mode": "run", "task": "x"}) is True
+        assert tool.parallel_batchable({"mode": "spawn"}) is False
+        assert tool.parallel_batchable({"mode": "request", "key": "k"}) is False
+
+    def test_run_validate_requires_task(self):
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["agent"]
+        assert "requires" in tool.validate({"mode": "run"})
+        assert tool.validate({"mode": "run", "task": "do"}) is None
+
+    def test_run_single_through_full_loop(self, tmp_path, renderer):
+        # main 이 run op → 같은 provider 로 서브루프가 돌아 결과가 그 턴
+        # 관찰(STATUS/RESULT)로 — 구 delegate 의미 그대로.
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+
+        def emit(action, ai):
+            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(content=emit("agent", {"mode": "run", "task": "count to 3"})),
+            LLMResponse(content=emit("complete", {"result": "1 2 3"})),  # 서브루프
+            LLMResponse(content=emit("complete", {"result": "done"})),  # main
+        ]
+        result = run_loop(
+            query="use run",
+            provider=provider,
+            capabilities=self._caps(),
+            model="m",
+            ctx=ctx,
+        )
+        assert result.success and result.output == "done"
+        obs = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and m.get("tool") == "agent"
+        ]
+        assert obs and "STATUS: success" in obs[0]["content"]
+        assert "1 2 3" in obs[0]["content"]
+
+    def test_run_carries_instructions_to_subagent(self, tmp_path, renderer):
+        # instant + run: 인라인 지시가 서브루프 system 의 Role 로.
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+
+        def emit(action, ai):
+            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
+        provider = MagicMock()
+        provider.call.side_effect = [
+            LLMResponse(
+                content=emit(
+                    "agent",
+                    {"mode": "run", "task": "t", "instructions": "MARKER-ROLE-9"},
+                )
+            ),
+            LLMResponse(content=emit("complete", {"result": "sub done"})),
+            LLMResponse(content=emit("complete", {"result": "done"})),
+        ]
+        run_loop(
+            query="q",
+            provider=provider,
+            capabilities=self._caps(),
+            model="m",
+            ctx=ctx,
+        )
+        # 두 번째 LLM 호출(서브루프)의 system 에 인라인 역할이 실렸다
+        _, kwargs = provider.call.call_args_list[1]
+        assert "MARKER-ROLE-9" in kwargs["system"]
+        # main(1·3번째)에는 없음
+        assert "MARKER-ROLE-9" not in provider.call.call_args_list[0].kwargs["system"]
+
+    def test_run_fanout_multiop_parallel_batch(self, tmp_path, renderer):
+        # 멀티-op run ×2 = 한 배치(병렬 엔진) → [1/2][2/2] 결합 관찰.
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.wire_formats import get as get_wf
+
+        wf = get_wf("md_array")
+
+        def turn(ops):
+            # md_array 실제 envelope: ## Thought / ## Action + flat op 배열
+            return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
+
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
+        provider = MagicMock()
+        responses = [
+            turn(
+                [
+                    {"action": "agent", "mode": "run", "task": "job A"},
+                    {"action": "agent", "mode": "run", "task": "job B"},
+                ]
+            ),
+            # 서브루프 2개 (병렬 — 순서 무관하게 각자 complete)
+            turn([{"action": "complete", "result": "A-done"}]),
+            turn([{"action": "complete", "result": "B-done"}]),
+            turn([{"action": "complete", "result": "main-done"}]),
+        ]
+        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
+        result = AgentLoop(
+            query="fan out",
+            provider=provider,
+            capabilities=self._caps(),
+            model="m",
+            ctx=ctx,
+            wire_format=wf,
+        ).run()
+        assert result.success
+        combined = [
+            m
+            for m in ctx.get_raw_messages()
+            if m.get("role") == "user" and "[Task 1]" in str(m.get("content"))
+        ]
+        assert len(combined) == 1  # 배치 = 결합 관찰 1개 (병렬 엔진 관통)
+        c = combined[0]["content"]
+        assert "[Task 2]" in c and "A-done" in c and "B-done" in c
+        # 두 서브루프가 실제로 각각 돌았다 (main 2 + sub 2 = 4 콜)
+        assert provider.call.call_count == 4

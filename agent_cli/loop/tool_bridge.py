@@ -259,15 +259,60 @@ class ToolBridge:
             )
         return result
 
-    # ── 2b. AgentInstance dispatch (teammate P1) ─────────────────────────
+    # ── 2b. Agent dispatch (5.0.0 통합) ─────────────────────────────
+    @staticmethod
+    def _run_spec(args: dict) -> dict:
+        """agent run op → 일회성 실행 spec (exec 의 task 스펙 shape)."""
+        return {
+            "task": args.get("task", ""),
+            "context": args.get("context", "none"),
+            "tools": args.get("tools"),
+            "agent": args.get("profile", ""),
+            "instructions": args.get("instructions", ""),
+        }
+
     def _invoke_agent(self, tool_input) -> ToolResult:
-        """teammate 인터셉트 — delegate 와 같은 이유(제네릭 execute 경로에
-        없는 provider/identity 배선이 필요)로 여기서 가로챈다. runtime 은
-        레지스트리의 worker 가 회신 처리(run_subagent_message)에 쓸 실행
-        배선 — delegate 의 tool_delegate kwargs 와 동일 항목."""
+        """agent 인터셉트 — 제네릭 execute 경로에 없는 provider/identity
+        배선이 필요해 여기서 가로챈다.
+
+        - ``{"tasks":[...]}`` : 배치 디스패처가 조립한 run fan-out →
+          일회성 병렬 엔진(tool_delegate 경로)으로.
+        - ``mode:"run"`` 단건 : 같은 엔진의 단건 경로.
+        - 그 외(상주 모드) : tool_agent(레지스트리) — 레지스트리 없는
+          루프에서는 tool_agent 가 "main 전용" 에러로 거부 (모드 축소).
+        """
         from agent_cli.subagent.agents_live import tool_agent
+        from agent_cli.tools.delegate.exec import tool_delegate
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
+
+        if "tasks" in args or args.get("mode") == "run":
+            raw = (
+                {"tasks": args["tasks"]}
+                if "tasks" in args
+                else {"tasks": [self._run_spec(args)]}
+            )
+            return tool_delegate(
+                args=raw,
+                parent_ctx=self.ctx,
+                provider=self.provider,
+                model=self.cfg.model,
+                capabilities=self.cfg.capabilities,
+                provider_name=self.cfg.provider_name,
+                base_url=self.cfg.base_url,
+                api_key=self.cfg.api_key,
+                depth=self.cfg.depth,
+                max_depth=self.cfg.max_depth,
+                max_turns=self.cfg.max_turns,
+                timeout=self.cfg.delegate_timeout,
+                session=self.cfg.session,
+                skill_stack=self.cfg.skill_stack,
+                agent_stack=self.cfg.agent_stack,
+                stop_event=self.state.stop_event,
+                hooks_config=self.cfg.hooks_config,
+                compaction_enabled=self.cfg.compaction_enabled,
+            )
+
         return tool_agent(
             args,
             registry=self.cfg.agent_registry,

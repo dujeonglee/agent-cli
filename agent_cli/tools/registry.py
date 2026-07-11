@@ -225,6 +225,7 @@ def get_tool_descriptions(
     tool_names: list[str] | None = None,
     inline_guides: dict[str, str] | None = None,
     wire_format=None,
+    description_overrides: dict[str, str] | None = None,
 ) -> str:
     """Generate tool description text for system prompt.
 
@@ -241,6 +242,7 @@ def get_tool_descriptions(
     conditional (edit_file, delegate) last.
     """
     guides = inline_guides or {}
+    overrides = description_overrides or {}
     multi_op = bool(getattr(wire_format, "multi_op", False))
     exposes_complete = getattr(wire_format, "exposes_complete", True)
     names = tool_names if tool_names is not None else list(TOOL_SCHEMAS.keys())
@@ -278,12 +280,13 @@ def get_tool_descriptions(
         else:
             params = {k: render_param_value(v, k in required) for k, v in props.items()}
         params_str = json.dumps(params, ensure_ascii=False)
+        base_description = overrides.get(name, schema.description)
         if multi_op:
-            description = _strip_own_prefix(name, schema.description)
+            description = _strip_own_prefix(name, base_description)
             for old, new in _MULTI_OP_DESC_REWRITES.get(name, []):
                 description = description.replace(old, new)
         else:
-            description = schema.description
+            description = base_description
         roster.append(f"- {name}: {description}\n  Input JSON: {params_str}")
         if name in guides:
             guide_blocks.append(guides[name])

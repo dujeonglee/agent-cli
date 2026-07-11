@@ -192,6 +192,14 @@ class Tool(ABC):
     #: concurrency is both safe and worth the wall-clock win).
     parallel_safe: bool = False
 
+    def parallel_batchable(self, action_input: dict) -> bool:
+        """이 op 이 병렬 배치에 합류 가능한가 (5.0.0 mode-aware 배칭).
+
+        기본 = ``parallel_safe`` 그대로. AgentTool 이 override —
+        ``mode:"run"`` op 만 배치 가능(상주 모드는 즉시-반환이라 배칭
+        불필요·혼합 턴은 순차가 정확성 보장)."""
+        return self.parallel_safe
+
     #: Whether the oversized-observation cap applies to THIS tool's
     #: observation. Default True → the cap (context_window/10) is enforced
     #: consistently for every tool: an observation over the cap is replaced

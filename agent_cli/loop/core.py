@@ -125,16 +125,16 @@ class AgentLoop:
         # belt-and-suspenders layer for direct callers that built a
         # custom ``active_tools`` list.
         if depth >= max_depth:
-            tools_list = [t for t in tools_list if t not in ("delegate", "run_skill")]
+            tools_list = [
+                t for t in tools_list if t not in ("delegate", "run_skill", "agent")
+            ]
         # Remove "ask" in non-interactive mode (no ctx)
         if not ctx and "ask" in tools_list:
             tools_list = [t for t in tools_list if t != "ask"]
-        # teammate 는 레지스트리가 주입된 루프(=main 부트스트랩)에서만 —
-        # 서브에이전트(delegate/skill/teammate 자신)와 headless 호출자는
-        # 레지스트리가 없으므로 도구 자체가 안 보인다 (P1: teammate 안
-        # teammate 금지의 단일 가드; 모델이 거부당할 도구를 보지 않는다).
-        if agent_registry is None and "agent" in tools_list:
-            tools_list = [t for t in tools_list if t != "agent"]
+        # agent 도구는 모든 루프에 존재 (5.0.0 모드 축소 노출, 설계 §3.2):
+        # 서브루프(레지스트리 없음)는 run 만 문서화된 축소 설명을 받고,
+        # 상주 모드는 디스패치가 거부한다. depth 상한에서는 run 도 불가라
+        # 위에서 도구째 strip.
         # Build skill stack for recursive call prevention
         if skill_stack is None:
             skill_stack = []

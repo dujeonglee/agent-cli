@@ -296,9 +296,20 @@ class TurnDispatcher:
                     )
                     i = j
                     continue
-            if tool is not None and tool.parallel_safe:
+            if (
+                tool is not None
+                and tool.parallel_safe
+                and tool.parallel_batchable(op.action_input or {})
+            ):
+                # mode-aware 수집 (5.0.0): 같은 도구라도 배치 가능한 op
+                # (agent 는 mode:"run")만 묶는다 — 상주 모드가 섞이면 거기서
+                # 끊고 순차로.
                 j = i
-                while j < len(ops) and ops[j].action == op.action:
+                while (
+                    j < len(ops)
+                    and ops[j].action == op.action
+                    and tool.parallel_batchable(ops[j].action_input or {})
+                ):
                     j += 1
                 if j - i > 1:
                     self._dispatch_parallel_batch(
@@ -376,22 +387,31 @@ class TurnDispatcher:
                 else str(disp),
             )
 
-        if tool_name != "delegate":
+        if tool_name == "agent":
+            # 5.0.0: agent run fan-out — 각 run op 을 일회성 task 스펙으로
+            # 조립해 병렬 엔진으로 (수집 단계가 mode:"run" 만 묶었음을 전제).
+            from agent_cli.loop.tool_bridge import ToolBridge
+
+            specs = [
+                ToolBridge._run_spec(TOOLS["agent"].strip_prefix(op.action_input or {}))
+                for op in batch_ops
+            ]
+        elif tool_name == "delegate":
+            specs = [
+                TOOLS["delegate"].strip_prefix(op.action_input or {})
+                for op in batch_ops
+            ]
+        else:
             # Extension slot: a parallel_safe tool with no internal concurrent
             # engine (e.g. a future read-only read_file/code_index opt-in) would
             # fan its ops out over a thread-pool of per-op run() calls here.
             raise NotImplementedError(
                 f"parallel_safe batch dispatch not wired for {tool_name!r}; only "
-                "delegate has an internal concurrent engine (_run_parallel)."
+                "delegate/agent have an internal concurrent engine (_run_parallel)."
             )
 
-        # delegate: assemble each flat op into one task spec and run the batch
-        # through the existing parallel engine (one combined observation).
-        specs = [
-            TOOLS["delegate"].strip_prefix(op.action_input or {}) for op in batch_ops
-        ]
-        result = self.tools._dispatch_tool_with_hooks("delegate", {"tasks": specs})
-        observation = self.tools._tool_observation("delegate", result, {"tasks": specs})
+        result = self.tools._dispatch_tool_with_hooks(tool_name, {"tasks": specs})
+        observation = self.tools._tool_observation(tool_name, result, {"tasks": specs})
         # Rendered from storage by _flush_op_results' _append_observation
         # (combined card), matching ctx + resume — no separate pre-render.
         accumulate.append(
