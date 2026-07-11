@@ -368,6 +368,12 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
   후 resume"). 죽은 세대들의 디스크 컨텍스트는 그대로라 사후에도
   resume 가능함을 확인.
 
+- 2026-07-11 **v4.62.1 (starting 고착 수리)**: task 없는 spawn/재생성분의
+  최초 starting→idle 전환에 roster 알림 누락 — 초기 task spawn 은 곧바로
+  busy 알림이 와서 가려졌고, resume 재생성분만 UI 가 starting 고착 (표시
+  전용 — 실제로는 idle·정상 동작). worker 의 idle 전환에 _notify_roster
+  추가 + 재생성 roster 회귀 테스트 2종.
+
 ## 진행 로그
 
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.

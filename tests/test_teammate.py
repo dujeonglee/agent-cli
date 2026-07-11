@@ -1949,3 +1949,33 @@ class TestMinimalConsoleReception:
         )
         out = buf.getvalue()
         assert "❓" in out and "어느 파일요?" in out
+
+
+class TestRosterInitialIdle:
+    def test_roster_reflects_idle_after_startup(self, tmp_path, renderer):
+        # v4.62.1 회귀: task 없는 spawn(재생성 동형)의 starting→idle 전환이
+        # roster 에 브로드캐스트되어야 한다 — 안 하면 UI 가 starting 고착.
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        assert wait_until(
+            lambda: any(
+                e["key"] == key and e["state"] == "idle"
+                for c in renderer.named("teammate_roster")[-1:]
+                for e in c[1]["roster"]
+            )
+        )
+        reg.shutdown_all()
+
+    def test_restored_teammate_roster_shows_idle(self, tmp_path, renderer):
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.shutdown_all()
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1
+        assert wait_until(lambda: reg2.get(key).state == "idle")
+        last = renderer.named("teammate_roster")[-1][1]["roster"]
+        entry = next(e for e in last if e["key"] == key)
+        assert entry["state"] == "idle"  # starting 고착 없음
+        reg2.shutdown_all()

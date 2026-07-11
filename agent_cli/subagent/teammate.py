@@ -765,6 +765,10 @@ class TeammateRegistry:
                 return
             tm.ctx = ctx
             tm.state = "idle"
+            # starting→idle 전환도 roster 에 반영 — 초기 task 없는
+            # spawn/재생성분이 UI 에 "starting" 으로 영구 표시되던 버그
+            # (busy/dead 전환만 알리고 최초 idle 을 빠뜨렸었음, v4.62.1).
+            self._notify_roster()
 
             while not tm.stop_event.is_set():
                 item = tm.inbox.get()
