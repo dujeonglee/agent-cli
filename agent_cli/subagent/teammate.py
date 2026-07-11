@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -53,6 +54,30 @@ _DEFAULT_MAX_TEAMMATES = 4
 
 # teammates.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
 TEAMMATES_STATE_VERSION = 1
+
+# ── Live Teammates 시스템 프롬프트 리로드 플래그 ──
+# 멤버십(spawn/kill/died/restore/auto_spawn) 변화 시 set — 루프의
+# _execute_turn 이 directives/memory 플래그와 같은 자리에서 consume 해
+# 다음 턴 시스템 프롬프트를 재조립한다 (상태 전이 busy/idle 은 안 건드림
+# — KV 캐시 프리픽스를 의미 있는 사건에만 버스트).
+_membership_changed = threading.Event()
+
+
+def notify_teammates_changed() -> None:
+    _membership_changed.set()
+
+
+def consume_teammates_reload() -> bool:
+    if _membership_changed.is_set():
+        _membership_changed.clear()
+        return True
+    return False
+
+
+def format_teammate_label(key: str, role: str = "", name: str = "") -> str:
+    """표시 라벨 — 다중 인스턴스 구분: "agt-x (coder · ui)"."""
+    parts = [p for p in (role, name) if p]
+    return f"{key} ({' · '.join(parts)})" if parts else key
 
 
 def _max_teammates() -> int:
@@ -77,8 +102,7 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     from agent_cli.context.token_estimator import estimate_tokens
 
     key = reply.get("key", "")
-    role = reply.get("role", "")
-    label = f"{key} ({role})" if role else key
+    label = format_teammate_label(key, reply.get("role", ""), reply.get("name", ""))
 
     if reply.get("kind") == "died":
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
@@ -161,10 +185,17 @@ class Teammate:
         hooks_config: dict | None,
         context_mode: str,
         home_dir: Path,
+        instance_name: str = "",
+        description: str = "",
     ):
         self.key = key
         self.role_name = role_name
         self.role_prompt = role_prompt
+        # 다중 인스턴스 구분 라벨 (예: 같은 coder 역할의 "ui"/"api") — 주소는
+        # 항상 key, name 은 표시·광고용.
+        self.instance_name = instance_name
+        # 역할 md 의 description — Live Teammates 광고의 전문영역 요약.
+        self.description = description
         self.allowed_tools = allowed_tools
         self.model = model
         self.hooks_config = hooks_config
@@ -200,6 +231,7 @@ class Teammate:
         return {
             "key": self.key,
             "role": self.role_name,
+            "name": self.instance_name,
             "state": self.state,
             "handled": self.handled,
             "pending_requests": self.inbox.qsize(),
@@ -281,6 +313,7 @@ class TeammateRegistry:
         self,
         *,
         role: str = "",
+        name: str = "",
         allowed_tools: list[str] | None = None,
         context_mode: str = "none",
         parent_ctx=None,
@@ -300,7 +333,11 @@ class TeammateRegistry:
                 f'Kill one first (mode:"kill") or raise AGENT_CLI_MAX_TEAMMATES.'
             )
 
+        if name and not re.match(r"^[a-zA-Z0-9_-]{1,24}$", name):
+            return "", (f"invalid instance name '{name}': [a-zA-Z0-9_-], max 24 chars")
+
         role_prompt = ""
+        description = ""
         model = self.runtime.get("model", "")
         hooks_config = self.runtime.get("hooks_config")
         if role:
@@ -311,6 +348,7 @@ class TeammateRegistry:
             if error:
                 return "", error
             role_prompt = body or ""
+            description = str(config.get("description", "") or "")
             allowed_tools, model, hooks_config = apply_role_overrides(
                 config,
                 allowed_tools=allowed_tools,
@@ -334,6 +372,8 @@ class TeammateRegistry:
             hooks_config=hooks_config,
             context_mode=context_mode,
             home_dir=self.session_dir / "teammates" / key,
+            instance_name=name,
+            description=description,
         )
         self._teammates[key] = tm
         tm.worker = threading.Thread(
@@ -345,6 +385,7 @@ class TeammateRegistry:
         tm.worker.start()
         self._save_state()
         self._notify_roster()
+        notify_teammates_changed()  # Live Teammates 섹션 재조립 (멤버십 변화)
         return key, ""
 
     # ── request / 회신 ──────────────────────────
@@ -427,6 +468,8 @@ class TeammateRegistry:
         for tm in items:
             s = tm.snapshot()
             role = s["role"] or "anon"
+            if s.get("name"):
+                role = f"{role} · {s['name']}"
             line = (
                 f"- {s['key']} [{role}] {s['state']}"
                 f" | handled {s['handled']}"
@@ -453,6 +496,7 @@ class TeammateRegistry:
             tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
         self._save_state()
         self._notify_roster()
+        notify_teammates_changed()
         return ""
 
     def shutdown_all(self) -> None:
@@ -506,6 +550,8 @@ class TeammateRegistry:
                 {
                     "key": tm.key,
                     "role": tm.role_name,
+                    "name": tm.instance_name,
+                    "description": tm.description,
                     # role_prompt 를 통째로 저장 — resume 시 역할 md 파일이
                     # 지워졌어도 teammate 는 갖고 있던 역할 그대로 살아난다.
                     "role_prompt": tm.role_prompt,
@@ -582,6 +628,8 @@ class TeammateRegistry:
                 hooks_config=e.get("hooks_config"),
                 context_mode=e.get("context_mode", "none"),
                 home_dir=self.session_dir / "teammates" / key,
+                instance_name=e.get("name", ""),
+                description=e.get("description", ""),
             )
             tm.handled = int(e.get("handled", 0) or 0)
             tm.queued = tm.handled  # seq 이어가기 (reply-N.md 충돌 방지)
@@ -604,6 +652,8 @@ class TeammateRegistry:
             revived += 1
         self._save_state()
         self._notify_roster()
+        if revived:
+            notify_teammates_changed()
         return revived
 
     # ── worker ──────────────────────────────────
@@ -628,7 +678,8 @@ class TeammateRegistry:
         from agent_cli.subagent.runner import create_subagent_ctx
 
         renderer = get_renderer()
-        renderer.begin_prompt_scope(tm.key, label=f"teammate:{tm.role_name or 'anon'}")
+        _disp = " · ".join(p for p in (tm.role_name, tm.instance_name) if p) or "anon"
+        renderer.begin_prompt_scope(tm.key, label=f"teammate:{_disp}")
         crash = ""  # 비정상 종료 사유 (의도된 종료 = stop_event set 은 제외)
         try:
             # ctx 는 worker 스레드에서 생성 — create_subagent_ctx 의
@@ -660,7 +711,7 @@ class TeammateRegistry:
                 query = f"[{author}]: {text}" if author != "main" else text
 
                 renderer.begin_teammate_work(
-                    key=tm.key, seq=seq, role=tm.role_name, message=text
+                    key=tm.key, seq=seq, role=_disp, message=text
                 )
                 success, output, duration = False, "", 0.0
                 try:
@@ -726,6 +777,7 @@ class TeammateRegistry:
                         "kind": "died",
                         "key": tm.key,
                         "role": tm.role_name,
+                        "name": tm.instance_name,
                         "success": False,
                         "output": crash,
                     }
@@ -733,6 +785,7 @@ class TeammateRegistry:
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
+            notify_teammates_changed()  # 사망도 멤버십 변화 — 광고에서 제거
 
     def _make_ask_handler(self, tm: Teammate):
         """teammate 서브루프의 ask 라우팅 훅 (P2, D4).
@@ -762,6 +815,7 @@ class TeammateRegistry:
                         "kind": "question",
                         "key": tm.key,
                         "role": tm.role_name,
+                        "name": tm.instance_name,
                         "success": True,
                         "output": question,
                     }
@@ -890,6 +944,7 @@ def tool_teammate(
     if mode == "spawn":
         key, error = registry.spawn(
             role=args.get("role", ""),
+            name=args.get("name", ""),
             allowed_tools=args.get("tools"),
             context_mode=args.get("context", "none"),
             parent_ctx=parent_ctx,
@@ -897,9 +952,9 @@ def tool_teammate(
         )
         if error:
             return ToolResult(False, error=f"spawn rejected: {error}")
+        _parts = [p for p in (args.get("role", ""), args.get("name", "")) if p]
         lines = [
-            f"spawned teammate '{key}'"
-            + (f" (role: {args['role']})" if args.get("role") else "")
+            f"spawned teammate '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")
         ]
         task = args.get("task", "")
         if task:

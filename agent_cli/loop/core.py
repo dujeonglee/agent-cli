@@ -20,6 +20,7 @@ from agent_cli.recovery.observability import (
     TurnRecorder,
 )
 from agent_cli.memory import consume_memory_reload
+from agent_cli.subagent.teammate import consume_teammates_reload
 from agent_cli.render import (
     consume_directives_reload,
     notify_directives_applied,
@@ -700,7 +701,13 @@ class AgentLoop:
         # all it needs to refresh.
         directives_changed = consume_directives_reload()
         memory_changed = consume_memory_reload()
-        if directives_changed or memory_changed:
+        # teammate 멤버십(spawn/kill/died) 변화 → Live Teammates 섹션 재조립.
+        # 레지스트리 없는 루프(서브에이전트)는 섹션이 없어 no-op 재조립이나,
+        # 플래그는 전역이라 main 루프가 소비하도록 여기서도 조건에 포함.
+        teammates_changed = (
+            self._config.teammate_registry is not None and consume_teammates_reload()
+        )
+        if directives_changed or memory_changed or teammates_changed:
             self._rebuild_system_prompt()
             # Update-when-applied: push the fresh snapshot + signal open
             # inspectors so the prompt view shows the now-live sections at the

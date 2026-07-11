@@ -1329,3 +1329,191 @@ class TestAutoSpawn:
         assert reg2.restore() == 1  # 재생성으로 이미 상주
         assert reg2.auto_spawn() == 0  # 중복 없음
         reg2.shutdown_all()
+
+
+# ── 다중 인스턴스 + Live Teammates 광고 (v4.60.0) ──
+
+
+class TestMultiInstance:
+    def test_same_role_spawns_multiple(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        k1, e1 = reg.spawn(role="", name="ui")
+        k2, e2 = reg.spawn(role="", name="api")
+        assert e1 == e2 == "" and k1 != k2
+        assert reg.get(k1).instance_name == "ui"
+        assert reg.get(k2).snapshot()["name"] == "api"
+        reg.shutdown_all()
+
+    def test_invalid_instance_name_rejected(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, err = reg.spawn(name="bad name!")
+        assert key == "" and "invalid instance name" in err
+
+    def test_label_in_reply_record(self):
+        from agent_cli.subagent.teammate import format_teammate_label
+
+        assert format_teammate_label("agt-1", "coder", "ui") == "agt-1 (coder · ui)"
+        assert format_teammate_label("agt-1") == "agt-1"
+        rec = build_reply_record(
+            {
+                "kind": "reply",
+                "key": "agt-1",
+                "role": "coder",
+                "name": "ui",
+                "success": True,
+                "output": "done",
+            }
+        )
+        assert "agt-1 (coder · ui)" in rec["content"]
+
+    def test_name_and_description_survive_resume(self, tmp_path, renderer, monkeypatch):
+        import agent_cli.subagent.roles as roles_mod
+
+        d = tmp_path / "roles"
+        d.mkdir()
+        (d / "coder.md").write_text(
+            "---\ndescription: builds things\n---\nYou build.", encoding="utf-8"
+        )
+        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn(role="coder", name="ui")
+        wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.shutdown_all()
+
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1
+        tm = reg2.get(key)
+        assert tm.instance_name == "ui" and tm.description == "builds things"
+        reg2.shutdown_all()
+
+
+class TestLiveTeammatesSection:
+    def test_lists_alive_with_labels_and_descriptions(self, tmp_path, renderer):
+        from agent_cli.prompts.system_prompt import build_live_teammates_section
+
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn(name="ui")
+        reg.get(k1).description = "x" * 200  # 광고 요약은 절단
+        k2, _ = reg.spawn()
+        wait_until(lambda: reg.get(k2).state == "idle")
+        reg.kill(k2)  # dead 는 광고에서 제외
+
+        desc = build_live_teammates_section(reg)
+        assert "## Live Teammates" in desc
+        assert f"`{k1}`" in desc and "(ui)" in desc
+        assert f"`{k2}`" not in desc
+        assert "..." in desc and "x" * 141 not in desc  # 140자 절단
+        assert '"mode":"request"' in desc  # 재사용 유도
+        assert "distinct `name`" in desc  # 다중 인스턴스 안내
+        reg.shutdown_all()
+
+    def test_empty_or_absent_registry_renders_nothing(self, tmp_path, renderer):
+        from agent_cli.prompts.system_prompt import build_live_teammates_section
+
+        assert build_live_teammates_section(None) == ""
+        assert build_live_teammates_section(make_registry(tmp_path)) == ""
+
+    def test_hidden_from_teammate_subloops(self, tmp_path, renderer):
+        # 이중 게이트: teammate 서브루프는 도구 strip + registry None —
+        # 카탈로그도 Live 목록도 자신에겐 보이지 않는다.
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        reg = make_registry(tmp_path)
+        reg.spawn(name="ui")
+        # main 루프 (도구 + registry): 두 섹션 다 존재
+        main_names = [
+            n
+            for n, _ in build_system_prompt_sections(
+                caps, active_tools=["teammate"], teammate_registry=reg
+            )
+        ]
+        assert "Teammate Roles" in main_names and "Live Teammates" in main_names
+        # teammate 서브루프 (도구 strip → active_tools 에 없음): 둘 다 부재
+        sub_names = [
+            n
+            for n, _ in build_system_prompt_sections(
+                caps, active_tools=["read_file"], teammate_registry=None
+            )
+        ]
+        assert "Teammate Roles" not in sub_names
+        assert "Live Teammates" not in sub_names
+        reg.shutdown_all()
+
+    def test_membership_flag_set_and_consumed(self, tmp_path, renderer):
+        from agent_cli.subagent.teammate import (
+            consume_teammates_reload,
+            notify_teammates_changed,
+        )
+
+        consume_teammates_reload()  # 잔여 클리어
+        assert consume_teammates_reload() is False
+        notify_teammates_changed()
+        assert consume_teammates_reload() is True
+        assert consume_teammates_reload() is False  # 소비됨
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()  # spawn 이 플래그를 세운다
+        assert consume_teammates_reload() is True
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.kill(key)  # kill 도
+        assert consume_teammates_reload() is True
+
+    def test_full_loop_advertises_after_spawn(self, tmp_path, renderer):
+        # 통합: 턴1 spawn → 멤버십 플래그 → 턴2 시스템 프롬프트에
+        # Live Teammates 광고 (core consume → rebuild → prompt svc 관통).
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+        def emit(action, ai):
+            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
+        reg = make_registry(tmp_path / "sess")
+        provider = MagicMock()
+
+        def scripted(*a, **k):
+            if provider.call.call_count == 1:
+                return LLMResponse(
+                    content=emit("teammate", {"mode": "spawn", "name": "ui"})
+                )
+            return LLMResponse(content=emit("complete", {"result": "ok"}))
+
+        provider.call = MagicMock(side_effect=scripted)
+        result = run_loop(
+            query="spawn one",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            teammate_registry=reg,
+        )
+        assert result.success
+        # 턴 2 의 시스템 프롬프트(system kwarg)에 광고가 실렸다
+        _, kwargs = provider.call.call_args_list[1]
+        system = kwargs["system"]
+        assert "## Live Teammates" in system
+        key = next(iter(reg._teammates))
+        assert key in system and "(ui)" in system
+        reg.shutdown_all()

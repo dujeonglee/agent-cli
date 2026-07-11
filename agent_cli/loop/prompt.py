@@ -45,6 +45,7 @@ class SystemPromptSvc:
             wire_format=self.cfg.wire_format,
             depth=self.cfg.depth,
             max_depth=self.cfg.max_depth,
+            teammate_registry=self.cfg.teammate_registry,
         )
         self.system = "\n\n".join(t for _, t in self.sections)
 

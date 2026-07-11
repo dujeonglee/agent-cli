@@ -317,6 +317,16 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
   첫 접촉 대비) ⑥**worker 사망 통지**(사용자 Q4): 비정상 종료는
   kind:"died" mail 로 main 에 관찰 통지, kill/세션종료는 제외.
 
+- 2026-07-11 **다중 인스턴스 + Live Teammates 광고 (v4.60.0)**: 같은 역할
+  N명(파일 분담 병렬 개발) — spawn `name` 인스턴스 라벨(표시 전용, 주소는
+  key)·내장 `coder`(파일 스코프 규율). **static/dynamic 분리 설계**:
+  멤버십(key·역할·name·전문영역)은 static 시스템 프롬프트 Live Teammates
+  섹션(compaction 면역·auto-spawn/resume 커버·멤버십 변화 플래그로만
+  재조립=KV 보호), 활동(관찰·상태)은 dynamic 현행 유지. 이중 게이트로
+  teammate 자신에겐 미노출, 인스펙터엔 섹션 단일 진실로 자동 노출. 통합
+  테스트가 "spawn 다음 턴 프롬프트 광고 탑재" 관통 검증. 테스트 +9,
+  전체 2998.
+
 ## 진행 로그
 
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.

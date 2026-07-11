@@ -52,7 +52,17 @@ class TeammateTool(Tool):
                 "description": (
                     "spawn: role definition from .agent-cli/teammates/{role}.md "
                     "(loaded into the teammate's system prompt; omit for a "
-                    "generalist)"
+                    "generalist). The SAME role may be spawned multiple times "
+                    "for parallel independent workstreams — give each instance "
+                    "a distinct `name`."
+                ),
+            },
+            "name": {
+                "type": "string",
+                "description": (
+                    "spawn: optional instance label to tell same-role teammates "
+                    "apart (e.g. two coders as 'ui' and 'api'). Display only — "
+                    "always address teammates by their key."
                 ),
             },
             "task": {

@@ -2931,9 +2931,10 @@
     roster.forEach(function (tm) {
       const chip = document.createElement("span");
       chip.className = "tm-chip" + (tm.key === selected ? " active" : "");
+      const who = [tm.role, tm.name].filter(Boolean).join(" · ");
       chip.innerHTML =
         esc(tm.key) +
-        (tm.role ? " <b>" + esc(tm.role) + "</b>" : "") +
+        (who ? " <b>" + esc(who) + "</b>" : "") +
         ' <span class="tm-state ' + esc(tm.state) + '">' + esc(tm.state) + "</span>";
       chip.addEventListener("click", function () {
         select(tm.key);

@@ -1039,7 +1039,9 @@ delegate 가 "일회성 파견"(답변 → 소멸)이라면 `teammate` 는 **상
 - **양방향 문답 (ask 라우팅)**: teammate 가 작업 중 막혀서 `ask` 를 부르면 질문이 **main 의 mailbox 로** 옵니다 (사용자가 아니라 main LLM 이 teammate 의 "사용자"). main 은 같은 `request` 로 답하고, teammate 는 답을 받을 때까지 `waiting_ask` 상태로 대기합니다. `wait` 중에 질문이 먼저 도착하면 질문을 반환해 교착을 방지합니다. delegate 서브에이전트의 `ask` 는 종전대로 사용자에게 갑니다.
 - **역할 정의 (`role`) — 전문가 팀**: `.agent-cli/teammates/{name}.md` (프로젝트) → `~/.agent-cli/teammates/` (전역) → 패키지 내장 순으로 검색. agent 파일과 같은 포맷 — YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — teammate 시스템 프롬프트의 Role 섹션을 통째로 교체, 상주라 세션 내내 지속). delegate 의 `agents/` 와는 **별도 디렉토리**입니다.
   - **역할 발견**: 사용 가능한 역할 목록(이름+description)이 시스템 프롬프트에 광고되어 **모델이 스스로 적합한 전문가를 골라 소집**합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
-  - **내장 전문가**: `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분).
+  - **내장 전문가**: `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
+  - **다중 인스턴스**: 같은 역할을 여러 명 스폰할 수 있습니다 — coder 3명이 서로 다른 파일을 병렬 개발하는 식. spawn 의 `name`(예: `ui`/`api`)으로 인스턴스를 구분하며 광고·대화창·회신 헤더에 `agt-x (coder · ui)` 로 표시됩니다 (주소는 항상 key).
+  - **Live Teammates 광고**: 현재 상주 중인 teammate 목록(key·역할·인스턴스명·전문영역)이 main 시스템 프롬프트에 상시 광고됩니다 — compaction 이 spawn 관찰을 지워도, auto-spawn/resume 처럼 관찰이 없어도 모델이 자기 팀을 잊지 않습니다. 멤버십 변화(spawn/kill/사망) 때만 재조립되어 KV 캐시 영향 최소(busy/idle 같은 휘발 상태는 미포함 — 활동은 관찰이 운반). 프롬프트 인스펙터에서 그대로 확인 가능하며, teammate 자신에게는 보이지 않습니다.
   - **auto-spawn**: frontmatter `auto-spawn: true` 역할은 세션 시작 시 자동 상주합니다 (resume 재생성분과 중복 스폰 없음).
   - **`/create-teammate` 스킬**: 새 역할 md 를 대화형으로 생성.
 - **worker 사망 통지**: teammate worker 가 비정상 종료(ctx 생성 실패·내부 기계 예외)하면 main 에 `DIED` 관찰로 즉시 통지됩니다 — status 를 조회할 필요 없음. `kill`/세션 종료 같은 의도된 종료는 통지하지 않습니다.
