@@ -3,6 +3,16 @@
 from agent_cli.tools.delegate import _load_agent, _BUILTIN_AGENTS_DIR
 
 
+def _set_agent_paths(paths):
+    """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체 —
+    agents 모듈의 로더 전역을 직접 교체한다."""
+    import agent_cli.tools.delegate.agents as _agents_mod
+
+    from agent_cli.resource_loader import ResourceLoader
+
+    _agents_mod._agent_loader = ResourceLoader(list(paths))
+
+
 class TestBuiltinAgentsDirectory:
     def test_builtin_dir_exists(self):
         assert _BUILTIN_AGENTS_DIR.is_dir()
@@ -157,7 +167,6 @@ class TestExplorerPromptIntent:
 class TestBuiltinAgentPriority:
     def test_project_overrides_builtin(self, tmp_path, monkeypatch):
         """Project agent with same name overrides built-in."""
-        import agent_cli.tools.delegate as delegate_mod
 
         project_dir = tmp_path / "agents"
         project_dir.mkdir()
@@ -167,7 +176,7 @@ class TestBuiltinAgentPriority:
             "# Custom Explorer\nYou are a custom explorer that can also write."
         )
 
-        delegate_mod._reset_agent_loader([project_dir, _BUILTIN_AGENTS_DIR])
+        _set_agent_paths([project_dir, _BUILTIN_AGENTS_DIR])
 
         role, config, error = _load_agent("explorer")
         assert error is None
@@ -176,12 +185,11 @@ class TestBuiltinAgentPriority:
 
     def test_builtin_used_when_no_override(self, tmp_path, monkeypatch):
         """Built-in is used when no project/user override exists."""
-        import agent_cli.tools.delegate as delegate_mod
 
         empty_dir = tmp_path / "agents"
         empty_dir.mkdir()
 
-        delegate_mod._reset_agent_loader([empty_dir, _BUILTIN_AGENTS_DIR])
+        _set_agent_paths([empty_dir, _BUILTIN_AGENTS_DIR])
 
         role, config, error = _load_agent("explorer")
         assert error is None

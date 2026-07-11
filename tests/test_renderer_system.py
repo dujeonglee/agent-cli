@@ -14,6 +14,15 @@ from agent_cli.render.base import ConfirmOption
 from agent_cli.render.minimal import MinimalRenderer
 
 
+def _set_agent_paths(paths):
+    """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체."""
+    import agent_cli.tools.delegate.agents as _agents_mod
+
+    from agent_cli.resource_loader import ResourceLoader
+
+    _agents_mod._agent_loader = ResourceLoader(list(paths))
+
+
 class _FakeStream:
     """Minimal stdin/stdout stand-in with a controllable ``isatty``."""
 
@@ -261,9 +270,8 @@ class TestBuildAgentDescriptions:
 
     def test_empty_when_no_agents(self, tmp_path, monkeypatch):
         from agent_cli.prompts.system_prompt import build_agent_descriptions
-        import agent_cli.tools.delegate as delegate_mod
 
-        delegate_mod._reset_agent_loader([tmp_path / "empty"])
+        _set_agent_paths([tmp_path / "empty"])
         desc = build_agent_descriptions()
         assert desc == ""
 

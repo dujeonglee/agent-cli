@@ -916,7 +916,7 @@ def build_agent_descriptions(wire_format=None) -> str:
         wire_format = _get_wire_format()
 
     try:
-        from agent_cli.tools.delegate import _agent_loader
+        from agent_cli.tools.delegate.agents import _agent_loader
     except ImportError:
         return ""
 

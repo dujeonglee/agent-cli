@@ -16,6 +16,15 @@ from agent_cli.hooks import (
 )
 
 
+def _set_agent_paths(paths):
+    """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체."""
+    import agent_cli.tools.delegate.agents as _agents_mod
+
+    from agent_cli.resource_loader import ResourceLoader
+
+    _agents_mod._agent_loader = ResourceLoader(list(paths))
+
+
 class TestHookModels:
     def test_hook_entry_defaults(self):
         entry = HookEntry(command="echo ok")
@@ -753,7 +762,7 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate._load_agent",
+            "agent_cli.tools.delegate.exec._load_agent",
             return_value=self._stub_load_agent(hooks_raw=agent_hooks_raw),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -796,7 +805,7 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate._load_agent",
+            "agent_cli.tools.delegate.exec._load_agent",
             return_value=self._stub_load_agent(hooks_raw=agent_hooks_raw),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -828,7 +837,7 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate._load_agent",
+            "agent_cli.tools.delegate.exec._load_agent",
             return_value=self._stub_load_agent(hooks_raw=None),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -855,7 +864,6 @@ class TestAgentFrontmatterHooks:
 
         from agent_cli.context.manager import ContextManager
         from agent_cli.providers.base import LLMResponse
-        from agent_cli.tools import delegate as delegate_mod
         from agent_cli.tools.delegate import tool_delegate
 
         log_file = tmp_path / "hook.log"
@@ -879,7 +887,7 @@ class TestAgentFrontmatterHooks:
 
         # Point the agent loader at this tmp dir so _load_agent('probe')
         # finds our definition instead of a real one.
-        delegate_mod._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         provider = MagicMock()
         provider.call.side_effect = [
@@ -929,4 +937,8 @@ class TestAgentFrontmatterHooks:
             # Restore default agent search paths so later tests in the
             # same process aren't pointed at the tmp dir. conftest.py's
             # autouse fixture does this too — belt and suspenders.
-            delegate_mod._reset_agent_loader()
+            _set_agent_paths(
+                __import__(
+                    "agent_cli.tools.delegate.agents", fromlist=["x"]
+                )._AGENT_SEARCH_PATHS
+            )

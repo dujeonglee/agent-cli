@@ -158,3 +158,15 @@ def model_capabilities(integration_model):
     return get_capabilities(
         integration_model, provider="openai", base_url=OMLX_BASE_URL
     )
+
+
+@pytest.fixture(autouse=True)
+def _restore_agent_loader():
+    """C2: agents._agent_loader 는 테스트가 직접 교체하는 모듈 전역 —
+    테스트 간 누수를 원천 차단(스냅샷/복원). 구 _reset_agent_loader 시절부터
+    있던 순서-의존 누수 클래스의 근본 수리."""
+    import agent_cli.tools.delegate.agents as _agents_mod
+
+    orig = _agents_mod._agent_loader
+    yield
+    _agents_mod._agent_loader = orig

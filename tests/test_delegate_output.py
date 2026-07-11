@@ -441,3 +441,46 @@ class TestRegression:
         assert dr.duration_secs == 0.0
         assert dr.activity_log == []
         assert dr.last_actions == []
+
+
+# ── C2 패키지 표면 (loop/ 패키지와 동형 패턴) ─────────────────────────
+
+
+class TestDelegatePackageSurface:
+    def test_public_reexports_unchanged(self):
+        # 기존 `from agent_cli.tools.delegate import X` 표면 전부 유효
+        from agent_cli.tools.delegate import (  # noqa: F401
+            DelegateResult,
+            DelegateTool,
+            _extract_activity_log,
+            _load_agent,
+            _run_parallel,
+            _run_single,
+            tool_delegate,
+        )
+
+    def test_reset_agent_loader_removed_from_prod(self):
+        # 테스트 전용 전역 mutator 는 prod 에서 삭제 (감사 dead-code #7) —
+        # 테스트는 agents._agent_loader 를 직접 교체(conftest 가 자동 복원).
+        import agent_cli.tools.delegate as pkg
+        import agent_cli.tools.delegate.agents as agents_mod
+
+        assert not hasattr(pkg, "_reset_agent_loader")
+        assert not hasattr(agents_mod, "_reset_agent_loader")
+
+    def test_builtin_agents_dir_resolves_after_split(self):
+        # 패키지化로 __file__ 깊이가 변해도 빌트인 에이전트 경로는 유효
+        from agent_cli.tools.delegate.agents import _BUILTIN_AGENTS_DIR
+
+        assert _BUILTIN_AGENTS_DIR.is_dir()
+        assert (_BUILTIN_AGENTS_DIR / "explorer.md").is_file()
+
+    def test_module_ownership(self):
+        # 소유권 배치: 추출기=report, 실행=exec, 스키마=tool
+        from agent_cli.tools.delegate import exec as exec_mod
+        from agent_cli.tools.delegate import report, tool
+
+        assert hasattr(report, "_extract_activity_log")
+        assert hasattr(report, "_format_parallel_results")
+        assert hasattr(exec_mod, "tool_delegate")
+        assert hasattr(tool, "DelegateTool")

@@ -34,7 +34,7 @@
 | # | 항목 | 근거 | 방향 | 상태 |
 |---|---|---|---|---|
 | **C1** | loop.py god-module(2671줄) — `_dispatch_op` ~390줄, `__init__` ~190줄, action-card 렌더 5중복, `_append_observation` 8곳 동일 인자. (정정: 순환의 뿌리는 registry eager TOOLS — delegate→run_loop 지연은 유지 필수, lazy registry 재시도 금지) | loop.py:1239-1626 | **Option 3 협력객체 3단 PR 확정** — PR-1 State/Config ✅ v4.40.0 → PR-2 SystemPromptSvc·ToolBridge ✅ v4.41.0 → PR-3 ✅ v4.42.0 → 패키지化 ✅ v4.43.0 | ✅ 완결 |
-| **C2** | delegate.py 8책임(851줄) — agent 로딩/추출기/persist/포맷팅/단일·병렬 실행/dispatch/Tool | delegate.py | `delegate/` 패키지 분할 | ☐ |
+| **C2** | delegate.py 8책임(851줄) — agent 로딩/추출기/persist/포맷팅/단일·병렬 실행/dispatch/Tool | delegate.py | `delegate/` 패키지 분할 (agents/report/exec/tool) | ✅ v4.44.0 |
 | **C3** | web/server.py 전송·비즈니스 뒤엉킴(1727줄, 27라우트) — directive 조작·lesson 학습·slash ~440줄 | server.py:168-408,493-687 | `directives_service.py`/`slash.py` 추출 | ☐ |
 | **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | `bootstrap_session()` 공용 추출 | ☐ |
 | **C5** | ContextManager 8관심사(1053줄) — 캐시+압축+요약+2종 영속화+분류+NL렌더 | manager.py | 렌더/분류 → `context/_render.py`, 영속화 store 분리. B1 과 연계 | ☐ |
@@ -58,6 +58,16 @@
 6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
+
+- **2026-07-11 · v4.44.0 · C2 완료**: delegate.py(838줄) → `tools/delegate/`
+  4모듈(agents 67/report 249/exec 474/tool 114 + __init__ 재수출).
+  F821→F401 2단 검증. `_reset_agent_loader` prod 삭제(테스트는
+  `agents._agent_loader` 직접 교체 + conftest autouse 복원 — 구식부터
+  있던 순서-의존 누수 클래스 근본 수리). `_BUILTIN_AGENTS_DIR` __file__
+  깊이 보정. patch 재타게팅: _run_single×3·_load_agent×3→exec,
+  `_agent_loader` prod 소비 2곳(main/system_prompt)→agents 모듈 직접
+  (재수출 alias 는 stale-바인딩 함정이라 의도적 미제공). 패키지 표면
+  테스트 4종. 전체 회귀 2817 passed.
 
 - **2026-07-11 · v4.43.0 · C1 패키지化 (완결)**: loop.py(2954줄) →
   `agent_cli/loop/` 9모듈(state/prompt/tool_bridge/llm/dispatch/

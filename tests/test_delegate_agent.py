@@ -13,6 +13,16 @@ from agent_cli.tools.result import ToolResult
 # ── AG-01 ~ AG-05: Agent name validation ──────────────────
 
 
+def _set_agent_paths(paths):
+    """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체 —
+    agents 모듈의 로더 전역을 직접 교체한다."""
+    import agent_cli.tools.delegate.agents as _agents_mod
+
+    from agent_cli.resource_loader import ResourceLoader
+
+    _agents_mod._agent_loader = ResourceLoader(list(paths))
+
+
 class TestValidateAgentName:
     def test_valid_names(self):
         """AG-01: Valid names with alphanumeric, hyphens, underscores."""
@@ -52,9 +62,8 @@ class TestLoadAgent:
         (agents_dir / "reviewer.md").write_text(
             "You are a code reviewer.\nCheck for bugs."
         )
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         role, config, error = _load_agent("reviewer")
 
@@ -69,9 +78,8 @@ class TestLoadAgent:
         (agents_dir / "secure.md").write_text(
             "---\nallowed-tools:\n  - read_file\n  - shell\nmodel: test-model\n---\n\nYou are a security reviewer."
         )
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         role, config, error = _load_agent("secure")
 
@@ -86,9 +94,8 @@ class TestLoadAgent:
         agents_dir.mkdir(parents=True)
         content = "---\n: invalid: yaml: [broken\n---\n\nYou are a reviewer."
         (agents_dir / "broken.md").write_text(content)
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         role, config, error = _load_agent("broken")
 
@@ -100,9 +107,8 @@ class TestLoadAgent:
         """AG-09: Non-existent agent returns error."""
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         role, config, error = _load_agent("nonexistent")
 
@@ -123,9 +129,8 @@ class TestLoadAgent:
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "empty.md").write_text("---\nmodel: test\n---\n\n")
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         role, config, error = _load_agent("empty")
 
@@ -142,9 +147,7 @@ class TestLoadAgent:
         (project_dir / "reviewer.md").write_text("Project reviewer")
         (global_dir / "reviewer.md").write_text("Global reviewer")
 
-        import agent_cli.tools.delegate as _dm
-
-        _dm._reset_agent_loader([project_dir, global_dir])
+        _set_agent_paths([project_dir, global_dir])
 
         role, config, error = _load_agent("reviewer")
 
@@ -160,9 +163,7 @@ class TestLoadAgent:
 
         (global_dir / "reviewer.md").write_text("Global reviewer")
 
-        import agent_cli.tools.delegate as _dm
-
-        _dm._reset_agent_loader([project_dir, global_dir])
+        _set_agent_paths([project_dir, global_dir])
 
         role, config, error = _load_agent("reviewer")
 
@@ -176,9 +177,8 @@ class TestLoadAgent:
         (agents_dir / "compat.md").write_text(
             "---\nallowed-tools:\n  - read_file\nunknown-field: value\nanother: 123\n---\n\nYou are an agent."
         )
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         role, config, error = _load_agent("compat")
 
@@ -198,9 +198,8 @@ class TestRunSingleWithAgent:
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
         (agents_dir / "tester.md").write_text("You are a test engineer.")
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         captured_kwargs = {}
 
@@ -311,9 +310,8 @@ class TestRunSingleWithAgent:
         """AG-16: Non-existent agent returns error ToolResult."""
         agents_dir = tmp_path / ".agent-cli" / "agents"
         agents_dir.mkdir(parents=True)
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -347,9 +345,8 @@ class TestRunSingleWithAgent:
         (agents_dir / "reader.md").write_text(
             "---\nallowed-tools:\n  - read_file\n---\n\nYou are a reader."
         )
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         captured_kwargs = {}
 
@@ -393,9 +390,8 @@ class TestRunSingleWithAgent:
         (agents_dir / "reader.md").write_text(
             "---\nallowed-tools:\n  - read_file\n---\n\nYou are a reader."
         )
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         captured_kwargs = {}
 
@@ -440,9 +436,8 @@ class TestRunSingleWithAgent:
         (agents_dir / "smart.md").write_text(
             "---\nmodel: special-model\n---\n\nYou are smart."
         )
-        import agent_cli.tools.delegate as _dm
 
-        _dm._reset_agent_loader([agents_dir])
+        _set_agent_paths([agents_dir])
 
         captured_kwargs = {}
 
@@ -528,7 +523,9 @@ class TestToolDelegatePassesAgent:
             captured_kwargs.update(kwargs)
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.tools.delegate._run_single", mock_run_single)
+        monkeypatch.setattr(
+            "agent_cli.tools.delegate.exec._run_single", mock_run_single
+        )
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -563,7 +560,9 @@ class TestToolDelegatePassesAgent:
             captured_agents.append(kwargs.get("agent_name", ""))
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.tools.delegate._run_single", mock_run_single)
+        monkeypatch.setattr(
+            "agent_cli.tools.delegate.exec._run_single", mock_run_single
+        )
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -621,7 +620,9 @@ class TestToolDelegatePassesAgent:
         def mock_run_single(**kwargs):
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr("agent_cli.tools.delegate._run_single", mock_run_single)
+        monkeypatch.setattr(
+            "agent_cli.tools.delegate.exec._run_single", mock_run_single
+        )
 
         caps = ModelCapabilities(
             context_window=32768,
