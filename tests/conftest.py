@@ -112,12 +112,6 @@ def _reset_loaders_after_test():
         _reset_loader()
     except Exception:
         pass
-    try:
-        from agent_cli.tools.delegate import _reset_agent_loader
-
-        _reset_agent_loader()
-    except Exception:
-        pass
 
 
 # ── omlx integration fixtures ─────────────────────────────
@@ -161,12 +155,12 @@ def model_capabilities(integration_model):
 
 
 @pytest.fixture(autouse=True)
-def _restore_agent_loader():
-    """C2: agents._agent_loader 는 테스트가 직접 교체하는 모듈 전역 —
-    테스트 간 누수를 원천 차단(스냅샷/복원). 구 _reset_agent_loader 시절부터
-    있던 순서-의존 누수 클래스의 근본 수리."""
-    import agent_cli.tools.delegate.agents as _agents_mod
+def _restore_profile_loader():
+    """profiles._profile_loader 는 테스트가 직접 교체하는 모듈 전역 —
+    테스트 간 누수를 원천 차단(스냅샷/복원). C2 의 _agent_loader 규율을
+    5.0.0 프로파일 병합 로더로 승계."""
+    import agent_cli.subagent.profiles as _profiles_mod
 
-    orig = _agents_mod._agent_loader
+    orig = _profiles_mod._profile_loader
     yield
-    _agents_mod._agent_loader = orig
+    _profiles_mod._profile_loader = orig

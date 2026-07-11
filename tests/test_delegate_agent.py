@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from agent_cli.tools.delegate import (
-    _load_agent,
-    _run_single,
-    _validate_agent_name,
-)
+from agent_cli.subagent.profiles import _PROFILE_NAME_PATTERN, load_profile
+from agent_cli.tools.delegate import _run_single
 from agent_cli.tools.result import ToolResult
+
+
+def _validate_agent_name(name: str) -> bool:
+    # 5.0.0: 검증은 load_profile 내부의 이름 패턴으로 병합 — 기존 AG-01~05
+    # 계약을 패턴에 대해 유지한다.
+    return bool(_PROFILE_NAME_PATTERN.match(name))
 
 
 # ── AG-01 ~ AG-05: Agent name validation ──────────────────
@@ -16,11 +19,11 @@ from agent_cli.tools.result import ToolResult
 def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체 —
     agents 모듈의 로더 전역을 직접 교체한다."""
-    import agent_cli.tools.delegate.agents as _agents_mod
+    import agent_cli.subagent.profiles as _profiles_mod
 
     from agent_cli.resource_loader import ResourceLoader
 
-    _agents_mod._agent_loader = ResourceLoader(list(paths))
+    _profiles_mod._profile_loader = ResourceLoader(list(paths))
 
 
 class TestValidateAgentName:
@@ -65,7 +68,7 @@ class TestLoadAgent:
 
         _set_agent_paths([agents_dir])
 
-        role, config, error = _load_agent("reviewer")
+        role, config, error = load_profile("reviewer")
 
         assert error is None
         assert role == "You are a code reviewer.\nCheck for bugs."
@@ -81,7 +84,7 @@ class TestLoadAgent:
 
         _set_agent_paths([agents_dir])
 
-        role, config, error = _load_agent("secure")
+        role, config, error = load_profile("secure")
 
         assert error is None
         assert role == "You are a security reviewer."
@@ -97,7 +100,7 @@ class TestLoadAgent:
 
         _set_agent_paths([agents_dir])
 
-        role, config, error = _load_agent("broken")
+        role, config, error = load_profile("broken")
 
         assert error is None
         assert config == {}
@@ -110,7 +113,7 @@ class TestLoadAgent:
 
         _set_agent_paths([agents_dir])
 
-        role, config, error = _load_agent("nonexistent")
+        role, config, error = load_profile("nonexistent")
 
         assert role is None
         assert config == {}
@@ -118,11 +121,11 @@ class TestLoadAgent:
 
     def test_invalid_name(self):
         """AG-10: Invalid agent name returns error."""
-        role, config, error = _load_agent("../hack")
+        role, config, error = load_profile("../hack")
 
         assert role is None
         assert config == {}
-        assert "Invalid agent name" in error
+        assert "Invalid profile name" in error
 
     def test_empty_body(self, tmp_path, monkeypatch):
         """AG-11: File with frontmatter but no body returns error."""
@@ -132,7 +135,7 @@ class TestLoadAgent:
 
         _set_agent_paths([agents_dir])
 
-        role, config, error = _load_agent("empty")
+        role, config, error = load_profile("empty")
 
         assert role is None
         assert error is not None  # empty body → not found
@@ -149,7 +152,7 @@ class TestLoadAgent:
 
         _set_agent_paths([project_dir, global_dir])
 
-        role, config, error = _load_agent("reviewer")
+        role, config, error = load_profile("reviewer")
 
         assert error is None
         assert role == "Project reviewer"
@@ -165,7 +168,7 @@ class TestLoadAgent:
 
         _set_agent_paths([project_dir, global_dir])
 
-        role, config, error = _load_agent("reviewer")
+        role, config, error = load_profile("reviewer")
 
         assert error is None
         assert role == "Global reviewer"
@@ -180,7 +183,7 @@ class TestLoadAgent:
 
         _set_agent_paths([agents_dir])
 
-        role, config, error = _load_agent("compat")
+        role, config, error = load_profile("compat")
 
         assert error is None
         assert role == "You are an agent."

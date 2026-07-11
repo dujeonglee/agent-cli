@@ -374,10 +374,10 @@ class TeammateRegistry:
         model = self.runtime.get("model", "")
         hooks_config = self.runtime.get("hooks_config")
         if role:
-            from agent_cli.subagent.roles import load_teammate_role
+            from agent_cli.subagent.profiles import load_profile
             from agent_cli.subagent.runner import apply_role_overrides
 
-            body, config, error = load_teammate_role(role)
+            body, config, error = load_profile(role)
             if error:
                 return "", error
             role_prompt = body or ""
@@ -587,13 +587,13 @@ class TeammateRegistry:
         """frontmatter ``auto-spawn: true`` 역할을 세션 시작 시 자동 상주
         (전문가 팀 확장). restore() **이후에** 호출 — 같은 역할의 살아있는
         teammate(재생성분)가 이미 있으면 중복 스폰하지 않는다. 스폰 수 반환."""
-        from agent_cli.subagent.roles import available_roles
+        from agent_cli.subagent.profiles import available_profiles
 
         live_roles = {
             tm.role_name for tm in self._teammates.values() if tm.state != "dead"
         }
         spawned = 0
-        for name, meta in available_roles(include_meta=True):
+        for name, meta in available_profiles(include_meta=True):
             if not meta.get("auto-spawn"):
                 continue
             if name in live_roles:

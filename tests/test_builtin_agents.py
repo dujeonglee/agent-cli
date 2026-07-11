@@ -1,36 +1,36 @@
 """Tests for built-in agent loading and discovery."""
 
-from agent_cli.tools.delegate import _load_agent, _BUILTIN_AGENTS_DIR
+from agent_cli.subagent.profiles import load_profile, _BUILTIN_PROFILES_DIR
 
 
 def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체 —
     agents 모듈의 로더 전역을 직접 교체한다."""
-    import agent_cli.tools.delegate.agents as _agents_mod
+    import agent_cli.subagent.profiles as _profiles_mod
 
     from agent_cli.resource_loader import ResourceLoader
 
-    _agents_mod._agent_loader = ResourceLoader(list(paths))
+    _profiles_mod._profile_loader = ResourceLoader(list(paths))
 
 
 class TestBuiltinAgentsDirectory:
     def test_builtin_dir_exists(self):
-        assert _BUILTIN_AGENTS_DIR.is_dir()
+        assert _BUILTIN_PROFILES_DIR.is_dir()
 
     def test_builtin_dir_has_agents(self):
-        md_files = list(_BUILTIN_AGENTS_DIR.glob("*.md"))
+        md_files = list(_BUILTIN_PROFILES_DIR.glob("*.md"))
         assert len(md_files) >= 1  # explorer
 
 
 class TestExplorerAgent:
     def test_loads_successfully(self):
-        role, config, error = _load_agent("explorer")
+        role, config, error = load_profile("explorer")
         assert error is None
         assert role is not None
         assert "explorer" in role.lower() or "read-only" in role.lower()
 
     def test_has_tool_restrictions(self):
-        role, config, error = _load_agent("explorer")
+        role, config, error = load_profile("explorer")
         assert "allowed-tools" in config
         tools = config["allowed-tools"]
         assert "read_file" in tools
@@ -39,11 +39,11 @@ class TestExplorerAgent:
         assert "edit_file" not in tools
 
     def test_has_description(self):
-        role, config, error = _load_agent("explorer")
+        role, config, error = load_profile("explorer")
         assert config.get("description")
 
     def test_role_mentions_read_only(self):
-        role, config, error = _load_agent("explorer")
+        role, config, error = load_profile("explorer")
         assert "read" in role.lower()
 
 
@@ -56,11 +56,11 @@ class TestExplorerPromptIntent:
     """
 
     def _body(self) -> str:
-        role, _config, _error = _load_agent("explorer")
+        role, _config, _error = load_profile("explorer")
         return (role or "").lower()
 
     def _description(self) -> str:
-        _role, config, _error = _load_agent("explorer")
+        _role, config, _error = load_profile("explorer")
         return (config.get("description") or "").lower()
 
     def test_description_signals_analysis_not_edits(self):
@@ -176,9 +176,9 @@ class TestBuiltinAgentPriority:
             "# Custom Explorer\nYou are a custom explorer that can also write."
         )
 
-        _set_agent_paths([project_dir, _BUILTIN_AGENTS_DIR])
+        _set_agent_paths([project_dir, _BUILTIN_PROFILES_DIR])
 
-        role, config, error = _load_agent("explorer")
+        role, config, error = load_profile("explorer")
         assert error is None
         assert "custom" in role.lower()
         assert "write_file" in config["allowed-tools"]
@@ -189,8 +189,8 @@ class TestBuiltinAgentPriority:
         empty_dir = tmp_path / "agents"
         empty_dir.mkdir()
 
-        _set_agent_paths([empty_dir, _BUILTIN_AGENTS_DIR])
+        _set_agent_paths([empty_dir, _BUILTIN_PROFILES_DIR])
 
-        role, config, error = _load_agent("explorer")
+        role, config, error = load_profile("explorer")
         assert error is None
         assert "write_file" not in config.get("allowed-tools", [])

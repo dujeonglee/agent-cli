@@ -387,9 +387,9 @@ def _collect_agents() -> list[tuple[str, str]]:
     this user listing does NOT hide ``disable-model-invocation`` agents (the
     user may still inspect/@-dispatch them).
     """
-    from agent_cli.tools.delegate.agents import _agent_loader
+    from agent_cli.subagent.profiles import _profile_loader
 
-    resources = _agent_loader.load_all()
+    resources = _profile_loader.load_all()
     return sorted(
         ((name, res.meta.get("description", "")) for name, res in resources.items()),
         key=lambda x: x[0].lower(),

@@ -920,11 +920,11 @@ def build_teammate_role_descriptions(wire_format=None) -> str:
         wire_format = _get_wire_format()
 
     try:
-        from agent_cli.subagent.roles import available_roles
+        from agent_cli.subagent.profiles import available_profiles
     except ImportError:
         return ""
 
-    roles = available_roles()
+    roles = available_profiles()
     if not roles:
         return ""
 
@@ -1010,11 +1010,11 @@ def build_agent_descriptions(wire_format=None) -> str:
         wire_format = _get_wire_format()
 
     try:
-        from agent_cli.tools.delegate.agents import _agent_loader
+        from agent_cli.subagent.profiles import _profile_loader
     except ImportError:
         return ""
 
-    resources = _agent_loader.load_all()
+    resources = _profile_loader.load_all()
     # Exclude agents flagged ``disable-model-invocation: true`` (frontmatter) —
     # parity with skills. Such agents (e.g. the auto-spawned ``reviewer``) are
     # not advertised to the model, but remain user-listable via ``@agents``.

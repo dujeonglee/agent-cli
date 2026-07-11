@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 # ── Agent file loading ──────────────────────────
 
-from agent_cli.tools.delegate.agents import _load_agent
+from agent_cli.subagent.profiles import load_profile
 from agent_cli.tools.delegate.report import (
     DelegateResult,
     _extract_activity_log,
@@ -111,7 +111,7 @@ def _run_single(
     # ── Agent loading ──
     agent_role = ""
     if agent_name:
-        role_prompt, agent_config, error = _load_agent(agent_name)
+        role_prompt, agent_config, error = load_profile(agent_name)
         if error:
             return ToolResult(False, error=f"Delegation rejected: {error}")
 

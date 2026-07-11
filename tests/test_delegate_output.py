@@ -448,32 +448,32 @@ class TestRegression:
 
 class TestDelegatePackageSurface:
     def test_public_reexports_unchanged(self):
-        # 기존 `from agent_cli.tools.delegate import X` 표면 전부 유효
+        # 5.0.0 PR-1: 로더는 subagent/profiles 로 이관 — 나머지 표면 유효
         from agent_cli.tools.delegate import (  # noqa: F401
             DelegateResult,
             DelegateTool,
             _extract_activity_log,
-            _load_agent,
             _run_parallel,
             _run_single,
             tool_delegate,
         )
 
-    def test_reset_agent_loader_removed_from_prod(self):
-        # 테스트 전용 전역 mutator 는 prod 에서 삭제 (감사 dead-code #7) —
-        # 테스트는 agents._agent_loader 를 직접 교체(conftest 가 자동 복원).
+    def test_loader_moved_to_profiles(self):
+        # 5.0.0 PR-1: agents.py 로더 모듈은 소멸 — profiles 가 단일 소유자.
         import agent_cli.tools.delegate as pkg
-        import agent_cli.tools.delegate.agents as agents_mod
 
-        assert not hasattr(pkg, "_reset_agent_loader")
-        assert not hasattr(agents_mod, "_reset_agent_loader")
+        assert not hasattr(pkg, "_load_agent")
+        import importlib.util
 
-    def test_builtin_agents_dir_resolves_after_split(self):
-        # 패키지化로 __file__ 깊이가 변해도 빌트인 에이전트 경로는 유효
-        from agent_cli.tools.delegate.agents import _BUILTIN_AGENTS_DIR
+        assert importlib.util.find_spec("agent_cli.tools.delegate.agents") is None
 
-        assert _BUILTIN_AGENTS_DIR.is_dir()
-        assert (_BUILTIN_AGENTS_DIR / "explorer.md").is_file()
+    def test_builtin_profiles_dir_resolves(self):
+        # 통합 카탈로그: 기존 explorer + teammate 내장 3종이 한 디렉토리에
+        from agent_cli.subagent.profiles import _BUILTIN_PROFILES_DIR
+
+        assert _BUILTIN_PROFILES_DIR.is_dir()
+        for name in ("explorer", "researcher", "coder", "code-reviewer"):
+            assert (_BUILTIN_PROFILES_DIR / f"{name}.md").is_file()
 
     def test_module_ownership(self):
         # 소유권 배치: 추출기=report, 실행=exec, 스키마=tool

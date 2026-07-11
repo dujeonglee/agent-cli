@@ -112,10 +112,10 @@ def make_registry(tmp_path, *, runner=None, **runtime):
 
 class TestRolesLoader:
     def _swap_loader(self, monkeypatch, tmp_path):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
-        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([tmp_path]))
-        return roles_mod
+        monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([tmp_path]))
+        return profiles_mod
 
     def test_loads_role_body_and_config(self, monkeypatch, tmp_path):
         (tmp_path / "researcher.md").write_text(
@@ -123,21 +123,21 @@ class TestRolesLoader:
             encoding="utf-8",
         )
         roles = self._swap_loader(monkeypatch, tmp_path)
-        body, config, error = roles.load_teammate_role("researcher")
+        body, config, error = roles.load_profile("researcher")
         assert error is None
         assert "researcher" in body
         assert config["allowed-tools"] == ["read_file"]
 
     def test_missing_role_reports_search_paths(self, monkeypatch, tmp_path):
         roles = self._swap_loader(monkeypatch, tmp_path)
-        body, config, error = roles.load_teammate_role("nope")
+        body, config, error = roles.load_profile("nope")
         assert body is None
         assert "not found" in error
-        assert "teammates" in error  # agents/ 가 아니라 전용 디렉토리 안내
+        assert "agents" in error  # 5.0.0: 단일 프로파일 카탈로그 경로 안내
 
     def test_invalid_name_rejected(self, monkeypatch, tmp_path):
         roles = self._swap_loader(monkeypatch, tmp_path)
-        _, _, error = roles.load_teammate_role("../hack")
+        _, _, error = roles.load_profile("../hack")
         assert "Invalid" in error
 
 
@@ -217,10 +217,10 @@ class TestRegistryLifecycle:
         reg.shutdown_all()
 
     def test_unknown_role_rejected(self, tmp_path, renderer, monkeypatch):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
         monkeypatch.setattr(
-            roles_mod, "_teammate_loader", ResourceLoader([tmp_path / "empty"])
+            profiles_mod, "_profile_loader", ResourceLoader([tmp_path / "empty"])
         )
         reg = make_registry(tmp_path)
         key, err = reg.spawn(role="ghost")
@@ -875,14 +875,16 @@ class TestResumeRestore:
     def test_role_prompt_survives_role_file_deletion(
         self, tmp_path, renderer, monkeypatch
     ):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
         roles_dir = tmp_path / "roles"
         roles_dir.mkdir()
         (roles_dir / "researcher.md").write_text(
             "---\nmodel: r-model\n---\nYou are THE researcher.", encoding="utf-8"
         )
-        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([roles_dir]))
+        monkeypatch.setattr(
+            profiles_mod, "_profile_loader", ResourceLoader([roles_dir])
+        )
 
         reg1 = make_registry(tmp_path)
         key, err = reg1.spawn(role="researcher")
@@ -1222,18 +1224,18 @@ class TestWorkerDeathNotice:
 
 class TestRoleDiscovery:
     def test_builtin_roles_loadable_and_advertised(self):
-        from agent_cli.subagent.roles import available_roles, load_teammate_role
+        from agent_cli.subagent.profiles import available_profiles, load_profile
 
         for name in ("researcher", "code-reviewer"):
-            body, config, err = load_teammate_role(name)
+            body, config, err = load_profile(name)
             assert err is None and body
             assert config.get("allowed-tools")
-        advertised = dict(available_roles())
+        advertised = dict(available_profiles())
         assert "researcher" in advertised and "code-reviewer" in advertised
         assert advertised["researcher"]  # description 필수 (발견 표면)
 
     def test_disable_model_invocation_hidden(self, tmp_path, monkeypatch):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
         (tmp_path / "hidden.md").write_text(
             "---\ndescription: secret\ndisable-model-invocation: true\n---\nbody",
@@ -1242,11 +1244,11 @@ class TestRoleDiscovery:
         (tmp_path / "visible.md").write_text(
             "---\ndescription: shown\n---\nbody", encoding="utf-8"
         )
-        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([tmp_path]))
-        names = [n for n, _ in roles_mod.available_roles()]
+        monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([tmp_path]))
+        names = [n for n, _ in profiles_mod.available_profiles()]
         assert names == ["visible"]
         # auto-spawn 스캔용 include_meta 는 전체 반환
-        all_names = [n for n, _ in roles_mod.available_roles(include_meta=True)]
+        all_names = [n for n, _ in profiles_mod.available_profiles(include_meta=True)]
         assert set(all_names) == {"hidden", "visible"}
 
     def test_prompt_section_lists_roles_with_spawn_example(self):
@@ -1282,7 +1284,7 @@ class TestRoleDiscovery:
 
 class TestAutoSpawn:
     def _roles_dir(self, tmp_path, monkeypatch, *, flagged=True):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
         d = tmp_path / "roles"
         d.mkdir(exist_ok=True)
@@ -1290,7 +1292,7 @@ class TestAutoSpawn:
         (d / "concierge.md").write_text(
             f"---\ndescription: greeter\n{flag}---\nYou greet.", encoding="utf-8"
         )
-        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([d]))
         return d
 
     def test_flagged_role_spawns_once(self, tmp_path, renderer, monkeypatch):
@@ -1358,14 +1360,14 @@ class TestMultiInstance:
         assert "agt-1 (coder · ui)" in rec["content"]
 
     def test_name_and_description_survive_resume(self, tmp_path, renderer, monkeypatch):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
         d = tmp_path / "roles"
         d.mkdir()
         (d / "coder.md").write_text(
             "---\ndescription: builds things\n---\nYou build.", encoding="utf-8"
         )
-        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([d]))
         reg1 = make_registry(tmp_path)
         key, _ = reg1.spawn(role="coder", name="ui")
         wait_until(lambda: reg1.get(key).state == "idle")
@@ -1795,14 +1797,14 @@ class TestResumeGuidance:
     def test_spawn_hints_when_same_role_dead_exists(
         self, tmp_path, renderer, monkeypatch
     ):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
         d = tmp_path / "roles"
         d.mkdir()
         (d / "comedian.md").write_text(
             "---\ndescription: gag\n---\nYou joke.", encoding="utf-8"
         )
-        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([d]))
         reg = make_registry(tmp_path)
         k1, _ = reg.spawn(role="comedian")
         wait_until(lambda: reg.get(k1).state == "idle")
@@ -1995,14 +1997,14 @@ class TestInstantAgent:
         reg.shutdown_all()
 
     def test_profile_plus_instructions_overlay(self, tmp_path, renderer, monkeypatch):
-        import agent_cli.subagent.roles as roles_mod
+        import agent_cli.subagent.profiles as profiles_mod
 
         d = tmp_path / "roles"
         d.mkdir()
         (d / "coder.md").write_text(
             "---\ndescription: builds\n---\nYou build things.", encoding="utf-8"
         )
-        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([d]))
         reg = make_registry(tmp_path)
         key, _ = reg.spawn(role="coder", instructions="이 세션에선 테스트만 담당.")
         tm = reg.get(key)

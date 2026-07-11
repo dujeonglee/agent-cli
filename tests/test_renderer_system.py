@@ -16,11 +16,11 @@ from agent_cli.render.minimal import MinimalRenderer
 
 def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체."""
-    import agent_cli.tools.delegate.agents as _agents_mod
+    import agent_cli.subagent.profiles as _profiles_mod
 
     from agent_cli.resource_loader import ResourceLoader
 
-    _agents_mod._agent_loader = ResourceLoader(list(paths))
+    _profiles_mod._profile_loader = ResourceLoader(list(paths))
 
 
 class _FakeStream:
@@ -254,7 +254,9 @@ class TestBuildAgentDescriptions:
         from agent_cli.prompts.system_prompt import build_agent_descriptions
 
         desc = build_agent_descriptions()
-        assert "reviewer" not in desc
+        # 5.0.0: code-reviewer(광고 대상)가 부분 문자열로 겹치므로 정확 매치
+        assert "`reviewer`" not in desc
+        assert "`code-reviewer`" in desc
         assert "explorer" in desc  # normal agents still shown
 
     def test_includes_delegate_usage(self):

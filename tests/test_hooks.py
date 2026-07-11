@@ -18,11 +18,11 @@ from agent_cli.hooks import (
 
 def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체."""
-    import agent_cli.tools.delegate.agents as _agents_mod
+    import agent_cli.subagent.profiles as _profiles_mod
 
     from agent_cli.resource_loader import ResourceLoader
 
-    _agents_mod._agent_loader = ResourceLoader(list(paths))
+    _profiles_mod._profile_loader = ResourceLoader(list(paths))
 
 
 class TestHookModels:
@@ -728,7 +728,7 @@ class TestAgentFrontmatterHooks:
             thinking_format="",
         )
 
-    def _stub_load_agent(
+    def _stubload_profile(
         self, role: str = "you are a test agent", hooks_raw: dict | None = None
     ):
         """Build a _load_agent return tuple: (role_prompt, config, error)."""
@@ -762,8 +762,8 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate.exec._load_agent",
-            return_value=self._stub_load_agent(hooks_raw=agent_hooks_raw),
+            "agent_cli.tools.delegate.exec.load_profile",
+            return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
                 tool_delegate(
@@ -805,8 +805,8 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate.exec._load_agent",
-            return_value=self._stub_load_agent(hooks_raw=agent_hooks_raw),
+            "agent_cli.tools.delegate.exec.load_profile",
+            return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
                 tool_delegate(
@@ -837,8 +837,8 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate.exec._load_agent",
-            return_value=self._stub_load_agent(hooks_raw=None),
+            "agent_cli.tools.delegate.exec.load_profile",
+            return_value=self._stubload_profile(hooks_raw=None),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
                 tool_delegate(
@@ -885,7 +885,7 @@ class TestAgentFrontmatterHooks:
             "You are the probe agent.\n"
         )
 
-        # Point the agent loader at this tmp dir so _load_agent('probe')
+        # Point the agent loader at this tmp dir so load_profile('probe')
         # finds our definition instead of a real one.
         _set_agent_paths([agents_dir])
 
@@ -939,6 +939,6 @@ class TestAgentFrontmatterHooks:
             # autouse fixture does this too — belt and suspenders.
             _set_agent_paths(
                 __import__(
-                    "agent_cli.tools.delegate.agents", fromlist=["x"]
-                )._AGENT_SEARCH_PATHS
+                    "agent_cli.subagent.profiles", fromlist=["x"]
+                )._PROFILE_SEARCH_PATHS
             )
