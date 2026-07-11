@@ -39,7 +39,7 @@
 | **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | 공용 추출 + 실측서 발견 3결함 수리 | ✅ v4.46.0 |
 | **C5** | ContextManager 8관심사(1053줄) — 캐시+압축+요약+2종 영속화+분류+NL렌더 | manager.py | records/render/store 분리 + fsio 저장 패턴 통일 | ✅ v4.47.0 |
 | C6 | providers 스트리밍 파서 중복 — 양 어댑터 `_handle_stream` 각 ~130줄 (retry 는 공유됨) | anthropic.py:96, openai.py:122 | run_sse_stream 골격 공유 + 비대칭 2건 수리 | ✅ v4.48.0 |
-| C7 | 이중 검증층 — registry 중앙 + 도구 내부 재검증 | registry.py:293-377 | `Tool.validate(args)` 훅 1-pass | ☐ |
+| C7 | 이중 검증층 — registry 중앙 + 도구 내부 재검증 | registry.py:293-377 | `Tool.validate` 훅 + A5 경로 통합(정밀화: 관찰 문구 보존) | ✅ v4.49.0 |
 | C8 | Renderer ABC 50메서드/17추상 — fat 아님, 신규 renderer 진입장벽만 | render/base.py | 코어+mixin 분리 (낮은 우선순위) | ☐ |
 
 ### C9. Latent seam 재고 (과거 결정 존중)
@@ -58,6 +58,15 @@
 6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
+
+- **2026-07-11 · v4.49.0 · C7 완료 (정밀화 버전)**: `Tool.validate` 의미론
+  훅 — 중앙 6단계(A5)+run() 방어 2곳 호출·로직 1곳. **실측 비교로 결정**:
+  A5 도 관찰 되먹임임을 확인(재발화 아님 — 앞선 설명 정정), 차이의 실체는
+  관측 기록/스키마 전문/렌더 라벨 3축 → 관찰 문구는 도구 짧은 오류 그대로
+  유지(스키마 전문은 shape 실패만), SCHEMA_MISMATCH 기록+렌더만 획득 =
+  모델-대면 텍스트 무변화·통계 사각지대 해소. 이동: code_index 13분기→
+  선언 테이블, edit_file op/pos 가드, memory mode/id. 계약 테스트 6종
+  (문구 보존·스키마 비동봉·기록 신호·직접 호출 방어). 전체 2849 passed.
 
 - **2026-07-11 · v4.48.0 · C6 완료**: 공용 SSE 골격 `http.run_sse_stream`
   (+StreamEvent/StreamAccum) — provider 는 `map_payload` 이벤트 해석만.

@@ -270,29 +270,47 @@ def _on_demand_symbols(file_abs: Path) -> Optional[list[dict]]:
 # ----- mode handlers --------------------------------------------------------
 
 
-def _require(value, key: str, mode: str) -> ToolResult | None:
-    """Error ToolResult when a required arg is missing/empty, else None.
-    Centralizes the ``'<key>' is required for mode='<mode>'`` message so it
-    can't drift across the ~10 mode handlers below."""
-    if not value:
-        return ToolResult(False, error=f"'{key}' is required for mode='{mode}'")
-    return None
+# ── 의미론 검증 (C7, v4.49.0) — mode별 요구사항의 선언 테이블 ─────────
+# 이전엔 ~10개 _do_* 핸들러가 _require/_validate_kind 를 제각각 호출했다.
+# 단일 함수로 수렴: CodeIndexTool.validate(A5 경로)와 _dispatch_one(직접
+# 호출자 방어)이 같은 구현을 소비 — 로직 1곳, 실행 2곳(µs).
+_MODE_REQUIRED: dict[str, tuple[str, ...]] = {
+    "list": ("path",),
+    "fetch": ("path", "name"),
+    "lookup": ("name",),
+    "kind": ("symbol_kind",),
+    "file": ("path",),
+    "refs": ("name",),
+    "callers": ("name",),
+    "callees": ("name",),
+    "slice": ("name",),
+}
 
 
-def _validate_kind(value, valid, label: str) -> ToolResult | None:
-    """Error ToolResult when ``value`` (if given) isn't in ``valid``, else None.
-    ``value`` of ``None`` passes (the filter is optional for some modes)."""
-    if value is not None and value not in valid:
-        return ToolResult(
-            False, error=f"invalid {label}: {value!r}. Valid: {sorted(valid)}"
-        )
+def _validate_semantics(args: dict) -> str | None:
+    """mode 존재/enum + mode별 필수 키 + kind enum — None=통과, str=오류.
+    오류 문구는 기존 핸들러 문구와 바이트 동일(모델-대면 텍스트 보존)."""
+    mode = args.get("mode")
+    if not mode:
+        return f"'mode' is required. Valid: {sorted(_MODES.keys())}"
+    if mode not in _MODES:
+        return f"unknown mode: {mode!r}. Valid: {sorted(_MODES.keys())}"
+    for key in _MODE_REQUIRED.get(mode, ()):
+        if not args.get(key):
+            return f"'{key}' is required for mode='{mode}'"
+    symbol_kind = args.get("symbol_kind")
+    if mode in ("lookup", "kind") and symbol_kind is not None:
+        if symbol_kind not in NAME_KINDS:
+            return f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
+    if mode == "refs":
+        ref_kind = args.get("ref_kind")
+        if ref_kind is not None and ref_kind not in REF_KINDS:
+            return f"invalid ref_kind: {ref_kind!r}. Valid: {sorted(REF_KINDS)}"
     return None
 
 
 def _do_list(action_input: dict) -> ToolResult:
     path_str = action_input.get("path")
-    if err := _require(path_str, "path", "list"):
-        return err
     path_abs = Path(path_str).resolve()
     if not path_abs.is_file():
         return ToolResult(False, error=f"file not found: {path_str}")
@@ -333,10 +351,6 @@ def _do_list(action_input: dict) -> ToolResult:
 def _do_fetch(action_input: dict) -> ToolResult:
     path_str = action_input.get("path")
     name = action_input.get("name")
-    if err := _require(path_str, "path", "fetch"):
-        return err
-    if err := _require(name, "name", "fetch"):
-        return err
     path_abs = Path(path_str).resolve()
     if not path_abs.is_file():
         return ToolResult(False, error=f"file not found: {path_str}")
@@ -378,11 +392,7 @@ def _do_fetch(action_input: dict) -> ToolResult:
 
 def _do_lookup(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if err := _require(name, "name", "lookup"):
-        return err
     symbol_kind = action_input.get("symbol_kind")
-    if err := _validate_kind(symbol_kind, NAME_KINDS, "symbol_kind"):
-        return err
 
     store, _ = _ensure_index()
     # Dual lookup: try qualified_name first, fall back to bare name.
@@ -402,10 +412,6 @@ def _do_lookup(action_input: dict) -> ToolResult:
 
 def _do_kind(action_input: dict) -> ToolResult:
     symbol_kind = action_input.get("symbol_kind")
-    if err := _require(symbol_kind, "symbol_kind", "kind"):
-        return err
-    if err := _validate_kind(symbol_kind, NAME_KINDS, "symbol_kind"):
-        return err
 
     store, _ = _ensure_index()
     syms = store.find_symbols(kind=symbol_kind)
@@ -428,8 +434,6 @@ def _do_kind(action_input: dict) -> ToolResult:
 
 def _do_file(action_input: dict) -> ToolResult:
     path_str = action_input.get("path")
-    if err := _require(path_str, "path", "file"):
-        return err
     path_abs = Path(path_str).resolve()
 
     store, root = _ensure_index()
@@ -454,11 +458,7 @@ def _do_file(action_input: dict) -> ToolResult:
 
 def _do_refs(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if err := _require(name, "name", "refs"):
-        return err
     ref_kind = action_input.get("ref_kind")
-    if err := _validate_kind(ref_kind, REF_KINDS, "ref_kind"):
-        return err
 
     store, _ = _ensure_index()
     # Refs table stores bare names (because they come from raw source
@@ -476,8 +476,6 @@ def _do_refs(action_input: dict) -> ToolResult:
 
 def _do_callers(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if err := _require(name, "name", "callers"):
-        return err
     store, _ = _ensure_index()
     # Callgraph indexes by bare name (refs are bare-name). Resolve
     # qualified → bare via the symbols table.
@@ -502,8 +500,6 @@ def _do_callers(action_input: dict) -> ToolResult:
 
 def _do_callees(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if err := _require(name, "name", "callees"):
-        return err
     store, _ = _ensure_index()
     syms = _resolve_symbol(store, name)
     bare = syms[0]["name"] if syms else _normalize_markdown_name(name)
@@ -526,8 +522,6 @@ def _do_callees(action_input: dict) -> ToolResult:
 
 def _do_slice(action_input: dict) -> ToolResult:
     name = action_input.get("name")
-    if err := _require(name, "name", "slice"):
-        return err
     store, _ = _ensure_index()
     # cmd_slice picks a symbol by bare ``name``; resolve qualified
     # input through the symbols table first.
@@ -593,19 +587,12 @@ def _dispatch_one(query: dict) -> ToolResult:
             False,
             error=f"each query must be an object, got {type(query).__name__}",
         )
-    mode = query.get("mode")
-    if not mode:
-        return ToolResult(
-            False,
-            error=(f"'mode' is required. Valid: {sorted(_MODES.keys())}"),
-        )
-    handler = _MODES.get(mode)
-    if handler is None:
-        return ToolResult(
-            False,
-            error=(f"unknown mode: {mode!r}. Valid: {sorted(_MODES.keys())}"),
-        )
-    return handler(query)
+    # C7: 의미론 검증은 _validate_semantics 단일 구현 — A5 경로
+    # (CodeIndexTool.validate)와 직접 호출자가 같은 것을 소비.
+    err = _validate_semantics(query)
+    if err:
+        return ToolResult(False, error=err)
+    return _MODES[query["mode"]](query)
 
 
 class CodeIndexTool(Tool):
@@ -739,6 +726,11 @@ class CodeIndexTool(Tool):
     def summary_arg(self, action_input: dict) -> str:
         std = self.strip_prefix(action_input)
         return f"{std.get('mode', '')} {std.get('path', '')}".strip()
+
+    def validate(self, args: dict) -> str | None:
+        """C7: mode 존재/enum·mode별 필수 키·kind enum — _validate_semantics
+        단일 구현 위임 (직접 호출자 경로 _dispatch_one 과 동일 소스)."""
+        return _validate_semantics(args)
 
     def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
         """Over-cap policy for an index query: the fix is a NARROWER query in

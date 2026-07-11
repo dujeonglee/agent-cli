@@ -275,6 +275,28 @@ def apply_edits_batch(path: str, edits: list[dict]) -> ToolResult:
     return ToolResult(True, output=msg)
 
 
+def _validate_semantics(args: dict) -> str | None:
+    """op enum + pos/end 하시라인-문자열 형식 (C7) — None=통과, str=오류.
+
+    ``pos``/``end`` 가 bare int/null 로 오면 예전엔 ``_parse_ref`` 의
+    ``re.match`` 에서 raw TypeError 가 워커 스레드를 죽였다 — 실행 전에
+    잡아 재시도 가능한 문구로. A5 경로(EditFileTool.validate)와 직접
+    호출자(tool_edit_file)가 같은 구현을 소비. ``op`` 기본값 ""(누락=
+    오류)은 기존 tool_edit_file 과 바이트 동일 의미론."""
+    op = args.get("op", "")
+    if op not in ("replace", "append", "prepend", "delete"):
+        return f"Unknown edit op: '{op}'. Use replace|append|prepend|delete."
+    for field in ("pos", "end"):
+        v = args.get(field)
+        if v is not None and not isinstance(v, str):
+            return (
+                f"'{field}' must be a hashline string like '5#VR', got "
+                f"{type(v).__name__} ({v!r}). Re-read the file with "
+                f"read_file to get fresh hashline tags, then retry."
+            )
+    return None
+
+
 def tool_edit_file(args: dict) -> ToolResult:
     """Apply a single hashline-based edit to a file (fuzzy matching support).
 
@@ -289,36 +311,15 @@ def tool_edit_file(args: dict) -> ToolResult:
     end = args.get("end")
     new_lines = args.get("lines")
 
-    if op not in ("replace", "append", "prepend", "delete"):
-        return ToolResult(
-            False,
-            error=f"Unknown edit op: '{op}'. Use replace|append|prepend|delete.",
-        )
+    semantic_err = _validate_semantics(args)
+    if semantic_err:
+        return ToolResult(False, error=semantic_err)
 
     from agent_cli.tools import _confine
 
     denial = _confine.guard([path], "edit_file")
     if denial:
         return ToolResult(False, error=denial)
-
-    # ``pos`` / ``end`` MUST be hashline strings like ``"5#VR"`` — but smaller
-    # models sometimes emit them as bare integers (``pos: 5``) or null-wrapped
-    # values. Without this guard those propagate into ``_parse_ref`` →
-    # ``re.match`` and raise a raw ``TypeError`` from ``re.py`` that escapes the
-    # worker thread, killing the loop instead of surfacing a recoverable
-    # Observation. Catch the bad shape here and return a clear retry message.
-    for field, v in (("pos", pos), ("end", end)):
-        if v is None:
-            continue
-        if not isinstance(v, str):
-            return ToolResult(
-                False,
-                error=(
-                    f"'{field}' must be a hashline string like '5#VR', got "
-                    f"{type(v).__name__} ({v!r}). Re-read the file with "
-                    f"read_file to get fresh hashline tags, then retry."
-                ),
-            )
 
     if isinstance(new_lines, str):
         new_lines = new_lines.split("\n")
@@ -450,6 +451,10 @@ class EditFileTool(Tool):
 
     # NOTE: no ``render_action_input_for_context`` override — see WriteFileTool
     # (action-body re-feed elision caused marker mimicry; reverted in v3.16.1).
+
+    def validate(self, args: dict) -> str | None:
+        """C7: op enum·pos/end 형식 — _validate_semantics 단일 구현 위임."""
+        return _validate_semantics(args)
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return tool_edit_file(args)

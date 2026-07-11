@@ -301,13 +301,32 @@ class Tool(ABC):
         """
         return default_oversized_nudge(self.name, tokens, ctx.oversized_cap)
 
+    def validate(self, args: dict) -> str | None:
+        """의미론 검증 훅 (C7, v4.49.0) — ``None``=통과, ``str``=오류 문구.
+
+        shape(존재/required/타입/coercion)는 중앙 ``validate_tool_input``
+        1~5단계 소유; 여기는 **실행 없이 판정 가능한 의미론**만 — mode별
+        조건부 필수, enum, 필드 형식. 파일 내용이 필요한 검사(hashline
+        ref 대조 등)는 실행 소관이라 넣지 않는다.
+
+        호출 지점 2곳, 로직은 여기 1곳: ① 중앙 검증 6단계(A5 경로 —
+        실패가 ``SCHEMA_MISMATCH`` 로 기록되고 format-error 렌더를 탐;
+        관찰 문구는 이 훅이 돌려준 짧은 오류 그대로 — 전체 스키마 전문은
+        shape 실패에만 동봉[정밀화 결정]) ② :meth:`run` 초입(직접
+        호출자 방어 — loop 경로에선 ①이 먼저라 사실상 no-op 재검사).
+        ``args`` 는 표준(strip 후) 키."""
+        return None
+
     def run(self, args: dict, *, ctx: RunContext | None = None) -> ToolResult:
         """Public dispatch: strip the tool-name prefix from ``action_input``
-        keys, then hand standard keys to :meth:`_run`. ``ctx`` carries the
-        per-call loop context (:class:`RunContext`); tools that do not need it
-        ignore it. ``None`` (a direct/test caller that omits it) is forwarded
-        as-is — consumers of a ``ctx`` field guard for it."""
-        return self._run(self.strip_prefix(args), ctx=ctx)
+        keys, validate semantics(:meth:`validate` — 직접 호출자 방어), then
+        hand standard keys to :meth:`_run`. ``ctx`` carries the per-call loop
+        context (:class:`RunContext`); tools that do not need it ignore it."""
+        std = self.strip_prefix(args)
+        err = self.validate(std) if isinstance(std, dict) else None
+        if err:
+            return ToolResult(False, error=err)
+        return self._run(std, ctx=ctx)
 
     def wrap_single_op(self, flat: dict) -> dict:
         """Convert a multi-op format's flat single-target op into this tool's

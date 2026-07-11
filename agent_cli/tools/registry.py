@@ -374,6 +374,16 @@ def validate_tool_input(
                     action_input,
                 )
 
+    # 6단계 (C7): 도구 의미론 검증 — mode별 조건부 필수/enum/필드 형식.
+    # 실패 관찰은 도구가 쓴 짧은 문구 그대로(스키마 전문 비동봉 — 정밀화
+    # 결정: shape 실패만 전문 동봉), A5 경로라 SCHEMA_MISMATCH 로 기록됨.
+    tool = TOOLS.get(tool_name)
+    if tool is not None:
+        std = tool.strip_prefix(action_input)
+        semantic_err = tool.validate(std) if isinstance(std, dict) else None
+        if semantic_err:
+            return False, semantic_err, action_input
+
     return True, None, action_input
 
 

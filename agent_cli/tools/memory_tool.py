@@ -140,5 +140,16 @@ class MemoryTool(Tool):
         std = self.strip_prefix(action_input)
         return f"{std.get('mode', '')} {std.get('summary', std.get('id', ''))}".strip()
 
+    def validate(self, args: dict) -> str | None:
+        """C7: mode enum + get/update/delete 의 id 필수 — 실행 없이 판정
+        가능한 의미론. id 값 형식 coercion(_as_id)은 실행 소관 유지."""
+        mode = (args.get("mode") or "").strip()
+        valid = ("add", "get", "update", "delete", "list")
+        if mode not in valid:
+            return f"invalid mode: {mode!r}. Valid: {list(valid)}"
+        if mode in ("get", "update", "delete") and args.get("id") in (None, ""):
+            return f"'id' is required for mode='{mode}'"
+        return None
+
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         return _dispatch(args, ctx.session_dir if ctx else None)

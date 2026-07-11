@@ -288,3 +288,84 @@ class TestRenderParamValue:
         from agent_cli.tools.registry import render_param_value
 
         assert render_param_value({"type": "string"}, True) == "string, required"
+
+
+# ── C7: Tool.validate 훅 — shape(중앙 1~5단계) + 의미론(6단계) 통합 ────
+
+
+class TestSemanticValidationHook:
+    def test_default_validate_is_none(self):
+        from agent_cli.tools import TOOLS
+        from agent_cli.tools.base import Tool
+
+        assert Tool.validate(TOOLS["shell"], {"command": "ls"}) is None
+
+    def test_central_stage6_catches_mode_semantics(self):
+        # 정밀화 계약 ①: 의미론 실패도 중앙(A5 경로)에서 잡힘
+        from agent_cli.tools.registry import validate_tool_input
+
+        ok, err, _ = validate_tool_input("code_index", {"mode": "fetch"})
+        assert not ok
+        # 정밀화 계약 ②: 관찰 문구는 도구의 짧은 오류 그대로 —
+        # 전체 스키마 전문("Expected: {")은 shape 실패에만 동봉
+        assert err == "'path' is required for mode='fetch'"
+        assert "Expected: {" not in err
+
+    def test_shape_failure_still_carries_schema(self):
+        from agent_cli.tools.registry import validate_tool_input
+
+        ok, err, _ = validate_tool_input("read_file", {})
+        assert not ok and "Expected: {" in err  # 기존 A5 동작 보존
+
+    def test_run_defends_direct_callers(self):
+        # 로직 1곳(validate)·실행 2곳 — 직접 호출자도 같은 문구로 거절
+        from agent_cli.tools import TOOLS
+
+        r = TOOLS["code_index"].run({"mode": "fetch"})
+        assert not r.success and r.error == "'path' is required for mode='fetch'"
+
+    def test_per_tool_validate_semantics(self):
+        from agent_cli.tools import TOOLS
+
+        assert TOOLS["edit_file"].validate({"path": "a", "op": "bogus"}) is not None
+        assert "hashline string" in TOOLS["edit_file"].validate(
+            {"path": "a", "op": "replace", "pos": 5}
+        )
+        assert (
+            TOOLS["memory"].validate({"mode": "get"})
+            == "'id' is required for mode='get'"
+        )
+        assert TOOLS["memory"].validate({"mode": "list"}) is None
+        assert (
+            TOOLS["code_index"].validate(
+                {"mode": "lookup", "name": "f", "symbol_kind": "nope"}
+            )
+            is not None
+        )
+
+    def test_semantic_failure_records_schema_mismatch_via_a5(self):
+        # 정밀화 계약 ③: 의미론 실패가 이제 관측 기록(SCHEMA_MISMATCH)에 잡힘
+        from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
+        from agent_cli.wire_formats import get as get_wf
+        from agent_cli.wire_formats.base import Op, ParsedTurn
+
+        cfg = LoopConfig(
+            tools_list=["code_index", "complete"], wire_format=get_wf("md_array")
+        )
+        st = LoopState(query="q")
+        d = TurnDispatcher(
+            cfg, st, ctx=None, tools=ToolBridge(cfg, st, None, None), recorder=None
+        )
+        turn = ParsedTurn(
+            thought="t",
+            ops=[Op("code_index", {"mode": "fetch"})],
+            raw="r",
+            parse_stage=1,
+        )
+        outcome = {}
+        d._dispatch_op("r", turn, turn.ops[0], outcome)
+        assert outcome.get("failure_signal") == "SCHEMA_MISMATCH"  # 이전엔 {}
+        # 모델이 받는 관찰은 여전히 짧은 도구 문구
+        obs = [m for m in st.messages if m["role"] == "user"][-1]
+        assert "'path' is required for mode='fetch'" in obs["content"]
+        assert "Expected: {" not in obs["content"]
