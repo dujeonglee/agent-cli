@@ -54,6 +54,7 @@ def run_loop(
     wire_format=None,
     compaction_enabled: bool = True,
     teammate_registry=None,
+    ask_handler=None,
 ):
     """Run the agent loop with the given wire-format plugin. Returns ToolResult.
 
@@ -97,4 +98,5 @@ def run_loop(
         wire_format=wire_format,
         compaction_enabled=compaction_enabled,
         teammate_registry=teammate_registry,
+        ask_handler=ask_handler,
     ).run()

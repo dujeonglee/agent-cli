@@ -551,7 +551,12 @@ class TurnDispatcher:
                 if isinstance(op.action_input, dict)
                 else str(op.action_input),
             )
-            user_response = _handle_ask(questions)
+            # handler 없음(main/delegate)이면 종전 단일-인자 호출 유지 —
+            # 기존 테스트/외부 patcher 의 _handle_ask 교체 표면 보존.
+            if self.cfg.ask_handler is not None:
+                user_response = _handle_ask(questions, handler=self.cfg.ask_handler)
+            else:
+                user_response = _handle_ask(questions)
             # ``ask`` is a normal observation-producing op (the user's
             # reply is the observation), not a terminal. In a multi-op turn
             # it accumulates like read/shell so consecutive asks batch into
@@ -963,8 +968,16 @@ def _extract_questions(action_input) -> list[str]:
     return []
 
 
-def _handle_ask(questions: list[str]) -> str:
-    """Display all questions at once and collect a single response."""
+def _handle_ask(questions: list[str], handler=None) -> str:
+    """Display all questions at once and collect a single response.
+
+    ``handler`` (teammate P2): teammate 서브루프의 ask 라우팅 훅 —
+    있으면 사용자 프롬프트(announce/prompt_user) 대신
+    ``handler(question_text) -> answer`` 로 답을 받는다 (worker 가 질문을
+    main mailbox 에 올리고 main/인간의 답변을 블록 대기). 반환 Q/A 포맷은
+    사용자 경로와 동일해 teammate 모델이 같은 관찰 shape 을 본다.
+    delegate 서브에이전트의 ask 는 종전대로 사용자에게 간다 (handler 없음).
+    """
     import re
 
     from agent_cli.render import get_renderer
@@ -972,6 +985,15 @@ def _handle_ask(questions: list[str]) -> str:
     # Strip existing leading "1.", "2)", "- ", etc. so our numbering isn't doubled
     def _strip_leading_marker(q: str) -> str:
         return re.sub(r"^\s*(?:\d+[.):]|[-*•])\s+", "", q)
+
+    if handler is not None:
+        cleaned = [_strip_leading_marker(q) for q in questions]
+        try:
+            answer = handler("\n".join(cleaned))
+        except Exception:
+            answer = "(no response)"
+        q_part = "\n".join(f"Q: {q}" for q in cleaned)
+        return f"{q_part}\nA: {answer}"
 
     # Respect nested depth prefix (so ask inside skill/delegate aligns with │)
     renderer = get_renderer()

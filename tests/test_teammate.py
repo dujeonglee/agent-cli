@@ -618,3 +618,150 @@ class TestFullLoopIntegration:
             teammate_registry=reg,
         )
         assert "teammate" in loop2._config.tools_list
+
+
+# ── P2: ask→main 양방향 라우팅 ──────────────────
+
+
+def make_asking_runner(question="which branch?"):
+    """ask_handler 를 실제로 호출하는 가짜 러너 — teammate 가 작업 중
+    질문하고, 받은 답을 회신에 반영하는 시나리오."""
+
+    def runner(query, ctx, **kwargs):
+        answer = kwargs["ask_handler"](question)
+        return _FakeLoopResult(output=f"resumed with: {answer}"), 0.01
+
+    return runner
+
+
+class TestAskRouting:
+    def test_handle_ask_handler_branch(self):
+        # dispatch 의 _handle_ask: handler 가 있으면 사용자 프롬프트 대신
+        # 핸들러로 — Q/A 관찰 shape 은 사용자 경로와 동일.
+        from agent_cli.loop.dispatch import _handle_ask
+
+        out = _handle_ask(["1. which branch?"], handler=lambda q: "main branch")
+        assert out == "Q: which branch?\nA: main branch"
+
+    def test_handle_ask_handler_exception_is_no_response(self):
+        from agent_cli.loop.dispatch import _handle_ask
+
+        def broken(q):
+            raise RuntimeError("mailbox gone")
+
+        out = _handle_ask(["q?"], handler=broken)
+        assert out.endswith("A: (no response)")
+
+    def test_question_record_contract(self):
+        rec = build_reply_record(
+            {
+                "kind": "question",
+                "key": "agt-q1",
+                "role": "researcher",
+                "success": True,
+                "output": "which branch?",
+            }
+        )
+        assert rec["tool"] == "teammate"
+        assert rec["source"] == "teammate_question"
+        assert not is_format_intervention(rec)
+        assert "QUESTION" in rec["content"] and "which branch?" in rec["content"]
+        # main 이 그대로 따라할 수 있는 답변 op 안내 포함
+        assert '"mode":"request"' in rec["content"] and "agt-q1" in rec["content"]
+
+    def test_full_ask_roundtrip(self, tmp_path, renderer):
+        # teammate 가 질문 → main mailbox 에 kind:question → main 이
+        # request 로 답변 → teammate 재개 → 최종 회신에 답 반영.
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "do the task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        # 질문이 mailbox 에 떠 있다
+        with reg._cv:
+            kinds = [r.get("kind") for r in reg._pending]
+        assert kinds == ["question"]
+        # main 이 답변 — 도구 힌트가 "답변으로 소비" 를 알린다
+        r = tool_teammate(
+            {"mode": "request", "key": key, "message": "main branch"}, registry=reg
+        )
+        assert r.success and "answer to its pending question" in r.output
+        # teammate 재개 → 최종 회신에 답이 반영
+        assert wait_until(
+            lambda: any(x.get("kind") == "reply" for x in getattr(reg, "_pending", []))
+        )
+        items = reg.drain_replies()
+        reply = next(x for x in items if x.get("kind") == "reply")
+        assert reply["output"] == "resumed with: main branch"
+        assert reg.get(key).state == "idle"
+        reg.shutdown_all()
+
+    def test_answer_attribution_for_non_main_author(self, tmp_path, renderer):
+        # P4 인간 개입의 토대: main 외 화자의 답은 [author]: 접두로 전달.
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        reg.request(key, "the blue one", author="user:bob")
+        assert wait_until(lambda: any(x.get("kind") == "reply" for x in reg._pending))
+        reply = next(x for x in reg.drain_replies() if x.get("kind") == "reply")
+        assert reply["output"] == "resumed with: [user:bob]: the blue one"
+        reg.shutdown_all()
+
+    def test_wait_returns_question_first(self, tmp_path, renderer):
+        # 교착 방지: wait 중 질문이 먼저 오면 그걸 반환해야 main 이 답할
+        # 기회를 얻는다 (질문을 건너뛰면 상호 대기).
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        r = tool_teammate({"mode": "wait", "key": key}, registry=reg)
+        assert r.success
+        assert "STATUS: question" in r.output and "which branch?" in r.output
+        assert '"mode":"request"' in r.output  # 답변 방법 안내
+        reg.shutdown_all()
+
+    def test_status_shows_waiting_ask(self, tmp_path, renderer):
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        assert "waiting_ask" in reg.format_status(key)
+        reg.shutdown_all()
+
+    def test_shutdown_unblocks_pending_ask(self, tmp_path, renderer):
+        # 답변 없이 세션 종료 — 핸들러가 즉시 풀리고 worker 가 dead 로.
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        t0 = time.monotonic()
+        reg.shutdown_all()
+        assert time.monotonic() - t0 < 4.0  # join(5s) 안에 즉시 종료
+        assert reg.get(key).state == "dead"
+        # 종료 답변이 회신에 반영됨 (터미널 no-response)
+        replies = [x for x in reg.drain_replies() if x.get("kind") == "reply"]
+        assert replies and "no response" in replies[0]["output"]
+
+    def test_delegate_ask_path_unchanged(self):
+        # handler=None(delegate/main) 이면 종전 사용자-프롬프트 경로 —
+        # can_prompt False 환경에선 "(no response)" 폴백 그대로.
+        from unittest.mock import MagicMock
+
+        import agent_cli.loop.dispatch as dispatch_mod
+        from agent_cli.loop.dispatch import _handle_ask
+
+        fake = MagicMock()
+        fake.can_prompt.return_value = False
+        fake._prefix = ""
+        assert dispatch_mod is not None  # import 경로 확인용
+        import agent_cli.render as render_mod
+        import pytest as _pytest
+
+        mp = _pytest.MonkeyPatch()
+        try:
+            mp.setattr(render_mod, "get_renderer", lambda: fake)
+            out = _handle_ask(["q?"])
+        finally:
+            mp.undo()
+        assert out.endswith("A: (no response)")
+        fake.announce_ask.assert_called_once()

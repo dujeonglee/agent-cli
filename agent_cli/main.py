@@ -1074,12 +1074,19 @@ def run(
 
 
 def _teammate_reply_notice(reply: dict) -> None:
-    """teammate 회신 도착 알림 (D2 배달과 별개의 힌트 라인) — CLI 는 상태
-    라인, web 은 transient status 이벤트. 배달 자체는 다음 턴 경계."""
+    """teammate mailbox 도착 알림 (D2 배달과 별개의 힌트 라인) — CLI 는
+    상태 라인, web 은 transient status 이벤트. 배달 자체는 다음 턴 경계.
+    kind:"question"(P2 ask 라우팅)은 teammate 가 답변까지 블록되므로
+    구분해 표시한다."""
     from agent_cli.render import get_renderer
 
+    key = reply.get("key", "?")
+    if reply.get("kind") == "question":
+        line = f"❓ teammate {key} 질문 도착 (답변 대기 중)"
+    else:
+        line = f"📨 teammate {key} 회신 도착"
     try:
-        get_renderer().status(f"📨 teammate {reply.get('key', '?')} 회신 도착")
+        get_renderer().status(line)
     except Exception:
         pass  # 알림은 best-effort
 

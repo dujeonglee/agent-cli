@@ -88,6 +88,7 @@ class AgentLoop:
         wire_format=None,
         compaction_enabled: bool = True,
         teammate_registry=None,
+        ask_handler=None,
     ):
         # Wire format plugin — ReAct by default. Centralizes the
         # parser, recovery wording, prompt section, and lifecycle hooks
@@ -173,6 +174,7 @@ class AgentLoop:
             compaction_enabled=compaction_enabled,
             verbose=verbose,
             teammate_registry=teammate_registry,
+            ask_handler=ask_handler,
         )
         self._state = LoopState(
             query=query,

@@ -312,6 +312,14 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.
 - 2026-07-11: §7 결정 4건 전원 해소 (CLI 큐 통일=P5 신설, 비배달 동의, 중첩
   금지 동의, 역할 md=(b) 전용 디렉토리). **P0 착수 승인.**
+- 2026-07-11: **P2 완료 (v4.55.0)** — ask→main 라우팅 (D4). LoopConfig.
+  ask_handler 훅(run_loop→dispatch `_handle_ask` 분기 — handler 없으면
+  종전 시그니처 유지로 기존 patcher 무영향), worker 의 핸들러가 질문을
+  mailbox `kind:"question"` 으로 올리고 inbox 다음 메시지를 답으로 소비
+  ("도착 순서가 답" — P4 인간 개입 대비 `[author]:` attribution 포함).
+  교착 방지: wait 는 kind 불문 반환(질문 우선 도착 시 답변 유도 후 재대기
+  안내). _SHUTDOWN 이 답변 대기를 즉시 해제. 테스트 +9 (roundtrip·
+  attribution·교착·종료 해제·delegate 경로 불변), 전체 2937.
 - 2026-07-11: **P1 완료 (v4.54.0)** — Registry+Teammate(worker 스레딩, DI
   러너 seam)·teammate 도구 5 mode(C7 validate)·턴 경계 배달
   (`_deliver_teammate_replies`, 레코드 tool:"teammate"+source — fold 오인

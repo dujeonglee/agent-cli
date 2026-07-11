@@ -59,7 +59,11 @@ def _max_teammates() -> int:
 
 
 def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
-    """회신 1건 → main ctx 에 넣을 관찰 레코드.
+    """mailbox 아이템 1건(회신 또는 질문) → main ctx 에 넣을 관찰 레코드.
+
+    ``kind:"question"`` (P2, ask→main 라우팅): teammate 가 ask 로 물은
+    질문 — teammate 는 답변까지 블록되므로 request 로 답하라는 안내를
+    붙인다. 그 외(kind:"reply"/부재)는 회신.
 
     ``cap``(loop 의 ``_oversized_cap``, 0=무제한) 초과 회신은 전문 대신
     디스크 포인터 + head 발췌로 치환 — 전문은 worker 가 이미
@@ -71,6 +75,22 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     key = reply.get("key", "")
     role = reply.get("role", "")
     label = f"{key} ({role})" if role else key
+
+    if reply.get("kind") == "question":
+        question = reply.get("output") or "(empty question)"
+        content = (
+            f"── teammate {label} QUESTION ──\n{question}\n"
+            f"(The teammate is BLOCKED until answered. Answer via teammate op: "
+            f'{{"mode":"request","key":"{key}","message":"<your answer>"}}.)'
+        )
+        return {
+            "role": "user",
+            "tool": "teammate",
+            "success": True,
+            "content": content,
+            "source": "teammate_question",
+        }
+
     body = reply.get("output") or "(empty reply)"
 
     tokens = estimate_tokens(body)
@@ -294,10 +314,12 @@ class TeammateRegistry:
         return out
 
     def wait_reply(self, key: str, timeout: float) -> dict | None:
-        """``key`` 의 회신 1건을 블록 대기 (mode:"wait" — 명시적 join).
+        """``key`` 의 mailbox 아이템 1건을 블록 대기 (mode:"wait").
 
-        해당 key 의 것만 꺼내고 다른 teammate 의 회신은 pending 에 남긴다
-        (다음 턴 경계에 정상 배달).
+        해당 key 의 것만 꺼내고 다른 teammate 의 것은 pending 에 남긴다
+        (다음 턴 경계에 정상 배달). **kind 불문** — 질문(P2)이 먼저
+        도착하면 그걸 반환한다: wait 가 질문을 건너뛰면 main(회신 대기)과
+        teammate(답변 대기)가 서로를 기다리는 교착이 된다.
         """
         deadline = time.monotonic() + timeout
         with self._cv:
@@ -433,6 +455,7 @@ class TeammateRegistry:
                 tm.state = "idle"
                 self._push_reply(
                     {
+                        "kind": "reply",
                         "key": tm.key,
                         "role": tm.role_name,
                         "seq": seq,
@@ -446,6 +469,41 @@ class TeammateRegistry:
             tm.state = "dead"
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
 
+    def _make_ask_handler(self, tm: Teammate):
+        """teammate 서브루프의 ask 라우팅 훅 (P2, D4).
+
+        teammate 가 ask 를 부르면: 질문을 main mailbox 에 올리고
+        (턴 경계 배달 — main 은 관찰로 받는다), 이 teammate 의 inbox 에
+        **다음으로 도착하는 메시지를 답변으로 소비**한다 — "도착 순서가
+        답" (main 의 request 든, P4 의 인간 개입이든 먼저 온 쪽).
+        kill/세션 종료(_SHUTDOWN)는 답변 대기를 즉시 풀고 sentinel 을
+        재게시해 바깥 worker 루프도 종료되게 한다.
+        """
+
+        def handler(question: str) -> str:
+            self._push_reply(
+                {
+                    "kind": "question",
+                    "key": tm.key,
+                    "role": tm.role_name,
+                    "success": True,
+                    "output": question,
+                }
+            )
+            tm.state = "waiting_ask"
+            try:
+                item = tm.inbox.get()
+                if item is _SHUTDOWN:
+                    tm.inbox.put(_SHUTDOWN)  # 바깥 루프의 몫으로 재게시
+                    return "(no response — teammate is being terminated)"
+                author = item.get("author", "main")
+                text = item.get("text", "")
+                return f"[{author}]: {text}" if author != "main" else text
+            finally:
+                tm.state = "busy"
+
+        return handler
+
     def _run_message(self, tm: Teammate, query: str):
         """request 1건 실행 — 실제 러너 또는 테스트 주입 러너."""
         runner = self._runner
@@ -457,6 +515,7 @@ class TeammateRegistry:
         return runner(
             query,
             tm.ctx,
+            ask_handler=self._make_ask_handler(tm),
             provider=rt.get("provider"),
             capabilities=rt.get("capabilities"),
             model=tm.model or rt.get("model", ""),
@@ -532,9 +591,21 @@ def tool_teammate(
 
     if mode == "request":
         key = args.get("key", "")
+        tm = registry.get(key)
+        was_waiting = tm is not None and tm.state == "waiting_ask"
         err = registry.request(key, args.get("message", ""))
         if err:
             return ToolResult(False, error=f"request rejected: {err}")
+        if was_waiting:
+            # P2: 질문 대기 중이던 teammate — 이 메시지가 답변으로 소비되고
+            # 원래 작업이 재개된다 (표시용 힌트 — 도착 순서가 진실).
+            return ToolResult(
+                True,
+                output=(
+                    f"delivered to {key} as the answer to its pending question — "
+                    f"it resumes the original request now."
+                ),
+            )
         return ToolResult(
             True,
             output=(
@@ -562,6 +633,19 @@ def tool_teammate(
                     f"no reply from {key} within {int(timeout)}s — it is still "
                     f"working. Wait again, keep doing other work (the reply "
                     f"will be delivered automatically), or kill it."
+                ),
+            )
+        if reply.get("kind") == "question":
+            # P2: 회신 대신 질문이 먼저 도착 — wait 가 이걸 삼키지 않으면
+            # main(대기)과 teammate(답변 대기)가 서로를 기다리는 교착.
+            return ToolResult(
+                True,
+                output=(
+                    f"STATUS: question\nQUESTION from {key}:\n"
+                    f"{reply.get('output', '')}\n"
+                    f"(The teammate is BLOCKED until answered. Answer via "
+                    f'{{"mode":"request","key":"{key}","message":"<answer>"}}, '
+                    f"then wait again for the actual reply.)"
                 ),
             )
         status = "success" if reply.get("success") else "error"

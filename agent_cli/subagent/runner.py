@@ -125,11 +125,14 @@ def run_subagent_message(
     agent_role: str = "",
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
+    ask_handler=None,
 ) -> tuple[LoopResult, float]:
     """``ctx`` 위에서 메시지 1건을 처리 — ``(loop_result, 소요초)``.
 
     ``depth`` 는 **호출자의** 깊이다 — 서브루프는 ``depth + 1`` 로 돈다
-    (기존 delegate 의미 그대로).
+    (기존 delegate 의미 그대로). ``ask_handler``(teammate P2)가 있으면
+    서브루프의 ask 가 사용자 대신 이 훅으로 라우팅된다 — delegate 는
+    안 넘겨서 종전대로 사용자에게 간다.
     """
     from agent_cli.loop import run_loop
 
@@ -157,5 +160,6 @@ def run_subagent_message(
         agent_role=agent_role,
         hooks_config=hooks_config,
         compaction_enabled=compaction_enabled,
+        ask_handler=ask_handler,
     )
     return loop_result, time.monotonic() - t0
