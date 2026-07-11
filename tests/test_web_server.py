@@ -2669,6 +2669,36 @@ class TestTeammateEndpoints:
         r = client.post("/api/teammate/agt-1/input?token=wrong", json={"content": "x"})
         assert r.status_code == 401
 
+    def test_resume_endpoint(self, server_and_client):
+        server, _, client = server_and_client
+
+        class _Reg(self._FakeRegistry):
+            def resume_teammate(self, key, *, parent_ctx=None):
+                if key == "agt-missing":
+                    return f"unknown teammate '{key}'"
+                if key == "agt-alive":
+                    return f"teammate '{key}' is still alive (idle)"
+                self.killed.append(("resumed", key))
+                return ""
+
+        reg = _Reg()
+        server.teammate_registry = reg
+        r = client.post(f"/api/teammate/agt-1/resume?token={server.token}")
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert ("resumed", "agt-1") in reg.killed
+        assert (
+            client.post(
+                f"/api/teammate/agt-missing/resume?token={server.token}"
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                f"/api/teammate/agt-alive/resume?token={server.token}"
+            ).status_code
+            == 409
+        )
+
     def test_kill_endpoint(self, server_and_client):
         server, _, client = server_and_client
         reg = self._FakeRegistry()

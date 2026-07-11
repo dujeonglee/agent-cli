@@ -63,8 +63,22 @@ TEAMMATES_STATE_VERSION = 1
 _membership_changed = threading.Event()
 
 
-def notify_teammates_changed() -> None:
+def notify_teammates_changed(registry=None) -> None:
+    """멤버십 변화 신호. 플래그(다음 턴 실제 재조립)에 더해, ``registry``
+    가 주어지면 인스펙터의 main 스냅샷 Live Teammates 섹션을 **즉시**
+    갱신한다 — idle 중 대화 창 kill 도 인스펙터에 바로 반영 (v4.61.0)."""
     _membership_changed.set()
+    if registry is None:
+        return
+    try:
+        from agent_cli.prompts.system_prompt import build_live_teammates_section
+        from agent_cli.render import get_renderer
+
+        get_renderer().update_prompt_section(
+            "", "Live Teammates", build_live_teammates_section(registry)
+        )
+    except Exception:
+        pass  # 표시용 — 실행 경로를 막지 않는다
 
 
 def consume_teammates_reload() -> bool:
@@ -110,9 +124,10 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
         reason = reply.get("output") or "worker terminated unexpectedly"
         content = (
             f"── teammate {label} DIED ──\n{reason}\n"
-            f"(This teammate is gone — its queued requests were lost. Spawn a "
-            f"new one if the work is still needed; its context dir is kept on "
-            f"disk for post-mortem.)"
+            f"(Its queued requests were lost, but its context is kept — bring "
+            f'it back with {{"mode":"resume","key":"{key}"}} to continue with '
+            f"full memory, or spawn a new one. If it died from a crash, the "
+            f"same cause may recur.)"
         )
         return {
             "role": "user",
@@ -385,7 +400,7 @@ class TeammateRegistry:
         tm.worker.start()
         self._save_state()
         self._notify_roster()
-        notify_teammates_changed()  # Live Teammates 섹션 재조립 (멤버십 변화)
+        notify_teammates_changed(self)  # Live Teammates 재조립+인스펙터 즉시 반영
         return key, ""
 
     # ── request / 회신 ──────────────────────────
@@ -496,7 +511,7 @@ class TeammateRegistry:
             tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
         self._save_state()
         self._notify_roster()
-        notify_teammates_changed()
+        notify_teammates_changed(self)
         return ""
 
     def shutdown_all(self) -> None:
@@ -509,6 +524,59 @@ class TeammateRegistry:
                 tm.worker.join(timeout=5.0)
         # 최종 스냅샷 — revivable 유지 상태로 기록돼 resume 이 되살린다 (D7).
         self._save_state()
+
+    def resume_teammate(self, key: str, *, parent_ctx=None) -> str:
+        """죽은 teammate 를 **이전 컨텍스트 그대로** 되살린다 (mode:"resume").
+
+        kill/비정상 사망으로 dead 가 된 teammate 의 history 는 디스크에
+        온전히 남아 있다 — 같은 key 로 fresh worker 를 세우고 ctx 를
+        resume 모드(자기 history 이어받기, P3 기계 재사용)로 재기동한다.
+        성공 시 빈 문자열, 실패 시 에러 메시지. 부활 후에는 세션 resume
+        의 자동 재생성 대상으로도 복귀한다 (revivable=True).
+        """
+        tm = self._teammates.get(key)
+        if tm is None:
+            return f"unknown teammate '{key}'"
+        if tm.state != "dead":
+            return (
+                f"teammate '{key}' is still alive ({tm.state}) — send it a "
+                f"request instead"
+            )
+        if self.alive_count() >= _max_teammates():
+            return (
+                f"teammate limit reached ({_max_teammates()} alive). "
+                f'Kill one first (mode:"kill").'
+            )
+
+        fresh = Teammate(
+            key,
+            role_name=tm.role_name,
+            role_prompt=tm.role_prompt,
+            allowed_tools=tm.allowed_tools,
+            model=tm.model,
+            hooks_config=tm.hooks_config,
+            context_mode=tm.context_mode,
+            home_dir=tm.home_dir,
+            instance_name=tm.instance_name,
+            description=tm.description,
+        )
+        # seq 이어가기 — 이전 생의 replies/reply-N.md 를 덮지 않는다.
+        fresh.handled = tm.handled
+        fresh.queued = max(tm.queued, tm.handled)
+        fresh.created_at = tm.created_at
+        fresh.revive = True  # worker 가 ctx 를 resume 모드로 (이력 이어받기)
+        self._teammates[key] = fresh
+        fresh.worker = threading.Thread(
+            target=self._worker,
+            args=(fresh, parent_ctx),
+            daemon=True,
+            name=f"teammate-{key}",
+        )
+        fresh.worker.start()
+        self._save_state()
+        self._notify_roster()
+        notify_teammates_changed(self)
+        return ""
 
     def auto_spawn(self, parent_ctx=None) -> int:
         """frontmatter ``auto-spawn: true`` 역할을 세션 시작 시 자동 상주
@@ -653,7 +721,7 @@ class TeammateRegistry:
         self._save_state()
         self._notify_roster()
         if revived:
-            notify_teammates_changed()
+            notify_teammates_changed(self)
         return revived
 
     # ── worker ──────────────────────────────────
@@ -785,7 +853,7 @@ class TeammateRegistry:
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
-            notify_teammates_changed()  # 사망도 멤버십 변화 — 광고에서 제거
+            notify_teammates_changed(self)  # 사망도 멤버십 변화 — 광고에서 제거
 
     def _make_ask_handler(self, tm: Teammate):
         """teammate 서브루프의 ask 라우팅 훅 (P2, D4).
@@ -1041,6 +1109,24 @@ def tool_teammate(
             artifact=reply.get("reply_path", ""),
         )
 
+    if mode == "resume":
+        key = args.get("key", "")
+        err = registry.resume_teammate(key, parent_ctx=parent_ctx)
+        if err:
+            return ToolResult(False, error=f"resume rejected: {err}")
+        lines = [
+            f"teammate '{key}' resumed — it remembers ALL previous exchanges "
+            f"(its context was preserved across death)."
+        ]
+        task = args.get("task", "")
+        if task:
+            qerr = registry.request(key, task)
+            if qerr:
+                lines.append(f"task NOT queued: {qerr}")
+            else:
+                lines.append("task queued — reply will be delivered automatically.")
+        return ToolResult(True, output="\n".join(lines))
+
     if mode == "status":
         return ToolResult(True, output=registry.format_status(args.get("key", "")))
 
@@ -1053,5 +1139,8 @@ def tool_teammate(
 
     return ToolResult(
         False,
-        error=f"unknown mode '{mode}' — use spawn / request / wait / status / kill",
+        error=(
+            f"unknown mode '{mode}' — use spawn / request / wait / status / "
+            f"resume / kill"
+        ),
     )

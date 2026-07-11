@@ -1099,6 +1099,12 @@
     window.dispatchEvent(new CustomEvent("agentcli:directives-changed"));
   });
 
+  es.addEventListener("prompt_changed", function () {
+    // 시스템 프롬프트 스냅샷의 외과적 갱신 (teammate 멤버십 즉시 반영) —
+    // 열린 인스펙터가 프롬프트 뷰를 재조회하게 중계.
+    window.dispatchEvent(new CustomEvent("agentcli:prompt-changed"));
+  });
+
   es.addEventListener("memory_changed", function () {
     // A `memory` op updated the ## Session Memory index → refresh the prompt
     // view (memory has no editor, so prompt-only).
@@ -1912,6 +1918,11 @@
   window.addEventListener("agentcli:directives-changed", function () {
     if ($drawer.classList.contains("open")) {
       loadDirectives();
+      loadPrompt();
+    }
+  });
+  window.addEventListener("agentcli:prompt-changed", function () {
+    if ($drawer.classList.contains("open")) {
       loadPrompt();
     }
   });
@@ -2951,6 +2962,20 @@
           });
         });
         chip.appendChild(kill);
+      } else {
+        // 죽은 teammate 는 이전 컨텍스트 그대로 부활 가능 (mode:"resume")
+        const rev = document.createElement("button");
+        rev.className = "tm-kill";
+        rev.title = "이전 컨텍스트로 부활";
+        rev.textContent = "↻";
+        rev.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          fetch(
+            "api/teammate/" + encodeURIComponent(tm.key) + "/resume?" + qt(),
+            { method: "POST" },
+          );
+        });
+        chip.appendChild(rev);
       }
       $roster.appendChild(chip);
     });

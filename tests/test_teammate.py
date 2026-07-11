@@ -1194,7 +1194,8 @@ class TestWorkerDeathNotice:
         assert died["kind"] == "died" and "disk full" in died["output"]
         rec = build_reply_record(died)
         assert rec["source"] == "teammate_died" and rec["success"] is False
-        assert "DIED" in rec["content"] and "Spawn a new one" in rec["content"]
+        assert "DIED" in rec["content"]
+        assert '"mode":"resume"' in rec["content"]  # 부활 안내 (v4.61.0)
         assert not is_format_intervention(rec)
         # 원인 미상 사망은 resume 이 되살리지 않는다
         assert wait_until(lambda: reg.get(key).state == "dead")
@@ -1578,3 +1579,204 @@ class TestRendererSignatureRegression:
         texts = [str(d) for e, d in events if e == "status"]
         assert any("📨" in x and "agt-1" in x for x in texts), texts
         assert any("❓" in x and "agt-2" in x for x in texts), texts
+
+
+# ── mode:"resume" — 죽은 teammate 부활 (v4.61.0) ──
+
+
+class TestResumeMode:
+    def test_killed_teammate_resumes_with_full_context(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn(name="ui")
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.get(key).ctx.add({"role": "user", "content": "landmark-before-death"})
+        reg.request(key, "first job")
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        reg.drain_replies()
+        reg.kill(key)
+        assert reg.get(key).state == "dead"
+
+        assert reg.resume_teammate(key) == ""
+        tm = reg.get(key)
+        assert wait_until(lambda: tm.state == "idle")
+        # 이전 생의 기억을 그대로 갖고 살아났다
+        assert any("landmark-before-death" in str(m) for m in tm.ctx.get_raw_messages())
+        assert tm.instance_name == "ui"  # 라벨 보존
+        # seq 이어가기 — 부활 후 첫 회신은 reply-2 (reply-1 안 덮음)
+        reg.request(key, "second job")
+        assert wait_until(reg.has_pending_replies)
+        again = reg.drain_replies()[0]
+        assert again["seq"] == 2
+        assert (tm.home_dir / "replies" / "reply-1.md").is_file()
+        reg.shutdown_all()
+
+    def test_resume_guards(self, tmp_path, renderer, monkeypatch):
+        reg = make_registry(tmp_path)
+        assert "unknown" in reg.resume_teammate("agt-nope")
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        assert "still alive" in reg.resume_teammate(key)  # 산 사람 부활 금지
+        reg.kill(key)
+        monkeypatch.setenv("AGENT_CLI_MAX_TEAMMATES", "1")
+        k2, _ = reg.spawn()
+        assert "limit" in reg.resume_teammate(key)  # 상한 존중
+        reg.shutdown_all()
+
+    def test_resumed_teammate_is_session_revivable_again(self, tmp_path, renderer):
+        # 부활 → revivable 복귀 → 세션 resume 의 자동 재생성 대상.
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.kill(key)
+        assert reg1.resume_teammate(key) == ""
+        wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.shutdown_all()
+
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1  # 다시 자동 재생성 대상
+        reg2.shutdown_all()
+
+    def test_tombstone_from_session_restore_can_resume(self, tmp_path, renderer):
+        # 세션 1 에서 kill → 세션 2 restore 는 툼스톤(dead)으로만 복원 —
+        # 그 툼스톤도 mode:"resume" 으로 컨텍스트째 부활 가능.
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        assert wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.get(key).ctx.add({"role": "user", "content": "from-first-life"})
+        reg1.kill(key)
+        reg1.shutdown_all()
+
+        reg2 = make_registry(tmp_path)
+        reg2.restore()
+        assert reg2.get(key).state == "dead"  # 툼스톤
+        assert reg2.resume_teammate(key) == ""
+        tm = reg2.get(key)
+        assert wait_until(lambda: tm.state == "idle")
+        assert any("from-first-life" in str(m) for m in tm.ctx.get_raw_messages())
+        reg2.shutdown_all()
+
+    def test_died_teammate_resume_clears_error(self, tmp_path, renderer, monkeypatch):
+        import agent_cli.subagent.runner as runner_mod
+
+        real = runner_mod.create_subagent_ctx
+        monkeypatch.setattr(
+            runner_mod, "create_subagent_ctx", lambda *a, **k: (None, "boom")
+        )
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "dead")
+        reg.drain_replies()  # died 통지 소비
+        monkeypatch.setattr(runner_mod, "create_subagent_ctx", real)  # 원인 해소
+        assert reg.resume_teammate(key) == ""
+        tm = reg.get(key)
+        assert wait_until(lambda: tm.state == "idle")
+        assert tm.error == ""  # 새 생 — 사인 리셋
+        reg.shutdown_all()
+
+    def test_tool_mode_resume_with_task(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.kill(key)
+        r = tool_teammate(
+            {"mode": "resume", "key": key, "task": "continue the work"},
+            registry=reg,
+        )
+        assert r.success
+        assert "remembers ALL previous exchanges" in r.output
+        assert "task queued" in r.output
+        assert wait_until(reg.has_pending_replies)
+        reg.shutdown_all()
+
+    def test_tool_mode_resume_validation(self):
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["teammate"]
+        assert tool.validate({"mode": "resume"}) is not None  # key 필수
+        assert tool.validate({"mode": "resume", "key": "agt-1"}) is None
+
+    def test_died_notice_mentions_resume(self):
+        rec = build_reply_record(
+            {
+                "kind": "died",
+                "key": "agt-x",
+                "role": "",
+                "success": False,
+                "output": "boom",
+            }
+        )
+        assert '"mode":"resume"' in rec["content"]
+
+
+# ── 멤버십 변화의 인스펙터 즉시 반영 (v4.61.0) ──
+
+
+class TestInspectorImmediateReflection:
+    def _web_with_snapshot(self):
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer()
+        r.note_system_prompt([("Base", "BASE"), ("Teammate Roles", "CATALOG")], turn=1)
+        return r
+
+    def test_update_prompt_section_insert_replace_remove(self):
+        r = self._web_with_snapshot()
+        # 신설 — 카탈로그 뒤에 삽입
+        r.update_prompt_section("", "Live Teammates", "- `agt-1` (coder)")
+        names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
+        assert names == ["Base", "Teammate Roles", "Live Teammates"]
+        # 교체 + 총계 재계산
+        r.update_prompt_section("", "Live Teammates", "- `agt-1`\n- `agt-2`")
+        snap = r.prompt_snapshot("")
+        live = next(s for s in snap["sections"] if s["name"] == "Live Teammates")
+        assert "agt-2" in live["text"]
+        assert snap["total_chars"] == sum(s["chars"] for s in snap["sections"]) + 4
+        # 제거 (마지막 teammate 사망 → 섹션 소멸)
+        r.update_prompt_section("", "Live Teammates", "")
+        names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
+        assert "Live Teammates" not in names
+        # 열린 인스펙터 재조회 신호가 흘렀다 (transient)
+        # → connection 등록 후 한 번 더 갱신해 이벤트 수신 확인
+        from agent_cli.render.web import WebConnection
+
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        r.update_prompt_section("", "Live Teammates", "- back")
+        events = []
+        while not conn.queue.empty():
+            events.append(conn.queue.get_nowait())
+        assert any(e == "prompt_changed" for e, _ in events)
+
+    def test_kill_reflects_in_main_snapshot_immediately(self, tmp_path, monkeypatch):
+        # 대화 창/도구 kill 공통 경로 — 다음 턴을 기다리지 않고 main
+        # 스냅샷의 Live Teammates 에서 즉시 사라진다.
+        import agent_cli.render as render_mod
+
+        r = self._web_with_snapshot()
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        live = next(
+            s
+            for s in r.prompt_snapshot("")["sections"]
+            if s["name"] == "Live Teammates"
+        )
+        assert key in live["text"]  # spawn 즉시 광고
+        reg.kill(key)
+        names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
+        assert "Live Teammates" not in names  # 유일 멤버 사망 → 섹션 소멸
+
+    def test_no_snapshot_is_safe_noop(self, tmp_path, monkeypatch):
+        # CLI(minimal)·스냅샷 미존재 환경에서도 멤버십 변화가 안전.
+        from agent_cli.render.web import WebRenderer
+
+        import agent_cli.render as render_mod
+
+        r = WebRenderer()  # note_system_prompt 안 함 — 스냅샷 없음
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.kill(key)  # 예외 없이 통과하면 OK
+        assert r.prompt_snapshot("") is None

@@ -1110,6 +1110,19 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=404, detail=error)
         return JSONResponse({"accepted": True})
 
+    @app.post("/api/teammate/{key}/resume")
+    async def teammate_resume(key: str, token: str = Query(...)):
+        """죽은 teammate 를 이전 컨텍스트 그대로 부활 (대화 창의 ↻)."""
+        server._require_token(token)
+        registry = server.teammate_registry
+        if registry is None:
+            raise HTTPException(status_code=503, detail="teammate registry not ready")
+        error = registry.resume_teammate(key)
+        if error:
+            code = 409 if "still alive" in error or "limit" in error else 404
+            raise HTTPException(status_code=code, detail=error)
+        return JSONResponse({"ok": True})
+
     @app.post("/api/teammate/{key}/kill")
     async def teammate_kill(key: str, token: str = Query(...)):
         """teammate 종료 (P4 창의 ✕) — kill 은 worker join(≤2s)을 포함하므로

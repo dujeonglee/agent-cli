@@ -36,7 +36,7 @@ class TeammateTool(Tool):
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["spawn", "request", "wait", "status", "kill"],
+                "enum": ["spawn", "request", "wait", "status", "resume", "kill"],
                 "description": (
                     "spawn: create a teammate (returns its key). "
                     "request: send it a message — returns immediately, the "
@@ -44,6 +44,8 @@ class TeammateTool(Tool):
                     "wait: block until its next reply (only when you have "
                     "nothing else to do). "
                     "status: list teammates and their state. "
+                    "resume: bring a DEAD teammate back to life with its full "
+                    "prior context (it remembers everything). "
                     "kill: terminate one."
                 ),
             },
@@ -67,7 +69,9 @@ class TeammateTool(Tool):
             },
             "task": {
                 "type": "string",
-                "description": "spawn: optional initial request queued right away",
+                "description": (
+                    "spawn/resume: optional initial request queued right away"
+                ),
             },
             "key": {
                 "type": "string",
@@ -101,12 +105,13 @@ class TeammateTool(Tool):
     _MODE_REQUIRED = {
         "request": ("key", "message"),
         "wait": ("key",),
+        "resume": ("key",),
         "kill": ("key",),
     }
 
     def validate(self, args: dict) -> str | None:
         mode = args.get("mode")
-        valid = ("spawn", "request", "wait", "status", "kill")
+        valid = ("spawn", "request", "wait", "status", "resume", "kill")
         if mode not in valid:
             return f"unknown mode '{mode}' — must be one of {', '.join(valid)}"
         for field in self._MODE_REQUIRED.get(mode, ()):

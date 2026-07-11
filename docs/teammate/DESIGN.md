@@ -338,6 +338,20 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
   카드, 조용한 큐 마비 재발 방지). 사용자 세션 그대로 재현→수리 검증
   (web resume→재생성→main 정리 요청 처리).
 
+- 2026-07-11 **mode:"resume" (v4.61.0)**: 죽은 teammate 를 이전 컨텍스트
+  그대로 부활 — dead 칩이 남는 이유("사후 검사")에 두 번째 이유("부활
+  가능") 추가. 같은 key + ctx resume 모드(P3 재사용) + seq 연속 + revivable
+  복귀. 이름 논의: resume(세션·ctx 와 동일 의미론) 채택, respawn(초기화
+  오해)/restore(내부 API 충돌) 기각. 웹 dead 칩 ↻ 버튼 + 엔드포인트.
+  테스트 +9 (kill/사망/툼스톤 3경로 부활·가드·seq·revivable 복귀).
+  같은 릴리스에 **멤버십 변화의 인스펙터 즉시 반영**: 플래그-리로드는
+  다음 턴에야 돌아 idle 중 창 kill 이 낡은 Live Teammates 를 남기던 갭 —
+  `update_prompt_section`(web 스냅샷 외과 갱신: 교체/카탈로그-뒤 삽입/
+  빈값 제거+총계 재계산) + transient `prompt_changed` → 열린 인스펙터
+  refetch(memory_changed 패턴). notify_teammates_changed(registry) 가
+  spawn/kill/died/restore/resume 전 지점에서 구동. 실제 재조립은 여전히
+  플래그가 보장 (인스펙터는 다음 호출이 받을 내용을 앞당겨 표시).
+
 ## 진행 로그
 
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.

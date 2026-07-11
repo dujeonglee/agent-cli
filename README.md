@@ -1032,6 +1032,7 @@ delegate 가 "일회성 파견"(답변 → 소멸)이라면 `teammate` 는 **상
 {"action": "teammate", "action_input": {"mode": "spawn", "role": "researcher", "task": "레포 구조를 파악해줘"}}
 {"action": "teammate", "action_input": {"mode": "request", "key": "agt-3f2a1b9c", "message": "그래서 진입점이 어디야?"}}
 {"action": "teammate", "action_input": {"mode": "status"}}
+{"action": "teammate", "action_input": {"mode": "resume", "key": "agt-3f2a1b9c", "task": "이어서 진행해"}}
 {"action": "teammate", "action_input": {"mode": "kill", "key": "agt-3f2a1b9c"}}
 ```
 
@@ -1045,6 +1046,7 @@ delegate 가 "일회성 파견"(답변 → 소멸)이라면 `teammate` 는 **상
   - **auto-spawn**: frontmatter `auto-spawn: true` 역할은 세션 시작 시 자동 상주합니다 (resume 재생성분과 중복 스폰 없음).
   - **`/create-teammate` 스킬**: 새 역할 md 를 대화형으로 생성.
 - **worker 사망 통지**: teammate worker 가 비정상 종료(ctx 생성 실패·내부 기계 예외)하면 main 에 `DIED` 관찰로 즉시 통지됩니다 — status 를 조회할 필요 없음. `kill`/세션 종료 같은 의도된 종료는 통지하지 않습니다.
+- **부활 (`mode: "resume"`)**: kill 되거나 사망한 teammate 를 **이전 컨텍스트 그대로** 되살립니다 — history 가 디스크에 보존되므로 부활한 teammate 는 죽기 전 문답을 전부 기억합니다 (`task` 로 즉시 이어서 요청 가능, 회신 파일 번호도 이어감). 웹 대화 창의 dead 칩에서 ↻ 버튼으로도 부활할 수 있습니다. 부활 후에는 세션 resume 의 자동 재생성 대상으로 복귀합니다. 죽은 teammate 의 칩/기록이 남아 있는 이유가 바로 이것 — 사후 검사 + 부활 가능성.
 - **스코프**: main 세션 전용 — 서브에이전트(delegate/skill/teammate 자신) 안에서는 도구가 노출되지 않습니다. delegate 는 teammate 안에서 평소처럼 쓸 수 있습니다. 동시 생존 상한 기본 4 (`AGENT_CLI_MAX_TEAMMATES`).
 - **수명**: main 의 Stop/Ctrl+C 는 teammate 를 죽이지 않습니다(백그라운드 계속). 종료는 `kill` 또는 세션 종료 시 일괄 정리. 회신 전문은 `teammates/<key>/replies/` 에 항상 저장됩니다.
 - **세션 resume 시 자동 재생성**: `--resume` 하면 이전 세션에서 살아있던 teammate 가 **자기 대화 이력을 전부 기억한 채** 자동으로 되살아납니다 (`teammates.json` manifest — 역할 프롬프트도 저장돼 역할 md 파일이 지워져도 무관). 미배달 회신도 보존되어 첫 턴에 배달됩니다 (답변 대기 중이던 질문은 STALE 로 표시 — 재시작으로 더 이상 블록 상태가 아님을 안내). 명시적으로 `kill` 한 teammate 는 되살아나지 않습니다.
