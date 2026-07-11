@@ -267,14 +267,14 @@ class DispatchOutput:
         """``@agt-<key> ...`` 의 결과/에러 (기본: 무시)."""
 
 
-def _try_dispatch_teammate_command(
-    message: str, output: DispatchOutput, teammate_registry
+def _try_dispatch_agent_command(
+    message: str, output: DispatchOutput, agent_registry
 ) -> bool:
     """``@teammates`` / ``@agt-<key> [메시지]`` 사용자 명령 (범위 B).
 
     ``@agents`` 대칭의 직접 조작 표면 — 회신 라우팅은 D8 그대로: 사용자
     발신이므로 main LLM 컨텍스트에 들어가지 않고, 웹은 🤝 창으로, CLI 는
-    MinimalRenderer.teammate_message 콘솔 라인으로 받는다. 처리했으면
+    MinimalRenderer.agent_message 콘솔 라인으로 받는다. 처리했으면
     True (호출자는 LLM 경로를 건너뜀).
     """
     if not message.startswith("@"):
@@ -283,23 +283,23 @@ def _try_dispatch_teammate_command(
     name = parts[0][1:]
 
     if name == "teammates":
-        if teammate_registry is None:
+        if agent_registry is None:
             output.list_teammates("(teammate 레지스트리가 없는 모드입니다)")
         else:
-            output.list_teammates(teammate_registry.format_status())
+            output.list_teammates(agent_registry.format_status())
         return True
 
     if name.startswith("agt-"):
-        if teammate_registry is None:
+        if agent_registry is None:
             output.teammate_dispatch_result(
                 "(teammate 레지스트리가 없는 모드입니다)", False
             )
             return True
         if len(parts) < 2:
             # 메시지 없음 → 그 teammate 의 상태
-            output.teammate_dispatch_result(teammate_registry.format_status(name), True)
+            output.teammate_dispatch_result(agent_registry.format_status(name), True)
             return True
-        error = teammate_registry.request(name, parts[1], author="user")
+        error = agent_registry.request(name, parts[1], author="user")
         if error:
             output.teammate_dispatch_result(f"@{name}: {error}", False)
         else:
@@ -445,7 +445,7 @@ def try_dispatch_agent_or_skill(
     session,
     graceful_interrupt: bool = True,
     stop_event=None,
-    teammate_registry=None,
+    agent_registry=None,
 ) -> bool:
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
 
@@ -471,7 +471,7 @@ def try_dispatch_agent_or_skill(
     if message.startswith("@"):
         # teammate 명령이 먼저 — ``@teammates`` 목록 / ``@agt-<key>`` 직접
         # 조작 (agents 폴백에 가려지던 것을 전용 처리, 범위 B).
-        if _try_dispatch_teammate_command(message, output, teammate_registry):
+        if _try_dispatch_agent_command(message, output, agent_registry):
             return True
         parts = message.split(maxsplit=1)
         name = parts[0][1:]
@@ -1083,11 +1083,11 @@ def run(
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
     # 자동 strip). run 은 프로세스 단명이라 종료 시 전원 정리 — 미배달
     # 회신의 세션-넘김 보존은 P3(manifest/outbox).
-    from agent_cli.subagent.teammate import TeammateRegistry
+    from agent_cli.subagent.agents_live import AgentRegistry
 
     # runtime 프리필: restore/auto-spawn 된 teammate 가 도구 호출(스폰)
     # 없이 첫 접촉(웹 창 인간 개입 등)을 받아도 provider 배선이 있도록.
-    teammate_registry = TeammateRegistry(
+    agent_registry = AgentRegistry(
         ctx.session_dir if ctx else None,
         runtime={
             "provider": llm_provider,
@@ -1111,38 +1111,38 @@ def run(
     # 정지 = 큐 비고 + teammate 활성 작업 없음(quiescence). teammate 를
     # 안 쓰면 종전과 동일하게 1회 실행 후 즉시 종료.
     from agent_cli.input_queue import InputQueue
-    from agent_cli.subagent.teammate import MailWaker
+    from agent_cli.subagent.agents_live import MailWaker
 
     input_queue = InputQueue()
-    waker = MailWaker(input_queue.enqueue, teammate_registry.has_pending_replies)
+    waker = MailWaker(input_queue.enqueue, agent_registry.has_pending_replies)
 
     def _on_teammate_mail(reply: dict) -> None:
-        _teammate_reply_notice(reply)
+        _agent_mail_notice(reply)
         waker.on_mail()
 
-    teammate_registry.on_reply = _on_teammate_mail
+    agent_registry.on_reply = _on_teammate_mail
     # P3 (D7): --resume 세션이면 이전 teammate 자동 재생성 + 미배달 회신
-    # 복원 (fresh 세션은 teammates.json 이 없어 no-op).
-    revived = teammate_registry.restore(parent_ctx=ctx)
+    # 복원 (fresh 세션은 agents.json 이 없어 no-op).
+    revived = agent_registry.restore(parent_ctx=ctx)
     if revived:
         console.print(f"[{C['muted']}]🤝 teammate {revived}명 재생성됨[/]")
-    auto = teammate_registry.auto_spawn(parent_ctx=ctx)
+    auto = agent_registry.auto_spawn(parent_ctx=ctx)
     if auto:
         console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
 
     # teammate 직접 명령 (범위 B): @teammates / @agt-<key> [메시지].
     # --resume 세션에서 재생성된 teammate 에게 CLI 로 직접 말 걸기.
-    if query.startswith("@") and _try_dispatch_teammate_command(
-        query, _ConsoleDispatchOutput(), teammate_registry
+    if query.startswith("@") and _try_dispatch_agent_command(
+        query, _ConsoleDispatchOutput(), agent_registry
     ):
-        # 회신까지 대기 — MinimalRenderer.teammate_message 가 콘솔로 출력.
+        # 회신까지 대기 — MinimalRenderer.agent_message 가 콘솔로 출력.
         try:
-            while teammate_registry.has_active_work():
+            while agent_registry.has_active_work():
                 time.sleep(0.3)
         except KeyboardInterrupt:
             pass
         finally:
-            teammate_registry.shutdown_all()
+            agent_registry.shutdown_all()
         _finalize_run(session, ctx, mcp_manager)
         return
 
@@ -1166,7 +1166,7 @@ def run(
         if answer is not _AGENT_NOT_FOUND:
             if answer is not None:
                 console.print(f"\n[{C['final']}]{answer}[/]")
-            teammate_registry.shutdown_all()
+            agent_registry.shutdown_all()
             _finalize_run(session, ctx)
             return
 
@@ -1195,25 +1195,25 @@ def run(
             record_turns=record_turns,
             wire_format=wire_format_plugin,
             compaction_enabled=not no_compaction,
-            teammate_registry=teammate_registry,
+            agent_registry=agent_registry,
         )
         if loop_result.success:
             answer = loop_result.output
 
     input_queue.enqueue(None, query)
     try:
-        _run_message_pump(input_queue, waker, teammate_registry, _run_one)
+        _run_message_pump(input_queue, waker, agent_registry, _run_one)
     except KeyboardInterrupt:
         answer = None
         console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
     finally:
-        stuck = teammate_registry.waiting_ask_keys()
+        stuck = agent_registry.waiting_ask_keys()
         if stuck:
             console.print(
                 f"[{C['accent']}]⚠ teammate {', '.join(stuck)} 이(가) 답변 대기 "
                 f"중인 채 종료 — resume 시 질문은 STALE 처리됩니다[/]"
             )
-        teammate_registry.shutdown_all()
+        agent_registry.shutdown_all()
 
     _finalize_run(session, ctx, mcp_manager)
 
@@ -1246,7 +1246,7 @@ def _run_message_pump(input_queue, waker, registry, run_one, *, poll_secs=0.5):
         waker.on_run_end()  # run 종료 직후 도착분 레이스 봉합
 
 
-def _announce_teammate_boot(renderer, revived: int, auto: int) -> None:
+def _announce_agent_boot(renderer, revived: int, auto: int) -> None:
     """web 부트스트랩의 teammate 재생성/auto-spawn 알림.
 
     v4.60.1 사고의 재발 방지 지점: 인라인 status() 오호출(시그니처)이
@@ -1259,7 +1259,7 @@ def _announce_teammate_boot(renderer, revived: int, auto: int) -> None:
         renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
 
 
-def _teammate_reply_notice(reply: dict) -> None:
+def _agent_mail_notice(reply: dict) -> None:
     """teammate mailbox 도착 알림 (D2 배달과 별개의 힌트 라인) — CLI 는
     상태 라인, web 은 transient status 이벤트. 배달 자체는 다음 턴 경계.
     kind:"question"(P2 ask 라우팅)은 teammate 가 답변까지 블록되므로
@@ -1746,7 +1746,7 @@ def web(
     from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
 
     # teammate P1: worker 가 생성(nonlocal)하고 서버 teardown 이 정리.
-    teammate_registry = None
+    agent_registry = None
 
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.
@@ -1764,10 +1764,10 @@ def web(
         # teammate P1: 서버 수명의 레지스트리 — 매 run_loop 에 주입되어
         # teammate 가 run 경계를 넘어 생존한다. 종료는 서버 teardown 의
         # shutdown_all (아래 finally).
-        from agent_cli.subagent.teammate import TeammateRegistry
+        from agent_cli.subagent.agents_live import AgentRegistry
 
-        nonlocal teammate_registry
-        teammate_registry = TeammateRegistry(
+        nonlocal agent_registry
+        agent_registry = AgentRegistry(
             ctx.session_dir if ctx else None,
             # runtime 프리필 — restore/auto-spawn 분이 스폰 도구 호출 없이
             # 웹 창 첫 접촉을 받아도 돌 수 있게 (run 경로와 동일 이유).
@@ -1787,25 +1787,25 @@ def web(
                 "compaction_enabled": not no_compaction,
             },
         )
-        _registry = teammate_registry  # 클로저 고정 (nonlocal 재대입과 분리)
+        _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
-        server.teammate_registry = _registry
+        server.agent_registry = _registry
 
         # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
         # 가능한 순수 조율자, subagent/teammate.py) 가 소유.
-        from agent_cli.subagent.teammate import MailWaker
+        from agent_cli.subagent.agents_live import MailWaker
 
         _waker = MailWaker(server.enqueue, _registry.has_pending_replies)
 
         def _on_teammate_mail(reply: dict) -> None:
-            _teammate_reply_notice(reply)
+            _agent_mail_notice(reply)
             _waker.on_mail()
 
-        teammate_registry.on_reply = _on_teammate_mail
+        agent_registry.on_reply = _on_teammate_mail
         # P3 (D7): --resume 세션의 teammate 자동 재생성 (fresh 는 no-op).
-        revived = teammate_registry.restore(parent_ctx=ctx)
-        auto = teammate_registry.auto_spawn(parent_ctx=ctx)
-        _announce_teammate_boot(renderer, revived, auto)
+        revived = agent_registry.restore(parent_ctx=ctx)
+        auto = agent_registry.auto_spawn(parent_ctx=ctx)
+        _announce_agent_boot(renderer, revived, auto)
         while True:
             # Tell the frontend we're waiting for the next user
             # message. Goes through ``_latest_worker_state`` so a
@@ -1860,7 +1860,7 @@ def web(
                     return try_dispatch_agent_or_skill(
                         text,
                         web_output,
-                        teammate_registry=_registry,
+                        agent_registry=_registry,
                         llm_provider=llm_provider,
                         capabilities=capabilities,
                         resolved_model=resolved_model,
@@ -1905,7 +1905,7 @@ def web(
                             wire_format=wire_format_plugin,
                             compaction_enabled=not no_compaction,
                             mcp_manager=mcp_manager,
-                            teammate_registry=teammate_registry,
+                            agent_registry=agent_registry,
                         )
 
                     result = _run_main(message, nickname)
@@ -2139,8 +2139,8 @@ def web(
         renderer.shutdown_all_connections()
         server.shutdown()
         worker.join(timeout=2.0)
-        if teammate_registry is not None:
-            teammate_registry.shutdown_all()  # 상주 teammate 전원 종료
+        if agent_registry is not None:
+            agent_registry.shutdown_all()  # 상주 teammate 전원 종료
         if mcp_manager:
             mcp_manager.disconnect_all()
         console.print(f"[{C['muted']}]Saving session...[/]")

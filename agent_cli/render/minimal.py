@@ -980,13 +980,11 @@ class MinimalRenderer(Renderer):
     # 캡처로 억제하고 버린다. teammate 활동은 회신 배달(관찰 카드)과
     # 📨 도착 알림·teammates/<key>/ 세션 기록으로만 표면화 (P1 결정).
 
-    def begin_teammate_work(
-        self, *, key: str, seq: int, role: str, message: str
-    ) -> None:
+    def begin_agent_work(self, *, key: str, seq: int, role: str, message: str) -> None:
         self.start_capture()
         self.set_thread_agent(role or key)
 
-    def end_teammate_work(
+    def end_agent_work(
         self,
         *,
         key: str,
@@ -998,7 +996,7 @@ class MinimalRenderer(Renderer):
         self.stop_capture()  # 캡처 폐기 — 전문은 teammate 세션 디렉토리에
         self.set_thread_agent("")
 
-    def teammate_message(
+    def agent_message(
         self,
         *,
         key: str,

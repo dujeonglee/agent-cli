@@ -1,6 +1,6 @@
 """teammate 도구 스키마 (P1, docs/teammate/DESIGN.md §4.3).
 
-실행은 :func:`agent_cli.subagent.teammate.tool_teammate` — delegate 처럼
+실행은 :func:`agent_cli.subagent.agents_live.tool_agent` — delegate 처럼
 루프(tool_bridge)가 인터셉트해 registry/provider 배선을 주입한다. 이
 모듈은 스키마·의미론 검증(C7 ``validate``)·over-cap 표면만 소유한다.
 레지스트리가 없는 루프(서브에이전트·headless)에서는 AgentLoop 초기화가

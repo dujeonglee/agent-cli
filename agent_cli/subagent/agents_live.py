@@ -3,8 +3,8 @@
 delegate 가 "파견"(스폰→완주→ctx 폐기)이라면 teammate 는 "상주 팀원"이다:
 spawn 이 key 를 반환하고, 이후 request 가 같은 ctx 위에서 반복 처리된다
 (D1 비동기 mailbox). 회신은 LLM 폴링이 아니라 **harness 가 배달**한다 —
-main 루프가 턴 경계에서 :meth:`TeammateRegistry.drain_replies` 를 비워
-관찰 레코드로 주입한다 (D2, ``AgentLoop._deliver_teammate_replies``).
+main 루프가 턴 경계에서 :meth:`AgentRegistry.drain_replies` 를 비워
+관찰 레코드로 주입한다 (D2, ``AgentLoop._deliver_agent_mail``).
 
 스레딩 모델
 -----------
@@ -19,7 +19,7 @@ teammate 하나 = 데몬 worker 스레드 하나. worker 는 자기 inbox 를 �
 - **인스펙터 (D9)**: worker 시작 시 ``begin_prompt_scope(key)`` 로 상시
   스코프를 열고(ctx 도 등록), **종료 시에만** ``end_prompt_scope`` —
   delegate 와 달리 요청 사이에도 칩이 살아 있고 동적 컨텍스트가 자란다.
-  요청별 SSE 라우팅은 별도 표면 ``begin/end_teammate_work`` (renderer) —
+  요청별 SSE 라우팅은 별도 표면 ``begin/end_agent_work`` (renderer) —
   스코프(상시)와 카드(요청별)를 분리한 이유는 web 렌더러의
   ``begin_delegate_task`` 가 스코프 push 와 결합돼 있어서다.
 - **레코드 계약**: 배달 레코드는 ``tool:"teammate"`` + additive
@@ -50,10 +50,10 @@ if TYPE_CHECKING:
 # worker 를 inbox 블록에서 깨워 종료시키는 sentinel (identity 비교).
 _SHUTDOWN = object()
 
-_DEFAULT_MAX_TEAMMATES = 4
+_DEFAULT_MAX_AGENTS = 4
 
-# teammates.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
-TEAMMATES_STATE_VERSION = 1
+# agents.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
+AGENTS_STATE_VERSION = 1
 
 # ── Live Teammates 시스템 프롬프트 리로드 플래그 ──
 # 멤버십(spawn/kill/died/restore/auto_spawn) 변화 시 set — 루프의
@@ -63,7 +63,7 @@ TEAMMATES_STATE_VERSION = 1
 _membership_changed = threading.Event()
 
 
-def notify_teammates_changed(registry=None) -> None:
+def notify_agents_changed(registry=None) -> None:
     """멤버십 변화 신호. 플래그(다음 턴 실제 재조립)에 더해, ``registry``
     가 주어지면 인스펙터의 main 스냅샷 Live Teammates 섹션을 **즉시**
     갱신한다 — idle 중 대화 창 kill 도 인스펙터에 바로 반영 (v4.61.0)."""
@@ -71,17 +71,17 @@ def notify_teammates_changed(registry=None) -> None:
     if registry is None:
         return
     try:
-        from agent_cli.prompts.system_prompt import build_live_teammates_section
+        from agent_cli.prompts.system_prompt import build_live_agents_section
         from agent_cli.render import get_renderer
 
         get_renderer().update_prompt_section(
-            "", "Live Teammates", build_live_teammates_section(registry)
+            "", "Live Teammates", build_live_agents_section(registry)
         )
     except Exception:
         pass  # 표시용 — 실행 경로를 막지 않는다
 
 
-def consume_teammates_reload() -> bool:
+def consume_agents_reload() -> bool:
     if _membership_changed.is_set():
         _membership_changed.clear()
         return True
@@ -100,17 +100,17 @@ def compose_role_prompt(profile_body: str, instructions: str) -> str:
     return parts[0] if parts else ""
 
 
-def format_teammate_label(key: str, role: str = "", name: str = "") -> str:
+def format_agent_label(key: str, role: str = "", name: str = "") -> str:
     """표시 라벨 — 다중 인스턴스 구분: "agt-x (coder · ui)"."""
     parts = [p for p in (role, name) if p]
     return f"{key} ({' · '.join(parts)})" if parts else key
 
 
-def _max_teammates() -> int:
+def _max_agents() -> int:
     try:
-        return int(os.environ.get("AGENT_CLI_MAX_TEAMMATES", _DEFAULT_MAX_TEAMMATES))
+        return int(os.environ.get("AGENT_CLI_MAX_AGENTS", _DEFAULT_MAX_AGENTS))
     except ValueError:
-        return _DEFAULT_MAX_TEAMMATES
+        return _DEFAULT_MAX_AGENTS
 
 
 def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
@@ -128,7 +128,7 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     from agent_cli.context.token_estimator import estimate_tokens
 
     key = reply.get("key", "")
-    label = format_teammate_label(key, reply.get("role", ""), reply.get("name", ""))
+    label = format_agent_label(key, reply.get("role", ""), reply.get("name", ""))
 
     if reply.get("kind") == "died":
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
@@ -198,7 +198,7 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     }
 
 
-class Teammate:
+class AgentInstance:
     """상주 teammate 1명 — key·역할·영속 ctx·inbox·worker 스레드."""
 
     def __init__(
@@ -272,7 +272,7 @@ class Teammate:
         }
 
 
-class TeammateRegistry:
+class AgentRegistry:
     """main 루프 수명의 teammate 소유자 + 회신 mailbox.
 
     ``runner`` 는 :func:`run_subagent_message` 기본값 — 테스트가 가짜
@@ -293,7 +293,7 @@ class TeammateRegistry:
         self._runner = runner
         self.session_dir = Path(session_dir) if session_dir else None
 
-        self._teammates: dict[str, Teammate] = {}
+        self._agents: dict[str, AgentInstance] = {}
         self._cv = threading.Condition()
         self._pending: list[dict] = []  # 미배달 회신 (도착 순서)
         # 회신 도착 알림 (CLI 📨 라인 / web transient status) — 부트스트랩 주입.
@@ -301,23 +301,23 @@ class TeammateRegistry:
 
     # ── 조회 ────────────────────────────────────
 
-    def get(self, key: str) -> Teammate | None:
-        return self._teammates.get(key)
+    def get(self, key: str) -> AgentInstance | None:
+        return self._agents.get(key)
 
     def roster_snapshot(self) -> list[dict]:
-        return [tm.snapshot() for tm in self._teammates.values()]
+        return [tm.snapshot() for tm in self._agents.values()]
 
     def _notify_roster(self) -> None:
         """P4: 상태 변화를 대화 창 목록에 반영 — web sticky, CLI no-op."""
         from agent_cli.render import get_renderer
 
         try:
-            get_renderer().teammate_roster(self.roster_snapshot())
+            get_renderer().agent_roster(self.roster_snapshot())
         except Exception:
             pass  # 표시용 — 실행 경로를 막지 않는다
 
     def alive_count(self) -> int:
-        return sum(1 for t in self._teammates.values() if t.state != "dead")
+        return sum(1 for t in self._agents.values() if t.state != "dead")
 
     def has_pending_replies(self) -> bool:
         with self._cv:
@@ -330,14 +330,14 @@ class TeammateRegistry:
         교착이라, 펌프는 경고 후 종료(shutdown 이 대기를 푼다)를 택한다."""
         if self.has_pending_replies():
             return True
-        for tm in self._teammates.values():
+        for tm in self._agents.values():
             if tm.state == "busy" or tm.inbox.qsize() > 0:
                 return True
         return False
 
     def waiting_ask_keys(self) -> list[str]:
         """답변 대기 중인 teammate — 펌프 종료 시 경고 표시용."""
-        return [tm.key for tm in self._teammates.values() if tm.state == "waiting_ask"]
+        return [tm.key for tm in self._agents.values() if tm.state == "waiting_ask"]
 
     # ── spawn ───────────────────────────────────
 
@@ -360,10 +360,10 @@ class TeammateRegistry:
         if runtime:
             self.runtime = runtime
 
-        if self.alive_count() >= _max_teammates():
+        if self.alive_count() >= _max_agents():
             return "", (
-                f"teammate limit reached ({_max_teammates()} alive). "
-                f'Kill one first (mode:"kill") or raise AGENT_CLI_MAX_TEAMMATES.'
+                f"teammate limit reached ({_max_agents()} alive). "
+                f'Kill one first (mode:"kill") or raise AGENT_CLI_MAX_AGENTS.'
             )
 
         if name and not re.match(r"^[a-zA-Z0-9_-]{1,24}$", name):
@@ -400,7 +400,7 @@ class TeammateRegistry:
             return "", "teammate requires a session dir (headless run not supported)"
 
         key = f"agt-{uuid.uuid4().hex[:8]}"
-        tm = Teammate(
+        tm = AgentInstance(
             key,
             role_name=role,
             role_prompt=role_prompt,
@@ -408,12 +408,12 @@ class TeammateRegistry:
             model=model,
             hooks_config=hooks_config,
             context_mode=context_mode,
-            home_dir=self.session_dir / "teammates" / key,
+            home_dir=self.session_dir / "agents" / key,
             instance_name=name,
             description=description,
             instructions=instructions,
         )
-        self._teammates[key] = tm
+        self._agents[key] = tm
         tm.worker = threading.Thread(
             target=self._worker,
             args=(tm, parent_ctx),
@@ -423,14 +423,14 @@ class TeammateRegistry:
         tm.worker.start()
         self._save_state()
         self._notify_roster()
-        notify_teammates_changed(self)  # Live Teammates 재조립+인스펙터 즉시 반영
+        notify_agents_changed(self)  # Live Teammates 재조립+인스펙터 즉시 반영
         return key, ""
 
     # ── request / 회신 ──────────────────────────
 
     def request(self, key: str, message: str, *, author: str = "main") -> str:
         """request 큐잉 — 성공 시 빈 문자열, 실패 시 에러 메시지."""
-        tm = self._teammates.get(key)
+        tm = self._agents.get(key)
         if tm is None:
             return f"unknown teammate '{key}' (see mode:\"status\" for live keys)"
         if tm.state == "dead":
@@ -442,7 +442,7 @@ class TeammateRegistry:
         tm.inbox.put({"seq": tm.queued, "text": message, "author": author})
         from agent_cli.render import get_renderer
 
-        get_renderer().teammate_message(
+        get_renderer().agent_message(
             key=key, direction="in", author=author, text=message, seq=tm.queued
         )
         self._notify_roster()
@@ -473,15 +473,15 @@ class TeammateRegistry:
 
     def format_status(self, key: str = "") -> str:
         if key:
-            tm = self._teammates.get(key)
+            tm = self._agents.get(key)
             if tm is None:
                 return f"unknown teammate '{key}'"
             items = [tm]
         else:
-            items = list(self._teammates.values())
+            items = list(self._agents.values())
         if not items:
             return 'no teammates. Spawn one with mode:"spawn".'
-        lines = [f"teammates ({self.alive_count()}/{_max_teammates()} alive):"]
+        lines = [f"teammates ({self.alive_count()}/{_max_agents()} alive):"]
         for tm in items:
             s = tm.snapshot()
             role = s["role"] or "anon"
@@ -505,7 +505,7 @@ class TeammateRegistry:
 
     def kill(self, key: str) -> str:
         """종료 요청 — 성공 시 빈 문자열. 멱등 (이미 dead 여도 성공)."""
-        tm = self._teammates.get(key)
+        tm = self._agents.get(key)
         if tm is None:
             return f"unknown teammate '{key}'"
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
@@ -515,15 +515,15 @@ class TeammateRegistry:
             tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
         self._save_state()
         self._notify_roster()
-        notify_teammates_changed(self)
+        notify_agents_changed(self)
         return ""
 
     def shutdown_all(self) -> None:
         """세션 종료 — 전원 kill. main 부트스트랩의 finally 에서 호출."""
-        for tm in list(self._teammates.values()):
+        for tm in list(self._agents.values()):
             tm.stop_event.set()
             tm.inbox.put(_SHUTDOWN)
-        for tm in list(self._teammates.values()):
+        for tm in list(self._agents.values()):
             if tm.worker is not None:
                 tm.worker.join(timeout=5.0)
         # 최종 스냅샷 — revivable 유지 상태로 기록돼 resume 이 되살린다 (D7).
@@ -538,7 +538,7 @@ class TeammateRegistry:
         성공 시 빈 문자열, 실패 시 에러 메시지. 부활 후에는 세션 resume
         의 자동 재생성 대상으로도 복귀한다 (revivable=True).
         """
-        tm = self._teammates.get(key)
+        tm = self._agents.get(key)
         if tm is None:
             return f"unknown teammate '{key}'"
         if tm.state != "dead":
@@ -546,13 +546,13 @@ class TeammateRegistry:
                 f"teammate '{key}' is still alive ({tm.state}) — send it a "
                 f"request instead"
             )
-        if self.alive_count() >= _max_teammates():
+        if self.alive_count() >= _max_agents():
             return (
-                f"teammate limit reached ({_max_teammates()} alive). "
+                f"teammate limit reached ({_max_agents()} alive). "
                 f'Kill one first (mode:"kill").'
             )
 
-        fresh = Teammate(
+        fresh = AgentInstance(
             key,
             role_name=tm.role_name,
             role_prompt=tm.role_prompt,
@@ -570,7 +570,7 @@ class TeammateRegistry:
         fresh.queued = max(tm.queued, tm.handled)
         fresh.created_at = tm.created_at
         fresh.revive = True  # worker 가 ctx 를 resume 모드로 (이력 이어받기)
-        self._teammates[key] = fresh
+        self._agents[key] = fresh
         fresh.worker = threading.Thread(
             target=self._worker,
             args=(fresh, parent_ctx),
@@ -580,7 +580,7 @@ class TeammateRegistry:
         fresh.worker.start()
         self._save_state()
         self._notify_roster()
-        notify_teammates_changed(self)
+        notify_agents_changed(self)
         return ""
 
     def auto_spawn(self, parent_ctx=None) -> int:
@@ -590,7 +590,7 @@ class TeammateRegistry:
         from agent_cli.subagent.profiles import available_profiles
 
         live_roles = {
-            tm.role_name for tm in self._teammates.values() if tm.state != "dead"
+            tm.role_name for tm in self._agents.values() if tm.state != "dead"
         }
         spawned = 0
         for name, meta in available_profiles(include_meta=True):
@@ -606,10 +606,10 @@ class TeammateRegistry:
     # ── P3: 상태 영속 + resume 재생성 (D7) ──────
 
     def _state_path(self) -> Path | None:
-        return self.session_dir / "teammates.json" if self.session_dir else None
+        return self.session_dir / "agents.json" if self.session_dir else None
 
     def _save_state(self) -> None:
-        """teammates.json 원자 저장 (fsio) — manifest + 미배달 pending 미러.
+        """agents.json 원자 저장 (fsio) — manifest + 미배달 pending 미러.
 
         갱신 시점: spawn/kill/worker 종료(상태) + push/drain(pending).
         상태 파일은 best-effort — 디스크 문제로 세션 진행을 막지 않는다.
@@ -618,7 +618,7 @@ class TeammateRegistry:
         if path is None:
             return
         entries = []
-        for tm in self._teammates.values():
+        for tm in self._agents.values():
             entries.append(
                 {
                     "key": tm.key,
@@ -649,7 +649,7 @@ class TeammateRegistry:
             atomic_write_json(
                 path,
                 {
-                    "version": TEAMMATES_STATE_VERSION,
+                    "version": AGENTS_STATE_VERSION,
                     "teammates": entries,
                     "pending": pending,
                 },
@@ -658,7 +658,7 @@ class TeammateRegistry:
             pass
 
     def restore(self, parent_ctx=None) -> int:
-        """세션 resume 시 teammates.json 에서 재생성 — 되살린 수 반환.
+        """세션 resume 시 agents.json 에서 재생성 — 되살린 수 반환.
 
         - 살아있던(revivable) teammate: 자기 history 를 resume 한 ctx 로
           worker 재기동 (이전 문답 전부 기억). kill 된 것은 dead 툼스톤으로
@@ -675,7 +675,7 @@ class TeammateRegistry:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return 0
-        if not isinstance(data, dict) or data.get("version") != TEAMMATES_STATE_VERSION:
+        if not isinstance(data, dict) or data.get("version") != AGENTS_STATE_VERSION:
             return 0
 
         with self._cv:
@@ -691,9 +691,9 @@ class TeammateRegistry:
         revived = 0
         for e in data.get("teammates", []):
             key = e.get("key")
-            if not key or key in self._teammates or self.session_dir is None:
+            if not key or key in self._agents or self.session_dir is None:
                 continue
-            tm = Teammate(
+            tm = AgentInstance(
                 key,
                 role_name=e.get("role", ""),
                 role_prompt=e.get("role_prompt", ""),
@@ -701,7 +701,7 @@ class TeammateRegistry:
                 model=e.get("model", ""),
                 hooks_config=e.get("hooks_config"),
                 context_mode=e.get("context_mode", "none"),
-                home_dir=self.session_dir / "teammates" / key,
+                home_dir=self.session_dir / "agents" / key,
                 instance_name=e.get("name", ""),
                 description=e.get("description", ""),
                 instructions=e.get("instructions", ""),
@@ -710,7 +710,7 @@ class TeammateRegistry:
             tm.queued = tm.handled  # seq 이어가기 (reply-N.md 충돌 방지)
             if isinstance(e.get("created_at"), (int, float)):
                 tm.created_at = e["created_at"]
-            self._teammates[key] = tm
+            self._agents[key] = tm
             if e.get("state") == "dead":
                 tm.state = "dead"
                 tm.error = e.get("error", "")
@@ -728,12 +728,12 @@ class TeammateRegistry:
         self._save_state()
         self._notify_roster()
         if revived:
-            notify_teammates_changed(self)
+            notify_agents_changed(self)
         return revived
 
     # ── worker ──────────────────────────────────
 
-    def _persist_reply(self, tm: Teammate, seq: int, body: str) -> str:
+    def _persist_reply(self, tm: AgentInstance, seq: int, body: str) -> str:
         """회신 전문을 항상 디스크에 (over-cap 포인터 + P3 보존 토대)."""
         try:
             replies_dir = tm.home_dir / "replies"
@@ -744,7 +744,7 @@ class TeammateRegistry:
         except OSError:
             return ""
 
-    def _worker(self, tm: Teammate, parent_ctx) -> None:
+    def _worker(self, tm: AgentInstance, parent_ctx) -> None:
         """teammate 의 전 생애: 스코프 열기 → ctx 생성 → inbox 루프 → 정리.
 
         상태 전이는 전부 이 함수 안이다.
@@ -754,7 +754,7 @@ class TeammateRegistry:
 
         renderer = get_renderer()
         _disp = " · ".join(p for p in (tm.role_name, tm.instance_name) if p) or "anon"
-        renderer.begin_prompt_scope(tm.key, label=f"teammate:{_disp}")
+        renderer.begin_prompt_scope(tm.key, label=f"agent:{_disp}")
         crash = ""  # 비정상 종료 사유 (의도된 종료 = stop_event set 은 제외)
         try:
             # ctx 는 worker 스레드에서 생성 — create_subagent_ctx 의
@@ -789,9 +789,7 @@ class TeammateRegistry:
                 self._notify_roster()
                 query = f"[{author}]: {text}" if author != "main" else text
 
-                renderer.begin_teammate_work(
-                    key=tm.key, seq=seq, role=_disp, message=text
-                )
+                renderer.begin_agent_work(key=tm.key, seq=seq, role=_disp, message=text)
                 success, output, duration = False, "", 0.0
                 try:
                     loop_result, duration = self._run_message(tm, query)
@@ -804,7 +802,7 @@ class TeammateRegistry:
                 except Exception as e:  # worker 는 죽지 않는다 — 회신으로 보고
                     output = f"teammate internal error: {type(e).__name__}: {e}"
                 finally:
-                    renderer.end_teammate_work(
+                    renderer.end_agent_work(
                         key=tm.key,
                         seq=seq,
                         success=success,
@@ -815,7 +813,7 @@ class TeammateRegistry:
                 tm.handled += 1
                 tm.state = "idle"
                 # 대화 창에는 화자 불문 항상 표시 (P4).
-                renderer.teammate_message(
+                renderer.agent_message(
                     key=tm.key,
                     direction="out",
                     author=tm.key,
@@ -865,9 +863,9 @@ class TeammateRegistry:
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()
-            notify_teammates_changed(self)  # 사망도 멤버십 변화 — 광고에서 제거
+            notify_agents_changed(self)  # 사망도 멤버십 변화 — 광고에서 제거
 
-    def _make_ask_handler(self, tm: Teammate):
+    def _make_ask_handler(self, tm: AgentInstance):
         """teammate 서브루프의 ask 라우팅 훅 (P2, D4).
 
         teammate 가 ask 를 부르면: 질문을 main mailbox 에 올리고
@@ -882,7 +880,7 @@ class TeammateRegistry:
             from agent_cli.render import get_renderer
 
             # 대화 창에는 항상 (P4) — 인간이 먼저 답할 수 있는 표면.
-            get_renderer().teammate_message(
+            get_renderer().agent_message(
                 key=tm.key,
                 direction="question",
                 author=tm.key,
@@ -917,7 +915,7 @@ class TeammateRegistry:
 
         return handler
 
-    def _run_message(self, tm: Teammate, query: str):
+    def _run_message(self, tm: AgentInstance, query: str):
         """request 1건 실행 — 실제 러너 또는 테스트 주입 러너."""
         runner = self._runner
         if runner is None:
@@ -997,10 +995,10 @@ class MailWaker:
 # ── LLM 도구 진입점 (tool_bridge 인터셉트) ──────
 
 
-def tool_teammate(
+def tool_agent(
     args: dict,
     *,
-    registry: TeammateRegistry | None,
+    registry: AgentRegistry | None,
     parent_ctx=None,
     runtime: dict | None = None,
 ) -> ToolResult:
@@ -1044,7 +1042,7 @@ def tool_teammate(
         if role_arg:
             dead_same_role = [
                 tm.key
-                for tm in registry._teammates.values()
+                for tm in registry._agents.values()
                 if tm.role_name == role_arg and tm.state == "dead" and tm.key != key
             ]
             if dead_same_role:

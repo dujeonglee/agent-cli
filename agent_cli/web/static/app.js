@@ -1079,14 +1079,14 @@
     );
   });
 
-  es.addEventListener("teammate_roster", function (e) {
+  es.addEventListener("agent_roster", function (e) {
     // teammate 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계.
     document.dispatchEvent(
       new CustomEvent("agentcli:tm-roster", { detail: JSON.parse(e.data) }),
     );
   });
 
-  es.addEventListener("teammate_msg", function (e) {
+  es.addEventListener("agent_msg", function (e) {
     // teammate 대화 메시지 (persistent — 재접속 replay 포함).
     document.dispatchEvent(
       new CustomEvent("agentcli:tm-msg", { detail: JSON.parse(e.data) }),
@@ -2898,7 +2898,7 @@
   });
 })();
 
-// ── Teammate 대화 창 (🤝, P4) ─────────────────────────────────────────
+// ── AgentInstance 대화 창 (🤝, P4) ─────────────────────────────────────────
 // 상주 에이전트 roster + 대화 스트림 + 인간 개입. 데이터는 메인 SSE 가
 // document CustomEvent 로 중계(agentcli:tm-roster / agentcli:tm-msg —
 // auto_review 토글과 같은 브리지 패턴). 메시지는 persistent 이벤트라
@@ -2957,7 +2957,7 @@
         kill.textContent = "✕";
         kill.addEventListener("click", function (ev) {
           ev.stopPropagation();
-          fetch("api/teammate/" + encodeURIComponent(tm.key) + "/kill?" + qt(), {
+          fetch("api/agent/" + encodeURIComponent(tm.key) + "/kill?" + qt(), {
             method: "POST",
           });
         });
@@ -2971,7 +2971,7 @@
         rev.addEventListener("click", function (ev) {
           ev.stopPropagation();
           fetch(
-            "api/teammate/" + encodeURIComponent(tm.key) + "/resume?" + qt(),
+            "api/agent/" + encodeURIComponent(tm.key) + "/resume?" + qt(),
             { method: "POST" },
           );
         });
@@ -3042,7 +3042,7 @@
   function sendInput() {
     const text = ($input.value || "").trim();
     if (!text || !selected) return;
-    fetch("api/teammate/" + encodeURIComponent(selected) + "/input?" + qt(), {
+    fetch("api/agent/" + encodeURIComponent(selected) + "/input?" + qt(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: text, conn_id: window.AGENTCLI_CONN_ID || null }),

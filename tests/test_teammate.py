@@ -17,10 +17,10 @@ import pytest
 import agent_cli.render as render_mod
 from agent_cli.context.records import is_format_intervention
 from agent_cli.resource_loader import ResourceLoader
-from agent_cli.subagent.teammate import (
-    TeammateRegistry,
+from agent_cli.subagent.agents_live import (
+    AgentRegistry,
     build_reply_record,
-    tool_teammate,
+    tool_agent,
 )
 
 
@@ -55,17 +55,17 @@ class RecordingRenderer:
     def note_scope_ctx(self, ctx):
         self._rec("note_scope_ctx", ctx=ctx)
 
-    def begin_teammate_work(self, **kw):
-        self._rec("begin_teammate_work", **kw)
+    def begin_agent_work(self, **kw):
+        self._rec("begin_agent_work", **kw)
 
-    def end_teammate_work(self, **kw):
-        self._rec("end_teammate_work", **kw)
+    def end_agent_work(self, **kw):
+        self._rec("end_agent_work", **kw)
 
-    def teammate_roster(self, roster):
-        self._rec("teammate_roster", roster=roster)
+    def agent_roster(self, roster):
+        self._rec("agent_roster", roster=roster)
 
-    def teammate_message(self, **kw):
-        self._rec("teammate_message", **kw)
+    def agent_message(self, **kw):
+        self._rec("agent_message", **kw)
 
     def named(self, name):
         with self.lock:
@@ -99,7 +99,7 @@ def make_runner(reply_text="done", block: threading.Event | None = None, exc=Non
 
 
 def make_registry(tmp_path, *, runner=None, **runtime):
-    reg = TeammateRegistry(
+    reg = AgentRegistry(
         tmp_path,
         runtime={"model": "m", "timeout": 5, **runtime},
         runner=runner or make_runner(),
@@ -203,12 +203,12 @@ class TestRegistryLifecycle:
         assert key == "" and "fork" in err
 
     def test_spawn_without_session_dir_rejected(self, renderer):
-        reg = TeammateRegistry(None, runner=make_runner())
+        reg = AgentRegistry(None, runner=make_runner())
         key, err = reg.spawn()
         assert key == "" and "session dir" in err
 
     def test_spawn_limit(self, tmp_path, renderer, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_MAX_TEAMMATES", "1")
+        monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "1")
         reg = make_registry(tmp_path)
         key, err = reg.spawn()
         assert err == ""
@@ -247,7 +247,7 @@ class TestRegistryLifecycle:
         path = Path(reply["reply_path"])
         assert path.is_file()
         assert path.read_text(encoding="utf-8") == "done:hi"
-        assert "teammates" in str(path) and key in str(path)
+        assert "agents" in str(path) and key in str(path)  # 5.0.0 디스크 명명
         reg.shutdown_all()
 
     def test_on_reply_callback_fires(self, tmp_path, renderer):
@@ -339,7 +339,7 @@ class TestWaitAndScope:
         wait_until(lambda: reg.get(key).state == "idle")
         begins = renderer.named("begin_prompt_scope")
         assert [c[1]["scope"] for c in begins] == [key]
-        assert begins[0][1]["label"] == "teammate:anon"
+        assert begins[0][1]["label"] == "agent:anon"  # 5.0.0 라벨
         assert renderer.named("note_scope_ctx")  # live ctx 등록
         reg.request(key, "one")
         assert wait_until(lambda: reg.get(key).handled == 1)
@@ -352,9 +352,9 @@ class TestWaitAndScope:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         reg.request(key, "job")
-        assert wait_until(lambda: bool(renderer.named("end_teammate_work")))
-        begin = renderer.named("begin_teammate_work")[0][1]
-        end = renderer.named("end_teammate_work")[0][1]
+        assert wait_until(lambda: bool(renderer.named("end_agent_work")))
+        begin = renderer.named("begin_agent_work")[0][1]
+        end = renderer.named("end_agent_work")[0][1]
         assert begin["key"] == key and begin["seq"] == 1 and begin["message"] == "job"
         assert end["key"] == key and end["success"] is True
         reg.shutdown_all()
@@ -375,12 +375,12 @@ class TestWaitAndScope:
 
 class TestToolTeammate:
     def test_no_registry_rejected(self):
-        r = tool_teammate({"mode": "spawn"}, registry=None)
+        r = tool_agent({"mode": "spawn"}, registry=None)
         assert not r.success and "unavailable" in r.error
 
     def test_spawn_with_initial_task(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        r = tool_teammate(
+        r = tool_agent(
             {"mode": "spawn", "task": "explore"}, registry=reg, runtime=reg.runtime
         )
         assert r.success
@@ -392,9 +392,7 @@ class TestToolTeammate:
     def test_request_then_delivery_flow(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
-        r = tool_teammate(
-            {"mode": "request", "key": key, "message": "go"}, registry=reg
-        )
+        r = tool_agent({"mode": "request", "key": key, "message": "go"}, registry=reg)
         assert r.success and "queued" in r.output
         assert "DELIVERED" not in r.output  # 안내는 도구 설명이 담당
         assert "wait" not in r.output  # U-A: wait 유도 문구 소멸
@@ -409,22 +407,22 @@ class TestToolTeammate:
 
         assert "unknown mode" in TOOLS["teammate"].validate({"mode": "wait"})
         reg = make_registry(tmp_path)
-        r = tool_teammate({"mode": "wait", "key": "agt-x"}, registry=reg)
+        r = tool_agent({"mode": "wait", "key": "agt-x"}, registry=reg)
         assert not r.success and "unknown mode" in r.error
 
     def test_status_and_kill_modes(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        s = tool_teammate({"mode": "status"}, registry=reg)
+        s = tool_agent({"mode": "status"}, registry=reg)
         assert s.success and key in s.output
-        k = tool_teammate({"mode": "kill", "key": key}, registry=reg)
+        k = tool_agent({"mode": "kill", "key": key}, registry=reg)
         assert k.success and "terminated" in k.output
         assert wait_until(lambda: reg.get(key).state == "dead")
 
     def test_unknown_mode(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        r = tool_teammate({"mode": "dance"}, registry=reg)
+        r = tool_agent({"mode": "dance"}, registry=reg)
         assert not r.success and "unknown mode" in r.error
 
 
@@ -471,17 +469,17 @@ class TestLoopWiring:
 
         from agent_cli.loop import AgentLoop
 
-        reg = TeammateRegistry(tmp_path, runner=make_runner())
+        reg = AgentRegistry(tmp_path, runner=make_runner())
         loop = AgentLoop(
             query="Q",
             provider=MagicMock(),
             capabilities=None,
             model="m",
-            teammate_registry=reg,
+            agent_registry=reg,
         )
         assert "teammate" in loop._config.tools_list
 
-    def test_deliver_teammate_replies_injects_records(self, tmp_path, renderer):
+    def test_deliver_agent_mail_injects_records(self, tmp_path, renderer):
         # 턴 경계 배달 (D2): unbound 메서드를 fake self 로 구동 — 레지스트리
         # pending → messages + ctx.add, 형식-개입 오인 없음.
         from types import SimpleNamespace
@@ -496,13 +494,13 @@ class TestLoopWiring:
         added = []
         fake_ctx = SimpleNamespace(add=lambda rec: added.append(rec) or rec)
         fake_self = SimpleNamespace(
-            _config=SimpleNamespace(teammate_registry=reg),
+            _config=SimpleNamespace(agent_registry=reg),
             messages=[],
             ctx=fake_ctx,
             turn=3,
             _oversized_cap=10_000,
         )
-        AgentLoop._deliver_teammate_replies(fake_self)
+        AgentLoop._deliver_agent_mail(fake_self)
 
         assert len(fake_self.messages) == 1
         assert "done:job" in fake_self.messages[0]["content"]
@@ -512,9 +510,9 @@ class TestLoopWiring:
         assert not reg.has_pending_replies()  # 소비 완료
         # 레지스트리 없으면 no-op
         fake_self2 = SimpleNamespace(
-            _config=SimpleNamespace(teammate_registry=None), messages=[]
+            _config=SimpleNamespace(agent_registry=None), messages=[]
         )
-        AgentLoop._deliver_teammate_replies(fake_self2)
+        AgentLoop._deliver_agent_mail(fake_self2)
         assert fake_self2.messages == []
         reg.shutdown_all()
 
@@ -552,7 +550,7 @@ class TestFullLoopIntegration:
             )
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
-        reg = TeammateRegistry(tmp_path / "sess", runner=make_runner())
+        reg = AgentRegistry(tmp_path / "sess", runner=make_runner())
 
         provider = MagicMock()
 
@@ -578,7 +576,7 @@ class TestFullLoopIntegration:
             capabilities=self._caps(),
             model="test-model",
             ctx=ctx,
-            teammate_registry=reg,
+            agent_registry=reg,
         )
         assert result.success and result.output == "finished"
 
@@ -607,13 +605,13 @@ class TestFullLoopIntegration:
         loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
         assert "teammate" not in loop._config.tools_list
 
-        reg = TeammateRegistry(tmp_path, runner=make_runner())
+        reg = AgentRegistry(tmp_path, runner=make_runner())
         loop2 = AgentLoop(
             query="Q",
             provider=MagicMock(),
             capabilities=None,
             model="m",
-            teammate_registry=reg,
+            agent_registry=reg,
         )
         assert "teammate" in loop2._config.tools_list
 
@@ -679,7 +677,7 @@ class TestAskRouting:
             kinds = [r.get("kind") for r in reg._pending]
         assert kinds == ["question"]
         # main 이 답변 — 도구 힌트가 "답변으로 소비" 를 알린다
-        r = tool_teammate(
+        r = tool_agent(
             {"mode": "request", "key": key, "message": "main branch"}, registry=reg
         )
         assert r.success and "answer to its pending question" in r.output
@@ -772,7 +770,7 @@ class TestResumeRestore:
     def _state(self, tmp_path):
         import json
 
-        return json.loads((tmp_path / "teammates.json").read_text(encoding="utf-8"))
+        return json.loads((tmp_path / "agents.json").read_text(encoding="utf-8"))
 
     def test_manifest_written_on_spawn(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
@@ -901,7 +899,7 @@ class TestResumeRestore:
     def test_restore_noop_without_file_or_bad_version(self, tmp_path, renderer):
         reg = make_registry(tmp_path / "fresh")
         assert reg.restore() == 0
-        (tmp_path / "teammates.json").write_text(
+        (tmp_path / "agents.json").write_text(
             '{"version": 99, "teammates": [{"key": "agt-x"}]}', encoding="utf-8"
         )
         reg2 = make_registry(tmp_path)
@@ -911,7 +909,7 @@ class TestResumeRestore:
         # restore 된 teammate 가 스폰 없이도 현 세션 배선으로 돌 수 있도록
         # 모든 도구 호출이 runtime 을 갱신한다.
         reg = make_registry(tmp_path)
-        r = tool_teammate(
+        r = tool_agent(
             {"mode": "status"}, registry=reg, runtime={"model": "fresh-model"}
         )
         assert r.success
@@ -932,7 +930,7 @@ class TestHumanInterventionRouting:
         assert wait_until(lambda: reg.get(key).handled == 1)
         # 창에는 out 메시지가 갔지만 main pending 은 비어 있다
         outs = [
-            c for c in renderer.named("teammate_message") if c[1]["direction"] == "out"
+            c for c in renderer.named("agent_message") if c[1]["direction"] == "out"
         ]
         assert outs and outs[0][1]["text"] == "done:[user:bob]: hello from human"
         assert not reg.has_pending_replies()
@@ -955,7 +953,7 @@ class TestHumanInterventionRouting:
         assert not reg.has_pending_replies()  # main 비배달
         qs = [
             c
-            for c in renderer.named("teammate_message")
+            for c in renderer.named("agent_message")
             if c[1]["direction"] == "question"
         ]
         assert qs and qs[0][1]["text"] == "which branch?"  # 창에는 표시
@@ -978,11 +976,9 @@ class TestP4Events:
     def test_request_emits_in_message_and_roster(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
-        assert renderer.named("teammate_roster")  # spawn 시 roster
+        assert renderer.named("agent_roster")  # spawn 시 roster
         reg.request(key, "job", author="user:kim")
-        ins = [
-            c for c in renderer.named("teammate_message") if c[1]["direction"] == "in"
-        ]
+        ins = [c for c in renderer.named("agent_message") if c[1]["direction"] == "in"]
         assert ins and ins[0][1]["author"] == "user:kim" and ins[0][1]["text"] == "job"
         reg.shutdown_all()
 
@@ -991,14 +987,14 @@ class TestP4Events:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         reg.kill(key)
-        last = renderer.named("teammate_roster")[-1][1]["roster"]
+        last = renderer.named("agent_roster")[-1][1]["roster"]
         entry = next(e for e in last if e["key"] == key)
         assert entry["state"] == "dead"
 
 
 class TestMailWaker:
     def _waker(self, pending=lambda: True):
-        from agent_cli.subagent.teammate import MailWaker
+        from agent_cli.subagent.agents_live import MailWaker
 
         sent = []
         w = MailWaker(lambda conn, text: sent.append((conn, text)), pending)
@@ -1095,7 +1091,7 @@ class TestRunMessagePump:
 
     def test_plain_run_executes_once_and_exits(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.teammate import MailWaker
+        from agent_cli.subagent.agents_live import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1107,7 +1103,7 @@ class TestRunMessagePump:
 
     def test_wake_cycle_delivers_then_quiesces(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.teammate import MailWaker
+        from agent_cli.subagent.agents_live import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1140,7 +1136,7 @@ class TestRunMessagePump:
 
     def test_stale_wake_skipped(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.teammate import MailWaker
+        from agent_cli.subagent.agents_live import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1155,7 +1151,7 @@ class TestRunMessagePump:
 
     def test_shutdown_exits(self):
         from agent_cli.input_queue import InputQueue
-        from agent_cli.subagent.teammate import MailWaker
+        from agent_cli.subagent.agents_live import MailWaker
 
         q = InputQueue()
         reg = self._FakeReg()
@@ -1193,15 +1189,15 @@ class TestWorkerDeathNotice:
         assert wait_until(lambda: reg.get(key).state == "dead")
         import json
 
-        entry = json.loads((tmp_path / "teammates.json").read_text())["teammates"][0]
+        entry = json.loads((tmp_path / "agents.json").read_text())["teammates"][0]
         assert entry["state"] == "dead"
 
     def test_machinery_crash_notifies_main(self, tmp_path, renderer):
-        # 요청 처리기(내부 try) 밖의 기계 사망 — begin_teammate_work 폭발.
+        # 요청 처리기(내부 try) 밖의 기계 사망 — begin_agent_work 폭발.
         def boom(**kw):
             raise MemoryError("simulated OOM in worker machinery")
 
-        renderer.begin_teammate_work = boom
+        renderer.begin_agent_work = boom
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
@@ -1255,7 +1251,7 @@ class TestRoleDiscovery:
         from agent_cli.prompts.system_prompt import build_teammate_role_descriptions
 
         desc = build_teammate_role_descriptions()
-        assert "## Available Teammate Roles" in desc
+        assert "## Available AgentInstance Roles" in desc
         assert "`researcher`" in desc and "`code-reviewer`" in desc
         assert '"mode"' in desc and "spawn" in desc  # 스폰 예시 포함
 
@@ -1278,8 +1274,8 @@ class TestRoleDiscovery:
         without = build_system_prompt_sections(caps, active_tools=["read_file"])
         names_with = [n for n, _ in with_tool]
         names_without = [n for n, _ in without]
-        assert "Teammate Roles" in names_with
-        assert "Teammate Roles" not in names_without
+        assert "AgentInstance Roles" in names_with
+        assert "AgentInstance Roles" not in names_without
 
 
 class TestAutoSpawn:
@@ -1299,7 +1295,7 @@ class TestAutoSpawn:
         self._roles_dir(tmp_path, monkeypatch)
         reg = make_registry(tmp_path)
         assert reg.auto_spawn() == 1
-        tm = next(iter(reg._teammates.values()))
+        tm = next(iter(reg._agents.values()))
         assert tm.role_name == "concierge"
         assert reg.auto_spawn() == 0  # 살아있는 동안 중복 스폰 없음
         reg.shutdown_all()
@@ -1314,7 +1310,7 @@ class TestAutoSpawn:
         self._roles_dir(tmp_path, monkeypatch)
         reg1 = make_registry(tmp_path)
         assert reg1.auto_spawn() == 1
-        key = next(iter(reg1._teammates))
+        key = next(iter(reg1._agents))
         wait_until(lambda: reg1.get(key).state == "idle")
         reg1.shutdown_all()
 
@@ -1343,10 +1339,10 @@ class TestMultiInstance:
         assert key == "" and "invalid instance name" in err
 
     def test_label_in_reply_record(self):
-        from agent_cli.subagent.teammate import format_teammate_label
+        from agent_cli.subagent.agents_live import format_agent_label
 
-        assert format_teammate_label("agt-1", "coder", "ui") == "agt-1 (coder · ui)"
-        assert format_teammate_label("agt-1") == "agt-1"
+        assert format_agent_label("agt-1", "coder", "ui") == "agt-1 (coder · ui)"
+        assert format_agent_label("agt-1") == "agt-1"
         rec = build_reply_record(
             {
                 "kind": "reply",
@@ -1382,7 +1378,7 @@ class TestMultiInstance:
 
 class TestLiveTeammatesSection:
     def test_lists_alive_with_labels_and_descriptions(self, tmp_path, renderer):
-        from agent_cli.prompts.system_prompt import build_live_teammates_section
+        from agent_cli.prompts.system_prompt import build_live_agents_section
 
         reg = make_registry(tmp_path)
         k1, _ = reg.spawn(name="ui")
@@ -1391,7 +1387,7 @@ class TestLiveTeammatesSection:
         wait_until(lambda: reg.get(k2).state == "idle")
         reg.kill(k2)  # dead 는 광고에서 제외
 
-        desc = build_live_teammates_section(reg)
+        desc = build_live_agents_section(reg)
         assert "## Live Teammates" in desc
         assert f"`{k1}`" in desc and "(ui)" in desc
         assert f"`{k2}`" not in desc
@@ -1401,10 +1397,10 @@ class TestLiveTeammatesSection:
         reg.shutdown_all()
 
     def test_empty_or_absent_registry_renders_nothing(self, tmp_path, renderer):
-        from agent_cli.prompts.system_prompt import build_live_teammates_section
+        from agent_cli.prompts.system_prompt import build_live_agents_section
 
-        assert build_live_teammates_section(None) == ""
-        assert build_live_teammates_section(make_registry(tmp_path)) == ""
+        assert build_live_agents_section(None) == ""
+        assert build_live_agents_section(make_registry(tmp_path)) == ""
 
     def test_hidden_from_teammate_subloops(self, tmp_path, renderer):
         # 이중 게이트: teammate 서브루프는 도구 strip + registry None —
@@ -1426,38 +1422,38 @@ class TestLiveTeammatesSection:
         main_names = [
             n
             for n, _ in build_system_prompt_sections(
-                caps, active_tools=["teammate"], teammate_registry=reg
+                caps, active_tools=["teammate"], agent_registry=reg
             )
         ]
-        assert "Teammate Roles" in main_names and "Live Teammates" in main_names
+        assert "AgentInstance Roles" in main_names and "Live Teammates" in main_names
         # teammate 서브루프 (도구 strip → active_tools 에 없음): 둘 다 부재
         sub_names = [
             n
             for n, _ in build_system_prompt_sections(
-                caps, active_tools=["read_file"], teammate_registry=None
+                caps, active_tools=["read_file"], agent_registry=None
             )
         ]
-        assert "Teammate Roles" not in sub_names
+        assert "AgentInstance Roles" not in sub_names
         assert "Live Teammates" not in sub_names
         reg.shutdown_all()
 
     def test_membership_flag_set_and_consumed(self, tmp_path, renderer):
-        from agent_cli.subagent.teammate import (
-            consume_teammates_reload,
-            notify_teammates_changed,
+        from agent_cli.subagent.agents_live import (
+            consume_agents_reload,
+            notify_agents_changed,
         )
 
-        consume_teammates_reload()  # 잔여 클리어
-        assert consume_teammates_reload() is False
-        notify_teammates_changed()
-        assert consume_teammates_reload() is True
-        assert consume_teammates_reload() is False  # 소비됨
+        consume_agents_reload()  # 잔여 클리어
+        assert consume_agents_reload() is False
+        notify_agents_changed()
+        assert consume_agents_reload() is True
+        assert consume_agents_reload() is False  # 소비됨
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()  # spawn 이 플래그를 세운다
-        assert consume_teammates_reload() is True
+        assert consume_agents_reload() is True
         wait_until(lambda: reg.get(key).state == "idle")
         reg.kill(key)  # kill 도
-        assert consume_teammates_reload() is True
+        assert consume_agents_reload() is True
 
     def test_full_loop_advertises_after_spawn(self, tmp_path, renderer):
         # 통합: 턴1 spawn → 멤버십 플래그 → 턴2 시스템 프롬프트에
@@ -1500,14 +1496,14 @@ class TestLiveTeammatesSection:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            teammate_registry=reg,
+            agent_registry=reg,
         )
         assert result.success
         # 턴 2 의 시스템 프롬프트(system kwarg)에 광고가 실렸다
         _, kwargs = provider.call.call_args_list[1]
         system = kwargs["system"]
         assert "## Live Teammates" in system
-        key = next(iter(reg._teammates))
+        key = next(iter(reg._agents))
         assert key in system and "(ui)" in system
         reg.shutdown_all()
 
@@ -1521,18 +1517,18 @@ class TestRendererSignatureRegression:
     고정한다."""
 
     def test_boot_announce_on_real_web_renderer(self):
-        from agent_cli.main import _announce_teammate_boot
+        from agent_cli.main import _announce_agent_boot
         from agent_cli.render.web import WebRenderer
 
         r = WebRenderer()
-        _announce_teammate_boot(r, revived=2, auto=1)  # TypeError 면 즉사
+        _announce_agent_boot(r, revived=2, auto=1)  # TypeError 면 즉사
         # transient status 이벤트가 실제로 흘렀는지까지 확인
         # (persistent 버퍼가 아닌 라이브 큐라 connection 으로 수신)
         from agent_cli.render.web import WebConnection
 
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        _announce_teammate_boot(r, revived=1, auto=0)
+        _announce_agent_boot(r, revived=1, auto=0)
         events = []
         while not conn.queue.empty():
             events.append(conn.queue.get_nowait())
@@ -1545,26 +1541,26 @@ class TestRendererSignatureRegression:
 
         from rich.console import Console
 
-        from agent_cli.main import _announce_teammate_boot
+        from agent_cli.main import _announce_agent_boot
         from agent_cli.render.minimal import MinimalRenderer
 
         r = MinimalRenderer(Console(file=io.StringIO(), force_terminal=False))
-        _announce_teammate_boot(r, revived=1, auto=1)  # TypeError 면 즉사
+        _announce_agent_boot(r, revived=1, auto=1)  # TypeError 면 즉사
 
     def test_reply_notice_actually_emits_on_web(self):
         # try/except 가 시그니처 에러를 삼켜 알림이 조용히 죽어 있었다 —
         # 실렌더러에서 이벤트가 실제로 나가는지 검사.
         from unittest.mock import patch
 
-        from agent_cli.main import _teammate_reply_notice
+        from agent_cli.main import _agent_mail_notice
         from agent_cli.render.web import WebConnection, WebRenderer
 
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.register_connection(conn)
         with patch("agent_cli.render.get_renderer", return_value=r):
-            _teammate_reply_notice({"kind": "reply", "key": "agt-1"})
-            _teammate_reply_notice({"kind": "question", "key": "agt-2"})
+            _agent_mail_notice({"kind": "reply", "key": "agt-1"})
+            _agent_mail_notice({"kind": "question", "key": "agt-2"})
         events = []
         while not conn.queue.empty():
             events.append(conn.queue.get_nowait())
@@ -1609,7 +1605,7 @@ class TestResumeMode:
         wait_until(lambda: reg.get(key).state == "idle")
         assert "still alive" in reg.resume_teammate(key)  # 산 사람 부활 금지
         reg.kill(key)
-        monkeypatch.setenv("AGENT_CLI_MAX_TEAMMATES", "1")
+        monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "1")
         k2, _ = reg.spawn()
         assert "limit" in reg.resume_teammate(key)  # 상한 존중
         reg.shutdown_all()
@@ -1670,7 +1666,7 @@ class TestResumeMode:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         reg.kill(key)
-        r = tool_teammate(
+        r = tool_agent(
             {"mode": "resume", "key": key, "task": "continue the work"},
             registry=reg,
         )
@@ -1708,7 +1704,9 @@ class TestInspectorImmediateReflection:
         from agent_cli.render.web import WebRenderer
 
         r = WebRenderer()
-        r.note_system_prompt([("Base", "BASE"), ("Teammate Roles", "CATALOG")], turn=1)
+        r.note_system_prompt(
+            [("Base", "BASE"), ("AgentInstance Roles", "CATALOG")], turn=1
+        )
         return r
 
     def test_update_prompt_section_insert_replace_remove(self):
@@ -1716,7 +1714,7 @@ class TestInspectorImmediateReflection:
         # 신설 — 카탈로그 뒤에 삽입
         r.update_prompt_section("", "Live Teammates", "- `agt-1` (coder)")
         names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
-        assert names == ["Base", "Teammate Roles", "Live Teammates"]
+        assert names == ["Base", "AgentInstance Roles", "Live Teammates"]
         # 교체 + 총계 재계산
         r.update_prompt_section("", "Live Teammates", "- `agt-1`\n- `agt-2`")
         snap = r.prompt_snapshot("")
@@ -1782,7 +1780,7 @@ class TestResumeGuidance:
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
-        r = tool_teammate({"mode": "kill", "key": key}, registry=reg)
+        r = tool_agent({"mode": "kill", "key": key}, registry=reg)
         assert '"mode":"resume"' in r.output and key in r.output
         assert "PRESERVED" in r.output
 
@@ -1810,18 +1808,18 @@ class TestResumeGuidance:
         wait_until(lambda: reg.get(k1).state == "idle")
         reg.kill(k1)
         # 같은 역할 재spawn — 실사용 시나리오 ("다시 시작하자" → 모델이 spawn)
-        r = tool_teammate({"mode": "spawn", "role": "comedian"}, registry=reg)
+        r = tool_agent({"mode": "spawn", "role": "comedian"}, registry=reg)
         assert r.success
         assert "NO memory" in r.output and k1 in r.output
         assert '"mode":"resume"' in r.output
         # dead 없는 역할은 힌트 없음
-        r2 = tool_teammate({"mode": "spawn", "role": "comedian"}, registry=reg)
+        r2 = tool_agent({"mode": "spawn", "role": "comedian"}, registry=reg)
         assert "NO memory" in r2.output  # k1 여전히 dead → 힌트 유지
         reg.shutdown_all()
 
     def test_spawn_without_dead_role_has_no_hint(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        r = tool_teammate({"mode": "spawn"}, registry=reg)
+        r = tool_agent({"mode": "spawn"}, registry=reg)
         assert "NO memory" not in r.output
         reg.shutdown_all()
 
@@ -1841,10 +1839,10 @@ class TestAtCommand:
             self.calls.append(("result", text, success))
 
     def _dispatch(self, message, registry):
-        from agent_cli.main import _try_dispatch_teammate_command
+        from agent_cli.main import _try_dispatch_agent_command
 
         out = self._Out()
-        handled = _try_dispatch_teammate_command(message, out, registry)
+        handled = _try_dispatch_agent_command(message, out, registry)
         return handled, out.calls
 
     def test_at_teammates_lists_roster(self, tmp_path, renderer):
@@ -1872,7 +1870,7 @@ class TestAtCommand:
         assert not reg.has_pending_replies()
         # 회신 out 메시지에 to=user 태깅 (CLI 콘솔 수신 근거)
         outs = [
-            c for c in renderer.named("teammate_message") if c[1]["direction"] == "out"
+            c for c in renderer.named("agent_message") if c[1]["direction"] == "out"
         ]
         assert outs and outs[0][1]["to"] == "user"
         reg.shutdown_all()
@@ -1910,7 +1908,7 @@ class TestMinimalConsoleReception:
 
     def test_prints_user_directed_reply(self):
         r, buf = self._minimal()
-        r.teammate_message(
+        r.agent_message(
             key="agt-1",
             direction="out",
             author="agt-1",
@@ -1922,17 +1920,17 @@ class TestMinimalConsoleReception:
 
     def test_skips_main_directed_and_inbound(self):
         r, buf = self._minimal()
-        r.teammate_message(
+        r.agent_message(
             key="agt-1", direction="out", author="agt-1", text="X", to="main"
         )
-        r.teammate_message(
+        r.agent_message(
             key="agt-1", direction="in", author="user", text="Y", to="agt-1"
         )
         assert buf.getvalue() == ""  # 이중 표시/자기 메시지 방지
 
     def test_prints_user_directed_question(self):
         r, buf = self._minimal()
-        r.teammate_message(
+        r.agent_message(
             key="agt-1",
             direction="question",
             author="agt-1",
@@ -1953,13 +1951,13 @@ class TestRosterInitialIdle:
         assert wait_until(
             lambda: any(
                 e["key"] == key and e["state"] == "idle"
-                for c in renderer.named("teammate_roster")[-1:]
+                for c in renderer.named("agent_roster")[-1:]
                 for e in c[1]["roster"]
             )
         )
         reg.shutdown_all()
 
-    def test_restored_teammate_roster_shows_idle(self, tmp_path, renderer):
+    def test_restored_agent_roster_shows_idle(self, tmp_path, renderer):
         reg1 = make_registry(tmp_path)
         key, _ = reg1.spawn()
         wait_until(lambda: reg1.get(key).state == "idle")
@@ -1967,7 +1965,7 @@ class TestRosterInitialIdle:
         reg2 = make_registry(tmp_path)
         assert reg2.restore() == 1
         assert wait_until(lambda: reg2.get(key).state == "idle")
-        last = renderer.named("teammate_roster")[-1][1]["roster"]
+        last = renderer.named("agent_roster")[-1][1]["roster"]
         entry = next(e for e in last if e["key"] == key)
         assert entry["state"] == "idle"  # starting 고착 없음
         reg2.shutdown_all()
@@ -1978,7 +1976,7 @@ class TestRosterInitialIdle:
 
 class TestInstantAgent:
     def test_compose_rules(self):
-        from agent_cli.subagent.teammate import compose_role_prompt
+        from agent_cli.subagent.agents_live import compose_role_prompt
 
         both = compose_role_prompt("FILE BODY", "INLINE")
         assert both.startswith("FILE BODY")
@@ -2040,12 +2038,12 @@ class TestInstantAgent:
             return _FakeLoopResult(output="ok"), 0.01
 
         reg = make_registry(tmp_path, runner=spy_runner)
-        r = tool_teammate(
+        r = tool_agent(
             {"mode": "spawn", "instructions": "ad-hoc 전문가", "task": "일해"},
             registry=reg,
         )
         assert r.success
-        key = next(iter(reg._teammates))
+        key = next(iter(reg._agents))
         assert reg.get(key).role_prompt == "ad-hoc 전문가"
         assert wait_until(lambda: reg.get(key).handled == 1)
         assert captured.get("agent_role") == "ad-hoc 전문가"

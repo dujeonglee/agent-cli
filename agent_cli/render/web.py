@@ -574,9 +574,7 @@ class WebRenderer(Renderer):
     # request 1건 = 접이식 카드 1개. _thread_prompt_scopes 는 건드리지
     # 않으므로 시스템/동적 스냅샷은 계속 teammate key 스코프에 쌓인다.
 
-    def begin_teammate_work(
-        self, *, key: str, seq: int, role: str, message: str
-    ) -> None:
+    def begin_agent_work(self, *, key: str, seq: int, role: str, message: str) -> None:
         tid = threading.get_ident()
         task_id = f"{key}#{seq}"
         with self._lock:
@@ -594,7 +592,7 @@ class WebRenderer(Renderer):
             persistent=True,
         )
 
-    def end_teammate_work(
+    def end_agent_work(
         self,
         *,
         key: str,
@@ -616,12 +614,12 @@ class WebRenderer(Renderer):
             payload["error"] = error
         self._emit("delegate_task_end", payload, persistent=True)
 
-    def teammate_roster(self, roster: list) -> None:
+    def agent_roster(self, roster: list) -> None:
         """P4: teammate 목록 sticky — 라이브 브로드캐스트 + 재접속 snapshot
         복원 (다른 sticky 슬롯과 동일 기계)."""
-        self.set_sticky("teammate_roster", "teammate_roster", {"teammates": roster})
+        self.set_sticky("agent_roster", "agent_roster", {"teammates": roster})
 
-    def teammate_message(
+    def agent_message(
         self,
         *,
         key: str,
@@ -635,7 +633,7 @@ class WebRenderer(Renderer):
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
         창 내용이 복원된다 (버퍼 윈도우 내에서)."""
         self._emit(
-            "teammate_msg",
+            "agent_msg",
             {
                 "key": key,
                 "direction": direction,
@@ -1090,13 +1088,13 @@ class WebRenderer(Renderer):
                 if idx is not None:
                     sections[idx] = entry
                 else:
-                    # 신설 — 카탈로그(Teammate Roles) 뒤가 자연스러운 자리,
+                    # 신설 — 카탈로그(AgentInstance Roles) 뒤가 자연스러운 자리,
                     # 없으면 말미.
                     after = next(
                         (
                             i + 1
                             for i, s in enumerate(sections)
-                            if s["name"] == "Teammate Roles"
+                            if s["name"] == "AgentInstance Roles"
                         ),
                         len(sections),
                     )

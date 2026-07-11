@@ -693,7 +693,7 @@ def build_system_prompt_sections(
     wire_format=None,
     depth: int = 0,
     max_depth: int = 0,
-    teammate_registry=None,
+    agent_registry=None,
 ) -> list[tuple[str, str]]:
     """Build the system prompt as an ordered list of ``(name, text)`` sections.
 
@@ -760,8 +760,8 @@ def build_system_prompt_sections(
     if "teammate" in active_tools:
         role_desc = build_teammate_role_descriptions(wire_format=wire_format)
         if role_desc:
-            sections.append(("Teammate Roles", role_desc))
-        live_desc = build_live_teammates_section(teammate_registry)
+            sections.append(("AgentInstance Roles", role_desc))
+        live_desc = build_live_agents_section(agent_registry)
         if live_desc:
             sections.append(("Live Teammates", live_desc))
 
@@ -937,7 +937,7 @@ def build_teammate_role_descriptions(wire_format=None) -> str:
     )
     indented = "\n".join(f"  {line}" for line in example.splitlines())
     lines = [
-        "## Available Teammate Roles",
+        "## Available AgentInstance Roles",
         "Spawn a persistent expert teammate with one of these roles when the "
         "work benefits from an ongoing collaborator (it keeps its context "
         "across your requests):",
@@ -950,19 +950,19 @@ def build_teammate_role_descriptions(wire_format=None) -> str:
     return "\n".join(lines)
 
 
-def build_live_teammates_section(teammate_registry) -> str:
+def build_live_agents_section(agent_registry) -> str:
     """현재 상주 중인 teammate 광고 (static 멤버십 층).
 
     설계: 멤버십(key·역할·인스턴스명·전문영역)만 — compaction 이 spawn
     관찰을 지워도 모델이 상주 팀을 잊지 않고, auto-spawn/resume 분처럼
     관찰이 아예 없는 경우도 커버한다. busy/idle 같은 휘발 상태는 넣지
     않는다 (매 턴 KV 프리픽스 버스트 방지 — 활동은 dynamic 관찰이 이미
-    운반). 재조립 트리거는 멤버십 변화 플래그(consume_teammates_reload).
+    운반). 재조립 트리거는 멤버십 변화 플래그(consume_agents_reload).
     """
-    if teammate_registry is None:
+    if agent_registry is None:
         return ""
     try:
-        snapshot = teammate_registry.roster_snapshot()
+        snapshot = agent_registry.roster_snapshot()
     except Exception:
         return ""
     alive = [s for s in snapshot if s.get("state") != "dead"]
@@ -982,8 +982,8 @@ def build_live_teammates_section(teammate_registry) -> str:
         who = " · ".join(p for p in (s.get("role", ""), s.get("name", "")) if p)
         label = f"`{s['key']}`" + (f" ({who})" if who else "")
         desc = ""
-        # 전문영역 요약 — registry 의 Teammate 가 description 을 들고 있다.
-        tm = teammate_registry.get(s["key"])
+        # 전문영역 요약 — registry 의 AgentInstance 가 description 을 들고 있다.
+        tm = agent_registry.get(s["key"])
         if tm is not None and getattr(tm, "description", ""):
             desc = tm.description
             if len(desc) > 140:

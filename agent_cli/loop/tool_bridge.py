@@ -115,7 +115,7 @@ class ToolBridge:
             if tool_name == "delegate":
                 result = self._invoke_delegate(tool_input, input_dict)
             elif tool_name == "teammate":
-                result = self._invoke_teammate(tool_input)
+                result = self._invoke_agent(tool_input)
             else:
                 result = self._invoke_regular(tool_name, tool_input)
         except Exception as e:  # noqa: BLE001 — safety net by design
@@ -259,18 +259,18 @@ class ToolBridge:
             )
         return result
 
-    # ── 2b. Teammate dispatch (teammate P1) ─────────────────────────
-    def _invoke_teammate(self, tool_input) -> ToolResult:
+    # ── 2b. AgentInstance dispatch (teammate P1) ─────────────────────────
+    def _invoke_agent(self, tool_input) -> ToolResult:
         """teammate 인터셉트 — delegate 와 같은 이유(제네릭 execute 경로에
         없는 provider/identity 배선이 필요)로 여기서 가로챈다. runtime 은
         레지스트리의 worker 가 회신 처리(run_subagent_message)에 쓸 실행
         배선 — delegate 의 tool_delegate kwargs 와 동일 항목."""
-        from agent_cli.subagent.teammate import tool_teammate
+        from agent_cli.subagent.agents_live import tool_agent
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
-        return tool_teammate(
+        return tool_agent(
             args,
-            registry=self.cfg.teammate_registry,
+            registry=self.cfg.agent_registry,
             parent_ctx=self.ctx,
             runtime={
                 "provider": self.provider,

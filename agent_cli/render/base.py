@@ -243,9 +243,7 @@ class Renderer(ABC):
         """Mark the current thread as leaving its delegate context.
         No-op for CLI."""
 
-    def begin_teammate_work(
-        self, *, key: str, seq: int, role: str, message: str
-    ) -> None:
+    def begin_agent_work(self, *, key: str, seq: int, role: str, message: str) -> None:
         """teammate worker 가 request 1건 처리를 시작 (teammate P1).
 
         delegate 의 begin_delegate_task 와 달리 **프롬프트 스코프를
@@ -253,7 +251,7 @@ class Renderer(ABC):
         상시 보유. 이 표면은 요청별 표시(웹 SSE 카드 라우팅 / CLI 출력
         캡처)만 담당. 기본 no-op."""
 
-    def end_teammate_work(
+    def end_agent_work(
         self,
         *,
         key: str,
@@ -262,7 +260,7 @@ class Renderer(ABC):
         duration_s: float,
         error: str = "",
     ) -> None:
-        """teammate request 1건 처리 종료 — begin_teammate_work 과 짝.
+        """teammate request 1건 처리 종료 — begin_agent_work 과 짝.
         기본 no-op."""
 
     def update_prompt_section(self, scope: str, name: str, text: str) -> None:
@@ -270,11 +268,11 @@ class Renderer(ABC):
         (teammate 멤버십의 즉시 인스펙터 반영 — v4.61.0). text 가 빈
         문자열이면 섹션 제거. 기본 no-op (web 전용 표면)."""
 
-    def teammate_roster(self, roster: list) -> None:
+    def agent_roster(self, roster: list) -> None:
         """teammate 목록/상태 스냅샷 (P4) — spawn/kill/상태 전이마다 호출.
         web 은 sticky 브로드캐스트(대화 창 목록), CLI 는 no-op."""
 
-    def teammate_message(
+    def agent_message(
         self,
         *,
         key: str,
