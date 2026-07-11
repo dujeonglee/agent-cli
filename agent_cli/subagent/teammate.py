@@ -241,6 +241,22 @@ class TeammateRegistry:
         with self._cv:
             return bool(self._pending)
 
+    def has_active_work(self) -> bool:
+        """P5: CLI run 큐 펌프의 정지 판정 — 미배달 회신·처리 중(busy)·
+        큐잉된 요청이 하나라도 있으면 True. **waiting_ask 는 제외**:
+        main 이 답하지 않기로 한 질문을 기다리는 건 영원히 안 끝나는
+        교착이라, 펌프는 경고 후 종료(shutdown 이 대기를 푼다)를 택한다."""
+        if self.has_pending_replies():
+            return True
+        for tm in self._teammates.values():
+            if tm.state == "busy" or tm.inbox.qsize() > 0:
+                return True
+        return False
+
+    def waiting_ask_keys(self) -> list[str]:
+        """답변 대기 중인 teammate — 펌프 종료 시 경고 표시용."""
+        return [tm.key for tm in self._teammates.values() if tm.state == "waiting_ask"]
+
     # ── spawn ───────────────────────────────────
 
     def spawn(

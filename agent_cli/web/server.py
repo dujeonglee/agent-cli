@@ -29,7 +29,6 @@ import socket
 import tempfile
 import threading
 import zipfile
-from collections import deque
 from pathlib import Path
 from queue import Empty, SimpleQueue
 
@@ -39,6 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
+from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebConnection, WebRenderer
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
@@ -154,7 +154,7 @@ class WebServer:
     # thread's blocking call wakes up and breaks its loop cleanly. Workers
     # compare with ``is`` (identity); queued items are dicts, so a user
     # message can never collide with this object.
-    SHUTDOWN = object()
+    SHUTDOWN = InputQueue.SHUTDOWN
 
     def __init__(
         self,
@@ -197,13 +197,10 @@ class WebServer:
         # Pending user-message queue. Every connection may enqueue; the
         # worker pops one (blocking) to START a run, and the running loop
         # pops more at turn boundaries (non-blocking) to INJECT mid-run.
-        # A deque + condition (not SimpleQueue) so we can also cancel by id
-        # and snapshot the queue for the live display. Items:
-        # ``{id, conn_id, nickname, text}``.
-        self._pending: deque = deque()
-        self._pending_cv = threading.Condition()
-        self._pending_shutdown = False
-        self._msg_seq = 0
+        # 골격은 공용 InputQueue (teammate P5 — CLI run 의 큐 펌프와 공유);
+        # 서버는 닉네임 해석 + 라이브 큐 브로드캐스트(on_change)만 얹는다.
+        # Items: ``{id, conn_id, nickname, text}``.
+        self._queue = InputQueue(on_change=self._broadcast_queue)
         # Stop handle for the in-flight chat turn. The worker registers a
         # fresh ``threading.Event`` per message and passes it to
         # ``run_loop(stop_event=…)``; ``/api/stop`` sets it so the loop
@@ -270,18 +267,7 @@ class WebServer:
         """Add a user message to the pending queue (any connection may).
         Returns the queued item ``{id, conn_id, nickname, text}``."""
         nickname = self.renderer.nickname_for(conn_id)
-        with self._pending_cv:
-            self._msg_seq += 1
-            item = {
-                "id": str(self._msg_seq),
-                "conn_id": conn_id or "",
-                "nickname": nickname,
-                "text": text,
-            }
-            self._pending.append(item)
-            self._pending_cv.notify()
-        self._broadcast_queue()
-        return item
+        return self._queue.enqueue(conn_id, text, nickname=nickname)
 
     def dequeue_blocking(self):
         """Worker-idle: block until a message is queued (or shutdown).
@@ -289,54 +275,30 @@ class WebServer:
         Returns ``WebServer.SHUTDOWN`` if :meth:`shutdown` was called, else
         the queued item dict. Workers compare with ``is WebServer.SHUTDOWN``.
         """
-        with self._pending_cv:
-            while not self._pending and not self._pending_shutdown:
-                self._pending_cv.wait()
-            # Drain pending BEFORE shutting down (FIFO: messages queued before
-            # shutdown are still processed, then SHUTDOWN on the empty queue).
-            if not self._pending:
-                return self.SHUTDOWN
-            item = self._pending.popleft()
-        self._broadcast_queue()
-        return item
+        return self._queue.dequeue_blocking()
 
     def dequeue_nowait(self) -> dict | None:
         """Turn-boundary (running loop): pop one queued message if available,
         else ``None`` (don't block — the loop keeps going)."""
-        with self._pending_cv:
-            if not self._pending:
-                return None
-            item = self._pending.popleft()
-        self._broadcast_queue()
-        return item
+        return self._queue.dequeue_nowait()
 
     def cancel_pending(self, conn_id: str | None, msg_id: str) -> bool:
         """Remove a still-pending message — only its OWNER (matching
         ``conn_id``) may cancel. Returns True if removed."""
-        removed = False
-        with self._pending_cv:
-            for it in list(self._pending):
-                if it["id"] == msg_id and it["conn_id"] == (conn_id or ""):
-                    self._pending.remove(it)
-                    removed = True
-                    break
-        if removed:
-            self._broadcast_queue()
-        return removed
+        return self._queue.cancel(conn_id, msg_id)
 
     def queue_snapshot(self) -> list[dict]:
-        with self._pending_cv:
-            return [dict(it) for it in self._pending]
+        return self._queue.snapshot()
 
     def pending_count(self) -> int:
         """Number of queued-but-undelivered user messages — the idle-reaper's
         'work is waiting' signal."""
-        with self._pending_cv:
-            return len(self._pending)
+        return self._queue.pending_count()
 
     def _broadcast_queue(self) -> None:
         """Push the live queue state to all clients (released the queue lock
-        first — ``queue_state`` takes the renderer lock)."""
+        first — ``queue_state`` takes the renderer lock; InputQueue 도
+        on_change 를 락 밖에서 호출한다)."""
         self.renderer.queue_state(self.queue_snapshot())
 
     def shutdown(self) -> None:
@@ -345,9 +307,7 @@ class WebServer:
         Sets the shutdown flag and notifies so the worker's wait returns
         ``SHUTDOWN``. Idempotent.
         """
-        with self._pending_cv:
-            self._pending_shutdown = True
-            self._pending_cv.notify_all()
+        self._queue.shutdown()
 
     # ─── Auth helper ──────────────────────────────────────────
 

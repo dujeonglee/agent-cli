@@ -312,6 +312,15 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.
 - 2026-07-11: §7 결정 4건 전원 해소 (CLI 큐 통일=P5 신설, 비배달 동의, 중첩
   금지 동의, 역할 md=(b) 전용 디렉토리). **P0 착수 승인.**
+- 2026-07-11: **P5 완료 (v4.58.0)** — 큐 공용화 + CLI 자동 재기동.
+  **설계 정정**: CLI 에는 인터랙티브 REPL 이 없음이 실측됨(`run` 은
+  단발) — §4.4 의 "input() reader 스레드" 전제를 폐기하고 **run 을 큐
+  펌프로 재해석**: 초기 질의도 wake 도 공용 InputQueue 로, 정지=큐 비고
+  +활성 작업 없음(quiescence; waiting_ask 는 교착 방지로 제외·경고 후
+  종료). 공용화는 지시대로 web 골격 추출(`input_queue.py` — WebServer
+  는 thin wrapper, SHUTDOWN identity 계약 유지, web 테스트 무수정 317
+  통과). 테스트 +14(InputQueue 8·quiescence 2·펌프 4), 전체 2979 +
+  실기동 CLI e2e. **★로드맵 전체 완료.**
 - 2026-07-11: **P4 완료 (v4.57.0)** — WebUI 대화 창(D8)+idle 자동 재기동
   (D3). 렌더러 표면 teammate_roster(sticky)/teammate_message(persistent),
   인간 개입 비배달 규칙(current_author — 질문 라우팅도 대칭), 엔드포인트

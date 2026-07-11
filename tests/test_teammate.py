@@ -24,7 +24,9 @@ from agent_cli.subagent.teammate import (
 )
 
 
-def wait_until(pred, timeout: float = 3.0) -> bool:
+def wait_until(pred, timeout: float = 5.0) -> bool:
+    # 전체 스위트 병렬 부하에서 worker 스레드 스케줄링이 늦어질 수 있어
+    # 여유 있는 기본값 (단독 실행은 수 ms 에 끝난다 — flake 마진용).
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if pred():
@@ -1047,3 +1049,125 @@ class TestMailWaker:
         # 이미 배달됨 → skip
         state["pending"] = False
         assert w.handle_dequeued(w.WAKE_TEXT) == "skip"
+
+
+# ── P5: CLI 큐 펌프 (quiescence) ────────────────
+
+
+class TestQuiescenceHelpers:
+    def test_active_while_busy_or_queued(self, tmp_path, renderer):
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        assert not reg.has_active_work()
+        reg.request(key, "long")
+        assert reg.has_active_work()  # busy (또는 inbox 큐잉)
+        gate.set()
+        assert wait_until(reg.has_pending_replies)
+        assert reg.has_active_work()  # 미배달 회신
+        reg.drain_replies()
+        assert wait_until(lambda: not reg.has_active_work())
+        reg.shutdown_all()
+
+    def test_waiting_ask_not_active_but_reported(self, tmp_path, renderer):
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        reg.drain_replies()  # 질문 배달 소비 후에는
+        assert not reg.has_active_work()  # 교착 방지 — active 아님
+        assert reg.waiting_ask_keys() == [key]  # 대신 경고 표시용으로 노출
+        reg.shutdown_all()
+
+
+class TestRunMessagePump:
+    """CLI run 의 큐 펌프 — 초기 질의 1회 / teammate 회신 wake 재기동 /
+    quiescence 종료 / 빈 wake skip. (main.py 모듈 함수라 실제 배선 검증.)"""
+
+    class _FakeReg:
+        def __init__(self):
+            self.pending = False
+            self.busy = False
+
+        def has_pending_replies(self):
+            return self.pending
+
+        def has_active_work(self):
+            return self.pending or self.busy
+
+    def _pump(self, queue, waker, reg, run_one):
+        from agent_cli.main import _run_message_pump
+
+        _run_message_pump(queue, waker, reg, run_one, poll_secs=0.05)
+
+    def test_plain_run_executes_once_and_exits(self):
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.subagent.teammate import MailWaker
+
+        q = InputQueue()
+        reg = self._FakeReg()
+        waker = MailWaker(q.enqueue, reg.has_pending_replies)
+        calls = []
+        q.enqueue(None, "the query")
+        self._pump(q, waker, reg, lambda text, *, wake: calls.append((text, wake)))
+        assert calls == [("the query", False)]
+
+    def test_wake_cycle_delivers_then_quiesces(self):
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.subagent.teammate import MailWaker
+
+        q = InputQueue()
+        reg = self._FakeReg()
+        waker = MailWaker(q.enqueue, reg.has_pending_replies)
+        calls = []
+
+        def run_one(text, *, wake):
+            calls.append((text, wake))
+            if len(calls) == 1:
+                # 첫 run 이 teammate 를 스폰해 busy 로 만들었다 치고,
+                # 잠시 후 회신이 도착하는 백그라운드를 흉내낸다.
+                reg.busy = True
+
+                def later():
+                    time.sleep(0.15)
+                    reg.busy = False
+                    reg.pending = True
+                    waker.on_mail()  # registry.on_reply 배선과 동일
+
+                threading.Thread(target=later, daemon=True).start()
+            else:
+                reg.pending = False  # wake run 의 턴 경계 배달을 흉내
+
+        q.enqueue(None, "spawn and go")
+        self._pump(q, waker, reg, run_one)
+        assert len(calls) == 2
+        assert calls[0] == ("spawn and go", False)
+        assert calls[1][1] is True  # wake run
+        assert calls[1][0] == waker.WAKE_TEXT
+
+    def test_stale_wake_skipped(self):
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.subagent.teammate import MailWaker
+
+        q = InputQueue()
+        reg = self._FakeReg()
+        waker = MailWaker(q.enqueue, reg.has_pending_replies)
+        reg.pending = True
+        waker.idle.set()
+        waker.on_mail()  # wake 큐잉
+        reg.pending = False  # 다른 경로가 이미 배달
+        calls = []
+        self._pump(q, waker, reg, lambda text, *, wake: calls.append(text))
+        assert calls == []  # skip — 빈 run 없음
+
+    def test_shutdown_exits(self):
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.subagent.teammate import MailWaker
+
+        q = InputQueue()
+        reg = self._FakeReg()
+        reg.busy = True  # 활성 작업이 있어도 SHUTDOWN 이 우선
+        waker = MailWaker(q.enqueue, reg.has_pending_replies)
+        q.shutdown()
+        self._pump(q, waker, reg, lambda text, *, wake: None)  # 즉시 반환

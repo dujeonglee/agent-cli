@@ -1040,15 +1040,36 @@ def run(
     from agent_cli.subagent.teammate import TeammateRegistry
 
     teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
-    teammate_registry.on_reply = _teammate_reply_notice
+
+    # P5 (D3 완성): run 도 web 과 같은 큐 펌프 — 초기 질의를 InputQueue 에
+    # 넣고, teammate 회신의 wake 아이템(MailWaker)도 같은 큐로 들어온다.
+    # 정지 = 큐 비고 + teammate 활성 작업 없음(quiescence). teammate 를
+    # 안 쓰면 종전과 동일하게 1회 실행 후 즉시 종료.
+    from agent_cli.input_queue import InputQueue
+    from agent_cli.subagent.teammate import MailWaker
+
+    input_queue = InputQueue()
+    waker = MailWaker(input_queue.enqueue, teammate_registry.has_pending_replies)
+
+    def _on_teammate_mail(reply: dict) -> None:
+        _teammate_reply_notice(reply)
+        waker.on_mail()
+
+    teammate_registry.on_reply = _on_teammate_mail
     # P3 (D7): --resume 세션이면 이전 teammate 자동 재생성 + 미배달 회신
     # 복원 (fresh 세션은 teammates.json 이 없어 no-op).
     revived = teammate_registry.restore(parent_ctx=ctx)
     if revived:
         console.print(f"[{C['muted']}]🤝 teammate {revived}명 재생성됨[/]")
-    try:
+
+    answer = None
+
+    def _run_one(text: str, *, wake: bool) -> None:
+        nonlocal answer
+        if wake:
+            console.print(f"[{C['muted']}]🤝 teammate 회신 배달 — 이어서 진행[/]")
         loop_result = run_loop(
-            query=query,
+            query=text,
             provider=llm_provider,
             capabilities=capabilities,
             model=resolved_model,
@@ -1068,14 +1089,53 @@ def run(
             compaction_enabled=not no_compaction,
             teammate_registry=teammate_registry,
         )
-        answer = loop_result.output if loop_result.success else None
+        if loop_result.success:
+            answer = loop_result.output
+
+    input_queue.enqueue(None, query)
+    try:
+        _run_message_pump(input_queue, waker, teammate_registry, _run_one)
     except KeyboardInterrupt:
         answer = None
         console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
     finally:
+        stuck = teammate_registry.waiting_ask_keys()
+        if stuck:
+            console.print(
+                f"[{C['accent']}]⚠ teammate {', '.join(stuck)} 이(가) 답변 대기 "
+                f"중인 채 종료 — resume 시 질문은 STALE 처리됩니다[/]"
+            )
         teammate_registry.shutdown_all()
 
     _finalize_run(session, ctx, mcp_manager)
+
+
+def _run_message_pump(input_queue, waker, registry, run_one, *, poll_secs=0.5):
+    """CLI ``run`` 의 큐 펌프 (teammate P5) — web ``_worker_loop`` 와 같은
+    "큐에 뭔가 있으면 재기동" 모델을 공용 InputQueue 위에서 돈다.
+
+    정지 판정: 큐가 비었고 registry 에 활성 작업(busy·큐잉 요청·미배달
+    회신)이 없으면 종료. 활성 작업이 남아 있으면 poll 간격으로 재확인 —
+    회신이 도착하면 MailWaker 가 wake 아이템을 큐에 넣어 즉시 깨어난다.
+    KeyboardInterrupt 는 호출자 정책(중단 처리)이라 그대로 전파.
+    """
+    from agent_cli.input_queue import InputQueue
+
+    while True:
+        if input_queue.pending_count() == 0 and not registry.has_active_work():
+            return
+        waker.idle.set()
+        item = input_queue.dequeue_blocking(timeout=poll_secs)
+        waker.idle.clear()
+        if item is InputQueue.SHUTDOWN:
+            return
+        if item is None:
+            continue  # timeout — 정지 조건을 다시 판정
+        verdict = waker.handle_dequeued(item["text"])
+        if verdict == "skip":
+            continue  # 이미 배달 완료된 wake — 빈 run 을 열지 않는다
+        run_one(item["text"], wake=(verdict == "run"))
+        waker.on_run_end()  # run 종료 직후 도착분 레이스 봉합
 
 
 def _teammate_reply_notice(reply: dict) -> None:
