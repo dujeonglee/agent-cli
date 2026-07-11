@@ -1403,7 +1403,7 @@ def web(
     # (the loop only captures on an LLM call). With ctx already restored, the
     # inspector then shows both the system prompt and the dynamic context the
     # moment the drawer opens — no need to send a message first.
-    from agent_cli.web.server import capture_startup_system_prompt
+    from agent_cli.web.inspector import capture_startup_system_prompt
 
     capture_startup_system_prompt(
         renderer,
@@ -1413,7 +1413,7 @@ def web(
         max_depth=max_depth,
     )
 
-    from agent_cli.web.server import WebDispatchOutput, handle_slash_command
+    from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
 
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.

@@ -397,7 +397,7 @@ class TestWebDispatchOutput:
 
     def _make(self):
         from agent_cli.render.web import WebConnection, WebRenderer
-        from agent_cli.web.server import WebDispatchOutput
+        from agent_cli.web.slash import WebDispatchOutput
 
         renderer = WebRenderer()
         conn = WebConnection(id="t")
@@ -512,7 +512,7 @@ class TestProtocolCompleteness:
         assert not missing, f"_ConsoleDispatchOutput missing methods: {missing}"
 
     def test_web_implements_every_protocol_method(self, protocol_methods):
-        from agent_cli.web.server import WebDispatchOutput
+        from agent_cli.web.slash import WebDispatchOutput
 
         impl_methods = {
             name for name in dir(WebDispatchOutput) if not name.startswith("_")

@@ -138,14 +138,14 @@ class TestHandleSlashCommand:
     the worker forwards to ``run_loop``. Currently only ``/sh``."""
 
     def test_non_slash_message_is_passthrough(self):
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         assert handle_slash_command("regular chat message", renderer) is False
         assert renderer.persistent_count == 0
 
     def test_slash_sh_runs_command_and_emits_observation(self):
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -163,7 +163,7 @@ class TestHandleSlashCommand:
         assert "hello-from-shell" in data["content"]
 
     def test_slash_sh_nonzero_exit_marks_failure(self):
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -178,7 +178,7 @@ class TestHandleSlashCommand:
         assert "exit code: 7" in data["content"]
 
     def test_slash_sh_no_args_shows_usage(self):
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -193,7 +193,7 @@ class TestHandleSlashCommand:
     def test_slash_sh_non_utf8_output_does_not_crash(self):
         # `/sh git show HEAD` etc. can emit non-UTF-8 bytes; text=True would
         # raise UnicodeDecodeError. Must decode with replacement, not crash.
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -206,7 +206,7 @@ class TestHandleSlashCommand:
 
     def test_slash_compact_reports_before_after(self):
         from unittest.mock import MagicMock
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -226,7 +226,7 @@ class TestHandleSlashCommand:
 
     def test_slash_compact_no_change(self):
         from unittest.mock import MagicMock
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -240,7 +240,7 @@ class TestHandleSlashCommand:
         assert "Nothing to compact" in data["content"]
 
     def test_slash_compact_without_ctx_reports_unavailable(self):
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -251,7 +251,7 @@ class TestHandleSlashCommand:
         assert data["success"] is False
 
     def test_slash_help_lists_supported_commands(self):
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         conn = WebConnection(id="c1")
@@ -274,7 +274,7 @@ class TestHandleSlashCommand:
         single dispatcher. Test pins the surface boundary so a future
         refactor that re-adds duplicate listing logic here fails loudly.
         """
-        from agent_cli.web.server import handle_slash_command
+        from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
         # These belong to ``try_dispatch_agent_or_skill`` now.
@@ -310,7 +310,7 @@ class TestPromptInspectorDynamic:
     pipeline (kind=system | dynamic)."""
 
     def test_dynamic_sections_helper(self):
-        from agent_cli.web.server import _dynamic_context_sections
+        from agent_cli.web.inspector import _dynamic_context_sections
 
         assert _dynamic_context_sections(None) == []
         ctx = _FakeInspectorCtx(
@@ -372,7 +372,7 @@ class TestPromptInspectorDynamic:
         inspector shows it before any message (the loop only captures on an
         LLM call)."""
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.web.server import capture_startup_system_prompt
+        from agent_cli.web.inspector import capture_startup_system_prompt
         from agent_cli.wire_formats import get
 
         caps = ModelCapabilities(
@@ -2066,13 +2066,13 @@ class TestManagedSectionHelpers:
     (a user's hand-written directive) MUST stay byte-identical."""
 
     def test_strip_absent_heading_unchanged(self):
-        from agent_cli.web.server import _strip_section
+        from agent_cli.web.directives import _strip_section
 
         md = "## 수기 지시\n- A\n- B"
         assert _strip_section(md, "## 학습된 지침") == md
 
     def test_strip_named_section_preserves_rest(self):
-        from agent_cli.web.server import _strip_section
+        from agent_cli.web.directives import _strip_section
 
         md = "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2\n\n## 기타\n- Z"
         out = _strip_section(md, "## 학습된 지침")
@@ -2080,14 +2080,14 @@ class TestManagedSectionHelpers:
         assert "## 수기" in out and "## 기타" in out
 
     def test_replace_appends_by_default(self):
-        from agent_cli.web.server import _replace_managed_section
+        from agent_cli.web.directives import _replace_managed_section
 
         md = "## 수기\n- A"
         out = _replace_managed_section(md, "## 학습된 지침", "- L1\n- L2")
         assert out == "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2"
 
     def test_replace_prepend(self):
-        from agent_cli.web.server import _replace_managed_section
+        from agent_cli.web.directives import _replace_managed_section
 
         out = _replace_managed_section(
             "## 업무\n- 규칙", "## 페르소나", "- 목소리", prepend=True
@@ -2096,7 +2096,7 @@ class TestManagedSectionHelpers:
         assert out.endswith("## 업무\n- 규칙")
 
     def test_replace_swaps_existing_not_stacks(self):
-        from agent_cli.web.server import _replace_managed_section
+        from agent_cli.web.directives import _replace_managed_section
 
         md = "## 수기\n- A\n\n## 학습된 지침\n- OLD"
         out = _replace_managed_section(md, "## 학습된 지침", "- NEW")
@@ -2105,14 +2105,14 @@ class TestManagedSectionHelpers:
         assert "## 수기\n- A" in out  # hand-written part untouched
 
     def test_replace_empty_body_removes_section(self):
-        from agent_cli.web.server import _replace_managed_section
+        from agent_cli.web.directives import _replace_managed_section
 
         md = "## 수기\n- A\n\n## 학습된 지침\n- L1"
         out = _replace_managed_section(md, "## 학습된 지침", "  ")
         assert out == "## 수기\n- A"
 
     def test_replace_into_empty_is_just_block(self):
-        from agent_cli.web.server import _replace_managed_section
+        from agent_cli.web.directives import _replace_managed_section
 
         out = _replace_managed_section("", "## 학습된 지침", "- L1")
         assert out == "## 학습된 지침\n- L1"
@@ -2122,18 +2122,18 @@ class TestLearnHelpers:
     """📥 learn-from-session distillation helpers (pure, no LLM/HTTP)."""
 
     def test_section_body_extracts_only_that_section(self):
-        from agent_cli.web.server import _section_body
+        from agent_cli.web.directives import _section_body
 
         md = "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2\n\n## 기타\n- Z"
         assert _section_body(md, "## 학습된 지침") == "- L1\n- L2"
 
     def test_section_body_absent_is_empty(self):
-        from agent_cli.web.server import _section_body
+        from agent_cli.web.directives import _section_body
 
         assert _section_body("## 수기\n- A", "## 학습된 지침") == ""
 
     def test_render_input_includes_messages_and_existing(self):
-        from agent_cli.web.server import _render_learning_input
+        from agent_cli.web.directives import _render_learning_input
 
         msgs = [
             {"role": "user", "content": "AVL 지워줘"},
@@ -2144,7 +2144,7 @@ class TestLearnHelpers:
         assert "기존 교훈" in out  # existing learned fed back for merge
 
     def test_render_input_announces_truncation(self):
-        from agent_cli.web.server import _LEARN_MAX_MESSAGES, _render_learning_input
+        from agent_cli.web.directives import _LEARN_MAX_MESSAGES, _render_learning_input
 
         msgs = [
             {"role": "user", "content": f"m{i}"} for i in range(_LEARN_MAX_MESSAGES + 5)
@@ -2156,13 +2156,13 @@ class TestLearnHelpers:
         )  # kept the recent
 
     def test_render_input_serialises_nonstring_content(self):
-        from agent_cli.web.server import _render_learning_input
+        from agent_cli.web.directives import _render_learning_input
 
         out = _render_learning_input([{"role": "tool", "content": [{"x": 1}]}], "")
         assert '"x": 1' in out or '"x":1' in out
 
     def test_parse_lessons_happy(self):
-        from agent_cli.web.server import _parse_lessons
+        from agent_cli.web.directives import _parse_lessons
 
         raw = '[{"type":"failure","summary":"S1","detail":"D1"},{"type":"note","summary":"S2"}]'
         got = _parse_lessons(raw)
@@ -2172,7 +2172,7 @@ class TestLearnHelpers:
         ]
 
     def test_parse_lessons_strips_fences_and_prose(self):
-        from agent_cli.web.server import _parse_lessons
+        from agent_cli.web.directives import _parse_lessons
 
         raw = 'Sure!\n```json\n[{"type":"discovery","summary":"S"}]\n```\n'
         assert _parse_lessons(raw) == [
@@ -2180,26 +2180,26 @@ class TestLearnHelpers:
         ]
 
     def test_parse_lessons_unknown_type_becomes_note(self):
-        from agent_cli.web.server import _parse_lessons
+        from agent_cli.web.directives import _parse_lessons
 
         assert _parse_lessons('[{"type":"bogus","summary":"S"}]')[0]["type"] == "note"
 
     def test_parse_lessons_drops_empty_summary(self):
-        from agent_cli.web.server import _parse_lessons
+        from agent_cli.web.directives import _parse_lessons
 
         assert _parse_lessons('[{"type":"note","summary":"  "},{"summary":"ok"}]') == [
             {"type": "note", "summary": "ok", "detail": ""}
         ]
 
     def test_parse_lessons_garbage_is_empty(self):
-        from agent_cli.web.server import _parse_lessons
+        from agent_cli.web.directives import _parse_lessons
 
         assert _parse_lessons("no json here") == []
         assert _parse_lessons("[") == []
         assert _parse_lessons('{"not":"a list"}') == []
 
     def test_render_learned_block_is_summary_bullets(self):
-        from agent_cli.web.server import _render_learned_block
+        from agent_cli.web.directives import _render_learned_block
 
         block = _render_learned_block(
             [
@@ -2211,7 +2211,7 @@ class TestLearnHelpers:
 
     def test_record_lessons_writes_and_dedups(self, tmp_path):
         from agent_cli import memory
-        from agent_cli.web.server import _record_lessons
+        from agent_cli.web.directives import _record_lessons
 
         lessons = [
             {"type": "failure", "summary": "S1", "detail": "D1"},
@@ -2226,7 +2226,7 @@ class TestLearnHelpers:
         assert len(memory.load(tmp_path)) == 2
 
     def test_record_lessons_no_session_is_zero(self):
-        from agent_cli.web.server import _record_lessons
+        from agent_cli.web.directives import _record_lessons
 
         assert (
             _record_lessons(None, [{"type": "note", "summary": "S", "detail": ""}]) == 0
@@ -2242,19 +2242,19 @@ class TestZoneAccessors:
     FULL = "## 페르소나\n- 도도\n\n## 업무\n- 규칙\n\n## 학습된 지침\n- 교훈"
 
     def test_get_each_zone(self):
-        from agent_cli.web.server import _zone_get
+        from agent_cli.web.directives import _zone_get
 
         assert _zone_get(self.FULL, "persona") == "- 도도"
         assert _zone_get(self.FULL, "task") == "## 업무\n- 규칙"
         assert _zone_get(self.FULL, "learned") == "- 교훈"
 
     def test_task_zone_of_plain_directive_is_whole(self):
-        from agent_cli.web.server import _zone_get
+        from agent_cli.web.directives import _zone_get
 
         assert _zone_get("그냥 수기 지시\n- A", "task") == "그냥 수기 지시\n- A"
 
     def test_set_persona_preserves_task_and_learned(self):
-        from agent_cli.web.server import _zone_set
+        from agent_cli.web.directives import _zone_set
 
         out = _zone_set(self.FULL, "persona", "- 냉정")
         assert out.startswith("## 페르소나\n- 냉정")
@@ -2262,28 +2262,28 @@ class TestZoneAccessors:
         assert "## 업무\n- 규칙" in out and "## 학습된 지침\n- 교훈" in out
 
     def test_set_task_preserves_persona_and_learned(self):
-        from agent_cli.web.server import _zone_set
+        from agent_cli.web.directives import _zone_set
 
         out = _zone_set(self.FULL, "task", "## 새업무\n- 새규칙")
         assert "## 페르소나\n- 도도" in out and "## 학습된 지침\n- 교훈" in out
         assert "## 새업무\n- 새규칙" in out and "- 규칙\n" not in out
 
     def test_set_learned_preserves_persona_and_task(self):
-        from agent_cli.web.server import _zone_set
+        from agent_cli.web.directives import _zone_set
 
         out = _zone_set(self.FULL, "learned", "- 새교훈")
         assert "## 페르소나\n- 도도" in out and "## 업무\n- 규칙" in out
         assert "## 학습된 지침\n- 새교훈" in out
 
     def test_set_empty_removes_section_zone(self):
-        from agent_cli.web.server import _zone_set
+        from agent_cli.web.directives import _zone_set
 
         out = _zone_set(self.FULL, "persona", "")
         assert "## 페르소나" not in out
         assert "## 업무\n- 규칙" in out and "## 학습된 지침" in out
 
     def test_zone_set_roundtrips_with_get(self):
-        from agent_cli.web.server import _zone_get, _zone_set
+        from agent_cli.web.directives import _zone_get, _zone_set
 
         # setting a zone to its own current value leaves all three intact
         for axis in ("persona", "task", "learned"):
@@ -2570,3 +2570,38 @@ class TestPresetLibraryEndpoints:
             ).status_code
             != 200
         )
+
+
+# ── C3 분리 모듈 표면 (전송/도메인 분리 증명) ─────────────────────────
+
+
+class TestC3ModuleSeparation:
+    def test_directives_module_has_no_fastapi_dependency(self):
+        # directive 도메인 로직은 순수 — 웹 전송 없이 단독 임포트/사용 가능
+        import importlib
+        import sys
+
+        mod = importlib.import_module("agent_cli.web.directives")
+        src = open(mod.__file__).read()
+        # import 문 기준 검사 (docstring 의 "FastAPI 무의존" 언급은 무관)
+        imports = [ln for ln in src.splitlines() if ln.startswith(("import ", "from "))]
+        assert not any("fastapi" in ln or "starlette" in ln for ln in imports)
+        # server 를 되돌아 import 하지 않음 (단방향: server → directives)
+        assert "web.server" not in src
+        assert "agent_cli.web.directives" in sys.modules
+
+    def test_inspector_and_slash_do_not_import_server(self):
+        for name in ("agent_cli.web.inspector", "agent_cli.web.slash"):
+            import importlib
+
+            mod = importlib.import_module(name)
+            assert "web.server" not in open(mod.__file__).read(), name
+
+    def test_directives_roundtrip_standalone(self):
+        # zone set→get 왕복이 server 없이 동작
+        from agent_cli.web.directives import _zone_get, _zone_set
+
+        content = _zone_set("", "persona", "친절하고 간결하게.")
+        content = _zone_set(content, "learned", "- 검증 먼저.")
+        assert _zone_get(content, "persona") == "친절하고 간결하게."
+        assert _zone_get(content, "learned") == "- 검증 먼저."
