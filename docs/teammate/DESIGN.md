@@ -307,6 +307,16 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
    frontmatter(auto-spawn 등)가 자랄 자리를 처음부터 분리. 파싱은
    resource_loader 공유 — 포맷 복제 없음.
 
+## 후속 확장 로그 (로드맵 완결 이후)
+
+- 2026-07-11 **전문가 역할 확장 (v4.59.0)**: ①역할 발견 — 시스템 프롬프트
+  Teammate Roles 섹션(agents 광고와 동형, teammate 도구 게이트) ②내장
+  전문가 researcher/code-reviewer (`agent_cli/teammates/builtin/`) ③
+  `/create-teammate` 스킬 ④auto-spawn frontmatter(D11(b) 때 예약한 자리 —
+  restore 후 dedup 스폰) ⑤runtime 부트스트랩 프리필(restore/auto-spawn 분
+  첫 접촉 대비) ⑥**worker 사망 통지**(사용자 Q4): 비정상 종료는
+  kind:"died" mail 로 main 에 관찰 통지, kill/세션종료는 제외.
+
 ## 진행 로그
 
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.

@@ -17,9 +17,13 @@ from agent_cli.resource_loader import ResourceLoader
 
 _ROLE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# 패키지 내장 전문가 — subagent/ 아래라 패키지 루트까지 parent 2단.
+_BUILTIN_TEAMMATES_DIR = Path(__file__).parent.parent / "teammates" / "builtin"
+
 _TEAMMATE_SEARCH_PATHS = [
     Path.cwd() / ".agent-cli" / "teammates",
     Path.home() / ".agent-cli" / "teammates",
+    _BUILTIN_TEAMMATES_DIR,
 ]
 
 _teammate_loader = ResourceLoader(_TEAMMATE_SEARCH_PATHS)
@@ -43,3 +47,22 @@ def load_teammate_role(name: str) -> tuple[str | None, dict, str | None]:
         return None, {}, f"Teammate role file '{name}.md' has no content"
 
     return resource.body, resource.meta, None
+
+
+def available_roles(*, include_meta: bool = False) -> list:
+    """스폰 가능한 역할 목록 — 시스템 프롬프트 광고·auto-spawn 스캔용.
+
+    ``disable-model-invocation: true`` frontmatter 는 모델에게 광고하지
+    않는다 (agents/skills 와 동일 규율 — auto-spawn 스캔은 meta 를 직접
+    보므로 영향 없음: include_meta=True 는 전체 반환).
+    반환: include_meta=False → ``[(name, description), ...]``,
+    True → ``[(name, meta_dict), ...]``.
+    """
+    resources = _teammate_loader.load_all()
+    if include_meta:
+        return [(name, res.meta) for name, res in resources.items()]
+    return [
+        (name, res.meta.get("description", ""))
+        for name, res in resources.items()
+        if not res.meta.get("disable-model-invocation")
+    ]

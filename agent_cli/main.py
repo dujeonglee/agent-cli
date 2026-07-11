@@ -1039,7 +1039,26 @@ def run(
     # 회신의 세션-넘김 보존은 P3(manifest/outbox).
     from agent_cli.subagent.teammate import TeammateRegistry
 
-    teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
+    # runtime 프리필: restore/auto-spawn 된 teammate 가 도구 호출(스폰)
+    # 없이 첫 접촉(웹 창 인간 개입 등)을 받아도 provider 배선이 있도록.
+    teammate_registry = TeammateRegistry(
+        ctx.session_dir if ctx else None,
+        runtime={
+            "provider": llm_provider,
+            "capabilities": capabilities,
+            "model": resolved_model,
+            "provider_name": provider,
+            "base_url": resolved_url,
+            "api_key": resolved_key,
+            "max_turns": max_turns,
+            "depth": 0,
+            "max_depth": max_depth,
+            "timeout": delegate_timeout,
+            "session": session,
+            "hooks_config": _disk_hooks,
+            "compaction_enabled": not no_compaction,
+        },
+    )
 
     # P5 (D3 완성): run 도 web 과 같은 큐 펌프 — 초기 질의를 InputQueue 에
     # 넣고, teammate 회신의 wake 아이템(MailWaker)도 같은 큐로 들어온다.
@@ -1061,6 +1080,9 @@ def run(
     revived = teammate_registry.restore(parent_ctx=ctx)
     if revived:
         console.print(f"[{C['muted']}]🤝 teammate {revived}명 재생성됨[/]")
+    auto = teammate_registry.auto_spawn(parent_ctx=ctx)
+    if auto:
+        console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
 
     answer = None
 
@@ -1644,7 +1666,26 @@ def web(
         from agent_cli.subagent.teammate import TeammateRegistry
 
         nonlocal teammate_registry
-        teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
+        teammate_registry = TeammateRegistry(
+            ctx.session_dir if ctx else None,
+            # runtime 프리필 — restore/auto-spawn 분이 스폰 도구 호출 없이
+            # 웹 창 첫 접촉을 받아도 돌 수 있게 (run 경로와 동일 이유).
+            runtime={
+                "provider": llm_provider,
+                "capabilities": capabilities,
+                "model": resolved_model,
+                "provider_name": provider,
+                "base_url": resolved_url,
+                "api_key": resolved_key,
+                "max_turns": max_turns,
+                "depth": 0,
+                "max_depth": max_depth,
+                "timeout": delegate_timeout,
+                "session": session,
+                "hooks_config": None,
+                "compaction_enabled": not no_compaction,
+            },
+        )
         _registry = teammate_registry  # 클로저 고정 (nonlocal 재대입과 분리)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
         server.teammate_registry = _registry
@@ -1664,6 +1705,9 @@ def web(
         revived = teammate_registry.restore(parent_ctx=ctx)
         if revived:
             renderer.status(f"🤝 teammate {revived}명 재생성됨")
+        auto = teammate_registry.auto_spawn(parent_ctx=ctx)
+        if auto:
+            renderer.status(f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
         while True:
             # Tell the frontend we're waiting for the next user
             # message. Goes through ``_latest_worker_state`` so a

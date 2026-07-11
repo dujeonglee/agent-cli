@@ -756,6 +756,11 @@ def build_system_prompt_sections(
         if agent_desc:
             sections.append(("Agents", agent_desc))
 
+    if "teammate" in active_tools:
+        role_desc = build_teammate_role_descriptions(wire_format=wire_format)
+        if role_desc:
+            sections.append(("Teammate Roles", role_desc))
+
     # ── Recency: passive reference → active rules → immediate constraint ──
     sections.append(("Environment", _build_environment_section()))
 
@@ -897,6 +902,48 @@ def _build_context_recovery(session_dir: str) -> str:
         "Only use this if the user references something you cannot find in the current messages:\n"
         f'  read_file("{session_dir}/history.jsonl")'
     )
+
+
+def build_teammate_role_descriptions(wire_format=None) -> str:
+    """Available teammate roles for system prompt injection (전문가 발견).
+
+    delegate 의 ``build_agent_descriptions`` 와 동형 — teammate 로더로
+    역할을 나열해 모델이 **어떤 전문가를 소집할 수 있는지** 알게 한다
+    (이것 없이는 사용자가 역할 이름을 불러줘야만 쓸 수 있었다).
+    ``disable-model-invocation: true`` 역할은 제외 (skills/agents 규율).
+    """
+    if wire_format is None:
+        wire_format = _get_wire_format()
+
+    try:
+        from agent_cli.subagent.roles import available_roles
+    except ImportError:
+        return ""
+
+    roles = available_roles()
+    if not roles:
+        return ""
+
+    example = wire_format.render_full_example(
+        thought=None,
+        action="teammate",
+        action_input=wire_format.render_action_input(
+            {"mode": "spawn", "role": "role-name", "task": "..."}
+        ),
+    )
+    indented = "\n".join(f"  {line}" for line in example.splitlines())
+    lines = [
+        "## Available Teammate Roles",
+        "Spawn a persistent expert teammate with one of these roles when the "
+        "work benefits from an ongoing collaborator (it keeps its context "
+        "across your requests):",
+        indented,
+    ]
+    for name, desc in roles:
+        suffix = f" — {desc}" if desc else ""
+        lines.append(f"- `{name}`{suffix}")
+
+    return "\n".join(lines)
 
 
 def build_agent_descriptions(wire_format=None) -> str:

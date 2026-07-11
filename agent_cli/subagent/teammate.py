@@ -80,6 +80,24 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     role = reply.get("role", "")
     label = f"{key} ({role})" if role else key
 
+    if reply.get("kind") == "died":
+        # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
+        # status 를 조회하기 전에 능동적으로 알린다.
+        reason = reply.get("output") or "worker terminated unexpectedly"
+        content = (
+            f"── teammate {label} DIED ──\n{reason}\n"
+            f"(This teammate is gone — its queued requests were lost. Spawn a "
+            f"new one if the work is still needed; its context dir is kept on "
+            f"disk for post-mortem.)"
+        )
+        return {
+            "role": "user",
+            "tool": "teammate",
+            "success": False,
+            "content": content,
+            "source": "teammate_died",
+        }
+
     if reply.get("kind") == "question":
         question = reply.get("output") or "(empty question)"
         if reply.get("stale"):
@@ -448,6 +466,26 @@ class TeammateRegistry:
         # 최종 스냅샷 — revivable 유지 상태로 기록돼 resume 이 되살린다 (D7).
         self._save_state()
 
+    def auto_spawn(self, parent_ctx=None) -> int:
+        """frontmatter ``auto-spawn: true`` 역할을 세션 시작 시 자동 상주
+        (전문가 팀 확장). restore() **이후에** 호출 — 같은 역할의 살아있는
+        teammate(재생성분)가 이미 있으면 중복 스폰하지 않는다. 스폰 수 반환."""
+        from agent_cli.subagent.roles import available_roles
+
+        live_roles = {
+            tm.role_name for tm in self._teammates.values() if tm.state != "dead"
+        }
+        spawned = 0
+        for name, meta in available_roles(include_meta=True):
+            if not meta.get("auto-spawn"):
+                continue
+            if name in live_roles:
+                continue
+            key, error = self.spawn(role=name, parent_ctx=parent_ctx)
+            if not error:
+                spawned += 1
+        return spawned
+
     # ── P3: 상태 영속 + resume 재생성 (D7) ──────
 
     def _state_path(self) -> Path | None:
@@ -591,6 +629,7 @@ class TeammateRegistry:
 
         renderer = get_renderer()
         renderer.begin_prompt_scope(tm.key, label=f"teammate:{tm.role_name or 'anon'}")
+        crash = ""  # 비정상 종료 사유 (의도된 종료 = stop_event set 은 제외)
         try:
             # ctx 는 worker 스레드에서 생성 — create_subagent_ctx 의
             # note_scope_ctx 가 "현재 스레드의 스코프"(방금 연 tm.key)에
@@ -601,6 +640,7 @@ class TeammateRegistry:
             ctx, err = create_subagent_ctx(mode, parent_ctx, tm.home_dir)
             if ctx is None:
                 tm.error = err
+                crash = f"context creation failed: {err}"
                 return
             tm.ctx = ctx
             tm.state = "idle"
@@ -672,8 +712,24 @@ class TeammateRegistry:
                     self._save_state()  # push 를 건너뛰어도 상태는 미러
                 tm.current_author = "main"
                 self._notify_roster()
+        except BaseException as e:  # noqa: BLE001 — 루프 기계 자체의 사망 포착
+            tm.error = f"{type(e).__name__}: {e}"
+            crash = tm.error
         finally:
             tm.state = "dead"
+            if crash and not tm.stop_event.is_set():
+                # Q4: kill/세션종료(의도된 종료)가 아닌 사망 → main 에 관찰
+                # 통지. MailWaker 가 on_reply 로 idle run 도 깨운다.
+                tm.revivable = False  # 원인 미상 사망을 resume 이 되살리지 않게
+                self._push_reply(
+                    {
+                        "kind": "died",
+                        "key": tm.key,
+                        "role": tm.role_name,
+                        "success": False,
+                        "output": crash,
+                    }
+                )
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
             self._notify_roster()

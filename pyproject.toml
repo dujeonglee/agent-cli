@@ -73,6 +73,7 @@ agent_cli = [
     # auto-review reviewer, explorer, and create-* skills would all go missing.
     "agents/builtin/**/*.md",
     "skills/builtin/**/*.md",
+    "teammates/builtin/**/*.md",
     # Built-in DIRECTIVE presets (persona/task fragments) shipped read-only.
     "directive_presets_builtin/**/*.md",
 ]

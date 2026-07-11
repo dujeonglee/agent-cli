@@ -1171,3 +1171,161 @@ class TestRunMessagePump:
         waker = MailWaker(q.enqueue, reg.has_pending_replies)
         q.shutdown()
         self._pump(q, waker, reg, lambda text, *, wake: None)  # 즉시 반환
+
+
+# ── 전문가 역할: died 통지·광고·auto-spawn (v4.59.0) ──
+
+
+class TestWorkerDeathNotice:
+    """Q4: worker 의 비정상 사망은 main 에 관찰(kind:"died")로 통지 —
+    kill/세션 종료(의도된 종료)는 통지하지 않는다."""
+
+    def test_ctx_creation_failure_notifies_main(self, tmp_path, renderer, monkeypatch):
+        import agent_cli.subagent.runner as runner_mod
+
+        monkeypatch.setattr(
+            runner_mod, "create_subagent_ctx", lambda *a, **k: (None, "disk full")
+        )
+        reg = make_registry(tmp_path)
+        key, err = reg.spawn()
+        assert err == ""
+        assert wait_until(reg.has_pending_replies)
+        died = reg.drain_replies()[0]
+        assert died["kind"] == "died" and "disk full" in died["output"]
+        rec = build_reply_record(died)
+        assert rec["source"] == "teammate_died" and rec["success"] is False
+        assert "DIED" in rec["content"] and "Spawn a new one" in rec["content"]
+        assert not is_format_intervention(rec)
+        # 원인 미상 사망은 resume 이 되살리지 않는다
+        assert wait_until(lambda: reg.get(key).state == "dead")
+        import json
+
+        entry = json.loads((tmp_path / "teammates.json").read_text())["teammates"][0]
+        assert entry["state"] == "dead"
+
+    def test_machinery_crash_notifies_main(self, tmp_path, renderer):
+        # 요청 처리기(내부 try) 밖의 기계 사망 — begin_teammate_work 폭발.
+        def boom(**kw):
+            raise MemoryError("simulated OOM in worker machinery")
+
+        renderer.begin_teammate_work = boom
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "job")
+        assert wait_until(reg.has_pending_replies)
+        kinds = {r["kind"] for r in reg.drain_replies()}
+        assert "died" in kinds
+        assert reg.get(key).state == "dead"
+
+    def test_kill_and_shutdown_do_not_notify(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn()
+        k2, _ = reg.spawn()
+        wait_until(lambda: reg.get(k1).state == "idle")
+        wait_until(lambda: reg.get(k2).state == "idle")
+        reg.kill(k1)
+        reg.shutdown_all()
+        assert not reg.has_pending_replies()  # 의도된 종료 — died mail 없음
+
+
+class TestRoleDiscovery:
+    def test_builtin_roles_loadable_and_advertised(self):
+        from agent_cli.subagent.roles import available_roles, load_teammate_role
+
+        for name in ("researcher", "code-reviewer"):
+            body, config, err = load_teammate_role(name)
+            assert err is None and body
+            assert config.get("allowed-tools")
+        advertised = dict(available_roles())
+        assert "researcher" in advertised and "code-reviewer" in advertised
+        assert advertised["researcher"]  # description 필수 (발견 표면)
+
+    def test_disable_model_invocation_hidden(self, tmp_path, monkeypatch):
+        import agent_cli.subagent.roles as roles_mod
+
+        (tmp_path / "hidden.md").write_text(
+            "---\ndescription: secret\ndisable-model-invocation: true\n---\nbody",
+            encoding="utf-8",
+        )
+        (tmp_path / "visible.md").write_text(
+            "---\ndescription: shown\n---\nbody", encoding="utf-8"
+        )
+        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([tmp_path]))
+        names = [n for n, _ in roles_mod.available_roles()]
+        assert names == ["visible"]
+        # auto-spawn 스캔용 include_meta 는 전체 반환
+        all_names = [n for n, _ in roles_mod.available_roles(include_meta=True)]
+        assert set(all_names) == {"hidden", "visible"}
+
+    def test_prompt_section_lists_roles_with_spawn_example(self):
+        from agent_cli.prompts.system_prompt import build_teammate_role_descriptions
+
+        desc = build_teammate_role_descriptions()
+        assert "## Available Teammate Roles" in desc
+        assert "`researcher`" in desc and "`code-reviewer`" in desc
+        assert '"mode"' in desc and "spawn" in desc  # 스폰 예시 포함
+
+    def test_prompt_section_gated_on_teammate_tool(self, tmp_path):
+        # 레지스트리 없는 루프(active_tools 에 teammate 부재)엔 광고 안 함.
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        with_tool = build_system_prompt_sections(
+            caps, active_tools=["read_file", "teammate"]
+        )
+        without = build_system_prompt_sections(caps, active_tools=["read_file"])
+        names_with = [n for n, _ in with_tool]
+        names_without = [n for n, _ in without]
+        assert "Teammate Roles" in names_with
+        assert "Teammate Roles" not in names_without
+
+
+class TestAutoSpawn:
+    def _roles_dir(self, tmp_path, monkeypatch, *, flagged=True):
+        import agent_cli.subagent.roles as roles_mod
+
+        d = tmp_path / "roles"
+        d.mkdir(exist_ok=True)
+        flag = "auto-spawn: true\n" if flagged else ""
+        (d / "concierge.md").write_text(
+            f"---\ndescription: greeter\n{flag}---\nYou greet.", encoding="utf-8"
+        )
+        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        return d
+
+    def test_flagged_role_spawns_once(self, tmp_path, renderer, monkeypatch):
+        self._roles_dir(tmp_path, monkeypatch)
+        reg = make_registry(tmp_path)
+        assert reg.auto_spawn() == 1
+        tm = next(iter(reg._teammates.values()))
+        assert tm.role_name == "concierge"
+        assert reg.auto_spawn() == 0  # 살아있는 동안 중복 스폰 없음
+        reg.shutdown_all()
+
+    def test_unflagged_role_ignored(self, tmp_path, renderer, monkeypatch):
+        self._roles_dir(tmp_path, monkeypatch, flagged=False)
+        reg = make_registry(tmp_path)
+        assert reg.auto_spawn() == 0
+
+    def test_revived_role_not_duplicated(self, tmp_path, renderer, monkeypatch):
+        # resume 재생성(P3) 후 auto_spawn — 같은 역할이 살아 있으면 skip.
+        self._roles_dir(tmp_path, monkeypatch)
+        reg1 = make_registry(tmp_path)
+        assert reg1.auto_spawn() == 1
+        key = next(iter(reg1._teammates))
+        wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.shutdown_all()
+
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1  # 재생성으로 이미 상주
+        assert reg2.auto_spawn() == 0  # 중복 없음
+        reg2.shutdown_all()
