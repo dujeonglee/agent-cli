@@ -148,6 +148,20 @@ class TestHistoryPersistence:
         lines = (session_dir / "history.jsonl").read_text().strip().split("\n")
         assert json.loads(lines[0])["content"] == "post-rm"
 
+    def test_append_recreates_dir_wiped_mid_session(self, session_dir):
+        """Same guard, mid-session: the dir vanishes AFTER successful writes
+        (the mkdir now lives in the failure path, so this proves the retry
+        covers later adds too — not just the first)."""
+        import shutil
+
+        ctx = ContextManager(session_dir, max_context_tokens=1000)
+        _add(ctx, {"role": "user", "content": "before"})
+        shutil.rmtree(session_dir)
+        _add(ctx, {"role": "user", "content": "after"})
+        lines = (session_dir / "history.jsonl").read_text().strip().split("\n")
+        # fresh file after the wipe: only the post-wipe record
+        assert json.loads(lines[0])["content"] == "after"
+
 
 # ── Session Resume ────────────────────────────────────
 

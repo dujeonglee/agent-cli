@@ -21,10 +21,10 @@
 | **B2** | **web: async 핸들러 안 블로킹 I/O** — `workspace_tree` 요청마다 재귀 `rglob` 사이징, zip·rmtree·write 도 이벤트루프 위 → 모든 뷰어 SSE 정지 ✅ | server.py:1440,1477,1519,1554 | 요청당, 전 클라이언트 파급 | sync `def` 전환(FastAPI 스레드풀) 또는 `run_in_executor` | ✅ v4.36.0 |
 | **B3** | **web: `_event_buffer` 무한 성장** — trim 없는 plain list, 재접속마다 전체 스냅샷 재직렬화 ✅ | render/web.py:117,233,284 | 세션 길이 비례 | `deque(maxlen)` 또는 디스크 폴백 | ✅ v4.36.0 |
 | B4 | SSE 페이로드 뷰어당 재직렬화 (`json.dumps` × N viewers) | server.py:926,947 | 이벤트당×뷰어 | `_emit` 1회 직렬화 후 문자열 공유 | ✅ v4.36.0 |
-| B5 | react 단일-op 턴 이중 파싱 — 3-stage 파스 후 classic 이면 `super().parse_turn`→`parse_react` 재파싱 ✅ | react.py:558-598→93 | LLM 턴당 1회 | 파싱된 `data` 로 Op 직조 | ☐ |
-| B6 | `ctx.add` 당 `mkdir`+open/close 동기 I/O(턴당 ≥2) + 같은 페이로드 `json.dumps` 2회 | manager.py:645-648,197 | 턴당 | 세션 파일핸들 유지, 직렬화 1회 | ☐ |
-| B7 | 도구 호출마다 `frozenset`+`RunContext` 재생성(oversized 경로 2회) — 입력 불변 | loop.py:_run_ctx | 호출당 소액 | init 1회 캐시 | ☐ |
-| B8 | read_file 전체 읽기 파일 2회 split | read_file.py:259/282 | 읽기당 소액 | `format_hashlines_range` 재사용 | ☐ |
+| B5 | react 단일-op 턴 이중 파싱 — 3-stage 파스 후 classic 이면 `super().parse_turn`→`parse_react` 재파싱 ✅ | react.py:558-598→93 | LLM 턴당 1회 | 파싱된 `data` 로 Op 직조 | ✅ v4.39.0 |
+| B6 | `ctx.add` 당 `mkdir`+open/close 동기 I/O(턴당 ≥2) + 같은 페이로드 `json.dumps` 2회 | manager.py:645-648,197 | 턴당 | 세션 파일핸들 유지, 직렬화 1회 | ✅(부분) v4.39.0 |
+| B7 | 도구 호출마다 `frozenset`+`RunContext` 재생성(oversized 경로 2회) — 입력 불변 | loop.py:_run_ctx | 호출당 소액 | init 1회 캐시 | ✅ v4.39.0 |
+| B8 | read_file 전체 읽기 파일 2회 split | read_file.py:259/282 | 읽기당 소액 | `format_hashlines_range` 재사용 | ✅ v4.39.0 |
 | 기각 | ~~`estimate_tokens(self.system)` 매 턴~~ — `len//4` 는 O(1), 공짜 | token_estimator.py:6 | — | ❌ 에이전트 주장 기각 | — |
 
 참고: 토큰 계정(`get_estimated_tokens`)은 O(1) 증분 + 서버 실측 재앵커로 잘 설계됨. B1 만 예외 지점.
@@ -54,10 +54,22 @@
 2. ✅ **B2+B3+B4 web 안정성 묶음** — 사용자 체감 직결 (v4.36.0)
 3. ✅ **B1 get_messages 증분 캐시** — 유일한 O(n²) (v4.37.0)
 4. ✅ **A2 fetch flatten** — 로드맵 완결 (v4.38.0)
-5. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
+5. ✅ **B5+B6(부분)+B7+B8 잔여 perf 소품 묶음** (v4.39.0)
+6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
 
+- **2026-07-11 · v4.39.0 · B5+B6(부분)+B7+B8 완료**: (B5) react classic 경로가
+  parse_turn 자신의 3-stage 파스 결과 dict 로 Op 직조 — 같은 텍스트 2회 파싱
+  제거, repair `truncated` 플래그 Op 보존, old-path 동등성 테스트(정상·drift·
+  repair·완전실패 케이스) 고정. (B6 부분) history append 의 세션dir 가드
+  `mkdir` 를 실패 시에만(FileNotFoundError→mkdir+재시도)으로 — add 당 stat 1회
+  절약, 외부 wipe 복구 의미 보존. **파일핸들 유지·dumps 공유는 의도적 비채택**:
+  fd 유지는 unlink 후 소리 없는 유실(가드 목적 훼손), estimate 와 record 는
+  서로 다른 payload 라 직렬화 공유가 추정 왜곡 — 잔여분 수용하고 종결.
+  (B7) `_run_ctx` lazy 1회 캐시(세 입력 init 후 불변 확인; per-call 가변 필드
+  등장 시 캐시 제거 주석). (B8) full read 가 기존 split 라인 리스트 재사용 —
+  출력 바이트 동일 테스트(엣지 5종) 고정.
 - **2026-07-11 · v4.38.0 · A2 완료**: fetch 스키마 flat `{url, depth?}` 전환 —
   마지막 prefixed builtin 제거로 "모든 builtin flat-native" 불변식이 실제로
   참이 됨(`claims` 전 builtin False, prefix 머신러리 완전 latent).

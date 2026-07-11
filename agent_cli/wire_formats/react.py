@@ -568,13 +568,14 @@ class ReActFormat(WireFormat):
         Completion is an explicit ``complete`` op (parity with md_array)."""
         text = _sanitize_surrogates(llm_text)
         stripped, thinking = _strip_thinking_blocks(text)
+        truncated = False
         data = _try_json_parse(stripped)
         stage = 1
         if data is None:
             data = _try_json_parse(stripped, strict=False)
             stage = 2
         if data is None:
-            repaired, _ = repair_json(stripped)
+            repaired, truncated = repair_json(stripped)
             if isinstance(repaired, dict):
                 data, stage = repaired, 2
         if isinstance(data, dict) and isinstance(data.get("actions"), list):
@@ -588,7 +589,35 @@ class ReActFormat(WireFormat):
                 parse_stage=stage,
                 thinking=thinking,
             )
-        # Classic single-op (or unparseable) → base wraps parse() as 1 op.
+        if isinstance(data, dict):
+            # Classic single-op: the 3-stage parse above already yielded the
+            # dict — build the one-op turn from it directly instead of
+            # recursing into ``super().parse_turn`` → ``parse_react``, which
+            # would sanitize / strip / 3-stage-parse the SAME text a second
+            # time (every classic turn was parsed twice). Mirrors parse_react's
+            # dict handling (populate + normalize + stage; ``truncated`` from
+            # the repair stage is now preserved instead of discarded) and the
+            # base wrap (one Op whenever an action OR a recovered action_input
+            # exists — the dropped-action preservation invariant).
+            pa = ParsedAction(raw=stripped, thinking=thinking)
+            _populate_from_dict(pa, data)
+            pa.parse_stage = stage
+            pa.truncated = truncated
+            ops = (
+                [Op(pa.action, pa.action_input, pa.truncated)]
+                if (pa.action is not None or pa.action_input is not None)
+                else []
+            )
+            return ParsedTurn(
+                thought=pa.thought,
+                ops=ops,
+                terminal=False,
+                raw=pa.raw,
+                parse_stage=pa.parse_stage,
+                thinking=pa.thinking,
+            )
+        # Unparseable here → base wraps parse() as 1 op (parse_react's
+        # stage-3 regex extraction is the remaining recovery).
         return super().parse_turn(llm_text)
 
     # ─── History round-trip (multi-op record) ──────────────────

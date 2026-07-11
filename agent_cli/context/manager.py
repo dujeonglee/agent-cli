@@ -667,17 +667,26 @@ class ContextManager:
     def _append_to_history(self, message: dict) -> None:
         """Append a single JSON line to history.jsonl.
 
-        Defensively recreates the parent directory before opening — the
-        session dir is created in ``__init__`` but can disappear between
-        construction and the first write if an external process (user
-        cleanup, parallel `rm -rf .agent-cli/sessions/`, etc.) wipes the
-        tree mid-run. Without this guard, parallel delegate workers
-        would crash on the first turn's history flush.
+        Defensively recreates the parent directory ON FAILURE — the session
+        dir is created in ``__init__`` but can disappear between construction
+        and a write if an external process (user cleanup, parallel `rm -rf
+        .agent-cli/sessions/`, etc.) wipes the tree mid-run. Without this
+        guard, parallel delegate workers would crash on the first turn's
+        history flush. The mkdir lives in the exception path (not before
+        every open) so the common case pays one ``open`` instead of a
+        ``mkdir`` stat + ``open`` per add (≥2 adds per turn). Open-per-add is
+        deliberate — a persistent handle would keep writing into an unlinked
+        inode after an external wipe (silent data loss instead of recovery).
         """
-        self._history_path.parent.mkdir(parents=True, exist_ok=True)
         record = self._enrich_record(message)
-        with open(self._history_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        try:
+            with open(self._history_path, "a", encoding="utf-8") as f:
+                f.write(line)
+        except FileNotFoundError:
+            self._history_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._history_path, "a", encoding="utf-8") as f:
+                f.write(line)
 
     def _enrich_record(self, message: dict) -> dict:
         """Build the history.jsonl record: the round-trip message + retrieval

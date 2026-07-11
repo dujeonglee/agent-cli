@@ -103,3 +103,20 @@ def test_claims_false_on_flat_keys():
     # flat `{path}` 엔 `read_file_` prefix 가 없으므로 claims 는 False —
     # infer_action 오염 없음 (write_file 와 동일한 latent-prefix 보장).
     assert ReadFileTool().claims({"path": "x", "stat": True}) is False
+
+
+# ── full read reuses the existing split (B8) ──────────────────────────
+
+
+def test_full_read_output_identical_to_format_hashlines(tmp_path):
+    """The bare full read now formats from the already-split line list —
+    output must stay byte-identical to ``format_hashlines(text)`` (incl.
+    trailing-newline and empty-line hash behaviour)."""
+    from agent_cli.tools.read_file import _read_one, format_hashlines
+
+    for content in ("a\nb\nc", "a\nb\n", "", "single", "x\n\n\ny\n"):
+        f = tmp_path / "f.txt"
+        f.write_text(content)
+        r = _read_one({"path": str(f)})
+        assert r.success
+        assert r.output == format_hashlines(content), repr(content)

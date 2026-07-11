@@ -166,6 +166,9 @@ class AgentLoop:
             if capabilities and getattr(capabilities, "context_window", 0)
             else 0
         )
+        # Lazy one-shot cache for _run_ctx() — see its docstring. None until
+        # the first tool call (ctx/tools_list are final well before then).
+        self._run_ctx_cache: RunContext | None = None
         self.model = model
         self.provider_name = provider_name
         self.base_url = base_url
@@ -1873,16 +1876,27 @@ class AgentLoop:
 
     # ── per-call loop context (execute + render seams share it) ─────
     def _run_ctx(self) -> RunContext:
-        """Build the :class:`RunContext` for the CURRENT tool call — the single
+        """The :class:`RunContext` for the CURRENT tool call — the single
         per-call bundle handed to both tool surfaces (``run``/``_run`` and
         ``render_oversized``): the session dir, the oversized cap, and the tool
         names callable in this loop. One construction point keeps the two seams
-        from drifting on what "this call's context" is."""
-        return RunContext(
-            session_dir=self.ctx.session_dir if self.ctx else None,
-            oversized_cap=self._oversized_cap,
-            tools_available=frozenset(self.tools_list),
-        )
+        from drifting on what "this call's context" is.
+
+        Built lazily ONCE and cached: all three inputs are immutable after
+        ``__init__`` (``tools_list`` is only depth/ctx-stripped there), and
+        ``RunContext`` is frozen — so re-building it (plus the ``frozenset``)
+        on every tool call and again on every oversized render was pure
+        waste. If a per-call-VARYING field ever joins RunContext, drop this
+        cache."""
+        cached = getattr(self, "_run_ctx_cache", None)
+        if cached is None:
+            cached = RunContext(
+                session_dir=self.ctx.session_dir if self.ctx else None,
+                oversized_cap=self._oversized_cap,
+                tools_available=frozenset(self.tools_list),
+            )
+            self._run_ctx_cache = cached
+        return cached
 
     # ── 3. Regular tool dispatch ───────────────────────────────────
     def _invoke_regular(self, tool_name: str, tool_input) -> ToolResult:

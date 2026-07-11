@@ -491,3 +491,98 @@ class TestDeleteOpPreserved:
         assert out.action == "edit_file"
         assert out.action_input["edits"][0] == {"op": "delete", "pos": "2#ab"}
         assert "lines" not in out.action_input["edits"][0]
+
+
+# ── parse_turn classic path: no double parse (B5) ─────────────────────
+
+
+class TestParseTurnSingleParse:
+    """The classic single-op shape used to fall through to
+    ``super().parse_turn`` → ``parse_react``, re-running sanitize + strip +
+    the 3-stage JSON parse on the SAME text — every classic turn was parsed
+    twice. Now the dict from parse_turn's own parse builds the Op directly;
+    output stays byte-identical to the old path."""
+
+    def _fmt(self):
+        from agent_cli.wire_formats.react import ReActFormat
+
+        return ReActFormat()
+
+    def test_classic_strict_json_parsed_once(self, monkeypatch):
+        import agent_cli.wire_formats.react as react_mod
+
+        calls = {"n": 0}
+        real = react_mod._try_json_parse
+
+        def counting(text, **kw):
+            calls["n"] += 1
+            return real(text, **kw)
+
+        monkeypatch.setattr(react_mod, "_try_json_parse", counting)
+        turn = self._fmt().parse_turn(
+            '{"thought": "t", "action": "shell", "action_input": {"command": "ls"}}'
+        )
+        assert calls["n"] == 1  # strict succeeds on the first attempt — no recurse
+        assert turn.parse_stage == 1
+        assert turn.ops[0].action == "shell"
+
+    def test_classic_equivalent_to_base_wrap(self):
+        # Ground truth: what the old path (base wrap of parse()) produces.
+        from agent_cli.wire_formats.base import WireFormat
+
+        fmt = self._fmt()
+        raw = '{"thought": "why", "action": "read_file", "action_input": {"path": "a.py"}}'
+        turn = fmt.parse_turn(raw)
+        base_turn = WireFormat.parse_turn(fmt, raw)  # forced old path
+        assert turn.thought == base_turn.thought
+        assert turn.parse_stage == base_turn.parse_stage
+        assert turn.terminal == base_turn.terminal
+        assert [(op.action, op.action_input, op.truncated) for op in turn.ops] == [
+            (op.action, op.action_input, op.truncated) for op in base_turn.ops
+        ]
+        assert turn.raw == base_turn.raw
+
+    def test_sibling_drift_normalized(self):
+        # _normalize_action_input bundling must survive the direct build.
+        turn = self._fmt().parse_turn(
+            '{"thought": "t", "action": "shell", "command": "ls -la"}'
+        )
+        assert turn.ops[0].action == "shell"
+        assert turn.ops[0].action_input == {"command": "ls -la"}
+
+    def test_dropped_action_preserves_input(self):
+        # Preservation invariant: no action but recovered input → 1 op kept.
+        turn = self._fmt().parse_turn(
+            '{"thought": "t", "action_input": {"path": "x.py"}}'
+        )
+        assert len(turn.ops) == 1
+        assert turn.ops[0].action is None
+        assert turn.ops[0].action_input == {"path": "x.py"}
+
+    def test_repaired_truncated_flag_preserved(self):
+        # An unterminated classic emission goes through repair_json —
+        # the truncated flag must ride onto the Op (as it did via parse_react).
+        raw = '{"thought": "t", "action": "write_file", "action_input": {"path": "a", "content": "abc'
+        turn = self._fmt().parse_turn(raw)
+        assert turn.parse_stage == 2
+        assert len(turn.ops) == 1
+        assert turn.ops[0].truncated is True
+
+    def test_broken_emissions_match_old_path(self):
+        # For malformed emissions (repaired or regex-recovered), the result
+        # must equal what the OLD path (base wrap of parse()) produced — the
+        # direct build may only change WHO parses, never WHAT comes out.
+        from agent_cli.wire_formats.base import WireFormat
+
+        fmt = self._fmt()
+        for raw in (
+            'thought: broken "action": "shell" "action_input": {"command": "ls"}',
+            '{"thought": "t", "action": "shell", "action_input": {"command": "ls"},}',
+            "no json at all, just prose",
+        ):
+            turn = fmt.parse_turn(raw)
+            base_turn = WireFormat.parse_turn(fmt, raw)
+            assert [(op.action, op.action_input) for op in turn.ops] == [
+                (op.action, op.action_input) for op in base_turn.ops
+            ], raw
+            assert turn.thought == base_turn.thought, raw

@@ -278,8 +278,10 @@ def _read_one(
                 True, output=format_hashlines_range(all_lines, start, end)
             )
 
-        # Bare full read — return the whole file.
-        return ToolResult(True, output=format_hashlines(text))
+        # Bare full read — return the whole file. Reuse the split done above
+        # for ``total`` instead of ``format_hashlines(text)`` re-splitting the
+        # same text (same output: format_hashlines splits on "\n" identically).
+        return ToolResult(True, output=format_hashlines_range(all_lines, 0, total))
     except Exception as e:
         return ToolResult(False, error=f"read_file failed: {e}")
 

@@ -671,6 +671,13 @@ class TestRunContext:
         c = loop._run_ctx()
         assert c.session_dir is None and c.oversized_cap == 0
 
+    def test_loop_run_ctx_cached_single_instance(self):
+        # Inputs are immutable after __init__ and RunContext is frozen, so
+        # _run_ctx builds ONCE and returns the same instance thereafter
+        # (tool-call seam + oversized-render seam share it).
+        loop = _loop(cap=4_096, tools=["read_file", "delegate"])
+        assert loop._run_ctx() is loop._run_ctx()
+
 
 # ── read_file stat hint is cap-aware, threaded via RunContext, and the
 #    over-cap decision agrees with the loop's real capping ─────────────
