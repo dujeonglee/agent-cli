@@ -558,3 +558,59 @@ class TestStopEventThreading:
             "/plan do it", _RecordingOutput(), stop_event=ev, **base_state
         )
         assert captured["stop_event"] is ev
+
+
+# ── 경로-선두 메시지 오인 방지 (v4.51.1) ─────────────────────────────
+
+
+class TestLooksLikeSlashCommand:
+    def _f(self):
+        from agent_cli.main import looks_like_slash_command
+
+        return looks_like_slash_command
+
+    def test_paths_are_not_commands(self, tmp_path):
+        f = self._f()
+        assert f("/Users/me/proj 를 분석해줘") is False  # 두 번째 슬래시
+        assert f("/tmp/report.md 읽어봐") is False
+        assert f("/etc 안에 뭐 있어?") is False  # 실존 한-단어 경로
+        assert f(str(tmp_path) + " 정리해줘") is False
+
+    def test_commands_still_recognized(self):
+        f = self._f()
+        assert f("/skills") is True
+        assert f("/plan 로그인 기능") is True
+        assert f("/create-skill foo") is True  # 하이픈 이름
+        assert f("/no-such-skill x") is True  # unknown 도 명령 후보(오타 안전망)
+
+    def test_non_command_shapes_pass_through(self):
+        f = self._f()
+        assert f("/") is False
+        assert f("/?뭐지") is False
+        assert f("/한글스킬") is False  # 명령 문법 아님 → chat 으로
+
+    def test_dispatch_lets_path_message_through_to_llm(self):
+        # 통합: 경로-선두 메시지는 dispatcher 가 먹지 않고 False(=LLM 경로)
+        from agent_cli.main import try_dispatch_agent_or_skill
+
+        class _Out:
+            def __getattr__(self, name):
+                raise AssertionError(f"dispatcher must not handle this ({name})")
+
+        handled = try_dispatch_agent_or_skill(
+            "/Users/idujeong/workspace 를 봐줘",
+            _Out(),
+            llm_provider=None,
+            capabilities=None,
+            resolved_model="m",
+            provider="openai",
+            resolved_url="",
+            resolved_key="",
+            max_turns=0,
+            verbose=False,
+            max_depth=2,
+            delegate_timeout=60,
+            ctx=None,
+            session=None,
+        )
+        assert handled is False

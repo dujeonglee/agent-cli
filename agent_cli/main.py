@@ -6,6 +6,7 @@ import os
 import subprocess
 import threading
 import time
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -331,6 +332,37 @@ def _collect_agents() -> list[tuple[str, str]]:
     )
 
 
+_SLASH_CMD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def looks_like_slash_command(message: str) -> bool:
+    """``/...`` 메시지가 **명령**인지 — 경로/일반 텍스트 오인 방지 (v4.51.1).
+
+    이전엔 ``startswith("/")`` 만으로 skill dispatch 로 보내서
+    ``/Users/me/proj 분석해줘`` 같은 경로-선두 메시지가 SKILL_NOT_FOUND
+    로 먹혔다. 판별 규칙(보수적 — 명령이라고 확신할 때만 True):
+
+    1. 첫 토큰에 두 번째 ``/`` 가 있으면 경로 (``/tmp/a.py``) → False
+    2. 첫 토큰이 파일시스템에 실존하면 경로 (``/etc``, ``/Users``) → False
+    3. 이름이 명령 문법(영숫자·-_)이 아니면 → False
+    4. 그 외 → True — unknown 이름은 기존대로 not-found 안내(오타 안전망)
+
+    ``@agent`` 라우팅과 web 의 정확-매치 명령(/help·/sh·/compact)은 무관.
+    """
+    first = message.split(maxsplit=1)[0]
+    body = first[1:]
+    if "/" in body:  # 규칙 1
+        return False
+    if not _SLASH_CMD_NAME.match(body):  # 규칙 3 (빈 문자열 포함)
+        return False
+    try:
+        if Path(first).exists():  # 규칙 2 — /etc, /Users 등 한 단어 경로
+            return False
+    except OSError:
+        pass
+    return True
+
+
 def try_dispatch_agent_or_skill(
     message: str,
     output: DispatchOutput,
@@ -405,7 +437,7 @@ def try_dispatch_agent_or_skill(
         output.agent_result(result)
         return True
 
-    if message.startswith("/"):
+    if message.startswith("/") and looks_like_slash_command(message):
         parts = message.split(maxsplit=1)
         cmd_name = parts[0][1:]
         # ``/skills`` is a synthetic command — it isn't a real skill
@@ -949,8 +981,12 @@ def run(
     save_meta(session)
     ctx = _build_context(session, boot, resume=session_resumed is not None)
 
-    # Skill dispatch: /skill-name args
-    if query.startswith("/") and not query.startswith("/sh"):
+    # Skill dispatch: /skill-name args — 경로-선두 쿼리는 통과(looks_like)
+    if (
+        query.startswith("/")
+        and not query.startswith("/sh")
+        and looks_like_slash_command(query)
+    ):
         answer = _dispatch_skill(
             query,
             llm_provider,
