@@ -170,31 +170,47 @@ def execute_skill(
 
     effective_hooks_config = merge_hooks_configs(parent_hooks_config, skill.hooks)
 
-    loop_result = run_loop(
-        query=prompt,
-        provider=provider,
-        capabilities=capabilities,
-        model=effective_model,
-        provider_name=provider_name,
-        base_url=base_url,
-        api_key=api_key,
-        max_turns=effective_max_turns,
-        verbose=verbose,
-        depth=parent_depth + 1,
-        max_depth=max_depth,
-        delegate_timeout=delegate_timeout,
-        active_tools=effective_tools,
-        ctx=skill_ctx or ctx,
-        session=session,
-        hooks_config=effective_hooks_config,
-        skill_name=skill.name,
-        skill_stack=skill_stack,
-        skill_args=arguments,
-        graceful_interrupt=graceful_interrupt,
-        stop_event=stop_event,
-        agent_role=parent_role,
-        compaction_enabled=compaction_enabled,
-    )
+    # v4.52.0 프롬프트 인스펙터 스코프: skill 은 호출자 스레드에서 중첩
+    # 실행이라(delegate 의 스레드-매핑 미적용) 명시 push — 중첩 루프의
+    # 시스템 스냅샷이 main 스코프를 덮던 동작이 사라지고, skill 이 독립
+    # 칩(+동적 컨텍스트)으로 인스펙터에 잡힌다. CLI(minimal)는 no-op.
+    import uuid as _uuid
+
+    from agent_cli.render import get_renderer as _get_renderer
+
+    _renderer = _get_renderer()
+    _scope_id = f"skill-{skill.name or 'skill'}-{_uuid.uuid4().hex[:8]}"
+    _renderer.begin_prompt_scope(_scope_id, label=f"skill:{skill.name or 'skill'}")
+    if skill_ctx is not None:
+        _renderer.note_scope_ctx(skill_ctx)
+    try:
+        loop_result = run_loop(
+            query=prompt,
+            provider=provider,
+            capabilities=capabilities,
+            model=effective_model,
+            provider_name=provider_name,
+            base_url=base_url,
+            api_key=api_key,
+            max_turns=effective_max_turns,
+            verbose=verbose,
+            depth=parent_depth + 1,
+            max_depth=max_depth,
+            delegate_timeout=delegate_timeout,
+            active_tools=effective_tools,
+            ctx=skill_ctx or ctx,
+            session=session,
+            hooks_config=effective_hooks_config,
+            skill_name=skill.name,
+            skill_stack=skill_stack,
+            skill_args=arguments,
+            graceful_interrupt=graceful_interrupt,
+            stop_event=stop_event,
+            agent_role=parent_role,
+            compaction_enabled=compaction_enabled,
+        )
+    finally:
+        _renderer.end_prompt_scope(_scope_id)
 
     result = loop_result.output if loop_result.success else None
 

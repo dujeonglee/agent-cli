@@ -162,6 +162,12 @@ def _run_single(
             wire_format=inherited_wire_format,
         )
 
+    # v4.52.0: 인스펙터 동적 컨텍스트 — 이 워커의 스코프(begin_delegate_task
+    # 가 push 한 task_id)에 live ctx 등록. CLI(minimal)는 no-op.
+    from agent_cli.render import get_renderer as _get_renderer
+
+    _get_renderer().note_scope_ctx(ctx)
+
     t0 = time.monotonic()
 
     loop_result = run_loop(

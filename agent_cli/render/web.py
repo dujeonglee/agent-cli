@@ -186,6 +186,15 @@ class WebRenderer(Renderer):
         # ``begin_delegate_task`` so the inspector chip row can name each
         # sub-agent ("explorer·1") without re-deriving it from the timeline.
         self._prompt_scope_labels: dict[str, dict[str, Any]] = {}
+        # v4.52.0 스코프 스택: 스레드당 [스코프id…] — 중첩 루프(delegate 안
+        # skill 등)의 top 이 현재 스코프. _thread_to_task(SSE delegate 그룹
+        # 라우팅)와 분리 — 프런트 카드 그룹핑은 delegate 전용 시각 장치.
+        self._thread_prompt_scopes: dict[int, list[str]] = {}
+        # 스코프별 동적 컨텍스트: live ContextManager 참조(실행 중 on-demand)
+        # → 종료 시 텍스트 고정(_scope_dynamic_final, 사후 검사 — 시스템
+        # 스냅샷과 대칭)하고 live 참조 해제(ctx 장기 홀드 방지).
+        self._scope_ctxs: dict[str, Any] = {}
+        self._scope_dynamic_final: dict[str, list[dict]] = {}
         # ── Sticky state registry ───────────────────────────────────
         # A "sticky" state is a single server value that is (a) broadcast live
         # to connected clients AND (b) replayed into each NEW connection's
@@ -420,6 +429,77 @@ class WebRenderer(Renderer):
 
     # ─── Parallel delegate visibility ───────────────
 
+    def _current_prompt_scope(self, tid: int) -> str:
+        """호출 스레드의 현재 프롬프트 스코프 — 스택 top, 없으면 delegate
+        맵 폴백, 그마저 없으면 main."""
+        stack = self._thread_prompt_scopes.get(tid)
+        if stack:
+            return stack[-1]
+        return self._thread_to_task.get(tid) or _MAIN_SCOPE
+
+    def begin_prompt_scope(self, scope_id: str, label: str = "") -> None:
+        """스코프 push (v4.52.0) — skill 등 호출자-스레드 중첩 루프용.
+        delegate 는 begin_delegate_task 가 같은 스택을 push 한다."""
+        tid = threading.get_ident()
+        with self._lock:
+            self._thread_prompt_scopes.setdefault(tid, []).append(scope_id)
+            if label:
+                self._prompt_scope_labels[scope_id] = {"agent": label}
+
+    def end_prompt_scope(self, scope_id: str) -> None:
+        """스코프 pop + 동적 컨텍스트 고정(live→final)."""
+        tid = threading.get_ident()
+        with self._lock:
+            stack = self._thread_prompt_scopes.get(tid, [])
+            if scope_id in stack:
+                stack.remove(scope_id)
+            if not stack:
+                self._thread_prompt_scopes.pop(tid, None)
+        self._finalize_prompt_scope(scope_id)
+
+    def note_scope_ctx(self, ctx) -> None:
+        """현재 스코프의 ContextManager 등록 — 인스펙터가 동적 컨텍스트를
+        on-demand 조회. main 스코프는 무시(server.ctx 가 이미 담당)."""
+        scope = self._current_prompt_scope(threading.get_ident())
+        if scope == _MAIN_SCOPE or ctx is None:
+            return
+        with self._lock:
+            self._scope_ctxs[scope] = ctx
+
+    def _finalize_prompt_scope(self, scope: str) -> None:
+        """live ctx → 최종 동적 섹션 텍스트 고정 후 참조 해제. best-effort
+        (고정 실패가 태스크 종료를 막지 않음)."""
+        with self._lock:
+            ctx = self._scope_ctxs.pop(scope, None)
+        if ctx is None:
+            return
+        try:
+            # lazy: web.inspector → render.web 역방향 import 가 이미 있어
+            # 모듈-로드 순환 회피.
+            from agent_cli.web.inspector import _dynamic_context_sections
+
+            final = _dynamic_context_sections(ctx)
+        except Exception:  # noqa: BLE001
+            return
+        with self._lock:
+            self._scope_dynamic_final[scope] = final
+
+    def scope_dynamic_sections(self, scope: str) -> list[dict]:
+        """스코프의 동적 컨텍스트 섹션 — 실행 중이면 live ctx 로 실시간,
+        종료 후면 고정 스냅샷, 둘 다 없으면 빈 리스트. 디버그 엔드포인트의
+        task_id 분기가 소비 (main 은 server.ctx 경로 그대로)."""
+        with self._lock:
+            ctx = self._scope_ctxs.get(scope)
+        if ctx is not None:
+            try:
+                from agent_cli.web.inspector import _dynamic_context_sections
+
+                return _dynamic_context_sections(ctx)
+            except Exception:  # noqa: BLE001
+                return []
+        with self._lock:
+            return list(self._scope_dynamic_final.get(scope, []))
+
     def begin_delegate_task(
         self,
         *,
@@ -441,6 +521,7 @@ class WebRenderer(Renderer):
         tid = threading.get_ident()
         with self._lock:
             self._thread_to_task[tid] = task_id
+            self._thread_prompt_scopes.setdefault(tid, []).append(task_id)
             # Remember the chip-row label for this scope; the snapshot itself
             # arrives later (first LLM call) keyed by the same task_id.
             self._prompt_scope_labels[task_id] = {"agent": agent, "index": index}
@@ -471,6 +552,12 @@ class WebRenderer(Renderer):
         tid = threading.get_ident()
         with self._lock:
             self._thread_to_task.pop(tid, None)
+            stack = self._thread_prompt_scopes.get(tid, [])
+            if task_id in stack:
+                stack.remove(task_id)
+            if not stack:
+                self._thread_prompt_scopes.pop(tid, None)
+        self._finalize_prompt_scope(task_id)  # 동적 컨텍스트 live→고정
         self.set_thread_agent("")  # worker's prompt label no longer applies
         payload = {
             "task_id": task_id,
@@ -955,7 +1042,7 @@ class WebRenderer(Renderer):
         """
         from agent_cli.context.token_estimator import estimate_tokens
 
-        scope = self._thread_to_task.get(threading.get_ident()) or _MAIN_SCOPE
+        scope = self._current_prompt_scope(threading.get_ident())
         snapshot = {
             "turn": turn,
             "total_chars": sum(len(t) for _, t in sections)
@@ -1018,6 +1105,8 @@ class WebRenderer(Renderer):
         with self._lock:
             removed = self._prompt_snapshots.pop(scope, None) is not None
             self._prompt_scope_labels.pop(scope, None)
+            self._scope_ctxs.pop(scope, None)
+            self._scope_dynamic_final.pop(scope, None)
         return removed
 
     def dispatch_progress(

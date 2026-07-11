@@ -1882,3 +1882,78 @@ class TestEmitSerializesOnce:
         snapshot = r.register_connection(conn)
         ident = [d for e, d in snapshot if e == "identity"][0]
         assert getattr(ident, "json_str", None) is None
+
+
+# ── v4.52.0: 스코프 스택 + 서브-스코프 동적 컨텍스트 ─────────────────
+
+
+class TestPromptScopeStack:
+    def _ctx(self, tmp_path, marker):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / marker, max_context_tokens=10_000)
+        ctx.add({"role": "user", "content": f"질문-{marker}"})
+        return ctx
+
+    def test_skill_scope_no_longer_clobbers_main(self):
+        # 회귀 가드: skill(호출자 스레드 중첩)의 시스템 스냅샷이 main 을
+        # 덮던 동작 — 스코프 push 후에는 자기 스코프에 저장된다.
+        r = WebRenderer()
+        r.note_system_prompt([("Base", "MAIN PROMPT")], turn=1)
+        r.begin_prompt_scope("skill-plan-abc", label="skill:plan")
+        r.note_system_prompt([("Base", "SKILL PROMPT")], turn=1)
+        r.end_prompt_scope("skill-plan-abc")
+        assert "MAIN PROMPT" in r.prompt_snapshot("")["sections"][0]["text"]
+        assert (
+            "SKILL PROMPT" in r.prompt_snapshot("skill-plan-abc")["sections"][0]["text"]
+        )
+        # 칩 목록에 skill 라벨 등장
+        labels = [sc["label"] for sc in r.prompt_scopes()]
+        assert "skill:plan" in labels
+
+    def test_nested_delegate_then_skill_resolves_top(self):
+        r = WebRenderer()
+        r.begin_delegate_task(
+            task_id="delegate-1-x", index=0, agent="explorer", task_text="t"
+        )
+        r.begin_prompt_scope("skill-opt-1", label="skill:opt")
+        r.note_system_prompt([("Base", "NESTED")], turn=1)
+        r.end_prompt_scope("skill-opt-1")
+        r.note_system_prompt([("Base", "AGENT")], turn=1)
+        r.end_delegate_task(task_id="delegate-1-x", success=True, duration_s=0.1)
+        assert "NESTED" in r.prompt_snapshot("skill-opt-1")["sections"][0]["text"]
+        assert "AGENT" in r.prompt_snapshot("delegate-1-x")["sections"][0]["text"]
+
+    def test_scope_ctx_live_then_frozen(self, tmp_path):
+        r = WebRenderer()
+        ctx = self._ctx(tmp_path, "s1")
+        r.begin_prompt_scope("skill-x-1", label="skill:x")
+        r.note_scope_ctx(ctx)
+        live = r.scope_dynamic_sections("skill-x-1")
+        assert live and any("질문-s1" in sec.get("text", "") for sec in live)
+        # live 반영: ctx 에 추가되면 즉시 보임
+        ctx.add({"role": "user", "content": "추가-관찰"})
+        assert any(
+            "추가-관찰" in sec.get("text", "")
+            for sec in r.scope_dynamic_sections("skill-x-1")
+        )
+        r.end_prompt_scope("skill-x-1")
+        # 고정 스냅샷으로 전환(live 참조 해제) — 여전히 조회 가능
+        assert "skill-x-1" not in r._scope_ctxs
+        frozen = r.scope_dynamic_sections("skill-x-1")
+        assert any("추가-관찰" in sec.get("text", "") for sec in frozen)
+
+    def test_main_scope_ctx_is_ignored(self, tmp_path):
+        r = WebRenderer()
+        r.note_scope_ctx(self._ctx(tmp_path, "m"))  # 스코프 없음 = main
+        assert r._scope_ctxs == {}
+
+    def test_delete_scope_cleans_dynamic_stores(self, tmp_path):
+        r = WebRenderer()
+        r.begin_prompt_scope("skill-y-1", label="skill:y")
+        r.note_scope_ctx(self._ctx(tmp_path, "y"))
+        r.note_system_prompt([("Base", "Y")], turn=1)
+        r.end_prompt_scope("skill-y-1")
+        assert r.delete_prompt_scope("skill-y-1") is True
+        assert r.scope_dynamic_sections("skill-y-1") == []
+        assert r.prompt_snapshot("skill-y-1") is None

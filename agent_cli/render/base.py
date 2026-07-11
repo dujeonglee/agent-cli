@@ -143,6 +143,18 @@ class Renderer(ABC):
         line = f"{tool_name} → {tool_input}" if tool_input else tool_name
         self._thread_action[threading.get_ident()] = line
 
+    def begin_prompt_scope(self, scope_id: str, label: str = "") -> None:
+        """프롬프트 인스펙터 스코프 push (v4.52.0) — 중첩 루프(skill 등)가
+        호출자 스레드에서 돌 때 자기 스코프를 선언. Default no-op (C8 규율 —
+        인스펙터 없는 렌더러는 무관)."""
+
+    def end_prompt_scope(self, scope_id: str) -> None:
+        """스코프 pop + 동적 컨텍스트 고정. Default no-op."""
+
+    def note_scope_ctx(self, ctx) -> None:
+        """현재 스코프의 ContextManager 를 인스펙터에 등록 — 동적 컨텍스트
+        on-demand 조회용. Default no-op."""
+
     def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
         """Record the system prompt (as named sections) sent to the LLM this
         turn. Concrete no-op — the CLI renderer has no use for it; the web

@@ -69,6 +69,15 @@ latent — 유지.
 
 ### 진행 로그
 
+- **2026-07-11 · v4.52.0 · 인스펙터 서브-스코프 동적 컨텍스트 + skill 독립
+  스코프**: 스레드당 스코프 스택(_thread_prompt_scopes) — skill(호출자-
+  스레드 중첩)이 main 스냅샷을 덮던 동작 소멸, skill:<name> 독립 칩.
+  note_scope_ctx 로 서브 ctx 등록 → 실행 중 live on-demand / 종료 시
+  텍스트 고정(ctx 홀드 방지). SSE delegate 그룹 라우팅(_thread_to_task)
+  과 의도적 분리(프런트 무수정 — 칩은 자동). 실기동 e2e: @explorer 후
+  agent 스코프 system 9+dynamic 5 섹션(종료-후 고정 경로 포함) 확인.
+  렌더러 유닛 5종. 전체 2872 passed.
+
 - **2026-07-11 · v4.51.0 · 개입 fold (감사-후속, 사용자 설계)**: "dynamic
   context 에는 성공 궤적만" — 형식-복구 개입을 다음 파싱 성공 시 캐시
   뷰에서 접음(연속 실패는 성공 순간 일괄). 구조 3종: additive `recovery`

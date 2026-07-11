@@ -588,7 +588,12 @@ def create_app(server: WebServer) -> FastAPI:
                 for s in snapshot.get("sections", [])
             ]
             turn = snapshot.get("turn")
-        dynamic = _dynamic_context_sections(server.ctx) if not task_id else []
+        # v4.52.0: 서브 스코프(agent/skill)도 동적 컨텍스트 — 렌더러가
+        # 스코프별 live ctx(실행 중) 또는 종료-시 고정 스냅샷을 보유.
+        if task_id:
+            dynamic = server.renderer.scope_dynamic_sections(task_id)
+        else:
+            dynamic = _dynamic_context_sections(server.ctx)
         sections = system_sections + dynamic
         if not sections:
             reason = "no LLM call yet for this agent" if task_id else "no LLM call yet"
