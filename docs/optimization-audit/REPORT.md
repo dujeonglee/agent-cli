@@ -69,6 +69,15 @@ latent — 유지.
 
 ### 진행 로그
 
+- **2026-07-11 · v4.51.0 · 개입 fold (감사-후속, 사용자 설계)**: "dynamic
+  context 에는 성공 궤적만" — 형식-복구 개입을 다음 파싱 성공 시 캐시
+  뷰에서 접음(연속 실패는 성공 순간 일괄). 구조 3종: additive `recovery`
+  마킹(A4/A5 가 도구 실행 실패와 레코드상 구분 불가함을 실측해 필요 확정)
+  + records 계약 술어(tool=="" 매직 규약 승격) + manager 정책 메서드.
+  history 불변·resume 레코드-기반 재적용(무상태)·B1/도구실패 비대상·
+  env off. TDD 10종(술어/쌍fold/연속-일괄/불변/resume 동일 뷰/env/
+  dispatcher e2e). 전체 2863 passed.
+
 - **2026-07-11 · v4.50.0 · C8 완료**: Renderer abstract 17→9 — 출력 코어 7
   + 입력 계약 2(위험 셸 confirm 게이트라 명시 구현 강제 유지). 강등 8종:
   no-op 6(turn_sep 은 web 이 실증한 정답)+status 위임 2(model_detected/

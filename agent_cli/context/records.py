@@ -119,3 +119,45 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
         return "raw", [], content
 
     return str(role or "?"), [], content
+
+
+def is_format_intervention(record: dict) -> bool:
+    """형식-복구 개입 관찰인가 — fold(v4.51.0) 계약 술어.
+
+    1차 식별: additive ``recovery == "format"`` 마킹 (NO_THOUGHT/NO_JSON/
+    NO_ACTION/A4/A5 개입이 기록 시 찍음 — B1[행동 루프] 개입과 실제 도구
+    실행 실패는 마킹 없음 = fold 비대상).
+    레거시 백스톱: 마킹 도입 전 세션의 파싱 개입은 ``tool == ""`` 규약
+    (web replay 가 같은 규약 소비)으로 식별 — 단 A4/A5 는 구 세션에서
+    도구명이 찍혀 있어 식별 불가(안전하게 fold 안 함).
+    """
+    if record.get("role") != "user" or "tool" not in record:
+        return False
+    if record.get("recovery") == "format":
+        return True
+    return record.get("tool") == "" and not record.get("success", True)
+
+
+def fold_resolved_intervention_indices(records: list) -> list[int]:
+    """fold 대상 인덱스(내림차순) — "개입 관찰 뒤에 파싱-성공 assistant
+    레코드(ops 보유)가 존재"하면 그 개입과 **직전 실패 assistant** 를 접는다.
+
+    순수 함수: live(성공 직후 호출 — 이때는 아직 성공 레코드가 캐시에 없어
+    꼬리 개입도 접도록 caller 가 ``assume_tail_resolved`` 의미로 사용)와
+    resume(레코드만 보고 재판정) 이 같은 규칙을 공유하기 위한 기반.
+    여기서는 레코드-기반 판정만: 뒤에 ops-보유 assistant 가 있는 개입.
+    """
+    out: list[int] = []
+    for i, rec in enumerate(records):
+        if not is_format_intervention(rec):
+            continue
+        resolved = any(
+            r.get("role") == "assistant" and iter_record_ops(r)
+            for r in records[i + 1 :]
+        )
+        if not resolved:
+            continue
+        out.append(i)
+        if i > 0 and records[i - 1].get("role") == "assistant":
+            out.append(i - 1)  # 직전 실패 emission 도 함께
+    return sorted(set(out), reverse=True)

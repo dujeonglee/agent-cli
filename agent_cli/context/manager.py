@@ -673,6 +673,65 @@ class ContextManager:
 
     # ── Persistence ──────────────────────────────────
 
+    def fold_resolved_interventions(self, *, assume_tail_resolved: bool = False) -> int:
+        """해소된 형식-복구 개입 쌍을 dynamic 캐시 **뷰**에서 접는다 (v4.51.0).
+
+        설계(사용자 결정): "dynamic context 에는 성공 궤적만" — 형식 개입은
+        교정(다음 파싱 성공)의 일회성 재료라, 소비된 뒤에도 남으면 실패
+        shape 의 self-reinforcement 재료가 된다(v3.16.1 mimicry 계열 교훈의
+        관찰-측 확장 — 단 이것은 **변형이 아니라 제거**라 모델이 가짜 마커를
+        볼 일이 없음). history.jsonl 은 불변(관측·디버그 보존) — 캐시 뷰만.
+
+        - ``assume_tail_resolved=True``: live 경로(파싱 성공 직후 — 성공
+          레코드가 아직 캐시에 없으므로 꼬리의 개입도 해소로 간주).
+        - False: resume 경로 — 레코드만으로 재판정(개입 뒤 ops-보유
+          assistant 존재). live 가 접은 뒤 저장된 순서와 동일 결과 →
+          live↔resume 동일 뷰(사이드카 상태 불필요).
+        - ``AGENT_CLI_FOLD_INTERVENTIONS=off`` 로 비활성.
+        - 연속 실패는 자연 처리: 미해소(꼬리) 개입은 남고, 새 개입이
+          그 앞의 것을 해소 조건 충족 전이라도 live 호출로 접는다 —
+          컨텍스트에는 항상 최신 개입 1개만.
+        반환: 접은 레코드 수.
+        """
+        import os
+
+        if os.environ.get("AGENT_CLI_FOLD_INTERVENTIONS", "").strip().lower() in (
+            "off",
+            "0",
+            "false",
+        ):
+            return 0
+        from agent_cli.context.records import (
+            fold_resolved_intervention_indices,
+            is_format_intervention,
+        )
+
+        if assume_tail_resolved:
+            # live 경로(파싱 성공 직후): 성공이 확인된 순간, 캐시의 **모든**
+            # 형식 개입이 소비 완료다 — 연속 실패로 쌓인 [실패,개입]×k 전체를
+            # 접는다("성공 궤적만" 의미론; 개별 해소-증거 판정 불필요 —
+            # 호출 시점 자체가 해소 신호).
+            idxs = []
+            for i, rec in enumerate(self._cache):
+                if is_format_intervention(rec):
+                    idxs.append(i)
+                    if i > 0 and self._cache[i - 1].get("role") == "assistant":
+                        idxs.append(i - 1)
+            idxs = sorted(set(idxs), reverse=True)
+        else:
+            # resume 경로: 레코드-기반 재판정(개입 뒤 ops-보유 assistant 존재)
+            # — live 가 접은 순서(성공 레코드가 뒤에 남음)와 동일 결과.
+            idxs = fold_resolved_intervention_indices(self._cache)
+        if not idxs:
+            return 0
+        for i in idxs:
+            removed = self._cache.pop(i)
+            self._cache_tokens = max(
+                self._cache_tokens - _estimate_message_tokens(removed), 0
+            )
+        self._nl_cache = None  # 벌크 변형 → 렌더 미러 재빌드
+        return len(idxs)
+
     def _append_to_history(self, message: dict) -> None:
         """enrich(turn 은 manager 소유) 후 history.jsonl 에 append.
         가드/패턴 근거는 :mod:`agent_cli.fsio` 모듈 docstring 참조."""
@@ -758,6 +817,7 @@ class ContextManager:
                 removed = self._cache.pop(0)
                 self._cache_tokens -= _estimate_message_tokens(removed)
                 self._dynamic_start_index += 1
+            self.fold_resolved_interventions()  # v4.51.0 — 위와 동일 재적용
             return
 
         # Legacy path: invalid or absent offset → reverse-load.
@@ -775,6 +835,9 @@ class ContextManager:
 
         self._cache = messages[start_idx:]
         self._cache_tokens = _sum_message_tokens(self._cache)
+        # fold 재적용 (v4.51.0): live 가 접은 뷰를 레코드-기반 재판정으로
+        # 동일 재현 — history 는 전부 남아 있으므로 여기서 다시 접는다.
+        self.fold_resolved_interventions()
 
     # ── Fork support ─────────────────────────────────
 

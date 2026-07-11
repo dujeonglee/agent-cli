@@ -178,6 +178,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_COMPACTION` | — | 컨텍스트 컴팩션(90% 예산 LLM 요약) 비활성 스위치. `off`/`false`/`0`/`disabled`/`no` 중 하나면 끔(플레인 FIFO drop). `--no-compaction` 과 동일 효과(env 가 flag 보다 우선). |
+| `AGENT_CLI_FOLD_INTERVENTIONS` | `off` 로 형식-복구 개입 fold 비활성. 기본 on: 파싱/스키마 개입(NO_JSON·A4·A5 등)은 다음 파싱 성공 시 dynamic 컨텍스트에서 접혀 **성공 궤적만** 남음(실패 shape 재공급 방지 — v4.51.0). history.jsonl 에는 전부 보존 | (on) |
 | `AGENT_CLI_RECORD_RAW_FAILURES` | — | `1`/`true`/`on`/`yes` 면 파싱 실패 시 raw 페이로드를 `turns.jsonl` 에 기록(복구 분석용). 기본 off. |
 | `AGENT_CLI_UNIFDEF` | — | code_index 의 C/C++ 전처리 모드: `auto`(기본, unifdef 있으면 씀)·`system`(시스템 unifdef 강제)·`pure`(순수 파이썬 폴백). 프로세스 시작 시 1회 읽어 고정. |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. **스트리밍**: post timeout `(connect 30초, read 30초)` 로 **헤더 대기·헤더 구간 interrupt 를 30초로 바운드**(broken 서버의 ~20분 행 제거) → 헤더 수신 후 소켓을 patient 로 리셋해 body 는 느긋. body 가 **30초** 무토큰이면 UI 에 대기 알림(`응답 대기 중 — …`), **20틱(10분) 연속 침묵**이면 연결 끊고 재전송(최대 3회). 토큰 오면 카운터 리셋. **비스트리밍**: `(30, 1200)` (전체 생성 read). interrupt 는 body 구간 ~8초, 헤더 구간 ≤30초. |

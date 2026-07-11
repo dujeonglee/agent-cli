@@ -92,6 +92,12 @@ class TurnDispatcher:
         the record.
         """
         turn = self.cfg.wire_format.parse_turn(llm_text)
+        # fold (v4.51.0): 이 emission 이 파싱 성공(ops 보유)이면 직전의
+        # 형식-복구 개입은 소비 완료 — dynamic 캐시 뷰에서 [실패 prior,
+        # 개입] 쌍을 접는다(성공 궤적만 유지). messages 는 다음 _call_llm
+        # 이 get_messages() 로 재파생하므로 캐시만 접으면 자동 반영.
+        if turn.ops and self.ctx is not None:
+            self.ctx.fold_resolved_interventions(assume_tail_resolved=True)
 
         # Recover dropped action names (parse_stage 3) — the dropped-action
         # recovery SEAM: an op's action slot is empty but its action_input
@@ -212,6 +218,7 @@ class TurnDispatcher:
                 success=False,
                 turn=self.state.turn,
                 render=False,  # render_recovery already surfaced it
+                recovery_kind="format",
             )
             outcome["failure_signal"] = FAILURE_NO_THOUGHT
             outcome["primitives"] = list(intervention.primitives)
@@ -760,6 +767,7 @@ class TurnDispatcher:
                 success=False,
                 turn=self.state.turn,
                 render=False,  # render_recovery already surfaced it
+                recovery_kind="format",
             )
             return _CONTINUE
 
@@ -786,6 +794,7 @@ class TurnDispatcher:
                 success=False,
                 turn=self.state.turn,
                 render=False,  # render_recovery already surfaced it
+                recovery_kind="format",
             )
             return _CONTINUE
         tool_input = normalized  # use post-normalization input for dispatch
@@ -882,6 +891,7 @@ class TurnDispatcher:
             success=False,
             turn=self.state.turn,
             render=False,  # render_recovery already surfaced it
+            recovery_kind="format",
         )
         # Surface composed primitive names to the enclosing _handle_text_path
         # so the trailing finally-block records them.
@@ -1087,6 +1097,7 @@ def _append_observation(
     artifact: str = "",
     corrected_record: dict | None = None,
     render: bool = True,
+    recovery_kind: str = "",
 ) -> None:
     """Text parsing: append assistant + observation + sync ctx.
 
@@ -1139,6 +1150,11 @@ def _append_observation(
         }
         if artifact:
             obs_entry["artifact"] = artifact
+        # 개입 마킹 (fold, v4.51.0): "format"=파싱/스키마 개입 — 해소 시
+        # 캐시 뷰에서 접힌다(records.is_format_intervention 계약). additive
+        # 라 구 세션 레코드(필드 없음)는 fold 대상 아님 = 안전 기본.
+        if recovery_kind:
+            obs_entry["recovery"] = recovery_kind
         stored = ctx.add(obs_entry)
         # ctx.add returns the stored (possibly spilled) message; tolerate a
         # ctx stub that returns None (some tests) by keeping obs_msg.
