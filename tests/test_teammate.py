@@ -59,6 +59,12 @@ class RecordingRenderer:
     def end_teammate_work(self, **kw):
         self._rec("end_teammate_work", **kw)
 
+    def teammate_roster(self, roster):
+        self._rec("teammate_roster", roster=roster)
+
+    def teammate_message(self, **kw):
+        self._rec("teammate_message", **kw)
+
     def named(self, name):
         with self.lock:
             return [c for c in self.calls if c[0] == name]
@@ -916,3 +922,128 @@ class TestResumeRestore:
         )
         assert r.success
         assert reg.runtime["model"] == "fresh-model"
+
+
+# ── P4: WebUI 이벤트·비배달 규칙·idle 자동 재기동 ──
+
+
+class TestHumanInterventionRouting:
+    """D8: 인간(비-main 화자) 문답은 대화 창에만 — main mailbox 비오염."""
+
+    def test_human_request_reply_not_delivered_to_main(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "hello from human", author="user:bob")
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        # 창에는 out 메시지가 갔지만 main pending 은 비어 있다
+        outs = [
+            c for c in renderer.named("teammate_message") if c[1]["direction"] == "out"
+        ]
+        assert outs and outs[0][1]["text"] == "done:[user:bob]: hello from human"
+        assert not reg.has_pending_replies()
+        reg.shutdown_all()
+
+    def test_main_request_reply_still_delivered(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        reg.request(key, "hello")  # author 기본 main
+        assert wait_until(reg.has_pending_replies)
+        reg.shutdown_all()
+
+    def test_question_during_human_request_stays_in_window(self, tmp_path, renderer):
+        # 인간 발신 작업 중의 ask 질문은 main mailbox 로 가지 않는다 (D8 대칭)
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "human task", author="user:bob")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        assert not reg.has_pending_replies()  # main 비배달
+        qs = [
+            c
+            for c in renderer.named("teammate_message")
+            if c[1]["direction"] == "question"
+        ]
+        assert qs and qs[0][1]["text"] == "which branch?"  # 창에는 표시
+        # 인간이 창에서 답하면 재개되고, 회신도 창에만
+        reg.request(key, "blue", author="user:bob")
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        assert not reg.has_pending_replies()
+        reg.shutdown_all()
+
+    def test_question_during_main_request_reaches_main(self, tmp_path, renderer):
+        reg = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg.spawn()
+        reg.request(key, "main task")
+        assert wait_until(lambda: reg.get(key).state == "waiting_ask")
+        assert reg.has_pending_replies()  # main 에도 배달
+        reg.shutdown_all()
+
+
+class TestP4Events:
+    def test_request_emits_in_message_and_roster(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert renderer.named("teammate_roster")  # spawn 시 roster
+        reg.request(key, "job", author="user:kim")
+        ins = [
+            c for c in renderer.named("teammate_message") if c[1]["direction"] == "in"
+        ]
+        assert ins and ins[0][1]["author"] == "user:kim" and ins[0][1]["text"] == "job"
+        reg.shutdown_all()
+
+    def test_roster_reflects_states_and_kill(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.kill(key)
+        last = renderer.named("teammate_roster")[-1][1]["roster"]
+        entry = next(e for e in last if e["key"] == key)
+        assert entry["state"] == "dead"
+
+
+class TestMailWaker:
+    def _waker(self, pending=lambda: True):
+        from agent_cli.subagent.teammate import MailWaker
+
+        sent = []
+        w = MailWaker(lambda conn, text: sent.append((conn, text)), pending)
+        return w, sent
+
+    def test_mail_while_idle_arms_once(self):
+        w, sent = self._waker()
+        w.idle.set()
+        w.on_mail()
+        w.on_mail()  # 중복 mail → wake 1개
+        assert len(sent) == 1
+        assert sent[0] == (None, w.WAKE_TEXT)
+
+    def test_mail_while_busy_does_not_wake(self):
+        w, sent = self._waker()
+        w.on_mail()  # idle 아님
+        assert sent == []
+
+    def test_run_end_race_closure(self):
+        # run 마지막 턴 경계 이후 도착분 — on_run_end 가 봉합
+        w, sent = self._waker(pending=lambda: True)
+        w.on_run_end()
+        assert len(sent) == 1
+
+    def test_run_end_noop_without_pending(self):
+        w, sent = self._waker(pending=lambda: False)
+        w.on_run_end()
+        assert sent == []
+
+    def test_handle_dequeued_verdicts(self):
+        state = {"pending": True}
+        w, sent = self._waker(pending=lambda: state["pending"])
+        assert w.handle_dequeued("normal user message") is None
+        w.idle.set()
+        w.on_mail()
+        # 잔여 있음 → run (그리고 disarm — 다음 mail 이 다시 wake 가능)
+        assert w.handle_dequeued(w.WAKE_TEXT) == "run"
+        w.on_mail()
+        assert len(sent) == 2  # disarm 후 재무장 확인
+        # 이미 배달됨 → skip
+        state["pending"] = False
+        assert w.handle_dequeued(w.WAKE_TEXT) == "skip"

@@ -1079,6 +1079,20 @@
     );
   });
 
+  es.addEventListener("teammate_roster", function (e) {
+    // teammate 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:tm-roster", { detail: JSON.parse(e.data) }),
+    );
+  });
+
+  es.addEventListener("teammate_msg", function (e) {
+    // teammate 대화 메시지 (persistent — 재접속 replay 포함).
+    document.dispatchEvent(
+      new CustomEvent("agentcli:tm-msg", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("directives_changed", function () {
     // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
     // IIFE to re-fetch the editor so concurrent editors don't show stale text.
@@ -1262,6 +1276,8 @@
   // only to mark "(you)" in the roster and to own queued messages.
   es.addEventListener("identity", function (e) {
     myConnId = JSON.parse(e.data).conn_id;
+    // teammate 대화 창 IIFE(별도 클로저)가 닉네임 attribution 에 쓰도록 노출.
+    window.AGENTCLI_CONN_ID = myConnId;
   });
 
   const $viewers = document.getElementById("viewers");
@@ -2868,5 +2884,179 @@
   });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && !menu.hidden) close();
+  });
+})();
+
+// ── Teammate 대화 창 (🤝, P4) ─────────────────────────────────────────
+// 상주 에이전트 roster + 대화 스트림 + 인간 개입. 데이터는 메인 SSE 가
+// document CustomEvent 로 중계(agentcli:tm-roster / agentcli:tm-msg —
+// auto_review 토글과 같은 브리지 패턴). 메시지는 persistent 이벤트라
+// 재접속 replay 로 창 내용이 복원된다.
+(function () {
+  "use strict";
+
+  const token = new URLSearchParams(window.location.search).get("token");
+  const $btn = document.getElementById("teammate-btn");
+  const $badge = document.getElementById("tm-badge");
+  const $drawer = document.getElementById("tm-drawer");
+  const $backdrop = document.getElementById("tm-backdrop");
+  const $roster = document.getElementById("tm-roster");
+  const $conv = document.getElementById("tm-conv");
+  const $input = document.getElementById("tm-input");
+  const $send = document.getElementById("tm-send");
+  if (!$btn || !$drawer || !token) return;
+
+  let roster = []; // [{key, role, state, handled, ...}]
+  const msgs = Object.create(null); // key → [{direction, author, text, seq, success}]
+  let selected = null;
+
+  const qt = () => "token=" + encodeURIComponent(token);
+
+  function esc(s) {
+    const d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function renderRoster() {
+    const alive = roster.filter((t) => t.state !== "dead").length;
+    $badge.hidden = alive === 0;
+    $badge.textContent = String(alive);
+    if (!roster.length) {
+      $roster.innerHTML =
+        '<div class="tm-empty">아직 teammate 가 없습니다 — 모델이 spawn 하면 여기 나타납니다.</div>';
+      return;
+    }
+    $roster.innerHTML = "";
+    roster.forEach(function (tm) {
+      const chip = document.createElement("span");
+      chip.className = "tm-chip" + (tm.key === selected ? " active" : "");
+      chip.innerHTML =
+        esc(tm.key) +
+        (tm.role ? " <b>" + esc(tm.role) + "</b>" : "") +
+        ' <span class="tm-state ' + esc(tm.state) + '">' + esc(tm.state) + "</span>";
+      chip.addEventListener("click", function () {
+        select(tm.key);
+      });
+      if (tm.state !== "dead") {
+        const kill = document.createElement("button");
+        kill.className = "tm-kill";
+        kill.title = "종료";
+        kill.textContent = "✕";
+        kill.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          fetch("api/teammate/" + encodeURIComponent(tm.key) + "/kill?" + qt(), {
+            method: "POST",
+          });
+        });
+        chip.appendChild(kill);
+      }
+      $roster.appendChild(chip);
+    });
+  }
+
+  function renderConv() {
+    const list = (selected && msgs[selected]) || [];
+    $conv.innerHTML = "";
+    if (!selected) {
+      $conv.innerHTML = '<div class="tm-empty">teammate 를 선택하세요.</div>';
+      return;
+    }
+    if (!list.length) {
+      $conv.innerHTML = '<div class="tm-empty">아직 대화가 없습니다.</div>';
+      return;
+    }
+    list.forEach(function (m) {
+      const el = document.createElement("div");
+      el.className =
+        "tm-msg " + m.direction + (m.direction === "out" && !m.success ? " fail" : "");
+      const who =
+        m.direction === "in"
+          ? m.author
+          : m.direction === "question"
+            ? m.author + " ❓"
+            : m.author;
+      el.innerHTML = '<div class="tm-author">' + esc(who) + "</div>" + esc(m.text);
+      $conv.appendChild(el);
+    });
+    $conv.scrollTop = $conv.scrollHeight;
+  }
+
+  function select(key) {
+    selected = key;
+    const tm = roster.find((t) => t.key === key);
+    const alive = tm && tm.state !== "dead";
+    $input.disabled = !alive;
+    $send.disabled = !alive;
+    $input.placeholder = alive
+      ? key + " 에게 메시지… (답변 대기 중이면 답으로 소비)"
+      : "종료된 teammate 입니다.";
+    renderRoster();
+    renderConv();
+  }
+
+  document.addEventListener("agentcli:tm-roster", function (e) {
+    roster = (e.detail && e.detail.teammates) || [];
+    if (!selected && roster.length) {
+      select(roster[0].key);
+      return;
+    }
+    if (selected && !roster.find((t) => t.key === selected)) selected = null;
+    renderRoster();
+    if (selected) select(selected);
+  });
+
+  document.addEventListener("agentcli:tm-msg", function (e) {
+    const m = e.detail || {};
+    if (!m.key) return;
+    (msgs[m.key] = msgs[m.key] || []).push(m);
+    if ($drawer.classList.contains("open") && m.key === selected) renderConv();
+  });
+
+  function sendInput() {
+    const text = ($input.value || "").trim();
+    if (!text || !selected) return;
+    fetch("api/teammate/" + encodeURIComponent(selected) + "/input?" + qt(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text, conn_id: window.AGENTCLI_CONN_ID || null }),
+    }).then(function (r) {
+      if (r.ok) $input.value = "";
+    });
+  }
+  $send.addEventListener("click", sendInput);
+  $input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendInput();
+    }
+  });
+
+  function open() {
+    $backdrop.hidden = false;
+    requestAnimationFrame(function () {
+      $backdrop.classList.add("open");
+    });
+    $drawer.classList.add("open");
+    $drawer.setAttribute("aria-hidden", "false");
+    renderRoster();
+    renderConv();
+  }
+  function close() {
+    $drawer.classList.remove("open");
+    $backdrop.classList.remove("open");
+    $drawer.setAttribute("aria-hidden", "true");
+    setTimeout(function () {
+      $backdrop.hidden = true;
+    }, 260);
+  }
+  $btn.addEventListener("click", function () {
+    if ($drawer.classList.contains("open")) close();
+    else open();
+  });
+  document.getElementById("tm-close").addEventListener("click", close);
+  $backdrop.addEventListener("click", close);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && $drawer.classList.contains("open")) close();
   });
 })();

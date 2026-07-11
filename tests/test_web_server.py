@@ -2605,3 +2605,76 @@ class TestC3ModuleSeparation:
         content = _zone_set(content, "learned", "- 검증 먼저.")
         assert _zone_get(content, "persona") == "친절하고 간결하게."
         assert _zone_get(content, "learned") == "- 검증 먼저."
+
+
+class TestTeammateEndpoints:
+    """P4: 대화 창의 인간 개입 — input(닉네임 attribution)/kill."""
+
+    class _FakeRegistry:
+        def __init__(self):
+            self.requests = []
+            self.killed = []
+
+        def request(self, key, message, *, author="main"):
+            if key == "agt-missing":
+                return f"unknown teammate '{key}'"
+            self.requests.append((key, message, author))
+            return ""
+
+        def kill(self, key):
+            if key == "agt-missing":
+                return f"unknown teammate '{key}'"
+            self.killed.append(key)
+            return ""
+
+    def test_input_requires_registry(self, server_and_client):
+        server, _, client = server_and_client
+        r = client.post(
+            f"/api/teammate/agt-1/input?token={server.token}",
+            json={"content": "hi"},
+        )
+        assert r.status_code == 503
+
+    def test_input_routes_with_nickname_attribution(self, server_and_client):
+        server, renderer, client = server_and_client
+        reg = self._FakeRegistry()
+        server.teammate_registry = reg
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+        renderer.set_nickname("c1", "bob")
+        r = client.post(
+            f"/api/teammate/agt-1/input?token={server.token}",
+            json={"content": "do it", "conn_id": "c1"},
+        )
+        assert r.status_code == 200 and r.json()["accepted"] is True
+        assert reg.requests == [("agt-1", "do it", "user:bob")]
+
+    def test_input_unknown_key_404_and_empty_400(self, server_and_client):
+        server, _, client = server_and_client
+        server.teammate_registry = self._FakeRegistry()
+        r = client.post(
+            f"/api/teammate/agt-missing/input?token={server.token}",
+            json={"content": "x"},
+        )
+        assert r.status_code == 404
+        r2 = client.post(
+            f"/api/teammate/agt-1/input?token={server.token}",
+            json={"content": "   "},
+        )
+        assert r2.status_code == 400
+
+    def test_input_rejects_bad_token(self, server_and_client):
+        server, _, client = server_and_client
+        server.teammate_registry = self._FakeRegistry()
+        r = client.post("/api/teammate/agt-1/input?token=wrong", json={"content": "x"})
+        assert r.status_code == 401
+
+    def test_kill_endpoint(self, server_and_client):
+        server, _, client = server_and_client
+        reg = self._FakeRegistry()
+        server.teammate_registry = reg
+        r = client.post(f"/api/teammate/agt-1/kill?token={server.token}")
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert reg.killed == ["agt-1"]
+        r2 = client.post(f"/api/teammate/agt-missing/kill?token={server.token}")
+        assert r2.status_code == 404

@@ -265,6 +265,23 @@ class Renderer(ABC):
         """teammate request 1건 처리 종료 — begin_teammate_work 과 짝.
         기본 no-op."""
 
+    def teammate_roster(self, roster: list) -> None:
+        """teammate 목록/상태 스냅샷 (P4) — spawn/kill/상태 전이마다 호출.
+        web 은 sticky 브로드캐스트(대화 창 목록), CLI 는 no-op."""
+
+    def teammate_message(
+        self,
+        *,
+        key: str,
+        direction: str,
+        author: str,
+        text: str,
+        seq: int = 0,
+        success: bool = True,
+    ) -> None:
+        """teammate 대화 창의 메시지 1건 (P4). direction: "in"(요청/답변
+        수신) | "out"(회신) | "question"(ask). 기본 no-op."""
+
     # ── Abstract render methods ──────────────────────
 
     @abstractmethod

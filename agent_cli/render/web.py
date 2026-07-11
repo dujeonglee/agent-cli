@@ -616,6 +616,36 @@ class WebRenderer(Renderer):
             payload["error"] = error
         self._emit("delegate_task_end", payload, persistent=True)
 
+    def teammate_roster(self, roster: list) -> None:
+        """P4: teammate 목록 sticky — 라이브 브로드캐스트 + 재접속 snapshot
+        복원 (다른 sticky 슬롯과 동일 기계)."""
+        self.set_sticky("teammate_roster", "teammate_roster", {"teammates": roster})
+
+    def teammate_message(
+        self,
+        *,
+        key: str,
+        direction: str,
+        author: str,
+        text: str,
+        seq: int = 0,
+        success: bool = True,
+    ) -> None:
+        """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
+        창 내용이 복원된다 (버퍼 윈도우 내에서)."""
+        self._emit(
+            "teammate_msg",
+            {
+                "key": key,
+                "direction": direction,
+                "author": author,
+                "text": text,
+                "seq": seq,
+                "success": success,
+            },
+            persistent=True,
+        )
+
     def set_thread_status(self, status: str) -> None:
         """Forward to the base ``_thread_status`` dict (CLI rich.Live
         polling compatibility) AND emit a transient

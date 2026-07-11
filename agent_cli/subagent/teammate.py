@@ -164,6 +164,9 @@ class Teammate:
         # 세션 종료로 죽은 teammate 는 revivable 유지 → resume 시 재생성.
         self.revivable = True
         self.revive = False  # restore 가 세움 — worker 가 ctx 를 resume 모드로
+        # P4: 지금 처리 중인 request 의 화자 — "main" 이 아니면(웹 인간 개입)
+        # 그 회신/질문을 main mailbox 에 넣지 않는다 (D8: 컨텍스트 비오염).
+        self.current_author = "main"
         self.created_at = time.time()
         self.handled = 0  # 처리 완료한 request 수
         self.queued = 0  # inbox 에 넣은 request 수 (seq 발급)
@@ -218,6 +221,18 @@ class TeammateRegistry:
 
     def get(self, key: str) -> Teammate | None:
         return self._teammates.get(key)
+
+    def roster_snapshot(self) -> list[dict]:
+        return [tm.snapshot() for tm in self._teammates.values()]
+
+    def _notify_roster(self) -> None:
+        """P4: 상태 변화를 대화 창 목록에 반영 — web sticky, CLI no-op."""
+        from agent_cli.render import get_renderer
+
+        try:
+            get_renderer().teammate_roster(self.roster_snapshot())
+        except Exception:
+            pass  # 표시용 — 실행 경로를 막지 않는다
 
     def alive_count(self) -> int:
         return sum(1 for t in self._teammates.values() if t.state != "dead")
@@ -295,6 +310,7 @@ class TeammateRegistry:
         )
         tm.worker.start()
         self._save_state()
+        self._notify_roster()
         return key, ""
 
     # ── request / 회신 ──────────────────────────
@@ -311,6 +327,12 @@ class TeammateRegistry:
             return "empty message"
         tm.queued += 1
         tm.inbox.put({"seq": tm.queued, "text": message, "author": author})
+        from agent_cli.render import get_renderer
+
+        get_renderer().teammate_message(
+            key=key, direction="in", author=author, text=message, seq=tm.queued
+        )
+        self._notify_roster()
         return ""
 
     def _push_reply(self, reply: dict) -> None:
@@ -396,6 +418,7 @@ class TeammateRegistry:
         if tm.worker is not None:
             tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
         self._save_state()
+        self._notify_roster()
         return ""
 
     def shutdown_all(self) -> None:
@@ -526,6 +549,7 @@ class TeammateRegistry:
             tm.worker.start()
             revived += 1
         self._save_state()
+        self._notify_roster()
         return revived
 
     # ── worker ──────────────────────────────────
@@ -575,6 +599,8 @@ class TeammateRegistry:
                 # 화자 attribution — teammate ctx 에 누가 말했는지 남긴다
                 # (P2 양방향·P4 인간 개입에서 두 화자를 구분하는 기반).
                 author = item.get("author", "main")
+                tm.current_author = author  # 회신/질문 라우팅 기준 (D8)
+                self._notify_roster()
                 query = f"[{author}]: {text}" if author != "main" else text
 
                 renderer.begin_teammate_work(
@@ -602,22 +628,39 @@ class TeammateRegistry:
                 reply_path = self._persist_reply(tm, seq, output)
                 tm.handled += 1
                 tm.state = "idle"
-                self._push_reply(
-                    {
-                        "kind": "reply",
-                        "key": tm.key,
-                        "role": tm.role_name,
-                        "seq": seq,
-                        "success": success,
-                        "output": output,
-                        "duration_s": duration,
-                        "reply_path": reply_path,
-                    }
+                # 대화 창에는 화자 불문 항상 표시 (P4).
+                renderer.teammate_message(
+                    key=tm.key,
+                    direction="out",
+                    author=tm.key,
+                    text=output,
+                    seq=seq,
+                    success=success,
                 )
+                if author == "main":
+                    # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
+                    # 개입 문답은 창에만, main 컨텍스트 비오염).
+                    self._push_reply(
+                        {
+                            "kind": "reply",
+                            "key": tm.key,
+                            "role": tm.role_name,
+                            "seq": seq,
+                            "success": success,
+                            "output": output,
+                            "duration_s": duration,
+                            "reply_path": reply_path,
+                        }
+                    )
+                else:
+                    self._save_state()  # push 를 건너뛰어도 상태는 미러
+                tm.current_author = "main"
+                self._notify_roster()
         finally:
             tm.state = "dead"
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
             self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
+            self._notify_roster()
 
     def _make_ask_handler(self, tm: Teammate):
         """teammate 서브루프의 ask 라우팅 훅 (P2, D4).
@@ -631,16 +674,28 @@ class TeammateRegistry:
         """
 
         def handler(question: str) -> str:
-            self._push_reply(
-                {
-                    "kind": "question",
-                    "key": tm.key,
-                    "role": tm.role_name,
-                    "success": True,
-                    "output": question,
-                }
+            from agent_cli.render import get_renderer
+
+            # 대화 창에는 항상 (P4) — 인간이 먼저 답할 수 있는 표면.
+            get_renderer().teammate_message(
+                key=tm.key,
+                direction="question",
+                author=tm.key,
+                text=question,
             )
+            if tm.current_author == "main":
+                # main 발신 작업의 질문만 main mailbox 로 (D8 대칭).
+                self._push_reply(
+                    {
+                        "kind": "question",
+                        "key": tm.key,
+                        "role": tm.role_name,
+                        "success": True,
+                        "output": question,
+                    }
+                )
             tm.state = "waiting_ask"
+            self._notify_roster()
             try:
                 item = tm.inbox.get()
                 if item is _SHUTDOWN:
@@ -651,6 +706,7 @@ class TeammateRegistry:
                 return f"[{author}]: {text}" if author != "main" else text
             finally:
                 tm.state = "busy"
+                self._notify_roster()
 
         return handler
 
@@ -684,6 +740,51 @@ class TeammateRegistry:
             hooks_config=tm.hooks_config,
             compaction_enabled=rt.get("compaction_enabled", True),
         )
+
+
+class MailWaker:
+    """P4 (D3): main idle 자동 재기동 조율자 — 순수 로직 (web 무의존).
+
+    회신/질문 도착 시 main worker 가 큐 대기(idle) 중이면 합성 wake
+    아이템을 입력 큐에 넣어 run 을 깨운다. 배달 자체는 그 run 의 첫 턴
+    경계가 수행. ``armed`` 가 중복 wake 를 막고(여러 mail → run 하나),
+    wake 아이템을 꺼냈을 때 잔여가 없으면(이미 다른 run 이 배달) skip.
+    ``on_run_end`` 는 "run 마지막 턴 경계 이후 도착한 mail" 레이스 봉합.
+    """
+
+    WAKE_TEXT = (
+        "New teammate mail has arrived. It is delivered as observation(s) at "
+        "the start of this turn — review it and continue accordingly."
+    )
+
+    def __init__(self, enqueue: Callable, has_pending: Callable[[], bool]):
+        self._enqueue = enqueue  # (conn_id, text) — web 서버의 입력 큐
+        self._has_pending = has_pending
+        self._armed = False
+        self.idle = threading.Event()  # worker 가 dequeue 대기 중인 구간
+
+    def _arm(self) -> None:
+        if not self._armed:
+            self._armed = True
+            self._enqueue(None, self.WAKE_TEXT)
+
+    def on_mail(self) -> None:
+        """registry.on_reply 에서 — idle 일 때만 wake."""
+        if self.idle.is_set():
+            self._arm()
+
+    def on_run_end(self) -> None:
+        """run 종료 직후 — 마지막 턴 경계 이후 도착분 잔여 확인."""
+        if self._has_pending():
+            self._arm()
+
+    def handle_dequeued(self, text: str) -> str | None:
+        """큐에서 꺼낸 메시지 판정: wake 아니면 None, wake 면
+        "run"(배달할 잔여 있음) 또는 "skip"(이미 배달됨)."""
+        if text != self.WAKE_TEXT:
+            return None
+        self._armed = False
+        return "run" if self._has_pending() else "skip"
 
 
 # ── LLM 도구 진입점 (tool_bridge 인터셉트) ──────

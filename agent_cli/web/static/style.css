@@ -1195,3 +1195,86 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   #auto-review-btn { font-size: 12px; padding: 2px 6px; }
   #viewers { max-width: 50vw; }
 }
+
+
+/* ── Teammate 대화 창 (🤝, P4) ─────────────────── */
+#teammate-btn {
+  position: relative;
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer; font-size: 15px; padding: 2px 8px; line-height: 1.4;
+}
+#teammate-btn:hover { border-color: var(--accent); }
+#tm-badge {
+  position: absolute; top: -6px; right: -6px;
+  background: var(--accent); color: var(--on-accent); border-radius: 8px;
+  font-size: 10px; padding: 0 4px; min-width: 14px; text-align: center;
+}
+#tm-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.25);
+  opacity: 0; transition: opacity .25s; z-index: 49;
+}
+#tm-backdrop.open { opacity: 1; }
+#tm-drawer {
+  position: fixed; top: 0; right: 0; height: 100%;
+  width: min(520px, 92vw);
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 40px var(--shadow);
+  transform: translateX(105%);
+  transition: transform .28s cubic-bezier(.32,.72,.28,1);
+  z-index: 50; display: flex; flex-direction: column;
+  padding: 14px 16px; gap: 10px;
+}
+#tm-drawer.open { transform: translateX(0); }
+.tm-head { display: flex; align-items: center; justify-content: space-between; }
+.tm-title { font-weight: 700; font-size: 15px; }
+#tm-close {
+  background: none; border: none; cursor: pointer;
+  font-size: 15px; color: var(--muted);
+}
+#tm-roster { display: flex; flex-wrap: wrap; gap: 6px; }
+.tm-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 9px;
+  padding: 3px 8px; font-size: 12px; cursor: pointer; user-select: none;
+}
+.tm-chip.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.tm-chip .tm-state { font-size: 10px; border-radius: 6px; padding: 0 5px; }
+.tm-state.idle { background: var(--ok-soft-bg); }
+.tm-state.busy { background: var(--warn-soft-bg); }
+.tm-state.waiting_ask { background: var(--accent-soft-bg); }
+.tm-state.dead, .tm-state.starting { background: var(--surface-2); color: var(--muted); }
+.tm-chip .tm-kill {
+  border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: 11px; padding: 0 2px;
+}
+.tm-chip .tm-kill:hover { color: var(--fail); }
+#tm-conv {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--border); padding-top: 10px;
+}
+.tm-msg { max-width: 88%; border-radius: 10px; padding: 6px 10px; font-size: 13px;
+  white-space: pre-wrap; word-break: break-word; }
+.tm-msg .tm-author { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+.tm-msg.in { align-self: flex-end; background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft-border); }
+.tm-msg.out { align-self: flex-start; background: var(--surface-2);
+  border: 1px solid var(--border); }
+.tm-msg.out.fail { border-color: var(--fail-soft-border); }
+.tm-msg.question { align-self: flex-start; background: var(--accent-soft-bg2);
+  border: 1px dashed var(--accent-soft-border); }
+.tm-empty { color: var(--muted); font-size: 12px; padding: 12px 4px; }
+#tm-inputrow { display: flex; gap: 8px; align-items: flex-end; }
+#tm-input {
+  flex: 1; resize: none; border: 1px solid var(--border); border-radius: 8px;
+  background: transparent; color: inherit; font: inherit; font-size: 13px;
+  padding: 6px 8px;
+}
+#tm-send {
+  border: 1px solid var(--border); border-radius: 8px; background: none;
+  cursor: pointer; padding: 6px 12px; font-size: 13px;
+}
+#tm-send:disabled, #tm-input:disabled { opacity: .5; cursor: default; }

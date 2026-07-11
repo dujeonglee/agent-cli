@@ -312,6 +312,14 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.
 - 2026-07-11: §7 결정 4건 전원 해소 (CLI 큐 통일=P5 신설, 비배달 동의, 중첩
   금지 동의, 역할 md=(b) 전용 디렉토리). **P0 착수 승인.**
+- 2026-07-11: **P4 완료 (v4.57.0)** — WebUI 대화 창(D8)+idle 자동 재기동
+  (D3). 렌더러 표면 teammate_roster(sticky)/teammate_message(persistent),
+  인간 개입 비배달 규칙(current_author — 질문 라우팅도 대칭), 엔드포인트
+  input(닉네임 attribution)/kill, 🤝 드로어(roster 칩·대화 버블·입력).
+  자동 재기동은 **MailWaker 로 추출**(main 클로저에 묻지 않고 단위 테스트
+  — armed 중복 방지·run 종료 후 레이스 봉합·빈 wake skip). CSS 는 테마
+  토큰만(가드 테스트가 raw hex 검출). 테스트 +18(비배달·질문 라우팅·
+  waker 5종·엔드포인트 5종·sticky/persistent), 전체 2965.
 - 2026-07-11: **P3 완료 (v4.56.0)** — resume 자동 재생성 (D7). 설계의
   outbox.jsonl 대신 **teammates.json 단일 파일**(manifest+pending 미러,
   fsio 원자 교체)로 단순화 — pending 이 in-memory 진실이므로 변경마다

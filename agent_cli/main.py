@@ -1585,7 +1585,21 @@ def web(
 
         nonlocal teammate_registry
         teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
-        teammate_registry.on_reply = _teammate_reply_notice
+        _registry = teammate_registry  # 클로저 고정 (nonlocal 재대입과 분리)
+        # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
+        server.teammate_registry = _registry
+
+        # P4 (D3): idle 자동 재기동 — 조율 로직은 MailWaker (단위 테스트
+        # 가능한 순수 조율자, subagent/teammate.py) 가 소유.
+        from agent_cli.subagent.teammate import MailWaker
+
+        _waker = MailWaker(server.enqueue, _registry.has_pending_replies)
+
+        def _on_teammate_mail(reply: dict) -> None:
+            _teammate_reply_notice(reply)
+            _waker.on_mail()
+
+        teammate_registry.on_reply = _on_teammate_mail
         # P3 (D7): --resume 세션의 teammate 자동 재생성 (fresh 는 no-op).
         revived = teammate_registry.restore(parent_ctx=ctx)
         if revived:
@@ -1596,7 +1610,9 @@ def web(
             # refreshed client also lands on the right send-button
             # state via snapshot replay, not just live listeners.
             renderer.worker_idle()
+            _waker.idle.set()
             item = server.dequeue_blocking()
+            _waker.idle.clear()
             if item is server.SHUTDOWN:
                 # Server shutdown — break out so the worker thread
                 # can exit cleanly instead of being killed daemon-style.
@@ -1606,6 +1622,11 @@ def web(
                 break
             message = item["text"]
             nickname = item["nickname"]
+            _wake_verdict = _waker.handle_dequeued(message)
+            if _wake_verdict == "skip":
+                continue  # 이미 다른 run 이 배달 완료 — 빈 run 을 열지 않는다
+            if _wake_verdict == "run":
+                nickname = "🤝 teammate"
             # Real user message — flip to busy until the next dequeue
             # (after handle_slash_command / try_dispatch_agent_or_skill /
             # run_loop finish). Anything that follows — including a
@@ -1771,6 +1792,8 @@ def web(
                     renderer.error(f"Worker error: {exc}", 0)
             finally:
                 server.set_stop_handle(None)
+                # 레이스 봉합 (P4 D3): run 마지막 턴 경계 이후 도착분.
+                _waker.on_run_end()
 
     worker = threading.Thread(target=_worker_loop, daemon=True, name="agent-loop")
     worker.start()

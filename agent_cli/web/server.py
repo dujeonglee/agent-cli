@@ -188,6 +188,9 @@ class WebServer:
         # observations), not just the static system prompt. May be None
         # (tests / pre-session).
         self.ctx = ctx
+        # teammate P4: 대화 창의 인간 개입(input/kill) 대상 — worker 부트가
+        # TeammateRegistry 를 꽂는다. None(테스트/기동 전)이면 엔드포인트 503.
+        self.teammate_registry = None
         # ``secrets.token_urlsafe`` gives a URL-safe random token —
         # ``--token`` override sticks if provided.
         self.token = token or secrets.token_urlsafe(32)
@@ -1121,6 +1124,45 @@ def create_app(server: WebServer) -> FastAPI:
         server._require_token(token)
         conn = WebConnection(id=secrets.token_hex(8))
         return EventSourceResponse(server.stream_events(conn))
+
+    @app.post("/api/teammate/{key}/input")
+    async def teammate_input(key: str, request: Request, token: str = Query(...)):
+        """teammate 대화 창의 인간 개입 (P4, D8) — 해당 teammate 의 inbox 로
+        직접 전송. teammate 가 ask 답변 대기(waiting_ask) 중이면 이 메시지가
+        답으로 소비된다 (main 과 선착순). 이 문답의 회신은 main 컨텍스트에
+        배달되지 않는다 (창에만 — 레지스트리의 화자 규칙)."""
+        server._require_token(token)
+        registry = server.teammate_registry
+        if registry is None:
+            raise HTTPException(status_code=503, detail="teammate registry not ready")
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        content = body.get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            raise HTTPException(
+                status_code=400, detail="content must be a non-empty string"
+            )
+        nickname = server.renderer.nickname_for(body.get("conn_id")) or "user"
+        error = registry.request(key, content, author=f"user:{nickname}")
+        if error:
+            raise HTTPException(status_code=404, detail=error)
+        return JSONResponse({"accepted": True})
+
+    @app.post("/api/teammate/{key}/kill")
+    async def teammate_kill(key: str, token: str = Query(...)):
+        """teammate 종료 (P4 창의 ✕) — kill 은 worker join(≤2s)을 포함하므로
+        이벤트 루프를 막지 않게 executor 로 오프로드."""
+        server._require_token(token)
+        registry = server.teammate_registry
+        if registry is None:
+            raise HTTPException(status_code=503, detail="teammate registry not ready")
+        loop = asyncio.get_running_loop()
+        error = await loop.run_in_executor(None, registry.kill, key)
+        if error:
+            raise HTTPException(status_code=404, detail=error)
+        return JSONResponse({"ok": True})
 
     @app.post("/api/input")
     async def input_endpoint(request: Request, token: str = Query(...)):

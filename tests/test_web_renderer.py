@@ -1995,3 +1995,27 @@ class TestTeammateWork:
         labels = [sc["label"] for sc in r.prompt_scopes()]
         assert "teammate:anon" in labels
         r.end_prompt_scope("agt-9")
+
+
+class TestTeammateWindowEvents:
+    """P4: roster 는 sticky(재접속 복원), 대화 메시지는 persistent(replay)."""
+
+    def test_roster_sticky_replayed_on_reconnect(self):
+        # sticky 계약: register_connection 의 snapshot 에 최신 roster 포함.
+        r = WebRenderer()
+        r.teammate_roster([{"key": "agt-1", "role": "res", "state": "idle"}])
+        r.teammate_roster([{"key": "agt-1", "role": "res", "state": "busy"}])
+        snap = r.register_connection(WebConnection(id="late"))
+        roster_evs = [d for (e, d) in snap if e == "teammate_roster"]
+        assert len(roster_evs) == 1  # latest wins (슬롯 1개)
+        assert roster_evs[0]["teammates"][0]["state"] == "busy"
+
+    def test_message_is_persistent(self):
+        r = WebRenderer()
+        r.teammate_message(
+            key="agt-1", direction="out", author="agt-1", text="hi", seq=1
+        )
+        names = [e for e, _ in r._event_buffer]
+        assert "teammate_msg" in names
+        data = next(d for e, d in r._event_buffer if e == "teammate_msg")
+        assert data["direction"] == "out" and data["text"] == "hi"
