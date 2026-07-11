@@ -765,3 +765,154 @@ class TestAskRouting:
             mp.undo()
         assert out.endswith("A: (no response)")
         fake.announce_ask.assert_called_once()
+
+
+# ── P3: 상태 영속 + resume 재생성 (D7) ──────────
+
+
+class TestResumeRestore:
+    def _state(self, tmp_path):
+        import json
+
+        return json.loads((tmp_path / "teammates.json").read_text(encoding="utf-8"))
+
+    def test_manifest_written_on_spawn(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        data = self._state(tmp_path)
+        assert data["version"] == 1
+        entry = next(e for e in data["teammates"] if e["key"] == key)
+        assert entry["state"] == "idle"
+        reg.shutdown_all()
+
+    def test_kill_is_permanent_in_manifest(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.kill(key)
+        entry = next(e for e in self._state(tmp_path)["teammates"] if e["key"] == key)
+        assert entry["state"] == "dead"
+
+    def test_session_exit_keeps_teammate_revivable(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.shutdown_all()  # 세션 종료 ≠ kill
+        entry = next(e for e in self._state(tmp_path)["teammates"] if e["key"] == key)
+        assert entry["state"] == "idle"  # resume 대상
+
+    def test_pending_mirrored_to_disk(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        reg.request(key, "hi")
+        assert wait_until(reg.has_pending_replies)
+        assert len(self._state(tmp_path)["pending"]) == 1
+        reg.drain_replies()
+        assert self._state(tmp_path)["pending"] == []
+        reg.shutdown_all()
+
+    def test_full_resume_roundtrip(self, tmp_path, renderer):
+        # 세션 1: spawn → 문답 1회 → ctx 에 landmark → 미배달 회신 남기고 종료
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        assert wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.get(key).ctx.add({"role": "user", "content": "landmark-from-session-1"})
+        reg1.request(key, "hello")
+        assert wait_until(reg1.has_pending_replies)
+        reg1.shutdown_all()
+
+        # 세션 2 (같은 session_dir): restore → 재생성 + 미배달 복원
+        reg2 = make_registry(tmp_path)
+        revived = reg2.restore()
+        assert revived == 1
+        tm = reg2.get(key)
+        assert wait_until(lambda: tm.state == "idle")
+        # 이전 세션 문맥을 기억한 채 살아났다 (ctx resume)
+        assert any(
+            "landmark-from-session-1" in str(m) for m in tm.ctx.get_raw_messages()
+        )
+        # 미배달 회신은 첫 턴 경계 배달 대상으로 복원
+        restored = reg2.drain_replies()
+        assert [r["output"] for r in restored] == ["done:hello"]
+        # seq 이어가기 — 새 요청은 reply-2 (기존 reply-1 안 덮음)
+        assert tm.queued == tm.handled == 1
+        reg2.request(key, "again")
+        assert wait_until(reg2.has_pending_replies)
+        again = reg2.drain_replies()[0]
+        assert again["output"] == "done:again" and again["seq"] == 2
+        reg2.shutdown_all()
+
+    def test_killed_teammate_not_revived(self, tmp_path, renderer):
+        reg1 = make_registry(tmp_path)
+        k_alive, _ = reg1.spawn()
+        k_dead, _ = reg1.spawn()
+        wait_until(lambda: reg1.get(k_dead).state == "idle")
+        reg1.kill(k_dead)
+        reg1.shutdown_all()
+
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1  # 산 것만 재기동
+        assert wait_until(lambda: reg2.get(k_alive).state == "idle")
+        tomb = reg2.get(k_dead)
+        assert tomb is not None and tomb.state == "dead"  # 툼스톤 (status 가시성)
+        assert "dead" in reg2.format_status(k_dead)
+        reg2.shutdown_all()
+
+    def test_stale_question_marked_on_restore(self, tmp_path, renderer):
+        reg1 = make_registry(tmp_path, runner=make_asking_runner())
+        key, _ = reg1.spawn()
+        reg1.request(key, "task")
+        assert wait_until(lambda: reg1.get(key).state == "waiting_ask")
+        reg1.shutdown_all()  # 질문이 미배달인 채 종료
+
+        reg2 = make_registry(tmp_path)
+        reg2.restore()
+        question = next(r for r in reg2.drain_replies() if r.get("kind") == "question")
+        assert question.get("stale") is True
+        rec = build_reply_record(question)
+        assert "STALE" in rec["content"]
+        assert "NO LONGER" in rec["content"]  # 답변 대기 아님을 명시
+        reg2.shutdown_all()
+
+    def test_role_prompt_survives_role_file_deletion(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        import agent_cli.subagent.roles as roles_mod
+
+        roles_dir = tmp_path / "roles"
+        roles_dir.mkdir()
+        (roles_dir / "researcher.md").write_text(
+            "---\nmodel: r-model\n---\nYou are THE researcher.", encoding="utf-8"
+        )
+        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([roles_dir]))
+
+        reg1 = make_registry(tmp_path)
+        key, err = reg1.spawn(role="researcher")
+        assert err == ""
+        wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.shutdown_all()
+
+        (roles_dir / "researcher.md").unlink()  # 역할 파일이 사라져도
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1
+        assert reg2.get(key).role_prompt == "You are THE researcher."
+        reg2.shutdown_all()
+
+    def test_restore_noop_without_file_or_bad_version(self, tmp_path, renderer):
+        reg = make_registry(tmp_path / "fresh")
+        assert reg.restore() == 0
+        (tmp_path / "teammates.json").write_text(
+            '{"version": 99, "teammates": [{"key": "agt-x"}]}', encoding="utf-8"
+        )
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 0
+
+    def test_tool_call_refreshes_runtime(self, tmp_path, renderer):
+        # restore 된 teammate 가 스폰 없이도 현 세션 배선으로 돌 수 있도록
+        # 모든 도구 호출이 runtime 을 갱신한다.
+        reg = make_registry(tmp_path)
+        r = tool_teammate(
+            {"mode": "status"}, registry=reg, runtime={"model": "fresh-model"}
+        )
+        assert r.success
+        assert reg.runtime["model"] == "fresh-model"

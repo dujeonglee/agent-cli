@@ -1041,6 +1041,11 @@ def run(
 
     teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
     teammate_registry.on_reply = _teammate_reply_notice
+    # P3 (D7): --resume 세션이면 이전 teammate 자동 재생성 + 미배달 회신
+    # 복원 (fresh 세션은 teammates.json 이 없어 no-op).
+    revived = teammate_registry.restore(parent_ctx=ctx)
+    if revived:
+        console.print(f"[{C['muted']}]🤝 teammate {revived}명 재생성됨[/]")
     try:
         loop_result = run_loop(
             query=query,
@@ -1581,6 +1586,10 @@ def web(
         nonlocal teammate_registry
         teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
         teammate_registry.on_reply = _teammate_reply_notice
+        # P3 (D7): --resume 세션의 teammate 자동 재생성 (fresh 는 no-op).
+        revived = teammate_registry.restore(parent_ctx=ctx)
+        if revived:
+            renderer.status(f"🤝 teammate {revived}명 재생성됨")
         while True:
             # Tell the frontend we're waiting for the next user
             # message. Goes through ``_latest_worker_state`` so a

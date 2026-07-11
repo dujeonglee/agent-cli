@@ -69,7 +69,10 @@ def create_subagent_ctx(
 ) -> tuple[ContextManager | None, str]:
     """서브에이전트 ctx 생성 — ``(ctx, error)``.
 
-    ``none`` 은 fresh, ``fork`` 는 부모 history.jsonl 복사 후 resume.
+    ``none`` 은 fresh, ``fork`` 는 부모 history.jsonl 복사 후 resume,
+    ``resume`` (teammate P3) 은 **자기 디렉토리의 기존 history** 를 그대로
+    이어받는다 — 세션 resume 시 teammate 재생성용 (복사 없음; delegate
+    스키마 enum 에는 없어 LLM 이 직접 선택할 수 없다).
     부모의 wire_format·토큰 예산을 상속한다 (부모 없으면 ContextManager
     기본값). 생성된 live ctx 는 현재 스레드의 인스펙터 스코프에 등록 —
     CLI(minimal 렌더러)에선 no-op.
@@ -85,6 +88,14 @@ def create_subagent_ctx(
         ctx = ContextManager(
             session_dir=subagent_dir,
             max_context_tokens=parent_ctx.max_context_tokens,
+            resume=True,
+            wire_format=inherited_wire_format,
+        )
+    elif context_mode == "resume":
+        budget = parent_ctx.max_context_tokens if parent_ctx else 0
+        ctx = ContextManager(
+            session_dir=subagent_dir,
+            max_context_tokens=budget,
             resume=True,
             wire_format=inherited_wire_format,
         )

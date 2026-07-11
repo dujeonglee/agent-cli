@@ -312,6 +312,14 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.
 - 2026-07-11: §7 결정 4건 전원 해소 (CLI 큐 통일=P5 신설, 비배달 동의, 중첩
   금지 동의, 역할 md=(b) 전용 디렉토리). **P0 착수 승인.**
+- 2026-07-11: **P3 완료 (v4.56.0)** — resume 자동 재생성 (D7). 설계의
+  outbox.jsonl 대신 **teammates.json 단일 파일**(manifest+pending 미러,
+  fsio 원자 교체)로 단순화 — pending 이 in-memory 진실이므로 변경마다
+  전체 스냅샷이 마킹-소비 jsonl 보다 정직. role_prompt 통째 저장(역할 md
+  소실 무관), 논리 생사(kill=영구/세션종료=revivable), ctx "resume" 모드
+  (runner 3번째 모드), stale 질문 마킹, seq 이어가기, 매 호출 runtime
+  갱신. semver 체크: additive 파일 — 구 세션 무영향, minor. 테스트 +10
+  (roundtrip·kill 영구·stale·역할 파일 삭제 생존·버전 가드), 전체 2947.
 - 2026-07-11: **P2 완료 (v4.55.0)** — ask→main 라우팅 (D4). LoopConfig.
   ask_handler 훅(run_loop→dispatch `_handle_ask` 분기 — handler 없으면
   종전 시그니처 유지로 기존 patcher 무영향), worker 의 핸들러가 질문을

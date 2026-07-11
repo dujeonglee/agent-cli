@@ -32,6 +32,7 @@ P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 �
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -49,6 +50,9 @@ if TYPE_CHECKING:
 _SHUTDOWN = object()
 
 _DEFAULT_MAX_TEAMMATES = 4
+
+# teammates.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
+TEAMMATES_STATE_VERSION = 1
 
 
 def _max_teammates() -> int:
@@ -78,11 +82,20 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
 
     if reply.get("kind") == "question":
         question = reply.get("output") or "(empty question)"
-        content = (
-            f"── teammate {label} QUESTION ──\n{question}\n"
-            f"(The teammate is BLOCKED until answered. Answer via teammate op: "
-            f'{{"mode":"request","key":"{key}","message":"<your answer>"}}.)'
-        )
+        if reply.get("stale"):
+            # P3: 세션 재시작으로 teammate 는 더 이상 답변 대기가 아님 —
+            # 그대로 답하면 새 request 로 오인되므로 정직하게 알린다.
+            tail = (
+                "(STALE — the session was resumed; the teammate is NO LONGER "
+                "waiting for this answer. Re-send the original request with "
+                f'{{"mode":"request","key":"{key}","message":"..."}} if still needed.)'
+            )
+        else:
+            tail = (
+                "(The teammate is BLOCKED until answered. Answer via teammate op: "
+                f'{{"mode":"request","key":"{key}","message":"<your answer>"}}.)'
+            )
+        content = f"── teammate {label} QUESTION ──\n{question}\n{tail}"
         return {
             "role": "user",
             "tool": "teammate",
@@ -145,8 +158,12 @@ class Teammate:
         self.worker: threading.Thread | None = None
         self.ctx: ContextManager | None = None
 
-        self.state = "starting"  # starting | idle | busy | dead
+        self.state = "starting"  # starting | idle | busy | waiting_ask | dead
         self.error = ""  # dead 사유 (ctx 생성 실패 등)
+        # P3 resume: kill 은 영구(revivable=False — manifest 에 dead 로 기록),
+        # 세션 종료로 죽은 teammate 는 revivable 유지 → resume 시 재생성.
+        self.revivable = True
+        self.revive = False  # restore 가 세움 — worker 가 ctx 를 resume 모드로
         self.created_at = time.time()
         self.handled = 0  # 처리 완료한 request 수
         self.queued = 0  # inbox 에 넣은 request 수 (seq 발급)
@@ -277,6 +294,7 @@ class TeammateRegistry:
             name=f"teammate-{key}",
         )
         tm.worker.start()
+        self._save_state()
         return key, ""
 
     # ── request / 회신 ──────────────────────────
@@ -299,6 +317,7 @@ class TeammateRegistry:
         with self._cv:
             self._pending.append(reply)
             self._cv.notify_all()
+        self._save_state()  # P3: 미배달분 디스크 미러 — resume 시 유실 없음
         cb = self.on_reply
         if cb is not None:
             try:
@@ -311,6 +330,8 @@ class TeammateRegistry:
         with self._cv:
             out = list(self._pending)
             self._pending.clear()
+        if out:
+            self._save_state()  # 배달 완료 → 디스크 미러도 소비
         return out
 
     def wait_reply(self, key: str, timeout: float) -> dict | None:
@@ -326,7 +347,9 @@ class TeammateRegistry:
             while True:
                 for i, r in enumerate(self._pending):
                     if r.get("key") == key:
-                        return self._pending.pop(i)
+                        item = self._pending.pop(i)
+                        self._save_state()  # 소비 반영 (_cv 는 RLock — 재진입 안전)
+                        return item
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return None
@@ -367,10 +390,12 @@ class TeammateRegistry:
         tm = self._teammates.get(key)
         if tm is None:
             return f"unknown teammate '{key}'"
+        tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         tm.stop_event.set()
         tm.inbox.put(_SHUTDOWN)
         if tm.worker is not None:
             tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
+        self._save_state()
         return ""
 
     def shutdown_all(self) -> None:
@@ -381,6 +406,127 @@ class TeammateRegistry:
         for tm in list(self._teammates.values()):
             if tm.worker is not None:
                 tm.worker.join(timeout=5.0)
+        # 최종 스냅샷 — revivable 유지 상태로 기록돼 resume 이 되살린다 (D7).
+        self._save_state()
+
+    # ── P3: 상태 영속 + resume 재생성 (D7) ──────
+
+    def _state_path(self) -> Path | None:
+        return self.session_dir / "teammates.json" if self.session_dir else None
+
+    def _save_state(self) -> None:
+        """teammates.json 원자 저장 (fsio) — manifest + 미배달 pending 미러.
+
+        갱신 시점: spawn/kill/worker 종료(상태) + push/drain/wait(pending).
+        상태 파일은 best-effort — 디스크 문제로 세션 진행을 막지 않는다.
+        """
+        path = self._state_path()
+        if path is None:
+            return
+        entries = []
+        for tm in self._teammates.values():
+            entries.append(
+                {
+                    "key": tm.key,
+                    "role": tm.role_name,
+                    # role_prompt 를 통째로 저장 — resume 시 역할 md 파일이
+                    # 지워졌어도 teammate 는 갖고 있던 역할 그대로 살아난다.
+                    "role_prompt": tm.role_prompt,
+                    "allowed_tools": tm.allowed_tools,
+                    "model": tm.model,
+                    "hooks_config": tm.hooks_config,
+                    "context_mode": tm.context_mode,
+                    "created_at": tm.created_at,
+                    "handled": tm.handled,
+                    # 논리 생사: kill(revivable=False)·에러만 영구 dead —
+                    # 세션 종료로 멈춘 teammate 는 idle 로 남아 resume 대상.
+                    "state": "dead" if (not tm.revivable or tm.error) else "idle",
+                    "error": tm.error,
+                }
+            )
+        with self._cv:
+            pending = [dict(r) for r in self._pending]
+        try:
+            from agent_cli.fsio import atomic_write_json
+
+            atomic_write_json(
+                path,
+                {
+                    "version": TEAMMATES_STATE_VERSION,
+                    "teammates": entries,
+                    "pending": pending,
+                },
+            )
+        except OSError:
+            pass
+
+    def restore(self, parent_ctx=None) -> int:
+        """세션 resume 시 teammates.json 에서 재생성 — 되살린 수 반환.
+
+        - 살아있던(revivable) teammate: 자기 history 를 resume 한 ctx 로
+          worker 재기동 (이전 문답 전부 기억). kill 된 것은 dead 툼스톤으로
+          만 복원 (status 가시성).
+        - 미배달 pending 은 그대로 복원 → 첫 턴 경계에 정상 배달. 단
+          질문(kind:"question")은 **stale 마킹** — 재시작으로 teammate 가
+          더 이상 답변 대기가 아니므로 배달 문구가 재요청을 안내.
+        - 파일 부재/파손/버전 불일치는 조용히 no-op (fresh 세션과 동일).
+        """
+        path = self._state_path()
+        if path is None or not path.is_file():
+            return 0
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return 0
+        if not isinstance(data, dict) or data.get("version") != TEAMMATES_STATE_VERSION:
+            return 0
+
+        with self._cv:
+            for item in data.get("pending", []):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("kind") == "question":
+                    item["stale"] = True
+                self._pending.append(item)
+            if self._pending:
+                self._cv.notify_all()
+
+        revived = 0
+        for e in data.get("teammates", []):
+            key = e.get("key")
+            if not key or key in self._teammates or self.session_dir is None:
+                continue
+            tm = Teammate(
+                key,
+                role_name=e.get("role", ""),
+                role_prompt=e.get("role_prompt", ""),
+                allowed_tools=e.get("allowed_tools"),
+                model=e.get("model", ""),
+                hooks_config=e.get("hooks_config"),
+                context_mode=e.get("context_mode", "none"),
+                home_dir=self.session_dir / "teammates" / key,
+            )
+            tm.handled = int(e.get("handled", 0) or 0)
+            tm.queued = tm.handled  # seq 이어가기 (reply-N.md 충돌 방지)
+            if isinstance(e.get("created_at"), (int, float)):
+                tm.created_at = e["created_at"]
+            self._teammates[key] = tm
+            if e.get("state") == "dead":
+                tm.state = "dead"
+                tm.error = e.get("error", "")
+                tm.revivable = False
+                continue
+            tm.revive = True
+            tm.worker = threading.Thread(
+                target=self._worker,
+                args=(tm, parent_ctx),
+                daemon=True,
+                name=f"teammate-{key}",
+            )
+            tm.worker.start()
+            revived += 1
+        self._save_state()
+        return revived
 
     # ── worker ──────────────────────────────────
 
@@ -409,7 +555,10 @@ class TeammateRegistry:
             # ctx 는 worker 스레드에서 생성 — create_subagent_ctx 의
             # note_scope_ctx 가 "현재 스레드의 스코프"(방금 연 tm.key)에
             # 등록되게 하기 위함 (spawn 스레드면 main 스코프를 오염).
-            ctx, err = create_subagent_ctx(tm.context_mode, parent_ctx, tm.home_dir)
+            # P3 revive: 자기 history 를 그대로 이어받는 resume 모드 —
+            # teammate 는 이전 세션의 문답을 전부 기억한 채 살아난다.
+            mode = "resume" if tm.revive else tm.context_mode
+            ctx, err = create_subagent_ctx(mode, parent_ctx, tm.home_dir)
             if ctx is None:
                 tm.error = err
                 return
@@ -468,6 +617,7 @@ class TeammateRegistry:
         finally:
             tm.state = "dead"
             renderer.end_prompt_scope(tm.key)  # 스코프 고정 (사후 검사 가능)
+            self._save_state()  # ctx 실패(error→dead)·종료 상태 반영
 
     def _make_ask_handler(self, tm: Teammate):
         """teammate 서브루프의 ask 라우팅 훅 (P2, D4).
@@ -556,6 +706,11 @@ def tool_teammate(
                 "teammates cannot spawn teammates)"
             ),
         )
+
+    # P3: 매 호출 runtime 갱신 — restore 로 되살아난 teammate(스폰 없음)도
+    # 첫 request 부터 현재 세션의 provider 배선으로 돈다.
+    if runtime:
+        registry.runtime = runtime
 
     mode = args.get("mode", "")
 

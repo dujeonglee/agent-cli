@@ -1040,6 +1040,7 @@ delegate 가 "일회성 파견"(답변 → 소멸)이라면 `teammate` 는 **상
 - **역할 정의 (`role`)**: `.agent-cli/teammates/{name}.md` (프로젝트) → `~/.agent-cli/teammates/` (전역) 검색. agent 파일과 같은 포맷 — YAML frontmatter(`allowed-tools`/`model`/`hooks`) + 본문(역할, teammate 의 시스템 프롬프트로 로드). delegate 의 `agents/` 와는 **별도 디렉토리**입니다.
 - **스코프**: main 세션 전용 — 서브에이전트(delegate/skill/teammate 자신) 안에서는 도구가 노출되지 않습니다. delegate 는 teammate 안에서 평소처럼 쓸 수 있습니다. 동시 생존 상한 기본 4 (`AGENT_CLI_MAX_TEAMMATES`).
 - **수명**: main 의 Stop/Ctrl+C 는 teammate 를 죽이지 않습니다(백그라운드 계속). 종료는 `kill` 또는 세션 종료 시 일괄 정리. 회신 전문은 `teammates/<key>/replies/` 에 항상 저장됩니다.
+- **세션 resume 시 자동 재생성**: `--resume` 하면 이전 세션에서 살아있던 teammate 가 **자기 대화 이력을 전부 기억한 채** 자동으로 되살아납니다 (`teammates.json` manifest — 역할 프롬프트도 저장돼 역할 md 파일이 지워져도 무관). 미배달 회신도 보존되어 첫 턴에 배달됩니다 (답변 대기 중이던 질문은 STALE 로 표시 — 재시작으로 더 이상 블록 상태가 아님을 안내). 명시적으로 `kill` 한 teammate 는 되살아나지 않습니다.
 - **인스펙터**: 웹 Prompt Inspector 에 teammate 스코프 칩이 상시 표시되어 살아있는 동안 시스템 프롬프트·동적 컨텍스트를 실시간 검사할 수 있습니다. 요청 처리 과정은 delegate 와 같은 접이식 카드(🤝)로 표시됩니다.
 
 ### run_skill — 스킬 실행
