@@ -58,21 +58,23 @@ _COMPACTION_JSON_VERSION = 1
 # receives can blow past the window. (Replaced the earlier chunked-spill record.)
 
 
-def compute_token_budget(context_window: int, max_output_tokens: int) -> int:
+def compute_token_budget(context_window: int) -> int:
     """Compute the fallback context budget (``max_context_tokens``).
 
-    budget = context_window - max_output_tokens - 4000 (system reserve)
+    budget = (context_window * 7) // 10 — 70% of the window.
+
+    v4.46.0 통일: 이전엔 run(``context − max_output − 4000``)과 web
+    (``×0.7`` 인라인)이 서로 다른 폴백을 써서 같은 세션을 어느 엔트리로
+    여느냐에 따라 resume 복원 창이 달랐다(C4 감사 발견). web 의 보수적
+    70% 로 단일화 — chars/4 추정의 CJK 과소평가에 대한 여유이기도 하다.
 
     NOTE: this is no longer the live compaction threshold. flow 1
     computes the real target per call as ``(context − system(measured)
     − max_output) × 0.8`` in ``AgentLoop._call_llm``. This value remains
     the ``_evict_fifo`` default target and the budget used to restore the
-    cache on resume (before the first call's ``ensure_within`` refines
-    it), where a fixed 4000-token system estimate is good enough.
+    cache on resume (before the first call's ``ensure_within`` refines it).
     """
-    reserve = max_output_tokens + 4000
-    budget = context_window - reserve
-    return max(budget, 4000)  # floor: at least 4K tokens
+    return max((context_window * 7) // 10, 4000)  # floor: at least 4K tokens
 
 
 def _compaction_disabled_via_env() -> bool:

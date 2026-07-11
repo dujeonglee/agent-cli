@@ -62,3 +62,75 @@ class TestPickPort:
             assert got != busy and got > 0  # OS-assigned fallback
         finally:
             srv.close()
+
+
+# ── C4: run/web 공용 부트스트랩 + --resume 공용 경로 + 예산 통일 ──────
+
+
+class TestC4Bootstrap:
+    def _fake_setup(self, monkeypatch, context_window=100_000):
+        import agent_cli.main as m
+
+        class _Caps:
+            pass
+
+        caps = _Caps()
+        caps.context_window = context_window
+        caps.max_output_tokens = 8_192
+        monkeypatch.setattr(
+            m,
+            "_setup_provider",
+            lambda *a, **k: ("PROV", caps, "m1", "http://u", "k", "openai"),
+        )
+        return m
+
+    def test_bootstrap_bundles_and_budget_fallback(self, monkeypatch):
+        m = self._fake_setup(monkeypatch)
+        boot = m._bootstrap_provider(None, None, "", "", "md_array", 0)
+        assert boot.resolved_model == "m1" and boot.provider_name == "openai"
+        assert boot.wire_format.name == "md_array"
+        # 예산 폴백 = 70% 통일 공식 (run/web 동일)
+        assert boot.max_context_tokens == (100_000 * 7) // 10
+
+    def test_bootstrap_explicit_budget_respected(self, monkeypatch):
+        m = self._fake_setup(monkeypatch)
+        boot = m._bootstrap_provider(None, None, "", "", "md_array", 12_345)
+        assert boot.max_context_tokens == 12_345
+
+    def test_bootstrap_unknown_format_fails_fast(self, monkeypatch):
+        import typer
+
+        m = self._fake_setup(monkeypatch)
+        try:
+            m._bootstrap_provider(None, None, "", "", "no_such_format", 0)
+        except typer.Exit as e:
+            assert e.exit_code == 2
+        else:  # pragma: no cover
+            raise AssertionError("unknown format must exit(2)")
+
+    def test_load_resume_session_fail_fast(self):
+        import typer
+
+        import agent_cli.main as m
+
+        try:
+            m._load_resume_session("no-such-session-id-000")
+        except typer.Exit as e:
+            assert e.exit_code == 1
+        else:  # pragma: no cover
+            raise AssertionError("unknown session must exit(1)")
+
+    def test_compute_token_budget_unified_formula(self):
+        from agent_cli.context.manager import compute_token_budget
+
+        assert compute_token_budget(262_144) == (262_144 * 7) // 10
+        assert compute_token_budget(1_000) == 4_000  # floor
+
+    def test_run_and_web_have_resume_option(self):
+        # run 도 web 과 동일하게 --resume 을 노출 (C4 ③)
+        import inspect
+
+        import agent_cli.main as m
+
+        assert "resume" in inspect.signature(m.run).parameters
+        assert "resume" in inspect.signature(m.web).parameters

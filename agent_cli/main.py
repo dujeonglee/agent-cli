@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from dataclasses import dataclass
 
 from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT, DELEGATE_DEFAULT_TIMEOUT
@@ -745,6 +746,88 @@ def _setup_provider(
     )
 
 
+@dataclass(frozen=True)
+class SessionBootstrap:
+    """`run`/`web` 이 공유하는 부트스트랩 산출물 (C4).
+
+    provider 6-튜플 + fail-fast 해석된 wire format + 폴백 적용된 토큰
+    예산을 한 번에 — 두 커맨드가 각자 unpack/try-except/분기를 복제하던
+    동형 시퀀스의 단일 소유자. 세션 획득(create vs resume UX)·renderer·
+    worker 배선은 진짜 다른 부분이라 커맨드별에 남는다.
+    """
+
+    llm_provider: object
+    capabilities: object
+    resolved_model: str
+    resolved_url: str
+    resolved_key: str
+    provider_name: str
+    wire_format: object
+    max_context_tokens: int
+
+
+def _bootstrap_provider(
+    provider,
+    model,
+    base_url,
+    api_key,
+    response_format: str,
+    max_context_tokens: int,
+    *,
+    quiet: bool = False,
+) -> SessionBootstrap:
+    """provider 셋업 → wire format fail-fast → 예산 폴백(70% 통일 공식)."""
+    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, name = (
+        _setup_provider(provider, model, base_url, api_key, quiet=quiet)
+    )
+    # Resolve the wire-format plugin up front so an unknown name fails
+    # before the session is even created.
+    try:
+        wire_format_plugin = _get_wire_format(response_format)
+    except KeyError as exc:
+        console.print(f"[{C['error']}]{exc}[/]")
+        raise typer.Exit(2) from exc
+    if max_context_tokens <= 0:
+        from agent_cli.context.manager import compute_token_budget
+
+        max_context_tokens = compute_token_budget(capabilities.context_window)
+    return SessionBootstrap(
+        llm_provider=llm_provider,
+        capabilities=capabilities,
+        resolved_model=resolved_model,
+        resolved_url=resolved_url,
+        resolved_key=resolved_key,
+        provider_name=name,
+        wire_format=wire_format_plugin,
+        max_context_tokens=max_context_tokens,
+    )
+
+
+def _load_resume_session(resume_id: str):
+    """``--resume <id>`` 공용 경로: unknown ID 는 provider 핸드셰이크 전에
+    fail-fast, 성공 시 SessionMeta 반환 + 배너. run/web 동형."""
+    from agent_cli.context.session import load_session
+
+    session = load_session(resume_id)
+    if session is None:
+        console.print(f"[{C['error']}]Session '{resume_id}' not found.[/]")
+        raise typer.Exit(code=1)
+    console.print(f"[{C['accent']}]Resuming session {resume_id}[/]")
+    return session
+
+
+def _build_context(session, boot: SessionBootstrap, *, resume: bool = False):
+    """세션 + 부트스트랩 산출물로 ContextManager 조립 (run/web 단일 경로)."""
+    from agent_cli.context.session import get_session_dir
+
+    return ContextManager(
+        get_session_dir(session),
+        max_context_tokens=boot.max_context_tokens,
+        resume=resume,
+        wire_format=boot.wire_format,
+    )
+
+
 @app.command()
 def run(
     query: str = typer.Argument(..., help="Task to execute"),
@@ -817,6 +900,12 @@ def run(
         "--response-format",
         help="Wire format plugin name (default: md_array — markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-in: react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
+    resume: str = typer.Option(
+        "",
+        "--resume",
+        help="이전 세션 ID 를 이어서 실행 — web 과 동일한 on-disk 세션을 로드해 "
+        "복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 주입 (v4.46.0).",
+    ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     _apply_style(style)
@@ -829,9 +918,20 @@ def run(
         _run_shell_inline(cmd)
         raise typer.Exit(0)
 
-    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
-        _setup_provider(provider, model, base_url, api_key)
+    # C4: run/web 공용 부트스트랩 — provider 6-튜플 + wire format fail-fast +
+    # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저.
+    session_resumed = _load_resume_session(resume) if resume else None
+    boot = _bootstrap_provider(
+        provider, model, base_url, api_key, response_format, max_context_tokens
     )
+    llm_provider = boot.llm_provider
+    capabilities = boot.capabilities
+    resolved_model = boot.resolved_model
+    resolved_url = boot.resolved_url
+    resolved_key = boot.resolved_key
+    provider = boot.provider_name
+    wire_format_plugin = boot.wire_format
+    max_context_tokens = boot.max_context_tokens
 
     # MCP servers
     mcp_manager, mcp_tools = _setup_mcp()
@@ -840,33 +940,14 @@ def run(
 
         TOOLS.update(mcp_tools)
 
-    # Session & context setup
-    # Auto-compute token budget from model capabilities if not specified
-    if max_context_tokens <= 0:
-        from agent_cli.context.manager import compute_token_budget
-
-        max_context_tokens = compute_token_budget(
-            capabilities.context_window, capabilities.max_output_tokens
-        )
-
-    # Resolve the wire-format plugin name from --response-format up front
-    # so any unknown name fails before the session is even created, and so
-    # the ContextManager below is born with the right plugin attached.
-    try:
-        wire_format_plugin = _get_wire_format(response_format)
-    except KeyError as exc:
-        console.print(f"[{C['error']}]{exc}[/]")
-        raise typer.Exit(2) from exc
-
     from agent_cli.context.session import create_session, save_meta
 
-    session = create_session(response_format=response_format)
+    if session_resumed is not None:
+        session = session_resumed
+    else:
+        session = create_session(response_format=response_format)
     save_meta(session)
-    ctx = ContextManager(
-        session_dir=Path(".agent-cli") / "sessions" / session.session_id,
-        max_context_tokens=max_context_tokens,
-        wire_format=wire_format_plugin,
-    )
+    ctx = _build_context(session, boot, resume=session_resumed is not None)
 
     # Skill dispatch: /skill-name args
     if query.startswith("/") and not query.startswith("/sh"):
@@ -960,7 +1041,7 @@ def _finalize_run(session, ctx, mcp_manager=None) -> None:
     finalize_session(session, ctx)
     console.print(
         f"[{C['muted']}]Session {session.session_id} saved. "
-        f"Resume with: agent-cli web --resume {session.session_id}[/]"
+        f"Resume with: agent-cli run/web --resume {session.session_id}[/]"
     )
 
 
@@ -1305,44 +1386,47 @@ def web(
         )
         raise typer.Exit(code=1)
 
-    from agent_cli.context.session import load_session as _load_session_pre
-
-    # Validate ``--resume`` BEFORE the provider handshake so an unknown
-    # session ID fails fast without touching the network. The session
-    # load itself is repeated below (after provider setup) so the
-    # workspace can flow into the renderer / context manager.
-    if resume and _load_session_pre(resume) is None:
-        console.print(f"[{C['error']}]Session '{resume}' not found.[/]")
-        raise typer.Exit(code=1)
-
     from agent_cli.render import set_renderer
 
-    # 1. Resolve provider + capabilities (shared provider-setup helper).
-    llm_provider, capabilities, resolved_model, resolved_url, resolved_key, provider = (
-        _setup_provider(provider, model, base_url, api_key, quiet=True)
+    # C4: run/web 공용 부트스트랩. --resume pre-check(fail-fast)가 provider
+    # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거).
+    session_resumed = _load_resume_session(resume) if resume else None
+    boot = _bootstrap_provider(
+        provider,
+        model,
+        base_url,
+        api_key,
+        response_format,
+        max_context_tokens,
+        quiet=True,
     )
+    llm_provider = boot.llm_provider
+    capabilities = boot.capabilities
+    resolved_model = boot.resolved_model
+    resolved_url = boot.resolved_url
+    resolved_key = boot.resolved_key
+    provider = boot.provider_name
+    wire_format_plugin = boot.wire_format
+    max_context_tokens = boot.max_context_tokens
 
-    try:
-        wire_format_plugin = _get_wire_format(response_format)
-    except KeyError as e:
-        console.print(f"[red]{e}[/]")
-        raise typer.Exit(code=2)
+    # MCP servers (v4.46.0: run 과 동형 배선 — 이전엔 web 만 미지원이었음)
+    mcp_manager, mcp_tools = _setup_mcp()
+    if mcp_tools:
+        from agent_cli.tools import TOOLS
+
+        TOOLS.update(mcp_tools)
 
     # 2. Session + ContextManager.
     from agent_cli.context.session import (
         finalize_session,
         get_session_dir,
-        load_session,
         save_meta,
     )
 
     import sys
 
-    if resume:
-        # Pre-check above guarantees this exists; re-load to materialise
-        # the SessionMeta (workspace etc.) for the renderer/context.
-        session = load_session(resume)
-        console.print(f"[{C['accent']}]Resuming session {resume}[/]")
+    if session_resumed is not None:
+        session = session_resumed
         is_resume = True
     else:
         # No --resume: offer the most recent session ([y/N]) or start new.
@@ -1353,14 +1437,7 @@ def web(
         if is_resume:
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
     save_meta(session)
-    if max_context_tokens <= 0:
-        max_context_tokens = (capabilities.context_window * 7) // 10
-    ctx = ContextManager(
-        get_session_dir(session),
-        max_context_tokens=max_context_tokens,
-        resume=is_resume,
-        wire_format=wire_format_plugin,
-    )
+    ctx = _build_context(session, boot, resume=is_resume)
 
     # 3. Renderer + server + worker thread.
     renderer = WebRenderer(
@@ -1411,6 +1488,7 @@ def web(
         wire_format=wire_format_plugin,
         session_dir=str(ctx.session_dir),
         max_depth=max_depth,
+        mcp_manager=mcp_manager,
     )
 
     from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
@@ -1518,6 +1596,7 @@ def web(
                             record_turns=record_turns,
                             wire_format=wire_format_plugin,
                             compaction_enabled=not no_compaction,
+                            mcp_manager=mcp_manager,
                         )
 
                     result = _run_main(message, nickname)
@@ -1726,6 +1805,8 @@ def web(
         renderer.shutdown_all_connections()
         server.shutdown()
         worker.join(timeout=2.0)
+        if mcp_manager:
+            mcp_manager.disconnect_all()
         console.print(f"[{C['muted']}]Saving session...[/]")
         try:
             finalize_session(session, ctx)

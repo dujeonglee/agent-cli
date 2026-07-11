@@ -241,14 +241,17 @@ agent-cli run "task description" [options]
 | `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
 | `--response-format` | Wire format 플러그인 이름. 빌트인: `md_array` (**기본** — 멀티-op: `## Thought`/`## Action` + flat `{action, params}` op 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. Phase-2 bakeoff 95.2%=react + 실전 150턴 형식실패 0.7%로 검증 후 기본 전환), `react` (순수 JSON `{thought, action, action_input}`). 두 포맷 compliance 는 omlx 27B/35B bakeoff에서 동등. `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `md_array` |
 
-`run` 실행 후 세션이 자동 저장됩니다. `web --resume <id>`로 이어서 작업할 수 있습니다:
+| `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |
+
+`run` 실행 후 세션이 자동 저장됩니다. `run --resume <id>` 또는 `web --resume <id>`로 이어서 작업할 수 있습니다:
 
 ```bash
 $ agent-cli run "Analyze the project structure"
 # ... 실행 결과 ...
-# Session 1774752167 saved. Resume with: agent-cli web --resume 1774752167
+# Session 1774752167 saved. Resume with: agent-cli run/web --resume 1774752167
 
-$ agent-cli web --resume 1774752167   # 이전 작업 이어서 (브라우저 UI)
+$ agent-cli run "이어서 테스트도 작성해" --resume 1774752167   # CLI 로 이어서
+$ agent-cli web --resume 1774752167   # 또는 브라우저 UI 로 이어서
 ```
 
 resume 시 `web`은 이전 대화(turn)를 UI에 그대로 재생해 어디서 끊겼는지 바로 확인할 수 있습니다 (중간 도구 호출/관찰 포함).
@@ -1195,7 +1198,7 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 
 #### 사용
 
-세션 시작 시 자동 연결됩니다. MCP 도구는 `{server}.{tool}` 형식으로 LLM이 자동 사용:
+세션 시작 시 자동 연결됩니다 (`run`·`web` 양쪽 — web 은 v4.46.0 부터). MCP 도구는 `{server}.{tool}` 형식으로 LLM이 자동 사용:
 
 ```json
 {"action": "github.list_issues", "action_input": {"repo": "owner/repo"}}

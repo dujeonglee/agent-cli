@@ -56,11 +56,12 @@ def capture_startup_system_prompt(
     wire_format,
     session_dir: str,
     max_depth: int,
+    mcp_manager=None,
 ) -> None:
     """Build + capture the system-prompt snapshot at web startup so the Prompt
     Inspector is populated BEFORE the first message (the loop only captures on
     an LLM call). This mirrors what the main loop builds at depth 0 with all
-    tools (web chat uses ``active_tools=None`` → all, ``mcp_manager=None``).
+    tools (web chat uses ``active_tools=None`` → all; ``mcp_manager`` 는 v4.46.0 부터 web 도 배선).
     The first real LLM call rebuilds + overwrites this — including the per-turn
     ``Hook:`` sections, which only exist after ``PreLLMCall`` and so are absent
     from this static preview. Best-effort: a build error must not block
@@ -73,7 +74,7 @@ def capture_startup_system_prompt(
             capabilities=capabilities,
             active_tools=list(TOOLS.keys()),
             session_dir=session_dir,
-            mcp_manager=None,
+            mcp_manager=mcp_manager,
             wire_format=wire_format,
             depth=0,
             max_depth=max_depth,

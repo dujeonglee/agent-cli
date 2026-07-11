@@ -36,7 +36,7 @@
 | **C1** | loop.py god-module(2671줄) — `_dispatch_op` ~390줄, `__init__` ~190줄, action-card 렌더 5중복, `_append_observation` 8곳 동일 인자. (정정: 순환의 뿌리는 registry eager TOOLS — delegate→run_loop 지연은 유지 필수, lazy registry 재시도 금지) | loop.py:1239-1626 | **Option 3 협력객체 3단 PR 확정** — PR-1 State/Config ✅ v4.40.0 → PR-2 SystemPromptSvc·ToolBridge ✅ v4.41.0 → PR-3 ✅ v4.42.0 → 패키지化 ✅ v4.43.0 | ✅ 완결 |
 | **C2** | delegate.py 8책임(851줄) — agent 로딩/추출기/persist/포맷팅/단일·병렬 실행/dispatch/Tool | delegate.py | `delegate/` 패키지 분할 (agents/report/exec/tool) | ✅ v4.44.0 |
 | **C3** | web/server.py 전송·비즈니스 뒤엉킴(1727줄, 27라우트) — directive 조작·lesson 학습·slash ~440줄 | server.py:168-408,493-687 | directives/inspector/slash 3모듈 추출 | ✅ v4.45.0 |
-| **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | `bootstrap_session()` 공용 추출 | ☐ |
+| **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | 공용 추출 + 실측서 발견 3결함 수리 | ✅ v4.46.0 |
 | **C5** | ContextManager 8관심사(1053줄) — 캐시+압축+요약+2종 영속화+분류+NL렌더 | manager.py | 렌더/분류 → `context/_render.py`, 영속화 store 분리. B1 과 연계 | ☐ |
 | C6 | providers 스트리밍 파서 중복 — 양 어댑터 `_handle_stream` 각 ~130줄 (retry 는 공유됨) | anthropic.py:96, openai.py:122 | SSE 이터레이터+델타 누산기 http.py 공유 | ☐ |
 | C7 | 이중 검증층 — registry 중앙 + 도구 내부 재검증 | registry.py:293-377 | `Tool.validate(args)` 훅 1-pass | ☐ |
@@ -58,6 +58,17 @@
 6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
+
+- **2026-07-11 · v4.46.0 · C4 완료**: 실측이 드러낸 결함 3건 수리 —
+  ① web MCP 미배선(단순 누락 확정) → run 동형 배선(_setup_mcp/TOOLS.update/
+  run_loop·capture_startup mcp_manager/shutdown disconnect), ② 예산 폴백
+  run·web 상이 → `compute_token_budget`=(context×7)//10 단일 출처 통일,
+  ③ run 에 --resume 부재 → 추가(명시 플래그만; unknown fail-fast).
+  그 위에 공용 추출: `SessionBootstrap`+`_bootstrap_provider`+
+  `_load_resume_session`+`_build_context` — 3결함 수리로 두 경로가 동형이
+  되어 추출이 봉합-추상화가 아닌 진짜 공통부 명명. 유닛 6종 + 실기동
+  e2e(run 생성→run --resume 이전 대화 참조 정답, web 기동+health).
+  전체 회귀 2826 passed.
 
 - **2026-07-11 · v4.45.0 · C3 완료**: server.py(1772) → 전송 전용(1228) +
   directives(280 — FastAPI 무의존, 테스트 가드)/inspector(91)/slash(222).
