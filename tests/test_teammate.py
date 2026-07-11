@@ -1780,3 +1780,55 @@ class TestInspectorImmediateReflection:
         wait_until(lambda: reg.get(key).state == "idle")
         reg.kill(key)  # 예외 없이 통과하면 OK
         assert r.prompt_snapshot("") is None
+
+
+# ── resume 유도 (v4.61.1 — 모델이 spawn 으로 새 키를 만들던 실사용 이슈) ──
+
+
+class TestResumeGuidance:
+    def test_kill_output_teaches_resume(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        r = tool_teammate({"mode": "kill", "key": key}, registry=reg)
+        assert '"mode":"resume"' in r.output and key in r.output
+        assert "PRESERVED" in r.output
+
+    def test_status_marks_dead_as_resumable(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.kill(key)
+        s = reg.format_status(key)
+        assert "resumable" in s and '"mode":"resume"' in s
+
+    def test_spawn_hints_when_same_role_dead_exists(
+        self, tmp_path, renderer, monkeypatch
+    ):
+        import agent_cli.subagent.roles as roles_mod
+
+        d = tmp_path / "roles"
+        d.mkdir()
+        (d / "comedian.md").write_text(
+            "---\ndescription: gag\n---\nYou joke.", encoding="utf-8"
+        )
+        monkeypatch.setattr(roles_mod, "_teammate_loader", ResourceLoader([d]))
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn(role="comedian")
+        wait_until(lambda: reg.get(k1).state == "idle")
+        reg.kill(k1)
+        # 같은 역할 재spawn — 실사용 시나리오 ("다시 시작하자" → 모델이 spawn)
+        r = tool_teammate({"mode": "spawn", "role": "comedian"}, registry=reg)
+        assert r.success
+        assert "NO memory" in r.output and k1 in r.output
+        assert '"mode":"resume"' in r.output
+        # dead 없는 역할은 힌트 없음
+        r2 = tool_teammate({"mode": "spawn", "role": "comedian"}, registry=reg)
+        assert "NO memory" in r2.output  # k1 여전히 dead → 힌트 유지
+        reg.shutdown_all()
+
+    def test_spawn_without_dead_role_has_no_hint(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        r = tool_teammate({"mode": "spawn"}, registry=reg)
+        assert "NO memory" not in r.output
+        reg.shutdown_all()

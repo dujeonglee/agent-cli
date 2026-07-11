@@ -493,6 +493,8 @@ class TeammateRegistry:
             )
             if s["error"]:
                 line += f" | error: {s['error']}"
+            if s["state"] == "dead":
+                line += ' | resumable via {"mode":"resume","key":"%s"}' % s["key"]
             lines.append(line)
         with self._cv:
             if self._pending:
@@ -1024,6 +1026,22 @@ def tool_teammate(
         lines = [
             f"spawned teammate '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")
         ]
+        # 같은 역할의 dead 가 있으면 알려준다 — "다시 시작" 의도였다면
+        # 기억을 보존하는 길은 resume 이었음을 다음 선택부터 반영하도록.
+        role_arg = args.get("role", "")
+        if role_arg:
+            dead_same_role = [
+                tm.key
+                for tm in registry._teammates.values()
+                if tm.role_name == role_arg and tm.state == "dead" and tm.key != key
+            ]
+            if dead_same_role:
+                lines.append(
+                    f"note: dead teammate(s) with the same role exist "
+                    f"({', '.join(dead_same_role)}) — this NEW spawn starts "
+                    f"with NO memory of them. If you meant to CONTINUE one, "
+                    f'kill this and use {{"mode":"resume","key":"..."}} instead.'
+                )
         task = args.get("task", "")
         if task:
             err = registry.request(key, task)
@@ -1135,7 +1153,15 @@ def tool_teammate(
         err = registry.kill(key)
         if err:
             return ToolResult(False, error=f"kill rejected: {err}")
-        return ToolResult(True, output=f"teammate '{key}' terminated.")
+        return ToolResult(
+            True,
+            output=(
+                f"teammate '{key}' terminated. Its context is PRESERVED — to "
+                f"bring it back later with full memory, use "
+                f'{{"mode":"resume","key":"{key}"}} (do NOT spawn a new one '
+                f"if you want it to remember)."
+            ),
+        )
 
     return ToolResult(
         False,

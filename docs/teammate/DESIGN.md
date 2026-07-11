@@ -361,6 +361,15 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
   spawn/kill/died/restore/resume 전 지점에서 구동. 실제 재조립은 여전히
   플래그가 보장 (인스펙터는 다음 호출이 받을 내용을 앞당겨 표시).
 
+- 2026-07-11 **v4.61.1 (resume 유도)**: 실사용 관찰 — 사용자가 key 까지
+  지목하며 "다시 시작하자" 해도 모델(Qwen 35B-A3B)이 spawn 으로 새 키를
+  만들어 컨텍스트 유실+칩 증식 (resume 모드는 스키마에 있었으나 결정
+  시점의 유도 부재). 3지점 유도: kill 출력("context PRESERVED — resume
+  로, 새 spawn 금지"), status 의 dead 항목 "resumable via ...", 같은
+  역할 dead 존재 시 spawn 사후 힌트("NO memory — CONTINUE 였다면 kill
+  후 resume"). 죽은 세대들의 디스크 컨텍스트는 그대로라 사후에도
+  resume 가능함을 확인.
+
 ## 진행 로그
 
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.
