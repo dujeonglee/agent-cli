@@ -236,7 +236,7 @@ agent-cli run "task description" [options]
 | `--max-depth` | 중첩 깊이 (delegate + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
 | `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
-| `--style` | 렌더러 스타일 (minimal 또는 커스텀) | `minimal` |
+| `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
 | `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
 | `--response-format` | Wire format 플러그인 이름. 빌트인: `md_array` (**기본** — 멀티-op: `## Thought`/`## Action` + flat `{action, params}` op 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. Phase-2 bakeoff 95.2%=react + 실전 150턴 형식실패 0.7%로 검증 후 기본 전환), `react` (순수 JSON `{thought, action, action_input}`). 두 포맷 compliance 는 omlx 27B/35B bakeoff에서 동등. `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `md_array` |

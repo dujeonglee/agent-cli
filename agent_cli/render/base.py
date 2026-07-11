@@ -244,9 +244,9 @@ class Renderer(ABC):
     ) -> None:
         """Session or skill start banner."""
 
-    @abstractmethod
     def turn_sep(self, turn: int) -> None:
-        """Separator between turns."""
+        """Separator between turns. Default no-op (C8) — web 이 실증한
+        정답(턴 정보가 이벤트에 실림); 시각 구분이 필요한 렌더러만 override."""
 
     @abstractmethod
     def thought(self, content: str, turn: int) -> None:
@@ -337,9 +337,9 @@ class Renderer(ABC):
                 0,
             )
 
-    @abstractmethod
     def raw(self, text: str, turn: int, verbose: bool) -> None:
-        """Raw LLM response (verbose mode)."""
+        """Raw LLM response (verbose mode). Default no-op (C8) — 디버그
+        전용 대용량 덤프라 표출은 opt-in."""
 
     def thinking(self, text: str, turn: int) -> None:
         """Reasoning content from a separate API field (verbose mode).
@@ -363,19 +363,23 @@ class Renderer(ABC):
         (CLI line) and WebRenderer (top-bar SSE) override.
         """
 
-    @abstractmethod
     def model_detected(
         self, model: str, capabilities, provider: str, saved_path: str
     ) -> None:
-        """Newly detected model info."""
+        """Newly detected model info. Default (C8): 코어 ``status`` 위임 —
+        최소 구현(코어 7)만으로도 정보가 표출된다. 리치 표(스펙 카드)가
+        필요한 렌더러만 override."""
+        self.status(
+            "done",
+            f"model detected: {model} (provider={provider}, saved={saved_path})",
+        )
 
-    @abstractmethod
     def model_loaded(self, model: str, capabilities) -> None:
-        """Loaded model one-liner."""
+        """Loaded model one-liner. Default (C8): 코어 ``status`` 위임."""
+        self.status("done", f"model loaded: {model}")
 
-    @abstractmethod
     def context_dump(self, messages: list[dict], turn: int) -> None:
-        """Debug context window dump."""
+        """Debug context window dump. Default no-op (C8) — 디버그 전용."""
 
     def consume_directives_dirty(self) -> bool:
         """Atomically read+clear the 'DIRECTIVE.md was edited via the web
@@ -393,15 +397,13 @@ class Renderer(ABC):
         `memory` op changed the `## Session Memory` index. Memory has no editor
         (unlike directives), so this refreshes the prompt only. No-op off web."""
 
-    @abstractmethod
     def spinner_start(self, message: str = "") -> None:
-        """Start a spinner animation (e.g. during LLM call)."""
+        """Start a spinner animation (e.g. during LLM call). Default
+        no-op (C8) — 장식; 애니메이션 가능한 매체만 override."""
 
-    @abstractmethod
     def spinner_stop(self) -> None:
-        """Stop the spinner animation."""
+        """Stop the spinner animation. Default no-op (C8)."""
 
-    @abstractmethod
     def dispatch_progress(
         self,
         label: str,
@@ -410,7 +412,9 @@ class Renderer(ABC):
         detail: str = "",
         thought: str = "",
     ) -> None:
-        """Show dispatched execution progress (skill, delegate, etc.)."""
+        """Show dispatched execution progress (skill, delegate, etc.).
+        Default no-op (C8) — 진행 장식; 코어 action/observation 이 본 정보를
+        이미 나름."""
 
     def stream_chunk(self, text: str) -> None:
         """Render a streaming chunk from LLM response. Default: no-op."""

@@ -345,3 +345,89 @@ class TestDispatchAgent:
             "",
         )
         assert result is _AGENT_NOT_FOUND
+
+
+# ── C8: Renderer ABC 코어 축소 — 9개 구현으로 완전한 렌더러 (v4.50.0) ──
+
+
+class TestMinimalRendererContract:
+    """abstract 17→9 (출력 코어 7 + 입력 계약 2). 강등된 8개(디버그/장식)는
+    안전한 기본값 — 이 테스트가 '9개면 된다'는 계약 자체를 고정한다."""
+
+    def _minimal(self):
+        from agent_cli.render.base import Renderer
+
+        class NineMethodRenderer(Renderer):
+            def __init__(self):
+                super().__init__()
+                self.statuses = []
+
+            # ── 출력 코어 7 ──
+            def header(self, provider, model, max_turns, skill_name="", skill_args=""):
+                pass
+
+            def thought(self, content, turn):
+                pass
+
+            def action(self, tool_name, tool_input, turn):
+                pass
+
+            def observation(self, content, turn, success=True, tool_name=""):
+                pass
+
+            def final(self, content, turn):
+                pass
+
+            def error(self, content, turn):
+                pass
+
+            def status(self, state, message, turn=0):
+                self.statuses.append((state, message))
+
+            # ── 입력 계약 2 (안전상 abstract 유지 — 명시 구현 강제) ──
+            def prompt_user(self, prompt, context=None):
+                raise EOFError
+
+            def confirm(self, prompt, options, default_key="n"):
+                return (default_key, "")
+
+        return NineMethodRenderer()
+
+    def test_nine_methods_instantiate(self):
+        r = self._minimal()  # abstract 잔여가 있으면 TypeError
+        assert r.can_prompt() is True
+
+    def test_demoted_methods_have_safe_defaults(self):
+        r = self._minimal()
+        # no-op 6종 — 예외 없이 통과
+        r.turn_sep(1)
+        r.raw("dump", 1, verbose=True)
+        r.context_dump([], 1)
+        r.spinner_start("x")
+        r.spinner_stop()
+        r.dispatch_progress("label", 1, "shell")
+
+    def test_model_events_delegate_to_status(self):
+        r = self._minimal()
+        r.model_detected("m1", None, "openai", "/tmp/models.json")
+        r.model_loaded("m1", None)
+        assert any("model detected: m1" in m for _, m in r.statuses)
+        assert any("model loaded: m1" in m for _, m in r.statuses)
+
+    def test_abstract_surface_is_exactly_nine(self):
+        from agent_cli.render.base import Renderer
+
+        assert len(Renderer.__abstractmethods__) == 9
+        assert Renderer.__abstractmethods__ == frozenset(
+            {
+                "header",
+                "thought",
+                "action",
+                "observation",
+                "final",
+                "error",
+                "status",
+                "prompt_user",
+                "confirm",
+            }
+        )

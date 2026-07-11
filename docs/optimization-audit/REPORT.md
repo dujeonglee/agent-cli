@@ -40,7 +40,7 @@
 | **C5** | ContextManager 8관심사(1053줄) — 캐시+압축+요약+2종 영속화+분류+NL렌더 | manager.py | records/render/store 분리 + fsio 저장 패턴 통일 | ✅ v4.47.0 |
 | C6 | providers 스트리밍 파서 중복 — 양 어댑터 `_handle_stream` 각 ~130줄 (retry 는 공유됨) | anthropic.py:96, openai.py:122 | run_sse_stream 골격 공유 + 비대칭 2건 수리 | ✅ v4.48.0 |
 | C7 | 이중 검증층 — registry 중앙 + 도구 내부 재검증 | registry.py:293-377 | `Tool.validate` 훅 + A5 경로 통합(정밀화: 관찰 문구 보존) | ✅ v4.49.0 |
-| C8 | Renderer ABC 50메서드/17추상 — fat 아님, 신규 renderer 진입장벽만 | render/base.py | 코어+mixin 분리 (낮은 우선순위) | ☐ |
+| C8 | Renderer ABC 50메서드/17추상 — fat 아님, 신규 renderer 진입장벽만 | render/base.py | abstract 17→9 (코어7+입력2, 8종 기본값 강등) | ✅ v4.50.0 |
 
 ### C9. Latent seam 재고 (과거 결정 존중)
 
@@ -58,6 +58,13 @@
 6. ☐ C1/C2/C3 구조 분할 — 각각 독립 PR, 필요 시
 
 ### 진행 로그
+
+- **2026-07-11 · v4.50.0 · C8 완료**: Renderer abstract 17→9 — 출력 코어 7
+  + 입력 계약 2(위험 셸 confirm 게이트라 명시 구현 강제 유지). 강등 8종:
+  no-op 6(turn_sep 은 web 이 실증한 정답)+status 위임 2(model_detected/
+  loaded — 최소 구현도 정보 표출). mixin 분리안은 배제(클래스 계층 추가
+  대비 이득 동일). 9-메서드 렌더러 실증 계약 테스트 4종(__abstractmethods__
+  정확 집합 고정). 기존 minimal/web 전부 override 라 바이트 동일.
 
 - **2026-07-11 · v4.49.0 · C7 완료 (정밀화 버전)**: `Tool.validate` 의미론
   훅 — 중앙 6단계(A5)+run() 방어 2곳 호출·로직 1곳. **실측 비교로 결정**:
