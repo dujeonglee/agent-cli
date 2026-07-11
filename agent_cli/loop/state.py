@@ -1,0 +1,79 @@
+"""Agent loop: ReAct pattern with M1/M2 module integration."""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass, field
+
+from agent_cli.constants import (
+    DELEGATE_DEFAULT_TIMEOUT,
+)
+
+
+# Max shrink-and-retry attempts per turn when the server rejects the
+# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
+# history via ``ContextManager.force_fit``; the bound stops a runaway
+# loop when the cache cannot shrink enough or the server keeps rejecting.
+# Loop-control sentinels: distinct from None (failure) and str (answer).
+# 모듈 상수 (C1 PR-3) — AgentLoop._execute_turn 과 TurnDispatcher 가 공유.
+_CONTINUE = object()  # keep looping
+_NOT_HANDLED = object()  # dispatch 헬퍼: 이 분기가 처리 안 함 → 폴스루
+_RETRY = object()  # overflow retry
+
+
+@dataclass(frozen=True)
+class LoopConfig:
+    """AgentLoop 의 불변 배선 — ``__init__`` 에서 1회 조립되는 세션-수명 설정.
+
+    C1(Option 3, PR-1): god-object 의 ~40개 ``self.*`` 중 실측상 "생성 후
+    아무도 재할당하지 않는" 설정군을 한 객체로 격리. PR-2/PR-3 에서 승격되는
+    협력 객체(SystemPromptSvc/ToolBridge/LLMCaller/TurnDispatcher)들은 이
+    객체를 읽기 전용으로 주입받는다 — 각자가 ``self.model`` 류를 직접 헤집는
+    무경계 공유를 구조적으로 차단하는 것이 목적. frozen 이므로 협력자/스레드
+    간 공유 안전. (컨테이너 필드의 내용 불변은 관례로 지킨다 — ``tools_list``
+    등은 ``__init__`` 확정 후 아무도 mutate 하지 않음을 전제.)
+    """
+
+    model: str = ""
+    provider_name: str = "openai"
+    base_url: str = ""
+    api_key: str = ""
+    depth: int = 0
+    max_depth: int = 2
+    max_turns: int = 0
+    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT
+    tools_list: list = field(default_factory=list)
+    skill_name: str = ""
+    skill_args: str = ""
+    skill_stack: list = field(default_factory=list)
+    agent_stack: list = field(default_factory=list)
+    capabilities: object = None
+    wire_format: object = None
+    mcp_manager: object = None
+    hook_runner: object = None
+    hooks_config: dict | None = None
+    session: object = None
+    agent_role: str = ""
+    graceful_interrupt: bool = False
+    compaction_enabled: bool = True
+    verbose: bool = False
+
+
+@dataclass
+class LoopState:
+    """AgentLoop 의 per-run 가변 공유 상태 — 실측상 여러 클러스터가 함께
+    읽고 쓰는 필드는 정확히 이 6종(+query 정체성 2종)뿐이다.
+
+    C1(Option 3, PR-1): 협력 객체들이 이 단일 인스턴스를 참조 공유한다 —
+    "무엇이 진짜 공유 상태인가"를 타입으로 못박아, 이후 추가되는 상태가
+    아무 데나 ``self.X`` 로 스며드는 것을 막는다. 여기 없는 가변 필드는
+    한 클러스터의 전유물이며 그 소유 객체(PR-2/3)로 이동한다.
+    """
+
+    query: str = ""
+    query_author: str | None = None
+    messages: list = field(default_factory=list)
+    turn: int = 0
+    task_log: list = field(default_factory=list)
+    interrupted: bool = False
+    stop_event: threading.Event = field(default_factory=threading.Event)

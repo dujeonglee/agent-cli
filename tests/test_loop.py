@@ -643,7 +643,7 @@ class TestActionRenderShowsRawEmission:
     card invariant.)"""
 
     def _capture_render(self, monkeypatch):
-        import agent_cli.loop as loop_mod
+        import agent_cli.loop.dispatch as loop_mod
 
         recorded: list[dict] = []
         real = loop_mod.render_step
@@ -660,7 +660,7 @@ class TestActionRenderShowsRawEmission:
             )
             real(step_type, content, turn, **kwargs)
 
-        monkeypatch.setattr("agent_cli.loop.render_step", fake)
+        monkeypatch.setattr("agent_cli.loop.dispatch.render_step", fake)
         return recorded
 
     def test_read_file_card_shows_flat_path_not_wrapped_batch(
@@ -750,7 +750,7 @@ class TestObservationRenderFromStored:
     double-rendered."""
 
     def _capture(self, monkeypatch):
-        import agent_cli.loop as loop_mod
+        import agent_cli.loop.dispatch as loop_mod
 
         recorded: list[dict] = []
         real = loop_mod.render_step
@@ -759,7 +759,7 @@ class TestObservationRenderFromStored:
             recorded.append({"type": step_type, "content": content})
             real(step_type, content, turn, **kwargs)
 
-        monkeypatch.setattr("agent_cli.loop.render_step", fake)
+        monkeypatch.setattr("agent_cli.loop.dispatch.render_step", fake)
         return recorded
 
     def test_huge_tool_output_renders_as_nudge_not_raw(
@@ -1974,7 +1974,7 @@ class TestGracefulInterrupt:
             query="Q", provider=provider, capabilities=caps, model="m", ctx=ctx
         )
         loop._interrupted = True
-        with patch("agent_cli.loop.render_step") as mock_rs:
+        with patch("agent_cli.loop.core.render_step") as mock_rs:
             loop.run()
         interrupt_renders = [
             c
@@ -2308,10 +2308,10 @@ class TestAskTool:
             if real_render_step is not None:
                 real_render_step(step_type, content, turn, **kwargs)
 
-        import agent_cli.loop as loop_mod
+        import agent_cli.loop.dispatch as loop_mod
 
         real_render_step = loop_mod.render_step
-        monkeypatch.setattr("agent_cli.loop.render_step", fake_render_step)
+        monkeypatch.setattr("agent_cli.loop.dispatch.render_step", fake_render_step)
         monkeypatch.setattr("builtins.input", lambda _: "ok")
 
         provider = MagicMock()
@@ -3606,7 +3606,7 @@ class TestContextOverflowRecovery:
     def test_bounded_gives_up_cleanly(self, caps, tmp_path):
         """Server keeps rejecting → loop gives up without spinning; the
         number of attempts is bounded by _MAX_OVERFLOW_RETRIES."""
-        from agent_cli.loop import _MAX_OVERFLOW_RETRIES
+        from agent_cli.loop.llm import _MAX_OVERFLOW_RETRIES
 
         ctx = self._ctx_with_history(tmp_path, n=40)
         provider = MagicMock()

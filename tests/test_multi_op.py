@@ -329,7 +329,7 @@ class TestMultiOpDispatch:
     def test_ask_is_not_turn_ending_accumulates(self, tmp_path, monkeypatch):
         # ask is NOT terminal — [read, ask] both accumulate into ONE combined
         # observation (read=[1/2], ask=[2/2]), like a normal tool batch.
-        import agent_cli.loop as loop_mod
+        import agent_cli.loop.dispatch as loop_mod
 
         monkeypatch.setattr(loop_mod, "_handle_ask", lambda qs: "yes")
         f1 = tmp_path / "a.txt"
@@ -358,7 +358,7 @@ class TestMultiOpDispatch:
     def test_multiple_ask_ops_batch_sequentially(self, tmp_path, monkeypatch):
         # several ask ops in one turn each prompt in sequence → ONE combined obs
         # (the read_file-style batch, applied to ask).
-        import agent_cli.loop as loop_mod
+        import agent_cli.loop.dispatch as loop_mod
 
         asked: list[list[str]] = []
         answers = iter(["A1", "A2"])
@@ -399,7 +399,7 @@ class TestMultiOpDelegateParallel:
     parallel" actually true — the N-op loop is otherwise sequential."""
 
     def _patch(self, monkeypatch):
-        import agent_cli.loop as loop_mod
+        import agent_cli.loop.tool_bridge as bridge_mod
         from agent_cli.tools.result import ToolResult
 
         calls = []
@@ -408,7 +408,7 @@ class TestMultiOpDelegateParallel:
             calls.append(args.get("tasks"))
             return ToolResult(True, output="STATUS: success\nRESULT:\nok")
 
-        monkeypatch.setattr(loop_mod, "tool_delegate", fake_tool_delegate)
+        monkeypatch.setattr(bridge_mod, "tool_delegate", fake_tool_delegate)
         return calls
 
     def test_two_delegate_ops_batched_into_one_parallel_call(

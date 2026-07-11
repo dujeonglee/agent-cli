@@ -1218,7 +1218,7 @@ class TestSystemSectionsSingleSource:
                 "react"
             ),
         )
-        with patch("agent_cli.loop.render_system_prompt_snapshot") as snap:
+        with patch("agent_cli.loop.llm.render_system_prompt_snapshot") as snap:
             loop.run()
         assert snap.called
         sections, turn = snap.call_args.args
