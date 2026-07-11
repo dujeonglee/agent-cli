@@ -327,6 +327,17 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
   테스트가 "spawn 다음 턴 프롬프트 광고 탑재" 관통 검증. 테스트 +9,
   전체 2998.
 
+- 2026-07-11 **v4.60.1 (사고 수리)**: `renderer.status()` 시그니처 오호출
+  3곳 — web 부트의 재생성/auto-spawn 알림이 worker 스레드를 **부트에서
+  죽여** "큐만 쌓이고 소비 안 됨"으로 발현 (web+resume+teammate 조합에서만
+  — CLI e2e 는 console.print, P4 웹 e2e 는 fresh 세션이라 전부 비껴감).
+  📨 도착 알림은 try/except 가 삼켜 조용히 죽어 있었음. 수리: status(state,
+  message) 정호출 + `_announce_teammate_boot` 헬퍼 추출(실렌더러 Web/
+  Minimal 로 시그니처 고정 테스트 3종) + **worker crash 가드**(_worker_
+  loop_guarded — 사망 시 instance.log traceback + 접속 클라이언트에 에러
+  카드, 조용한 큐 마비 재발 방지). 사용자 세션 그대로 재현→수리 검증
+  (web resume→재생성→main 정리 요청 처리).
+
 ## 진행 로그
 
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.

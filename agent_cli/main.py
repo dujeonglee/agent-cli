@@ -1160,6 +1160,19 @@ def _run_message_pump(input_queue, waker, registry, run_one, *, poll_secs=0.5):
         waker.on_run_end()  # run 종료 직후 도착분 레이스 봉합
 
 
+def _announce_teammate_boot(renderer, revived: int, auto: int) -> None:
+    """web 부트스트랩의 teammate 재생성/auto-spawn 알림.
+
+    v4.60.1 사고의 재발 방지 지점: 인라인 status() 오호출(시그니처)이
+    worker 스레드를 부트에서 죽여 "큐만 쌓이고 소비 안 됨"으로 보였다 —
+    실렌더러(Web/Minimal)로 단위 테스트되는 헬퍼로 추출.
+    """
+    if revived:
+        renderer.status("running", f"🤝 teammate {revived}명 재생성됨")
+    if auto:
+        renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
+
+
 def _teammate_reply_notice(reply: dict) -> None:
     """teammate mailbox 도착 알림 (D2 배달과 별개의 힌트 라인) — CLI 는
     상태 라인, web 은 transient status 이벤트. 배달 자체는 다음 턴 경계.
@@ -1173,7 +1186,9 @@ def _teammate_reply_notice(reply: dict) -> None:
     else:
         line = f"📨 teammate {key} 회신 도착"
     try:
-        get_renderer().status(line)
+        # status(state, message) — 시그니처 오호출이 try 에 삼켜져 알림이
+        # 조용히 죽어 있던 회귀의 수리 지점 (v4.60.1).
+        get_renderer().status("running", line)
     except Exception:
         pass  # 알림은 best-effort
 
@@ -1703,11 +1718,8 @@ def web(
         teammate_registry.on_reply = _on_teammate_mail
         # P3 (D7): --resume 세션의 teammate 자동 재생성 (fresh 는 no-op).
         revived = teammate_registry.restore(parent_ctx=ctx)
-        if revived:
-            renderer.status(f"🤝 teammate {revived}명 재생성됨")
         auto = teammate_registry.auto_spawn(parent_ctx=ctx)
-        if auto:
-            renderer.status(f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
+        _announce_teammate_boot(renderer, revived, auto)
         while True:
             # Tell the frontend we're waiting for the next user
             # message. Goes through ``_latest_worker_state`` so a
@@ -1899,7 +1911,30 @@ def web(
                 # 레이스 봉합 (P4 D3): run 마지막 턴 경계 이후 도착분.
                 _waker.on_run_end()
 
-    worker = threading.Thread(target=_worker_loop, daemon=True, name="agent-loop")
+    def _worker_loop_guarded() -> None:
+        """worker 사망 = 세션 무력화(큐만 쌓이고 소비 불가) — 조용히 죽는
+        대신 인스턴스 로그에 traceback 을 남기고 접속 클라이언트에 에러를
+        알린다 (v4.60.1 — status 시그니처 오호출로 부트스트랩 사망이
+        '큐가 안 빠져요'로만 보였던 사고의 재발 방지)."""
+        try:
+            _worker_loop()
+        except BaseException as exc:  # noqa: BLE001 — 최후 방벽
+            import traceback
+
+            traceback.print_exc()
+            try:
+                renderer.error(
+                    f"agent worker crashed: {type(exc).__name__}: {exc} — "
+                    f"이 세션은 재시작이 필요합니다 (instance.log 참조)",
+                    0,
+                )
+            except Exception:
+                pass
+            raise
+
+    worker = threading.Thread(
+        target=_worker_loop_guarded, daemon=True, name="agent-loop"
+    )
     worker.start()
 
     # 4. Print URL + start uvicorn.

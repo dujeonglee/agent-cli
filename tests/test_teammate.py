@@ -1517,3 +1517,64 @@ class TestLiveTeammatesSection:
         key = next(iter(reg._teammates))
         assert key in system and "(ui)" in system
         reg.shutdown_all()
+
+
+# ── v4.60.1 회귀: 실렌더러 시그니처 (worker 부트 사망 사고) ──
+
+
+class TestRendererSignatureRegression:
+    """status() 오호출이 (1) web 부트에서 worker 를 죽이고 (2) 📨 알림을
+    try/except 가 조용히 삼키던 사고 — mock 이 아닌 **실렌더러**로 호출을
+    고정한다."""
+
+    def test_boot_announce_on_real_web_renderer(self):
+        from agent_cli.main import _announce_teammate_boot
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer()
+        _announce_teammate_boot(r, revived=2, auto=1)  # TypeError 면 즉사
+        # transient status 이벤트가 실제로 흘렀는지까지 확인
+        # (persistent 버퍼가 아닌 라이브 큐라 connection 으로 수신)
+        from agent_cli.render.web import WebConnection
+
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        _announce_teammate_boot(r, revived=1, auto=0)
+        events = []
+        while not conn.queue.empty():
+            events.append(conn.queue.get_nowait())
+        assert any(e == "status" and "재생성" in str(d) for e, d in events), (
+            f"status 이벤트 미수신: {events[:5]}"
+        )
+
+    def test_boot_announce_on_real_minimal_renderer(self):
+        import io
+
+        from rich.console import Console
+
+        from agent_cli.main import _announce_teammate_boot
+        from agent_cli.render.minimal import MinimalRenderer
+
+        r = MinimalRenderer(Console(file=io.StringIO(), force_terminal=False))
+        _announce_teammate_boot(r, revived=1, auto=1)  # TypeError 면 즉사
+
+    def test_reply_notice_actually_emits_on_web(self):
+        # try/except 가 시그니처 에러를 삼켜 알림이 조용히 죽어 있었다 —
+        # 실렌더러에서 이벤트가 실제로 나가는지 검사.
+        from unittest.mock import patch
+
+        from agent_cli.main import _teammate_reply_notice
+        from agent_cli.render.web import WebConnection, WebRenderer
+
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        with patch("agent_cli.render.get_renderer", return_value=r):
+            _teammate_reply_notice({"kind": "reply", "key": "agt-1"})
+            _teammate_reply_notice({"kind": "question", "key": "agt-2"})
+        events = []
+        while not conn.queue.empty():
+            events.append(conn.queue.get_nowait())
+        texts = [str(d) for e, d in events if e == "status"]
+        assert any("📨" in x and "agt-1" in x for x in texts), texts
+        assert any("❓" in x and "agt-2" in x for x in texts), texts
