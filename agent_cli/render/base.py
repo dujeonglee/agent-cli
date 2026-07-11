@@ -243,6 +243,28 @@ class Renderer(ABC):
         """Mark the current thread as leaving its delegate context.
         No-op for CLI."""
 
+    def begin_teammate_work(
+        self, *, key: str, seq: int, role: str, message: str
+    ) -> None:
+        """teammate worker 가 request 1건 처리를 시작 (teammate P1).
+
+        delegate 의 begin_delegate_task 와 달리 **프롬프트 스코프를
+        건드리지 않는다** — 스코프는 worker 가 begin_prompt_scope(key) 로
+        상시 보유. 이 표면은 요청별 표시(웹 SSE 카드 라우팅 / CLI 출력
+        캡처)만 담당. 기본 no-op."""
+
+    def end_teammate_work(
+        self,
+        *,
+        key: str,
+        seq: int,
+        success: bool,
+        duration_s: float,
+        error: str = "",
+    ) -> None:
+        """teammate request 1건 처리 종료 — begin_teammate_work 과 짝.
+        기본 no-op."""
+
     # ── Abstract render methods ──────────────────────
 
     @abstractmethod

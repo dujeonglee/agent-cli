@@ -57,6 +57,10 @@ class LoopConfig:
     graceful_interrupt: bool = False
     compaction_enabled: bool = True
     verbose: bool = False
+    # teammate P1: 상주 에이전트 레지스트리 — main 부트스트랩만 주입.
+    # None(서브에이전트/headless)이면 AgentLoop.__init__ 이 teammate 도구를
+    # tools_list 에서 제거한다 (teammate 안 teammate 금지의 단일 가드).
+    teammate_registry: object = None
 
 
 @dataclass

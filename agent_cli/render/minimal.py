@@ -974,6 +974,30 @@ class MinimalRenderer(Renderer):
                 self._parallel_tasks.pop(tid, None)
             self._parallel_order = []
 
+    # ── teammate 요청별 표시 (P1) ────────────────────
+    # CLI 에서 teammate worker 는 main run 과 동시에(또는 main idle 중에)
+    # 돌 수 있어 라이브 출력을 그대로 흘리면 터미널이 섞인다 — per-thread
+    # 캡처로 억제하고 버린다. teammate 활동은 회신 배달(관찰 카드)과
+    # 📨 도착 알림·teammates/<key>/ 세션 기록으로만 표면화 (P1 결정).
+
+    def begin_teammate_work(
+        self, *, key: str, seq: int, role: str, message: str
+    ) -> None:
+        self.start_capture()
+        self.set_thread_agent(role or key)
+
+    def end_teammate_work(
+        self,
+        *,
+        key: str,
+        seq: int,
+        success: bool,
+        duration_s: float,
+        error: str = "",
+    ) -> None:
+        self.stop_capture()  # 캡처 폐기 — 전문은 teammate 세션 디렉토리에
+        self.set_thread_agent("")
+
     # ── Ask-tool announcement ────────────────────────
 
     def announce_ask(self, questions: list[str], *, prefix: str = "") -> None:

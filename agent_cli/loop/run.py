@@ -53,6 +53,7 @@ def run_loop(
     record_turns: bool = True,
     wire_format=None,
     compaction_enabled: bool = True,
+    teammate_registry=None,
 ):
     """Run the agent loop with the given wire-format plugin. Returns ToolResult.
 
@@ -95,4 +96,5 @@ def run_loop(
         record_turns=record_turns,
         wire_format=wire_format,
         compaction_enabled=compaction_enabled,
+        teammate_registry=teammate_registry,
     ).run()

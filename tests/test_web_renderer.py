@@ -1957,3 +1957,41 @@ class TestPromptScopeStack:
         assert r.delete_prompt_scope("skill-y-1") is True
         assert r.scope_dynamic_sections("skill-y-1") == []
         assert r.prompt_snapshot("skill-y-1") is None
+
+
+class TestTeammateWork:
+    """teammate P1: 요청별 SSE 라우팅(begin/end_teammate_work)은 delegate
+    카드 이벤트를 재사용하되 프롬프트 스코프는 건드리지 않는다 — 스코프는
+    worker 의 begin_prompt_scope(key) 상시 소유."""
+
+    def test_work_emits_delegate_card_events(self):
+        r = WebRenderer()
+        r.begin_teammate_work(key="agt-1", seq=2, role="researcher", message="dig")
+        r.end_teammate_work(key="agt-1", seq=2, success=True, duration_s=0.3)
+        names = [e for e, _ in r._event_buffer]
+        assert "delegate_task_start" in names and "delegate_task_end" in names
+        start = next(d for e, d in r._event_buffer if e == "delegate_task_start")
+        assert start["task_id"] == "agt-1#2"
+        assert "researcher" in start["agent"]
+        end = next(d for e, d in r._event_buffer if e == "delegate_task_end")
+        assert end["task_id"] == "agt-1#2" and end["success"] is True
+
+    def test_work_routes_thread_without_touching_prompt_scope(self, tmp_path):
+        import threading
+
+        r = WebRenderer()
+        tid = threading.get_ident()
+        # worker 가 상시 스코프를 이미 보유한 상태를 재현
+        r.begin_prompt_scope("agt-9", label="teammate:anon")
+        r.begin_teammate_work(key="agt-9", seq=1, role="", message="m")
+        assert r._thread_to_task[tid] == "agt-9#1"  # SSE 는 요청 카드로
+        r.note_system_prompt([("Base", "TM PROMPT")], turn=1)
+        r.end_teammate_work(key="agt-9", seq=1, success=True, duration_s=0.1)
+        assert tid not in r._thread_to_task
+        # 시스템 스냅샷은 요청 카드가 아니라 상시 teammate 스코프에 쌓였다
+        assert "TM PROMPT" in r.prompt_snapshot("agt-9")["sections"][0]["text"]
+        assert r.prompt_snapshot("agt-9#1") is None
+        # 스코프는 end_teammate_work 이후에도 살아 있다 (kill 때만 고정)
+        labels = [sc["label"] for sc in r.prompt_scopes()]
+        assert "teammate:anon" in labels
+        r.end_prompt_scope("agt-9")

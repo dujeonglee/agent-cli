@@ -568,6 +568,54 @@ class WebRenderer(Renderer):
             payload["error"] = error
         self._emit("delegate_task_end", payload, persistent=True)
 
+    # ── teammate 요청별 표시 (P1) ────────────────────
+    # 스코프(상시, worker 의 begin_prompt_scope(key) 소유)와 분리된 요청별
+    # SSE 라우팅만 담당 — delegate 카드 이벤트를 재사용해 프런트 무수정으로
+    # request 1건 = 접이식 카드 1개. _thread_prompt_scopes 는 건드리지
+    # 않으므로 시스템/동적 스냅샷은 계속 teammate key 스코프에 쌓인다.
+
+    def begin_teammate_work(
+        self, *, key: str, seq: int, role: str, message: str
+    ) -> None:
+        tid = threading.get_ident()
+        task_id = f"{key}#{seq}"
+        with self._lock:
+            self._thread_to_task[tid] = task_id
+        label = role or key
+        self.set_thread_agent(label)
+        self._emit(
+            "delegate_task_start",
+            {
+                "task_id": task_id,
+                "index": seq,
+                "agent": f"🤝 {label}",
+                "task_text": message,
+            },
+            persistent=True,
+        )
+
+    def end_teammate_work(
+        self,
+        *,
+        key: str,
+        seq: int,
+        success: bool,
+        duration_s: float,
+        error: str = "",
+    ) -> None:
+        tid = threading.get_ident()
+        with self._lock:
+            self._thread_to_task.pop(tid, None)
+        self.set_thread_agent("")
+        payload = {
+            "task_id": f"{key}#{seq}",
+            "success": success,
+            "duration_s": duration_s,
+        }
+        if error:
+            payload["error"] = error
+        self._emit("delegate_task_end", payload, persistent=True)
+
     def set_thread_status(self, status: str) -> None:
         """Forward to the base ``_thread_status`` dict (CLI rich.Live
         polling compatibility) AND emit a transient

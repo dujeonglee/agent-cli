@@ -312,6 +312,16 @@ run_loop 출력이 같은 스코프로 라우팅되는지 확인 (begin_delegate
 - 2026-07-11: 설계 공동 확정 (D1~D11), 문서 작성.
 - 2026-07-11: §7 결정 4건 전원 해소 (CLI 큐 통일=P5 신설, 비배달 동의, 중첩
   금지 동의, 역할 md=(b) 전용 디렉토리). **P0 착수 승인.**
+- 2026-07-11: **P1 완료 (v4.54.0)** — Registry+Teammate(worker 스레딩, DI
+  러너 seam)·teammate 도구 5 mode(C7 validate)·턴 경계 배달
+  (`_deliver_teammate_replies`, 레코드 tool:"teammate"+source — fold 오인
+  방지 테스트 고정)·인스펙터 상시 스코프(worker 가 begin_prompt_scope(key)
+  1회 보유, 요청별 SSE 는 begin/end_teammate_work 분리 — web 은 delegate
+  카드 이벤트 재사용으로 프런트 무수정, CLI 는 캡처 폐기)·main 인터럽트
+  분리·세션 종료 정리·회신 상시 영속(replies/, P3 토대)·📨 도착 알림.
+  설계 대비 조정: parallel_safe=False(모든 mode 즉시 반환이라 병렬 배칭
+  불필요), 레지스트리 부재 시 도구 strip 이 "중첩 금지+기존 테스트 무영향"
+  겸용 단일 가드. 테스트: teammate 계약 40종+web 라우팅 2종, 전체 2926.
 - 2026-07-11: **P0 완료 (v4.53.0)** — `subagent/runner.py` 추출 (오버레이는
   로더-불가지론적으로 조정: D11(b) 확정으로 역할 md 로더 자체는 공유 대상이
   아님이 판명, config dict 소화만 공유). 게이트: delegate 테스트 151개

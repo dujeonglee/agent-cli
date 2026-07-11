@@ -114,6 +114,8 @@ class ToolBridge:
         try:
             if tool_name == "delegate":
                 result = self._invoke_delegate(tool_input, input_dict)
+            elif tool_name == "teammate":
+                result = self._invoke_teammate(tool_input)
             else:
                 result = self._invoke_regular(tool_name, tool_input)
         except Exception as e:  # noqa: BLE001 — safety net by design
@@ -256,6 +258,36 @@ class ToolBridge:
                 mcp_manager=self.cfg.mcp_manager,
             )
         return result
+
+    # ── 2b. Teammate dispatch (teammate P1) ─────────────────────────
+    def _invoke_teammate(self, tool_input) -> ToolResult:
+        """teammate 인터셉트 — delegate 와 같은 이유(제네릭 execute 경로에
+        없는 provider/identity 배선이 필요)로 여기서 가로챈다. runtime 은
+        레지스트리의 worker 가 회신 처리(run_subagent_message)에 쓸 실행
+        배선 — delegate 의 tool_delegate kwargs 와 동일 항목."""
+        from agent_cli.subagent.teammate import tool_teammate
+
+        args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
+        return tool_teammate(
+            args,
+            registry=self.cfg.teammate_registry,
+            parent_ctx=self.ctx,
+            runtime={
+                "provider": self.provider,
+                "capabilities": self.cfg.capabilities,
+                "model": self.cfg.model,
+                "provider_name": self.cfg.provider_name,
+                "base_url": self.cfg.base_url,
+                "api_key": self.cfg.api_key,
+                "max_turns": self.cfg.max_turns,
+                "depth": self.cfg.depth,
+                "max_depth": self.cfg.max_depth,
+                "timeout": self.cfg.delegate_timeout,
+                "session": self.cfg.session,
+                "hooks_config": self.cfg.hooks_config,
+                "compaction_enabled": self.cfg.compaction_enabled,
+            },
+        )
 
     # ── per-call loop context (execute + render seams share it) ─────
     def _run_ctx(self) -> RunContext:

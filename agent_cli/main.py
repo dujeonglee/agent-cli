@@ -1034,6 +1034,13 @@ def run(
     from agent_cli.hooks import load_hooks as _load_hooks
 
     _disk_hooks = _load_hooks() or None
+    # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
+    # 자동 strip). run 은 프로세스 단명이라 종료 시 전원 정리 — 미배달
+    # 회신의 세션-넘김 보존은 P3(manifest/outbox).
+    from agent_cli.subagent.teammate import TeammateRegistry
+
+    teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
+    teammate_registry.on_reply = _teammate_reply_notice
     try:
         loop_result = run_loop(
             query=query,
@@ -1054,13 +1061,27 @@ def run(
             record_turns=record_turns,
             wire_format=wire_format_plugin,
             compaction_enabled=not no_compaction,
+            teammate_registry=teammate_registry,
         )
         answer = loop_result.output if loop_result.success else None
     except KeyboardInterrupt:
         answer = None
         console.print(f"\n[{C['accent']}]⚡ Interrupted.[/]")
+    finally:
+        teammate_registry.shutdown_all()
 
     _finalize_run(session, ctx, mcp_manager)
+
+
+def _teammate_reply_notice(reply: dict) -> None:
+    """teammate 회신 도착 알림 (D2 배달과 별개의 힌트 라인) — CLI 는 상태
+    라인, web 은 transient status 이벤트. 배달 자체는 다음 턴 경계."""
+    from agent_cli.render import get_renderer
+
+    try:
+        get_renderer().status(f"📨 teammate {reply.get('key', '?')} 회신 도착")
+    except Exception:
+        pass  # 알림은 best-effort
 
 
 def _finalize_run(session, ctx, mcp_manager=None) -> None:
@@ -1529,6 +1550,9 @@ def web(
 
     from agent_cli.web.slash import WebDispatchOutput, handle_slash_command
 
+    # teammate P1: worker 가 생성(nonlocal)하고 서버 teardown 이 정리.
+    teammate_registry = None
+
     def _worker_loop() -> None:
         """Pop chat messages and drive AgentLoop in a background thread.
 
@@ -1542,6 +1566,14 @@ def web(
           3. Otherwise the message is a conversation turn → ``run_loop``.
         """
         web_output = WebDispatchOutput(renderer)
+        # teammate P1: 서버 수명의 레지스트리 — 매 run_loop 에 주입되어
+        # teammate 가 run 경계를 넘어 생존한다. 종료는 서버 teardown 의
+        # shutdown_all (아래 finally).
+        from agent_cli.subagent.teammate import TeammateRegistry
+
+        nonlocal teammate_registry
+        teammate_registry = TeammateRegistry(ctx.session_dir if ctx else None)
+        teammate_registry.on_reply = _teammate_reply_notice
         while True:
             # Tell the frontend we're waiting for the next user
             # message. Goes through ``_latest_worker_state`` so a
@@ -1633,6 +1665,7 @@ def web(
                             wire_format=wire_format_plugin,
                             compaction_enabled=not no_compaction,
                             mcp_manager=mcp_manager,
+                            teammate_registry=teammate_registry,
                         )
 
                     result = _run_main(message, nickname)
@@ -1841,6 +1874,8 @@ def web(
         renderer.shutdown_all_connections()
         server.shutdown()
         worker.join(timeout=2.0)
+        if teammate_registry is not None:
+            teammate_registry.shutdown_all()  # 상주 teammate 전원 종료
         if mcp_manager:
             mcp_manager.disconnect_all()
         console.print(f"[{C['muted']}]Saving session...[/]")

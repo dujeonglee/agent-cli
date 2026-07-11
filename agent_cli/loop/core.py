@@ -87,6 +87,7 @@ class AgentLoop:
         record_raw_failures: bool | None = None,
         wire_format=None,
         compaction_enabled: bool = True,
+        teammate_registry=None,
     ):
         # Wire format plugin — ReAct by default. Centralizes the
         # parser, recovery wording, prompt section, and lifecycle hooks
@@ -126,6 +127,12 @@ class AgentLoop:
         # Remove "ask" in non-interactive mode (no ctx)
         if not ctx and "ask" in tools_list:
             tools_list = [t for t in tools_list if t != "ask"]
+        # teammate 는 레지스트리가 주입된 루프(=main 부트스트랩)에서만 —
+        # 서브에이전트(delegate/skill/teammate 자신)와 headless 호출자는
+        # 레지스트리가 없으므로 도구 자체가 안 보인다 (P1: teammate 안
+        # teammate 금지의 단일 가드; 모델이 거부당할 도구를 보지 않는다).
+        if teammate_registry is None and "teammate" in tools_list:
+            tools_list = [t for t in tools_list if t != "teammate"]
         # Build skill stack for recursive call prevention
         if skill_stack is None:
             skill_stack = []
@@ -165,6 +172,7 @@ class AgentLoop:
             graceful_interrupt=graceful_interrupt,
             compaction_enabled=compaction_enabled,
             verbose=verbose,
+            teammate_registry=teammate_registry,
         )
         self._state = LoopState(
             query=query,
@@ -458,6 +466,7 @@ class AgentLoop:
                 if self.ctx:
                     self.ctx.set_turn(self.turn + 1)
                 self._inject_queued_messages()
+                self._deliver_teammate_replies()
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
@@ -638,6 +647,34 @@ class AgentLoop:
                 self.messages = self.ctx.get_messages()
             return
         self._add_user_message(text, author)
+
+    def _deliver_teammate_replies(self) -> None:
+        """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로
+        주입한다 — LLM 폴링 없이 harness 가 배달. 레코드는 tool="teammate"
+        + source="teammate_reply" (tool="" 는 형식-개입 마커라 금지 —
+        records.is_format_intervention 오인 방지). over-cap 회신은
+        build_reply_record 가 디스크 포인터로 치환(전문은 worker 가 이미
+        teammates/<key>/replies/ 에 영속)."""
+        registry = self._config.teammate_registry
+        if registry is None:
+            return
+        replies = registry.drain_replies()
+        if not replies:
+            return
+        from agent_cli.subagent.teammate import build_reply_record
+
+        for reply in replies:
+            record = build_reply_record(reply, cap=self._oversized_cap)
+            self.messages.append({"role": "user", "content": record["content"]})
+            if self.ctx:
+                self.ctx.add(dict(record))
+            render_step(
+                "observation",
+                record["content"],
+                self.turn,
+                tool_name="teammate",
+                success=bool(reply.get("success")),
+            )
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a

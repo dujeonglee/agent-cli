@@ -27,6 +27,7 @@ from agent_cli.tools.fetch import FetchTool
 from agent_cli.tools.read_file import ReadFileTool
 from agent_cli.tools.result import ToolResult
 from agent_cli.tools.shell import ShellTool
+from agent_cli.tools.teammate_tool import TeammateTool
 from agent_cli.tools.virtual import (
     AskTool,
     CompleteTool,
@@ -50,6 +51,7 @@ _ALL_TOOLS: list[Tool] = [
     RunSkillTool(),
     FetchTool(),
     DelegateTool(),
+    TeammateTool(),
 ]
 
 TOOLS: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}

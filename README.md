@@ -179,6 +179,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_COMPACTION` | — | 컨텍스트 컴팩션(90% 예산 LLM 요약) 비활성 스위치. `off`/`false`/`0`/`disabled`/`no` 중 하나면 끔(플레인 FIFO drop). `--no-compaction` 과 동일 효과(env 가 flag 보다 우선). |
 | `AGENT_CLI_FOLD_INTERVENTIONS` | `off` 로 형식-복구 개입 fold 비활성. 기본 on: 파싱/스키마 개입(NO_JSON·A4·A5 등)은 다음 파싱 성공 시 dynamic 컨텍스트에서 접혀 **성공 궤적만** 남음(실패 shape 재공급 방지 — v4.51.0). history.jsonl 에는 전부 보존 | (on) |
+| `AGENT_CLI_MAX_TEAMMATES` | 동시 생존 가능한 `teammate` 상주 에이전트 수 상한 | `4` |
 | `AGENT_CLI_RECORD_RAW_FAILURES` | — | `1`/`true`/`on`/`yes` 면 파싱 실패 시 raw 페이로드를 `turns.jsonl` 에 기록(복구 분석용). 기본 off. |
 | `AGENT_CLI_UNIFDEF` | — | code_index 의 C/C++ 전처리 모드: `auto`(기본, unifdef 있으면 씀)·`system`(시스템 unifdef 강제)·`pure`(순수 파이썬 폴백). 프로세스 시작 시 1회 읽어 고정. |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. **스트리밍**: post timeout `(connect 30초, read 30초)` 로 **헤더 대기·헤더 구간 interrupt 를 30초로 바운드**(broken 서버의 ~20분 행 제거) → 헤더 수신 후 소켓을 patient 로 리셋해 body 는 느긋. body 가 **30초** 무토큰이면 UI 에 대기 알림(`응답 대기 중 — …`), **20틱(10분) 연속 침묵**이면 연결 끊고 재전송(최대 3회). 토큰 오면 카운터 리셋. **비스트리밍**: `(30, 1200)` (전체 생성 read). interrupt 는 body 구간 ~8초, 헤더 구간 ≤30초. |
@@ -689,6 +690,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
 | `delegate` | 서브에이전트에 작업 위임 (한 op=한 task; 여러 delegate op = 병렬, 에이전트 역할 지정 가능) |
+| `teammate` | **상주 팀원 에이전트** — delegate 와 달리 답변 후에도 컨텍스트를 유지한 채 살아있어 이어서 문답 가능. `spawn`(key 반환, `role`=`.agent-cli/teammates/{name}.md`)/`request`(비동기 전송 — 회신은 준비되는 대로 관찰로 **자동 배달**, 폴링 불필요)/`wait`/`status`/`kill`. main 세션 전용 (서브에이전트 안에서는 비노출) |
 | `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
@@ -1021,6 +1023,23 @@ RESULT:
 ```
 
 실패 시에는 `[Last actions before failure]` 섹션이 추가되어 디버깅에 필요한 마지막 액션과 에러 메시지를 확인할 수 있습니다. 결과는 delegate subdir의 `result.md`에 자동 저장됩니다.
+
+### teammate — 상주 팀원 에이전트
+
+delegate 가 "일회성 파견"(답변 → 소멸)이라면 `teammate` 는 **상주 팀원**입니다 — spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할 수 있습니다. teammate 는 자기 컨텍스트(이전 문답 전부)를 유지한 채 살아 있습니다. 반복 협업(탐색시켜 놓고 후속 질문, 역할별 장기 작업)에 쓰고, 독립적인 일회성 작업에는 delegate 를 쓰세요.
+
+```json
+{"action": "teammate", "action_input": {"mode": "spawn", "role": "researcher", "task": "레포 구조를 파악해줘"}}
+{"action": "teammate", "action_input": {"mode": "request", "key": "agt-3f2a1b9c", "message": "그래서 진입점이 어디야?"}}
+{"action": "teammate", "action_input": {"mode": "status"}}
+{"action": "teammate", "action_input": {"mode": "kill", "key": "agt-3f2a1b9c"}}
+```
+
+- **비동기 + 자동 배달**: `request` 는 즉시 반환되고, teammate 는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링할 필요가 없습니다. 회신만 기다리면 되는 상황엔 `wait`(블록) 를 씁니다.
+- **역할 정의 (`role`)**: `.agent-cli/teammates/{name}.md` (프로젝트) → `~/.agent-cli/teammates/` (전역) 검색. agent 파일과 같은 포맷 — YAML frontmatter(`allowed-tools`/`model`/`hooks`) + 본문(역할, teammate 의 시스템 프롬프트로 로드). delegate 의 `agents/` 와는 **별도 디렉토리**입니다.
+- **스코프**: main 세션 전용 — 서브에이전트(delegate/skill/teammate 자신) 안에서는 도구가 노출되지 않습니다. delegate 는 teammate 안에서 평소처럼 쓸 수 있습니다. 동시 생존 상한 기본 4 (`AGENT_CLI_MAX_TEAMMATES`).
+- **수명**: main 의 Stop/Ctrl+C 는 teammate 를 죽이지 않습니다(백그라운드 계속). 종료는 `kill` 또는 세션 종료 시 일괄 정리. 회신 전문은 `teammates/<key>/replies/` 에 항상 저장됩니다.
+- **인스펙터**: 웹 Prompt Inspector 에 teammate 스코프 칩이 상시 표시되어 살아있는 동안 시스템 프롬프트·동적 컨텍스트를 실시간 검사할 수 있습니다. 요청 처리 과정은 delegate 와 같은 접이식 카드(🤝)로 표시됩니다.
 
 ### run_skill — 스킬 실행
 
