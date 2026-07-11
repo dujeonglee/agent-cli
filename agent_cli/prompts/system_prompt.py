@@ -757,7 +757,7 @@ def build_system_prompt_sections(
         if agent_desc:
             sections.append(("Agents", agent_desc))
 
-    if "teammate" in active_tools:
+    if "agent" in active_tools:
         role_desc = build_teammate_role_descriptions(wire_format=wire_format)
         if role_desc:
             sections.append(("AgentInstance Roles", role_desc))
@@ -930,7 +930,7 @@ def build_teammate_role_descriptions(wire_format=None) -> str:
 
     example = wire_format.render_full_example(
         thought=None,
-        action="teammate",
+        action="agent",
         action_input=wire_format.render_action_input(
             {"mode": "spawn", "role": "role-name", "task": "..."}
         ),

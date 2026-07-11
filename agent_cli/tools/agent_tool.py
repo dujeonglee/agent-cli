@@ -14,8 +14,8 @@ from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
 
-class TeammateTool(Tool):
-    name = "teammate"
+class AgentTool(Tool):
+    name = "agent"
     description = (
         "Manage persistent teammate agents that KEEP their context between "
         "requests. Unlike `delegate` (one-shot: the subagent answers once and "
@@ -42,10 +42,10 @@ class TeammateTool(Tool):
                     "kill: terminate one."
                 ),
             },
-            "role": {
+            "profile": {
                 "type": "string",
                 "description": (
-                    "spawn: role definition from .agent-cli/teammates/{role}.md "
+                    "spawn: profile from .agent-cli/agents/{profile}.md "
                     "(loaded into the teammate's system prompt; omit for a "
                     "generalist). The SAME role may be spawned multiple times "
                     "for parallel independent workstreams — give each instance "

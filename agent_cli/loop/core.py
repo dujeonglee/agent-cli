@@ -133,8 +133,8 @@ class AgentLoop:
         # 서브에이전트(delegate/skill/teammate 자신)와 headless 호출자는
         # 레지스트리가 없으므로 도구 자체가 안 보인다 (P1: teammate 안
         # teammate 금지의 단일 가드; 모델이 거부당할 도구를 보지 않는다).
-        if agent_registry is None and "teammate" in tools_list:
-            tools_list = [t for t in tools_list if t != "teammate"]
+        if agent_registry is None and "agent" in tools_list:
+            tools_list = [t for t in tools_list if t != "agent"]
         # Build skill stack for recursive call prevention
         if skill_stack is None:
             skill_stack = []
@@ -654,7 +654,7 @@ class AgentLoop:
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로
         주입한다 — LLM 폴링 없이 harness 가 배달. 레코드는 tool="teammate"
-        + source="teammate_reply" (tool="" 는 형식-개입 마커라 금지 —
+        + source="agent_reply" (tool="" 는 형식-개입 마커라 금지 —
         records.is_format_intervention 오인 방지). over-cap 회신은
         build_reply_record 가 디스크 포인터로 치환(전문은 worker 가 이미
         teammates/<key>/replies/ 에 영속)."""
@@ -675,7 +675,7 @@ class AgentLoop:
                 "observation",
                 record["content"],
                 self.turn,
-                tool_name="teammate",
+                tool_name="agent",
                 success=bool(reply.get("success")),
             )
 

@@ -114,7 +114,7 @@ class ToolBridge:
         try:
             if tool_name == "delegate":
                 result = self._invoke_delegate(tool_input, input_dict)
-            elif tool_name == "teammate":
+            elif tool_name == "agent":
                 result = self._invoke_agent(tool_input)
             else:
                 result = self._invoke_regular(tool_name, tool_input)

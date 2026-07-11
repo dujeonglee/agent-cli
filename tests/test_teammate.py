@@ -160,9 +160,9 @@ class TestBuildReplyRecord:
     def test_record_shape(self):
         rec = build_reply_record(self._reply())
         assert rec["role"] == "user"
-        assert rec["tool"] == "teammate"  # tool="" 금지 (형식-개입 마커)
+        assert rec["tool"] == "agent"  # tool="" 금지 (형식-개입 마커)
         assert rec["success"] is True
-        assert rec["source"] == "teammate_reply"
+        assert rec["source"] == "agent_reply"
         assert "agt-abc (researcher)" in rec["content"]
         assert "findings" in rec["content"]
 
@@ -405,7 +405,7 @@ class TestToolTeammate:
         # 스키마 밖 모드 — 의미론 검증과 디스패치 양쪽에서 거부.
         from agent_cli.tools.registry import TOOLS
 
-        assert "unknown mode" in TOOLS["teammate"].validate({"mode": "wait"})
+        assert "unknown mode" in TOOLS["agent"].validate({"mode": "wait"})
         reg = make_registry(tmp_path)
         r = tool_agent({"mode": "wait", "key": "agt-x"}, registry=reg)
         assert not r.success and "unknown mode" in r.error
@@ -429,14 +429,14 @@ class TestToolTeammate:
 # ── 스키마 의미론 검증 (C7) ─────────────────────
 
 
-class TestTeammateToolValidate:
+class TestAgentToolValidate:
     def _tool(self):
         from agent_cli.tools.registry import TOOLS
 
-        return TOOLS["teammate"]
+        return TOOLS["agent"]
 
     def test_registered_in_tools(self):
-        assert self._tool().name == "teammate"
+        assert self._tool().name == "agent"
 
     def test_mode_enum(self):
         assert "unknown mode" in self._tool().validate({"mode": "fly"})
@@ -462,7 +462,7 @@ class TestLoopWiring:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
-        assert "teammate" not in loop._config.tools_list
+        assert "agent" not in loop._config.tools_list
 
     def test_tool_present_with_registry(self, tmp_path):
         from unittest.mock import MagicMock
@@ -477,7 +477,7 @@ class TestLoopWiring:
             model="m",
             agent_registry=reg,
         )
-        assert "teammate" in loop._config.tools_list
+        assert "agent" in loop._config.tools_list
 
     def test_deliver_agent_mail_injects_records(self, tmp_path, renderer):
         # 턴 경계 배달 (D2): unbound 메서드를 fake self 로 구동 — 레지스트리
@@ -505,7 +505,7 @@ class TestLoopWiring:
         assert len(fake_self.messages) == 1
         assert "done:job" in fake_self.messages[0]["content"]
         assert len(added) == 1
-        assert added[0]["tool"] == "teammate"
+        assert added[0]["tool"] == "agent"
         assert not is_format_intervention(added[0])
         assert not reg.has_pending_replies()  # 소비 완료
         # 레지스트리 없으면 no-op
@@ -558,14 +558,12 @@ class TestFullLoopIntegration:
             n = provider.call.call_count
             if n == 1:
                 return LLMResponse(
-                    content=emit(
-                        "teammate", {"mode": "spawn", "task": "explore the repo"}
-                    )
+                    content=emit("agent", {"mode": "spawn", "task": "explore the repo"})
                 )
             # 배달을 기다렸다가 complete — 실전에선 다른 작업을 하는 턴.
             wait_until(reg.has_pending_replies)
             if n == 2:
-                return LLMResponse(content=emit("teammate", {"mode": "status"}))
+                return LLMResponse(content=emit("agent", {"mode": "status"}))
             return LLMResponse(content=emit("complete", {"result": "finished"}))
 
         provider.call = MagicMock(side_effect=scripted)
@@ -582,7 +580,7 @@ class TestFullLoopIntegration:
 
         # 회신이 턴 경계에서 ctx 레코드로 배달됐고 fold 오인이 없다
         delivered = [
-            m for m in ctx.get_raw_messages() if m.get("source") == "teammate_reply"
+            m for m in ctx.get_raw_messages() if m.get("source") == "agent_reply"
         ]
         assert len(delivered) == 1
         assert "done:explore the repo" in delivered[0]["content"]
@@ -603,7 +601,7 @@ class TestFullLoopIntegration:
         from agent_cli.loop import AgentLoop
 
         loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
-        assert "teammate" not in loop._config.tools_list
+        assert "agent" not in loop._config.tools_list
 
         reg = AgentRegistry(tmp_path, runner=make_runner())
         loop2 = AgentLoop(
@@ -613,7 +611,7 @@ class TestFullLoopIntegration:
             model="m",
             agent_registry=reg,
         )
-        assert "teammate" in loop2._config.tools_list
+        assert "agent" in loop2._config.tools_list
 
 
 # ── P2: ask→main 양방향 라우팅 ──────────────────
@@ -658,8 +656,8 @@ class TestAskRouting:
                 "output": "which branch?",
             }
         )
-        assert rec["tool"] == "teammate"
-        assert rec["source"] == "teammate_question"
+        assert rec["tool"] == "agent"
+        assert rec["source"] == "agent_question"
         assert not is_format_intervention(rec)
         assert "QUESTION" in rec["content"] and "which branch?" in rec["content"]
         # main 이 그대로 따라할 수 있는 답변 op 안내 포함
@@ -1181,7 +1179,7 @@ class TestWorkerDeathNotice:
         died = reg.drain_replies()[0]
         assert died["kind"] == "died" and "disk full" in died["output"]
         rec = build_reply_record(died)
-        assert rec["source"] == "teammate_died" and rec["success"] is False
+        assert rec["source"] == "agent_died" and rec["success"] is False
         assert "DIED" in rec["content"]
         assert '"mode":"resume"' in rec["content"]  # 부활 안내 (v4.61.0)
         assert not is_format_intervention(rec)
@@ -1269,7 +1267,7 @@ class TestRoleDiscovery:
             supports_strict_schema=False,
         )
         with_tool = build_system_prompt_sections(
-            caps, active_tools=["read_file", "teammate"]
+            caps, active_tools=["read_file", "agent"]
         )
         without = build_system_prompt_sections(caps, active_tools=["read_file"])
         names_with = [n for n, _ in with_tool]
@@ -1422,7 +1420,7 @@ class TestLiveTeammatesSection:
         main_names = [
             n
             for n, _ in build_system_prompt_sections(
-                caps, active_tools=["teammate"], agent_registry=reg
+                caps, active_tools=["agent"], agent_registry=reg
             )
         ]
         assert "AgentInstance Roles" in main_names and "Live Teammates" in main_names
@@ -1485,7 +1483,7 @@ class TestLiveTeammatesSection:
         def scripted(*a, **k):
             if provider.call.call_count == 1:
                 return LLMResponse(
-                    content=emit("teammate", {"mode": "spawn", "name": "ui"})
+                    content=emit("agent", {"mode": "spawn", "name": "ui"})
                 )
             return LLMResponse(content=emit("complete", {"result": "ok"}))
 
@@ -1679,7 +1677,7 @@ class TestResumeMode:
     def test_tool_mode_resume_validation(self):
         from agent_cli.tools.registry import TOOLS
 
-        tool = TOOLS["teammate"]
+        tool = TOOLS["agent"]
         assert tool.validate({"mode": "resume"}) is not None  # key 필수
         assert tool.validate({"mode": "resume", "key": "agt-1"}) is None
 

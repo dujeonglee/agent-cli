@@ -23,7 +23,7 @@ teammate 하나 = 데몬 worker 스레드 하나. worker 는 자기 inbox 를 �
   스코프(상시)와 카드(요청별)를 분리한 이유는 web 렌더러의
   ``begin_delegate_task`` 가 스코프 push 와 결합돼 있어서다.
 - **레코드 계약**: 배달 레코드는 ``tool:"teammate"`` + additive
-  ``source:"teammate_reply"``. ``tool:""`` 는 v4.51.0 형식-개입 레거시
+  ``source:"agent_reply"``. ``tool:""`` 는 v4.51.0 형식-개입 레거시
   마커라 금지 (``records.is_format_intervention`` 오인 방지 — 테스트 고정).
 
 P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 서브루프
@@ -143,10 +143,10 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
         )
         return {
             "role": "user",
-            "tool": "teammate",
+            "tool": "agent",
             "success": False,
             "content": content,
-            "source": "teammate_died",
+            "source": "agent_died",
         }
 
     if reply.get("kind") == "question":
@@ -167,10 +167,10 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
         content = f"── teammate {label} QUESTION ──\n{question}\n{tail}"
         return {
             "role": "user",
-            "tool": "teammate",
+            "tool": "agent",
             "success": True,
             "content": content,
-            "source": "teammate_question",
+            "source": "agent_question",
         }
 
     body = reply.get("output") or "(empty reply)"
@@ -190,11 +190,11 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     content = f"── teammate {label} reply ({status}) ──\n{body}"
     return {
         "role": "user",
-        "tool": "teammate",
+        "tool": "agent",
         "success": bool(reply.get("success")),
         "content": content,
         # additive 마킹 — tool="" (형식-개입 레거시) 오인 금지 계약과 짝.
-        "source": "teammate_reply",
+        "source": "agent_reply",
     }
 
 
