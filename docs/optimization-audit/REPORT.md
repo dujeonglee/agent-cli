@@ -37,7 +37,7 @@
 | **C2** | delegate.py 8책임(851줄) — agent 로딩/추출기/persist/포맷팅/단일·병렬 실행/dispatch/Tool | delegate.py | `delegate/` 패키지 분할 (agents/report/exec/tool) | ✅ v4.44.0 |
 | **C3** | web/server.py 전송·비즈니스 뒤엉킴(1727줄, 27라우트) — directive 조작·lesson 학습·slash ~440줄 | server.py:168-408,493-687 | directives/inspector/slash 3모듈 추출 | ✅ v4.45.0 |
 | **C4** | main.py `run`/`web` 부트스트랩 중복(web 커맨드 546줄) | main.py:749,1188 | 공용 추출 + 실측서 발견 3결함 수리 | ✅ v4.46.0 |
-| **C5** | ContextManager 8관심사(1053줄) — 캐시+압축+요약+2종 영속화+분류+NL렌더 | manager.py | 렌더/분류 → `context/_render.py`, 영속화 store 분리. B1 과 연계 | ☐ |
+| **C5** | ContextManager 8관심사(1053줄) — 캐시+압축+요약+2종 영속화+분류+NL렌더 | manager.py | records/render/store 분리 + fsio 저장 패턴 통일 | ✅ v4.47.0 |
 | C6 | providers 스트리밍 파서 중복 — 양 어댑터 `_handle_stream` 각 ~130줄 (retry 는 공유됨) | anthropic.py:96, openai.py:122 | SSE 이터레이터+델타 누산기 http.py 공유 | ☐ |
 | C7 | 이중 검증층 — registry 중앙 + 도구 내부 재검증 | registry.py:293-377 | `Tool.validate(args)` 훅 1-pass | ☐ |
 | C8 | Renderer ABC 50메서드/17추상 — fat 아님, 신규 renderer 진입장벽만 | render/base.py | 코어+mixin 분리 (낮은 우선순위) | ☐ |
