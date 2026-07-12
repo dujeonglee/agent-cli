@@ -211,7 +211,6 @@ class WebRenderer(Renderer):
         #   worker_state — {busy} send-button gating
         #   token_usage  — per-turn token readout
         #   queue        — pending user-message queue
-        #   auto_review  — {enabled} review toggle (shared across all browsers)
         # NOT sticky: viewers (connection-set-derived, not a single latest
         # value) / prompt snapshots (per-scope, on-demand pull).
         # name → {"event", "payload", "position"}.
@@ -336,7 +335,7 @@ class WebRenderer(Renderer):
             # Replay sticky state into the new connection's snapshot so a
             # late/refreshed/second-browser client sees the last value of each.
             # ``prepend`` slots (ready → top-bar) go ahead of the buffer;
-            # ``append`` slots (worker_state/token_usage/queue/auto_review) after.
+            # ``append`` slots (worker_state/token_usage/queue) after.
             for slot in self._sticky.values():
                 entry = (slot["event"], slot["payload"])
                 if slot["position"] == "prepend":
@@ -1147,14 +1146,6 @@ class WebRenderer(Renderer):
             )
         except OSError:
             pass  # best-effort: a status write must never break the session
-
-    def auto_review_state(self, enabled: bool) -> None:
-        """Broadcast the auto-review toggle state. Sticky so EVERY browser's
-        toggle button reflects the shared server state — toggling on one client
-        updates the others live, and a refreshed/new client sees it via the
-        snapshot. (The state itself lives on ``WebServer``; this just mirrors it
-        to all views.)"""
-        self.set_sticky("auto_review", "auto_review", {"enabled": bool(enabled)})
 
     def note_system_prompt(self, sections: list[tuple[str, str]], turn: int) -> None:
         """Keep the latest system-prompt snapshot for the Prompt Inspector.

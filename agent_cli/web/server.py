@@ -44,15 +44,6 @@ from agent_cli.render.web import WebConnection, WebRenderer
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
 from agent_cli.web.directives import (
     _AXIS_TEMPLATES,
-    _LEARN_SYSTEM,
-    _LEARNED_HEADING,
-    _parse_lessons,
-    _record_lessons,
-    _render_learned_block,
-    _render_learning_input,
-    _replace_managed_section,
-    _section_body,
-    _strip_code_fences,
     _zone_get,
     _zone_set,
 )
@@ -163,18 +154,8 @@ class WebServer:
         ctx=None,
         trust_local: bool = False,
         base_path: str = "",
-        provider=None,
-        model: str | None = None,
-        capabilities=None,
     ) -> None:
         self.renderer = renderer
-        # The session's LLM handle — reused by the Directives 🪄 enhance endpoint
-        # for a one-off meta-call (generate a richer DIRECTIVE.md). ``provider``
-        # is stateless per call (builds its own request), so a web-thread call is
-        # safe alongside the worker's loop. None (tests / no LLM) → feature 503s.
-        self.provider = provider
-        self.model = model
-        self.capabilities = capabilities
         # --trust-local: skip token auth for loopback requests (the gateway in
         # front of a 127.0.0.1-bound instance already authenticated the user).
         self.trust_local = trust_local
@@ -213,22 +194,6 @@ class WebServer:
         # agent) runs in. Resolved once at startup; downloads are confined to
         # this subtree (path-traversal guarded in ``_safe_workspace_path``).
         self.workspace = Path.cwd().resolve()
-        # Auto-review toggle. When True, the worker runs a reviewer agent after
-        # each ``complete`` and keeps reviewing until it accepts (or the toggle
-        # goes off). Read LIVE each review round (a plain bool is fine — set
-        # from a request thread, read from the worker thread; a stale read at
-        # worst delays the toggle by one round). Off by default.
-        self._auto_review = False
-
-    def auto_review_enabled(self) -> bool:
-        return self._auto_review
-
-    def set_auto_review(self, enabled: bool) -> None:
-        self._auto_review = bool(enabled)
-        # Broadcast as sticky state so EVERY browser's toggle button reflects
-        # the shared server value (not just the one that clicked) — and a
-        # refreshed/new client picks it up via the snapshot.
-        self.renderer.auto_review_state(self._auto_review)
 
     def _safe_workspace_path(self, rel: str) -> Path:
         """Resolve ``rel`` under the workspace root, rejecting traversal /
@@ -603,26 +568,6 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_directives_changed()
         return {"ok": True}
 
-    async def _gen_directive(system: str, user: str) -> str:
-        """One-off meta-call to the session LLM (NOT the loop), fences stripped.
-        Blocking ``provider.call`` runs in a threadpool so the async server isn't
-        blocked. Raises 502 on provider error."""
-
-        def _run() -> str:
-            resp = server.provider.call(
-                messages=[{"role": "user", "content": user}],
-                system=system,
-                model=server.model,
-                capabilities=server.capabilities,
-            )
-            return resp.content or ""
-
-        try:
-            result = await asyncio.get_event_loop().run_in_executor(None, _run)
-        except Exception as e:  # network / provider error → surface as 502
-            raise HTTPException(status_code=502, detail=f"LLM call failed: {e}") from e
-        return _strip_code_fences(result)
-
     @app.post("/api/directives/template")
     async def debug_directives_template(
         body: dict, axis: str = Query(...), token: str = Query(...)
@@ -630,44 +575,12 @@ def create_app(server: WebServer) -> FastAPI:
         """📋 Insert a static fill-in skeleton into one axis's zone (persona or
         task), returned UNSAVED for the user to fill by hand. Deterministic — no
         LLM (the leak-free replacement for 🪄). Body: ``{content}``. 400 on a bad
-        axis or an axis without a template (learned is filled by 📥 learn)."""
+        axis or an axis without a template (learned 축은 수동 편집/프리셋 전용)."""
         server._require_token(token)
         tmpl = _AXIS_TEMPLATES.get(axis)
         if tmpl is None:
             raise HTTPException(status_code=400, detail=f"no template for axis: {axis}")
         return {"content": _zone_set(body.get("content") or "", axis, tmpl)}
-
-    @app.post("/api/directives/learn")
-    async def debug_directives_learn(body: dict, token: str = Query(...)):
-        """📥 Learn from the live session: distill REUSABLE lessons from the
-        conversation into the managed ``## 학습된 지침`` section, returned UNSAVED
-        for review. Also records each lesson to the session memory store
-        (deterministic — the system writes, not the model). Body: ``{content}``
-        (current editor text = hand-written + any learned section). Returns
-        ``{content, learned: N}``. ``learned: 0`` (content unchanged) when the
-        context is empty or nothing durable was found. 503 when no LLM / no
-        active session is wired."""
-        server._require_token(token)
-        if server.provider is None or server.model is None:
-            raise HTTPException(status_code=503, detail="LLM not available")
-        if server.ctx is None:
-            raise HTTPException(status_code=503, detail="no active session")
-        content = body.get("content") or ""
-        messages = list(server.ctx.get_messages())
-        if not messages:
-            return {"content": content, "learned": 0}
-        user = _render_learning_input(
-            messages, _section_body(content, _LEARNED_HEADING)
-        )
-        raw = await _gen_directive(_LEARN_SYSTEM, user)
-        lessons = _parse_lessons(raw)
-        if not lessons:
-            return {"content": content, "learned": 0}
-        _record_lessons(getattr(server.ctx, "session_dir", None), lessons)
-        new_content = _replace_managed_section(
-            content, _LEARNED_HEADING, _render_learned_block(lessons)
-        )
-        return {"content": new_content, "learned": len(lessons)}
 
     def _require_axis(axis: str) -> str:
         """Validate the ``axis`` query param against the fixed enum → 400."""
@@ -915,8 +828,7 @@ def create_app(server: WebServer) -> FastAPI:
 
         # Recursive dir sizing walks the whole subtree (node_modules/.git …) —
         # run it in the executor so the asyncio thread (and every viewer's SSE
-        # delivery) is not stalled for the duration. Same offload pattern as
-        # _gen_directive's provider.call.
+        # delivery) is not stalled for the duration.
         entries = await asyncio.get_event_loop().run_in_executor(None, _scan)
         return JSONResponse({"path": path, "entries": entries})
 
@@ -1228,19 +1140,6 @@ def create_app(server: WebServer) -> FastAPI:
         server._require_token(token)
         stopped = server.trigger_stop()
         return JSONResponse({"stopped": stopped})
-
-    @app.post("/api/auto_review")
-    async def auto_review(request: Request, token: str = Query(...)):
-        """Set the auto-review toggle. Body: ``{enabled: bool}``. When on, the
-        worker runs a reviewer agent after each complete and keeps reviewing
-        until it accepts (or the toggle goes off)."""
-        server._require_token(token)
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="invalid JSON body")
-        server.set_auto_review(bool(body.get("enabled", False)))
-        return JSONResponse({"enabled": server.auto_review_enabled()})
 
     return app
 

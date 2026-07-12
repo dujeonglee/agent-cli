@@ -1121,15 +1121,6 @@
     return n >= 1000 ? (n / 1000).toFixed(1) + "K" : String(n);
   }
 
-  es.addEventListener("auto_review", function (e) {
-    // Sticky toggle state from the server (shared across all browsers).
-    // Bridge to the toggle button's own IIFE via a document CustomEvent so
-    // every viewer's button reflects the latest value (live + reconnect).
-    const d = JSON.parse(e.data);
-    document.dispatchEvent(
-      new CustomEvent("agentcli:auto_review", { detail: !!d.enabled }),
-    );
-  });
 
   es.addEventListener("agent_roster", function (e) {
     // 상주 에이전트 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계.
@@ -1495,7 +1486,6 @@
   const $dirTaskSave = document.getElementById("insp-dir-task-save");
   const $dirTaskDel = document.getElementById("insp-dir-task-del");
   const $dirLearned = document.getElementById("insp-dir-learned");
-  const $dirLearn = document.getElementById("insp-dir-learn");
   const $dirLearnedSave = document.getElementById("insp-dir-learned-save");
   const $dirLearnedDel = document.getElementById("insp-dir-learned-del");
   // 💾 save modal
@@ -1748,10 +1738,10 @@
   if ($dirCancel) $dirCancel.addEventListener("click", cancelDirectives);
 
   // ── Three symmetric axes (성격 / 업무 / 지침) ─────────────────────────
-  // Each axis = a dropdown (내 프리셋), an action (📋 템플릿 for 성격/업무, 📥 학습
+  // Each axis = a dropdown (내 프리셋), an action (📋 템플릿 for 성격/업무
   // for 지침), a 💾 save (per-axis home preset), and a 🗑 delete. Dropdown option
   // values are typed: "" = 없음 · "preset:<id>" = 저장분(선택 시 즉시 반영). Section
-  // merging + the static 📋 templates are all server-side — no LLM except 📥 learn.
+  // merging + the static 📋 templates are all server-side — no LLM involved.
   const AXIS = {
     persona: { sel: $dirPersona, save: $dirPersonaSave, del: $dirPersonaDel, none: "성격 프리셋…", label: "성격" },
     task: { sel: $dirTask, save: $dirTaskSave, del: $dirTaskDel, none: "업무 프리셋…", label: "업무" },
@@ -1822,38 +1812,6 @@
         $dirStatus.textContent = "📋 " + AXIS[axis].label + " 템플릿 삽입 — 손으로 채운 뒤 저장";
       })
       .catch(function () { $dirStatus.textContent = "✗ 템플릿 삽입 실패"; });
-  }
-
-  // ── 📥 learn-from-session (지침 axis) ────────────────────────────────
-  // Distill reusable lessons from the live conversation into the managed
-  // "## 학습된 지침" section (unsaved) + record them to the session memory store.
-  function learnDirective() {
-    $dirStatus.textContent = "📥 학습 중…";
-    if ($dirLearn) $dirLearn.disabled = true;
-    $dirSave.disabled = true;
-    fetch("api/directives/learn?" + qtoken(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: $dirText.value }),
-    })
-      .then(function (r) {
-        if (r.status === 503) { $dirStatus.textContent = "· 학습하려면 실행 중인 세션(LLM)이 필요해요"; return null; }
-        if (!r.ok) throw new Error(r.status);
-        return r.json();
-      })
-      .then(function (d) {
-        if (!d) return;
-        const n = d.learned || 0;
-        if (n === 0) { $dirStatus.textContent = "· 아직 배울 내용이 없어요"; return; }
-        $dirText.value = d.content || $dirText.value;
-        dirDirty = true;
-        $dirStatus.textContent = "📥 " + n + "개 학습됨 — 검토 후 저장";
-      })
-      .catch(function () { $dirStatus.textContent = "✗ 학습 실패"; })
-      .finally(function () {
-        if ($dirLearn) $dirLearn.disabled = false;
-        $dirSave.disabled = false;
-      });
   }
 
   // ── 💾 preset save modal (fixed location) + 🗑 delete ─────────────────
@@ -1935,7 +1893,6 @@
   if ($dirLearned) $dirLearned.addEventListener("change", function () { onAxisChange("learned"); });
   if ($dirPersonaTmpl) $dirPersonaTmpl.addEventListener("click", function () { insertTemplate("persona"); });
   if ($dirTaskTmpl) $dirTaskTmpl.addEventListener("click", function () { insertTemplate("task"); });
-  if ($dirLearn) $dirLearn.addEventListener("click", learnDirective);
   if ($dirPersonaSave) $dirPersonaSave.addEventListener("click", function () { openSaveModal("persona"); });
   if ($dirTaskSave) $dirTaskSave.addEventListener("click", function () { openSaveModal("task"); });
   if ($dirLearnedSave) $dirLearnedSave.addEventListener("click", function () { openSaveModal("learned"); });
@@ -2825,47 +2782,7 @@
 })();
 
 // ── Auto-review toggle (header button → separate IIFE) ──────────────
-// Toggles the server's auto-review state (POST /api/auto_review). When on,
-// the worker runs a reviewer agent after each completion and keeps reviewing
-// until it accepts (or the toggle goes off). The state is SHARED across all
-// browsers: the server broadcasts ``auto_review`` (sticky) and the main SSE
-// handler relays it here via a document CustomEvent, so every viewer's button
-// stays in sync (live + on reconnect via snapshot), not just the clicker's.
-(function () {
-  "use strict";
 
-  const token = new URLSearchParams(window.location.search).get("token");
-  const $btn = document.getElementById("auto-review-btn");
-  if (!$btn) return;
-  let enabled = false;
-
-  function paint() {
-    $btn.setAttribute("aria-pressed", enabled ? "true" : "false");
-    $btn.classList.toggle("active", enabled);
-    $btn.textContent = enabled ? "🔍 Review: on" : "🔍 Review: off";
-  }
-
-  // Sync from the server broadcast (any browser toggling, or our own
-  // reconnect snapshot). Server is the source of truth.
-  document.addEventListener("agentcli:auto_review", function (e) {
-    enabled = !!e.detail;
-    paint();
-  });
-
-  $btn.addEventListener("click", function () {
-    // POST the intended next state; the button repaints from the resulting
-    // ``auto_review`` broadcast (so all viewers converge on the server value).
-    fetch("api/auto_review?token=" + encodeURIComponent(token), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: !enabled }),
-    }).catch(function () {
-      /* leave the toggle as-is on failure */
-    });
-  });
-
-  paint();
-})();
 
 // ── Theme picker (🎨) ───────────────────────────────────────────────
 // Self-contained dropdown: the <head> inline script already applied the saved
@@ -2953,7 +2870,7 @@
 // ── 상주 에이전트 대화 창 (🤝, P4) ─────────────────────────────────────────
 // 상주 에이전트 roster + 대화 스트림 + 인간 개입. 데이터는 메인 SSE 가
 // document CustomEvent 로 중계(agentcli:tm-roster / agentcli:tm-msg —
-// auto_review 토글과 같은 브리지 패턴). 메시지는 persistent 이벤트라
+// 메인 SSE 가 CustomEvent 로 중계하는 브리지 패턴). 메시지는 persistent 이벤트라
 // 재접속 replay 로 창 내용이 복원된다.
 (function () {
   "use strict";

@@ -1682,7 +1682,7 @@ class TestSetNickname:
 class TestStickyState:
     """Sticky state = a single server value broadcast live AND replayed into
     each new connection's snapshot (so a late/refreshed client sees the last
-    value). ready/worker_state/token_usage/queue + auto_review all share this.
+    value). ready/worker_state/token_usage/queue all share this.
     Pins the snapshot ORDER invariant (ready prepends; others append) across
     the set_sticky refactor."""
 
@@ -1719,31 +1719,6 @@ class TestStickyState:
         snap = r.register_connection(WebConnection(id="late"))
         tok = [d for e, d in snap if e == "token_usage"]
         assert tok and tok[0]["in"] == 42
-
-    def test_auto_review_is_sticky(self):
-        """The auto-review toggle state replays to new connections so every
-        browser's button reflects the shared server state."""
-        r = WebRenderer()
-        r.auto_review_state(True)
-        snap = r.register_connection(WebConnection(id="c1"))
-        ar = [d for e, d in snap if e == "auto_review"]
-        assert ar and ar[0].get("enabled") is True
-
-    def test_auto_review_broadcasts_to_existing_connections(self):
-        """Toggling on one browser updates others live (broadcast, not just
-        the toggler's local button)."""
-        r = WebRenderer()
-        a = WebConnection(id="a")
-        r.register_connection(a)
-        # drain join events
-        while not a.queue.empty():
-            a.queue.get_nowait()
-        r.auto_review_state(True)
-        seen = []
-        while not a.queue.empty():
-            seen.append(a.queue.get_nowait())
-        # _emit stamps a ``ts`` field, so check the enabled flag, not equality
-        assert any(e == "auto_review" and d.get("enabled") is True for e, d in seen)
 
 
 class TestDirectivesDirtyFlag:

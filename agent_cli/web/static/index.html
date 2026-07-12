@@ -33,7 +33,6 @@
     </span>
     <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
     <button id="agent-btn" type="button" title="Agents — 상주 에이전트 대화 창">🤝<span id="tm-badge" hidden></span></button>
-    <button id="auto-review-btn" type="button" title="Auto-review: review each completion with a reviewer agent until it accepts" aria-pressed="false">🔍 Review: off</button>
     <button id="export-btn" type="button" title="Export conversation">📤</button>
     <button id="files-btn" type="button" title="Workspace files — download / upload">📁</button>
     <span id="viewers" title="connected viewers"></span>
@@ -134,7 +133,7 @@
       <div class="insp-dir-foot">
         <span id="insp-dir-status" class="insp-dir-status"></span>
         <!-- Three symmetric axis rows: 성격 / 업무 / 지침. Each = label + dropdown
-             (내 프리셋) + action(📋 템플릿 / 📥 학습) + 💾 프리셋 저장 + 🗑 삭제.
+             (내 프리셋) + action(📋 템플릿 — 성격/업무) + 💾 프리셋 저장 + 🗑 삭제.
              No LLM generation (📋 inserts a static skeleton to fill by hand). -->
         <div class="insp-dir-axis" data-axis="persona">
           <span class="insp-dir-axlabel">성격</span>
@@ -158,8 +157,6 @@
           <span class="insp-dir-axlabel">지침</span>
           <select id="insp-dir-learned" class="insp-dir-sel"
             title="학습된 지침 프리셋 (홈, 모든 방 공유). 선택 시 학습 섹션에 반영."></select>
-          <button id="insp-dir-learn" type="button" class="insp-dir-gen-btn"
-            title="현재 세션 대화에서 재사용 가능한 지침을 학습해 반영 (미저장)">📥</button>
           <button id="insp-dir-learned-save" type="button"
             title="현재 학습된 지침을 프리셋으로 저장 (홈, 모든 방 공유)">💾</button>
           <button id="insp-dir-learned-del" type="button" title="선택한 지침 프리셋 삭제">🗑</button>

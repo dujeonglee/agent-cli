@@ -1,9 +1,9 @@
 """Packaging guard: non-.py resources must be declared in package-data.
 
-The built-in agents (reviewer/explorer) and skills (create-*, plan) are ``.md``
+The built-in agents (explorer 등) and skills (create-*, plan) are ``.md``
 files — setuptools won't ship them in the wheel unless they're listed under
 ``[tool.setuptools.package-data]``. They were silently dropped once (pip
-installs had no reviewer → auto-review broke; editable installs hid it because
+installs had no built-in profiles; editable installs hid it because
 they read straight from the source tree). This test fails if any built-in
 resource on disk is NOT covered by a package-data glob.
 """

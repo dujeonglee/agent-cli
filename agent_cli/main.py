@@ -1754,12 +1754,6 @@ def web(
         ctx=ctx,
         trust_local=trust_local,
         base_path=base_path,
-        # The session's LLM — reused by the Directives 🪄 enhance endpoint.
-        # (``provider`` here is the provider-name string; ``llm_provider`` is the
-        # actual LLMProvider object.)
-        provider=llm_provider,
-        model=resolved_model,
-        capabilities=capabilities,
     )
 
     # Prime the session-info ``ready`` so a client opening the page
@@ -1957,86 +1951,8 @@ def web(
                             agent_registry=agent_registry,
                         )
 
-                    result = _run_main(message, nickname)
+                    _run_main(message, nickname)
 
-                    # Auto-review (web toggle): after the main agent completes,
-                    # if the toggle is on, run a reviewer agent and keep
-                    # reviewing until it accepts (or the toggle goes off). The
-                    # reviewer is a normal delegate — no loop changes; the
-                    # verdict rides in its complete result (parsed worker-side).
-                    if server.auto_review_enabled() and result is not None:
-                        from agent_cli.review import run_auto_review
-                        from agent_cli.subagent.oneshot import tool_delegate
-
-                        def _spawn_reviewer(task: str) -> str:
-                            r = tool_delegate(
-                                {"tasks": [{"task": task, "agent": "reviewer"}]},
-                                parent_ctx=ctx,
-                                provider=llm_provider,
-                                model=resolved_model,
-                                capabilities=capabilities,
-                                provider_name=provider,
-                                base_url=resolved_url,
-                                api_key=resolved_key,
-                                max_depth=max_depth,
-                                timeout=agent_timeout,
-                                session=session,
-                                stop_event=stop_event,
-                                compaction_enabled=not no_compaction,
-                            )
-                            return (r.output if r and r.success else r.error) or ""
-
-                        def _resume_main(feedback: str) -> str:
-                            r = _run_main(
-                                f"A reviewer checked your completed work and "
-                                f"did NOT accept it. Address this feedback, then "
-                                f"complete again:\n\n{feedback}",
-                                "reviewer",
-                            )
-                            return (r.output if r else "") or ""
-
-                        def _review_render(event: str, detail: str = "") -> None:
-                            # Surface the verdict in the MAIN conversation — the
-                            # reviewer's result otherwise lives only inside the
-                            # delegate group card, so an ACCEPT left no trace and
-                            # the run looked like it just ended after 'complete'.
-                            # Both emit (live SSE) AND record to ctx so the card
-                            # survives resume (replay_from_history).
-                            from agent_cli.review import record_review_observation
-
-                            text = {
-                                "review_start": (
-                                    "Auto-review: a reviewer is verifying the "
-                                    "completed work…"
-                                ),
-                                "accept": (
-                                    "Auto-review passed — the reviewer accepted "
-                                    "the work."
-                                ),
-                                "reject": (
-                                    "Auto-review requested changes — applying the "
-                                    "reviewer's feedback and continuing:\n\n"
-                                    + (detail or "(no detail)")
-                                ),
-                            }.get(event)
-                            if text is None:
-                                return
-                            ok = event != "reject"
-                            renderer.observation(
-                                text, 0, tool_name="auto-review", success=ok
-                            )
-                            record_review_observation(ctx, text, success=ok)
-
-                        run_auto_review(
-                            message,
-                            (result.output if result else "") or "",
-                            ctx,
-                            is_enabled=server.auto_review_enabled,
-                            spawn_reviewer=_spawn_reviewer,
-                            resume_main=_resume_main,
-                            render=_review_render,
-                            is_interrupted=stop_event.is_set,
-                        )
                 except Exception as exc:  # noqa: BLE001 — worker boundary
                     # Push the error into the renderer so the frontend
                     # sees it rather than dying silently. Worker keeps

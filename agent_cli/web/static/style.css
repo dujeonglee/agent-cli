@@ -772,27 +772,6 @@ footer {
   border: 1px solid var(--hairline-strong);
 }
 .theme-item .theme-check { margin-left: auto; opacity: .9; font-size: 12px; }
-#auto-review-btn {
-  background: none;
-  border: 1px solid var(--ghost-border);
-  border-radius: 10px;
-  color: inherit;
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 8px;
-  margin-left: 6px;
-  flex-shrink: 0;
-  white-space: nowrap;
-  opacity: .7;
-  transition: opacity .15s ease, background .15s ease;
-}
-#auto-review-btn:hover { opacity: 1; }
-#auto-review-btn.active {
-  opacity: 1;
-  background: var(--ok-soft-bg);
-  border-color: var(--ok-soft-border);
-}
 
 #inspector-backdrop {
   position: fixed;
@@ -1202,7 +1181,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   header { flex-wrap: wrap; gap: 4px 6px; padding: 8px 12px; }
   #info { flex-basis: 100%; margin-right: 0; }   /* model/workspace on its own row */
   #token-usage { margin-right: auto; }            /* push the toggles to the right */
-  #auto-review-btn { font-size: 12px; padding: 2px 6px; }
   #viewers { max-width: 50vw; }
 }
 

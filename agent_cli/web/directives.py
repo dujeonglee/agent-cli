@@ -6,8 +6,6 @@ C3: web 전송 계층(server.py)에서 분리. 섹션 헤딩·3축 zone(_AXIS_*)
 
 from __future__ import annotations
 
-import json
-
 
 _PERSONA_HEADING = "## 페르소나"
 # Template BODIES per axis, matching what ``_zone_set`` expects: the persona zone
@@ -98,50 +96,6 @@ def _append_before_scope_markers(rest: str, block: str) -> str:
     return f"{rest}\n\n{block}"
 
 
-def _strip_code_fences(text: str) -> str:
-    """Drop a leading ```lang / trailing ``` fence the model may wrap the
-    directive in despite instructions, so the editor gets raw Markdown."""
-    t = text.strip()
-    if t.startswith("```"):
-        nl = t.find("\n")
-        if nl != -1:
-            t = t[nl + 1 :]
-        if t.rstrip().endswith("```"):
-            t = t.rstrip()[:-3]
-    return t.strip()
-
-
-# ── Directives 📥 learn-from-session (POST /api/directives/learn) ──
-# Distill REUSABLE lessons from the live conversation into the managed
-# ``## 학습된 지침`` section — the safe alternative to whole-cloth task
-# auto-generation (which hallucinated boilerplate). A dedicated one-off call
-# whose ONLY job is extraction is reliable, unlike the loop model which
-# empirically never self-records via the memory tool (docs/directive-learning
-# DESIGN §1.1). The system — not the model — then writes both the memory store
-# and the DIRECTIVE section (deterministic; §4).
-_LEARN_SYSTEM = (
-    "You extract REUSABLE operating lessons from a work session so the same kind "
-    "of task goes better next time. The session may be any kind of work — "
-    "coding, log/data analysis, research, ops, writing, and so on — so do not "
-    "assume a domain. Read the conversation and keep ONLY transferable guidance "
-    "— general working rules, gotchas, and decisions that would help on a "
-    "DIFFERENT instance of a similar task. EXCLUDE session-specific facts (a "
-    "particular error message, a specific file/line/record, a one-off value or "
-    "name). If an existing '## 학습된 지침' list is given, MERGE with it: "
-    "deduplicate and consolidate, regenerating the FULL set (accumulate but do "
-    "not bloat). Write lessons in the session's language (Korean if the session "
-    "is Korean). Output ONLY a JSON array — no prose, no code fences: "
-    '[{"type": "failure|discovery|decision|note", "summary": "one actionable '
-    'line", "detail": "optional context"}]. Output [] when there is nothing '
-    "durable to learn."
-)
-
-# Cap the conversation fed to distillation (keep the most recent) so a long
-# session can't blow the meta-call's context. Truncation is announced in the
-# input, never silent (the no-silent-caps rule).
-_LEARN_MAX_MESSAGES = 40
-
-
 def _section_body(md: str, heading: str) -> str:
     """Return just the body of the ``heading`` section (its lines up to the next
     top-level ``## `` or EOF), or ``""`` if absent — the inverse of
@@ -158,101 +112,6 @@ def _section_body(md: str, heading: str) -> str:
             return "\n".join(body).strip()
         i += 1
     return ""
-
-
-def _render_learning_input(messages: list, existing_learned: str) -> str:
-    """Build the distillation user prompt: the conversation (capped to the most
-    recent ``_LEARN_MAX_MESSAGES``, with any elision announced) plus any existing
-    learned section to merge against."""
-    total = len(messages)
-    recent = messages[-_LEARN_MAX_MESSAGES:]
-    parts: list[str] = []
-    if total > len(recent):
-        parts.append(
-            f"(앞부분 {total - len(recent)}개 메시지 생략, 최근 {len(recent)}개만 표시)"
-        )
-    for m in recent:
-        role = m.get("role", "?")
-        content = m.get("content", "")
-        if not isinstance(content, str):
-            content = json.dumps(content, ensure_ascii=False)
-        parts.append(f"[{role}] {content}")
-    convo = "\n".join(parts)
-    if existing_learned:
-        return (
-            f"기존 '## 학습된 지침' (중복 제거·통합 대상):\n{existing_learned}\n\n"
-            f"=== 세션 대화 ===\n{convo}"
-        )
-    return f"=== 세션 대화 ===\n{convo}"
-
-
-def _parse_lessons(raw: str) -> list[dict]:
-    """Parse the distillation output into validated ``{type, summary, detail}``
-    lessons. Tolerant: strips fences, takes the first JSON array, coerces an
-    unknown type to ``note``, drops empty-summary entries. Returns ``[]`` on
-    unrecoverable output so a bad meta-call degrades to "nothing learned" rather
-    than 500ing (distillation quality is tuned on real 27B in a later phase)."""
-    from agent_cli import memory as _mem
-
-    text = _strip_code_fences(raw or "")
-    start, end = text.find("["), text.rfind("]")
-    if start == -1 or end <= start:
-        return []
-    try:
-        data = json.loads(text[start : end + 1])
-    except (ValueError, TypeError):
-        return []
-    if not isinstance(data, list):
-        return []
-    out: list[dict] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        typ = str(item.get("type", "note")).strip().lower()
-        if typ not in _mem.VALID_TYPES:
-            typ = "note"
-        summary = str(item.get("summary", "")).strip()
-        if not summary:
-            continue
-        out.append(
-            {
-                "type": typ,
-                "summary": summary,
-                "detail": str(item.get("detail", "")).strip(),
-            }
-        )
-    return out
-
-
-def _render_learned_block(lessons: list[dict]) -> str:
-    """Render the ``## 학습된 지침`` body — one concise bullet per lesson summary
-    (full detail lives in the memory store, per DESIGN §8.2)."""
-    return "\n".join(f"- {les['summary']}" for les in lessons)
-
-
-def _record_lessons(session_dir, lessons: list[dict]) -> int:
-    """Persist lessons to the session memory store (deterministic — the system
-    writes, not the model). Skips a lesson already stored (same type+summary) so
-    repeated 📥 presses don't spam the store. Returns the count newly recorded."""
-    from agent_cli import memory as _mem
-
-    if not session_dir:
-        return 0
-    seen = {(e["type"], e["summary"]) for e in _mem.load(session_dir)}
-    n = 0
-    for les in lessons:
-        key = (les["type"], les["summary"])
-        if key in seen:
-            continue
-        _mem.add(
-            session_dir,
-            type=les["type"],
-            summary=les["summary"],
-            detail=les["detail"] or None,
-        )
-        seen.add(key)
-        n += 1
-    return n
 
 
 # ── Directive axis zones ──────────────────────────────────────────────

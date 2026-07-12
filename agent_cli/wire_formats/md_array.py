@@ -26,7 +26,7 @@ The shape (DESIGN §3; multi-op validated by single-turn bakeoffs):
   thought-only / actionless turn is now a NO_ACTION nudge (call ``complete`` or
   emit ops), never a silent completion. (The old loop-side review gate and the
   model-invoked ``ready_for_review`` tool were both later removed — review is
-  now an optional auto-review pass after ``complete``, not a model tool.)
+  not a model tool.)
 """
 
 from __future__ import annotations
