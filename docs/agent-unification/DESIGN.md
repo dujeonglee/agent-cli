@@ -259,3 +259,21 @@ role_prompt = profile 파일 본문                (profile 지정 시)
     무관 프록시·status.json/web.json/history.jsonl 계약 전부 불변.
   - 회귀 게이트: 전체 3043 passed, ruff clean. README·ARCHITECTURE
     전면 동기. (잔여: 실기동 e2e — run fan-out·spawn·instant·fork·@구문.)
+- 2026-07-12: **U-C 완료 (5.1.0)** — DIRECTIVE 스코프:
+  - `split_directive_scopes` (system_prompt.py): `## @main`/`## @agents`
+    라인 마커 분할 — 블록=다음 `## @` 마커/EOF(일반 `##` 헤딩 무중단,
+    스코프 안 다중 섹션 허용), 마커 라인 렌더 제거, **무마커=본문
+    그대로 common(5.0 바이트 동일 — KV 보존)**, 반복 마커는 누적.
+  - `_load_directives(audience)` + 조립 게이트 `depth==0→main /
+    else→agents` (run·spawn·skill 전 서브루프 = agents; 사용자 부재로
+    추천안 채택 — 판정 단순성).
+  - 3축 에디터 상호작용: learned append 를 첫 스코프 마커 앞(common)에
+    삽입(`_append_before_scope_markers`) — 세션 교훈 상시 공통(추천안);
+    페르소나 prepend=자연 common; task 프리셋은 스코프 블록 포함 교체.
+  - 내장 프로파일 협업 패치 동승: Linux 커널 4종
+    `kernel-coder`(구현 — checkpatch/goto-cleanup/락 컨텍스트/BUG_ON 금지,
+    Files touched 계약) / `kernel-kunit`(kunit_test_suite·ops-table
+    페이크·.kunitconfig·kunit.py 실행 검증) / `kernel-analyzer`(읽기 전용
+    — 콜패스·컨텍스트·수명, file:line) / `kernel-reviewer`(읽기 전용 —
+    race/atomic-sleep/누수/UAF, 심각도+시나리오+ACCEPT/REJECT). 기존
+    범용 4종 유지(추천안).

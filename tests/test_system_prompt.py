@@ -1262,3 +1262,95 @@ def _sections():
     return build_system_prompt_sections(
         capabilities=_make_caps(), active_tools=["shell"]
     )
+
+
+class TestDirectiveScoping:
+    """U-C (5.1.0, 설계 §3.7): ``## @main`` / ``## @agents`` 마커로
+    DIRECTIVE 본문을 스코프 분할 — 무마커 = common = 5.0 과 동치."""
+
+    def _write(self, tmp_path, monkeypatch, body: str):
+        d = tmp_path / ".agent-cli"
+        d.mkdir(exist_ok=True)
+        (d / "DIRECTIVE.md").write_text(body, encoding="utf-8")
+        monkeypatch.setattr("agent_cli.prompts.system_prompt._DIRECTIVE_PATHS", [d])
+
+    def _prompt(self, depth: int) -> str:
+        return build_system_prompt(_make_caps(), ["shell"], depth=depth)
+
+    # ── split_directive_scopes 단위 ──
+
+    def test_split_no_markers_all_common(self):
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+
+        body = "공통 규칙.\n\n## 일반 헤딩\n- 항목"
+        scopes = split_directive_scopes(body)
+        assert scopes["common"] == body
+        assert scopes["main"] == "" and scopes["agents"] == ""
+
+    def test_split_partitions_and_strips_markers(self):
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+
+        body = "공통 A\n\n## @main\nmain 전용 B\n\n## @agents\n서브 전용 C"
+        scopes = split_directive_scopes(body)
+        assert scopes["common"] == "공통 A"
+        assert scopes["main"] == "main 전용 B"
+        assert scopes["agents"] == "서브 전용 C"
+        assert "## @" not in scopes["main"]
+
+    def test_split_regular_headings_stay_in_scope(self):
+        # 일반 ## 헤딩은 스코프 블록을 끊지 않는다 — 블록 안에 여러 섹션.
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+
+        body = "## @main\n서두\n\n## 세부 규칙\n- 규칙1"
+        scopes = split_directive_scopes(body)
+        assert "## 세부 규칙" in scopes["main"]
+        assert "- 규칙1" in scopes["main"]
+        assert scopes["common"] == ""
+
+    def test_split_unknown_at_heading_is_content(self):
+        # @main/@agents 외의 ``## @…`` 는 마커가 아니라 내용.
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+
+        body = "## @notes\n메모"
+        scopes = split_directive_scopes(body)
+        assert "## @notes" in scopes["common"]
+
+    def test_split_repeated_markers_accumulate(self):
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+
+        body = "## @main\nA\n## @agents\nB\n## @main\nC"
+        scopes = split_directive_scopes(body)
+        assert "A" in scopes["main"] and "C" in scopes["main"]
+        assert scopes["agents"] == "B"
+
+    # ── 조립 (depth 게이트) ──
+
+    def test_unmarked_file_identical_main_and_sub(self, tmp_path, monkeypatch):
+        # 무마커 = 전부 common — main/서브 Directives 섹션 바이트 동일 (5.0 동치).
+        self._write(tmp_path, monkeypatch, "Always write tests.")
+        main_p, sub_p = self._prompt(0), self._prompt(1)
+        main_sec = main_p.split("## Directives")[1]
+        sub_sec = sub_p.split("## Directives")[1]
+        assert "Always write tests." in main_sec
+        assert main_sec.split("\n## ")[0] == sub_sec.split("\n## ")[0]
+
+    def test_main_scope_only_in_main_loop(self, tmp_path, monkeypatch):
+        self._write(
+            tmp_path,
+            monkeypatch,
+            "공통 지침.\n\n## @main\nMAIN-ONLY-RULE\n\n## @agents\nAGENT-ONLY-RULE",
+        )
+        main_p, sub_p = self._prompt(0), self._prompt(1)
+        assert "공통 지침." in main_p and "공통 지침." in sub_p
+        assert "MAIN-ONLY-RULE" in main_p
+        assert "MAIN-ONLY-RULE" not in sub_p
+        assert "AGENT-ONLY-RULE" in sub_p
+        assert "AGENT-ONLY-RULE" not in main_p
+        # 마커 라인 자체는 렌더에서 제거
+        assert "## @main" not in main_p and "## @agents" not in sub_p
+
+    def test_scope_only_file_omits_section_for_other_scope(self, tmp_path, monkeypatch):
+        # @main 블록만 있는 파일 — 서브루프에선 빈 지침 = 섹션 자체 생략.
+        self._write(tmp_path, monkeypatch, "## @main\nMAIN-ONLY-RULE")
+        assert "MAIN-ONLY-RULE" in self._prompt(0)
+        assert "## Directives" not in self._prompt(1)

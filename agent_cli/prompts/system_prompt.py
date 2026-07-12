@@ -19,6 +19,7 @@ from __future__ import annotations
 from agent_cli.fsio import atomic_write_text
 
 import platform
+import re
 from pathlib import Path
 
 from agent_cli.providers.capabilities import ModelCapabilities
@@ -651,8 +652,43 @@ def _build_environment_section() -> str:
     return "\n".join(lines)
 
 
-def _load_directives() -> str:
+# U-C (5.1.0, docs/agent-unification/DESIGN.md §3.7): DIRECTIVE 스코프 마커.
+# 라인 전체가 ``## @main`` / ``## @agents`` 일 때만 마커 (그 외 ``## @…`` 는
+# 일반 내용). web/directives.py 의 learned-append 위치 결정도 이 정규식 공유.
+DIRECTIVE_SCOPE_MARKER = re.compile(r"##\s+@(main|agents)")
+
+
+def split_directive_scopes(text: str) -> dict[str, str]:
+    """DIRECTIVE 본문을 스코프별로 분할 — ``{"common", "main", "agents"}``.
+
+    ``## @main`` / ``## @agents`` 라인이 스코프 블록을 열고, 블록은 다음
+    ``## @`` 마커 또는 EOF 까지 이어진다 — 일반 ``##`` 헤딩은 블록을 끊지
+    않아 스코프 안에 여러 섹션을 담을 수 있다. 첫 마커 이전 = common.
+    마커 라인 자체는 출력에서 제거된다.
+
+    **무마커 파일은 본문 그대로 common** (5.0 과 바이트 동일 — KV 프리픽스
+    보존). 같은 스코프 마커가 반복되면 블록들이 이어 붙는다.
+    """
+    if not any(
+        DIRECTIVE_SCOPE_MARKER.fullmatch(line.strip()) for line in text.splitlines()
+    ):
+        return {"common": text, "main": "", "agents": ""}
+    parts: dict[str, list[str]] = {"common": [], "main": [], "agents": []}
+    current = "common"
+    for line in text.splitlines():
+        m = DIRECTIVE_SCOPE_MARKER.fullmatch(line.strip())
+        if m:
+            current = m.group(1)
+            continue
+        parts[current].append(line)
+    return {k: "\n".join(v).strip() for k, v in parts.items()}
+
+
+def _load_directives(audience: str = "main") -> str:
     """Load DIRECTIVE.md files from project and user paths.
+
+    ``audience`` ("main" | "agents") selects which scope blocks join the
+    common body — U-C 스코프 분할 (마커 없는 파일은 종전과 동일 전문).
 
     Uses ResourceLoader._parse_file for consistent parsing.
     Both project and user directives are included (not deduplicated by name)
@@ -688,8 +724,12 @@ def _load_directives() -> str:
             continue
         seen_hashes.add(content_hash)
 
+        scopes = split_directive_scopes(resource.body)
+        body = "\n\n".join(p for p in (scopes["common"], scopes[audience]) if p)
+        if not body:
+            continue  # 이 청중에 해당하는 내용이 없는 파일 (예: @main 전용)
         scope = "project" if idx == 0 else "user"
-        loaded.append(f"### DIRECTIVE.md (scope: {scope})\n{resource.body}")
+        loaded.append(f"### DIRECTIVE.md (scope: {scope})\n{body}")
 
     if not loaded:
         return ""
@@ -789,7 +829,9 @@ def build_system_prompt_sections(
     if session_dir:
         sections.append(("Context Recovery", _build_context_recovery(session_dir)))
 
-    directives = _load_directives()
+    # U-C: main 루프(depth 0)만 @main 블록을, 모든 서브루프(run/spawn/skill)는
+    # @agents 블록을 받는다. 무마커 지침은 양쪽 공통 (5.0 동치).
+    directives = _load_directives("main" if depth == 0 else "agents")
     if directives:
         sections.append(("Directives", directives))
 

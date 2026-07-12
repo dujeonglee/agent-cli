@@ -163,6 +163,22 @@ agent-cli run "task" -m gpt-4o-mini
 - Python 3.10+ 호환을 유지한다
 ```
 
+**스코프 마커 (5.1.0)** — 지침을 main LLM 과 서브에이전트에 나눠 보낼 수 있습니다:
+
+```markdown
+공통 규칙 (마커 이전 = main + 모든 서브에이전트)
+
+## @main
+- 사용자 보고는 한국어로, 결론 먼저
+
+## @agents
+- 결과는 영어 bullet 로 간결하게 반환
+```
+
+- `## @main` 블록은 **main LLM 에만**, `## @agents` 블록은 **모든 서브루프**(agent run/spawn·skill)에만 주입됩니다. 마커 라인 자체는 프롬프트에서 제거됩니다.
+- 블록은 다음 `## @` 마커(또는 파일 끝)까지 — 블록 안에 일반 `## 헤딩` 여러 개를 담을 수 있습니다. 마커 없는 파일은 종전과 완전히 동일하게 전체가 공통입니다.
+- 웹 에디터의 📥 학습(`## 학습된 지침`)은 항상 공통 영역(첫 마커 앞)에 기록됩니다.
+
 ### 환경변수
 
 | 변수 | config.json 키 | 설명 |
@@ -999,7 +1015,9 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — 서브에이전트 시스템 프롬프트의 Role 섹션을 통째로 교체). 검색 경로: 프로젝트(`.agent-cli/agents/`) → 유저 전역(`~/.agent-cli/agents/`) → 패키지 내장(`agent_cli/agents/builtin/`).
 
 - **프로파일 발견**: 사용 가능한 프로파일 목록(이름+description)이 시스템 프롬프트 `## Agent Profiles` 섹션에 광고되어 **모델이 스스로 적합한 전문가를 골라** run/spawn 합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
-- **내장 프로파일**: `explorer`(읽기 전용 코드베이스 탐색) / `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
+- **내장 프로파일**:
+  - 범용 — `explorer`(읽기 전용 코드베이스 탐색) / `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
+  - Linux 커널 (5.1.0) — `kernel-coder`(드라이버 구현: 커널 스타일·goto-cleanup 에러 경로·락 컨텍스트 규율·checkpatch/빌드 자가 검증) / `kernel-kunit`(KUnit 테스트: `kunit_test_suite` 설계·ops-table 페이크·`.kunitconfig`+`kunit.py run` 실행 검증) / `kernel-analyzer`(읽기 전용 분석: 콜패스·실행 컨텍스트(process/softirq/hardirq)·락·수명 추적, file:line 인용) / `kernel-reviewer`(읽기 전용 리뷰: race·atomic-sleep·에러경로 누수·UAF·API 오용, 심각도+실패 시나리오+ACCEPT/REJECT 판정).
 - **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}` (run 도 동일 지원). `profile` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시). 상주 에이전트의 인라인 지시는 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속).
 - **`/create-agent` 스킬**: 새 프로파일 md 를 대화형으로 생성 (run/spawn 겸용).
 

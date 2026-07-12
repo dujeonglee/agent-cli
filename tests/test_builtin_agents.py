@@ -194,3 +194,64 @@ class TestBuiltinAgentPriority:
         role, config, error = load_profile("explorer")
         assert error is None
         assert "write_file" not in config.get("allowed-tools", [])
+
+
+class TestKernelProfiles:
+    """내장 커널 4종 (5.1.0 협업 패치) — 로딩·도구 경계·정체성 핵심 계약."""
+
+    ALL = ("kernel-coder", "kernel-kunit", "kernel-analyzer", "kernel-reviewer")
+    READ_ONLY = ("kernel-analyzer", "kernel-reviewer")
+    WRITING = ("kernel-coder", "kernel-kunit")
+
+    def test_all_load_with_description(self):
+        for name in self.ALL:
+            role, config, error = load_profile(name)
+            assert error is None, f"{name}: {error}"
+            assert role and len(role) > 200, name
+            assert config.get("description"), name
+
+    def test_read_only_profiles_cannot_write(self):
+        for name in self.READ_ONLY:
+            _, config, _ = load_profile(name)
+            tools = config["allowed-tools"]
+            assert "write_file" not in tools, name
+            assert "edit_file" not in tools, name
+            assert "read_file" in tools and "code_index" in tools, name
+
+    def test_writing_profiles_have_edit_tools(self):
+        for name in self.WRITING:
+            _, config, _ = load_profile(name)
+            tools = config["allowed-tools"]
+            assert "write_file" in tools and "edit_file" in tools, name
+            assert "shell" in tools, name  # build/checkpatch/kunit.py 실행
+
+    def test_coder_contract(self):
+        role, _, _ = load_profile("kernel-coder")
+        flat = role.lower()
+        assert "checkpatch" in flat  # 자가 검증
+        assert "goto" in flat  # 에러 경로 규율
+        assert "files touched:" in flat  # 병렬 협업 보고 계약
+        assert "bug_on" in flat  # 드라이버 금지 규칙
+
+    def test_kunit_contract(self):
+        role, _, _ = load_profile("kernel-kunit")
+        flat = role.lower()
+        assert "kunit_test_suite" in flat
+        assert "kunit.py" in flat  # 실행 검증 경로
+        assert "kunit_expect" in flat or "kunit_assert" in flat
+        assert ".kunitconfig" in flat
+
+    def test_analyzer_contract(self):
+        role, _, _ = load_profile("kernel-analyzer")
+        flat = role.lower()
+        assert "file:line" in flat  # 인용 규율
+        assert "softirq" in flat or "hardirq" in flat  # 컨텍스트 주석
+        assert "cannot modify" in flat  # 읽기 전용 정체성
+
+    def test_reviewer_contract(self):
+        role, _, _ = load_profile("kernel-reviewer")
+        flat = role.lower()
+        assert "severity" in flat and "file:line" in flat
+        assert "accept" in flat and "reject" in flat  # 명시 판정
+        assert "checkpatch" in flat
+        assert "scenario" in flat  # 실패 시나리오 요구

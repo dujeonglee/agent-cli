@@ -73,7 +73,29 @@ def _replace_managed_section(
     block = f"{heading}\n{body}"
     if not rest:
         return block
-    return f"{block}\n\n{rest}" if prepend else f"{rest}\n\n{block}"
+    if prepend:
+        return f"{block}\n\n{rest}"
+    return _append_before_scope_markers(rest, block)
+
+
+def _append_before_scope_markers(rest: str, block: str) -> str:
+    """Append ``block`` at the end of the COMMON zone — before the first
+    ``## @main``/``## @agents`` scope marker if one exists, else at EOF.
+
+    U-C(5.1.0) 상호작용: learned 지침을 파일 끝에 그대로 붙이면 마지막
+    스코프 블록 안으로 빨려 들어가 서브(or main) 전용이 돼 버린다 — 세션
+    교훈은 항상 common 이어야 하므로 마커 앞에 삽입한다."""
+    from agent_cli.prompts.system_prompt import DIRECTIVE_SCOPE_MARKER
+
+    lines = rest.splitlines()
+    for i, ln in enumerate(lines):
+        if DIRECTIVE_SCOPE_MARKER.fullmatch(ln.strip()):
+            head = "\n".join(lines[:i]).rstrip()
+            tail = "\n".join(lines[i:])
+            if head:
+                return f"{head}\n\n{block}\n\n{tail}"
+            return f"{block}\n\n{tail}"
+    return f"{rest}\n\n{block}"
 
 
 def _strip_code_fences(text: str) -> str:

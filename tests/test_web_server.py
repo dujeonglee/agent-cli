@@ -2305,6 +2305,53 @@ class _FakeCtx:
         return list(self._messages)
 
 
+class TestZoneScopeMarkerInteraction:
+    """U-C 3축 에디터 상호작용: 스코프 블록(``## @main``/``## @agents``)이 있는
+    지침에서 관리 섹션 조작이 스코프를 오염시키지 않는다 — 특히 learned
+    append 는 파일 끝(마지막 스코프 안)이 아니라 **첫 마커 앞(common)** 에."""
+
+    SCOPED = "공통 규칙\n\n## @main\n- main 전용\n\n## @agents\n- 서브 전용"
+
+    def test_learned_append_lands_in_common(self):
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+        from agent_cli.web.directives import _zone_set
+
+        out = _zone_set(self.SCOPED, "learned", "- 새 교훈")
+        scopes = split_directive_scopes(out)
+        assert "## 학습된 지침" in scopes["common"]
+        assert "- 새 교훈" in scopes["common"]
+        # 스코프 블록은 바이트 그대로
+        assert scopes["main"] == "- main 전용"
+        assert scopes["agents"] == "- 서브 전용"
+
+    def test_learned_replace_in_scoped_file(self):
+        # 이미 common 에 있는 learned 갱신 — 위치 유지·스코프 불변.
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+        from agent_cli.web.directives import _zone_set
+
+        base = _zone_set(self.SCOPED, "learned", "- 교훈1")
+        out = _zone_set(base, "learned", "- 교훈2")
+        scopes = split_directive_scopes(out)
+        assert "- 교훈2" in scopes["common"] and "교훈1" not in out
+        assert scopes["main"] == "- main 전용"
+
+    def test_persona_prepend_stays_common(self):
+        from agent_cli.prompts.system_prompt import split_directive_scopes
+        from agent_cli.web.directives import _zone_set
+
+        out = _zone_set(self.SCOPED, "persona", "- 침착")
+        scopes = split_directive_scopes(out)
+        assert "## 페르소나" in scopes["common"]
+        assert scopes["agents"] == "- 서브 전용"
+
+    def test_no_markers_learned_appends_at_end(self):
+        # 무마커 파일은 종전 동작 그대로 (끝에 append).
+        from agent_cli.web.directives import _zone_set
+
+        out = _zone_set("수기 지시", "learned", "- 교훈")
+        assert out == "수기 지시\n\n## 학습된 지침\n- 교훈"
+
+
 class TestDirectivesLearnEndpoint:
     """POST /api/directives/learn — distill lessons from the live session into
     the ``## 학습된 지침`` section (unsaved) + record them to memory."""
