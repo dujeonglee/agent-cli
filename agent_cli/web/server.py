@@ -574,12 +574,12 @@ def create_app(server: WebServer) -> FastAPI:
     @app.post("/api/directives/generate")
     async def directives_generate(body: dict, token: str = Query(...)):
         """✨ 생성 — 대략적 의도(brief)를 해당 청중(audience)용 directive
-        초안으로. 서브에이전트 루프 경유(CoT-leak 안전 — 구 🪄 의 산문
-        메타-콜 경로가 아님), 결과는 **미저장** 반환(에디터가 활성 탭에
+        초안으로. 별도 agent-cli run 프로세스(@directive-writer — 완전 격리,
+        동시 생성 가능), 결과는 **미저장** 반환(에디터가 활성 탭에
         반영, 사용자 검토 후 저장). Body: ``{audience, brief, current?}``.
         LLM 미배선 503. 수십 초 블로킹 — executor 오프로드."""
         server._require_token(token)
-        if not server.runtime or server.runtime.get("provider") is None:
+        if not server.runtime or not server.runtime.get("model"):
             raise HTTPException(status_code=503, detail="LLM not available")
 
         def _run() -> str:

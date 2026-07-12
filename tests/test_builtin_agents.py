@@ -255,3 +255,21 @@ class TestKernelProfiles:
         assert "accept" in flat and "reject" in flat  # 명시 판정
         assert "checkpatch" in flat
         assert "scenario" in flat  # 실패 시나리오 요구
+
+
+class TestDirectiveWriterProfile:
+    """✨ 생성이 디스패치하는 내장 프로파일 (5.6.0) — 도구 0·작성 규율 계약."""
+
+    def test_loads_with_minimal_tools(self):
+        role, config, error = load_profile("directive-writer")
+        assert error is None
+        tools = config["allowed-tools"]
+        assert "write_file" not in tools and "shell" not in tools
+        assert config.get("disable-model-invocation") is True  # 모델 자발 호출 숨김
+
+    def test_contract(self):
+        role, _, _ = load_profile("directive-writer")
+        flat = role.lower()
+        assert "no preamble" in flat and "code fences" in flat
+        assert "## @main" in role  # 스코프 마커 금지 규칙 명시
+        assert "complete" in flat  # 종료 계약

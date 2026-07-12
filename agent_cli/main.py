@@ -529,7 +529,7 @@ def try_dispatch_agent_or_skill(
             live = agent_registry.format_status() if agent_registry is not None else ""
             output.list_agents(_collect_agents(), live)
             return True
-        result = _dispatch_agent(
+        result, _ok = _dispatch_agent(
             message,
             llm_provider,
             capabilities,
@@ -611,7 +611,12 @@ def _dispatch_agent(
     graceful_interrupt: bool = False,
     stop_event=None,
 ):
-    """Dispatch @agent-name query. Returns _AGENT_NOT_FOUND if agent not found."""
+    """Dispatch @agent-name query → ``(answer, success)``.
+
+    미발견 프로파일은 ``(_AGENT_NOT_FOUND, False)`` — 호출자가 sentinel 로
+    분기. success 는 run 엔진의 실제 성공 여부 (``--result-file`` 이 실패
+    텍스트를 성공 답변처럼 기록하지 않기 위한 신호, 5.6.0).
+    """
     from agent_cli.subagent.oneshot import tool_delegate
 
     parts = query.split(maxsplit=1)
@@ -620,7 +625,7 @@ def _dispatch_agent(
     task = parts[1] if len(parts) > 1 else ""
 
     if not task:
-        return _AGENT_NOT_FOUND  # No task = not a valid agent call
+        return _AGENT_NOT_FOUND, False  # No task = not a valid agent call
 
     # Record agent invocation in context
     if ctx:
@@ -650,7 +655,7 @@ def _dispatch_agent(
     )
 
     if not result.success and "not found" in (result.error or ""):
-        return _AGENT_NOT_FOUND
+        return _AGENT_NOT_FOUND, False
 
     answer = result.output if result.success else result.error
 
@@ -666,7 +671,7 @@ def _dispatch_agent(
             }
         )
 
-    return answer
+    return answer, result.success
 
 
 def _dispatch_skill(
@@ -1056,6 +1061,13 @@ def run(
         help="이전 세션 ID 를 이어서 실행 — web 과 동일한 on-disk 세션을 로드해 "
         "복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 주입 (v4.46.0).",
     ),
+    result_file: str = typer.Option(
+        "",
+        "--result-file",
+        help="최종 답변(원문)을 이 경로에 기록 — 렌더러 장식 없는 기계 소비용 "
+        "(스크립팅·web ✨ directive 생성 서브프로세스가 소비). 실패/무답 시 "
+        "파일을 만들지 않고 exit code 로 판별.",
+    ),
 ):
     """Execute a task in single-shot mode. The agent uses tools (read_file, shell, etc.) to complete the task and returns the result."""
     _apply_style(style)
@@ -1197,7 +1209,7 @@ def run(
 
     # Agent dispatch: @agent-name task
     if query.startswith("@"):
-        answer = _dispatch_agent(
+        answer, dispatch_ok = _dispatch_agent(
             query,
             llm_provider,
             capabilities,
@@ -1215,6 +1227,8 @@ def run(
         if answer is not _AGENT_NOT_FOUND:
             if answer is not None:
                 console.print(f"\n[{C['final']}]{answer}[/]")
+            # 실패 텍스트를 성공 산출물처럼 기록하지 않는다 (✨ 생성 소비 계약)
+            _write_result_file(result_file, answer if dispatch_ok else None)
             agent_registry.shutdown_all()
             _finalize_run(session, ctx)
             return
@@ -1264,6 +1278,7 @@ def run(
             )
         agent_registry.shutdown_all()
 
+    _write_result_file(result_file, answer)
     _finalize_run(session, ctx, mcp_manager)
 
 
@@ -1326,6 +1341,16 @@ def _agent_mail_notice(reply: dict) -> None:
         get_renderer().status("running", line)
     except Exception:
         pass  # 알림은 best-effort
+
+
+def _write_result_file(path: str, answer) -> None:
+    """``--result-file`` — 성공 답변만 원문 기록 (실패/무답=파일 미생성)."""
+    if not path or answer is None:
+        return
+    try:
+        Path(path).write_text(str(answer), encoding="utf-8")
+    except OSError as e:
+        console.print(f"[{C['error']}]--result-file 기록 실패: {e}[/]")
 
 
 def _finalize_run(session, ctx, mcp_manager=None) -> None:
@@ -1754,16 +1779,13 @@ def web(
         ctx=ctx,
         trust_local=trust_local,
         base_path=base_path,
-        # ✨ directive 생성(run 엔진 경유)의 LLM 배선.
+        # ✨ directive 생성의 LLM 배선 — 별도 agent-cli run 서브프로세스가
+        # 소비하므로 문자열만 (provider 객체/세션 비공유 = 완전 격리).
         runtime={
-            "provider": llm_provider,
             "model": resolved_model,
-            "capabilities": capabilities,
             "provider_name": provider,
             "base_url": resolved_url,
             "api_key": resolved_key,
-            "session": session,
-            "ctx": ctx,
             "timeout": agent_timeout,
         },
     )

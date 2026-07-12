@@ -1,4 +1,4 @@
-"""Directive 스코프 에디터 도메인 로직 — ✨ 생성 (5.4.0 전면 개편).
+"""Directive 스코프 에디터 도메인 로직 — ✨ 생성 (5.4.0 개편, 5.6.0 프로세스 분리).
 
 구 3축(성격/업무/지침) zone 외과수술·프리셋 라이브러리는 폐지됐다 —
 에디터의 구조 = 파일의 구조(U-C 청중 스코프: 공통/``## @main``/``## @agents``)
@@ -6,16 +6,26 @@
 ``split_directive_scopes``/``join_directive_scopes`` 가 단일 출처다.
 
 이 모듈이 소유하는 것은 ✨ 생성 하나: 사용자의 대략적 의도(brief)를
-받아 **서브에이전트 루프로** directive 초안을 쓴다. 구 🪄 자동생성이
-죽었던 원인(독립 산문 메타-콜의 CoT 누출 — omlx/Qwen 실측, JSON wire
-경로는 안전)을 우회하는 형태: ``provider.call`` 직행 대신 run 엔진
-(``tool_delegate``, 도구 0 = complete 만)으로 돌려 wire format 이 CoT 를
-격리하고, complete 결과가 곧 초안이 된다. 진행은 일반 run 카드로 표면화.
+**별도 ``agent-cli run`` 서브프로세스**(5.6.0 — 사용자 결정 "완전 분리")
+로 directive 초안으로 만든다:
+
+- ``@directive-writer``(내장 프로파일 — 도구 0, 작성 규율) 디스패치 +
+  ``--result-file`` 로 원문 수확. 렌더러/세션/레지스트리가 메인 프로세스와
+  완전히 분리 — 메인 타임라인에 카드가 생기지 않고, 탭별 동시 생성 가능.
+- 자격(base_url/api_key)은 argv 가 아니라 **env 로** 전달 (ps 누출 방지).
+- 구 🪄 자동생성의 CoT-leak(산문 메타-콜)와 무관 — run 은 JSON wire
+  경로라 CoT 가 격리된다.
 
 FastAPI import 0 (전송은 server.py) — 테스트 가드 유지.
 """
 
 from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 VALID_AUDIENCES = ("common", "main", "agents")
 
@@ -39,30 +49,9 @@ _AUDIENCE_FRAMING = {
     ),
 }
 
-_WRITER_INSTRUCTIONS = """You are a directive writer for agent-cli. A DIRECTIVE.md is a set of
-persistent operating rules injected into the system prompt every turn —
-it is read by an LLM, so every line must be an actionable instruction.
-
-Rules for what you write:
-- Output ONLY the directive body: short markdown bullets (optionally under
-  `##` subheadings). No preamble, no explanation, no code fences.
-- NEVER emit scope markers (`## @main`, `## @agents`) — the caller places
-  your text into the right scope.
-- Imperative, specific, testable ("답변은 한국어로", not "be helpful").
-- Only rules that generalize beyond a single task; drop anything tied to
-  one file/error/date.
-- Keep it tight: prefer 3-8 bullets over prose. Merge overlapping rules.
-- Write in the language the user's brief is written in.
-
-When the task includes EXISTING directive content, produce the UPDATED
-full body: keep rules that still apply, merge duplicates, integrate the
-new intent — the result REPLACES the existing text.
-
-Finish with a `complete` op whose result is exactly the directive body."""
-
 
 def build_generation_task(audience: str, brief: str, current: str) -> str:
-    """✨ 생성 서브에이전트에 넘길 task 텍스트."""
+    """✨ 생성 서브프로세스(@directive-writer)에 넘길 task 텍스트."""
     parts = [
         _AUDIENCE_FRAMING[audience],
         f"USER INTENT (rough — turn this into directive rules):\n{brief.strip()}",
@@ -81,46 +70,69 @@ def generate_directive_section(
 ) -> str:
     """brief → directive 초안 (활성 스코프용, 미저장 반환).
 
-    run 엔진 1회: 도구 0(complete 만)·context none·짧은 턴 제한.
-    ``runtime`` 은 web 부트스트랩이 채운 LLM 배선
-    (provider/model/capabilities/provider_name/base_url/api_key/session).
-    실패는 ValueError 로 — 전송 계층이 상태코드로 변환.
+    별도 ``agent-cli run`` 프로세스 1회 — 완전 격리(메인 워커/렌더러/
+    세션 무접촉), POST 마다 자기 프로세스라 동시 생성이 자연 지원.
+    ``runtime`` 은 문자열 배선만: model/provider_name/base_url/api_key/
+    timeout. 입력 오류=ValueError(→400) / 실행 실패=RuntimeError(→502).
     """
-    from agent_cli.subagent.oneshot import tool_delegate
-    from agent_cli.subagent.report import extract_result_body
-
     if audience not in VALID_AUDIENCES:
         raise ValueError(f"unknown audience: {audience}")
     if not brief.strip():
         raise ValueError("brief 가 비어 있습니다")
-    if not runtime or runtime.get("provider") is None:
+    if not runtime or not runtime.get("model"):
         raise ValueError("LLM 이 배선되지 않았습니다")
 
-    result = tool_delegate(
-        {
-            "tasks": [
-                {
-                    "task": build_generation_task(audience, brief, current),
-                    "context": "none",
-                    "tools": [],
-                    "instructions": _WRITER_INSTRUCTIONS,
-                }
-            ]
-        },
-        parent_ctx=runtime.get("ctx"),
-        provider=runtime["provider"],
-        model=runtime.get("model", ""),
-        capabilities=runtime.get("capabilities"),
-        provider_name=runtime.get("provider_name", ""),
-        base_url=runtime.get("base_url", ""),
-        api_key=runtime.get("api_key", ""),
-        max_turns=4,
-        timeout=runtime.get("timeout", 120),
-        session=runtime.get("session"),
-    )
-    if not result.success:
-        raise ValueError(f"생성 실패: {result.error or '(no detail)'}")
-    body = extract_result_body(result.output or "")
+    task = build_generation_task(audience, brief, current)
+    timeout = int(runtime.get("timeout", 120))
+
+    # 자격은 env 로 (argv 는 ps 에 노출). 서브프로세스는 부모와 같은
+    # 인터프리터의 agent_cli 를 실행 — PATH 의 다른 설치본에 안 흔들린다.
+    env = dict(os.environ)
+    for env_key, rt_key in (
+        ("AGENT_CLI_PROVIDER", "provider_name"),
+        ("AGENT_CLI_BASE_URL", "base_url"),
+        ("AGENT_CLI_API_KEY", "api_key"),
+    ):
+        val = runtime.get(rt_key)
+        if val:
+            env[env_key] = str(val)
+
+    with tempfile.TemporaryDirectory(prefix="agentcli-dirgen-") as workdir:
+        result_path = Path(workdir) / "result.md"
+        cmd = [
+            sys.executable,
+            "-m",
+            "agent_cli",
+            "run",
+            f"@directive-writer {task}",
+            "--model",
+            str(runtime["model"]),
+            "--max-turns",
+            "4",
+            "--result-file",
+            str(result_path),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=workdir,  # 세션/스크래치가 임시 디렉토리에 격리
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"생성 시간 초과 ({timeout}s)") from e
+        if not result_path.is_file():
+            tail = (proc.stderr or proc.stdout or "").strip()[-400:]
+            raise RuntimeError(
+                f"생성 실패 (exit {proc.returncode}): {tail or '(no output)'}"
+            )
+        # @ 경로의 result-file 은 run 관찰 포맷(STATUS/RESULT/[activity])
+        # 그대로다 — 포맷터의 역(extract_result_body)으로 원문만 수확.
+        from agent_cli.subagent.report import extract_result_body
+
+        body = extract_result_body(result_path.read_text(encoding="utf-8")).strip()
     if not body:
-        raise ValueError("생성 결과가 비어 있습니다")
+        raise RuntimeError("생성 결과가 비어 있습니다")
     return body

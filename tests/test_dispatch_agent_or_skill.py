@@ -123,7 +123,7 @@ class TestDispatcherBranches:
         def fake_dispatch_agent(query, *args, **kwargs):
             captured["query"] = query
             captured["args_count"] = len(args)
-            return "agent answer"
+            return "agent answer", True
 
         monkeypatch.setattr("agent_cli.main._dispatch_agent", fake_dispatch_agent)
 
@@ -143,7 +143,7 @@ class TestDispatcherBranches:
         through to the LLM (returns True)."""
         monkeypatch.setattr(
             "agent_cli.main._dispatch_agent",
-            lambda *_a, **_kw: _AGENT_NOT_FOUND,
+            lambda *_a, **_kw: (_AGENT_NOT_FOUND, False),
         )
         out = _RecordingOutput()
         handled = try_dispatch_agent_or_skill(
@@ -268,7 +268,7 @@ class TestSessionPersistence:
         )
         monkeypatch.setattr(
             "agent_cli.main._dispatch_agent",
-            lambda *a, **k: _AGENT_NOT_FOUND,
+            lambda *a, **k: (_AGENT_NOT_FOUND, False),
         )
         try_dispatch_agent_or_skill("@ghost task", _RecordingOutput(), **base_state)
         assert save_calls == []

@@ -327,7 +327,7 @@ class TestDispatchAgent:
         )
         provider = MagicMock()
 
-        result = _dispatch_agent(
+        result, _ok = _dispatch_agent(
             "@nonexistent_agent_xyz do something",
             provider,
             caps,
@@ -342,7 +342,7 @@ class TestDispatchAgent:
         from unittest.mock import MagicMock
         from agent_cli.main import _dispatch_agent, _AGENT_NOT_FOUND
 
-        result = _dispatch_agent(
+        result, _ok = _dispatch_agent(
             "@",
             MagicMock(),
             None,

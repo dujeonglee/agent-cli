@@ -1703,6 +1703,7 @@
     dirAudience = aud;
     $dirText.value = dirBuffers[aud];
     dirUpdateTabs();
+    dirGenLabel();
   }
   if ($dirTabs)
     $dirTabs.addEventListener("click", function (e) {
@@ -1758,8 +1759,19 @@
   if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
   if ($dirCancel) $dirCancel.addEventListener("click", cancelDirectives);
 
-  // ✨ 생성 — brief → 활성 탭의 directive 초안 (기존 내용은 병합/개정 대상).
-  // run 엔진 1회라 수십 초 걸릴 수 있음: 버튼을 진행 상태로 잠근다.
+  // ✨ 생성 — brief → 요청 시점 탭의 directive 초안 (기존 내용은 병합/개정).
+  // 별도 agent-cli run 프로세스라 **탭별 동시 생성** 가능 (5.6.0): 결과는
+  // 요청한 탭의 버퍼로 들어가고, 생성 중 다른 탭에서 또 ✨ 를 눌러도 된다.
+  // 같은 탭의 이중 생성만 막는다 (버퍼 레이스).
+  const dirGenPending = { common: false, main: false, agents: false };
+
+  function dirGenLabel() {
+    if (!$dirGen) return;
+    const busy = Object.keys(dirGenPending).filter(function (k) { return dirGenPending[k]; });
+    $dirGen.disabled = dirGenPending[dirAudience];
+    $dirGen.textContent = busy.length ? "✨ 생성 (" + busy.length + " 진행 중…)" : "✨ 생성";
+  }
+
   function generateDirective() {
     const brief = ($dirBrief.value || "").trim();
     if (!brief) {
@@ -1767,17 +1779,19 @@
       return;
     }
     dirSyncActive();
-    $dirGen.disabled = true;
-    const label = $dirGen.textContent;
-    $dirGen.textContent = "생성 중…";
-    $dirStatus.textContent = "✨ 초안 생성 중 — 수십 초 걸릴 수 있습니다";
+    const aud = dirAudience; // 요청 시점 탭 고정 — 완료 시 이 버퍼에만 반영
+    if (dirGenPending[aud]) return;
+    dirGenPending[aud] = true;
+    $dirBrief.value = "";
+    dirGenLabel();
+    $dirStatus.textContent = "✨ [" + aud + "] 초안 생성 중 — 수십 초 걸릴 수 있습니다";
     fetch("api/directives/generate?" + qtoken(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        audience: dirAudience,
+        audience: aud,
         brief: brief,
-        current: $dirText.value,
+        current: dirBuffers[aud],
       }),
     })
       .then(function (r) {
@@ -1785,16 +1799,18 @@
         return r.json();
       })
       .then(function (d) {
-        $dirText.value = (d && d.content) || $dirText.value;
-        dirDirty = true; // unsaved — review, then 저장 or 취소
-        $dirBrief.value = "";
-        $dirStatus.textContent = "✨ 초안 반영 — 검토 후 저장";
-        dirUpdateTabs();
+        if (d && d.content) {
+          dirBuffers[aud] = d.content;
+          if (dirAudience === aud) $dirText.value = d.content; // 보고 있는 탭이면 즉시
+          dirDirty = true; // unsaved — review, then 저장 or 취소
+          $dirStatus.textContent = "✨ [" + aud + "] 초안 반영 — 검토 후 저장";
+          dirUpdateTabs();
+        }
       })
-      .catch(function (e) { $dirStatus.textContent = "✗ 생성 실패: " + e.message; })
+      .catch(function (e) { $dirStatus.textContent = "✗ [" + aud + "] 생성 실패: " + e.message; })
       .finally(function () {
-        $dirGen.disabled = false;
-        $dirGen.textContent = label;
+        dirGenPending[aud] = false;
+        dirGenLabel();
       });
   }
   if ($dirGen) $dirGen.addEventListener("click", generateDirective);

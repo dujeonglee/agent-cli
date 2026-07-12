@@ -2060,7 +2060,10 @@ class TestDirectivesScopeContract:
 
 
 class TestDirectivesGenerate:
-    """POST /api/directives/generate — ✨ 생성 (run 엔진 경유, 미저장 반환)."""
+    """POST /api/directives/generate — 별도 agent-cli run 프로세스로 완전
+    격리 생성 (5.6.0, 사용자 결정). subprocess 는 fake — 계약만 고정:
+    @directive-writer 디스패치·--result-file 수확·자격은 env·argv 에
+    api_key 비노출·실패 시 파일 미생성 판정."""
 
     def test_503_without_runtime(self, server_and_client):
         _, _, client = server_and_client  # 기본 픽스처는 runtime 미배선
@@ -2073,11 +2076,19 @@ class TestDirectivesGenerate:
     def _client_with_runtime(self):
         renderer = WebRenderer()
         server = WebServer(
-            renderer, token="t", runtime={"provider": object(), "model": "m"}
+            renderer,
+            token="t",
+            runtime={
+                "model": "m1",
+                "provider_name": "openai",
+                "base_url": "http://x/v1",
+                "api_key": "sk-secret",
+                "timeout": 30,
+            },
         )
         return server, TestClient(create_app(server))
 
-    def test_400_on_bad_input(self, monkeypatch):
+    def test_400_on_bad_input(self):
         server, client = self._client_with_runtime()
         r = client.post(
             "/api/directives/generate?token=t",
@@ -2090,26 +2101,31 @@ class TestDirectivesGenerate:
         )
         assert r.status_code == 400
 
-    def test_success_returns_generated_body(self, monkeypatch):
-        from agent_cli.tools.result import ToolResult
+    def test_success_via_subprocess_contract(self, monkeypatch):
+        import agent_cli.web.directives as dmod
 
         seen = {}
 
-        def fake_tool_delegate(args, **kw):
-            seen["task"] = args["tasks"][0]["task"]
-            seen["instructions"] = args["tasks"][0]["instructions"]
-            seen["tools"] = args["tasks"][0]["tools"]
-            return ToolResult(
-                True,
-                output=(
-                    "STATUS: success\nRESULT:\n- 결론 먼저 보고\n\n"
-                    "[Subagent activity]\n- iter 1: complete\n\n[Duration: 2s]"
-                ),
-            )
+        def fake_run(
+            cmd, cwd=None, env=None, capture_output=None, text=None, timeout=None
+        ):
+            seen["cmd"] = cmd
+            seen["env"] = env
+            seen["cwd"] = cwd
+            # --result-file 경로에 초안을 기록 (run 의 성공 계약 재현)
+            idx = cmd.index("--result-file")
+            from pathlib import Path as _P
 
-        import agent_cli.subagent.oneshot as oneshot_mod
+            _P(cmd[idx + 1]).write_text("- 결론 먼저 보고\n", encoding="utf-8")
 
-        monkeypatch.setattr(oneshot_mod, "tool_delegate", fake_tool_delegate)
+            class R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return R()
+
+        monkeypatch.setattr(dmod.subprocess, "run", fake_run)
         server, client = self._client_with_runtime()
         r = client.post(
             "/api/directives/generate?token=t",
@@ -2117,10 +2133,37 @@ class TestDirectivesGenerate:
         )
         assert r.status_code == 200
         assert r.json()["content"] == "- 결론 먼저 보고"
-        assert "MAIN conversation LLM only" in seen["task"]
-        assert "기존" in seen["task"]  # 기존 내용 병합 지시
-        assert seen["tools"] == []  # 도구 0 (complete 만)
-        assert "directive writer" in seen["instructions"]
+        cmd = seen["cmd"]
+        query = cmd[cmd.index("run") + 1]
+        assert query.startswith("@directive-writer ")
+        assert "MAIN conversation LLM only" in query
+        assert "기존" in query  # 기존 내용 병합 지시
+        # 자격은 env 로 — argv 에 키 비노출
+        assert seen["env"]["AGENT_CLI_API_KEY"] == "sk-secret"
+        assert all("sk-secret" not in str(a) for a in cmd)
+        assert "--model" in cmd and "m1" in cmd
+        # 세션 격리 — 임시 cwd
+        assert "agentcli-dirgen-" in str(seen["cwd"])
+
+    def test_failure_without_result_file_is_502(self, monkeypatch):
+        import agent_cli.web.directives as dmod
+
+        def fake_run(cmd, **kw):
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "LLM call failed"
+
+            return R()  # result-file 미생성 = 실패
+
+        monkeypatch.setattr(dmod.subprocess, "run", fake_run)
+        server, client = self._client_with_runtime()
+        r = client.post(
+            "/api/directives/generate?token=t",
+            json={"audience": "agents", "brief": "영어로"},
+        )
+        assert r.status_code == 502
+        assert "LLM call failed" in r.json()["detail"]
 
 
 class TestButtonSystem:
