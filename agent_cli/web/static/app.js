@@ -1063,6 +1063,27 @@
     }
   });
 
+  /** Copy ``text`` to the clipboard. navigator.clipboard needs a secure
+   * context (https / localhost) — board-proxied LAN sessions are plain
+   * http, so fall back to the legacy textarea + execCommand path there. */
+  function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      document.body.removeChild(ta);
+    }
+    return Promise.resolve();
+  }
+
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
     // ``workspace`` is the agent's working directory at session
@@ -1070,14 +1091,29 @@
     // checkout you're talking to when several LAN sessions are open
     // side-by-side. Field is omitted (rather than empty-string) when
     // unavailable so we never render a dangling " · " separator.
-    let label = d.provider + " · " + d.model;
-    if (d.workspace) {
-      label += " · " + d.workspace;
-    }
-    $info.textContent = label;
+    $info.textContent = d.provider + " · " + d.model;
     // Full path in the tooltip — the header truncates with ellipsis
     // for long paths but the user can still hover to see the whole.
     $info.title = d.workspace || "";
+    if (d.workspace) {
+      $info.appendChild(document.createTextNode(" · " + d.workspace));
+      // 📋 workspace-path copy button — click copies the full path
+      // (board 사용자가 터미널로 옮겨갈 때의 편의).
+      const btn = document.createElement("button");
+      btn.id = "ws-copy";
+      btn.type = "button";
+      btn.title = "워크스페이스 경로 복사";
+      btn.textContent = "📋";
+      btn.addEventListener("click", function () {
+        copyToClipboard(d.workspace).then(function () {
+          btn.textContent = "✓";
+          setTimeout(function () {
+            btn.textContent = "📋";
+          }, 1000);
+        });
+      });
+      $info.appendChild(btn);
+    }
   });
 
   function fmtTok(n) {

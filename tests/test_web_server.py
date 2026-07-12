@@ -2305,6 +2305,30 @@ class _FakeCtx:
         return list(self._messages)
 
 
+class TestWorkspaceCopyButton:
+    """상단 workspace 복사 버튼 (5.2.0) — 클라이언트 배선의 문자열 계약.
+
+    클립보드는 브라우저 API 라 서버 테스트로는 배선 존재만 고정:
+    ready 핸들러의 버튼 생성 + insecure-context 폴백(execCommand) —
+    board 프록시 LAN(http)에선 navigator.clipboard 가 없어서 폴백이
+    없으면 기능이 조용히 죽는다.
+    """
+
+    def test_app_js_wires_copy_button(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert 'btn.id = "ws-copy"' in js
+        assert "copyToClipboard(d.workspace)" in js
+        # insecure-context 폴백 필수 (LAN http)
+        assert 'document.execCommand("copy")' in js
+        assert "window.isSecureContext" in js
+
+    def test_style_has_copy_button(self, server_and_client):
+        _, _, client = server_and_client
+        css = client.get("/static/style.css").text
+        assert "#ws-copy" in css
+
+
 class TestZoneScopeMarkerInteraction:
     """U-C 3축 에디터 상호작용: 스코프 블록(``## @main``/``## @agents``)이 있는
     지침에서 관리 섹션 조작이 스코프를 오염시키지 않는다 — 특히 learned
