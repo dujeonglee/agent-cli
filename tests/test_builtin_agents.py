@@ -289,6 +289,9 @@ class TestWatcherProfiles:
         assert "memory" in tools  # 연대기 저장소
         assert "write_file" not in tools and "shell" not in tools
         flat = role.lower()
-        assert "lgtm" in flat and "never interrupt" in flat  # 무개입 계약
+        # 무개입 계약 — 회신은 항상 정확히 LGTM 한 단어 (절대화 문구)
+        assert "lgtm" in flat
+        assert "always the single word" in flat
+        assert "record first" in flat  # 기록-우선 절차 (A3B inert 실측 대응)
         for ev in ("failure", "discovery", "decision"):
             assert ev in flat  # 사건 분류 규율
