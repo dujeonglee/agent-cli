@@ -68,6 +68,7 @@
 :root[data-theme="terminal"] {
   --bg: #0a0c0b; --surface: #101413; --surface-2: #161c1a; --surface-3: #121716;
   --accent: #2dd4bf; --accent-hover: #45e0cc; --accent-2: #5ee8d6;
+  --on-accent: #04211d;
   --accent-soft-text: #7fe8da; --accent-soft-bg: rgba(45,212,191,.13); --accent-soft-border: rgba(45,212,191,.30);
   --user-bg: #15897b; --user-hover: #12796c; --user-time: #7fe8da; --focus-ring: #2dd4bf;
   --accent-shadow: rgba(45,212,191,.40); --accent-soft-bg2: rgba(45,212,191,.18); --accent-soft-bg3: rgba(45,212,191,.10);
@@ -80,6 +81,7 @@
   --text: #e8e2d8; --text-2: #a89f90; --muted: #7a7264;
   --border: rgba(255,248,235,.07); --border-2: rgba(255,248,235,.12);
   --accent: #e0a458; --accent-hover: #ecb56c; --accent-2: #f0c084;
+  --on-accent: #1c1610;
   --accent-soft-text: #f0c890; --accent-soft-bg: rgba(224,164,88,.14); --accent-soft-border: rgba(224,164,88,.32);
   --user-bg: #c0813a; --user-hover: #a8662b; --user-time: #f0c890; --focus-ring: #e0a458;
   --accent-shadow: rgba(224,164,88,.42); --accent-soft-bg2: rgba(224,164,88,.18); --accent-soft-bg3: rgba(224,164,88,.12);
@@ -125,10 +127,39 @@ input, textarea, select {
   background: var(--surface);
 }
 input::placeholder, textarea::placeholder { color: var(--muted); }
-/* Buttons don't inherit `color` either — give them the text token as a base;
-   colored buttons (#send, .confirm-btn.default, …) override via higher
-   specificity, emoji buttons are unaffected. */
-button { color: var(--text); }
+/* ── 버튼 체계 (5.5.0) — 변형 4종이 전부 ─────────────────────────
+   베이스가 안전망: 모든 button 에 투명 배경+테마 글자색을 강제해 UA
+   기본(밝은 회색 배경)이 다크 테마에서 '유령 버튼'을 만드는 사고를
+   원천 차단 — 클래스를 깜빡한 버튼도 읽히는 ghost 로 강등된다.
+   위계 규칙: 화면당 primary 하나 · 나머지 ghost · 위험은 색으로만. */
+button {
+  font-family: inherit; font-size: 12px; line-height: 1.2;
+  padding: 6px 12px; border-radius: 7px; cursor: pointer;
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-2);
+  transition: color .12s, background .12s, border-color .12s, opacity .12s;
+}
+button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+button:disabled { opacity: .45; cursor: default; }
+
+/* primary — 화면당 하나의 주행동 (Send·저장·다운로드·전송) */
+.btn-primary {
+  background: var(--accent); border-color: var(--accent);
+  color: var(--on-accent); font-weight: 600;
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+/* ghost — 나머지 전부의 기본값: hairline + 흐린 글자, hover 에서 또렷 */
+.btn-ghost { border-color: var(--ghost-border); color: var(--text-2); }
+.btn-ghost:hover { border-color: var(--border-2); color: var(--text); background: var(--surface-2); }
+
+/* danger — 파괴/중단: 평시엔 조용, hover 에서만 채움 */
+.btn-danger { border-color: var(--fail-soft-border); color: var(--fail-soft-fg); }
+.btn-danger:hover { background: var(--fail-soft-bg); color: var(--fail); border-color: var(--fail); }
+
+/* icon — 헤더 도구·✕ 닫기·📋 복사: 무테두리, 투명도 75→100% */
+.btn-icon { padding: 4px 7px; border: 0; font-size: 14px; color: var(--text-2); opacity: .75; }
+.btn-icon:hover { opacity: 1; color: var(--text); background: var(--surface-2); }
 
 /* ── Header ─────────────────────────────────── */
 header {
@@ -139,16 +170,7 @@ header {
   justify-content: space-between;
   align-items: center;
 }
-#ws-copy {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 0.85em;
-  padding: 0 4px;
-  vertical-align: baseline;
-  opacity: 0.7;
-}
-#ws-copy:hover { opacity: 1; }
+#ws-copy { font-size: 0.85em; padding: 0 4px; vertical-align: baseline; }
 #info {
   color: var(--text-2);
   font-size: 12px;
@@ -168,7 +190,7 @@ header {
   flex-shrink: 0;
 }
 #viewers { font-size: 12px; color: var(--text-2); margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
-#rename-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: var(--text-2); padding: 0 2px; flex-shrink: 0; }
+#rename-btn { font-size: 13px; padding: 0 2px; flex-shrink: 0; }
 #rename-btn[hidden] { display: none; }
 
 /* First-connect nickname bar */
@@ -183,15 +205,8 @@ header {
   flex: 0 1 220px; padding: 5px 9px; border: 1px solid var(--accent-soft-border);
   border-radius: 6px; font-size: 13px;
 }
-#nb-set {
-  padding: 5px 12px; border: none; border-radius: 6px;
-  background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer;
-}
-#nb-set:hover { background: var(--accent-hover); }
-#nb-skip {
-  border: none; background: none; color: var(--accent); cursor: pointer;
-  font-size: 14px; padding: 2px 6px;
-}
+#nb-set { padding: 5px 12px; }
+#nb-skip { font-size: 14px; padding: 2px 6px; }
 #conn-status { font-size: 18px; color: var(--muted); line-height: 1; }
 #conn-status.up { color: var(--ok); }
 #conn-status.down { color: var(--fail); }
@@ -475,22 +490,9 @@ footer {
 #input:focus { outline: 2px solid var(--user-time); outline-offset: 0; border-color: var(--focus-ring); }
 #input:disabled { background: var(--surface-2); color: var(--muted); }
 
-#send, #abort, #chat-stop {
-  padding: 8px 16px;
-  color: var(--on-accent);
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
-}
-#send { background: var(--user-bg); }
-#send:hover { background: var(--user-hover); }
-#send:disabled { background: var(--border-2); cursor: not-allowed; }
-#abort, #chat-stop { background: var(--fail); }
-#abort:hover, #chat-stop:hover { background: var(--fail); }
+/* 채팅 입력줄 — primary/danger 클래스에 크기만 가산 */
+#send, #abort, #chat-stop { padding: 8px 16px; font-size: 14px; }
 #abort[hidden], #chat-stop[hidden] { display: none; }
-#chat-stop:disabled { background: var(--border-2); cursor: not-allowed; }
 
 /* Pending message queue (live) */
 #queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
@@ -547,21 +549,14 @@ footer {
   flex-wrap: wrap;
 }
 .confirm-btn {
-  padding: 6px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border-2);
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 13px;
+  padding: 6px 12px; font-size: 13px; font-weight: 500;
+  border-color: var(--ghost-border);
 }
-.confirm-btn:hover { background: var(--surface-2); }
+.confirm-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-2); }
 .confirm-btn.default {
-  background: var(--user-bg);
-  color: var(--on-accent);
-  border-color: var(--user-bg);
+  background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600;
 }
-.confirm-btn.default:hover { background: var(--user-hover); }
+.confirm-btn.default:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
 /* ── Prompt provenance (who/why/what behind a confirm or ask) ── */
 .prompt-meta {
@@ -713,20 +708,9 @@ footer {
 }
 
 /* ── Prompt Inspector ───────────────────────── */
-/* header icon buttons — one consistent borderless-emoji style */
-#theme-btn, #inspector-btn, #export-btn, #files-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
-  padding: 2px 4px;
-  margin-left: 4px;
-  flex-shrink: 0;
-  transition: transform .15s ease;
-}
-#theme-btn:hover, #inspector-btn:hover, #export-btn:hover, #files-btn:hover {
-  transform: scale(1.15);
+/* header icon buttons — btn-icon + 헤더 전용 크기/간격 */
+#theme-btn, #inspector-btn, #export-btn, #files-btn, #agent-btn {
+  font-size: 18px; margin-left: 4px; flex-shrink: 0;
 }
 
 /* Theme picker dropdown — anchored under the 🎨 button. Items are built by
@@ -821,10 +805,7 @@ footer {
   font-size: 11.5px;
   font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
 }
-#insp-close {
-  border: none; background: none; cursor: pointer;
-  font-size: 14px; color: var(--muted); padding: 2px 6px; border-radius: 6px;
-}
+#insp-close { font-size: 16px; }
 #insp-close:hover { background: var(--surface-2); color: var(--text); }
 
 /* Stacked budget bar — one colored span per section */
@@ -913,10 +894,13 @@ footer {
 .insp-dir-text:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
 .insp-dir-tabs { display: flex; gap: 4px; margin: 6px 0 4px; }
 .insp-dir-tabs button {
-  background: none; border: 1px solid var(--border); border-radius: 6px 6px 0 0;
-  padding: 3px 10px; cursor: pointer; font-size: 12px; opacity: .65; color: inherit;
+  border-color: var(--ghost-border); border-radius: 7px 7px 0 0;
+  padding: 4px 10px; font-size: 11px; opacity: .8;
 }
-.insp-dir-tabs button.active { opacity: 1; border-bottom-color: transparent; background: rgba(255,255,255,.05); }
+.insp-dir-tabs button.active {
+  opacity: 1; color: var(--text); background: var(--surface-2);
+  border-bottom-color: transparent;
+}
 .insp-dir-gen { display: flex; gap: 6px; margin-top: 6px; }
 .insp-dir-gen input { flex: 1; padding: 4px 8px; font-size: 12px; }
 .insp-dir-gen button { white-space: nowrap; }
@@ -924,11 +908,7 @@ footer {
 .insp-dir-status { flex: 1 1 auto; order: 1; color: var(--text-2); font-size: 11px; }
 #insp-dir-cancel { order: 2; }
 #insp-dir-save { order: 2; }
-.insp-dir-foot button {
-  font-size: 12px; padding: 3px 12px; border-radius: 6px; cursor: pointer;
-  color: var(--on-accent); background: var(--accent); border: 0;
-}
-.insp-dir-foot button:disabled { opacity: .5; cursor: default; }
+
 /* Three axis rows (성격/업무/지침): each = label + dropdown + subtle icon
    buttons. Each wraps to its own full-width line under the status text. */
 
@@ -1053,8 +1033,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #export-bar .exp-all { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
 #export-count { color: var(--muted); min-width: 6rem; }
 #export-bar .exp-actions { display: inline-flex; gap: 0.4rem; }
-#export-bar button { padding: 0.25rem 0.6rem; cursor: pointer; }
-#export-bar button:disabled { opacity: 0.45; cursor: default; }
 #export-cancel { margin-left: 0.2rem; }
 #export-jira-form { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 #export-jira-form input { padding: 0.25rem 0.4rem; }
@@ -1098,12 +1076,13 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .ul-drop.over { border-color: var(--accent); background: var(--accent-soft-bg3); }
 .ul-target { font-weight: 500; color: var(--text-2); }
 .ul-hint { font-size: 11.5px; }
-#ul-pick { cursor: pointer; padding: 3px 9px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 500; }
+/* 드롭존 인라인 버튼 — 문장 안에 앉는 컴팩트 ghost (파일/폴더 동급) */
+#ul-pick, #ul-pick-dir { padding: 3px 9px; font-size: 11.5px; }
 /* the tree row whose directory is the current upload target */
 .dl-row.target { background: var(--accent-soft-bg2); border-radius: 6px; }
 .dl-head { display: flex; align-items: center; justify-content: space-between; }
 .dl-title { font-weight: 600; }
-#dl-close { background: none; border: none; cursor: pointer; font-size: 16px; }
+#dl-close { font-size: 16px; }
 .dl-tree {
   flex: 1; min-height: 0; overflow: auto;
   border: 1px solid var(--border); border-radius: 8px; padding: 6px;
@@ -1120,9 +1099,9 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .dl-loading { color: var(--muted); padding: 8px; }
 .dl-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 #dl-count { font-size: 12.5px; color: var(--text-2); }
-#dl-download { cursor: pointer; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 500; }
+
 #dl-download:disabled { opacity: .5; cursor: default; }
-#dl-delete { cursor: pointer; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border-2); background: none; color: var(--text-2); font-weight: 500; }
+
 #dl-delete:hover { color: var(--fail); border-color: var(--fail); }
 #dl-delete:disabled { opacity: .5; cursor: default; }
 .dl-msg { font-size: 12px; color: var(--text-2); min-height: 16px; }
@@ -1139,12 +1118,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 
 
 /* ── Teammate 대화 창 (🤝, P4) ─────────────────── */
-#agent-btn {
-  position: relative;
-  background: none; border: 1px solid var(--border); border-radius: 8px;
-  cursor: pointer; font-size: 15px; padding: 2px 8px; line-height: 1.4;
-}
-#agent-btn:hover { border-color: var(--accent); }
+#agent-btn { position: relative; }
 #tm-badge {
   position: absolute; top: -6px; right: -6px;
   background: var(--accent); color: var(--on-accent); border-radius: 8px;
@@ -1171,10 +1145,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #tm-drawer.open { transform: translateX(0); }
 .tm-head { display: flex; align-items: center; justify-content: space-between; }
 .tm-title { font-weight: 700; font-size: 15px; }
-#tm-close {
-  background: none; border: none; cursor: pointer;
-  font-size: 15px; color: var(--muted);
-}
+#tm-close { font-size: 16px; }
 #tm-roster { display: flex; flex-wrap: wrap; gap: 6px; }
 .tm-chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1214,8 +1185,5 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   background: transparent; color: inherit; font: inherit; font-size: 13px;
   padding: 6px 8px;
 }
-#tm-send {
-  border: 1px solid var(--border); border-radius: 8px; background: none;
-  cursor: pointer; padding: 6px 12px; font-size: 13px;
-}
-#tm-send:disabled, #tm-input:disabled { opacity: .5; cursor: default; }
+#tm-send { font-size: 13px; }
+#tm-input:disabled { opacity: .5; cursor: default; }

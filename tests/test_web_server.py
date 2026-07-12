@@ -2123,6 +2123,70 @@ class TestDirectivesGenerate:
         assert "directive writer" in seen["instructions"]
 
 
+class TestButtonSystem:
+    """5.5.0 버튼 체계 — 변형 4종 + UA-기본 차단 안전망 계약.
+
+    회귀 클래스: 스타일 없는 버튼이 UA 밝은 배경 + 테마 밝은 글자로
+    '유령'이 되던 것 (#ul-pick-dir 실사례) — 베이스 규칙이 모든 button
+    에 투명 배경을 강제해야 한다.
+    """
+
+    def _css(self, client):
+        return client.get("/static/style.css").text
+
+    def test_base_button_blocks_ua_default(self, server_and_client):
+        _, _, client = server_and_client
+        css = self._css(client)
+        import re
+
+        m = re.search(r"\nbutton \{[^}]*\}", css)
+        assert m, "전역 button 베이스 규칙 부재"
+        base = m.group(0)
+        assert "background: transparent" in base
+        assert "color: var(--text-2)" in base
+
+    def test_four_variants_exist(self, server_and_client):
+        _, _, client = server_and_client
+        css = self._css(client)
+        for cls in (".btn-primary", ".btn-ghost", ".btn-danger", ".btn-icon"):
+            assert cls + " {" in css or cls + " {".replace(" ", "") in css, cls
+
+    def test_primary_uses_accent_on_accent(self, server_and_client):
+        _, _, client = server_and_client
+        css = self._css(client)
+        seg = css[css.index(".btn-primary {") :]
+        seg = seg[: seg.index("}")]
+        assert "var(--accent)" in seg and "var(--on-accent)" in seg
+
+    def test_bright_accent_themes_use_dark_ink(self, server_and_client):
+        # amber/terminal 의 밝은 accent 위 흰 글자 대비 부족 → 잉크 재정의.
+        _, _, client = server_and_client
+        css = self._css(client)
+        for theme in ("amber", "terminal"):
+            block = css[css.index(f':root[data-theme="{theme}"]') :]
+            block = block[: block.index("}")]
+            assert "--on-accent:" in block, theme
+
+    def test_dropzone_buttons_are_siblings(self, server_and_client):
+        # 파일/폴더 — 둘 다 같은 규칙(#ul-pick, #ul-pick-dir 동시 선택).
+        _, _, client = server_and_client
+        css = self._css(client)
+        assert "#ul-pick, #ul-pick-dir" in css
+        html = client.get("/").text
+        import re
+
+        for bid in ("ul-pick", "ul-pick-dir"):
+            m = re.search(f'<button id="{bid}"[^>]*class="([^"]*)"', html)
+            assert m and "btn-ghost" in m.group(1), bid
+
+    def test_index_buttons_carry_variant_classes(self, server_and_client):
+        _, _, client = server_and_client
+        html = client.get("/").text
+        assert 'id="send" type="button" class="btn-primary"' in html
+        assert 'id="chat-stop" type="button" class="btn-danger"' in html
+        assert 'id="dl-delete" type="button" class="btn-danger"' in html
+
+
 class TestWorkspaceCopyButton:
     """상단 workspace 복사 버튼 (5.2.0) — 클라이언트 배선의 문자열 계약.
 

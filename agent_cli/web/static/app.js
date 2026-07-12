@@ -1101,6 +1101,7 @@
       // (board 사용자가 터미널로 옮겨갈 때의 편의).
       const btn = document.createElement("button");
       btn.id = "ws-copy";
+      btn.className = "btn-icon";
       btn.type = "button";
       btn.title = "워크스페이스 경로 복사";
       btn.textContent = "📋";

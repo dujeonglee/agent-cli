@@ -28,15 +28,15 @@
     <span id="info">connecting…</span>
     <span id="token-usage" title="token usage"></span>
     <span id="theme-wrap">
-      <button id="theme-btn" type="button" title="테마 선택" aria-haspopup="true" aria-expanded="false">🎨</button>
+      <button id="theme-btn" class="btn-icon" type="button" title="테마 선택" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>
     </span>
-    <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
-    <button id="agent-btn" type="button" title="Agents — 상주 에이전트 대화 창">🤝<span id="tm-badge" hidden></span></button>
-    <button id="export-btn" type="button" title="Export conversation">📤</button>
-    <button id="files-btn" type="button" title="Workspace files — download / upload">📁</button>
+    <button id="inspector-btn" class="btn-icon" type="button" title="Prompt Inspector">⚡</button>
+    <button id="agent-btn" class="btn-icon" type="button" title="Agents — 상주 에이전트 대화 창">🤝<span id="tm-badge" hidden></span></button>
+    <button id="export-btn" class="btn-icon" type="button" title="Export conversation">📤</button>
+    <button id="files-btn" class="btn-icon" type="button" title="Workspace files — download / upload">📁</button>
     <span id="viewers" title="connected viewers"></span>
-    <button id="rename-btn" type="button" title="닉네임 변경" hidden>✎</button>
+    <button id="rename-btn" class="btn-icon" type="button" title="닉네임 변경" hidden>✎</button>
     <span id="conn-status" title="connection status">●</span>
   </header>
   <!-- First-connect nickname bar (pre-filled with the assigned fun default) -->
@@ -44,8 +44,8 @@
     <span class="nb-label">닉네임</span>
     <input id="nb-input" type="text" maxlength="24" autocomplete="off"
            placeholder="이름 입력">
-    <button id="nb-set" type="button">설정</button>
-    <button id="nb-skip" type="button" title="기본값 유지">✕</button>
+    <button id="nb-set" type="button" class="btn-primary">설정</button>
+    <button id="nb-skip" type="button" class="btn-icon" title="기본값 유지">✕</button>
   </div>
   <main id="messages"></main>
 
@@ -54,9 +54,9 @@
     <label class="exp-all"><input type="checkbox" id="export-all"> All</label>
     <span id="export-count">0 selected</span>
     <span class="exp-actions">
-      <button id="export-html" type="button" title="Download as HTML">⬇ HTML</button>
-      <button id="export-jira-btn" type="button" title="Post as Jira comment">Jira…</button>
-      <button id="export-cancel" type="button" title="Cancel">✕</button>
+      <button id="export-html" type="button" class="btn-ghost" title="Download as HTML">⬇ HTML</button>
+      <button id="export-jira-btn" type="button" class="btn-ghost" title="Post as Jira comment">Jira…</button>
+      <button id="export-cancel" type="button" class="btn-icon" title="Cancel">✕</button>
     </span>
     <span id="export-jira-form" hidden>
       <select id="export-jira-target" title="Jira instance"></select>
@@ -69,7 +69,7 @@
       <input id="export-jira-user" type="text" autocomplete="off" placeholder="email">
       <input id="export-jira-secret" type="password" autocomplete="off" placeholder="API token">
       <input id="export-jira-issue" type="text" placeholder="ISSUE-123" autocomplete="off">
-      <button id="export-jira-send" type="button">Send</button>
+      <button id="export-jira-send" type="button" class="btn-primary">Send</button>
       <span class="exp-hint" title="Credentials are stored only in this browser (localStorage) and sent over your LAN connection to post as you.">🔒 your account · saved in this browser</span>
     </span>
     <span id="export-msg" class="exp-msg"></span>
@@ -80,19 +80,19 @@
   <aside id="download-drawer" aria-hidden="true">
     <div class="dl-head">
       <div class="dl-title">📁 Workspace files</div>
-      <button id="dl-close" type="button" title="Close">✕</button>
+      <button id="dl-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
     <div id="dl-tree" class="dl-tree"></div>
     <div class="dl-foot">
       <span id="dl-count">0 selected</span>
-      <button id="dl-delete" type="button" title="Delete selected (permanent)">🗑 Delete</button>
-      <button id="dl-download" type="button" title="Download selected as zip">⬇ Download zip</button>
+      <button id="dl-delete" type="button" class="btn-danger" title="Delete selected (permanent)">🗑 Delete</button>
+      <button id="dl-download" type="button" class="btn-primary" title="Download selected as zip">⬇ Download zip</button>
     </div>
     <div id="ul-drop" class="ul-drop">
       <span id="ul-target" class="ul-target">⬆ 업로드 대상: <b>(루트)</b></span>
       <span class="ul-hint">파일/폴더를 여기로 드래그하거나
-        <button id="ul-pick" type="button">파일</button>
-        <button id="ul-pick-dir" type="button">폴더</button>
+        <button id="ul-pick" type="button" class="btn-ghost">파일</button>
+        <button id="ul-pick-dir" type="button" class="btn-ghost">폴더</button>
         — 트리에서 폴더를 클릭해 대상 변경</span>
       <input type="file" id="ul-input" multiple hidden>
       <input type="file" id="ul-dir-input" webkitdirectory hidden>
@@ -105,14 +105,14 @@
   <aside id="tm-drawer" aria-hidden="true">
     <div class="tm-head">
       <div class="tm-title">🤝 Agents</div>
-      <button id="tm-close" type="button" title="Close">✕</button>
+      <button id="tm-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
     <div id="tm-roster" title="살아있는 상주 에이전트 — 클릭해 대화 보기"></div>
     <div id="tm-conv"></div>
     <div id="tm-inputrow">
       <textarea id="tm-input" rows="2" placeholder="에이전트를 선택하고 메시지…"
                 spellcheck="false" disabled></textarea>
-      <button id="tm-send" type="button" disabled>Send</button>
+      <button id="tm-send" type="button" class="btn-primary" disabled>Send</button>
     </div>
   </aside>
 
@@ -122,7 +122,7 @@
     <div class="insp-head">
       <div class="insp-title">⚡ Prompt Inspector</div>
       <div id="insp-meta" class="insp-meta"></div>
-      <button id="insp-close" type="button" title="Close">✕</button>
+      <button id="insp-close" type="button" class="btn-icon" title="Close">✕</button>
     </div>
     <div id="insp-scopes" class="insp-scopes" title="System prompt scope — main loop or a delegate sub-agent"></div>
     <div id="insp-budget" class="insp-budget" title="per-section token share"></div>
@@ -141,13 +141,13 @@
       <div class="insp-dir-gen">
         <input id="insp-dir-brief" type="text"
           placeholder="넣고 싶은 내용을 대략적으로… (예: 보고는 한국어로 결론 먼저)">
-        <button id="insp-dir-gen" type="button"
+        <button id="insp-dir-gen" type="button" class="btn-ghost"
           title="이 탭의 directive 초안을 LLM 으로 생성 — 기존 내용이 있으면 병합/개정 (미저장, 검토 후 저장)">✨ 생성</button>
       </div>
       <div class="insp-dir-foot">
         <span id="insp-dir-status" class="insp-dir-status"></span>
-        <button id="insp-dir-cancel" type="button" title="편집 취소 — 파일 원본으로 되돌림">취소</button>
-        <button id="insp-dir-save" type="button" title="세 탭 전체를 조립해 저장">저장</button>
+        <button id="insp-dir-cancel" type="button" class="btn-ghost" title="편집 취소 — 파일 원본으로 되돌림">취소</button>
+        <button id="insp-dir-save" type="button" class="btn-primary" title="세 탭 전체를 조립해 저장">저장</button>
       </div>
     </details>
     <input id="insp-search" type="search" placeholder="Filter sections…" autocomplete="off">
@@ -160,9 +160,9 @@
       <textarea id="input"
                 placeholder="Type a message — Enter to send, Shift+Enter for newline"
                 rows="3"></textarea>
-      <button id="send" type="button">Send</button>
-      <button id="chat-stop" type="button" hidden title="Stop the current run">Stop</button>
-      <button id="abort" type="button" hidden>Stop</button>
+      <button id="send" type="button" class="btn-primary">Send</button>
+      <button id="chat-stop" type="button" class="btn-danger" hidden title="Stop the current run">Stop</button>
+      <button id="abort" type="button" class="btn-danger" hidden>Stop</button>
     </div>
   </footer>
   <script src="static/app.js"></script>
