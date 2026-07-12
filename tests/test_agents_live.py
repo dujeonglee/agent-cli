@@ -1,4 +1,4 @@
-"""teammate P1 계약 (docs/teammate/DESIGN.md §6.1).
+"""상주 에이전트(agents_live) 계약 — 구 teammate P1 (docs/teammate/DESIGN.md §6.1, 5.0.0 에서 agent 로 통합).
 
 레지스트리·worker 스레딩은 가짜 러너(DI seam)로 LLM 없이 검증한다.
 핵심 계약: 배달 레코드가 형식-개입(fold, v4.51.0)으로 오인되지 않을 것,

@@ -1,4 +1,4 @@
-"""Tests for the unified begin/end-driven delegate lifecycle.
+"""run 워커의 begin/end 렌더러 lifecycle 계약 (구 delegate lifecycle).
 
 Before this refactor the parallel delegate orchestration straddled two
 layers: ``tool_delegate`` wrapped the worker join in

@@ -1,4 +1,4 @@
-"""Tests for delegate agent parameter feature (AG-01 ~ AG-22)."""
+"""run 엔진의 profile 파라미터 계약 — 구 delegate agent 파라미터 (AG-01 ~ AG-22)."""
 
 from __future__ import annotations
 

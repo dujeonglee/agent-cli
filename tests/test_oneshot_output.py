@@ -1,4 +1,4 @@
-"""Tests for delegate output improvements (DO-01 ~ DO-40).
+"""run 엔진(subagent/oneshot·report) 출력 계약 — 구 delegate output (DO-01 ~ DO-40).
 
 Covers: activity log, action summary, error detail, duration,
 output format, persistence, iterations, and integration.
