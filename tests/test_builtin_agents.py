@@ -255,3 +255,40 @@ class TestKernelProfiles:
         assert "accept" in flat and "reject" in flat  # 명시 판정
         assert "checkpatch" in flat
         assert "scenario" in flat  # 실패 시나리오 요구
+
+
+class TestWatcherProfiles:
+    """구독형 내장 프로파일 (5.9.0) — 구독 선언·도구 경계·회신 규율 계약."""
+
+    def test_kernel_reviewer_subscribes_like_code_reviewer(self):
+        for name in ("code-reviewer", "kernel-reviewer"):
+            role, config, err = load_profile(name)
+            assert err is None, name
+            assert config.get("subscribes") == ["write_file", "edit_file"], name
+            assert "LGTM" in role, name  # 무발견 회신 규율
+            tools = config["allowed-tools"]
+            assert "write_file" not in tools and "edit_file" not in tools, name
+
+    def test_task_reviewer_contract(self):
+        role, config, err = load_profile("task-reviewer")
+        assert err is None
+        assert config["subscribes"] == ["complete"]
+        tools = config["allowed-tools"]
+        assert "read_context" in tools  # 원 요청 회수 경로
+        assert "write_file" not in tools and "edit_file" not in tools
+        flat = role.lower()
+        assert "read_context" in flat  # 원 요청 회수 규율 명시
+        assert "lgtm" in flat
+        assert "never trust the summary" in flat  # 실검증 규율
+
+    def test_session_recorder_contract(self):
+        role, config, err = load_profile("session-recorder")
+        assert err is None
+        assert config["subscribes"] == ["*"]
+        tools = config["allowed-tools"]
+        assert "memory" in tools  # 연대기 저장소
+        assert "write_file" not in tools and "shell" not in tools
+        flat = role.lower()
+        assert "lgtm" in flat and "never interrupt" in flat  # 무개입 계약
+        for ev in ("failure", "discovery", "decision"):
+            assert ev in flat  # 사건 분류 규율

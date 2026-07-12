@@ -1017,7 +1017,8 @@ run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(
 - **프로파일 발견**: 사용 가능한 프로파일 목록(이름+description)이 시스템 프롬프트 `## Agent Profiles` 섹션에 광고되어 **모델이 스스로 적합한 전문가를 골라** run/spawn 합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
 - **내장 프로파일**:
   - 범용 — `explorer`(읽기 전용 코드베이스 탐색) / `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분 — spawn 시 write/edit 구독 실시간 리뷰 기본 탑재) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
-  - Linux 커널 (5.1.0) — `kernel-coder`(드라이버 구현: 커널 스타일·goto-cleanup 에러 경로·락 컨텍스트 규율·checkpatch/빌드 자가 검증) / `kernel-kunit`(KUnit 테스트: `kunit_test_suite` 설계·ops-table 페이크·`.kunitconfig`+`kunit.py run` 실행 검증) / `kernel-analyzer`(읽기 전용 분석: 콜패스·실행 컨텍스트(process/softirq/hardirq)·락·수명 추적, file:line 인용) / `kernel-reviewer`(읽기 전용 리뷰: race·atomic-sleep·에러경로 누수·UAF·API 오용, 심각도+실패 시나리오+ACCEPT/REJECT 판정).
+  - Linux 커널 (5.1.0) — `kernel-coder`(드라이버 구현: 커널 스타일·goto-cleanup 에러 경로·락 컨텍스트 규율·checkpatch/빌드 자가 검증) / `kernel-kunit`(KUnit 테스트: `kunit_test_suite` 설계·ops-table 페이크·`.kunitconfig`+`kunit.py run` 실행 검증) / `kernel-analyzer`(읽기 전용 분석: 콜패스·실행 컨텍스트(process/softirq/hardirq)·락·수명 추적, file:line 인용) / `kernel-reviewer`(읽기 전용 리뷰: race·atomic-sleep·에러경로 누수·UAF·API 오용, 심각도+실패 시나리오 — spawn 시 write/edit 구독 실시간 리뷰 기본 탑재).
+  - 관찰형 (5.9.0, 도구 이벤트 구독 기반) — `task-reviewer`(**completion gate**: `complete` 구독 — 완료 때마다 원 요청을 read_context 로 회수해 파일/테스트 실검증, 미충족 갭만 회신해 main 이 이어서 수정. spawn=게이트 on, kill=off) / `session-recorder`(**무개입 연대기**: `"*"` 구독 — 실패·발견·결정·위험 명령·반복 삽질만 자기 memory 에 기록, 항상 LGTM. "이 세션 무슨 일 있었지?" 로 질의).
 - **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}` (run 도 동일 지원). `profile` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시). 상주 에이전트의 인라인 지시는 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속).
 - **`/create-agent` 스킬**: 새 프로파일 md 를 대화형으로 생성 (run/spawn 겸용).
 
