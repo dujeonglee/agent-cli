@@ -1227,8 +1227,12 @@ def run(
         if answer is not _AGENT_NOT_FOUND:
             if answer is not None:
                 console.print(f"\n[{C['final']}]{answer}[/]")
-            # 실패 텍스트를 성공 산출물처럼 기록하지 않는다 (✨ 생성 소비 계약)
-            _write_result_file(result_file, answer if dispatch_ok else None)
+            # 성공 시에만, 관찰 래퍼(STATUS/RESULT/[activity])를 벗긴 원문만
+            # 기록 — 메인 경로(loop_result.output=원문)와 계약 일치.
+            if dispatch_ok and answer is not None:
+                from agent_cli.subagent.report import extract_result_body
+
+                _write_result_file(result_file, extract_result_body(str(answer)))
             agent_registry.shutdown_all()
             _finalize_run(session, ctx)
             return
@@ -1779,14 +1783,13 @@ def web(
         ctx=ctx,
         trust_local=trust_local,
         base_path=base_path,
-        # ✨ directive 생성의 LLM 배선 — 별도 agent-cli run 서브프로세스가
-        # 소비하므로 문자열만 (provider 객체/세션 비공유 = 완전 격리).
+        # ✨ directive 생성의 LLM 배선 — 산문 직접 호출(5.7.0).
+        # provider 는 콜마다 무상태라 요청 스레드에서 안전; 세션/렌더러는
+        # 비공유 (메인 타임라인 무접촉 유지).
         runtime={
+            "provider": llm_provider,
             "model": resolved_model,
-            "provider_name": provider,
-            "base_url": resolved_url,
-            "api_key": resolved_key,
-            "timeout": agent_timeout,
+            "capabilities": capabilities,
         },
     )
 

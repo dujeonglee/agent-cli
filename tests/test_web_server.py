@@ -2060,10 +2060,9 @@ class TestDirectivesScopeContract:
 
 
 class TestDirectivesGenerate:
-    """POST /api/directives/generate — 별도 agent-cli run 프로세스로 완전
-    격리 생성 (5.6.0, 사용자 결정). subprocess 는 fake — 계약만 고정:
-    @directive-writer 디스패치·--result-file 수확·자격은 env·argv 에
-    api_key 비노출·실패 시 파일 미생성 판정."""
+    """POST /api/directives/generate — 산문 직접 호출 (5.7.0, Qwen3.6
+    재실측 16/16 무누출로 사용자 결정). provider fake 로 계약 고정:
+    메타-콜 프롬프트 구성·새니타이저·400/502 분리."""
 
     def test_503_without_runtime(self, server_and_client):
         _, _, client = server_and_client  # 기본 픽스처는 runtime 미배선
@@ -2073,97 +2072,94 @@ class TestDirectivesGenerate:
         )
         assert r.status_code == 503
 
-    def _client_with_runtime(self):
+    class _FakeProvider:
+        def __init__(self, content):
+            self._content = content
+            self.calls = []
+
+        def call(self, messages, system, model, capabilities, **kw):
+            self.calls.append({"messages": messages, "system": system, "model": model})
+
+            class R:
+                pass
+
+            r = R()
+            r.content = self._content
+            return r
+
+    def _client_with(self, provider):
         renderer = WebRenderer()
         server = WebServer(
             renderer,
             token="t",
-            runtime={
-                "model": "m1",
-                "provider_name": "openai",
-                "base_url": "http://x/v1",
-                "api_key": "sk-secret",
-                "timeout": 30,
-            },
+            runtime={"provider": provider, "model": "m1", "capabilities": object()},
         )
         return server, TestClient(create_app(server))
 
     def test_400_on_bad_input(self):
-        server, client = self._client_with_runtime()
-        r = client.post(
-            "/api/directives/generate?token=t",
-            json={"audience": "nope", "brief": "x"},
+        _, client = self._client_with(self._FakeProvider("x"))
+        assert (
+            client.post(
+                "/api/directives/generate?token=t",
+                json={"audience": "nope", "brief": "x"},
+            ).status_code
+            == 400
         )
-        assert r.status_code == 400
-        r = client.post(
-            "/api/directives/generate?token=t",
-            json={"audience": "main", "brief": "  "},
+        assert (
+            client.post(
+                "/api/directives/generate?token=t",
+                json={"audience": "main", "brief": "  "},
+            ).status_code
+            == 400
         )
-        assert r.status_code == 400
 
-    def test_success_via_subprocess_contract(self, monkeypatch):
-        import agent_cli.web.directives as dmod
-
-        seen = {}
-
-        def fake_run(
-            cmd, cwd=None, env=None, capture_output=None, text=None, timeout=None
-        ):
-            seen["cmd"] = cmd
-            seen["env"] = env
-            seen["cwd"] = cwd
-            # --result-file 경로에 초안을 기록 (run 의 성공 계약 재현)
-            idx = cmd.index("--result-file")
-            from pathlib import Path as _P
-
-            _P(cmd[idx + 1]).write_text("- 결론 먼저 보고\n", encoding="utf-8")
-
-            class R:
-                returncode = 0
-                stdout = ""
-                stderr = ""
-
-            return R()
-
-        monkeypatch.setattr(dmod.subprocess, "run", fake_run)
-        server, client = self._client_with_runtime()
+    def test_success_prompt_contract(self):
+        fake = self._FakeProvider("- 결론 먼저 보고")
+        _, client = self._client_with(fake)
         r = client.post(
             "/api/directives/generate?token=t",
             json={"audience": "main", "brief": "보고는 결론 먼저", "current": "- 기존"},
         )
         assert r.status_code == 200
         assert r.json()["content"] == "- 결론 먼저 보고"
-        cmd = seen["cmd"]
-        query = cmd[cmd.index("run") + 1]
-        assert query.startswith("@directive-writer ")
-        assert "MAIN conversation LLM only" in query
-        assert "기존" in query  # 기존 내용 병합 지시
-        # 자격은 env 로 — argv 에 키 비노출
-        assert seen["env"]["AGENT_CLI_API_KEY"] == "sk-secret"
-        assert all("sk-secret" not in str(a) for a in cmd)
-        assert "--model" in cmd and "m1" in cmd
-        # 세션 격리 — 임시 cwd
-        assert "agentcli-dirgen-" in str(seen["cwd"])
+        call = fake.calls[0]
+        assert "Output ONLY the directive body" in call["system"]
+        user = call["messages"][0]["content"]
+        assert "MAIN conversation LLM only" in user
+        assert "기존" in user  # 기존 내용 병합 지시
+        assert call["model"] == "m1"
 
-    def test_failure_without_result_file_is_502(self, monkeypatch):
-        import agent_cli.web.directives as dmod
+    def test_sanitizer_strips_think_and_fences(self):
+        # 미래 모델 교체로 CoT 누출이 재발해도 조용히 오염되지 않는다.
+        fake = self._FakeProvider(
+            "<think>사용자는 규칙을 원한다...</think>\n```markdown\n- 규칙 하나\n- 규칙 둘\n```"
+        )
+        _, client = self._client_with(fake)
+        r = client.post(
+            "/api/directives/generate?token=t",
+            json={"audience": "common", "brief": "규칙"},
+        )
+        assert r.json()["content"] == "- 규칙 하나\n- 규칙 둘"
 
-        def fake_run(cmd, **kw):
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "LLM call failed"
+    def test_provider_failure_is_502(self):
+        class Boom:
+            def call(self, *a, **k):
+                raise ConnectionError("refused")
 
-            return R()  # result-file 미생성 = 실패
-
-        monkeypatch.setattr(dmod.subprocess, "run", fake_run)
-        server, client = self._client_with_runtime()
+        _, client = self._client_with(Boom())
         r = client.post(
             "/api/directives/generate?token=t",
             json={"audience": "agents", "brief": "영어로"},
         )
         assert r.status_code == 502
-        assert "LLM call failed" in r.json()["detail"]
+
+    def test_empty_result_is_502(self):
+        _, client = self._client_with(self._FakeProvider("<think>only</think>"))
+        r = client.post(
+            "/api/directives/generate?token=t",
+            json={"audience": "agents", "brief": "영어로"},
+        )
+        assert r.status_code == 502
 
 
 class TestButtonSystem:

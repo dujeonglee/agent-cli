@@ -1,31 +1,28 @@
-"""Directive 스코프 에디터 도메인 로직 — ✨ 생성 (5.4.0 개편, 5.6.0 프로세스 분리).
+"""Directive 스코프 에디터 도메인 로직 — ✨ 생성 (5.7.0 산문 직접 호출).
 
 구 3축(성격/업무/지침) zone 외과수술·프리셋 라이브러리는 폐지됐다 —
 에디터의 구조 = 파일의 구조(U-C 청중 스코프: 공통/``## @main``/``## @agents``)
 하나뿐이고, 분해/조립은 :mod:`agent_cli.prompts.system_prompt` 의
 ``split_directive_scopes``/``join_directive_scopes`` 가 단일 출처다.
 
-이 모듈이 소유하는 것은 ✨ 생성 하나: 사용자의 대략적 의도(brief)를
-**별도 ``agent-cli run`` 서브프로세스**(5.6.0 — 사용자 결정 "완전 분리")
-로 directive 초안으로 만든다:
+✨ 생성의 경로 변천 (재론 방지용 기록):
+- 산문 메타-콜(구 🪄) → **구세대 Qwen3 의 CoT 누출 실측**으로 폐기.
+- 5.4.0: in-process run 엔진 (wire format 이 CoT 격리) — 메인 타임라인에
+  카드 표면화.
+- 5.6.0: 별도 ``agent-cli run`` 서브프로세스 (완전 격리·동시 생성).
+- **5.7.0: 산문 직접 호출 복귀** — Qwen3.6 세대(27B·35B-A3B) 재실측
+  16/16 무누출 확인 후 사용자 결정. 래퍼/서브프로세스/역추출 전부 제거,
+  ``provider.call`` 1회 + 구조적 새니타이저(<think> 블록·코드 펜스
+  스트립 — 미래 모델 교체로 누출이 재발해도 조용히 오염되지 않게).
 
-- ``@directive-writer``(내장 프로파일 — 도구 0, 작성 규율) 디스패치 +
-  ``--result-file`` 로 원문 수확. 렌더러/세션/레지스트리가 메인 프로세스와
-  완전히 분리 — 메인 타임라인에 카드가 생기지 않고, 탭별 동시 생성 가능.
-- 자격(base_url/api_key)은 argv 가 아니라 **env 로** 전달 (ps 누출 방지).
-- 구 🪄 자동생성의 CoT-leak(산문 메타-콜)와 무관 — run 은 JSON wire
-  경로라 CoT 가 격리된다.
-
+동시 생성은 전송 계층의 executor 오프로드 + 백엔드 병렬로 성립 (POST
+마다 독립 호출 — 메인 워커/렌더러/세션 무접촉은 그대로).
 FastAPI import 0 (전송은 server.py) — 테스트 가드 유지.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
+import re
 
 VALID_AUDIENCES = ("common", "main", "agents")
 
@@ -49,9 +46,26 @@ _AUDIENCE_FRAMING = {
     ),
 }
 
+# 산문 메타-콜 시스템 프롬프트 — 실측 프로브(16/16 클린)와 동일 골격.
+_WRITER_SYSTEM = (
+    "You turn a rough intent into a DIRECTIVE.md section — persistent "
+    "operating rules injected into an LLM system prompt.\n"
+    "Output ONLY the directive body as short markdown bullets (optionally "
+    "under `##` subheadings). No preamble, no explanation, no code fences, "
+    "no reasoning text. NEVER emit scope markers (`## @main`, `## @agents`). "
+    "Imperative, specific, testable. Only rules that generalize beyond a "
+    "single task. Prefer 3-8 bullets. Write in the language of the user's "
+    "intent.\n"
+    "When EXISTING directive content is given, produce the UPDATED full "
+    "body: keep rules that still apply, merge duplicates, integrate the new "
+    "intent — your output replaces it."
+)
+
+_THINK_BLOCK = re.compile(r"<think[^>]*>.*?</think>", re.S | re.I)
+
 
 def build_generation_task(audience: str, brief: str, current: str) -> str:
-    """✨ 생성 서브프로세스(@directive-writer)에 넘길 task 텍스트."""
+    """✨ 생성 메타-콜의 user 메시지."""
     parts = [
         _AUDIENCE_FRAMING[audience],
         f"USER INTENT (rough — turn this into directive rules):\n{brief.strip()}",
@@ -65,74 +79,50 @@ def build_generation_task(audience: str, brief: str, current: str) -> str:
     return "\n\n".join(parts)
 
 
+def sanitize_generated(text: str) -> str:
+    """구조적 새니타이저 — 내용 필터가 아니라 **포장 제거만**.
+
+    <think> 블록(구세대류 CoT 누출 재발 대비)과 감싼 코드 펜스를 벗긴다.
+    문구 기반 필터는 하지 않는다 — 정당한 규칙 본문("사용자가 '예'를…")
+    을 오탐한 실측이 있어 위험 (프로브 검출기의 교훈).
+    """
+    t = _THINK_BLOCK.sub("", text).strip()
+    if t.startswith("```"):
+        nl = t.find("\n")
+        if nl != -1:
+            t = t[nl + 1 :]
+        if t.rstrip().endswith("```"):
+            t = t.rstrip()[:-3]
+    return t.strip()
+
+
 def generate_directive_section(
     audience: str, brief: str, current: str, *, runtime: dict
 ) -> str:
     """brief → directive 초안 (활성 스코프용, 미저장 반환).
 
-    별도 ``agent-cli run`` 프로세스 1회 — 완전 격리(메인 워커/렌더러/
-    세션 무접촉), POST 마다 자기 프로세스라 동시 생성이 자연 지원.
-    ``runtime`` 은 문자열 배선만: model/provider_name/base_url/api_key/
-    timeout. 입력 오류=ValueError(→400) / 실행 실패=RuntimeError(→502).
+    ``provider.call`` 1회 (블로킹 — 전송 계층이 executor 오프로드).
+    ``runtime`` = {provider(객체), model, capabilities}. 입력 오류는
+    ValueError(→400), 호출/결과 실패는 RuntimeError(→502).
     """
     if audience not in VALID_AUDIENCES:
         raise ValueError(f"unknown audience: {audience}")
     if not brief.strip():
         raise ValueError("brief 가 비어 있습니다")
-    if not runtime or not runtime.get("model"):
+    if not runtime or runtime.get("provider") is None:
         raise ValueError("LLM 이 배선되지 않았습니다")
 
     task = build_generation_task(audience, brief, current)
-    timeout = int(runtime.get("timeout", 120))
-
-    # 자격은 env 로 (argv 는 ps 에 노출). 서브프로세스는 부모와 같은
-    # 인터프리터의 agent_cli 를 실행 — PATH 의 다른 설치본에 안 흔들린다.
-    env = dict(os.environ)
-    for env_key, rt_key in (
-        ("AGENT_CLI_PROVIDER", "provider_name"),
-        ("AGENT_CLI_BASE_URL", "base_url"),
-        ("AGENT_CLI_API_KEY", "api_key"),
-    ):
-        val = runtime.get(rt_key)
-        if val:
-            env[env_key] = str(val)
-
-    with tempfile.TemporaryDirectory(prefix="agentcli-dirgen-") as workdir:
-        result_path = Path(workdir) / "result.md"
-        cmd = [
-            sys.executable,
-            "-m",
-            "agent_cli",
-            "run",
-            f"@directive-writer {task}",
-            "--model",
-            str(runtime["model"]),
-            "--max-turns",
-            "4",
-            "--result-file",
-            str(result_path),
-        ]
-        try:
-            proc = subprocess.run(
-                cmd,
-                cwd=workdir,  # 세션/스크래치가 임시 디렉토리에 격리
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError(f"생성 시간 초과 ({timeout}s)") from e
-        if not result_path.is_file():
-            tail = (proc.stderr or proc.stdout or "").strip()[-400:]
-            raise RuntimeError(
-                f"생성 실패 (exit {proc.returncode}): {tail or '(no output)'}"
-            )
-        # @ 경로의 result-file 은 run 관찰 포맷(STATUS/RESULT/[activity])
-        # 그대로다 — 포맷터의 역(extract_result_body)으로 원문만 수확.
-        from agent_cli.subagent.report import extract_result_body
-
-        body = extract_result_body(result_path.read_text(encoding="utf-8")).strip()
+    try:
+        resp = runtime["provider"].call(
+            messages=[{"role": "user", "content": task}],
+            system=_WRITER_SYSTEM,
+            model=runtime.get("model", ""),
+            capabilities=runtime.get("capabilities"),
+        )
+    except Exception as e:  # provider/network — 전송 계층이 502 로
+        raise RuntimeError(f"생성 실패: {e}") from e
+    body = sanitize_generated(resp.content or "")
     if not body:
         raise RuntimeError("생성 결과가 비어 있습니다")
     return body
