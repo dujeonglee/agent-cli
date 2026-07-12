@@ -13,9 +13,9 @@ ON_TURN_END = "OnTurnEnd"
 PRE_TOOL_USE = "PreToolUse"
 POST_TOOL_USE = "PostToolUse"
 
-# Delegate lifecycle
-ON_DELEGATE_START = "OnDelegateStart"
-ON_DELEGATE_END = "OnDelegateEnd"
+# Agent-run lifecycle
+ON_AGENT_START = "OnAgentStart"
+ON_AGENT_END = "OnAgentEnd"
 
 # Skill lifecycle
 ON_SKILL_START = "OnSkillStart"
@@ -30,8 +30,8 @@ ALL_EVENTS = frozenset(
         ON_TURN_END,
         PRE_TOOL_USE,
         POST_TOOL_USE,
-        ON_DELEGATE_START,
-        ON_DELEGATE_END,
+        ON_AGENT_START,
+        ON_AGENT_END,
         ON_SKILL_START,
         ON_SKILL_END,
     }
@@ -46,8 +46,8 @@ EVENT_TO_FUNC = {
     ON_TURN_END: "on_turn_end",
     PRE_TOOL_USE: "pre_tool_use",
     POST_TOOL_USE: "post_tool_use",
-    ON_DELEGATE_START: "on_delegate_start",
-    ON_DELEGATE_END: "on_delegate_end",
+    ON_AGENT_START: "on_agent_start",
+    ON_AGENT_END: "on_agent_end",
     ON_SKILL_START: "on_skill_start",
     ON_SKILL_END: "on_skill_end",
 }

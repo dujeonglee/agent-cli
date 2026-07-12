@@ -11,7 +11,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from agent_cli.constants import DELEGATE_DEFAULT_TIMEOUT
+from agent_cli.constants import AGENT_DEFAULT_TIMEOUT
 from agent_cli.providers.base import LLMProvider
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.result import ToolResult
@@ -31,8 +31,8 @@ from agent_cli.subagent.report import (
     _extract_last_actions,
     _format_delegate_output,
     _format_parallel_results,
-    _generate_delegate_dir_name,
-    _persist_delegate_result,
+    _generate_run_dir_name,
+    _persist_run_result,
     _resolve_session_dir,
 )
 
@@ -53,7 +53,7 @@ def _run_single(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = DELEGATE_DEFAULT_TIMEOUT,
+    timeout: int = AGENT_DEFAULT_TIMEOUT,
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
@@ -133,13 +133,13 @@ def _run_single(
 
     # Resolve parent session dir and create delegate subdir
     parent_session_dir = _resolve_session_dir(session, parent_ctx)
-    delegate_dir_name = _generate_delegate_dir_name(agent_name or "task")
-    delegate_dir = parent_session_dir / delegate_dir_name
+    run_dir_name = _generate_run_dir_name(agent_name or "task")
+    run_dir = parent_session_dir / run_dir_name
 
     # Context + run_loop — 공용 러너 (subagent/runner.py). wire_format·
     # 예산 상속, fork 히스토리 복사, 인스펙터 스코프 등록(v4.52.0)이
     # 전부 러너 안이다.
-    ctx, ctx_error = create_subagent_ctx(context_mode, parent_ctx, delegate_dir)
+    ctx, ctx_error = create_subagent_ctx(context_mode, parent_ctx, run_dir)
     if ctx is None:
         return ToolResult(False, error=f"Delegation rejected: {ctx_error}")
 
@@ -184,9 +184,9 @@ def _run_single(
     formatted = _format_delegate_output(delegate_result)
 
     # Persist result.md to delegate directory
-    _persist_delegate_result(formatted, delegate_dir)
+    _persist_run_result(formatted, run_dir)
 
-    artifact = f"{delegate_dir_name}/"
+    artifact = f"{run_dir_name}/"
 
     if result_str is not None:
         return ToolResult(
@@ -214,7 +214,7 @@ def _run_parallel(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = DELEGATE_DEFAULT_TIMEOUT,
+    timeout: int = AGENT_DEFAULT_TIMEOUT,
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
@@ -342,7 +342,7 @@ def tool_delegate(
     depth: int = 0,
     max_depth: int = 2,
     max_turns: int = 0,
-    timeout: int = DELEGATE_DEFAULT_TIMEOUT,
+    timeout: int = AGENT_DEFAULT_TIMEOUT,
     session=None,
     skill_stack: list[str] | None = None,
     agent_stack: list[str] | None = None,
@@ -382,7 +382,7 @@ def tool_delegate(
     )
 
     if len(tasks) == 1:
-        # Single delegate: grouped nested rendering
+        # Single run: grouped nested rendering
         from agent_cli.render import (
             get_renderer,
             render_group_start,
@@ -393,7 +393,7 @@ def tool_delegate(
 
         spec = tasks[0]
         agent_name = spec.get("agent", "")
-        label = f"delegate:{agent_name}" if agent_name else "delegate"
+        label = f"agent:{agent_name}" if agent_name else "agent"
 
         # Pair the CLI's group-block rendering with the same
         # ``begin_delegate_task`` / ``end_delegate_task`` lifecycle

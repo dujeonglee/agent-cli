@@ -90,9 +90,9 @@ def _summarize_action(action: str, action_input: dict) -> str:
     elif action == "shell":
         cmd = action_input.get("command", "")
         return f"shell {cmd[:60]}" if cmd else "shell"
-    elif action == "delegate":
-        task = action_input.get("task", "")
-        return f'delegate "{task[:40]}"' if task else "delegate"
+    elif action == "agent":
+        task = action_input.get("task", "") or action_input.get("message", "")
+        return f'agent "{task[:40]}"' if task else "agent"
     else:
         return action
 
@@ -145,15 +145,15 @@ def _extract_last_actions(messages: list[dict]) -> list[str]:
     return result
 
 
-def _generate_delegate_dir_name(agent_name: str) -> str:
-    """Generate a unique delegate directory name: delegate_{name}_{hash}_{ts}"""
+def _generate_run_dir_name(agent_name: str) -> str:
+    """Generate a unique run directory name: run_{name}_{hash}_{ts}"""
     import os
 
     name = agent_name or "task"
     hash_part = os.urandom(3).hex()  # 6-char hex
     ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
     ms = f"{int(time.time() * 1000) % 1000:03d}"
-    return f"delegate_{name}_{hash_part}_{ts}{ms}"
+    return f"run_{name}_{hash_part}_{ts}{ms}"
 
 
 def _resolve_session_dir(session, parent_ctx) -> Path:
@@ -165,14 +165,14 @@ def _resolve_session_dir(session, parent_ctx) -> Path:
     return Path(tempfile.mkdtemp(prefix="delegate_"))
 
 
-def _persist_delegate_result(
+def _persist_run_result(
     formatted: str,
-    delegate_dir: Path,
+    run_dir: Path,
 ) -> None:
     """Save delegate result as result.md in delegate directory."""
     try:
-        delegate_dir.mkdir(parents=True, exist_ok=True)
-        result_path = delegate_dir / "result.md"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        result_path = run_dir / "result.md"
         result_path.write_text(formatted, encoding="utf-8")
     except Exception:
         pass

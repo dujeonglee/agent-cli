@@ -32,7 +32,7 @@
       <div id="theme-menu" role="menu" hidden></div>
     </span>
     <button id="inspector-btn" type="button" title="Prompt Inspector">⚡</button>
-    <button id="teammate-btn" type="button" title="Teammates — 상주 에이전트 대화 창">🤝<span id="tm-badge" hidden></span></button>
+    <button id="agent-btn" type="button" title="Agents — 상주 에이전트 대화 창">🤝<span id="tm-badge" hidden></span></button>
     <button id="auto-review-btn" type="button" title="Auto-review: review each completion with a reviewer agent until it accepts" aria-pressed="false">🔍 Review: off</button>
     <button id="export-btn" type="button" title="Export conversation">📤</button>
     <button id="files-btn" type="button" title="Workspace files — download / upload">📁</button>
@@ -101,17 +101,17 @@
     <div id="dl-msg" class="dl-msg"></div>
   </aside>
 
-  <!-- Teammate 대화 창 (🤝) — 상주 에이전트 roster + 대화 + 인간 개입 -->
+  <!-- 상주 에이전트 대화 창 (🤝) — roster + 대화 + 인간 개입 -->
   <div id="tm-backdrop" hidden></div>
   <aside id="tm-drawer" aria-hidden="true">
     <div class="tm-head">
-      <div class="tm-title">🤝 Teammates</div>
+      <div class="tm-title">🤝 Agents</div>
       <button id="tm-close" type="button" title="Close">✕</button>
     </div>
-    <div id="tm-roster" title="살아있는 teammate — 클릭해 대화 보기"></div>
+    <div id="tm-roster" title="살아있는 상주 에이전트 — 클릭해 대화 보기"></div>
     <div id="tm-conv"></div>
     <div id="tm-inputrow">
-      <textarea id="tm-input" rows="2" placeholder="teammate 를 선택하고 메시지…"
+      <textarea id="tm-input" rows="2" placeholder="에이전트를 선택하고 메시지…"
                 spellcheck="false" disabled></textarea>
       <button id="tm-send" type="button" disabled>Send</button>
     </div>

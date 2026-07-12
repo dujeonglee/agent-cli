@@ -1,11 +1,11 @@
-"""teammate 도구 스키마 (P1, docs/teammate/DESIGN.md §4.3).
+"""agent 도구 스키마 (docs/agent-unification/DESIGN.md §3).
 
 실행은 :func:`agent_cli.subagent.agents_live.tool_agent` — delegate 처럼
 루프(tool_bridge)가 인터셉트해 registry/provider 배선을 주입한다. 이
 모듈은 스키마·의미론 검증(C7 ``validate``)·over-cap 표면만 소유한다.
-레지스트리가 없는 루프(서브에이전트·headless)에서는 AgentLoop 초기화가
-도구 목록에서 teammate 를 제거하므로 모델에게 보이지 않는다 (P1 경계:
-teammate 안 teammate 금지).
+레지스트리가 없는 루프(서브에이전트·headless)에서는 상주 모드가
+디스패치에서 거부되고 프롬프트는 SUBLOOP_DESCRIPTION(run 만 문서화)으로
+렌더된다 (§3.2 모드 축소 노출 — 도구 인스턴스는 하나).
 """
 
 from __future__ import annotations
@@ -50,12 +50,12 @@ class AgentTool(Tool):
                     "run: execute ONE task in a fresh one-shot sub-agent "
                     "(blocking — result returns in this turn; several run ops "
                     "in one turn execute in parallel). "
-                    "spawn: create a PERSISTENT teammate (returns its key). "
+                    "spawn: create a PERSISTENT agent (returns its key). "
                     "request: send it a message — returns immediately; the "
                     "reply is DELIVERED to you automatically when ready "
                     "(never poll, never wait — keep working or complete). "
-                    "status: list teammates and their state. "
-                    "resume: bring a DEAD teammate back to life with its full "
+                    "status: list live agents and their state. "
+                    "resume: bring a DEAD agent back to life with its full "
                     "prior context (it remembers everything). "
                     "kill: terminate one."
                 ),
@@ -63,9 +63,9 @@ class AgentTool(Tool):
             "profile": {
                 "type": "string",
                 "description": (
-                    "spawn: profile from .agent-cli/agents/{profile}.md "
-                    "(loaded into the teammate's system prompt; omit for a "
-                    "generalist). The SAME role may be spawned multiple times "
+                    "run/spawn: profile from .agent-cli/agents/{profile}.md "
+                    "(loaded into the sub-agent's system prompt; omit for a "
+                    "generalist). The SAME profile may be spawned multiple times "
                     "for parallel independent workstreams — give each instance "
                     "a distinct `name`."
                 ),
@@ -73,9 +73,9 @@ class AgentTool(Tool):
             "name": {
                 "type": "string",
                 "description": (
-                    "spawn: optional instance label to tell same-role teammates "
+                    "spawn: optional instance label to tell same-profile agents "
                     "apart (e.g. two coders as 'ui' and 'api'). Display only — "
-                    "always address teammates by their key."
+                    "always address agents by their key."
                 ),
             },
             "task": {
@@ -88,17 +88,17 @@ class AgentTool(Tool):
             "instructions": {
                 "type": "string",
                 "description": (
-                    "spawn: inline role text (instant-agent) — becomes part of "
-                    "the teammate's system prompt for its WHOLE life and "
-                    "survives resume. Use alone for an ad-hoc specialist, or "
-                    "with `role` to append session-specific directions to a "
-                    "profile."
+                    "run/spawn: inline role text (instant-agent) — becomes part "
+                    "of the sub-agent's system prompt (for a spawned agent: "
+                    "its WHOLE life, survives resume). Use alone for an "
+                    "ad-hoc specialist, or with `profile` to append "
+                    "session-specific directions."
                 ),
             },
             "key": {
                 "type": "string",
                 "description": (
-                    "teammate key returned by spawn (required for request/"
+                    "agent key returned by spawn (required for request/"
                     "resume/kill; optional filter for status)"
                 ),
             },
@@ -109,14 +109,14 @@ class AgentTool(Tool):
             "tools": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "spawn: allowed tools (omit for the default set)",
+                "description": "run/spawn: allowed tools (omit for the default set)",
             },
             "context": {
                 "type": "string",
                 "enum": ["none", "fork"],
                 "description": (
-                    "spawn: none (fresh context) or fork (copy of the current "
-                    "conversation history)"
+                    "run/spawn: none (fresh context) or fork (copy of the "
+                    "current conversation history)"
                 ),
             },
         },
@@ -193,4 +193,4 @@ class AgentTool(Tool):
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # 루프가 인터셉트 (registry/provider 필요) — 직접/테스트 호출자용.
-        return ToolResult(True, output="(teammate: intercepted by loop)")
+        return ToolResult(True, output="(agent: intercepted by loop)")

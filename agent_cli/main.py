@@ -14,7 +14,7 @@ import typer
 from dataclasses import dataclass
 
 from agent_cli.config import get_provider_defaults
-from agent_cli.constants import SHELL_COMMAND_TIMEOUT, DELEGATE_DEFAULT_TIMEOUT
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT, AGENT_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers import (
@@ -231,8 +231,12 @@ class DispatchOutput:
     broken adapter cannot wedge the dispatch loop.
     """
 
-    def list_agents(self, agents: list[tuple[str, str]]) -> None:
-        """Render available agents as ``(name, description)``. Empty = none."""
+    def list_agents(self, agents: list[tuple[str, str]], live_status: str = "") -> None:
+        """``@agents`` — 프로파일 카탈로그 + (있으면) live roster 통합 표시.
+
+        ``agents`` 는 ``(name, description)``, ``live_status`` 는
+        레지스트리의 ``format_status()`` 텍스트 (레지스트리 없으면 빈 문자열).
+        """
         raise NotImplementedError
 
     def list_skills(self, skills: dict) -> None:
@@ -260,54 +264,97 @@ class DispatchOutput:
         """
         raise NotImplementedError
 
-    def list_teammates(self, status_text: str) -> None:
-        """``@teammates`` — 상주 teammate roster (기본: 무시)."""
+    def agent_dispatch_result(self, text: str, success: bool) -> None:
+        """``@agt-<key>``/``@<profile>-spawn`` 의 결과/에러 (기본: 무시)."""
 
-    def teammate_dispatch_result(self, text: str, success: bool) -> None:
-        """``@agt-<key> ...`` 의 결과/에러 (기본: 무시)."""
+
+def _parse_at_profile(name: str) -> tuple[str, str]:
+    """``@<profile>[-run|-spawn]`` 토큰 파싱 → (profile, mode).
+
+    규칙 (설계 §3.5): **전체 토큰이 실존 프로파일이면 그것 우선**, 아니면
+    ``-run``/``-spawn`` 접미사 분리 — 하이픈 포함 프로파일명
+    (code-reviewer)과 극단 케이스(foo-run 이라는 프로파일)까지 결정적.
+    """
+    from agent_cli.subagent.profiles import load_profile
+
+    body, _, err = load_profile(name) if name else (None, {}, "empty")
+    if err is None:
+        return name, "run"
+    for suffix, mode in (("-run", "run"), ("-spawn", "spawn")):
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)], mode
+    return name, "run"
 
 
 def _try_dispatch_agent_command(
     message: str, output: DispatchOutput, agent_registry
 ) -> bool:
-    """``@teammates`` / ``@agt-<key> [메시지]`` 사용자 명령 (범위 B).
+    """상주 에이전트 방향의 ``@`` 명령 — LLM 을 거치지 않는 직접 표면.
 
-    ``@agents`` 대칭의 직접 조작 표면 — 회신 라우팅은 D8 그대로: 사용자
-    발신이므로 main LLM 컨텍스트에 들어가지 않고, 웹은 🤝 창으로, CLI 는
-    MinimalRenderer.agent_message 콘솔 라인으로 받는다. 처리했으면
-    True (호출자는 LLM 경로를 건너뜀).
+    처리 범위 (처리했으면 True — 호출자는 LLM/run 경로를 건너뜀):
+
+    - ``@agents`` — 프로파일 카탈로그 + live roster 통합 목록.
+    - ``@agt-<key> [메시지]`` — 상주 인스턴스 직접 전송 / 상태 (D8:
+      회신은 main LLM 컨텍스트에 안 섞이고 🤝 창(웹)/콘솔 라인(CLI)).
+    - ``@<profile>-spawn [task]`` — 상주 스폰 (+초기 task 전달).
+
+    ``@<profile>[-run] <task>`` (일회성 run)는 여기서 처리하지 않고
+    False 로 폴스루 — ``_dispatch_agent`` 가 run 엔진으로 실행한다.
     """
     if not message.startswith("@"):
         return False
     parts = message.split(maxsplit=1)
     name = parts[0][1:]
 
-    if name == "teammates":
-        if agent_registry is None:
-            output.list_teammates("(teammate 레지스트리가 없는 모드입니다)")
-        else:
-            output.list_teammates(agent_registry.format_status())
+    if not name or name == "agents":
+        live = agent_registry.format_status() if agent_registry is not None else ""
+        output.list_agents(_collect_agents(), live)
         return True
 
     if name.startswith("agt-"):
         if agent_registry is None:
-            output.teammate_dispatch_result(
-                "(teammate 레지스트리가 없는 모드입니다)", False
+            output.agent_dispatch_result(
+                "(에이전트 레지스트리가 없는 모드입니다)", False
             )
             return True
         if len(parts) < 2:
-            # 메시지 없음 → 그 teammate 의 상태
-            output.teammate_dispatch_result(agent_registry.format_status(name), True)
+            # 메시지 없음 → 그 인스턴스의 상태
+            output.agent_dispatch_result(agent_registry.format_status(name), True)
             return True
         error = agent_registry.request(name, parts[1], author="user")
         if error:
-            output.teammate_dispatch_result(f"@{name}: {error}", False)
+            output.agent_dispatch_result(f"@{name}: {error}", False)
         else:
-            output.teammate_dispatch_result(
+            output.agent_dispatch_result(
                 f"@{name} 에 전송됨 — 회신은 🤝 창(웹) / 콘솔 라인(CLI)으로 "
                 f"도착합니다 (main LLM 대화에는 섞이지 않음).",
                 True,
             )
+        return True
+
+    profile, mode = _parse_at_profile(name)
+    if mode == "spawn":
+        if agent_registry is None:
+            output.agent_dispatch_result(
+                "(에이전트 레지스트리가 없는 모드입니다 — spawn 불가)", False
+            )
+            return True
+        key, error = agent_registry.spawn(profile=profile)
+        if error:
+            output.agent_dispatch_result(f"@{name}: {error}", False)
+            return True
+        task = parts[1] if len(parts) > 1 else ""
+        if task:
+            send_error = agent_registry.request(key, task, author="user")
+            if send_error:
+                output.agent_dispatch_result(f"@{key}: {send_error}", False)
+                return True
+        output.agent_dispatch_result(
+            f"@{key} ({profile}) 상주 시작"
+            + (" — 초기 task 전달됨" if task else "")
+            + ". 이후 @agt-<key> <메시지> 로 직접 소통.",
+            True,
+        )
         return True
 
     return False
@@ -316,27 +363,25 @@ def _try_dispatch_agent_command(
 class _ConsoleDispatchOutput(DispatchOutput):
     """CLI-flavoured output — colour, Rich markup, plain ``console.print``."""
 
-    def list_teammates(self, status_text: str) -> None:
-        console.print(f"\n[{C['accent']}]Teammates:[/]")
-        console.print(status_text)
-        console.print(
-            f"\n[{C['muted']}]Usage: @agt-<key> <메시지> (직접 전송) · "
-            f"@agt-<key> (상태)[/]"
-        )
-
-    def teammate_dispatch_result(self, text: str, success: bool) -> None:
+    def agent_dispatch_result(self, text: str, success: bool) -> None:
         color = C["final"] if success else C["error"]
         console.print(f"[{color}]{text}[/]")
 
-    def list_agents(self, agents: list[tuple[str, str]]) -> None:
-        console.print(f"\n[{C['accent']}]Available agents:[/]")
+    def list_agents(self, agents: list[tuple[str, str]], live_status: str = "") -> None:
+        console.print(f"\n[{C['accent']}]Agent profiles:[/]")
         if not agents:
-            console.print(f"[{C['muted']}]No agents found.[/]")
+            console.print(f"[{C['muted']}]No profiles found.[/]")
         else:
             for name, desc in agents:
                 suffix = f"  — {desc}" if desc else ""
                 console.print(f"  @{name}{suffix}")
-        console.print(f"\n[{C['muted']}]Usage: @agent-name <task>[/]")
+        if live_status:
+            console.print(f"\n[{C['accent']}]Live agents:[/]")
+            console.print(live_status)
+        console.print(
+            f"\n[{C['muted']}]Usage: @<profile> <task> (일회성 run) · "
+            f"@<profile>-spawn <task> (상주) · @agt-<key> <메시지> (직접 전송)[/]"
+        )
 
     def list_skills(self, skills: dict) -> None:
         user_skills = {k: v for k, v in skills.items() if v.user_invocable}
@@ -440,7 +485,7 @@ def try_dispatch_agent_or_skill(
     max_turns: int,
     verbose: bool,
     max_depth: int,
-    delegate_timeout: int,
+    agent_timeout: int,
     ctx,
     session,
     graceful_interrupt: bool = True,
@@ -469,17 +514,18 @@ def try_dispatch_agent_or_skill(
     from agent_cli.context.session import save_meta
 
     if message.startswith("@"):
-        # teammate 명령이 먼저 — ``@teammates`` 목록 / ``@agt-<key>`` 직접
-        # 조작 (agents 폴백에 가려지던 것을 전용 처리, 범위 B).
+        # 상주 방향 명령이 먼저 — ``@agents`` 통합 목록 / ``@agt-<key>``
+        # 직접 조작 / ``@<profile>-spawn`` (run 은 폴스루).
         if _try_dispatch_agent_command(message, output, agent_registry):
             return True
         parts = message.split(maxsplit=1)
         name = parts[0][1:]
-        # Any ``@<x>`` with no task — including unknown agent names —
+        # Any ``@<x>`` with no task — including unknown profile names —
         # triggers a listing rather than an error. Typing ``@`` to
         # discover what's available is a documented UX pattern.
-        if not name or name == "agents" or len(parts) < 2:
-            output.list_agents(_collect_agents())
+        if len(parts) < 2:
+            live = agent_registry.format_status() if agent_registry is not None else ""
+            output.list_agents(_collect_agents(), live)
             return True
         result = _dispatch_agent(
             message,
@@ -492,7 +538,7 @@ def try_dispatch_agent_or_skill(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
@@ -529,7 +575,7 @@ def try_dispatch_agent_or_skill(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
@@ -557,7 +603,7 @@ def _dispatch_agent(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
+    agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,
@@ -567,7 +613,8 @@ def _dispatch_agent(
     from agent_cli.subagent.oneshot import tool_delegate
 
     parts = query.split(maxsplit=1)
-    agent_name = parts[0][1:]  # strip leading @
+    # ``-run`` 접미사 허용 (기본 모드의 명시 표기) — 실존 프로파일 우선.
+    agent_name, _ = _parse_at_profile(parts[0][1:])
     task = parts[1] if len(parts) > 1 else ""
 
     if not task:
@@ -594,7 +641,7 @@ def _dispatch_agent(
         depth=0,
         max_depth=max_depth,
         max_turns=max_turns,
-        timeout=delegate_timeout,
+        timeout=agent_timeout,
         session=session,
         hooks_config=_parent_hooks,
         stop_event=stop_event,
@@ -631,7 +678,7 @@ def _dispatch_skill(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
+    agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
     ctx=None,
     session=None,
     graceful_interrupt: bool = False,
@@ -690,7 +737,7 @@ def _dispatch_skill(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
             graceful_interrupt=graceful_interrupt,
@@ -970,9 +1017,9 @@ def run(
         "--max-depth",
         help="Maximum subagent nesting depth",
     ),
-    delegate_timeout: int = typer.Option(
+    agent_timeout: int = typer.Option(
         300,
-        "--delegate-timeout",
+        "--agent-timeout",
         help="Timeout in seconds for subagent delegation",
     ),
     verbose: bool = typer.Option(
@@ -1067,7 +1114,7 @@ def run(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
         )
@@ -1099,7 +1146,7 @@ def run(
             "max_turns": max_turns,
             "depth": 0,
             "max_depth": max_depth,
-            "timeout": delegate_timeout,
+            "timeout": agent_timeout,
             "session": session,
             "hooks_config": _disk_hooks,
             "compaction_enabled": not no_compaction,
@@ -1116,22 +1163,22 @@ def run(
     input_queue = InputQueue()
     waker = MailWaker(input_queue.enqueue, agent_registry.has_pending_replies)
 
-    def _on_teammate_mail(reply: dict) -> None:
+    def _on_agent_mail(reply: dict) -> None:
         _agent_mail_notice(reply)
         waker.on_mail()
 
-    agent_registry.on_reply = _on_teammate_mail
+    agent_registry.on_reply = _on_agent_mail
     # P3 (D7): --resume 세션이면 이전 teammate 자동 재생성 + 미배달 회신
     # 복원 (fresh 세션은 agents.json 이 없어 no-op).
     revived = agent_registry.restore(parent_ctx=ctx)
     if revived:
-        console.print(f"[{C['muted']}]🤝 teammate {revived}명 재생성됨[/]")
+        console.print(f"[{C['muted']}]🤝 상주 에이전트 {revived}명 재생성됨[/]")
     auto = agent_registry.auto_spawn(parent_ctx=ctx)
     if auto:
         console.print(f"[{C['muted']}]🤝 auto-spawn 전문가 {auto}명 상주 시작[/]")
 
-    # teammate 직접 명령 (범위 B): @teammates / @agt-<key> [메시지].
-    # --resume 세션에서 재생성된 teammate 에게 CLI 로 직접 말 걸기.
+    # 상주 방향 @ 명령: @agents / @agt-<key> [메시지] / @<profile>-spawn.
+    # --resume 세션에서 재생성된 상주 에이전트에게 CLI 로 직접 말 걸기.
     if query.startswith("@") and _try_dispatch_agent_command(
         query, _ConsoleDispatchOutput(), agent_registry
     ):
@@ -1159,7 +1206,7 @@ def run(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
         )
@@ -1175,7 +1222,7 @@ def run(
     def _run_one(text: str, *, wake: bool) -> None:
         nonlocal answer
         if wake:
-            console.print(f"[{C['muted']}]🤝 teammate 회신 배달 — 이어서 진행[/]")
+            console.print(f"[{C['muted']}]🤝 에이전트 회신 배달 — 이어서 진행[/]")
         loop_result = run_loop(
             query=text,
             provider=llm_provider,
@@ -1187,7 +1234,7 @@ def run(
             max_turns=max_turns,
             verbose=verbose,
             max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             ctx=ctx,
             session=session,
             mcp_manager=mcp_manager,
@@ -1210,7 +1257,7 @@ def run(
         stuck = agent_registry.waiting_ask_keys()
         if stuck:
             console.print(
-                f"[{C['accent']}]⚠ teammate {', '.join(stuck)} 이(가) 답변 대기 "
+                f"[{C['accent']}]⚠ 에이전트 {', '.join(stuck)} 이(가) 답변 대기 "
                 f"중인 채 종료 — resume 시 질문은 STALE 처리됩니다[/]"
             )
         agent_registry.shutdown_all()
@@ -1254,7 +1301,7 @@ def _announce_agent_boot(renderer, revived: int, auto: int) -> None:
     실렌더러(Web/Minimal)로 단위 테스트되는 헬퍼로 추출.
     """
     if revived:
-        renderer.status("running", f"🤝 teammate {revived}명 재생성됨")
+        renderer.status("running", f"🤝 상주 에이전트 {revived}명 재생성됨")
     if auto:
         renderer.status("running", f"🤝 auto-spawn 전문가 {auto}명 상주 시작")
 
@@ -1268,9 +1315,9 @@ def _agent_mail_notice(reply: dict) -> None:
 
     key = reply.get("key", "?")
     if reply.get("kind") == "question":
-        line = f"❓ teammate {key} 질문 도착 (답변 대기 중)"
+        line = f"❓ 에이전트 {key} 질문 도착 (답변 대기 중)"
     else:
-        line = f"📨 teammate {key} 회신 도착"
+        line = f"📨 에이전트 {key} 회신 도착"
     try:
         # status(state, message) — 시그니처 오호출이 try 에 삼켜져 알림이
         # 조용히 죽어 있던 회귀의 수리 지점 (v4.60.1).
@@ -1548,8 +1595,8 @@ def web(
         0, "--max-context-tokens", help="Max tokens in context window (0=auto)"
     ),
     max_depth: int = typer.Option(2, "--max-depth", help="Subagent nesting depth"),
-    delegate_timeout: int = typer.Option(
-        DELEGATE_DEFAULT_TIMEOUT, "--delegate-timeout", help="Subagent timeout (s)"
+    agent_timeout: int = typer.Option(
+        AGENT_DEFAULT_TIMEOUT, "--agent-timeout", help="Subagent timeout (s)"
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
@@ -1781,7 +1828,7 @@ def web(
                 "max_turns": max_turns,
                 "depth": 0,
                 "max_depth": max_depth,
-                "timeout": delegate_timeout,
+                "timeout": agent_timeout,
                 "session": session,
                 "hooks_config": None,
                 "compaction_enabled": not no_compaction,
@@ -1797,11 +1844,11 @@ def web(
 
         _waker = MailWaker(server.enqueue, _registry.has_pending_replies)
 
-        def _on_teammate_mail(reply: dict) -> None:
+        def _on_agent_mail(reply: dict) -> None:
             _agent_mail_notice(reply)
             _waker.on_mail()
 
-        agent_registry.on_reply = _on_teammate_mail
+        agent_registry.on_reply = _on_agent_mail
         # P3 (D7): --resume 세션의 teammate 자동 재생성 (fresh 는 no-op).
         revived = agent_registry.restore(parent_ctx=ctx)
         auto = agent_registry.auto_spawn(parent_ctx=ctx)
@@ -1828,7 +1875,7 @@ def web(
             if _wake_verdict == "skip":
                 continue  # 이미 다른 run 이 배달 완료 — 빈 run 을 열지 않는다
             if _wake_verdict == "run":
-                nickname = "🤝 teammate"
+                nickname = "🤝 agent"
             # Real user message — flip to busy until the next dequeue
             # (after handle_slash_command / try_dispatch_agent_or_skill /
             # run_loop finish). Anything that follows — including a
@@ -1870,7 +1917,7 @@ def web(
                         max_turns=max_turns,
                         verbose=verbose,
                         max_depth=max_depth,
-                        delegate_timeout=delegate_timeout,
+                        agent_timeout=agent_timeout,
                         ctx=ctx,
                         session=session,
                         graceful_interrupt=True,
@@ -1897,7 +1944,7 @@ def web(
                             verbose=verbose,
                             ctx=ctx,
                             max_depth=max_depth,
-                            delegate_timeout=delegate_timeout,
+                            agent_timeout=agent_timeout,
                             session=session,
                             graceful_interrupt=True,
                             stop_event=stop_event,
@@ -1930,7 +1977,7 @@ def web(
                                 base_url=resolved_url,
                                 api_key=resolved_key,
                                 max_depth=max_depth,
-                                timeout=delegate_timeout,
+                                timeout=agent_timeout,
                                 session=session,
                                 stop_event=stop_event,
                                 compaction_enabled=not no_compaction,

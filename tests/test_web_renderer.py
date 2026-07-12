@@ -1966,7 +1966,7 @@ class TestTeammateWork:
 
     def test_work_emits_delegate_card_events(self):
         r = WebRenderer()
-        r.begin_agent_work(key="agt-1", seq=2, role="researcher", message="dig")
+        r.begin_agent_work(key="agt-1", seq=2, profile="researcher", message="dig")
         r.end_agent_work(key="agt-1", seq=2, success=True, duration_s=0.3)
         names = [e for e, _ in r._event_buffer]
         assert "delegate_task_start" in names and "delegate_task_end" in names
@@ -1983,7 +1983,7 @@ class TestTeammateWork:
         tid = threading.get_ident()
         # worker 가 상시 스코프를 이미 보유한 상태를 재현
         r.begin_prompt_scope("agt-9", label="teammate:anon")
-        r.begin_agent_work(key="agt-9", seq=1, role="", message="m")
+        r.begin_agent_work(key="agt-9", seq=1, profile="", message="m")
         assert r._thread_to_task[tid] == "agt-9#1"  # SSE 는 요청 카드로
         r.note_system_prompt([("Base", "TM PROMPT")], turn=1)
         r.end_agent_work(key="agt-9", seq=1, success=True, duration_s=0.1)
@@ -2003,12 +2003,12 @@ class TestTeammateWindowEvents:
     def test_roster_sticky_replayed_on_reconnect(self):
         # sticky 계약: register_connection 의 snapshot 에 최신 roster 포함.
         r = WebRenderer()
-        r.agent_roster([{"key": "agt-1", "role": "res", "state": "idle"}])
-        r.agent_roster([{"key": "agt-1", "role": "res", "state": "busy"}])
+        r.agent_roster([{"key": "agt-1", "profile": "res", "state": "idle"}])
+        r.agent_roster([{"key": "agt-1", "profile": "res", "state": "busy"}])
         snap = r.register_connection(WebConnection(id="late"))
         roster_evs = [d for (e, d) in snap if e == "agent_roster"]
         assert len(roster_evs) == 1  # latest wins (슬롯 1개)
-        assert roster_evs[0]["teammates"][0]["state"] == "busy"
+        assert roster_evs[0]["roster"][0]["state"] == "busy"
 
     def test_message_is_persistent(self):
         r = WebRenderer()

@@ -775,12 +775,12 @@ def build_system_prompt_sections(
         sections.append(("Skills", skill_desc))
 
     if "agent" in active_tools:
-        role_desc = build_teammate_role_descriptions(wire_format=wire_format)
-        if role_desc:
-            sections.append(("AgentInstance Roles", role_desc))
+        profiles_desc = build_agent_profiles_section(wire_format=wire_format)
+        if profiles_desc:
+            sections.append(("Agent Profiles", profiles_desc))
         live_desc = build_live_agents_section(agent_registry)
         if live_desc:
-            sections.append(("Live Teammates", live_desc))
+            sections.append(("Live Agents", live_desc))
 
     # ── Recency: passive reference → active rules → immediate constraint ──
     sections.append(("Environment", _build_environment_section()))
@@ -925,13 +925,12 @@ def _build_context_recovery(session_dir: str) -> str:
     )
 
 
-def build_teammate_role_descriptions(wire_format=None) -> str:
-    """Available teammate roles for system prompt injection (전문가 발견).
+def build_agent_profiles_section(wire_format=None) -> str:
+    """## Agent Profiles — 프로파일 카탈로그 (5.0.0 통합 광고).
 
-    delegate 의 ``build_agent_descriptions`` 와 동형 — teammate 로더로
-    역할을 나열해 모델이 **어떤 전문가를 소집할 수 있는지** 알게 한다
-    (이것 없이는 사용자가 역할 이름을 불러줘야만 쓸 수 있었다).
-    ``disable-model-invocation: true`` 역할은 제외 (skills/agents 규율).
+    run(일회성)과 spawn(상주) 이 같은 카탈로그를 쓴다. 서브루프에도
+    노출된다 (run 이 profile 을 받으므로) — Live Agents 와 달리
+    레지스트리 게이트가 없다. ``disable-model-invocation`` 제외.
     """
     if wire_format is None:
         wire_format = _get_wire_format()
@@ -941,26 +940,34 @@ def build_teammate_role_descriptions(wire_format=None) -> str:
     except ImportError:
         return ""
 
-    roles = available_profiles()
-    if not roles:
+    profiles = available_profiles()
+    if not profiles:
         return ""
 
-    example = wire_format.render_full_example(
+    run_example = wire_format.render_full_example(
+        thought=None,
+        action="agent",
+        action_input=wire_format.render_action_input(
+            {"mode": "run", "profile": "profile-name", "task": "..."}
+        ),
+    )
+    spawn_example = wire_format.render_full_example(
         thought=None,
         action="agent",
         action_input=wire_format.render_action_input(
             {"mode": "spawn", "profile": "profile-name", "task": "..."}
         ),
     )
-    indented = "\n".join(f"  {line}" for line in example.splitlines())
+    indent = lambda s: "\n".join(f"  {line}" for line in s.splitlines())  # noqa: E731
     lines = [
-        "## Available AgentInstance Roles",
-        "Spawn a persistent expert teammate with one of these roles when the "
-        "work benefits from an ongoing collaborator (it keeps its context "
-        "across your requests):",
-        indented,
+        "## Agent Profiles",
+        "Profiles give a sub-agent a specialist role. Use them one-shot "
+        '(mode:"run") or as a persistent collaborator (mode:"spawn" — '
+        "keeps its context across your requests):",
+        indent(run_example),
+        indent(spawn_example),
     ]
-    for name, desc in roles:
+    for name, desc in profiles:
         suffix = f" — {desc}" if desc else ""
         lines.append(f"- `{name}`{suffix}")
 
@@ -987,13 +994,14 @@ def build_live_agents_section(agent_registry) -> str:
         return ""
 
     lines = [
-        "## Live Teammates",
-        "These teammates are ALREADY running and remember all previous "
+        "## Live Agents",
+        "These agents are ALREADY running and remember all previous "
         "exchanges — send follow-up work with "
         '`{"mode":"request","key":"<key>","message":"..."}` instead of '
         "spawning a new one for the same thread of work. Spawn ADDITIONAL "
-        "instances of a role (each with a distinct `name`) only for parallel "
-        "INDEPENDENT workstreams — e.g. several coders on disjoint files.",
+        "instances of a profile (each with a distinct `name`) only for "
+        "parallel INDEPENDENT workstreams — e.g. several coders on disjoint "
+        "files.",
     ]
     for s in alive:
         who = " · ".join(p for p in (s.get("role", ""), s.get("name", "")) if p)

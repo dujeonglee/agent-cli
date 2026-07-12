@@ -44,7 +44,7 @@ class _RecordingOutput(DispatchOutput):
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def list_agents(self, agents):
+    def list_agents(self, agents, live_status=""):
         # agents = [(name, description), ...] → record just the names
         self.calls.append(("list_agents", tuple(n for n, _ in agents)))
 
@@ -85,7 +85,7 @@ def base_state(tmp_path):
         "max_turns": 0,
         "verbose": False,
         "max_depth": 2,
-        "delegate_timeout": 300,
+        "agent_timeout": 300,
         "ctx": ContextManager(session_dir=tmp_path),
         "session": None,
     }
@@ -310,15 +310,15 @@ class TestConsoleDispatchOutput:
     def test_list_agents_empty(self):
         out = _ConsoleDispatchOutput()
         text = self._capture(lambda: out.list_agents([]))
-        assert "No agents found." in text
-        assert "Usage: @agent-name <task>" in text
+        assert "No profiles found." in text
+        assert "Usage: @<profile> <task>" in text
 
     def test_list_agents_with_descriptions(self):
         out = _ConsoleDispatchOutput()
         text = self._capture(
             lambda: out.list_agents([("alpha", "does A"), ("beta", "")])
         )
-        assert "Available agents:" in text
+        assert "Agent profiles:" in text
         assert "@alpha  — does A" in text  # description shown, like /skills
         assert "@beta" in text  # no description → name only
 
@@ -415,7 +415,7 @@ class TestWebDispatchOutput:
         assert event == "observation"
         assert data["tool_name"] == "agents"
         assert data["success"] is True
-        assert "No agents found" in data["content"]
+        assert "(none)" in data["content"]
 
     def test_list_agents_with_descriptions(self):
         out, conn = self._make()
@@ -609,7 +609,7 @@ class TestLooksLikeSlashCommand:
             max_turns=0,
             verbose=False,
             max_depth=2,
-            delegate_timeout=60,
+            agent_timeout=60,
             ctx=None,
             session=None,
         )

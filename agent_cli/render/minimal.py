@@ -977,12 +977,14 @@ class MinimalRenderer(Renderer):
     # ── teammate 요청별 표시 (P1) ────────────────────
     # CLI 에서 teammate worker 는 main run 과 동시에(또는 main idle 중에)
     # 돌 수 있어 라이브 출력을 그대로 흘리면 터미널이 섞인다 — per-thread
-    # 캡처로 억제하고 버린다. teammate 활동은 회신 배달(관찰 카드)과
-    # 📨 도착 알림·teammates/<key>/ 세션 기록으로만 표면화 (P1 결정).
+    # 캡처로 억제하고 버린다. 상주 에이전트 활동은 회신 배달(관찰 카드)과
+    # 📨 도착 알림·agents/<key>/ 세션 기록으로만 표면화 (P1 결정).
 
-    def begin_agent_work(self, *, key: str, seq: int, role: str, message: str) -> None:
+    def begin_agent_work(
+        self, *, key: str, seq: int, profile: str, message: str
+    ) -> None:
         self.start_capture()
-        self.set_thread_agent(role or key)
+        self.set_thread_agent(profile or key)
 
     def end_agent_work(
         self,

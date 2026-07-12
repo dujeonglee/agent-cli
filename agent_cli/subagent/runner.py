@@ -160,7 +160,7 @@ def run_subagent_message(
         verbose=False,
         depth=depth + 1,
         max_depth=max_depth,
-        delegate_timeout=timeout,
+        agent_timeout=timeout,
         active_tools=active_tools,
         ctx=ctx,
         session=session,

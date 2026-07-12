@@ -396,18 +396,13 @@ class TurnDispatcher:
                 ToolBridge._run_spec(TOOLS["agent"].strip_prefix(op.action_input or {}))
                 for op in batch_ops
             ]
-        elif tool_name == "delegate":
-            specs = [
-                TOOLS["delegate"].strip_prefix(op.action_input or {})
-                for op in batch_ops
-            ]
         else:
             # Extension slot: a parallel_safe tool with no internal concurrent
             # engine (e.g. a future read-only read_file/code_index opt-in) would
             # fan its ops out over a thread-pool of per-op run() calls here.
             raise NotImplementedError(
                 f"parallel_safe batch dispatch not wired for {tool_name!r}; only "
-                "delegate/agent have an internal concurrent engine (_run_parallel)."
+                "agent has an internal concurrent engine (_run_parallel)."
             )
 
         result = self.tools._dispatch_tool_with_hooks(tool_name, {"tasks": specs})

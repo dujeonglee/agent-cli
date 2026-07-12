@@ -1086,7 +1086,7 @@ def create_app(server: WebServer) -> FastAPI:
         return EventSourceResponse(server.stream_events(conn))
 
     @app.post("/api/agent/{key}/input")
-    async def teammate_input(key: str, request: Request, token: str = Query(...)):
+    async def agent_input(key: str, request: Request, token: str = Query(...)):
         """teammate 대화 창의 인간 개입 (P4, D8) — 해당 teammate 의 inbox 로
         직접 전송. teammate 가 ask 답변 대기(waiting_ask) 중이면 이 메시지가
         답으로 소비된다 (main 과 선착순). 이 문답의 회신은 main 컨텍스트에
@@ -1094,7 +1094,7 @@ def create_app(server: WebServer) -> FastAPI:
         server._require_token(token)
         registry = server.agent_registry
         if registry is None:
-            raise HTTPException(status_code=503, detail="teammate registry not ready")
+            raise HTTPException(status_code=503, detail="agent registry not ready")
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -1111,12 +1111,12 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"accepted": True})
 
     @app.post("/api/agent/{key}/resume")
-    async def teammate_resume(key: str, token: str = Query(...)):
+    async def agent_resume(key: str, token: str = Query(...)):
         """죽은 teammate 를 이전 컨텍스트 그대로 부활 (대화 창의 ↻)."""
         server._require_token(token)
         registry = server.agent_registry
         if registry is None:
-            raise HTTPException(status_code=503, detail="teammate registry not ready")
+            raise HTTPException(status_code=503, detail="agent registry not ready")
         error = registry.resume_teammate(key)
         if error:
             code = 409 if "still alive" in error or "limit" in error else 404
@@ -1124,13 +1124,13 @@ def create_app(server: WebServer) -> FastAPI:
         return JSONResponse({"ok": True})
 
     @app.post("/api/agent/{key}/kill")
-    async def teammate_kill(key: str, token: str = Query(...)):
+    async def agent_kill(key: str, token: str = Query(...)):
         """teammate 종료 (P4 창의 ✕) — kill 은 worker join(≤2s)을 포함하므로
         이벤트 루프를 막지 않게 executor 로 오프로드."""
         server._require_token(token)
         registry = server.agent_registry
         if registry is None:
-            raise HTTPException(status_code=503, detail="teammate registry not ready")
+            raise HTTPException(status_code=503, detail="agent registry not ready")
         loop = asyncio.get_running_loop()
         error = await loop.run_in_executor(None, registry.kill, key)
         if error:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-from agent_cli.constants import SHELL_COMMAND_TIMEOUT, DELEGATE_DEFAULT_TIMEOUT
+from agent_cli.constants import SHELL_COMMAND_TIMEOUT, AGENT_DEFAULT_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
@@ -97,7 +97,7 @@ def execute_skill(
     max_turns: int = 0,
     verbose: bool = False,
     max_depth: int = 2,
-    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
+    agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
     ctx: ContextManager | None = None,
     session=None,
     skill_stack: list[str] | None = None,
@@ -196,7 +196,7 @@ def execute_skill(
             verbose=verbose,
             depth=parent_depth + 1,
             max_depth=max_depth,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             active_tools=effective_tools,
             ctx=skill_ctx or ctx,
             session=session,

@@ -154,7 +154,7 @@ class TestBuildReplyRecord:
     def _reply(self, **kw):
         return {
             "key": "agt-abc",
-            "role": "researcher",
+            "profile": "researcher",
             "seq": 1,
             "success": True,
             "output": "findings",
@@ -229,7 +229,7 @@ class TestRegistryLifecycle:
             profiles_mod, "_profile_loader", ResourceLoader([tmp_path / "empty"])
         )
         reg = make_registry(tmp_path)
-        key, err = reg.spawn(role="ghost")
+        key, err = reg.spawn(profile="ghost")
         assert key == "" and "not found" in err
 
     def test_request_reply_roundtrip(self, tmp_path, renderer):
@@ -341,7 +341,7 @@ class TestWaitAndScope:
         # D9: 스코프는 worker 시작 시 1회 push, kill 시에만 고정 —
         # 요청 사이에도 살아 있다 (delegate 의 요청별 스코프와 다른 점).
         reg = make_registry(tmp_path)
-        key, _ = reg.spawn(role="")
+        key, _ = reg.spawn(profile="")
         wait_until(lambda: reg.get(key).state == "idle")
         begins = renderer.named("begin_prompt_scope")
         assert [c[1]["scope"] for c in begins] == [key]
@@ -367,7 +367,7 @@ class TestWaitAndScope:
 
     def test_format_status(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        assert "no teammates" in reg.format_status()
+        assert "no live agents" in reg.format_status()
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         s = reg.format_status()
@@ -392,7 +392,7 @@ class TestToolTeammate:
             {"mode": "spawn", "task": "explore"}, registry=reg, runtime=reg.runtime
         )
         assert r.success
-        assert "spawned teammate 'agt-" in r.output
+        assert "spawned agent 'agt-" in r.output
         assert "initial task queued" in r.output
         assert wait_until(reg.has_pending_replies)
         reg.shutdown_all()
@@ -670,7 +670,7 @@ class TestAskRouting:
             {
                 "kind": "question",
                 "key": "agt-q1",
-                "role": "researcher",
+                "profile": "researcher",
                 "success": True,
                 "output": "which branch?",
             }
@@ -794,7 +794,7 @@ class TestResumeRestore:
         key, _ = reg.spawn()
         data = self._state(tmp_path)
         assert data["version"] == 1
-        entry = next(e for e in data["teammates"] if e["key"] == key)
+        entry = next(e for e in data["agents"] if e["key"] == key)
         assert entry["state"] == "idle"
         reg.shutdown_all()
 
@@ -803,7 +803,7 @@ class TestResumeRestore:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         reg.kill(key)
-        entry = next(e for e in self._state(tmp_path)["teammates"] if e["key"] == key)
+        entry = next(e for e in self._state(tmp_path)["agents"] if e["key"] == key)
         assert entry["state"] == "dead"
 
     def test_session_exit_keeps_teammate_revivable(self, tmp_path, renderer):
@@ -811,7 +811,7 @@ class TestResumeRestore:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         reg.shutdown_all()  # 세션 종료 ≠ kill
-        entry = next(e for e in self._state(tmp_path)["teammates"] if e["key"] == key)
+        entry = next(e for e in self._state(tmp_path)["agents"] if e["key"] == key)
         assert entry["state"] == "idle"  # resume 대상
 
     def test_pending_mirrored_to_disk(self, tmp_path, renderer):
@@ -902,7 +902,7 @@ class TestResumeRestore:
         )
 
         reg1 = make_registry(tmp_path)
-        key, err = reg1.spawn(role="researcher")
+        key, err = reg1.spawn(profile="researcher")
         assert err == ""
         wait_until(lambda: reg1.get(key).state == "idle")
         reg1.shutdown_all()
@@ -917,7 +917,7 @@ class TestResumeRestore:
         reg = make_registry(tmp_path / "fresh")
         assert reg.restore() == 0
         (tmp_path / "agents.json").write_text(
-            '{"version": 99, "teammates": [{"key": "agt-x"}]}', encoding="utf-8"
+            '{"version": 99, "agents": [{"key": "agt-x"}]}', encoding="utf-8"
         )
         reg2 = make_registry(tmp_path)
         assert reg2.restore() == 0
@@ -1206,7 +1206,7 @@ class TestWorkerDeathNotice:
         assert wait_until(lambda: reg.get(key).state == "dead")
         import json
 
-        entry = json.loads((tmp_path / "agents.json").read_text())["teammates"][0]
+        entry = json.loads((tmp_path / "agents.json").read_text())["agents"][0]
         assert entry["state"] == "dead"
 
     def test_machinery_crash_notifies_main(self, tmp_path, renderer):
@@ -1265,10 +1265,10 @@ class TestRoleDiscovery:
         assert set(all_names) == {"hidden", "visible"}
 
     def test_prompt_section_lists_roles_with_spawn_example(self):
-        from agent_cli.prompts.system_prompt import build_teammate_role_descriptions
+        from agent_cli.prompts.system_prompt import build_agent_profiles_section
 
-        desc = build_teammate_role_descriptions()
-        assert "## Available AgentInstance Roles" in desc
+        desc = build_agent_profiles_section()
+        assert "## Agent Profiles" in desc
         assert "`researcher`" in desc and "`code-reviewer`" in desc
         assert '"mode"' in desc and "spawn" in desc  # 스폰 예시 포함
 
@@ -1291,8 +1291,8 @@ class TestRoleDiscovery:
         without = build_system_prompt_sections(caps, active_tools=["read_file"])
         names_with = [n for n, _ in with_tool]
         names_without = [n for n, _ in without]
-        assert "AgentInstance Roles" in names_with
-        assert "AgentInstance Roles" not in names_without
+        assert "Agent Profiles" in names_with
+        assert "Agent Profiles" not in names_without
 
 
 class TestAutoSpawn:
@@ -1313,7 +1313,7 @@ class TestAutoSpawn:
         reg = make_registry(tmp_path)
         assert reg.auto_spawn() == 1
         tm = next(iter(reg._agents.values()))
-        assert tm.role_name == "concierge"
+        assert tm.profile_name == "concierge"
         assert reg.auto_spawn() == 0  # 살아있는 동안 중복 스폰 없음
         reg.shutdown_all()
 
@@ -1343,8 +1343,8 @@ class TestAutoSpawn:
 class TestMultiInstance:
     def test_same_role_spawns_multiple(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        k1, e1 = reg.spawn(role="", name="ui")
-        k2, e2 = reg.spawn(role="", name="api")
+        k1, e1 = reg.spawn(profile="", name="ui")
+        k2, e2 = reg.spawn(profile="", name="api")
         assert e1 == e2 == "" and k1 != k2
         assert reg.get(k1).instance_name == "ui"
         assert reg.get(k2).snapshot()["name"] == "api"
@@ -1364,7 +1364,7 @@ class TestMultiInstance:
             {
                 "kind": "reply",
                 "key": "agt-1",
-                "role": "coder",
+                "profile": "coder",
                 "name": "ui",
                 "success": True,
                 "output": "done",
@@ -1382,7 +1382,7 @@ class TestMultiInstance:
         )
         monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([d]))
         reg1 = make_registry(tmp_path)
-        key, _ = reg1.spawn(role="coder", name="ui")
+        key, _ = reg1.spawn(profile="coder", name="ui")
         wait_until(lambda: reg1.get(key).state == "idle")
         reg1.shutdown_all()
 
@@ -1405,7 +1405,7 @@ class TestLiveTeammatesSection:
         reg.kill(k2)  # dead 는 광고에서 제외
 
         desc = build_live_agents_section(reg)
-        assert "## Live Teammates" in desc
+        assert "## Live Agents" in desc
         assert f"`{k1}`" in desc and "(ui)" in desc
         assert f"`{k2}`" not in desc
         assert "..." in desc and "x" * 141 not in desc  # 140자 절단
@@ -1419,9 +1419,10 @@ class TestLiveTeammatesSection:
         assert build_live_agents_section(None) == ""
         assert build_live_agents_section(make_registry(tmp_path)) == ""
 
-    def test_hidden_from_teammate_subloops(self, tmp_path, renderer):
-        # 이중 게이트: teammate 서브루프는 도구 strip + registry None —
-        # 카탈로그도 Live 목록도 자신에겐 보이지 않는다.
+    def test_subloop_sections_gating(self, tmp_path, renderer):
+        # 5.0.0 게이트: 카탈로그(Agent Profiles)는 agent 도구가 보이는 모든
+        # 루프에 (run 이 profile 을 받으므로 서브루프 포함), Live Agents 는
+        # 레지스트리(main)에서만.
         from agent_cli.prompts.system_prompt import build_system_prompt_sections
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -1442,16 +1443,16 @@ class TestLiveTeammatesSection:
                 caps, active_tools=["agent"], agent_registry=reg
             )
         ]
-        assert "AgentInstance Roles" in main_names and "Live Teammates" in main_names
-        # teammate 서브루프 (도구 strip → active_tools 에 없음): 둘 다 부재
+        assert "Agent Profiles" in main_names and "Live Agents" in main_names
+        # 서브루프 (agent 도구 있음·registry 없음): 카탈로그 O / Live X
         sub_names = [
             n
             for n, _ in build_system_prompt_sections(
-                caps, active_tools=["read_file"], agent_registry=None
+                caps, active_tools=["read_file", "agent"], agent_registry=None
             )
         ]
-        assert "AgentInstance Roles" not in sub_names
-        assert "Live Teammates" not in sub_names
+        assert "Agent Profiles" in sub_names  # 5.0.0: 카탈로그는 서브루프에도 (run 용)
+        assert "Live Agents" not in sub_names
         reg.shutdown_all()
 
     def test_membership_flag_set_and_consumed(self, tmp_path, renderer):
@@ -1519,7 +1520,7 @@ class TestLiveTeammatesSection:
         # 턴 2 의 시스템 프롬프트(system kwarg)에 광고가 실렸다
         _, kwargs = provider.call.call_args_list[1]
         system = kwargs["system"]
-        assert "## Live Teammates" in system
+        assert "## Live Agents" in system
         key = next(iter(reg._agents))
         assert key in system and "(ui)" in system
         reg.shutdown_all()
@@ -1705,7 +1706,7 @@ class TestResumeMode:
             {
                 "kind": "died",
                 "key": "agt-x",
-                "role": "",
+                "profile": "",
                 "success": False,
                 "output": "boom",
             }
@@ -1721,34 +1722,32 @@ class TestInspectorImmediateReflection:
         from agent_cli.render.web import WebRenderer
 
         r = WebRenderer()
-        r.note_system_prompt(
-            [("Base", "BASE"), ("AgentInstance Roles", "CATALOG")], turn=1
-        )
+        r.note_system_prompt([("Base", "BASE"), ("Agent Profiles", "CATALOG")], turn=1)
         return r
 
     def test_update_prompt_section_insert_replace_remove(self):
         r = self._web_with_snapshot()
         # 신설 — 카탈로그 뒤에 삽입
-        r.update_prompt_section("", "Live Teammates", "- `agt-1` (coder)")
+        r.update_prompt_section("", "Live Agents", "- `agt-1` (coder)")
         names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
-        assert names == ["Base", "AgentInstance Roles", "Live Teammates"]
+        assert names == ["Base", "Agent Profiles", "Live Agents"]
         # 교체 + 총계 재계산
-        r.update_prompt_section("", "Live Teammates", "- `agt-1`\n- `agt-2`")
+        r.update_prompt_section("", "Live Agents", "- `agt-1`\n- `agt-2`")
         snap = r.prompt_snapshot("")
-        live = next(s for s in snap["sections"] if s["name"] == "Live Teammates")
+        live = next(s for s in snap["sections"] if s["name"] == "Live Agents")
         assert "agt-2" in live["text"]
         assert snap["total_chars"] == sum(s["chars"] for s in snap["sections"]) + 4
         # 제거 (마지막 teammate 사망 → 섹션 소멸)
-        r.update_prompt_section("", "Live Teammates", "")
+        r.update_prompt_section("", "Live Agents", "")
         names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
-        assert "Live Teammates" not in names
+        assert "Live Agents" not in names
         # 열린 인스펙터 재조회 신호가 흘렀다 (transient)
         # → connection 등록 후 한 번 더 갱신해 이벤트 수신 확인
         from agent_cli.render.web import WebConnection
 
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        r.update_prompt_section("", "Live Teammates", "- back")
+        r.update_prompt_section("", "Live Agents", "- back")
         events = []
         while not conn.queue.empty():
             events.append(conn.queue.get_nowait())
@@ -1765,14 +1764,12 @@ class TestInspectorImmediateReflection:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         live = next(
-            s
-            for s in r.prompt_snapshot("")["sections"]
-            if s["name"] == "Live Teammates"
+            s for s in r.prompt_snapshot("")["sections"] if s["name"] == "Live Agents"
         )
         assert key in live["text"]  # spawn 즉시 광고
         reg.kill(key)
         names = [s["name"] for s in r.prompt_snapshot("")["sections"]]
-        assert "Live Teammates" not in names  # 유일 멤버 사망 → 섹션 소멸
+        assert "Live Agents" not in names  # 유일 멤버 사망 → 섹션 소멸
 
     def test_no_snapshot_is_safe_noop(self, tmp_path, monkeypatch):
         # CLI(minimal)·스냅샷 미존재 환경에서도 멤버십 변화가 안전.
@@ -1821,7 +1818,7 @@ class TestResumeGuidance:
         )
         monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([d]))
         reg = make_registry(tmp_path)
-        k1, _ = reg.spawn(role="comedian")
+        k1, _ = reg.spawn(profile="comedian")
         wait_until(lambda: reg.get(k1).state == "idle")
         reg.kill(k1)
         # 같은 역할 재spawn — 실사용 시나리오 ("다시 시작하자" → 모델이 spawn)
@@ -1849,10 +1846,10 @@ class TestAtCommand:
         def __init__(self):
             self.calls = []
 
-        def list_teammates(self, status_text):
-            self.calls.append(("list", status_text))
+        def list_agents(self, agents, live_status=""):
+            self.calls.append(("list", agents, live_status))
 
-        def teammate_dispatch_result(self, text, success):
+        def agent_dispatch_result(self, text, success):
             self.calls.append(("result", text, success))
 
     def _dispatch(self, message, registry):
@@ -1862,18 +1859,20 @@ class TestAtCommand:
         handled = _try_dispatch_agent_command(message, out, registry)
         return handled, out.calls
 
-    def test_at_teammates_lists_roster(self, tmp_path, renderer):
+    def test_at_agents_lists_catalog_and_roster(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn(name="ui")
         wait_until(lambda: reg.get(key).state == "idle")
-        handled, calls = self._dispatch("@teammates", reg)
+        handled, calls = self._dispatch("@agents", reg)
         assert handled and calls[0][0] == "list"
-        assert key in calls[0][1] and "ui" in calls[0][1]
+        assert isinstance(calls[0][1], list)  # 프로파일 카탈로그
+        assert key in calls[0][2] and "ui" in calls[0][2]  # live roster
         reg.shutdown_all()
 
-    def test_at_teammates_without_registry(self):
-        handled, calls = self._dispatch("@teammates", None)
-        assert handled and "레지스트리가 없는" in calls[0][1]
+    def test_at_agents_without_registry(self):
+        handled, calls = self._dispatch("@agents", None)
+        assert handled and calls[0][0] == "list"
+        assert calls[0][2] == ""  # live roster 없음
 
     def test_at_key_message_requests_as_user(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
@@ -1905,10 +1904,104 @@ class TestAtCommand:
         handled, calls = self._dispatch("@agt-nope hello", reg)
         assert handled and calls[0][2] is False and "unknown" in calls[0][1]
 
-    def test_non_teammate_at_falls_through(self, tmp_path, renderer):
+    def test_at_profile_spawn_suffix(self, tmp_path, renderer, monkeypatch):
+        import agent_cli.subagent.profiles as profiles_mod
+
+        roles_dir = tmp_path / "roles"
+        roles_dir.mkdir()
+        (roles_dir / "coder.md").write_text("---\n---\nYou code.", encoding="utf-8")
+        monkeypatch.setattr(
+            profiles_mod, "_profile_loader", ResourceLoader([roles_dir])
+        )
+        monkeypatch.setattr(profiles_mod, "_PROFILE_SEARCH_PATHS", [roles_dir])
+        reg = make_registry(tmp_path)
+        handled, calls = self._dispatch("@coder-spawn 초기 작업 하나", reg)
+        assert handled and calls[0][2] is True
+        assert "상주 시작" in calls[0][1] and "초기 task 전달됨" in calls[0][1]
+        tm = next(iter(reg._agents.values()))
+        assert tm.profile_name == "coder"
+        assert wait_until(lambda: tm.handled == 1)  # 초기 task 처리됨
+        reg.shutdown_all()
+
+    def test_at_profile_spawn_without_task(self, tmp_path, renderer, monkeypatch):
+        import agent_cli.subagent.profiles as profiles_mod
+
+        roles_dir = tmp_path / "roles"
+        roles_dir.mkdir()
+        (roles_dir / "coder.md").write_text("---\n---\nYou code.", encoding="utf-8")
+        monkeypatch.setattr(
+            profiles_mod, "_profile_loader", ResourceLoader([roles_dir])
+        )
+        monkeypatch.setattr(profiles_mod, "_PROFILE_SEARCH_PATHS", [roles_dir])
+        reg = make_registry(tmp_path)
+        handled, calls = self._dispatch("@coder-spawn", reg)
+        assert handled and calls[0][2] is True
+        assert "초기 task" not in calls[0][1]
+        reg.shutdown_all()
+
+    def test_at_profile_spawn_unknown_profile(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        handled, calls = self._dispatch("@nosuch-spawn 작업", reg)
+        assert handled and calls[0][2] is False
+
+    def test_at_teammates_removed(self, tmp_path, renderer):
+        # 5.0.0 하드컷 — @teammates 는 더 이상 명령이 아니다 (run 폴스루).
+        reg = make_registry(tmp_path)
+        handled, calls = self._dispatch("@teammates", reg)
+        assert handled is False and calls == []
+
+    def test_non_command_at_falls_through(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         handled, calls = self._dispatch("@explorer 조사해줘", reg)
-        assert handled is False and calls == []  # 기존 agent 경로로 폴스루
+        assert handled is False and calls == []  # run 경로로 폴스루
+
+
+class TestParseAtProfile:
+    """``@<profile>[-run|-spawn]`` 접미사 파싱 (설계 §3.5)."""
+
+    def _with_profiles(self, monkeypatch, tmp_path, names):
+        import agent_cli.subagent.profiles as profiles_mod
+
+        roles_dir = tmp_path / "roles"
+        roles_dir.mkdir(exist_ok=True)
+        for n in names:
+            (roles_dir / f"{n}.md").write_text("---\n---\nbody", encoding="utf-8")
+        monkeypatch.setattr(
+            profiles_mod, "_profile_loader", ResourceLoader([roles_dir])
+        )
+        monkeypatch.setattr(profiles_mod, "_PROFILE_SEARCH_PATHS", [roles_dir])
+
+    def test_plain_name_is_run(self, monkeypatch, tmp_path):
+        from agent_cli.main import _parse_at_profile
+
+        self._with_profiles(monkeypatch, tmp_path, ["coder"])
+        assert _parse_at_profile("coder") == ("coder", "run")
+
+    def test_suffixes(self, monkeypatch, tmp_path):
+        from agent_cli.main import _parse_at_profile
+
+        self._with_profiles(monkeypatch, tmp_path, ["coder"])
+        assert _parse_at_profile("coder-run") == ("coder", "run")
+        assert _parse_at_profile("coder-spawn") == ("coder", "spawn")
+
+    def test_exact_profile_wins_over_suffix(self, monkeypatch, tmp_path):
+        # 프로파일 이름 자체가 -run 으로 끝나는 극단 케이스 — 실존 우선.
+        from agent_cli.main import _parse_at_profile
+
+        self._with_profiles(monkeypatch, tmp_path, ["foo-run"])
+        assert _parse_at_profile("foo-run") == ("foo-run", "run")
+
+    def test_hyphenated_profile_with_suffix(self, monkeypatch, tmp_path):
+        from agent_cli.main import _parse_at_profile
+
+        self._with_profiles(monkeypatch, tmp_path, ["code-reviewer"])
+        assert _parse_at_profile("code-reviewer-spawn") == ("code-reviewer", "spawn")
+
+    def test_unknown_name_passes_through(self, monkeypatch, tmp_path):
+        from agent_cli.main import _parse_at_profile
+
+        self._with_profiles(monkeypatch, tmp_path, [])
+        assert _parse_at_profile("ghost") == ("ghost", "run")
 
 
 class TestMinimalConsoleReception:
@@ -2021,7 +2114,7 @@ class TestInstantAgent:
         )
         monkeypatch.setattr(profiles_mod, "_profile_loader", ResourceLoader([d]))
         reg = make_registry(tmp_path)
-        key, _ = reg.spawn(role="coder", instructions="이 세션에선 테스트만 담당.")
+        key, _ = reg.spawn(profile="coder", instructions="이 세션에선 테스트만 담당.")
         tm = reg.get(key)
         assert tm.role_prompt.startswith("You build things.")
         assert tm.role_prompt.endswith("이 세션에선 테스트만 담당.")

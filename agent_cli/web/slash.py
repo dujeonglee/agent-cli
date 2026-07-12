@@ -94,34 +94,25 @@ class WebDispatchOutput:
     def __init__(self, renderer: WebRenderer) -> None:
         self.renderer = renderer
 
-    def list_teammates(self, status_text: str) -> None:
-        self.renderer.observation(
-            status_text
-            + "\n\n직접 전송: ``@agt-<key> <메시지>`` · 상태: ``@agt-<key>`` "
-            "(회신은 🤝 창으로 — main 대화에 안 섞임)",
-            turn=0,
-            tool_name="teammates",
-            success=True,
-        )
+    def agent_dispatch_result(self, text: str, success: bool) -> None:
+        self.renderer.observation(text, turn=0, tool_name="agent", success=success)
 
-    def teammate_dispatch_result(self, text: str, success: bool) -> None:
-        self.renderer.observation(text, turn=0, tool_name="teammate", success=success)
-
-    def list_agents(self, agents: list[tuple[str, str]]) -> None:
+    def list_agents(self, agents: list[tuple[str, str]], live_status: str = "") -> None:
+        lines = ["Agent profiles:"]
         if not agents:
-            self.renderer.observation(
-                "No agents found.",
-                turn=0,
-                tool_name="agents",
-                success=True,
-            )
-            return
-        lines = ["Available agents:"]
+            lines.append("  (none)")
         for name, desc in agents:
             suffix = f" — {desc}" if desc else ""
             lines.append(f"  @{name}{suffix}")
+        if live_status:
+            lines.append("")
+            lines.append("Live agents:")
+            lines.append(live_status)
         lines.append("")
-        lines.append("Invoke with ``@<agent> <task>``.")
+        lines.append(
+            "``@<profile> <task>`` (일회성 run) · ``@<profile>-spawn <task>`` "
+            "(상주) · ``@agt-<key> <메시지>`` (직접 전송 — 회신은 🤝 창으로)"
+        )
         self.renderer.observation(
             "\n".join(lines),
             turn=0,

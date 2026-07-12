@@ -9,7 +9,6 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.tools import TOOLS, RunContext, _execute_tool
 from agent_cli.tools.base import default_oversized_nudge
-from agent_cli.subagent.oneshot import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -112,10 +111,8 @@ class ToolBridge:
         # slipped past pre-validation, an underlying library raising
         # ``TypeError`` from inside ``re.py``, etc.
         try:
-            if tool_name == "delegate":
-                result = self._invoke_delegate(tool_input, input_dict)
-            elif tool_name == "agent":
-                result = self._invoke_agent(tool_input)
+            if tool_name == "agent":
+                result = self._invoke_agent(tool_input, input_dict)
             else:
                 result = self._invoke_regular(tool_name, tool_input)
         except Exception as e:  # noqa: BLE001 — safety net by design
@@ -202,64 +199,7 @@ class ToolBridge:
 
         return None, tool_input, input_dict
 
-    # ── 2. Delegate dispatch (with delegate-specific hooks) ────────
-    def _invoke_delegate(self, tool_input, input_dict: dict) -> ToolResult:
-        """OnDelegateStart hook → tool_delegate(...) → OnDelegateEnd hook.
-
-        The kwargs threaded into ``tool_delegate`` are too provider/
-        identity-specific to fit the generic ``_execute_tool`` path,
-        which is why delegate is intercepted here.
-        """
-        if self.cfg.hook_runner:
-            self.cfg.hook_runner.fire(
-                "OnDelegateStart",
-                tool_name="delegate",
-                tool_input=input_dict,
-                turn=self.state.turn,
-                mcp_manager=self.cfg.mcp_manager,
-            )
-
-        raw = tool_input if isinstance(tool_input, dict) else {"task": str(tool_input)}
-        # Flat-native delegate (consolidation Step 3): a single op IS the flat
-        # task spec — wrap the whole dict as a one-element tasks list so all
-        # fields (task / context / tools / agent) survive. A parallel batch
-        # arrives already shaped as ``{tasks:[...]}`` (assembled by the loop's
-        # ``_dispatch_parallel_batch``) and passes through untouched.
-        if "tasks" not in raw:
-            raw = {"tasks": [raw]}
-        result = tool_delegate(
-            args=raw,
-            parent_ctx=self.ctx,
-            provider=self.provider,
-            model=self.cfg.model,
-            capabilities=self.cfg.capabilities,
-            provider_name=self.cfg.provider_name,
-            base_url=self.cfg.base_url,
-            api_key=self.cfg.api_key,
-            depth=self.cfg.depth,
-            max_depth=self.cfg.max_depth,
-            max_turns=self.cfg.max_turns,
-            timeout=self.cfg.delegate_timeout,
-            session=self.cfg.session,
-            skill_stack=self.cfg.skill_stack,
-            agent_stack=self.cfg.agent_stack,
-            stop_event=self.state.stop_event,
-            hooks_config=self.cfg.hooks_config,
-            compaction_enabled=self.cfg.compaction_enabled,
-        )
-
-        if self.cfg.hook_runner:
-            self.cfg.hook_runner.fire(
-                "OnDelegateEnd",
-                tool_name="delegate",
-                tool_input=input_dict,
-                delegate_result=result,
-                turn=self.state.turn,
-                mcp_manager=self.cfg.mcp_manager,
-            )
-        return result
-
-    # ── 2b. Agent dispatch (5.0.0 통합) ─────────────────────────────
+    # ── 2. Agent dispatch (5.0.0 통합) ──────────────────────────────
     @staticmethod
     def _run_spec(args: dict) -> dict:
         """agent run op → 일회성 실행 spec (exec 의 task 스펙 shape)."""
@@ -271,17 +211,22 @@ class ToolBridge:
             "instructions": args.get("instructions", ""),
         }
 
-    def _invoke_agent(self, tool_input) -> ToolResult:
+    def _invoke_agent(self, tool_input, input_dict: dict) -> ToolResult:
         """agent 인터셉트 — 제네릭 execute 경로에 없는 provider/identity
         배선이 필요해 여기서 가로챈다.
 
         - ``{"tasks":[...]}`` : 배치 디스패처가 조립한 run fan-out →
-          일회성 병렬 엔진(tool_delegate 경로)으로.
+          일회성 병렬 엔진(tool_delegate 경로)으로. OnAgentStart/End 훅이
+          엔진 실행을 감싼다 (구 delegate 훅 승계 — run 에만 발화;
+          상주 모드는 일반 PreToolUse/PostToolUse 로 충분).
         - ``mode:"run"`` 단건 : 같은 엔진의 단건 경로.
         - 그 외(상주 모드) : tool_agent(레지스트리) — 레지스트리 없는
           루프에서는 tool_agent 가 "main 전용" 에러로 거부 (모드 축소).
         """
         from agent_cli.subagent.agents_live import tool_agent
+
+        # 함수-로컬 import — 호출 시점에 oneshot 모듈 attr 을 읽는 테스트
+        # DI seam (모듈-레벨 바인딩이면 monkeypatch 가 안 닿는다).
         from agent_cli.subagent.oneshot import tool_delegate
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
@@ -292,7 +237,15 @@ class ToolBridge:
                 if "tasks" in args
                 else {"tasks": [self._run_spec(args)]}
             )
-            return tool_delegate(
+            if self.cfg.hook_runner:
+                self.cfg.hook_runner.fire(
+                    "OnAgentStart",
+                    tool_name="agent",
+                    tool_input=input_dict,
+                    turn=self.state.turn,
+                    mcp_manager=self.cfg.mcp_manager,
+                )
+            result = tool_delegate(
                 args=raw,
                 parent_ctx=self.ctx,
                 provider=self.provider,
@@ -304,7 +257,7 @@ class ToolBridge:
                 depth=self.cfg.depth,
                 max_depth=self.cfg.max_depth,
                 max_turns=self.cfg.max_turns,
-                timeout=self.cfg.delegate_timeout,
+                timeout=self.cfg.agent_timeout,
                 session=self.cfg.session,
                 skill_stack=self.cfg.skill_stack,
                 agent_stack=self.cfg.agent_stack,
@@ -312,6 +265,16 @@ class ToolBridge:
                 hooks_config=self.cfg.hooks_config,
                 compaction_enabled=self.cfg.compaction_enabled,
             )
+            if self.cfg.hook_runner:
+                self.cfg.hook_runner.fire(
+                    "OnAgentEnd",
+                    tool_name="agent",
+                    tool_input=input_dict,
+                    delegate_result=result,
+                    turn=self.state.turn,
+                    mcp_manager=self.cfg.mcp_manager,
+                )
+            return result
 
         return tool_agent(
             args,
@@ -327,7 +290,7 @@ class ToolBridge:
                 "max_turns": self.cfg.max_turns,
                 "depth": self.cfg.depth,
                 "max_depth": self.cfg.max_depth,
-                "timeout": self.cfg.delegate_timeout,
+                "timeout": self.cfg.agent_timeout,
                 "session": self.cfg.session,
                 "hooks_config": self.cfg.hooks_config,
                 "compaction_enabled": self.cfg.compaction_enabled,
@@ -360,7 +323,7 @@ class ToolBridge:
 
     # ── 3. Regular tool dispatch ───────────────────────────────────
     def _invoke_regular(self, tool_name: str, tool_input) -> ToolResult:
-        """Dispatch a non-delegate tool via the registry.
+        """Dispatch a non-agent tool via the registry.
 
         Recovery layer (A4/A5 detectors in ``_dispatch_op``) has
         already validated tool_name + action_input. The leaf primitive

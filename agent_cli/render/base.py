@@ -243,7 +243,9 @@ class Renderer(ABC):
         """Mark the current thread as leaving its delegate context.
         No-op for CLI."""
 
-    def begin_agent_work(self, *, key: str, seq: int, role: str, message: str) -> None:
+    def begin_agent_work(
+        self, *, key: str, seq: int, profile: str, message: str
+    ) -> None:
         """teammate worker 가 request 1건 처리를 시작 (teammate P1).
 
         delegate 의 begin_delegate_task 와 달리 **프롬프트 스코프를

@@ -17,7 +17,7 @@ Scope:
   - Shell is skipped naturally (``ShellTool.touched_paths`` returns []).
     Regex-extracting paths from ``rm -rf`` / ``cat foo`` has too many false
     positives; a pre-hook redirect is the cleaner follow-up.
-  - ``delegate`` contributes ``<delegate:agent>`` markers (no real file path)
+  - ``agent`` contributes ``<agent:target>`` markers (no real file path)
     so the file list still reflects "a subagent was spawned".
 """
 
@@ -34,13 +34,13 @@ def extract_file_paths(messages: list[dict[str, Any]]) -> list[str]:
     ``action_input`` is passed to :meth:`Tool.touched_paths`, which knows
     that tool's own key shape. All builtin tools are flat-native (Step 3):
     ``{path}`` (read_file / write_file / edit_file / code_index), or the
-    ``{agent}`` ``<delegate:agent>`` marker for delegate. Tools without paths
+    ``{key/profile}`` ``<agent:target>`` marker for agent. Tools without paths
     return [].
     """
     # Lazy import: ``registry`` pulls in tools that transitively import
     # ``context.manager``, which imports THIS module — a module-load cycle.
     # Importing inside the function defers it to call time, after all modules
-    # are loaded (same pattern as recovery.detectors / tools.delegate).
+    # are loaded (same pattern as recovery.detectors).
     from agent_cli.tools.registry import TOOLS
 
     paths: list[str] = []

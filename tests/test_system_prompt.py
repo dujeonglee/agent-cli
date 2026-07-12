@@ -247,7 +247,7 @@ class TestBuildSystemPromptSections:
         assert positions == sorted(positions)
         assert "Context Recovery" in names  # session_dir given
         # 5.0.0: 구 Agents(delegate) 섹션 소멸 — 프로파일 카탈로그 섹션이 존재
-        assert any("Roles" in n for n in names)  # agent 카탈로그 광고
+        assert "Agent Profiles" in names  # agent 카탈로그 광고
         assert (
             names.index("Execution Context") == len(names) - 1
             if ("Execution Context" in names)

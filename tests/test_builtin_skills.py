@@ -206,7 +206,7 @@ class TestBuiltinSkillContent:
         content = path.read_text()
         assert "frontmatter" in content.lower()
         assert ".agent-cli/agents/" in content
-        assert "delegate" in content.lower()
+        assert '"mode": "run"' in content and '"mode": "spawn"' in content
 
     def test_create_skill_user_invocable(self):
         skill = _parse_skill_file(_CREATE_SKILL_PATH)

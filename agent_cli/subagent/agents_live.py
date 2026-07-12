@@ -22,7 +22,7 @@ teammate 하나 = 데몬 worker 스레드 하나. worker 는 자기 inbox 를 �
   요청별 SSE 라우팅은 별도 표면 ``begin/end_agent_work`` (renderer) —
   스코프(상시)와 카드(요청별)를 분리한 이유는 web 렌더러의
   ``begin_delegate_task`` 가 스코프 push 와 결합돼 있어서다.
-- **레코드 계약**: 배달 레코드는 ``tool:"teammate"`` + additive
+- **레코드 계약**: 배달 레코드는 ``tool:"agent"`` + additive
   ``source:"agent_reply"``. ``tool:""`` 는 v4.51.0 형식-개입 레거시
   마커라 금지 (``records.is_format_intervention`` 오인 방지 — 테스트 고정).
 
@@ -75,7 +75,7 @@ def notify_agents_changed(registry=None) -> None:
         from agent_cli.render import get_renderer
 
         get_renderer().update_prompt_section(
-            "", "Live Teammates", build_live_agents_section(registry)
+            "", "Live Agents", build_live_agents_section(registry)
         )
     except Exception:
         pass  # 표시용 — 실행 경로를 막지 않는다
@@ -100,9 +100,9 @@ def compose_role_prompt(profile_body: str, instructions: str) -> str:
     return parts[0] if parts else ""
 
 
-def format_agent_label(key: str, role: str = "", name: str = "") -> str:
+def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
     """표시 라벨 — 다중 인스턴스 구분: "agt-x (coder · ui)"."""
-    parts = [p for p in (role, name) if p]
+    parts = [p for p in (profile, name) if p]
     return f"{key} ({' · '.join(parts)})" if parts else key
 
 
@@ -128,14 +128,14 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     from agent_cli.context.token_estimator import estimate_tokens
 
     key = reply.get("key", "")
-    label = format_agent_label(key, reply.get("role", ""), reply.get("name", ""))
+    label = format_agent_label(key, reply.get("profile", ""), reply.get("name", ""))
 
     if reply.get("kind") == "died":
         # worker 사망 통지 (Q4): kill/세션종료가 아닌 비정상 종료 — main 이
         # status 를 조회하기 전에 능동적으로 알린다.
         reason = reply.get("output") or "worker terminated unexpectedly"
         content = (
-            f"── teammate {label} DIED ──\n{reason}\n"
+            f"── agent {label} DIED ──\n{reason}\n"
             f"(Its queued requests were lost, but its context is kept — bring "
             f'it back with {{"mode":"resume","key":"{key}"}} to continue with '
             f"full memory, or spawn a new one. If it died from a crash, the "
@@ -155,16 +155,16 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
             # P3: 세션 재시작으로 teammate 는 더 이상 답변 대기가 아님 —
             # 그대로 답하면 새 request 로 오인되므로 정직하게 알린다.
             tail = (
-                "(STALE — the session was resumed; the teammate is NO LONGER "
+                "(STALE — the session was resumed; the agent is NO LONGER "
                 "waiting for this answer. Re-send the original request with "
                 f'{{"mode":"request","key":"{key}","message":"..."}} if still needed.)'
             )
         else:
             tail = (
-                "(The teammate is BLOCKED until answered. Answer via teammate op: "
+                "(The agent is BLOCKED until answered. Answer via agent op: "
                 f'{{"mode":"request","key":"{key}","message":"<your answer>"}}.)'
             )
-        content = f"── teammate {label} QUESTION ──\n{question}\n{tail}"
+        content = f"── agent {label} QUESTION ──\n{question}\n{tail}"
         return {
             "role": "user",
             "tool": "agent",
@@ -187,7 +187,7 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
         )
 
     status = "success" if reply.get("success") else "error"
-    content = f"── teammate {label} reply ({status}) ──\n{body}"
+    content = f"── agent {label} reply ({status}) ──\n{body}"
     return {
         "role": "user",
         "tool": "agent",
@@ -205,7 +205,7 @@ class AgentInstance:
         self,
         key: str,
         *,
-        role_name: str,
+        profile_name: str,
         role_prompt: str,
         allowed_tools: list[str] | None,
         model: str,
@@ -217,7 +217,7 @@ class AgentInstance:
         instructions: str = "",
     ):
         self.key = key
-        self.role_name = role_name
+        self.profile_name = profile_name
         self.role_prompt = role_prompt
         # 다중 인스턴스 구분 라벨 (예: 같은 coder 역할의 "ui"/"api") — 주소는
         # 항상 key, name 은 표시·광고용.
@@ -262,7 +262,7 @@ class AgentInstance:
                 est_tokens = 0
         return {
             "key": self.key,
-            "role": self.role_name,
+            "profile": self.profile_name,
             "name": self.instance_name,
             "state": self.state,
             "handled": self.handled,
@@ -344,7 +344,7 @@ class AgentRegistry:
     def spawn(
         self,
         *,
-        role: str = "",
+        profile: str = "",
         name: str = "",
         instructions: str = "",
         allowed_tools: list[str] | None = None,
@@ -362,7 +362,7 @@ class AgentRegistry:
 
         if self.alive_count() >= _max_agents():
             return "", (
-                f"teammate limit reached ({_max_agents()} alive). "
+                f"agent limit reached ({_max_agents()} alive). "
                 f'Kill one first (mode:"kill") or raise AGENT_CLI_MAX_AGENTS.'
             )
 
@@ -373,11 +373,11 @@ class AgentRegistry:
         description = ""
         model = self.runtime.get("model", "")
         hooks_config = self.runtime.get("hooks_config")
-        if role:
+        if profile:
             from agent_cli.subagent.profiles import load_profile
             from agent_cli.subagent.runner import apply_role_overrides
 
-            body, config, error = load_profile(role)
+            body, config, error = load_profile(profile)
             if error:
                 return "", error
             role_prompt = body or ""
@@ -397,12 +397,12 @@ class AgentRegistry:
             return "", "fork requires parent context"
 
         if self.session_dir is None:
-            return "", "teammate requires a session dir (headless run not supported)"
+            return "", "agents require a session dir (headless run not supported)"
 
         key = f"agt-{uuid.uuid4().hex[:8]}"
         tm = AgentInstance(
             key,
-            role_name=role,
+            profile_name=profile,
             role_prompt=role_prompt,
             allowed_tools=allowed_tools,
             model=model,
@@ -418,7 +418,7 @@ class AgentRegistry:
             target=self._worker,
             args=(tm, parent_ctx),
             daemon=True,
-            name=f"teammate-{key}",
+            name=f"agent-{key}",
         )
         tm.worker.start()
         self._save_state()
@@ -432,10 +432,10 @@ class AgentRegistry:
         """request 큐잉 — 성공 시 빈 문자열, 실패 시 에러 메시지."""
         tm = self._agents.get(key)
         if tm is None:
-            return f"unknown teammate '{key}' (see mode:\"status\" for live keys)"
+            return f"unknown agent '{key}' (see mode:\"status\" for live keys)"
         if tm.state == "dead":
             reason = f" ({tm.error})" if tm.error else ""
-            return f"teammate '{key}' is dead{reason} — spawn a new one"
+            return f"agent '{key}' is dead{reason} — spawn a new one"
         if not message.strip():
             return "empty message"
         tm.queued += 1
@@ -475,16 +475,16 @@ class AgentRegistry:
         if key:
             tm = self._agents.get(key)
             if tm is None:
-                return f"unknown teammate '{key}'"
+                return f"unknown agent '{key}'"
             items = [tm]
         else:
             items = list(self._agents.values())
         if not items:
-            return 'no teammates. Spawn one with mode:"spawn".'
-        lines = [f"teammates ({self.alive_count()}/{_max_agents()} alive):"]
+            return 'no live agents. Spawn one with mode:"spawn".'
+        lines = [f"agents ({self.alive_count()}/{_max_agents()} alive):"]
         for tm in items:
             s = tm.snapshot()
-            role = s["role"] or "anon"
+            role = s["profile"] or "anon"
             if s.get("name"):
                 role = f"{role} · {s['name']}"
             line = (
@@ -507,7 +507,7 @@ class AgentRegistry:
         """종료 요청 — 성공 시 빈 문자열. 멱등 (이미 dead 여도 성공)."""
         tm = self._agents.get(key)
         if tm is None:
-            return f"unknown teammate '{key}'"
+            return f"unknown agent '{key}'"
         tm.revivable = False  # P3: 명시 kill 은 영구 — resume 이 되살리지 않음
         tm.stop_event.set()
         tm.inbox.put(_SHUTDOWN)
@@ -540,21 +540,20 @@ class AgentRegistry:
         """
         tm = self._agents.get(key)
         if tm is None:
-            return f"unknown teammate '{key}'"
+            return f"unknown agent '{key}'"
         if tm.state != "dead":
             return (
-                f"teammate '{key}' is still alive ({tm.state}) — send it a "
-                f"request instead"
+                f"agent '{key}' is still alive ({tm.state}) — send it a request instead"
             )
         if self.alive_count() >= _max_agents():
             return (
-                f"teammate limit reached ({_max_agents()} alive). "
+                f"agent limit reached ({_max_agents()} alive). "
                 f'Kill one first (mode:"kill").'
             )
 
         fresh = AgentInstance(
             key,
-            role_name=tm.role_name,
+            profile_name=tm.profile_name,
             role_prompt=tm.role_prompt,
             allowed_tools=tm.allowed_tools,
             model=tm.model,
@@ -575,7 +574,7 @@ class AgentRegistry:
             target=self._worker,
             args=(fresh, parent_ctx),
             daemon=True,
-            name=f"teammate-{key}",
+            name=f"agent-{key}",
         )
         fresh.worker.start()
         self._save_state()
@@ -590,7 +589,7 @@ class AgentRegistry:
         from agent_cli.subagent.profiles import available_profiles
 
         live_roles = {
-            tm.role_name for tm in self._agents.values() if tm.state != "dead"
+            tm.profile_name for tm in self._agents.values() if tm.state != "dead"
         }
         spawned = 0
         for name, meta in available_profiles(include_meta=True):
@@ -598,7 +597,7 @@ class AgentRegistry:
                 continue
             if name in live_roles:
                 continue
-            key, error = self.spawn(role=name, parent_ctx=parent_ctx)
+            key, error = self.spawn(profile=name, parent_ctx=parent_ctx)
             if not error:
                 spawned += 1
         return spawned
@@ -622,7 +621,7 @@ class AgentRegistry:
             entries.append(
                 {
                     "key": tm.key,
-                    "role": tm.role_name,
+                    "profile": tm.profile_name,
                     "name": tm.instance_name,
                     "description": tm.description,
                     "instructions": tm.instructions,
@@ -650,7 +649,7 @@ class AgentRegistry:
                 path,
                 {
                     "version": AGENTS_STATE_VERSION,
-                    "teammates": entries,
+                    "agents": entries,
                     "pending": pending,
                 },
             )
@@ -689,13 +688,13 @@ class AgentRegistry:
                 self._cv.notify_all()
 
         revived = 0
-        for e in data.get("teammates", []):
+        for e in data.get("agents", []):
             key = e.get("key")
             if not key or key in self._agents or self.session_dir is None:
                 continue
             tm = AgentInstance(
                 key,
-                role_name=e.get("role", ""),
+                profile_name=e.get("profile", ""),
                 role_prompt=e.get("role_prompt", ""),
                 allowed_tools=e.get("allowed_tools"),
                 model=e.get("model", ""),
@@ -721,7 +720,7 @@ class AgentRegistry:
                 target=self._worker,
                 args=(tm, parent_ctx),
                 daemon=True,
-                name=f"teammate-{key}",
+                name=f"agent-{key}",
             )
             tm.worker.start()
             revived += 1
@@ -753,7 +752,9 @@ class AgentRegistry:
         from agent_cli.subagent.runner import create_subagent_ctx
 
         renderer = get_renderer()
-        _disp = " · ".join(p for p in (tm.role_name, tm.instance_name) if p) or "anon"
+        _disp = (
+            " · ".join(p for p in (tm.profile_name, tm.instance_name) if p) or "anon"
+        )
         renderer.begin_prompt_scope(tm.key, label=f"agent:{_disp}")
         crash = ""  # 비정상 종료 사유 (의도된 종료 = stop_event set 은 제외)
         try:
@@ -789,7 +790,9 @@ class AgentRegistry:
                 self._notify_roster()
                 query = f"[{author}]: {text}" if author != "main" else text
 
-                renderer.begin_agent_work(key=tm.key, seq=seq, role=_disp, message=text)
+                renderer.begin_agent_work(
+                    key=tm.key, seq=seq, profile=_disp, message=text
+                )
                 success, output, duration = False, "", 0.0
                 try:
                     loop_result, duration = self._run_message(tm, query)
@@ -797,10 +800,10 @@ class AgentRegistry:
                     output = (
                         loop_result.output
                         if loop_result.output is not None
-                        else "(teammate did not complete the request)"
+                        else "(agent did not complete the request)"
                     )
                 except Exception as e:  # worker 는 죽지 않는다 — 회신으로 보고
-                    output = f"teammate internal error: {type(e).__name__}: {e}"
+                    output = f"agent internal error: {type(e).__name__}: {e}"
                 finally:
                     renderer.end_agent_work(
                         key=tm.key,
@@ -829,7 +832,7 @@ class AgentRegistry:
                         {
                             "kind": "reply",
                             "key": tm.key,
-                            "role": tm.role_name,
+                            "profile": tm.profile_name,
                             "seq": seq,
                             "success": success,
                             "output": output,
@@ -854,7 +857,7 @@ class AgentRegistry:
                     {
                         "kind": "died",
                         "key": tm.key,
-                        "role": tm.role_name,
+                        "profile": tm.profile_name,
                         "name": tm.instance_name,
                         "success": False,
                         "output": crash,
@@ -893,7 +896,7 @@ class AgentRegistry:
                     {
                         "kind": "question",
                         "key": tm.key,
-                        "role": tm.role_name,
+                        "profile": tm.profile_name,
                         "name": tm.instance_name,
                         "success": True,
                         "output": question,
@@ -905,7 +908,7 @@ class AgentRegistry:
                 item = tm.inbox.get()
                 if item is _SHUTDOWN:
                     tm.inbox.put(_SHUTDOWN)  # 바깥 루프의 몫으로 재게시
-                    return "(no response — teammate is being terminated)"
+                    return "(no response — agent is being terminated)"
                 author = item.get("author", "main")
                 text = item.get("text", "")
                 return f"[{author}]: {text}" if author != "main" else text
@@ -939,7 +942,7 @@ class AgentRegistry:
             max_depth=rt.get("max_depth", 2),
             active_tools=tm.allowed_tools,
             session=rt.get("session"),
-            agent_name=tm.role_name,
+            agent_name=tm.profile_name,
             stop_event=tm.stop_event,
             agent_role=tm.role_prompt,
             hooks_config=tm.hooks_config,
@@ -958,7 +961,7 @@ class MailWaker:
     """
 
     WAKE_TEXT = (
-        "New teammate mail has arrived. It is delivered as observation(s) at "
+        "New agent mail has arrived. It is delivered as observation(s) at "
         "the start of this turn — review it and continue accordingly."
     )
 
@@ -1023,7 +1026,7 @@ def tool_agent(
 
     if mode == "spawn":
         key, error = registry.spawn(
-            role=args.get("profile", ""),
+            profile=args.get("profile", ""),
             name=args.get("name", ""),
             instructions=args.get("instructions", ""),
             allowed_tools=args.get("tools"),
@@ -1035,20 +1038,22 @@ def tool_agent(
             return ToolResult(False, error=f"spawn rejected: {error}")
         _parts = [p for p in (args.get("profile", ""), args.get("name", "")) if p]
         lines = [
-            f"spawned teammate '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")
+            f"spawned agent '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")
         ]
         # 같은 역할의 dead 가 있으면 알려준다 — "다시 시작" 의도였다면
         # 기억을 보존하는 길은 resume 이었음을 다음 선택부터 반영하도록.
-        role_arg = args.get("profile", "")
-        if role_arg:
+        profile_arg = args.get("profile", "")
+        if profile_arg:
             dead_same_role = [
                 tm.key
                 for tm in registry._agents.values()
-                if tm.role_name == role_arg and tm.state == "dead" and tm.key != key
+                if tm.profile_name == profile_arg
+                and tm.state == "dead"
+                and tm.key != key
             ]
             if dead_same_role:
                 lines.append(
-                    f"note: dead teammate(s) with the same role exist "
+                    f"note: dead agent(s) with the same profile exist "
                     f"({', '.join(dead_same_role)}) — this NEW spawn starts "
                     f"with NO memory of them. If you meant to CONTINUE one, "
                     f'kill this and use {{"mode":"resume","key":"..."}} instead.'
@@ -1102,7 +1107,7 @@ def tool_agent(
         if err:
             return ToolResult(False, error=f"resume rejected: {err}")
         lines = [
-            f"teammate '{key}' resumed — it remembers ALL previous exchanges "
+            f"agent '{key}' resumed — it remembers ALL previous exchanges "
             f"(its context was preserved across death)."
         ]
         task = args.get("task", "")
@@ -1125,7 +1130,7 @@ def tool_agent(
         return ToolResult(
             True,
             output=(
-                f"teammate '{key}' terminated. Its context is PRESERVED — to "
+                f"agent '{key}' terminated. Its context is PRESERVED — to "
                 f"bring it back later with full memory, use "
                 f'{{"mode":"resume","key":"{key}"}} (do NOT spawn a new one '
                 f"if you want it to remember)."

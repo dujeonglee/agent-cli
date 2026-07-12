@@ -7,7 +7,7 @@ import sys
 import threading
 
 from agent_cli.constants import (
-    DELEGATE_DEFAULT_TIMEOUT,
+    AGENT_DEFAULT_TIMEOUT,
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
 )
@@ -67,7 +67,7 @@ class AgentLoop:
         ctx: ContextManager | None = None,
         depth: int = 0,
         max_depth: int = 2,
-        delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT,
+        agent_timeout: int = AGENT_DEFAULT_TIMEOUT,
         active_tools: list[str] | None = None,
         session=None,  # SessionMeta — avoid circular import
         hooks_config: dict | None = None,
@@ -125,9 +125,7 @@ class AgentLoop:
         # belt-and-suspenders layer for direct callers that built a
         # custom ``active_tools`` list.
         if depth >= max_depth:
-            tools_list = [
-                t for t in tools_list if t not in ("delegate", "run_skill", "agent")
-            ]
+            tools_list = [t for t in tools_list if t not in ("run_skill", "agent")]
         # Remove "ask" in non-interactive mode (no ctx)
         if not ctx and "ask" in tools_list:
             tools_list = [t for t in tools_list if t != "ask"]
@@ -158,7 +156,7 @@ class AgentLoop:
             depth=depth,
             max_depth=max_depth,
             max_turns=max_turns,
-            delegate_timeout=delegate_timeout,
+            agent_timeout=agent_timeout,
             tools_list=tools_list,
             skill_name=skill_name,
             skill_args=skill_args,
@@ -270,8 +268,8 @@ class AgentLoop:
         return self._config.max_turns
 
     @property
-    def delegate_timeout(self):
-        return self._config.delegate_timeout
+    def agent_timeout(self):
+        return self._config.agent_timeout
 
     @property
     def tools_list(self):
@@ -653,7 +651,7 @@ class AgentLoop:
 
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로
-        주입한다 — LLM 폴링 없이 harness 가 배달. 레코드는 tool="teammate"
+        주입한다 — LLM 폴링 없이 harness 가 배달. 레코드는 tool="agent"
         + source="agent_reply" (tool="" 는 형식-개입 마커라 금지 —
         records.is_format_intervention 오인 방지). over-cap 회신은
         build_reply_record 가 디스크 포인터로 치환(전문은 worker 가 이미

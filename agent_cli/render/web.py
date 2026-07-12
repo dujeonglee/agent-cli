@@ -574,12 +574,14 @@ class WebRenderer(Renderer):
     # request 1건 = 접이식 카드 1개. _thread_prompt_scopes 는 건드리지
     # 않으므로 시스템/동적 스냅샷은 계속 teammate key 스코프에 쌓인다.
 
-    def begin_agent_work(self, *, key: str, seq: int, role: str, message: str) -> None:
+    def begin_agent_work(
+        self, *, key: str, seq: int, profile: str, message: str
+    ) -> None:
         tid = threading.get_ident()
         task_id = f"{key}#{seq}"
         with self._lock:
             self._thread_to_task[tid] = task_id
-        label = role or key
+        label = profile or key
         self.set_thread_agent(label)
         self._emit(
             "delegate_task_start",
@@ -617,7 +619,7 @@ class WebRenderer(Renderer):
     def agent_roster(self, roster: list) -> None:
         """P4: teammate 목록 sticky — 라이브 브로드캐스트 + 재접속 snapshot
         복원 (다른 sticky 슬롯과 동일 기계)."""
-        self.set_sticky("agent_roster", "agent_roster", {"teammates": roster})
+        self.set_sticky("agent_roster", "agent_roster", {"roster": roster})
 
     def agent_message(
         self,

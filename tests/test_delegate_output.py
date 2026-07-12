@@ -219,16 +219,19 @@ class TestSummarizeAction:
         result = _summarize_action("shell", {"command": long_cmd})
         assert result == f"shell {'a' * 60}"
 
-    def test_delegate(self):
-        """DO-11: delegate shows task truncated to 40 chars."""
+    def test_agent(self):
+        """DO-11: agent shows task truncated to 40 chars."""
         assert (
-            _summarize_action("delegate", {"task": "Fix the bug"})
-            == 'delegate "Fix the bug"'
+            _summarize_action("agent", {"task": "Fix the bug"}) == 'agent "Fix the bug"'
+        )
+        assert (
+            _summarize_action("agent", {"mode": "request", "message": "hi"})
+            == 'agent "hi"'
         )
 
         long_task = "b" * 60
-        result = _summarize_action("delegate", {"task": long_task})
-        assert result == f'delegate "{"b" * 40}"'
+        result = _summarize_action("agent", {"task": long_task})
+        assert result == f'agent "{"b" * 40}"'
 
     def test_unknown_action(self):
         """DO-12: Unknown action returns action name only."""

@@ -37,7 +37,7 @@ LLM_STREAM_TIMEOUT = (LLM_CONNECT_TIMEOUT, LLM_STREAM_READ_TIMEOUT)
 STREAM_IDLE_THRESHOLD = 30
 STREAM_IDLE_MAX_TICKS = 20
 STREAM_MAX_RECONNECTS = 3
-DELEGATE_DEFAULT_TIMEOUT = 300
+AGENT_DEFAULT_TIMEOUT = 300
 # First-run capability detection probes (thinking support, JSON-format
 # tolerance, context-window overflow). All run once per model and may
 # incur a cold model load, so they share a generous allowance distinct

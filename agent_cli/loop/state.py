@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass, field
 
 from agent_cli.constants import (
-    DELEGATE_DEFAULT_TIMEOUT,
+    AGENT_DEFAULT_TIMEOUT,
 )
 
 
@@ -41,7 +41,7 @@ class LoopConfig:
     depth: int = 0
     max_depth: int = 2
     max_turns: int = 0
-    delegate_timeout: int = DELEGATE_DEFAULT_TIMEOUT
+    agent_timeout: int = AGENT_DEFAULT_TIMEOUT
     tools_list: list = field(default_factory=list)
     skill_name: str = ""
     skill_args: str = ""

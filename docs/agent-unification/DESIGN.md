@@ -225,3 +225,37 @@ role_prompt = profile 파일 본문                (profile 지정 시)
   `instructions`(compose_role_prompt 합성, Teammate/manifest 필드,
   resume·부활 동일 정체성, 러너 agent_role 수신까지 spy 검증). 테스트
   재편 -4(wait 계약)/+7(instant·wait-거부·drain 왕복), 전체 3032.
+- 2026-07-12: **U-B 완료 (5.0.0)** — breaking 일괄:
+  - PR-1 프로파일 통합: `subagent/profiles.py` 병합 로더
+    (`load_profile`/`available_profiles`/`_profile_loader`), 검색 경로
+    `.agent-cli/agents/` 단일(teammates/ 폴백 0), 내장 기계적 이동.
+  - PR-2 개명 맵(§3.6): teammate.py→`agents_live.py`,
+    Teammate(Registry)→AgentInstance/AgentRegistry, SSE
+    `agent_msg`/`agent_roster`, 렌더러 `begin/end_agent_work`·`agent_*`,
+    env `AGENT_CLI_MAX_AGENTS`, 세션 `agents/<key>/`+`agents.json`
+    (구 이름 읽기 없음).
+  - PR-3 AgentTool: 도구명 `agent`, run 흡수(브리지 `_invoke_agent`
+    3-way: tasks 배치/run 단건→oneshot 엔진, 상주→tool_agent),
+    mode-aware 배칭(`parallel_batchable`=run 만), 모드 축소 노출
+    (SUBLOOP_DESCRIPTION + 디스패치 거부 — no-registry 도구 strip 제거),
+    run 은 main+서브루프 양쪽. tools/delegate/ 해체 →
+    `subagent/oneshot.py`+`report.py`(엔진 함수명 보존).
+  - PR-4 하드컷: DelegateTool·delegate 스키마·`@teammates`·
+    `/create-teammate`·`_invoke_delegate`(죽은 경로)·dispatch delegate
+    분기 제거. **run 훅은 `_invoke_agent` 로 이식**(PR-4 에서 소실됐던
+    OnAgentStart/End — 테스트가 아닌 잔존물 청소 중 발견·복구).
+  - PR-5 표면 개정: 광고 2섹션(`## Agent Profiles` — run/spawn 예시,
+    서브루프에도 카탈로그 노출 / `## Live Agents` — registry 게이트),
+    `@<profile>[-run|-spawn]` 접미사 구문(`_parse_at_profile` — 실존
+    프로파일 우선)+`@agents` 카탈로그+roster 통합+`@<profile>-spawn`
+    (`_try_dispatch_agent_command` 흡수), DispatchOutput
+    `agent_dispatch_result`/`list_agents(catalog, live)`,
+    `/create-agent` 개정(run/spawn 겸용), 프런트 라벨(🤝 Agents,
+    roster 필드 `profile`, `agent-btn`), manifest/roster/reply 페이로드
+    키 `role`→`profile`, spawn kwarg `profile=`.
+  - 후속 사용자 결정 3건(2026-07-12): `--agent-timeout`(플래그 개명),
+    훅 이벤트 `OnAgentStart`/`OnAgentEnd`, run dir `run_{name}_{hash}_{ts}/`.
+  - agent-board 영향 검토: **무변경** — spawn argv(안정 플래그만)·경로
+    무관 프록시·status.json/web.json/history.jsonl 계약 전부 불변.
+  - 회귀 게이트: 전체 3043 passed, ruff clean. README·ARCHITECTURE
+    전면 동기. (잔여: 실기동 e2e — run fan-out·spawn·instant·fork·@구문.)

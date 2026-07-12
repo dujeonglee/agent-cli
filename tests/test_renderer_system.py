@@ -243,7 +243,7 @@ class TestLoadRendererByName:
 class TestBuildAgentDescriptions:
     def test_includes_builtin_explorer(self):
         from agent_cli.prompts.system_prompt import (
-            build_teammate_role_descriptions as build_agent_descriptions,
+            build_agent_profiles_section as build_agent_descriptions,
         )
 
         desc = build_agent_descriptions()
@@ -253,7 +253,7 @@ class TestBuildAgentDescriptions:
         # reviewer is auto-spawned (disable-model-invocation: true) — it must NOT
         # be advertised to the model, parity with skills.
         from agent_cli.prompts.system_prompt import (
-            build_teammate_role_descriptions as build_agent_descriptions,
+            build_agent_profiles_section as build_agent_descriptions,
         )
 
         desc = build_agent_descriptions()
@@ -264,7 +264,7 @@ class TestBuildAgentDescriptions:
 
     def test_includes_delegate_usage(self):
         from agent_cli.prompts.system_prompt import (
-            build_teammate_role_descriptions as build_agent_descriptions,
+            build_agent_profiles_section as build_agent_descriptions,
         )
 
         desc = build_agent_descriptions()
@@ -275,7 +275,7 @@ class TestBuildAgentDescriptions:
 
     def test_empty_when_no_agents(self, tmp_path, monkeypatch):
         from agent_cli.prompts.system_prompt import (
-            build_teammate_role_descriptions as build_agent_descriptions,
+            build_agent_profiles_section as build_agent_descriptions,
         )
 
         _set_agent_paths([tmp_path / "empty"])

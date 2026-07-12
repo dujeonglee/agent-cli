@@ -179,7 +179,7 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
 | `AGENT_CLI_COMPACTION` | — | 컨텍스트 컴팩션(90% 예산 LLM 요약) 비활성 스위치. `off`/`false`/`0`/`disabled`/`no` 중 하나면 끔(플레인 FIFO drop). `--no-compaction` 과 동일 효과(env 가 flag 보다 우선). |
 | `AGENT_CLI_FOLD_INTERVENTIONS` | `off` 로 형식-복구 개입 fold 비활성. 기본 on: 파싱/스키마 개입(NO_JSON·A4·A5 등)은 다음 파싱 성공 시 dynamic 컨텍스트에서 접혀 **성공 궤적만** 남음(실패 shape 재공급 방지 — v4.51.0). history.jsonl 에는 전부 보존 | (on) |
-| `AGENT_CLI_MAX_TEAMMATES` | 동시 생존 가능한 `teammate` 상주 에이전트 수 상한 | `4` |
+| `AGENT_CLI_MAX_AGENTS` | 동시 생존 가능한 상주 에이전트(`agent` spawn) 수 상한 | `4` |
 | `AGENT_CLI_RECORD_RAW_FAILURES` | — | `1`/`true`/`on`/`yes` 면 파싱 실패 시 raw 페이로드를 `turns.jsonl` 에 기록(복구 분석용). 기본 off. |
 | `AGENT_CLI_UNIFDEF` | — | code_index 의 C/C++ 전처리 모드: `auto`(기본, unifdef 있으면 씀)·`system`(시스템 unifdef 강제)·`pure`(순수 파이썬 폴백). 프로세스 시작 시 1회 읽어 고정. |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. **스트리밍**: post timeout `(connect 30초, read 30초)` 로 **헤더 대기·헤더 구간 interrupt 를 30초로 바운드**(broken 서버의 ~20분 행 제거) → 헤더 수신 후 소켓을 patient 로 리셋해 body 는 느긋. body 가 **30초** 무토큰이면 UI 에 대기 알림(`응답 대기 중 — …`), **20틱(10분) 연속 침묵**이면 연결 끊고 재전송(최대 3회). 토큰 오면 카운터 리셋. **비스트리밍**: `(30, 1200)` (전체 생성 read). interrupt 는 body 구간 ~8초, 헤더 구간 ≤30초. |
@@ -213,7 +213,7 @@ agent-cli run "task" -m gpt-4o-mini
 | **7B 이하** | ❌ | △ | 도구 혼동, JSON 포맷 불안정, 반복 실패 빈번 |
 | **14-30B** | △ | ✅ | 간단한 도구 사용 가능, 복잡한 스킬은 불안정 |
 | **32B+** | ✅ | ✅ | 안정적 — 권장 최소 사양 |
-| **70B+** | ✅✅ | ✅ | delegate, 복잡한 스킬 등 고급 기능 안정 |
+| **70B+** | ✅✅ | ✅ | agent 위임, 복잡한 스킬 등 고급 기능 안정 |
 
 **최소: 30B, 권장: 32B+**
 
@@ -235,8 +235,8 @@ agent-cli run "task description" [options]
 | `--api-key` | API 키 (환경 변수 자동 감지) | |
 | `-n, --max-turns` | 최대 턴 (0=무제한) | `0` |
 | `--max-context-tokens` | 컨텍스트 윈도우 토큰 상한 (0=모델에서 자동 결정) | `0` |
-| `--max-depth` | 중첩 깊이 (delegate + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
-| `--delegate-timeout` | 서브에이전트 타임아웃 (초) | `300` |
+| `--max-depth` | 중첩 깊이 (agent + skill 합산). 한계 도달 시 두 도구 모두 자동 비활성. | `2` |
+| `--agent-timeout` | 서브에이전트 타임아웃 (초) | `300` |
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
@@ -287,20 +287,20 @@ agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토�
 UI 기능:
 - 좌측 어시스턴트 카드 (markdown 렌더링: 헤더 `#`/`##`/`###`, GFM 파이프 표, 순서/비순서 리스트, **bold**/*italic*, 인라인 코드, 펜스 코드 블록) + 우측 사용자 bubble
 - 도구 호출(action) / 결과(observation) 인라인 카드, ✓/✗ 상태 표시
-- 각 카드 모서리에 시각 표시 (`YYMMDD HH:MM:SS`, 마우스 hover 시 전체 날짜+밀리초). delegate/skill 내부 카드도 동일. `--resume` 로 이어서 보면 카드들은 **실제 발생 시각**(history 기록 기준)으로 표시되어 재접속 시점과 혼동되지 않음
+- 각 카드 모서리에 시각 표시 (`YYMMDD HH:MM:SS`, 마우스 hover 시 전체 날짜+밀리초). agent/skill 내부 카드도 동일. `--resume` 로 이어서 보면 카드들은 **실제 발생 시각**(history 기록 기준)으로 표시되어 재접속 시점과 혼동되지 않음
 - 실시간 스트리밍 (점선 카드로 토큰 누적 → 최종 카드로 교체)
 - 컨텍스트 동기화: 오래된 turn이 LLM 컨텍스트에서 밀려나거나 compaction으로 요약되면 UI에서도 제거
 - 여러 탭/PC가 접속하면 모두 동등하게 입력 가능 (접속자는 닉네임 로스터에 표시)
 - 재접속/새로고침 시 트랜스크립트 재생은 **최근 5,000개 이벤트 윈도우**로 제한 — 아주 긴 세션은 맨 위에 "이전 N개 생략" 노티스가 표시됩니다 (전체 기록은 세션 히스토리에 보존, `--resume` 은 무관). 라이브로 보고 있던 탭은 영향 없음
 - ANSWERING 모드: `ask` 도구 호출 시 질문 텍스트가 입력창 위에 표시되어 스크롤 없이 답변
 - **토큰 현황 표시**: 상단 info bar 옆에 `ctx 5.2K/256K (2%) · ↑5.2K ↓320 · Σ↓1.8K` 형태로 매 turn 갱신 — 현재 context 사용률(%), 이번 turn 의 in/out, 세션 누적 output. 새로고침 후에도 유지(SSE snapshot). CLI(`run`)도 동일 정보를 매 turn 한 줄로 표시(`in: … | out: … | ctx: … | Σout: …`). `usage.input_tokens`(서버 실측)를 받아 `renderer.token_usage` 로 추상화 → CLI/web 공통
-- **Send → Stop → Stopping… 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 즉시 **Stopping…**(비활성)으로 바뀌어 중복 클릭을 막고, 진행 중인 turn 을 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). LLM 생성 도중이면 스트림을 즉시 끊고 미완성 응답을 폐기하며, 도구 실행 중이면 그 스텝을 마친 뒤 멈춥니다. turn 이 끝나면 다시 Send 로 복귀. 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@agent`(delegate) 실행 모두 Stop 으로 중단됩니다 (delegate 는 병렬 worker 가 같은 `stop_event` 를 공유).
+- **Send → Stop → Stopping… 토글**: 사용자 메시지 전송 후 worker 가 응답을 처리하는 동안 Send 버튼이 빨간 **Stop** 버튼으로 바뀝니다. 클릭하면 즉시 **Stopping…**(비활성)으로 바뀌어 중복 클릭을 막고, 진행 중인 turn 을 안전하게 중단 (CLI 의 Ctrl+C 와 같은 `stop_event` 경로 → `POST /api/stop`). LLM 생성 도중이면 스트림을 즉시 끊고 미완성 응답을 폐기하며, 도구 실행 중이면 그 스텝을 마친 뒤 멈춥니다. turn 이 끝나면 다시 Send 로 복귀. 중단은 `[interrupt]` observation 으로 기록되어 다음 입력에서 이어집니다. 두 번째 메시지가 in-flight turn 에 끼어드는 것도 자연히 차단 (Enter 는 stop 을 트리거하지 않음 — 버튼 전용). **새로고침 / 재접속 후에도 상태 유지** (서버가 last worker state 를 SSE snapshot 에 prepend). prompt 모드(ask 답변)에선 항상 Send, confirm 모드는 별도 버튼. 일반 chat·`/skill`·`@<profile>`(agent run) 실행 모두 Stop 으로 중단됩니다 (run 팬아웃은 병렬 worker 가 같은 `stop_event` 를 공유).
 
 **🎨 테마 피커:** 헤더의 🎨 버튼으로 드롭다운을 열어 **5가지 큐레이션 테마**(각 항목에 색 스와치 + 현재 ✓)를 고릅니다 — **Amber**(기본, 따뜻한 차콜+호박색), **Slate**(중성 다크), **Midnight**(딥 블루), **Terminal**(틸/near-black), **Light**. 선택은 즉시 적용 + 브라우저에 기억되고(localStorage), 첫 페인트 전에 적용되어 깜빡임이 없습니다. 다크 테마들은 **반투명 헤어라인 테두리**로 부드러운 경계를 씁니다. 모든 색은 CSS 디자인 토큰(`:root` 베이스 + `[data-theme="…"]` 오버라이드) 한 곳에서 파생되어, 테마 추가 = 토큰 블록 하나입니다.
 
-**⚡ Prompt Inspector:** 헤더의 ⚡ 버튼으로 우측 드로어를 열면 **현재 턴에 실제로 전송된 시스템 프롬프트**를 섹션별로 확인할 수 있습니다. 상단의 토큰 예산 스택바(섹션별 색·비율), 섹션 아코디언(이름·토큰 뱃지·본문), 검색 필터를 제공합니다. 열 때마다 최신 LLM 호출의 스냅샷을 가져오며(`GET /api/debug/prompt`, 토큰 인증), 훅이 주입한 동적 섹션도 `Hook: <이름>`으로 표시됩니다. 컨텍스트 압축(compaction)이 일어나면 그 요약과 파일 목록도 `⊙ Compaction summary / Files touched (user-injected)` 섹션으로 함께 보여, 모델이 실제로 받는 압축 컨텍스트를 검사할 수 있습니다. **정적 시스템 프롬프트 아래에는 `── 동적 컨텍스트 (대화 · 관찰) ──` 구분선과 함께 현재 컨텍스트 윈도우에 든 대화·관찰(`ctx.get_messages()` 의 system 제외분)이 메시지별 섹션으로 표시**되어, 시스템 프롬프트뿐 아니라 LLM 이 실제로 받는 전체 입력을 검사할 수 있습니다(메인 스코프 한정). **첫 메시지 전에도 채워집니다** — 시작 시 시스템 프롬프트를 미리 캡처하고(`Hook:` 동적 섹션은 첫 LLM 호출 후 채워짐), `--resume` 면 복원된 대화도 드로어를 열자마자 보입니다. **에이전트별 스코프**: delegate 서브에이전트가 돌면 드로어 상단에 `[Main] [explorer·1] [coder·2]` 칩 row가 나타나, 칩을 클릭하면 해당 서브에이전트가 실제로 받은 시스템 프롬프트로 전환되고 `Main`을 누르면 메인으로 돌아옵니다. 끝난 서브에이전트의 프롬프트도 사후 검사를 위해 남아 있으며, 칩의 ✕로 개별 제거할 수 있습니다(Main은 제거 불가). **📝 Directives 에디터**: 드로어 상단에서 프로젝트 `.agent-cli/DIRECTIVE.md` 를 **바로 편집·저장**할 수 있습니다(파일이 없어도 항상 표시 — 저장 시 새로 생성). **취소** 버튼은 미저장 편집을 버리고 파일의 현재 내용을 편집창에 다시 불러옵니다. **성격 · 업무 · 지침 3축 (자동생성 없음)**: 에디터 아래에 세 축이 **동일한 모양**으로 놓입니다 — 각 축 = `[프리셋 ▼]`(그 축의 저장분) + 액션 + `💾 저장` + `🗑 삭제`. **LLM 자동생성(🪄)은 제거**됐습니다 — 온프렘 Qwen3-27B가 standalone 프로세 생성에서 chain-of-thought를 본문으로 흘려 `## ` 섹션 파싱을 오염시키는 게 실측돼(그리고 `/no_think`·`enable_thinking:false` 모두 무효/모델 붕괴), 결정적(무-LLM) 경로로 대체했습니다. **📋 템플릿**(성격·업무): **빈 fill-in 골격**을 편집창의 해당 축 영역에 삽입하면 손으로 채웁니다(모델 안 거침 → 누출 불가). 성격 템플릿엔 **적용 범위**(사용자 대면 답변만 캐릭터 목소리, 추론·도구 호출·경로·명령어·코드·사실 정확성은 그대로 정확) 규율이 기본 포함됩니다. **📥 학습**(지침): *실제 세션 대화에서* 재사용 가능한 교훈만 뽑아 관리 섹션 `## 학습된 지침`에 누적합니다 — 전용 요약 호출(유일 임무=이식 가능 교훈 추출, 코딩·로그 분석·리서치 등 세션 종류 무관)이 현재 대화를 읽고 세션-특정 사실(특정 에러·파일/줄·일회성 값)은 빼고 이식 가능한 운영 지침만 추려 반영, 재학습 시 중복 제거·통합. 교훈은 세션 memory 스토어에도 **시스템이 결정적으로** 기록됩니다(모델 자율 아님 — 27B는 memory 도구를 자율 사용하지 않음이 실측됨). 각 축의 **💾 저장**은 그 축의 내용만 홈(`~/.agent-cli/directive-presets/<축>/`)에 이름 프리셋으로 저장하고(위치 고정 모달 — 위치 변경 불가, 이름 기본값=현재 프리셋, 같은 이름은 덮어쓰기 확인, 기존 프리셋 클릭으로 덮어쓰기), 드롭다운에서 고르면 **그 축 영역에만** 반영(나머지 두 축은 바이트 그대로 보존), 🗑로 삭제합니다. 드롭다운에는 패키지에 **기본 제공(📦)되는 읽기전용 프리셋**(성격 2 — 간결한 전문가·친근한 페어 프로그래머, 업무 3 — TDD 개발자·코드 리뷰어·로그 데이터 분석가; 업무 프리셋엔 `memory` 도구 적극 활용 원칙 포함)이 사용자 프리셋(💾)과 함께 나타납니다 — 같은 이름으로 저장하면 사용자 프리셋이 기본 제공분을 덮어(shadow)쓰고, 기본 제공 프리셋 자체는 삭제할 수 없습니다. 프리셋은 **모든 방(agent-cli 인스턴스)에서 공유**되며 항상 적용되는 전역 `~/.agent-cli/DIRECTIVE.md`와는 분리된 "골라 쓰는" 라이브러리입니다. 이름은 한글·공백을 그대로 보존하되 경로 traversal은 차단합니다. 템플릿·학습·프리셋 반영은 모두 **미저장** 상태로 들어와 검토 후 저장합니다. 저장하면 파일에 기록되고 **다음 LLM 호출부터 시스템 프롬프트에 반영**됩니다(idle이면 다음 쿼리부터; KV 캐시 prefix 리셋). 프롬프트 뷰의 `Directives` 섹션은 *저장 즉시가 아니라 실제 적용되는 순간*(그 rebuild 시점)에 갱신되어 항상 **LLM 이 실제로 받는** 내용을 보여주고, 여러 명이 볼 때 저장·적용이 다른 인스펙터에도 브로드캐스트되어 동기화됩니다(`GET`/`POST /api/directives` · `POST /api/directives/template` · `POST /api/directives/learn` · `GET`/`POST`/`{id}/apply`/`DELETE /api/directives/presets/library?axis=`, 토큰 인증, **프로젝트 파일 전용** — 사용자 전역 `~/.agent-cli/DIRECTIVE.md`는 편집 대상 아님).
+**⚡ Prompt Inspector:** 헤더의 ⚡ 버튼으로 우측 드로어를 열면 **현재 턴에 실제로 전송된 시스템 프롬프트**를 섹션별로 확인할 수 있습니다. 상단의 토큰 예산 스택바(섹션별 색·비율), 섹션 아코디언(이름·토큰 뱃지·본문), 검색 필터를 제공합니다. 열 때마다 최신 LLM 호출의 스냅샷을 가져오며(`GET /api/debug/prompt`, 토큰 인증), 훅이 주입한 동적 섹션도 `Hook: <이름>`으로 표시됩니다. 컨텍스트 압축(compaction)이 일어나면 그 요약과 파일 목록도 `⊙ Compaction summary / Files touched (user-injected)` 섹션으로 함께 보여, 모델이 실제로 받는 압축 컨텍스트를 검사할 수 있습니다. **정적 시스템 프롬프트 아래에는 `── 동적 컨텍스트 (대화 · 관찰) ──` 구분선과 함께 현재 컨텍스트 윈도우에 든 대화·관찰(`ctx.get_messages()` 의 system 제외분)이 메시지별 섹션으로 표시**되어, 시스템 프롬프트뿐 아니라 LLM 이 실제로 받는 전체 입력을 검사할 수 있습니다(메인 스코프 한정). **첫 메시지 전에도 채워집니다** — 시작 시 시스템 프롬프트를 미리 캡처하고(`Hook:` 동적 섹션은 첫 LLM 호출 후 채워짐), `--resume` 면 복원된 대화도 드로어를 열자마자 보입니다. **에이전트별 스코프**: 서브에이전트(agent run)가 돌면 드로어 상단에 `[Main] [explorer·1] [coder·2]` 칩 row가 나타나, 칩을 클릭하면 해당 서브에이전트가 실제로 받은 시스템 프롬프트로 전환되고 `Main`을 누르면 메인으로 돌아옵니다. 끝난 서브에이전트의 프롬프트도 사후 검사를 위해 남아 있으며, 칩의 ✕로 개별 제거할 수 있습니다(Main은 제거 불가). **📝 Directives 에디터**: 드로어 상단에서 프로젝트 `.agent-cli/DIRECTIVE.md` 를 **바로 편집·저장**할 수 있습니다(파일이 없어도 항상 표시 — 저장 시 새로 생성). **취소** 버튼은 미저장 편집을 버리고 파일의 현재 내용을 편집창에 다시 불러옵니다. **성격 · 업무 · 지침 3축 (자동생성 없음)**: 에디터 아래에 세 축이 **동일한 모양**으로 놓입니다 — 각 축 = `[프리셋 ▼]`(그 축의 저장분) + 액션 + `💾 저장` + `🗑 삭제`. **LLM 자동생성(🪄)은 제거**됐습니다 — 온프렘 Qwen3-27B가 standalone 프로세 생성에서 chain-of-thought를 본문으로 흘려 `## ` 섹션 파싱을 오염시키는 게 실측돼(그리고 `/no_think`·`enable_thinking:false` 모두 무효/모델 붕괴), 결정적(무-LLM) 경로로 대체했습니다. **📋 템플릿**(성격·업무): **빈 fill-in 골격**을 편집창의 해당 축 영역에 삽입하면 손으로 채웁니다(모델 안 거침 → 누출 불가). 성격 템플릿엔 **적용 범위**(사용자 대면 답변만 캐릭터 목소리, 추론·도구 호출·경로·명령어·코드·사실 정확성은 그대로 정확) 규율이 기본 포함됩니다. **📥 학습**(지침): *실제 세션 대화에서* 재사용 가능한 교훈만 뽑아 관리 섹션 `## 학습된 지침`에 누적합니다 — 전용 요약 호출(유일 임무=이식 가능 교훈 추출, 코딩·로그 분석·리서치 등 세션 종류 무관)이 현재 대화를 읽고 세션-특정 사실(특정 에러·파일/줄·일회성 값)은 빼고 이식 가능한 운영 지침만 추려 반영, 재학습 시 중복 제거·통합. 교훈은 세션 memory 스토어에도 **시스템이 결정적으로** 기록됩니다(모델 자율 아님 — 27B는 memory 도구를 자율 사용하지 않음이 실측됨). 각 축의 **💾 저장**은 그 축의 내용만 홈(`~/.agent-cli/directive-presets/<축>/`)에 이름 프리셋으로 저장하고(위치 고정 모달 — 위치 변경 불가, 이름 기본값=현재 프리셋, 같은 이름은 덮어쓰기 확인, 기존 프리셋 클릭으로 덮어쓰기), 드롭다운에서 고르면 **그 축 영역에만** 반영(나머지 두 축은 바이트 그대로 보존), 🗑로 삭제합니다. 드롭다운에는 패키지에 **기본 제공(📦)되는 읽기전용 프리셋**(성격 2 — 간결한 전문가·친근한 페어 프로그래머, 업무 3 — TDD 개발자·코드 리뷰어·로그 데이터 분석가; 업무 프리셋엔 `memory` 도구 적극 활용 원칙 포함)이 사용자 프리셋(💾)과 함께 나타납니다 — 같은 이름으로 저장하면 사용자 프리셋이 기본 제공분을 덮어(shadow)쓰고, 기본 제공 프리셋 자체는 삭제할 수 없습니다. 프리셋은 **모든 방(agent-cli 인스턴스)에서 공유**되며 항상 적용되는 전역 `~/.agent-cli/DIRECTIVE.md`와는 분리된 "골라 쓰는" 라이브러리입니다. 이름은 한글·공백을 그대로 보존하되 경로 traversal은 차단합니다. 템플릿·학습·프리셋 반영은 모두 **미저장** 상태로 들어와 검토 후 저장합니다. 저장하면 파일에 기록되고 **다음 LLM 호출부터 시스템 프롬프트에 반영**됩니다(idle이면 다음 쿼리부터; KV 캐시 prefix 리셋). 프롬프트 뷰의 `Directives` 섹션은 *저장 즉시가 아니라 실제 적용되는 순간*(그 rebuild 시점)에 갱신되어 항상 **LLM 이 실제로 받는** 내용을 보여주고, 여러 명이 볼 때 저장·적용이 다른 인스펙터에도 브로드캐스트되어 동기화됩니다(`GET`/`POST /api/directives` · `POST /api/directives/template` · `POST /api/directives/learn` · `GET`/`POST`/`{id}/apply`/`DELETE /api/directives/presets/library?axis=`, 토큰 인증, **프로젝트 파일 전용** — 사용자 전역 `~/.agent-cli/DIRECTIVE.md`는 편집 대상 아님).
 
-**🔍 Auto-review (토글):** 헤더의 `🔍 Review` 버튼을 켜면, 최상위 대화의 모델이 `complete` 한 직후 **reviewer 에이전트**가 자동으로 돌아 작업이 원 요청을 실제로 충족했는지 검증합니다 — 요약을 믿지 않고 파일을 직접 읽고 빌드/테스트해 확인합니다. reviewer 가 **거부(REJECT)** 하면 구체 피드백(file:line)이 모델에게 주입되어 재작업 → 다시 complete → 재리뷰가 **수락(ACCEPT)할 때까지** 반복됩니다(멈추려면 토글을 끄세요 — 안전 캡 없음, 사용자가 토글로 제어). 토글이 꺼져 있으면 complete 은 리뷰 없이 그대로 종료. 모델이 자발적으로 자가 검증을 안 하는 문제를 결정적으로(토글) 우회하는 기능입니다. `@agent`·`/skill` 로 시작한 작업이나 내부 delegate/skill·reviewer 자신에는 적용되지 않습니다(무한재귀 방지). 웹 전용.
+**🔍 Auto-review (토글):** 헤더의 `🔍 Review` 버튼을 켜면, 최상위 대화의 모델이 `complete` 한 직후 **reviewer 에이전트**가 자동으로 돌아 작업이 원 요청을 실제로 충족했는지 검증합니다 — 요약을 믿지 않고 파일을 직접 읽고 빌드/테스트해 확인합니다. reviewer 가 **거부(REJECT)** 하면 구체 피드백(file:line)이 모델에게 주입되어 재작업 → 다시 complete → 재리뷰가 **수락(ACCEPT)할 때까지** 반복됩니다(멈추려면 토글을 끄세요 — 안전 캡 없음, 사용자가 토글로 제어). 토글이 꺼져 있으면 complete 은 리뷰 없이 그대로 종료. 모델이 자발적으로 자가 검증을 안 하는 문제를 결정적으로(토글) 우회하는 기능입니다. `@<profile>`·`/skill` 로 시작한 작업이나 내부 agent/skill·reviewer 자신에는 적용되지 않습니다(무한재귀 방지). 웹 전용.
 
 **📤 Export:** 헤더의 📤 버튼으로 **선택 모드**에 들어가면 각 대화 카드 좌측에 체크박스가 나타납니다(기본 전부 해제). 원하는 카드를 고르거나 `All`로 전체 선택한 뒤(하단 액션바에 선택 개수 표시), 두 가지로 내보낼 수 있습니다:
 > - **⬇ HTML** — 선택한 대화를 self-contained HTML 파일로 다운로드(스타일 인라인, 어디서나 열림).
@@ -523,8 +523,8 @@ def on_session_end(ctx):
 | `PreToolUse` | 도구 실행 직전 | ✓ block/modify | ✓ exit 2=block |
 | `PostToolUse` | 도구 실행 직후 | ✓ | ✓ |
 | `OnTurnEnd` | ��� 종료 후 | ✓ | |
-| `OnDelegateStart` | delegate 실행 직전 | ✓ | |
-| `OnDelegateEnd` | delegate 완료 후 | ✓ | |
+| `OnAgentStart` | agent run 실행 직전 | ✓ | |
+| `OnAgentEnd` | agent run 완료 후 | ✓ | |
 | `OnSkillStart` | skill 실행 직전 | ✓ | |
 | `OnSkillEnd` | skill 완료 후 | ✓ | |
 | `OnSessionEnd` | 세션 종료 | ✓ | |
@@ -689,8 +689,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
-| `delegate` | 서브에이전트에 작업 위임 (한 op=한 task; 여러 delegate op = 병렬, 에이전트 역할 지정 가능) |
-| `teammate` | **상주 팀원 에이전트** — delegate 와 달리 답변 후에도 컨텍스트를 유지한 채 살아있어 이어서 문답 가능. `spawn`(key 반환, `role`=`.agent-cli/teammates/{name}.md` 또는 `instructions`=인라인 즉석 역할)/`request`(비동기 전송 — 회신은 준비되는 대로 관찰로 **자동 배달**, 폴링·대기 불필요)/`status`/`resume`/`kill`. main 세션 전용 (서브에이전트 안에서는 비노출) |
+| `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**. 상주 모드는 main 세션 전용 |
 | `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |
@@ -700,7 +699,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 ### action_input 키 네이밍 규칙
 
-**모든 builtin 도구가 flat-native**입니다 (consolidation Step 3 완료) — `action_input` 에 표준 키를 그대로 씁니다: 파일 도구(`read_file`/`write_file`/`edit_file`)·`code_index`는 `{path/mode, ...}`, `delegate`는 `{task, ...}`, `shell`은 `{command, ...}`, 제어 도구(`complete`/`ask`/`run_skill`)도 표준 키. 한 op = 한 대상이고, 여러 대상(여러 파일 읽기, 여러 쿼리, **여러 병렬 서브에이전트**)은 한 턴에 **op 을 여러 개** 냅니다.
+**모든 builtin 도구가 flat-native**입니다 (consolidation Step 3 완료) — `action_input` 에 표준 키를 그대로 씁니다: 파일 도구(`read_file`/`write_file`/`edit_file`)·`code_index`는 `{path/mode, ...}`, `agent`는 `{mode, task, ...}`, `shell`은 `{command, ...}`, 제어 도구(`complete`/`ask`/`run_skill`)도 표준 키. 한 op = 한 대상이고, 여러 대상(여러 파일 읽기, 여러 쿼리, **여러 병렬 서브에이전트**)은 한 턴에 **op 을 여러 개** 냅니다.
 
 어떤 builtin 도 wire-key prefix 를 쓰지 않습니다. wire-key prefix(`{tool}_{param}`) 메커니즘 — 모델이 `action` 이름을 빠뜨려도 키 모양으로 도구를 복구(dropped-action recovery) — 은 **미래 prefixed 도구/포맷용 latent seam** 으로 코드에 남아 있고, 현재 어떤 builtin 도 활성화하지 않습니다. MCP/외부 도구는 **prefix-less**(자체 bare 스키마)라 이 메커니즘과 무관합니다.
 
@@ -787,17 +786,17 @@ LLM이 작업을 완료했을 때 호출하는 가상 도구입니다. `result` 
 {"action": "read_context", "action_input": {"query": "SELECT DISTINCT session FROM history", "sessions": "all"}}
 ```
 
-**읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부). 행/셀 수 캡은 없습니다 — 결과를 작게 유지하는 건 모델 몫(`LIMIT`/`substr`/조건). `sessions` 미지정 시 현재 세션(delegate/skill subdir 포함).
+**읽기전용**: `SELECT`/`WITH` 만 허용(쓰기·DDL 거부). 행/셀 수 캡은 없습니다 — 결과를 작게 유지하는 건 모델 몫(`LIMIT`/`substr`/조건). `sessions` 미지정 시 현재 세션(run/skill subdir 포함).
 
 ### 과대 출력 캡 (oversized observation)
 
 도구 관찰(observation)이 **컨텍스트 윈도우의 1/10** 을 넘으면, 그 전체 출력은 컨텍스트에 들어가지 않고 **"좁혀서 다시 받아라"는 nudge 로 대체**됩니다(도구 호출 자체는 성공). 거대 출력은 추론 공간을 잠식해 응답 품질을 떨어뜨리기 때문에, 모델을 라인범위/심볼/`LIMIT`/`grep` 같은 surgical 회수로 자연스럽게 유도합니다. 전체가 꼭 필요하면 파일로 빼서(`… | tee /tmp/out.txt`) 부분만 `read_file` 하면 됩니다.
 
 - **도구별 제어 (`Tool` 추상화 표면 3개)**: `Tool.render_observation(result, args)` 가 결과 → 관찰 본문 렌더(기본=성공 output·실패 error); `Tool.apply_oversized_cap`(기본 `True`)으로 캡 적용 여부를 도구별로 끔; **`Tool.render_oversized(result, args, *, body, tokens, ctx)`** 가 **캡에 걸렸을 때 무엇을 낼지**를 도구가 소유(기본=제네릭 nudge). per-call 루프 컨텍스트는 **`RunContext`**(frozen: `session_dir`·`oversized_cap`·`tools_available`) 하나로 묶여 실행(`run`/`_run`)·렌더(`render_oversized`) 두 표면에 동일하게 전달됩니다 — 새 per-call 값이 생겨도 시그니처를 다시 안 늘리고 필드 하나만 추가하면 됩니다. `ctx.tools_available`(현재 루프에서 호출 가능한 도구 집합)을 받아, 그 도구가 실제로 쓸 수 있는 복구만 안내합니다.
-- **디스크-기반 분산 유도 (`read_file`·`shell`·`delegate`·`fetch` 공통)**: 큰 내용이 파일 `<path>` 에 있으면 복구는 한 패턴으로 수렴합니다(공유 헬퍼 `on_disk_oversized_nudge`) — (a) **특정 부분** → `read_file '<path>'` line range/search, (b) **전체 분석/검색** → **N-way 병렬 `delegate` 팬아웃**: 파일 라인수로 `~k` 섹션을 계산해 **한 턴에 delegate op 여러 개**(agent-cli 가 동시 실행)를 내는 **구체 범위 예시**(`delegate(task="read_file '<path>' lines 1-N …")` × k)를 제시 → 서브에이전트마다 한 섹션만 read 해 요약 반환, 부모는 distilled 만 병합. 팬아웃 줄은 delegate 가 실제 호출 가능할 때만 표시(depth 한계 서브에이전트에선 자동 생략).
-  - `read_file`: `<path>`=원본 파일(이미 디스크). 추가 갈래 `read_symbols`. 또한 `stat` 모드(메타데이터 조회)의 후속 안내가 **cap-aware** — 전체 읽기가 캡을 넘을 파일이면 "full read" 미끼를 빼고 처음부터 range/search/delegate 팬아웃으로 유도(작은 파일은 기존대로 full read 제안), 캡에 걸릴 왕복 한 번을 아낍니다.
+- **디스크-기반 분산 유도 (`read_file`·`shell`·`agent`·`fetch` 공통)**: 큰 내용이 파일 `<path>` 에 있으면 복구는 한 패턴으로 수렴합니다(공유 헬퍼 `on_disk_oversized_nudge`) — (a) **특정 부분** → `read_file '<path>'` line range/search, (b) **전체 분석/검색** → **N-way 병렬 `agent` run 팬아웃**: 파일 라인수로 `~k` 섹션을 계산해 **한 턴에 run op 여러 개**(agent-cli 가 동시 실행)를 내는 **구체 범위 예시**(`agent(mode="run", task="read_file '<path>' lines 1-N …")` × k)를 제시 → 서브에이전트마다 한 섹션만 read 해 요약 반환, 부모는 distilled 만 병합. 팬아웃 줄은 agent 가 실제 호출 가능할 때만 표시(depth 한계 서브에이전트에선 자동 생략).
+  - `read_file`: `<path>`=원본 파일(이미 디스크). 추가 갈래 `read_symbols`. 또한 `stat` 모드(메타데이터 조회)의 후속 안내가 **cap-aware** — 전체 읽기가 캡을 넘을 파일이면 "full read" 미끼를 빼고 처음부터 range/search/run 팬아웃으로 유도(작은 파일은 기존대로 full read 제안), 캡에 걸릴 왕복 한 번을 아낍니다.
   - `shell`: over-cap 일 때만 출력을 `session_dir/shell-output-<hash>.txt` 로 **lazy 저장**(일반 shell 호출엔 디스크 쓰기 0) 후 그 파일을 가리킴. headless(세션 없음)면 `tee` 폴백.
-  - `delegate`: 서브에이전트 답변은 이미 `<delegate_dir>/result.md` 에 저장돼 있어 그 파일을 가리킴 + **더 좁은 재위임**(근본 원인 교정) 옵션 추가.
+  - `agent` (run): 서브에이전트 답변은 이미 `<run_dir>/result.md` 에 저장돼 있어 그 파일을 가리킴 + **더 좁은 재위임**(근본 원인 교정) 옵션 추가.
   - `fetch`: over-cap 일 때만 내용을 `session_dir/fetch-output-<hash>.txt` 로 lazy 저장 후 가리킴 + **더 좁은 URL/얕은 `depth`** 옵션 추가.
 - **비-파일 도구 (`read_context`·`code_index`)**: 출력이 파일이 아니라(SQL 결과·심볼 목록) **제자리 재-narrow** 가 정답이므로 별도 헬퍼(`narrow_oversized_nudge`)로 그 도구 파라미터만 안내 — `read_context` → `LIMIT`/컬럼 projection/`substr(text,1,200)` 재쿼리, `code_index` → `mode=fetch` 단일 심볼/`search` 필터/`max_bytes`. (파일·팬아웃 얘기 없음.)
 - 사용자/어시스턴트 메시지는 캡 대상이 아닙니다(사람의 의도적 입력·모델 자신의 출력이라 거절/절단하지 않음).
@@ -963,9 +962,9 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 
 첫 토큰은 별칭도 인식합니다 — `y`(yes/ok/okay/yep/yeah/sure), `a`(always/**allow**), `n`(no/nope) — 자연스러운 긍정이 안전 기본값 거부로 오인되지 않게. (`allow` 는 옵션 라벨이 "always allow" 이므로 `a` 로 매핑.)
 
-**누가/왜 묻는지 표시.** delegate(서브에이전트)에서 올라온 확인/질문에는 **에이전트 라벨 + reasoning(thought)**(확인은 실행하려는 **action**까지)이 함께 표시됩니다 — CLI는 프롬프트 위 `↳ from [explorer] · 💭 … · ⚡ …` 헤더, 웹은 확인 다이얼로그/답변 영역에 같은 정보. 메인 에이전트는 thought/action 이 이미 인라인이라 헤더 생략.
+**누가/왜 묻는지 표시.** 서브에이전트(agent run)에서 올라온 확인/질문에는 **에이전트 라벨 + reasoning(thought)**(확인은 실행하려는 **action**까지)이 함께 표시됩니다 — CLI는 프롬프트 위 `↳ from [explorer] · 💭 … · ⚡ …` 헤더, 웹은 확인 다이얼로그/답변 영역에 같은 정보. 메인 에이전트는 thought/action 이 이미 인라인이라 헤더 생략.
 
-기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. 확인을 띄울 수 있는지는 **렌더러가 판단**합니다 — CLI는 터미널(TTY), 웹은 연결된 브라우저(SSE 다이얼로그, TTY 불필요). 어느 쪽으로도 물어볼 수 없는 무인 환경(TTY 없는 CI/배치 + 미접속)에서는 자동 거부 — 위험 명령이 silent 실행되는 일 없음. parallel delegate처럼 여러 작업이 동시에 도는 경우에도 확인은 **직렬화**되어 한 번에 하나만 떠서, 응답이 엉뚱한 작업으로 새지 않음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
+기본 활성. 비활성하려면 `AGENT_CLI_DANGEROUS_SHELL_CONFIRM=0`. 확인을 띄울 수 있는지는 **렌더러가 판단**합니다 — CLI는 터미널(TTY), 웹은 연결된 브라우저(SSE 다이얼로그, TTY 불필요). 어느 쪽으로도 물어볼 수 없는 무인 환경(TTY 없는 CI/배치 + 미접속)에서는 자동 거부 — 위험 명령이 silent 실행되는 일 없음. 병렬 run 팬아웃처럼 여러 작업이 동시에 도는 경우에도 확인은 **직렬화**되어 한 번에 하나만 떠서, 응답이 엉뚱한 작업으로 새지 않음. shlex 토큰 단위 매칭이라 `rm-helper.sh`나 `echo "rm files"` 같은 false positive는 안 잡지만 `bash -c "rm x"` 처럼 wrapper 안의 위험 명령은 놓칠 수 있음 (확인 시 모델에 알려서 풀어쓰게 유도).
 
 ### write_file — 파일 생성
 
@@ -975,35 +974,48 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 {"action": "write_file", "action_input": {"path": "output.txt", "content": "hello world"}}
 ```
 
-### delegate — 서브에이전트 위임
+### agent — 서브에이전트 (일회성 run + 상주 spawn)
 
-작업을 in-process 서브에이전트에 위임합니다. **한 op = 한 task** (flat-native). 컨텍스트 모드로 서브에이전트가 부모 맥락을 얼마나 알지 제어합니다:
+서브에이전트 단일 도구입니다 (5.0.0 에서 구 `delegate`/`teammate` 통합). `mode` 로 두 수명 모델을 오갑니다:
+
+| mode | 수명 | 용도 |
+|------|------|------|
+| `run` | 일회성 — 답변 반환 후 소멸 | 독립적인 일회성 작업, 병렬 팬아웃 |
+| `spawn` / `request` / `status` / `resume` / `kill` | **상주** — 답변 후에도 컨텍스트 유지 | 반복 협업, 역할별 장기 작업 |
+
+```json
+{"action": "agent", "action_input": {"mode": "run", "task": "Read /tmp/data.csv and count rows"}}
+{"action": "agent", "action_input": {"mode": "run", "task": "Fix the bug we found", "context": "fork"}}
+{"action": "agent", "action_input": {"mode": "run", "task": "Review this code", "profile": "code-reviewer"}}
+{"action": "agent", "action_input": {"mode": "spawn", "profile": "researcher", "task": "레포 구조를 파악해줘"}}
+{"action": "agent", "action_input": {"mode": "request", "key": "agt-3f2a1b9c", "message": "그래서 진입점이 어디야?"}}
+{"action": "agent", "action_input": {"mode": "status"}}
+{"action": "agent", "action_input": {"mode": "resume", "key": "agt-3f2a1b9c", "task": "이어서 진행해"}}
+{"action": "agent", "action_input": {"mode": "kill", "key": "agt-3f2a1b9c"}}
+```
+
+#### 공통 — 프로파일 (profile)
+
+run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — 서브에이전트 시스템 프롬프트의 Role 섹션을 통째로 교체). 검색 경로: 프로젝트(`.agent-cli/agents/`) → 유저 전역(`~/.agent-cli/agents/`) → 패키지 내장(`agent_cli/agents/builtin/`).
+
+- **프로파일 발견**: 사용 가능한 프로파일 목록(이름+description)이 시스템 프롬프트 `## Agent Profiles` 섹션에 광고되어 **모델이 스스로 적합한 전문가를 골라** run/spawn 합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
+- **내장 프로파일**: `explorer`(읽기 전용 코드베이스 탐색) / `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
+- **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}` (run 도 동일 지원). `profile` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시). 상주 에이전트의 인라인 지시는 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속).
+- **`/create-agent` 스킬**: 새 프로파일 md 를 대화형으로 생성 (run/spawn 겸용).
+
+#### mode:"run" — 일회성 위임
+
+**한 op = 한 task** (flat-native). 컨텍스트 모드로 서브에이전트가 부모 맥락을 얼마나 알지 제어합니다:
 
 | 모드 | 동작 |
 |------|------|
 | `none` (기본) | 독립 실행. task에 모든 정보 포함 필요 |
 | `fork` | 부모 컨텍스트를 복사하여 실행. 맥락 인지 + 독립 |
 
-```json
-{"action": "delegate", "action_input": {"task": "Read /tmp/data.csv and count rows"}}
-{"action": "delegate", "action_input": {"task": "Fix the bug we found", "context": "fork"}}
-{"action": "delegate", "action_input": {"task": "Review changes", "context": "fork", "tools": ["read_file", "shell"]}}
-{"action": "delegate", "action_input": {"task": "Review this code for vulnerabilities", "agent": "security-reviewer"}}
-```
-
-**병렬 실행**: 한 턴에 delegate op 을 **여러 개** 내면 독립 서브에이전트가 **동시에**(threading) 실행됩니다 — 루프가 그 op 들을 모아 병렬 디스패치합니다. 독립 작업일 때만 여러 개를 내고, task B가 task A의 결과에 의존하면 A만 먼저 낸 뒤 다음 턴에 그 결과로 B를 호출하세요.
-
-`tools` 파라미터로 서브에이전트가 사용할 수 있는 도구를 제한할 수 있습니다.
-
-`agent` 파라미터로 에이전트 역할을 로드할 수 있습니다. 에이전트 파일은 YAML frontmatter로 `allowed-tools`, `model` 등을 설정하고, 본문에 역할/원칙을 정의합니다. 검색 경로: 프로젝트(`.agent-cli/agents/`) → 유저 전역(`~/.agent-cli/agents/`) → 패키지 내장(`agent_cli/agents/builtin/`).
-
-패키지 내장 에이전트:
-
-| 에이전트 | 설명 |
-|---------|------|
-| `explorer` | 읽기 전용 코드베이스 탐색 (read_file, shell만 사용, 파일 수정 불가) |
-
-**산출물 포맷**: delegate 실행 결과는 구조화된 형식으로 반환됩니다:
+- **병렬 실행**: 한 턴에 run op 을 **여러 개** 내면 독립 서브에이전트가 **동시에**(threading) 실행됩니다 — 루프가 연속된 run op 들을 모아 병렬 디스패치합니다 (**mode-aware 배칭**: 상주 모드 op 이 섞인 턴은 순차). 독립 작업일 때만 여러 개를 내고, task B가 task A의 결과에 의존하면 A만 먼저 낸 뒤 다음 턴에 그 결과로 B를 호출하세요.
+- `tools` 파라미터로 서브에이전트가 사용할 수 있는 도구를 제한할 수 있습니다.
+- **서브루프에서도 사용 가능**: run 은 main 뿐 아니라 서브에이전트(run/spawn/skill) 안에서도 쓸 수 있습니다 — 서브에이전트가 자기 작업을 다시 병렬 팬아웃하는 경로 (`--max-depth` 로 중첩 제한, 상주 모드는 main 전용). 서브루프의 도구 설명은 run 만 문서화된 축소판으로 렌더됩니다.
+- **산출물 포맷**: run 결과는 구조화된 형식으로 반환됩니다:
 
 ```
 STATUS: success
@@ -1022,40 +1034,31 @@ RESULT:
 [Duration: 12.3s] [Subagent used 3 iterations]
 ```
 
-실패 시에는 `[Last actions before failure]` 섹션이 추가되어 디버깅에 필요한 마지막 액션과 에러 메시지를 확인할 수 있습니다. 결과는 delegate subdir의 `result.md`에 자동 저장됩니다.
+실패 시에는 `[Last actions before failure]` 섹션이 추가되어 디버깅에 필요한 마지막 액션과 에러 메시지를 확인할 수 있습니다. 결과는 세션의 `run_{name}_{hash}_{ts}/` subdir 의 `result.md`에 자동 저장됩니다.
 
-### teammate — 상주 팀원 에이전트
+#### 상주 모드 — spawn / request / status / resume / kill
 
-delegate 가 "일회성 파견"(답변 → 소멸)이라면 `teammate` 는 **상주 팀원**입니다 — spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할 수 있습니다. teammate 는 자기 컨텍스트(이전 문답 전부)를 유지한 채 살아 있습니다. 반복 협업(탐색시켜 놓고 후속 질문, 역할별 장기 작업)에 쓰고, 독립적인 일회성 작업에는 delegate 를 쓰세요.
+spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할 수 있습니다. 상주 에이전트는 자기 컨텍스트(이전 문답 전부)를 유지한 채 살아 있습니다.
 
-```json
-{"action": "teammate", "action_input": {"mode": "spawn", "role": "researcher", "task": "레포 구조를 파악해줘"}}
-{"action": "teammate", "action_input": {"mode": "request", "key": "agt-3f2a1b9c", "message": "그래서 진입점이 어디야?"}}
-{"action": "teammate", "action_input": {"mode": "status"}}
-{"action": "teammate", "action_input": {"mode": "resume", "key": "agt-3f2a1b9c", "task": "이어서 진행해"}}
-{"action": "teammate", "action_input": {"mode": "kill", "key": "agt-3f2a1b9c"}}
-```
-
-- **비동기 + 자동 배달**: `request` 는 즉시 반환되고, teammate 는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링하거나 블록할 필요가 없습니다 (main 이 idle 이어도 자동 재기동으로 배달; `wait` 모드는 v4.63.0 에서 제거 — Stop 불응 결함이 있었고 자동 배달이 완전 대체).
-- **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}`. 인라인 지시는 그 teammate 의 시스템 프롬프트가 되어 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속). `role` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시).
-- **양방향 문답 (ask 라우팅)**: teammate 가 작업 중 막혀서 `ask` 를 부르면 질문이 **main 의 mailbox 로** 옵니다 (사용자가 아니라 main LLM 이 teammate 의 "사용자"). main 은 같은 `request` 로 답하고, teammate 는 답을 받을 때까지 `waiting_ask` 상태로 대기합니다. `wait` 중에 질문이 먼저 도착하면 질문을 반환해 교착을 방지합니다. delegate 서브에이전트의 `ask` 는 종전대로 사용자에게 갑니다.
-- **역할 정의 (`role`) — 전문가 팀**: `.agent-cli/teammates/{name}.md` (프로젝트) → `~/.agent-cli/teammates/` (전역) → 패키지 내장 순으로 검색. agent 파일과 같은 포맷 — YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — teammate 시스템 프롬프트의 Role 섹션을 통째로 교체, 상주라 세션 내내 지속). delegate 의 `agents/` 와는 **별도 디렉토리**입니다.
-  - **역할 발견**: 사용 가능한 역할 목록(이름+description)이 시스템 프롬프트에 광고되어 **모델이 스스로 적합한 전문가를 골라 소집**합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
-  - **내장 전문가**: `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
-  - **다중 인스턴스**: 같은 역할을 여러 명 스폰할 수 있습니다 — coder 3명이 서로 다른 파일을 병렬 개발하는 식. spawn 의 `name`(예: `ui`/`api`)으로 인스턴스를 구분하며 광고·대화창·회신 헤더에 `agt-x (coder · ui)` 로 표시됩니다 (주소는 항상 key).
-  - **Live Teammates 광고**: 현재 상주 중인 teammate 목록(key·역할·인스턴스명·전문영역)이 main 시스템 프롬프트에 상시 광고됩니다 — compaction 이 spawn 관찰을 지워도, auto-spawn/resume 처럼 관찰이 없어도 모델이 자기 팀을 잊지 않습니다. 멤버십 변화(spawn/kill/사망) 때만 재조립되어 KV 캐시 영향 최소(busy/idle 같은 휘발 상태는 미포함 — 활동은 관찰이 운반). 프롬프트 인스펙터에서 그대로 확인 가능하며, teammate 자신에게는 보이지 않습니다.
-  - **auto-spawn**: frontmatter `auto-spawn: true` 역할은 세션 시작 시 자동 상주합니다 (resume 재생성분과 중복 스폰 없음).
-  - **`/create-teammate` 스킬**: 새 역할 md 를 대화형으로 생성.
-- **worker 사망 통지**: teammate worker 가 비정상 종료(ctx 생성 실패·내부 기계 예외)하면 main 에 `DIED` 관찰로 즉시 통지됩니다 — status 를 조회할 필요 없음. `kill`/세션 종료 같은 의도된 종료는 통지하지 않습니다.
-- **부활 (`mode: "resume"`)**: kill 되거나 사망한 teammate 를 **이전 컨텍스트 그대로** 되살립니다 — history 가 디스크에 보존되므로 부활한 teammate 는 죽기 전 문답을 전부 기억합니다 (`task` 로 즉시 이어서 요청 가능, 회신 파일 번호도 이어감). 웹 대화 창의 dead 칩에서 ↻ 버튼으로도 부활할 수 있습니다. 부활 후에는 세션 resume 의 자동 재생성 대상으로 복귀합니다. 죽은 teammate 의 칩/기록이 남아 있는 이유가 바로 이것 — 사후 검사 + 부활 가능성.
-- **스코프**: main 세션 전용 — 서브에이전트(delegate/skill/teammate 자신) 안에서는 도구가 노출되지 않습니다. delegate 는 teammate 안에서 평소처럼 쓸 수 있습니다. 동시 생존 상한 기본 4 (`AGENT_CLI_MAX_TEAMMATES`).
-- **수명**: main 의 Stop/Ctrl+C 는 teammate 를 죽이지 않습니다(백그라운드 계속). 종료는 `kill` 또는 세션 종료 시 일괄 정리. 회신 전문은 `teammates/<key>/replies/` 에 항상 저장됩니다.
-- **세션 resume 시 자동 재생성**: `--resume` 하면 이전 세션에서 살아있던 teammate 가 **자기 대화 이력을 전부 기억한 채** 자동으로 되살아납니다 (`teammates.json` manifest — 역할 프롬프트도 저장돼 역할 md 파일이 지워져도 무관). 미배달 회신도 보존되어 첫 턴에 배달됩니다 (답변 대기 중이던 질문은 STALE 로 표시 — 재시작으로 더 이상 블록 상태가 아님을 안내). 명시적으로 `kill` 한 teammate 는 되살아나지 않습니다.
-- **인스펙터**: 웹 Prompt Inspector 에 teammate 스코프 칩이 상시 표시되어 살아있는 동안 시스템 프롬프트·동적 컨텍스트를 실시간 검사할 수 있습니다. 요청 처리 과정은 delegate 와 같은 접이식 카드(🤝)로 표시됩니다.
-- **사용자 직접 명령 (`@teammates` / `@agt-<key>`)**: 채팅박스(웹)나 CLI 에서 `@teammates` 로 roster 를 보고, `@agt-<key> <메시지>` 로 특정 teammate 에게 **직접** 말을 겁니다 (`@agt-<key>` 만 치면 상태). 사용자 발신이므로 회신은 main LLM 대화에 섞이지 않고 — 웹은 🤝 창으로, **CLI 는 콘솔 라인**(`🤝 [agt-x → user]`)으로 도착합니다.
-- **웹 대화 창 + 인간 개입 (🤝)**: 웹 헤더의 🤝 버튼으로 teammate 대화 창을 엽니다 — roster(상태 뱃지·✕ 종료)와 선택한 teammate 의 대화 스트림(요청 in / 회신 out / 질문 ❓)이 실시간으로 흐릅니다. 창 하단 입력으로 **사람이 직접 teammate 에게 메시지**를 보낼 수 있고(닉네임 attribution), teammate 가 질문(ask) 대기 중이면 그 메시지가 답으로 소비됩니다 (main 과 선착순). **인간↔teammate 문답은 창에만 표시**되고 main 컨텍스트에는 배달되지 않습니다 (오염 방지).
+- **비동기 + 자동 배달**: `request` 는 즉시 반환되고, 에이전트는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링하거나 블록할 필요가 없습니다 (main 이 idle 이어도 자동 재기동으로 배달).
+- **양방향 문답 (ask 라우팅)**: 상주 에이전트가 작업 중 막혀서 `ask` 를 부르면 질문이 **main 의 mailbox 로** 옵니다 (사용자가 아니라 main LLM 이 그 에이전트의 "사용자"). main 은 같은 `request` 로 답하고, 에이전트는 답을 받을 때까지 `waiting_ask` 상태로 대기합니다. run 서브에이전트의 `ask` 는 종전대로 사용자에게 갑니다.
+- **다중 인스턴스**: 같은 프로파일을 여러 명 스폰할 수 있습니다 — coder 3명이 서로 다른 파일을 병렬 개발하는 식. spawn 의 `name`(예: `ui`/`api`)으로 인스턴스를 구분하며 광고·대화창·회신 헤더에 `agt-x (coder · ui)` 로 표시됩니다 (주소는 항상 key).
+- **Live Agents 광고**: 현재 상주 중인 에이전트 목록(key·프로파일·인스턴스명·전문영역)이 main 시스템 프롬프트 `## Live Agents` 섹션에 상시 광고됩니다 — compaction 이 spawn 관찰을 지워도, auto-spawn/resume 처럼 관찰이 없어도 모델이 자기 팀을 잊지 않습니다. 멤버십 변화(spawn/kill/사망) 때만 재조립되어 KV 캐시 영향 최소(busy/idle 같은 휘발 상태는 미포함 — 활동은 관찰이 운반). 프롬프트 인스펙터에서 그대로 확인 가능하며, 상주 에이전트 자신에게는 보이지 않습니다.
+- **auto-spawn**: frontmatter `auto-spawn: true` 프로파일은 세션 시작 시 자동 상주합니다 (resume 재생성분과 중복 스폰 없음).
+- **worker 사망 통지**: worker 가 비정상 종료(ctx 생성 실패·내부 기계 예외)하면 main 에 `DIED` 관찰로 즉시 통지됩니다 — status 를 조회할 필요 없음. `kill`/세션 종료 같은 의도된 종료는 통지하지 않습니다.
+- **부활 (`mode: "resume"`)**: kill 되거나 사망한 에이전트를 **이전 컨텍스트 그대로** 되살립니다 — history 가 디스크에 보존되므로 부활한 에이전트는 죽기 전 문답을 전부 기억합니다 (`task` 로 즉시 이어서 요청 가능, 회신 파일 번호도 이어감). 웹 대화 창의 dead 칩에서 ↻ 버튼으로도 부활할 수 있습니다. 부활 후에는 세션 resume 의 자동 재생성 대상으로 복귀합니다. 죽은 에이전트의 칩/기록이 남아 있는 이유가 바로 이것 — 사후 검사 + 부활 가능성.
+- **스코프**: 상주 모드는 main 세션 전용 — 서브에이전트 안에서 spawn/request 등을 부르면 run 안내와 함께 거부됩니다. 동시 생존 상한 기본 4 (`AGENT_CLI_MAX_AGENTS`).
+- **수명**: main 의 Stop/Ctrl+C 는 상주 에이전트를 죽이지 않습니다(백그라운드 계속). 종료는 `kill` 또는 세션 종료 시 일괄 정리. 회신 전문은 `agents/<key>/replies/` 에 항상 저장됩니다.
+- **세션 resume 시 자동 재생성**: `--resume` 하면 이전 세션에서 살아있던 상주 에이전트가 **자기 대화 이력을 전부 기억한 채** 자동으로 되살아납니다 (`agents.json` manifest — 역할 프롬프트도 저장돼 프로파일 md 파일이 지워져도 무관). 미배달 회신도 보존되어 첫 턴에 배달됩니다 (답변 대기 중이던 질문은 STALE 로 표시 — 재시작으로 더 이상 블록 상태가 아님을 안내). 명시적으로 `kill` 한 에이전트는 되살아나지 않습니다.
+- **인스펙터**: 웹 Prompt Inspector 에 상주 에이전트 스코프 칩이 상시 표시되어 살아있는 동안 시스템 프롬프트·동적 컨텍스트를 실시간 검사할 수 있습니다. 요청 처리 과정은 run 과 같은 접이식 카드(🤝)로 표시됩니다.
+- **사용자 직접 명령 (`@` 구문)**: 채팅박스(웹)나 CLI 에서 —
+  - `@agents` — 프로파일 카탈로그 + live roster 통합 목록.
+  - `@<profile> <task>` — 일회성 run (명시적으로 `@<profile>-run` 도 동일).
+  - `@<profile>-spawn <task>` — 상주 스폰 (+초기 task). 하이픈 포함 프로파일명도 안전 — 전체 토큰이 실존 프로파일이면 그것이 우선.
+  - `@agt-<key> <메시지>` — 특정 상주 에이전트에게 **직접** 전송 (`@agt-<key>` 만 치면 상태). 사용자 발신이므로 회신은 main LLM 대화에 섞이지 않고 — 웹은 🤝 창으로, **CLI 는 콘솔 라인**(`🤝 [agt-x → user]`)으로 도착합니다.
+- **웹 대화 창 + 인간 개입 (🤝)**: 웹 헤더의 🤝 버튼으로 에이전트 대화 창을 엽니다 — roster(상태 뱃지·✕ 종료)와 선택한 에이전트의 대화 스트림(요청 in / 회신 out / 질문 ❓)이 실시간으로 흐릅니다. 창 하단 입력으로 **사람이 직접 메시지**를 보낼 수 있고(닉네임 attribution), 에이전트가 질문(ask) 대기 중이면 그 메시지가 답으로 소비됩니다 (main 과 선착순). **인간↔에이전트 문답은 창에만 표시**되고 main 컨텍스트에는 배달되지 않습니다 (오염 방지).
 - **idle 자동 재기동 (웹)**: main 이 입력 대기(idle) 중에 회신/질문이 도착하면 harness 가 run 을 **자동으로 깨워** 배달합니다 — 사용자가 다음 메시지를 보낼 때까지 회신이 잠들지 않습니다. 이미 다른 run 이 배달을 끝냈으면 빈 run 을 열지 않습니다.
-- **CLI `run` 에서도 동작 (큐 펌프)**: `run` 은 web 과 같은 공용 입력 큐 위에서 돕니다 — 모델이 complete 해도 **teammate 가 아직 일하는 중이거나 미배달 회신이 있으면 프로세스가 끝나지 않고**, 회신이 도착하면 자동으로 이어서(🤝 wake) 처리한 뒤 조용해졌을 때(quiescence) 종료합니다. teammate 를 안 쓰면 종전과 동일하게 1회 실행 후 즉시 종료. 답변 없는 질문만 남은 경우(교착)는 경고 후 종료하며 resume 시 STALE 처리됩니다.
+- **CLI `run` 커맨드에서도 동작 (큐 펌프)**: `run` 커맨드는 web 과 같은 공용 입력 큐 위에서 돕니다 — 모델이 complete 해도 **상주 에이전트가 아직 일하는 중이거나 미배달 회신이 있으면 프로세스가 끝나지 않고**, 회신이 도착하면 자동으로 이어서(🤝 wake) 처리한 뒤 조용해졌을 때(quiescence) 종료합니다. 상주 에이전트를 안 쓰면 종전과 동일하게 1회 실행 후 즉시 종료. 답변 없는 질문만 남은 경우(교착)는 경고 후 종료하며 resume 시 STALE 처리됩니다.
 
 ### run_skill — 스킬 실행
 
@@ -1124,7 +1127,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 │  │ Role / Task Guidelines / Format Rules         │  │  ← Primacy (고정, KV cache hit)
 │  │ Available Tools (inline guides)               │  │
 │  │ Available Skills / Available Agents           │  │  ← Middle (참조용)
-│  │ Execution Context (call stack)                │  │  ← 스킬/delegate 실행 시만
+│  │ Execution Context (call stack)                │  │  ← 스킬/agent 실행 시만
 │  │ Directives (DIRECTIVE.md)                     │  │
 │  │ Environment (CWD, date, platform)             │  │  ← Recency (현재 맥락)
 │  │ Context Recovery Guide                        │  │
@@ -1136,7 +1139,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 │  │ [evicted — history.jsonl에만 존재]            │  │  ← 90% 초과 시 oldest half가 요약으로 흡수
 │  │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │  │
 │  │ [Compaction summary]    ← LLM 요약 (recursive)│  │
-│  │ [Touched files] a.py, b.py, <delegate:foo>    │  │
+│  │ [Touched files] a.py, b.py, <agent:foo>       │  │
 │  │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │  │
 │  │ user: "hooks.py 분석해줘"                     │  │
 │  │ assistant: thought → action: read_file(...)   │  │  ← 자연어 변환
@@ -1156,7 +1159,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 - `context_window - max_output_tokens - 4000 (system prompt 예약)` 자동 계산
 - 메시지 **단위로** eviction — 메시지 중간이 잘리는 일 없음
 - `--max-context-tokens`로 수동 override 가능 (0 = 자동)
-- 스킬/delegate는 부모 budget 상속
+- 스킬/agent 서브에이전트는 부모 budget 상속
 
 #### Context Compaction (90% 임계)
 
@@ -1165,12 +1168,12 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 1. **분할**: `[system anchor][dynamic]` — system prompt만 무조건 보존
 2. **Evict 절반 (token-based)**: oldest 절반을 떼어냄
 3. **LLM 요약**: evict 묶음을 단일 호출로 요약. 요약은 구조화 섹션(TASK / STATE / DONE / PENDING / DECISIONS / FAILURES / FACTS)으로 만들어져, 에이전트가 요약만으로 작업을 이어갈 수 있게 남은 작업·실패한 시도·정확한 식별자(경로/명령/에러)를 보존합니다. 이전 요약이 있으면 prior summary를 같은 호출에 prepend (recursive single-call — 합치는 별도 단계 없음)
-4. **파일 경로 추출**: evict 안의 `read_file/write_file/edit_file/code_index` 호출과 `<delegate:agent>` placeholder를 누적 file_list에 dedup 머지
+4. **파일 경로 추출**: evict 안의 `read_file/write_file/edit_file/code_index` 호출과 `<agent:target>` placeholder를 누적 file_list에 dedup 머지
 5. **재구성**: `[system][summary][file_list][retained dynamic]`
 6. **영속화**: `compaction.json` (version, summary, file_list, dynamic_start_index 등) — `--resume` 시 압축 상태 그대로 복원
 7. **Belt-and-braces fallback**: LLM 호출 실패 또는 재구성된 cache가 여전히 budget 초과면 플레인 FIFO drop으로 떨어뜨림 — 무한 트리거 루프 방지
 
-`--no-compaction` 플래그 또는 `AGENT_CLI_COMPACTION=off` 환경 변수로 압축을 끄면 기존 플레인 FIFO만 동작합니다 (LLM 호출 비용·외부 의존이 곤란한 배포 환경 대비). 이 설정은 delegate·skill 서브에이전트에도 그대로 전파되어, 부모에서 압축을 끄면 중첩 실행도 모두 FIFO만 사용합니다.
+`--no-compaction` 플래그 또는 `AGENT_CLI_COMPACTION=off` 환경 변수로 압축을 끄면 기존 플레인 FIFO만 동작합니다 (LLM 호출 비용·외부 의존이 곤란한 배포 환경 대비). 이 설정은 agent·skill 서브에이전트에도 그대로 전파되어, 부모에서 압축을 끄면 중첩 실행도 모두 FIFO만 사용합니다.
 
 압축이 일어나면 CLI는 한 줄 상태로, 웹은 **대화창 인라인 시스템 라인**(`⊙ 컨텍스트 압축됨 X→Y tok`)으로 진행을 표시합니다. 압축으로 흡수된 요약·파일 목록은 웹의 ⚡ Prompt Inspector 에서도 확인할 수 있습니다(위 참조).
 
@@ -1182,9 +1185,9 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
     {session_id}/
       session.jsonl                     # 메타데이터 (1줄: id, workspace, updated_at, query)
       history.jsonl                     # 전체 대화 기록 (JSON Lines, append-only)
-      delegate_{name}_{hash}_{ts}/      # delegate subdir
-        history.jsonl                   #   delegate 내부 대화
-        result.md                       #   delegate 최종 결과
+      run_{name}_{hash}_{ts}/         # agent run subdir
+        history.jsonl                   #   run 내부 대화
+        result.md                       #   run 최종 결과
       skill_{name}_{hash}_{ts}/         # skill subdir
         history.jsonl                   #   skill 내부 대화
         result.md                       #   skill 최종 결과
@@ -1195,7 +1198,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 FIFO에서 밀려난 과거 메시지가 필요할 때:
 - System prompt에 `history.jsonl` 경로 안내 (Context Recovery Guide)
 - LLM이 `read_file(history.jsonl)` 실행하여 과거 맥락 복구
-- history.jsonl 내 artifact 경로로 delegate/skill 상세 결과 접근 가능
+- history.jsonl 내 artifact 경로로 run/skill 상세 결과 접근 가능
 
 #### 세션 관리
 
@@ -1254,9 +1257,9 @@ agent-cli web --resume <session_id>   # 이전 세션 이어서 작업
 - **반복 호출 감지**: 동일 도구를 같은 파라미터로 3회 연속 호출 시 자동 중단
 - **echo-as-final**: `echo`로 답하는 소형 모델 패턴 자동 감지 → `complete` 도구 호출로 변환
 - **잘린 JSON 복구**: LLM 응답이 잘릴 때 JSON repair 후 마지막 불완전한 edit 라인 제거, 적용된 edit 수 리포트
-- **Execution Context**: 스킬/delegate 실행 시 call stack + `depth N/M` 을 시스템 프롬프트에 표시, 재귀 호출 억제. 한계 도달 시 그 사실도 명시.
+- **Execution Context**: 스킬/agent 실행 시 call stack + `depth N/M` 을 시스템 프롬프트에 표시, 재귀 호출 억제. 한계 도달 시 그 사실도 명시.
 - **agent_stack / skill_stack**: 런타임 재귀 방지 (A→B→A 차단). 블록 메시지에 3가지 recovery option 포함 (다른 접근 / complete / ask).
-- **max_depth**: **skill + delegate 합산 중첩 깊이** 제한 (기본 2). 한계 도달 시 `AgentLoop.__init__` 가 `delegate` 와 `run_skill` 둘 다 tool list 에서 제거 (대칭). dispatch 단계 belt-and-suspenders check 도 동일 메시지 출력.
+- **max_depth**: **skill + agent 합산 중첩 깊이** 제한 (기본 2). 한계 도달 시 `AgentLoop.__init__` 가 `agent` 와 `run_skill` 둘 다 tool list 에서 제거 (대칭). dispatch 단계 belt-and-suspenders check 도 동일 메시지 출력.
 
 ## 프로젝트 구조
 
@@ -1272,7 +1275,7 @@ agent_cli/
 ├── input_history.py     readline 히스토리 영속화
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI)
 ├── wire_formats/        wire format 플러그인 (ReAct 외 추가 가능; 파서·복구·history 표현 self-contained)
-├── tools/               도구 (read/write/edit/shell/delegate/context)
+├── tools/               도구 (read/write/edit/shell/agent/context)
 ├── context/             컨텍스트 관리 (compaction + FIFO + history.jsonl + 세션 메타)
 ├── prompts/             조건부 시스템 프롬프트
 ├── skills/              프롬프트 스킬 시스템 (로더, 실행기, 모델)
@@ -1291,7 +1294,7 @@ pytest tests/ -v
 
 ### omlx 통합 테스트 (실 서버 필요)
 
-`omlx_integration` 마커가 붙은 E2E 테스트는 실제 OpenAI 호환 omlx 서버를 대상으로 run_loop·툴 사용·스킬·delegate·런타임 capability 감지를 검증합니다. 서버가 없으면 자동으로 skip되므로 `pytest tests/`는 항상 green입니다.
+`omlx_integration` 마커가 붙은 E2E 테스트는 실제 OpenAI 호환 omlx 서버를 대상으로 run_loop·툴 사용·스킬·agent run·런타임 capability 감지를 검증합니다. 서버가 없으면 자동으로 skip되므로 `pytest tests/`는 항상 green입니다.
 
 ```bash
 # 실 서버를 띄운 뒤 실행

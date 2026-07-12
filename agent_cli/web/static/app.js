@@ -604,7 +604,7 @@
    *
    * Known tool names get a custom layout (ask → numbered question list,
    * shell → ``$ <cmd>``, read_file → path + flags, edit_file →
-   * path + edit count, delegate → task list). Unknown tools fall
+   * path + edit count, agent → mode/task 요약). Unknown tools fall
    * back to pretty-printed JSON. Always escapes user-supplied text.
    */
   function renderActionInput(toolName, toolInputStr) {
@@ -679,22 +679,38 @@
       );
     }
 
-    if (toolName === "delegate" && Array.isArray(parsed.tasks)) {
-      const ul = el("ul", ["action-delegate"]);
-      parsed.tasks.forEach(function (t) {
-        const li = document.createElement("li");
-        li.textContent = String(t.task || "");
-        if (t.agent) {
-          const agent = el(
-            "span",
-            ["muted"],
-            " → " + escapeHtml(String(t.agent))
-          );
-          li.appendChild(agent);
-        }
-        ul.appendChild(li);
-      });
-      return ul;
+    if (toolName === "agent") {
+      // 배치형 {tasks:[...]} — run fan-out 을 task 목록으로.
+      if (Array.isArray(parsed.tasks)) {
+        const ul = el("ul", ["action-delegate"]);
+        parsed.tasks.forEach(function (t) {
+          const li = document.createElement("li");
+          li.textContent = String(t.task || "");
+          if (t.agent || t.profile) {
+            const prof = el(
+              "span",
+              ["muted"],
+              " → " + escapeHtml(String(t.agent || t.profile))
+            );
+            li.appendChild(prof);
+          }
+          ul.appendChild(li);
+        });
+        return ul;
+      }
+      // 플랫 op — "run: <task>" / "request agt-x: <message>" 한 줄 요약.
+      if (typeof parsed.mode === "string") {
+        const target = parsed.key || parsed.profile || "";
+        const body = parsed.task || parsed.message || "";
+        return el(
+          "div",
+          ["action-detail"],
+          escapeHtml(parsed.mode + (target ? " " + target : "")) +
+            (body
+              ? ' <span class="muted">' + escapeHtml(String(body)) + "</span>"
+              : "")
+        );
+      }
     }
 
     if (toolName === "complete" && typeof parsed.result === "string") {
@@ -725,12 +741,12 @@
           escapeHtml(d.tool_name || "")
       )
     );
-    // A `delegate` observation is a subagent's prose answer (the
-    // STATUS/RESULT/[Task N]/[Duration] wrapper around markdown text), so
+    // An `agent` observation is a subagent's prose answer (run 결과의
+    // STATUS/RESULT/[Task N]/[Duration] wrapper, 상주 회신 배달), so
     // render it through the markdown pipeline like an assistant turn. Every
     // other tool's output (read_file hashlines, shell text, write/edit diffs)
     // is monospace/structured → keep the <pre> + diff colouring.
-    if ((d.tool_name || "") === "delegate") {
+    if ((d.tool_name || "") === "agent") {
       card.appendChild(
         el("div", ["obs-body", "obs-md"], escapeAndFormat(d.content || ""))
       );
@@ -1080,14 +1096,14 @@
   });
 
   es.addEventListener("agent_roster", function (e) {
-    // teammate 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계.
+    // 상주 에이전트 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계.
     document.dispatchEvent(
       new CustomEvent("agentcli:tm-roster", { detail: JSON.parse(e.data) }),
     );
   });
 
   es.addEventListener("agent_msg", function (e) {
-    // teammate 대화 메시지 (persistent — 재접속 replay 포함).
+    // 상주 에이전트 대화 메시지 (persistent — 재접속 replay 포함).
     document.dispatchEvent(
       new CustomEvent("agentcli:tm-msg", { detail: JSON.parse(e.data) }),
     );
@@ -1100,7 +1116,7 @@
   });
 
   es.addEventListener("prompt_changed", function () {
-    // 시스템 프롬프트 스냅샷의 외과적 갱신 (teammate 멤버십 즉시 반영) —
+    // 시스템 프롬프트 스냅샷의 외과적 갱신 (상주 에이전트 멤버십 즉시 반영) —
     // 열린 인스펙터가 프롬프트 뷰를 재조회하게 중계.
     window.dispatchEvent(new CustomEvent("agentcli:prompt-changed"));
   });
@@ -1282,7 +1298,7 @@
   // only to mark "(you)" in the roster and to own queued messages.
   es.addEventListener("identity", function (e) {
     myConnId = JSON.parse(e.data).conn_id;
-    // teammate 대화 창 IIFE(별도 클로저)가 닉네임 attribution 에 쓰도록 노출.
+    // 상주 에이전트 대화 창 IIFE(별도 클로저)가 닉네임 attribution 에 쓰도록 노출.
     window.AGENTCLI_CONN_ID = myConnId;
   });
 
@@ -2032,8 +2048,8 @@
     if (cl.contains("card-task-group")) {
       const t = card.querySelector(".task-title");
       return {
-        kind: "delegate",
-        label: t ? t.innerText.trim() : "delegate",
+        kind: "agent",
+        label: t ? t.innerText.trim() : "agent",
         mono: false,
         body: ".task-body",
       };
@@ -2898,7 +2914,7 @@
   });
 })();
 
-// ── AgentInstance 대화 창 (🤝, P4) ─────────────────────────────────────────
+// ── 상주 에이전트 대화 창 (🤝, P4) ─────────────────────────────────────────
 // 상주 에이전트 roster + 대화 스트림 + 인간 개입. 데이터는 메인 SSE 가
 // document CustomEvent 로 중계(agentcli:tm-roster / agentcli:tm-msg —
 // auto_review 토글과 같은 브리지 패턴). 메시지는 persistent 이벤트라
@@ -2907,7 +2923,7 @@
   "use strict";
 
   const token = new URLSearchParams(window.location.search).get("token");
-  const $btn = document.getElementById("teammate-btn");
+  const $btn = document.getElementById("agent-btn");
   const $badge = document.getElementById("tm-badge");
   const $drawer = document.getElementById("tm-drawer");
   const $backdrop = document.getElementById("tm-backdrop");
@@ -2935,14 +2951,14 @@
     $badge.textContent = String(alive);
     if (!roster.length) {
       $roster.innerHTML =
-        '<div class="tm-empty">아직 teammate 가 없습니다 — 모델이 spawn 하면 여기 나타납니다.</div>';
+        '<div class="tm-empty">아직 상주 에이전트가 없습니다 — spawn 하면 여기 나타납니다.</div>';
       return;
     }
     $roster.innerHTML = "";
     roster.forEach(function (tm) {
       const chip = document.createElement("span");
       chip.className = "tm-chip" + (tm.key === selected ? " active" : "");
-      const who = [tm.role, tm.name].filter(Boolean).join(" · ");
+      const who = [tm.profile, tm.name].filter(Boolean).join(" · ");
       chip.innerHTML =
         esc(tm.key) +
         (who ? " <b>" + esc(who) + "</b>" : "") +
@@ -2963,7 +2979,7 @@
         });
         chip.appendChild(kill);
       } else {
-        // 죽은 teammate 는 이전 컨텍스트 그대로 부활 가능 (mode:"resume")
+        // 죽은 에이전트는 이전 컨텍스트 그대로 부활 가능 (mode:"resume")
         const rev = document.createElement("button");
         rev.className = "tm-kill";
         rev.title = "이전 컨텍스트로 부활";
@@ -2985,7 +3001,7 @@
     const list = (selected && msgs[selected]) || [];
     $conv.innerHTML = "";
     if (!selected) {
-      $conv.innerHTML = '<div class="tm-empty">teammate 를 선택하세요.</div>';
+      $conv.innerHTML = '<div class="tm-empty">에이전트를 선택하세요.</div>';
       return;
     }
     if (!list.length) {
@@ -3016,13 +3032,13 @@
     $send.disabled = !alive;
     $input.placeholder = alive
       ? key + " 에게 메시지… (답변 대기 중이면 답으로 소비)"
-      : "종료된 teammate 입니다.";
+      : "종료된 에이전트입니다.";
     renderRoster();
     renderConv();
   }
 
   document.addEventListener("agentcli:tm-roster", function (e) {
-    roster = (e.detail && e.detail.teammates) || [];
+    roster = (e.detail && e.detail.roster) || [];
     if (!selected && roster.length) {
       select(roster[0].key);
       return;

@@ -196,7 +196,7 @@ class TestRunSubagentMessage:
         # 서브루프는 호출자 깊이 + 1 로 돈다 (기존 delegate 의미).
         assert captured["depth"] == 2
         assert captured["max_depth"] == 3
-        assert captured["delegate_timeout"] == 77
+        assert captured["agent_timeout"] == 77
         assert captured["verbose"] is False
         assert captured["active_tools"] == ["shell"]
         assert captured["agent_name"] == "explorer"
