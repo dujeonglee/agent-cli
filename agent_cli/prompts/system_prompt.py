@@ -206,7 +206,7 @@ def _build_edit_file_inline(wire_format) -> str:
 {same_file}"""
 
 
-def _build_delegate_inline(wire_format) -> str:
+def _build_agent_inline(wire_format) -> str:
     """Build the delegate inline guide.
 
     Each ``Examples:`` line shows only the action_input dict for the
@@ -222,31 +222,35 @@ def _build_delegate_inline(wire_format) -> str:
     touching this builder. ReAct and envelope both implement that
     hook as identity (action_input is JSON in both formats today).
     """
-    # delegate is flat-native (consolidation Step 3): one op = one task, no
-    # `tasks` array. Several delegate ops in a turn run in PARALLEL — the loop
-    # batches a run of parallel_safe delegate ops through _run_parallel.
+    # agent run 은 flat-native: one op = one task. 같은 턴의 run op 들은
+    # 병렬(_run_parallel) — mode-aware 배칭이 run 만 묶는다 (5.0.0).
     examples = [
-        ("Single", {"task": "Read /tmp/data.csv and count rows"}),
-        ("With context", {"task": "Fix the bug we found", "context": "fork"}),
+        ("One-shot", {"mode": "run", "task": "Read /tmp/data.csv and count rows"}),
         (
-            "With agent",
+            "With context",
+            {"mode": "run", "task": "Fix the bug we found", "context": "fork"},
+        ),
+        (
+            "With profile",
             {
+                "mode": "run",
                 "task": "Review this code for vulnerabilities",
-                "agent": "security-reviewer",
+                "profile": "code-reviewer",
             },
         ),
         (
-            "Read-only",
+            "Persistent",
             {
-                "task": "Review changes",
-                "context": "fork",
-                "tools": ["read_file", "shell"],
+                "mode": "spawn",
+                "profile": "coder",
+                "name": "ui",
+                "task": "own the UI module",
             },
         ),
     ]
     if getattr(wire_format, "multi_op", False):
         intro = (
-            "  Each delegate op runs ONE subagent task. Several delegate ops "
+            "  Each run op executes ONE sub-agent task. Several run ops "
             "in the\n  same turn run in PARALLEL — emit several only when the "
             "tasks are\n  independent."
         )
@@ -255,9 +259,9 @@ def _build_delegate_inline(wire_format) -> str:
             "use its\n    result next turn."
         )
     else:
-        intro = "  Each delegate call runs ONE subagent task."
+        intro = "  Each run call executes ONE sub-agent task."
         dependency = (
-            "  - If task B depends on task A's result, call delegate twice: "
+            "  - If task B depends on task A's result, call run twice: "
             "first A,\n    then use A's result to call B."
         )
     # Inline tool-guide examples show only the action_input dict —
@@ -265,7 +269,7 @@ def _build_delegate_inline(wire_format) -> str:
     # header, and inlining the wire-shape envelope per example
     # anchored small models toward placeholder reasoning emissions.
     rendered = "\n".join(
-        f"  - {label}: {_rai_prefixed(wire_format, 'delegate', args)}"
+        f"  - {label}: {_rai_prefixed(wire_format, 'agent', args)}"
         for _, (label, args) in enumerate(examples, start=1)
     )
     return f"""\
@@ -604,7 +608,7 @@ def _build_tool_inline_guides(active_tools: list[str], wire_format) -> dict[str,
     return {
         "read_file": _build_read_file_inline(active_tools, wire_format),
         "edit_file": _build_edit_file_inline(wire_format),
-        "delegate": _build_delegate_inline(wire_format),
+        "agent": _build_agent_inline(wire_format),
         "ask": ask,
         "code_index": _build_code_index_inline(wire_format),
     }
@@ -769,11 +773,6 @@ def build_system_prompt_sections(
     skill_desc = build_skill_descriptions(wire_format=wire_format)
     if skill_desc:
         sections.append(("Skills", skill_desc))
-
-    if "delegate" in active_tools:
-        agent_desc = build_agent_descriptions(wire_format=wire_format)
-        if agent_desc:
-            sections.append(("Agents", agent_desc))
 
     if "agent" in active_tools:
         role_desc = build_teammate_role_descriptions(wire_format=wire_format)
@@ -950,7 +949,7 @@ def build_teammate_role_descriptions(wire_format=None) -> str:
         thought=None,
         action="agent",
         action_input=wire_format.render_action_input(
-            {"mode": "spawn", "role": "role-name", "task": "..."}
+            {"mode": "spawn", "profile": "profile-name", "task": "..."}
         ),
     )
     indented = "\n".join(f"  {line}" for line in example.splitlines())
@@ -1007,65 +1006,6 @@ def build_live_agents_section(agent_registry) -> str:
             if len(desc) > 140:
                 desc = desc[:137] + "..."
         lines.append(f"- {label}" + (f" — {desc}" if desc else ""))
-    return "\n".join(lines)
-
-
-def build_agent_descriptions(wire_format=None) -> str:
-    """Build agent descriptions for system prompt injection.
-
-    Uses the delegate module's agent loader to discover available
-    agents. The invocation example for ``delegate`` is rendered
-    through ``wire_format.render_full_example(thought=None, ...)`` —
-    same call shape as the sibling ``build_skill_descriptions``
-    section, ``thought=None`` because skill / agent docs historically
-    show only the invocation envelope (the user's thought is the
-    user's, not part of the doc template).
-
-    ``wire_format=None`` falls back to the default wire format (DEFAULT_WIRE_FORMAT)
-    so test callers don't have to thread the registry through.
-    """
-    if wire_format is None:
-        wire_format = _get_wire_format()
-
-    try:
-        from agent_cli.subagent.profiles import _profile_loader
-    except ImportError:
-        return ""
-
-    resources = _profile_loader.load_all()
-    # Exclude agents flagged ``disable-model-invocation: true`` (frontmatter) —
-    # parity with skills. Such agents (e.g. the auto-spawned ``reviewer``) are
-    # not advertised to the model, but remain user-listable via ``@agents``.
-    agents = [
-        (name, res.meta.get("description", ""))
-        for name, res in resources.items()
-        if not res.meta.get("disable-model-invocation")
-    ]
-
-    if not agents:
-        return ""
-
-    example = wire_format.render_full_example(
-        thought=None,
-        action="delegate",
-        action_input=wire_format.render_action_input(
-            TOOLS["delegate"].add_prefix(
-                {"tasks": [{"task": "...", "agent": "agent-name", "context": "fork"}]}
-            )
-        ),
-    )
-    # Indent every line so multi-line wire shapes (e.g. markdown
-    # section headers) keep their structure inside the bulleted list.
-    indented = "\n".join(f"  {line}" for line in example.splitlines())
-    lines = [
-        "## Available Agents",
-        "Consider delegating parallelizable or independent subtasks to agents.",
-        indented,
-    ]
-    for name, desc in agents:
-        suffix = f" — {desc}" if desc else ""
-        lines.append(f"- `{name}`{suffix}")
-
     return "\n".join(lines)
 
 

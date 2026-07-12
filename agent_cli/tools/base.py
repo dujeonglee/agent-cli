@@ -101,7 +101,7 @@ def on_disk_oversized_nudge(
     content is a file at ``read_path``, recovery is the same shape — (a) read a
     SPECIFIC part (range / search), or (b) fan out over SECTIONS of that file
     with delegate. The fan-out bullet steers to **N-way PARALLEL** — several
-    delegate ops in ONE turn (which agent-cli runs concurrently), each reading a
+    agent run ops in ONE turn (which agent-cli runs concurrently), each reading a
     distinct line range and returning only a short summary, so no single
     subagent (nor the parent) ever holds the raw bulk and the sections finish in
     parallel. ``nlines`` (the file's line count, from the caller's ``body``)
@@ -118,7 +118,7 @@ def on_disk_oversized_nudge(
         + (f", or {part_extra}" if part_extra else "")
         + ".",
     ]
-    if "delegate" in tools_available:
+    if "agent" in tools_available:
         if nlines and nlines > 1:
             # Split so each section stays well under cap; boundaries by line.
             k = max(2, min(8, (tokens + cap - 1) // cap + 1))
@@ -126,11 +126,11 @@ def on_disk_oversized_nudge(
             lines.append(
                 "· Need the WHOLE thing analysed/searched? Fan out IN PARALLEL: "
                 f"'{read_path}' is {nlines:,} lines — split into ~{k} sections "
-                f"and emit {k} delegate ops in ONE turn (same-turn delegate ops "
+                f"and emit {k} agent run ops in ONE turn (same-turn run ops "
                 "run concurrently), each like:\n"
-                f"    delegate(task=\"read_file '{read_path}' lines 1-{step} and "
+                f'    agent(mode="run", task="read_file \'{read_path}\' lines 1-{step} and '
                 'return a 3-line summary + anything about <your question>")\n'
-                f"    delegate(task=\"read_file '{read_path}' lines {step + 1}-"
+                f'    agent(mode="run", task="read_file \'{read_path}\' lines {step + 1}-'
                 f'{2 * step} …")   … (and so on, through line {nlines:,})\n'
                 f"  Merge the {k} summaries. One subagent doing it all is slower "
                 "and larger; parallel sections stay small and fast."

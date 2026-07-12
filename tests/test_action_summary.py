@@ -45,7 +45,10 @@ class TestToolSummaryArg:
 
     def test_delegate_agent(self):
         # Flat-native (Step 3): one flat task per op.
-        assert _sa("delegate", {"agent": "explorer", "task": "find"}) == "explorer"
+        assert (
+            _sa("agent", {"mode": "run", "profile": "explorer", "task": "find"})
+            == "run explorer"
+        )
 
     def test_run_skill_name(self):
         assert (

@@ -13,7 +13,7 @@ from agent_cli.tools.read_file import (
     _read_one,
     compute_line_hash,
 )
-from agent_cli.tools.delegate import (
+from agent_cli.subagent.oneshot import (
     tool_delegate,
     _format_delegate_output,
     _format_parallel_results,
@@ -1046,7 +1046,7 @@ class TestReadFileStat:
         result = _read_one(
             {"path": str(f), "stat": True},
             oversized_cap=4_096,
-            tools_available=frozenset({"read_file", "delegate"}),
+            tools_available=frozenset({"read_file", "agent"}),
         )
         assert "Fan out" in result.output
         assert "concurrently" in result.output

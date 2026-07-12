@@ -276,7 +276,7 @@ class TestFetchFlatNative:
             "read_file": {"path": "a.py"},
             "shell": {"command": "ls"},
             "write_file": {"path": "a", "content": "x"},
-            "delegate": {"task": "t"},
+            "agent": {"mode": "run", "task": "t"},
         }
         for name, payload in samples.items():
             assert TOOLS[name].claims(payload) is False, name

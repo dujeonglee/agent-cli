@@ -104,37 +104,22 @@ class TestTypeValidation:
         assert "expected string" in err
 
 
-class TestDelegateSchema:
-    """Flat-native (consolidation Step 3): delegate takes one flat task per op
-    — `{task, context?, tools?, agent?}`, no `delegate_tasks` array. Several
-    delegate ops in a turn run in parallel (parallel_safe=True, loop-batched)."""
+class TestAgentSchema:
+    """5.0.0: delegate 소멸 — agent 도구의 run 계약이 그 자리를 승계."""
 
-    def test_delegate_flat_task_param(self):
-        props = TOOL_SCHEMAS["delegate"].parameters["properties"]
-        assert "task" in props
-        assert props["task"]["type"] == "string"
-        # the old batch array wrapper is gone
-        assert "delegate_tasks" not in props
-
-    def test_delegate_flat_fields_present(self):
-        props = TOOL_SCHEMAS["delegate"].parameters["properties"]
-        for k in ("task", "context", "tools", "agent"):
+    def test_agent_flat_params(self):
+        props = TOOL_SCHEMAS["agent"].parameters["properties"]
+        for k in ("mode", "task", "profile", "instructions", "context", "tools"):
             assert k in props
+        assert TOOL_SCHEMAS["agent"].parameters["required"] == ["mode"]
 
-    def test_delegate_task_required(self):
-        assert TOOL_SCHEMAS["delegate"].parameters["required"] == ["task"]
+    def test_agent_is_parallel_safe_mode_aware(self):
+        assert TOOLS["agent"].parallel_safe is True
+        assert TOOLS["agent"].parallel_batchable({"mode": "run", "task": "x"})
+        assert not TOOLS["agent"].parallel_batchable({"mode": "spawn"})
 
-    def test_delegate_agent_is_string(self):
-        props = TOOL_SCHEMAS["delegate"].parameters["properties"]
-        assert props["agent"]["type"] == "string"
-
-    def test_delegate_agent_not_required(self):
-        assert "agent" not in TOOL_SCHEMAS["delegate"].parameters["required"]
-
-    def test_delegate_is_parallel_safe(self):
-        # The marker the loop reads to batch consecutive delegate ops into one
-        # concurrent dispatch (the only tool that opts in).
-        assert TOOLS["delegate"].parallel_safe is True
+    def test_delegate_gone(self):
+        assert "delegate" not in TOOLS
 
 
 class TestEmptyStringStripping:

@@ -21,7 +21,6 @@ from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.code_index import CodeIndexTool
 from agent_cli.tools.context import ReadContextTool
 from agent_cli.tools.memory_tool import MemoryTool
-from agent_cli.tools.delegate import DelegateTool
 from agent_cli.tools.edit_file import EditFileTool
 from agent_cli.tools.fetch import FetchTool
 from agent_cli.tools.read_file import ReadFileTool
@@ -50,7 +49,6 @@ _ALL_TOOLS: list[Tool] = [
     AskTool(),
     RunSkillTool(),
     FetchTool(),
-    DelegateTool(),
     AgentTool(),
 ]
 
@@ -256,7 +254,7 @@ def get_tool_descriptions(
             names = [*names, t]
 
     # Partition: static tools first, conditional tools last
-    conditional = {"edit_file", "delegate"}
+    conditional = {"edit_file", "agent"}
     static_names = [n for n in names if n not in conditional]
     cond_names = [n for n in names if n in conditional]
     ordered = static_names + cond_names

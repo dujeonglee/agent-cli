@@ -187,7 +187,7 @@ class TestReadFileOversized:
         )
 
     def test_names_path_size_and_narrowing(self):
-        n = self._nudge(["read_file", "delegate"])
+        n = self._nudge(["read_file", "agent"])
         assert "big_module.py" in n  # the path
         assert "63,488" in n and "4,096" in n  # size + cap
         assert "range" in n and "read_symbols" in n  # cheap narrowing
@@ -195,19 +195,19 @@ class TestReadFileOversized:
         assert "RAW_SECRET_BODY" not in n  # raw body never echoed
 
     def test_delegate_fanout_is_n_way_parallel(self):
-        n = self._nudge(["read_file", "delegate"])
+        n = self._nudge(["read_file", "agent"])
         assert "Fan out IN PARALLEL" in n
         # N-way: several delegate ops in ONE turn, with concrete line ranges
-        assert "delegate ops in ONE turn" in n
+        assert "agent run ops in ONE turn" in n
         assert "concurrently" in n
-        assert n.count("delegate(task=") >= 2  # a copyable multi-op pattern
+        assert n.count('agent(mode="run", task=') >= 2  # a copyable multi-op pattern
         assert "lines 1-" in n  # concrete section boundary
 
     def test_delegate_omitted_when_unavailable(self):
         # Depth-limited subagent: delegate is stripped from the toolset — the
         # nudge must NOT point at a tool the model cannot call.
         n = self._nudge(["read_file"])  # no delegate
-        assert "delegate" not in n
+        assert "agent" not in n
         assert "range" in n  # cheap narrowing still offered
 
     def test_missing_path_degrades_gracefully(self):
@@ -220,12 +220,12 @@ class TestReadFileOversized:
 
 class TestReadFileOversizedThroughSeam:
     def test_seam_emits_delegate_guidance_when_delegate_present(self):
-        loop = _loop(cap=50, tools=["read_file", "delegate"])
+        loop = _loop(cap=50, tools=["read_file", "agent"])
         big = "line of source\n" * 500
         out = loop._tool_observation(
             "read_file", ToolResult(True, output=big), {"path": "m.py"}
         )
-        assert "m.py" in out and "delegate" in out
+        assert "m.py" in out and "agent" in out
         assert "line of source" not in out  # raw dropped
 
     def test_seam_omits_delegate_when_depth_stripped(self):
@@ -234,7 +234,7 @@ class TestReadFileOversizedThroughSeam:
         out = loop._tool_observation(
             "read_file", ToolResult(True, output=big), {"path": "m.py"}
         )
-        assert "delegate" not in out
+        assert "agent" not in out
         assert "read_symbols" in out  # still steers to a narrower read
 
 
@@ -261,23 +261,23 @@ class TestOnDiskNudgeHelper:
         assert "saved to '/s/out.txt'" in n
 
     def test_fanout_bullet_only_when_delegate_available(self):
-        assert "Fan out IN PARALLEL" in self._n(["toolx", "delegate"])
+        assert "Fan out IN PARALLEL" in self._n(["toolx", "agent"])
         assert "Fan out IN PARALLEL" not in self._n(["toolx"])
 
     def test_fanout_concrete_ranges_with_nlines(self):
         # With a line count, the fan-out bullet proposes concrete parallel ops.
-        n = self._n(["toolx", "delegate"], nlines=2_483)
+        n = self._n(["toolx", "agent"], nlines=2_483)
         assert "2,483 lines" in n
-        assert "delegate ops in ONE turn" in n and "concurrently" in n
-        assert n.count("delegate(task=") >= 2
+        assert "agent run ops in ONE turn" in n and "concurrently" in n
+        assert n.count('agent(mode="run", task=') >= 2
         assert "lines 1-" in n
 
     def test_fanout_generic_without_nlines(self):
         # No line count → still parallel, but generic (no concrete ranges).
-        n = self._n(["toolx", "delegate"])  # nlines defaults to 0
+        n = self._n(["toolx", "agent"])  # nlines defaults to 0
         assert "Fan out IN PARALLEL" in n
         assert "one delegate op per section" in n
-        assert "delegate(task=" not in n  # no concrete op examples
+        assert 'agent(mode="run", task=' not in n  # no concrete op examples
 
     def test_part_extra_and_tail_bullets(self):
         n = self._n(["toolx"], part_extra="read_symbols", tail_bullets=("do X.",))
@@ -301,7 +301,7 @@ class TestShellOversized:
             ctx=RunContext(
                 session_dir=tmp_path,
                 oversized_cap=4_096,
-                tools_available=frozenset({"shell", "read_file", "delegate"}),
+                tools_available=frozenset({"shell", "read_file", "agent"}),
             ),
         )
         saved = list(tmp_path.glob("shell-output-*.txt"))
@@ -336,7 +336,7 @@ class TestShellOversized:
             ctx=RunContext(
                 session_dir=None,
                 oversized_cap=4_096,
-                tools_available=frozenset({"shell", "delegate"}),
+                tools_available=frozenset({"shell", "agent"}),
             ),
         )
         assert "tee" in n  # generic default nudge advises tee→read_file
@@ -367,7 +367,7 @@ class TestDelegateOversized:
         # tool_delegate persisted the answer at <session>/<artifact>result.md.
         (tmp_path / "task-abc").mkdir()
         (tmp_path / "task-abc" / "result.md").write_text("BIG ANSWER")
-        n = TOOLS["delegate"].render_oversized(
+        n = TOOLS["agent"].render_oversized(
             ToolResult(True, output="STATUS: success…", artifact="task-abc/"),
             {"task": "analyse everything"},
             body="x" * 50_000,
@@ -375,7 +375,7 @@ class TestDelegateOversized:
             ctx=RunContext(
                 session_dir=tmp_path,
                 oversized_cap=4_096,
-                tools_available=frozenset({"delegate", "read_file"}),
+                tools_available=frozenset({"agent", "read_file"}),
             ),
         )
         assert "task-abc/result.md" in n.replace(str(tmp_path) + "/", "")
@@ -384,7 +384,7 @@ class TestDelegateOversized:
         assert "re-delegate a NARROWER task" in n.lower() or "narrower" in n.lower()
 
     def test_falls_back_without_artifact(self, tmp_path):
-        n = TOOLS["delegate"].render_oversized(
+        n = TOOLS["agent"].render_oversized(
             ToolResult(True, output="…", artifact=""),
             {"task": "t"},
             body="x" * 50_000,
@@ -392,7 +392,7 @@ class TestDelegateOversized:
             ctx=RunContext(
                 session_dir=tmp_path,
                 oversized_cap=4_096,
-                tools_available=frozenset({"delegate"}),
+                tools_available=frozenset({"agent"}),
             ),
         )
         assert "too large" in n  # generic fallback still caps
@@ -420,7 +420,7 @@ class TestFetchOversized:
         )
 
     def test_persists_content_and_points_at_file(self, tmp_path):
-        n = self._call(tmp_path, ["fetch", "read_file", "delegate"])
+        n = self._call(tmp_path, ["fetch", "read_file", "agent"])
         saved = list(tmp_path.glob("fetch-output-*.txt"))
         assert len(saved) == 1
         assert saved[0].read_text() == self._big()  # full content on disk
@@ -461,7 +461,7 @@ class TestFetchOversized:
             ctx=RunContext(
                 session_dir=None,
                 oversized_cap=4_096,
-                tools_available=frozenset({"fetch", "delegate"}),
+                tools_available=frozenset({"fetch", "agent"}),
             ),
         )
         assert "too large" in n  # generic fallback
@@ -484,7 +484,7 @@ class TestNarrowNudgeHelper:
 
 
 class TestContextOversized:
-    def _n(self, tools=("read_context", "read_file", "delegate")):
+    def _n(self, tools=("read_context", "read_file", "agent")):
         return TOOLS["read_context"].render_oversized(
             ToolResult(True, output="…"),
             {"read_context_query": "SELECT * FROM history"},
@@ -661,7 +661,7 @@ class TestRunContext:
 
     def test_loop_run_ctx_bundles_the_three_fields(self, tmp_path):
         # _run_ctx is the single construction point handed to BOTH seams.
-        loop = _loop(cap=4_096, tools=["read_file", "delegate"])
+        loop = _loop(cap=4_096, tools=["read_file", "agent"])
 
         class _C:
             session_dir = tmp_path
@@ -673,7 +673,7 @@ class TestRunContext:
         assert isinstance(c, RunContext)
         assert c.session_dir == tmp_path
         assert c.oversized_cap == 4_096
-        assert c.tools_available == frozenset({"read_file", "delegate"})
+        assert c.tools_available == frozenset({"read_file", "agent"})
 
     def test_loop_run_ctx_headless_session_dir_none(self):
         loop = _loop(cap=0, tools=["read_file"])  # loop.ctx is None
@@ -684,7 +684,7 @@ class TestRunContext:
         # Inputs are immutable after __init__ and RunContext is frozen, so
         # _run_ctx builds ONCE and returns the same instance thereafter
         # (tool-call seam + oversized-render seam share it).
-        loop = _loop(cap=4_096, tools=["read_file", "delegate"])
+        loop = _loop(cap=4_096, tools=["read_file", "agent"])
         assert loop._run_ctx() is loop._run_ctx()
 
 
@@ -710,7 +710,7 @@ class TestStatHintCapAwareThreading:
                 {"path": str(f), "stat": True},
                 ctx=RunContext(
                     oversized_cap=4_096,
-                    tools_available=frozenset({"read_file", "delegate"}),
+                    tools_available=frozenset({"read_file", "agent"}),
                 ),
             )
             .output

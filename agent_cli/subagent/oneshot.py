@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 # ── Agent file loading ──────────────────────────
 
 from agent_cli.subagent.profiles import load_profile
-from agent_cli.tools.delegate.report import (
+from agent_cli.subagent.report import (
     DelegateResult,
     _extract_activity_log,
     _extract_last_actions,

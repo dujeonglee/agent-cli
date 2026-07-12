@@ -787,7 +787,7 @@ class TestFrameWidthAlignment:
         # And the delegate tool must NOT host its own Live region
         # anymore — that would re-introduce the architectural leak
         # (UI rendering outside the render module).
-        from agent_cli.tools import delegate as _delegate
+        from agent_cli.subagent import oneshot as _delegate
 
         delegate_src = inspect.getsource(_delegate)
         assert "from rich.live import Live" not in delegate_src
@@ -809,7 +809,7 @@ class TestFrameWidthAlignment:
         assert "FrameClock" in begin_src
         assert "FrameClock" in panel_src or ".current()" in panel_src
         # The hand-rolled throttle pattern must NOT reappear anywhere.
-        from agent_cli.tools import delegate as _delegate
+        from agent_cli.subagent import oneshot as _delegate
 
         assert "last_advance" not in inspect.getsource(_delegate)
         assert "last_advance" not in begin_src

@@ -10,7 +10,13 @@ teammate 안 teammate 금지).
 
 from __future__ import annotations
 
-from agent_cli.tools.base import Tool
+from pathlib import Path
+
+from agent_cli.tools.base import (
+    Tool,
+    default_oversized_nudge,
+    on_disk_oversized_nudge,
+)
 from agent_cli.tools.result import ToolResult
 
 
@@ -148,17 +154,42 @@ class AgentTool(Tool):
     def touched_paths(self, action_input: dict) -> list[str]:
         # 파일 경로가 없는 도구 — compaction file-list 에 스폰/요청 흔적 마커.
         args = self.strip_prefix(action_input)
-        target = args.get("key") or args.get("role")
-        return [f"<teammate:{target}>"] if isinstance(target, str) and target else []
+        target = args.get("key") or args.get("profile")
+        return [f"<agent:{target}>"] if isinstance(target, str) and target else []
 
     def summary_arg(self, action_input: dict) -> str:
         args = self.strip_prefix(action_input)
         mode = args.get("mode", "")
-        target = args.get("key") or args.get("role") or ""
+        target = args.get("key") or args.get("profile") or ""
         return f"{mode} {target}".strip()
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
+
+    def render_oversized(self, result, args, *, body, tokens, ctx) -> str:
+        """run 모드의 큰 결과: 일회성 엔진이 이미 전문을
+        ``<run_dir>/result.md``(상대경로 = ``result.artifact``)에 영속했으므로
+        그 파일을 가리키는 on-disk nudge — 구 DelegateTool 의 정책 이식
+        (PR-4 하드컷 때 누락됐던 것을 테스트가 잡음)."""
+        artifact = getattr(result, "artifact", "") or ""
+        if ctx.session_dir and artifact:
+            path = str(Path(ctx.session_dir) / artifact / "result.md")
+            return on_disk_oversized_nudge(
+                "agent",
+                "sub-agent answer",
+                f"full answer saved to '{path}'",
+                path,
+                tokens,
+                ctx.oversized_cap,
+                ctx.tools_available,
+                nlines=body.count("\n") + 1,
+                tail_bullets=(
+                    "Or re-run a NARROWER task so the sub-agent returns a "
+                    "focused result (attack the root cause: the task was too "
+                    "broad).",
+                ),
+            )
+        return default_oversized_nudge("agent", tokens, ctx.oversized_cap)
 
     def _run(self, args: dict, *, ctx=None) -> ToolResult:
         # 루프가 인터셉트 (registry/provider 필요) — 직접/테스트 호출자용.

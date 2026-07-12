@@ -151,7 +151,7 @@ def _stat(
     est_tokens = _full_read_est_tokens(text, total)
     if oversized_cap > 0 and est_tokens > oversized_cap:
         fan = ""
-        if "delegate" in tools_available:
+        if "agent" in tools_available:
             fan = (
                 "\n  - analyse the WHOLE file? Fan out: split the line range "
                 "into several contiguous sections and emit one delegate op per "

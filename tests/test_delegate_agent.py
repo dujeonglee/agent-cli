@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent_cli.subagent.profiles import _PROFILE_NAME_PATTERN, load_profile
-from agent_cli.tools.delegate import _run_single
+from agent_cli.subagent.oneshot import _run_single
 from agent_cli.tools.result import ToolResult
 
 
@@ -518,7 +518,7 @@ class TestRunSingleWithAgent:
 class TestToolDelegatePassesAgent:
     def test_passes_agent_name(self, monkeypatch):
         """AG-21: tool_delegate passes spec['agent'] to _run_single."""
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
 
         captured_kwargs = {}
 
@@ -526,9 +526,7 @@ class TestToolDelegatePassesAgent:
             captured_kwargs.update(kwargs)
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate.exec._run_single", mock_run_single
-        )
+        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", mock_run_single)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -555,7 +553,7 @@ class TestToolDelegatePassesAgent:
 
     def test_parallel_with_different_agents(self, monkeypatch):
         """AG-22: Parallel tasks can use different agents."""
-        from agent_cli.tools.delegate import _run_parallel
+        from agent_cli.subagent.oneshot import _run_parallel
 
         captured_agents = []
 
@@ -563,9 +561,7 @@ class TestToolDelegatePassesAgent:
             captured_agents.append(kwargs.get("agent_name", ""))
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate.exec._run_single", mock_run_single
-        )
+        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", mock_run_single)
 
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -604,7 +600,7 @@ class TestToolDelegatePassesAgent:
         would short-circuit on the stale entry and never draw the new
         cards. uuid4 ids are unique regardless of thread lifecycle.
         """
-        from agent_cli.tools.delegate import _run_parallel
+        from agent_cli.subagent.oneshot import _run_parallel
         from agent_cli.providers.capabilities import ModelCapabilities
 
         captured_ids = []
@@ -623,9 +619,7 @@ class TestToolDelegatePassesAgent:
         def mock_run_single(**kwargs):
             return ToolResult(True, output="done")
 
-        monkeypatch.setattr(
-            "agent_cli.tools.delegate.exec._run_single", mock_run_single
-        )
+        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", mock_run_single)
 
         caps = ModelCapabilities(
             context_window=32768,

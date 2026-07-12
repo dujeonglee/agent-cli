@@ -564,7 +564,7 @@ def _dispatch_agent(
     stop_event=None,
 ):
     """Dispatch @agent-name query. Returns _AGENT_NOT_FOUND if agent not found."""
-    from agent_cli.tools.delegate import tool_delegate
+    from agent_cli.subagent.oneshot import tool_delegate
 
     parts = query.split(maxsplit=1)
     agent_name = parts[0][1:]  # strip leading @
@@ -610,7 +610,7 @@ def _dispatch_agent(
         ctx.add(
             {
                 "role": "user",
-                "tool": "delegate",
+                "tool": "agent",
                 "args": {"agent": agent_name, "task": task[:60]},
                 "content": answer,
                 "artifact": result.artifact,
@@ -1917,7 +1917,7 @@ def web(
                     # verdict rides in its complete result (parsed worker-side).
                     if server.auto_review_enabled() and result is not None:
                         from agent_cli.review import run_auto_review
-                        from agent_cli.tools.delegate import tool_delegate
+                        from agent_cli.subagent.oneshot import tool_delegate
 
                         def _spawn_reviewer(task: str) -> str:
                             r = tool_delegate(

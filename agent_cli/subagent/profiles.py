@@ -1,6 +1,6 @@
 """에이전트 프로파일 로더 — 단일 카탈로그 (agent 통합 PR-1, 5.0.0).
 
-delegate 의 agents/ 로더(tools/delegate/agents.py)와 teammate 의
+delegate 의 agents/ 로더(subagent/oneshot/agents.py)와 teammate 의
 teammates/ 로더(subagent/roles.py)를 병합한 것. **검색 경로는 agents/
 하나** — 같은 프로파일이 일회성(run)과 상주(spawn) 양쪽에 쓰인다.
 teammates/ 경로는 하드컷 (하위호환 전면 포기 — 설계 §4).

@@ -1825,12 +1825,12 @@ class TestResumeGuidance:
         wait_until(lambda: reg.get(k1).state == "idle")
         reg.kill(k1)
         # 같은 역할 재spawn — 실사용 시나리오 ("다시 시작하자" → 모델이 spawn)
-        r = tool_agent({"mode": "spawn", "role": "comedian"}, registry=reg)
+        r = tool_agent({"mode": "spawn", "profile": "comedian"}, registry=reg)
         assert r.success
         assert "NO memory" in r.output and k1 in r.output
         assert '"mode":"resume"' in r.output
         # dead 없는 역할은 힌트 없음
-        r2 = tool_agent({"mode": "spawn", "role": "comedian"}, registry=reg)
+        r2 = tool_agent({"mode": "spawn", "profile": "comedian"}, registry=reg)
         assert "NO memory" in r2.output  # k1 여전히 dead → 힌트 유지
         reg.shutdown_all()
 

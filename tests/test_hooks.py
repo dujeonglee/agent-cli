@@ -628,7 +628,7 @@ class TestDelegateHooksWiring:
         from unittest.mock import patch
 
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
 
         caps = ModelCapabilities(
@@ -675,7 +675,7 @@ class TestDelegateHooksWiring:
         from unittest.mock import patch
 
         from agent_cli.providers.capabilities import ModelCapabilities
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
 
         caps = ModelCapabilities(
@@ -740,7 +740,7 @@ class TestAgentFrontmatterHooks:
     def test_agent_frontmatter_hooks_merged_with_parent(self):
         """Parent hook matchers fire first, then agent-local matchers —
         matching the merge_hooks_configs ordering contract."""
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
 
         parent_hooks = {
@@ -762,7 +762,7 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate.exec.load_profile",
+            "agent_cli.subagent.oneshot.load_profile",
             return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -786,7 +786,7 @@ class TestAgentFrontmatterHooks:
     def test_agent_hooks_only_when_parent_has_none(self):
         """With no parent hooks_config, the agent's own hooks still
         reach run_loop — agents aren't gated on parent presence."""
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
 
         agent_hooks_raw = {
@@ -805,7 +805,7 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate.exec.load_profile",
+            "agent_cli.subagent.oneshot.load_profile",
             return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -823,7 +823,7 @@ class TestAgentFrontmatterHooks:
     def test_agent_without_hooks_passes_parent_through_unchanged(self):
         """An agent whose frontmatter has no `hooks:` field must leave
         the parent's hooks_config intact — not wipe it to None."""
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
         from agent_cli.tools.result import ToolResult
 
         parent_hooks = {
@@ -837,7 +837,7 @@ class TestAgentFrontmatterHooks:
             return ToolResult(True, output="done")
 
         with patch(
-            "agent_cli.tools.delegate.exec.load_profile",
+            "agent_cli.subagent.oneshot.load_profile",
             return_value=self._stubload_profile(hooks_raw=None),
         ):
             with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
@@ -864,7 +864,7 @@ class TestAgentFrontmatterHooks:
 
         from agent_cli.context.manager import ContextManager
         from agent_cli.providers.base import LLMResponse
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
 
         log_file = tmp_path / "hook.log"
 

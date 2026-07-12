@@ -500,11 +500,15 @@ class TestFileExtractHelper:
         msgs = [
             {
                 "role": "assistant",
-                "action": "delegate",
-                "action_input": {"agent": "explorer", "task": "find X"},
+                "action": "agent",
+                "action_input": {
+                    "mode": "run",
+                    "profile": "explorer",
+                    "task": "find X",
+                },
             }
         ]
-        assert extract_file_paths(msgs) == ["<delegate:explorer>"]
+        assert extract_file_paths(msgs) == ["<agent:explorer>"]
 
     def test_dedup_across_records(self):
         msgs = [

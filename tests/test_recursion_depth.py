@@ -148,7 +148,7 @@ class TestToolsListDepthCeiling:
 
     def test_below_ceiling_keeps_both(self):
         loop = self._make_loop(depth=0, max_depth=2)
-        assert "delegate" in loop.tools_list
+        assert "agent" in loop.tools_list  # 5.0.0: delegate → agent(run)
         assert "run_skill" in loop.tools_list
 
     def test_at_ceiling_strips_both_symmetrically(self):
@@ -157,7 +157,7 @@ class TestToolsListDepthCeiling:
         # invariant is "both, or neither". A regression would let a
         # model emit ``run_skill`` at the ceiling and bounce off the
         # dispatch-time refusal instead.
-        assert "delegate" not in loop.tools_list
+        assert "agent" not in loop.tools_list
         assert "run_skill" not in loop.tools_list
 
     def test_above_ceiling_still_strips_both(self):
@@ -165,7 +165,7 @@ class TestToolsListDepthCeiling:
         # The strip is ``>=`` not ``==``, so anything beyond also
         # has them removed.
         loop = self._make_loop(depth=5, max_depth=2)
-        assert "delegate" not in loop.tools_list
+        assert "agent" not in loop.tools_list
         assert "run_skill" not in loop.tools_list
 
     def test_one_below_ceiling_keeps_both(self):
@@ -173,7 +173,7 @@ class TestToolsListDepthCeiling:
         # this loop CAN still descend once more. Both tools must
         # remain.
         loop = self._make_loop(depth=1, max_depth=2)
-        assert "delegate" in loop.tools_list
+        assert "agent" in loop.tools_list
         assert "run_skill" in loop.tools_list
 
 
@@ -276,7 +276,7 @@ class TestDelegateDispatchDepthCheck:
         return MagicMock()
 
     def test_depth_at_limit_returns_depth_limit_error(self):
-        from agent_cli.tools.delegate import _run_single
+        from agent_cli.subagent.oneshot import _run_single
 
         result = _run_single(
             task="do x",
@@ -293,7 +293,7 @@ class TestDelegateDispatchDepthCheck:
         assert "--max-depth" in result.error
 
     def test_anonymous_delegate_at_limit_also_blocked(self):
-        from agent_cli.tools.delegate import _run_single
+        from agent_cli.subagent.oneshot import _run_single
 
         # Anonymous delegates aren't on ``agent_stack`` so the cycle
         # check can't help. The depth check is the only thing
@@ -312,7 +312,7 @@ class TestDelegateDispatchDepthCheck:
         assert "depth" in result.error.lower()
 
     def test_cycle_check_still_fires_independently(self):
-        from agent_cli.tools.delegate import _run_single
+        from agent_cli.subagent.oneshot import _run_single
 
         # Within depth limit but the named agent is already on the
         # stack — cycle, not depth.
@@ -527,7 +527,7 @@ class TestExistingRecursionPathsUnchanged:
     def test_named_agent_cycle_still_blocked(self):
         from unittest.mock import MagicMock
 
-        from agent_cli.tools.delegate import _run_single
+        from agent_cli.subagent.oneshot import _run_single
 
         result = _run_single(
             task="x",

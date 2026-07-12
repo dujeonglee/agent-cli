@@ -28,7 +28,7 @@ from pathlib import Path
 
 from agent_cli.prompts.system_prompt import (
     _build_context_recovery,
-    _build_delegate_inline,
+    _build_agent_inline,
     _build_environment_section,
     _build_tools_section,
     _load_directives,
@@ -40,7 +40,7 @@ from agent_cli.wire_formats import get as _get_wire_format
 
 _SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
 # Fixed tool set for the snapshot — deterministic (no CWD / directives / env).
-_SNAPSHOT_TOOLS = ["read_file", "shell", "code_index", "edit_file", "delegate", "ask"]
+_SNAPSHOT_TOOLS = ["read_file", "shell", "code_index", "edit_file", "agent", "ask"]
 
 
 class TestToolsSectionSnapshot:
@@ -159,7 +159,7 @@ class TestMultiOpPromptBranches:
         )
 
     def test_delegate_one_task_per_op(self, section):
-        assert "Each delegate op runs ONE subagent task" in section
+        assert "Each run op executes ONE sub-agent task" in section
         assert 'Always use the "tasks" array format' not in section
 
     def test_ask_guide_uses_no_complete_variant(self, section):
@@ -205,8 +205,9 @@ class TestMultiOpPromptBranches:
         assert '"edits":' not in flat and '"edit_file_edits":' not in flat
 
     def test_delegate_input_json_is_flat_not_batch(self, section):
+        # 5.0.0: agent 도구도 flat — task 는 run 필수(모드 조건부), batch 배열 없음
         flat = " ".join(section.split())
-        assert '"task": "string, required' in flat
+        assert '"task":' in flat
         assert '"tasks":' not in flat and '"delegate_tasks":' not in flat
 
 
@@ -230,7 +231,7 @@ class TestBuildSystemPromptSections:
 
     def test_section_names_present_and_ordered(self):
         sections = build_system_prompt_sections(
-            _make_caps(), ["read_file", "shell", "delegate"], session_dir="/tmp/s"
+            _make_caps(), ["read_file", "shell", "agent"], session_dir="/tmp/s"
         )
         names = [n for n, _ in sections]
         # Primacy → Middle → Recency ordering of the always-present sections
@@ -245,7 +246,8 @@ class TestBuildSystemPromptSections:
         positions = [names.index(c) for c in core]
         assert positions == sorted(positions)
         assert "Context Recovery" in names  # session_dir given
-        assert "Agents" in names  # delegate active
+        # 5.0.0: 구 Agents(delegate) 섹션 소멸 — 프로파일 카탈로그 섹션이 존재
+        assert any("Roles" in n for n in names)  # agent 카탈로그 광고
         assert (
             names.index("Execution Context") == len(names) - 1
             if ("Execution Context" in names)
@@ -254,7 +256,7 @@ class TestBuildSystemPromptSections:
 
     def test_names_unique(self):
         sections = build_system_prompt_sections(
-            _make_caps(), ["read_file", "shell", "delegate"], session_dir="/tmp/s"
+            _make_caps(), ["read_file", "shell", "agent"], session_dir="/tmp/s"
         )
         names = [n for n, _ in sections]
         assert len(names) == len(set(names))
@@ -485,41 +487,42 @@ class TestBuildSystemPrompt:
         from agent_cli.wire_formats import get as get_wf
 
         section = _build_tools_section(
-            ["read_file", "code_index", "edit_file", "delegate", "shell"],
+            ["read_file", "code_index", "edit_file", "agent", "shell"],
             get_wf("md_array"),
         )
         first_example = section.index('{"action"')
-        for tool in ("read_file", "code_index", "edit_file", "delegate", "shell"):
+        for tool in ("read_file", "code_index", "edit_file", "agent", "shell"):
             intro = section.index(f"- {tool}:")
             assert intro < first_example, f"{tool} intro is after the first example"
 
     def test_delegate_included(self):
-        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
-        assert "delegate" in prompt.lower()
-        assert "tasks" in prompt
+        # 5.0.0: delegate 소멸 — agent(run) 이 그 자리
+        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
+        assert "agent" in prompt.lower()
+        assert "run" in prompt
 
     def test_delegate_excluded(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
-        assert "delegate" not in prompt.split("## Available Tools")[1]
+        assert "- agent:" not in prompt.split("## Available Tools")[1]
 
     def test_delegate_guide_mentions_context_modes(self):
-        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
+        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
         assert "none" in prompt
         assert "fork" in prompt
 
     def test_delegate_guide_mentions_parallel(self):
-        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
+        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
         assert "parallel" in prompt.lower()
 
-    def test_delegate_guide_mentions_tasks_array(self):
-        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
-        assert '"tasks"' in prompt
+    def test_delegate_guide_mentions_run_examples(self):
+        # 5.0.0: tasks 배열 없음 — run/spawn 예시가 가이드에 존재
+        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
+        assert '"mode": "run"' in prompt and '"mode": "spawn"' in prompt
 
-    def test_available_agents_shown_with_delegate(self):
-        """When delegate is included, available agents are listed."""
-        prompt = build_system_prompt(_make_caps(), ["shell", "delegate"])
-        assert "Available Agents" in prompt
-        assert "explorer" in prompt  # built-in agent
+    def test_profiles_advertised_with_agent_tool(self):
+        """5.0.0: agent 도구 포함 시 프로파일 카탈로그가 광고된다."""
+        prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
+        assert "explorer" in prompt  # built-in profile
 
     def test_no_agents_without_delegate(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
@@ -999,7 +1002,7 @@ class TestDelegateInlineAgent:
     """AG-27 ~ AG-28: delegate inline guide agent-field tests.
 
     Step 4 of the wire_format extraction turned the constant
-    ``_DELEGATE_INLINE`` into a builder ``_build_delegate_inline(wire_format)``;
+    ``_DELEGATE_INLINE`` into a builder ``_build_agent_inline(wire_format)``;
     the assertions below check the rendered guide rather than the
     pre-render literal. Behavior is unchanged for the ``"react"``
     plugin.
@@ -1008,7 +1011,7 @@ class TestDelegateInlineAgent:
     def _delegate_guide(self) -> str:
         from agent_cli import wire_formats
 
-        return _build_delegate_inline(wire_formats.get("react"))
+        return _build_agent_inline(wire_formats.get("react"))
 
     def test_delegate_inline_mentions_agent(self):
         guide = self._delegate_guide()
@@ -1017,7 +1020,7 @@ class TestDelegateInlineAgent:
 
     def test_delegate_inline_agent_example(self):
         guide = self._delegate_guide()
-        assert '"agent": "security-reviewer"' in guide
+        assert '"profile": "code-reviewer"' in guide  # 5.0.0: profile 파라미터
 
 
 # ── Role + Recovery axis (formerly test_system_prompt_v2.py) ────────

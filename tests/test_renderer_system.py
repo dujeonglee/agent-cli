@@ -242,16 +242,19 @@ class TestLoadRendererByName:
 
 class TestBuildAgentDescriptions:
     def test_includes_builtin_explorer(self):
-        from agent_cli.prompts.system_prompt import build_agent_descriptions
+        from agent_cli.prompts.system_prompt import (
+            build_teammate_role_descriptions as build_agent_descriptions,
+        )
 
         desc = build_agent_descriptions()
-        assert "explorer" in desc
-        assert "Available Agents" in desc
+        assert "explorer" in desc  # 5.0.0: 프로파일 카탈로그에 합류
 
     def test_excludes_disable_model_invocation_agents(self):
         # reviewer is auto-spawned (disable-model-invocation: true) — it must NOT
         # be advertised to the model, parity with skills.
-        from agent_cli.prompts.system_prompt import build_agent_descriptions
+        from agent_cli.prompts.system_prompt import (
+            build_teammate_role_descriptions as build_agent_descriptions,
+        )
 
         desc = build_agent_descriptions()
         # 5.0.0: code-reviewer(광고 대상)가 부분 문자열로 겹치므로 정확 매치
@@ -260,18 +263,20 @@ class TestBuildAgentDescriptions:
         assert "explorer" in desc  # normal agents still shown
 
     def test_includes_delegate_usage(self):
-        from agent_cli.prompts.system_prompt import build_agent_descriptions
+        from agent_cli.prompts.system_prompt import (
+            build_teammate_role_descriptions as build_agent_descriptions,
+        )
 
         desc = build_agent_descriptions()
-        assert '"agent"' in desc  # nested key inside the task
-        # Default format is multi-op now (Step 2): render_action_input flattens
-        # the `delegate_` prefix to the flat op shape, so the top-level key is
-        # the plain `"tasks"`, not the prefixed `"delegate_tasks"`.
-        assert '"tasks"' in desc
+        # 5.0.0: 카탈로그가 spawn 예시를 제시 (tasks 배열 소멸)
+        assert '"mode"' in desc and "spawn" in desc
+        assert '"tasks"' not in desc
         assert '"delegate_tasks"' not in desc
 
     def test_empty_when_no_agents(self, tmp_path, monkeypatch):
-        from agent_cli.prompts.system_prompt import build_agent_descriptions
+        from agent_cli.prompts.system_prompt import (
+            build_teammate_role_descriptions as build_agent_descriptions,
+        )
 
         _set_agent_paths([tmp_path / "empty"])
         desc = build_agent_descriptions()

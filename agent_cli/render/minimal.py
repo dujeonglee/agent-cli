@@ -602,7 +602,7 @@ class MinimalRenderer(Renderer):
         self.spinner_stop()
 
         # Delegate 🦀, skill 🪄, other ⚡
-        if "delegate" in label:
+        if "delegate" in label or "agent" in label:
             action_icon = "🦀"
         elif "skill:" in label:
             action_icon = "🪄"

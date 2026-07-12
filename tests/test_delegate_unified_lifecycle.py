@@ -485,7 +485,7 @@ class TestArchitecturalInvariants:
         # The tool layer must not host any UI rendering. After this
         # refactor ``rich.Live`` should only appear in
         # ``agent_cli/render/minimal.py``.
-        from agent_cli.tools import delegate
+        from agent_cli.subagent import oneshot as delegate
 
         src = inspect.getsource(delegate)
         assert "from rich.live" not in src
@@ -494,7 +494,7 @@ class TestArchitecturalInvariants:
     def test_delegate_does_not_use_parallel_live_panel(self):
         # ``parallel_live_panel`` is now a legacy nullcontext —
         # the tool layer should not call it.
-        from agent_cli.tools import delegate
+        from agent_cli.subagent import oneshot as delegate
 
         src = inspect.getsource(delegate)
         assert "parallel_live_panel" not in src
@@ -504,7 +504,7 @@ class TestArchitecturalInvariants:
         # ``render_replay_captured`` are render-module wrappers
         # that the tool layer no longer needs — begin/end carry
         # the capture lifecycle implicitly inside MinimalRenderer.
-        from agent_cli.tools import delegate
+        from agent_cli.subagent import oneshot as delegate
 
         src = inspect.getsource(delegate)
         assert "render_start_capture" not in src
@@ -527,7 +527,7 @@ class TestArchitecturalInvariants:
         # is not used by ``delegate.py`` either. Pin that — if a future
         # change pulls the dataclass back into the tool, the layering
         # leak is back too.
-        from agent_cli.tools import delegate
+        from agent_cli.subagent import oneshot as delegate
 
         src = inspect.getsource(delegate)
         assert "ParallelTaskState" not in src

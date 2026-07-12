@@ -48,12 +48,12 @@ class TestWrapSingleOp:
         flat = {"mode": "list", "path": "a.py"}
         assert TOOLS["code_index"].wrap_single_op(flat) == flat
 
-    def test_delegate_flat_is_identity(self):
+    def test_agent_flat_is_identity(self):
         # Flat-native (Step 3): delegate's wrap_single_op is identity — one op
         # = one task. Several delegate ops in a turn run in parallel (the loop
         # batches them), so no per-op canonical re-wrap.
         flat = {"task": "do x", "context": "fork"}
-        assert TOOLS["delegate"].wrap_single_op(flat) == flat
+        assert TOOLS["agent"].wrap_single_op(flat) == flat
 
     def test_shell_flat_is_identity(self):
         # Flat-native (Step 3): shell is the last builtin to flatten — its
@@ -399,7 +399,9 @@ class TestMultiOpDelegateParallel:
     parallel" actually true — the N-op loop is otherwise sequential."""
 
     def _patch(self, monkeypatch):
-        import agent_cli.loop.tool_bridge as bridge_mod
+        # 5.0.0: 브리지가 oneshot.tool_delegate 를 함수-내부 import 하므로
+        # 소유 모듈을 patch 한다.
+        import agent_cli.subagent.oneshot as oneshot_mod
         from agent_cli.tools.result import ToolResult
 
         calls = []
@@ -408,7 +410,7 @@ class TestMultiOpDelegateParallel:
             calls.append(args.get("tasks"))
             return ToolResult(True, output="STATUS: success\nRESULT:\nok")
 
-        monkeypatch.setattr(bridge_mod, "tool_delegate", fake_tool_delegate)
+        monkeypatch.setattr(oneshot_mod, "tool_delegate", fake_tool_delegate)
         return calls
 
     def test_two_delegate_ops_batched_into_one_parallel_call(
@@ -419,8 +421,18 @@ class TestMultiOpDelegateParallel:
             [
                 _turn(
                     ops=[
-                        {"action": "delegate", "task": "Analyze A", "context": "fork"},
-                        {"action": "delegate", "task": "Analyze B", "context": "fork"},
+                        {
+                            "action": "agent",
+                            "mode": "run",
+                            "task": "Analyze A",
+                            "context": "fork",
+                        },
+                        {
+                            "action": "agent",
+                            "mode": "run",
+                            "task": "Analyze B",
+                            "context": "fork",
+                        },
                     ]
                 ),
                 *_finish(),
@@ -443,7 +455,14 @@ class TestMultiOpDelegateParallel:
         result, _, _ = _run(
             [
                 _turn(
-                    ops=[{"action": "delegate", "task": "solo", "agent": "explorer"}]
+                    ops=[
+                        {
+                            "action": "agent",
+                            "mode": "run",
+                            "task": "solo",
+                            "profile": "explorer",
+                        }
+                    ]
                 ),
                 *_finish(),
             ],

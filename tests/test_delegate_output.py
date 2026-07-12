@@ -7,7 +7,8 @@ output format, persistence, iterations, and integration.
 from __future__ import annotations
 
 
-from agent_cli.tools.delegate import (
+from agent_cli.subagent.oneshot import _run_parallel, _run_single, tool_delegate  # noqa: F401
+from agent_cli.subagent.report import (
     DelegateResult,
     _extract_activity_log,
     _extract_last_actions,
@@ -443,44 +444,29 @@ class TestRegression:
         assert dr.last_actions == []
 
 
-# ── C2 패키지 표면 (loop/ 패키지와 동형 패턴) ─────────────────────────
+# ── 5.0.0 패키지 표면 (delegate 해체 → subagent/) ─────────────────────
 
 
-class TestDelegatePackageSurface:
-    def test_public_reexports_unchanged(self):
-        # 5.0.0 PR-1: 로더는 subagent/profiles 로 이관 — 나머지 표면 유효
-        from agent_cli.tools.delegate import (  # noqa: F401
+class TestOneshotPackageSurface:
+    def test_engine_surface(self):
+        # 일회성 엔진은 subagent/oneshot + report 가 소유 (delegate 패키지 소멸)
+        from agent_cli.subagent.report import (  # noqa: F401
             DelegateResult,
-            DelegateTool,
             _extract_activity_log,
-            _run_parallel,
-            _run_single,
-            tool_delegate,
         )
 
-    def test_loader_moved_to_profiles(self):
-        # 5.0.0 PR-1: agents.py 로더 모듈은 소멸 — profiles 가 단일 소유자.
-        import agent_cli.tools.delegate as pkg
-
-        assert not hasattr(pkg, "_load_agent")
+    def test_delegate_package_gone(self):
         import importlib.util
 
-        assert importlib.util.find_spec("agent_cli.tools.delegate.agents") is None
+        assert importlib.util.find_spec("agent_cli.tools.delegate") is None
+        from agent_cli.tools.registry import TOOLS
+
+        assert "delegate" not in TOOLS
 
     def test_builtin_profiles_dir_resolves(self):
-        # 통합 카탈로그: 기존 explorer + teammate 내장 3종이 한 디렉토리에
+        # 통합 카탈로그: 기존 explorer + 상주 내장 3종이 한 디렉토리에
         from agent_cli.subagent.profiles import _BUILTIN_PROFILES_DIR
 
         assert _BUILTIN_PROFILES_DIR.is_dir()
         for name in ("explorer", "researcher", "coder", "code-reviewer"):
             assert (_BUILTIN_PROFILES_DIR / f"{name}.md").is_file()
-
-    def test_module_ownership(self):
-        # 소유권 배치: 추출기=report, 실행=exec, 스키마=tool
-        from agent_cli.tools.delegate import exec as exec_mod
-        from agent_cli.tools.delegate import report, tool
-
-        assert hasattr(report, "_extract_activity_log")
-        assert hasattr(report, "_format_parallel_results")
-        assert hasattr(exec_mod, "tool_delegate")
-        assert hasattr(tool, "DelegateTool")

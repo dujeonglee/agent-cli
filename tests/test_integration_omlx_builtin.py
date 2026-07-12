@@ -26,7 +26,7 @@ class TestExplorerAgent:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """@explorer reads a file and explains it."""
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
 
         test_file = tmp_path / "calculator.py"
         test_file.write_text(
@@ -60,7 +60,7 @@ class TestExplorerAgent:
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
         """Explorer agent should only use read_file and shell (no writes)."""
-        from agent_cli.tools.delegate import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
 
         test_file = tmp_path / "data.txt"
         test_file.write_text("Hello World")

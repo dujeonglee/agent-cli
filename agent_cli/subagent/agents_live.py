@@ -1023,7 +1023,7 @@ def tool_agent(
 
     if mode == "spawn":
         key, error = registry.spawn(
-            role=args.get("role", ""),
+            role=args.get("profile", ""),
             name=args.get("name", ""),
             instructions=args.get("instructions", ""),
             allowed_tools=args.get("tools"),
@@ -1033,13 +1033,13 @@ def tool_agent(
         )
         if error:
             return ToolResult(False, error=f"spawn rejected: {error}")
-        _parts = [p for p in (args.get("role", ""), args.get("name", "")) if p]
+        _parts = [p for p in (args.get("profile", ""), args.get("name", "")) if p]
         lines = [
             f"spawned teammate '{key}'" + (f" ({' · '.join(_parts)})" if _parts else "")
         ]
         # 같은 역할의 dead 가 있으면 알려준다 — "다시 시작" 의도였다면
         # 기억을 보존하는 길은 resume 이었음을 다음 선택부터 반영하도록.
-        role_arg = args.get("role", "")
+        role_arg = args.get("profile", "")
         if role_arg:
             dead_same_role = [
                 tm.key

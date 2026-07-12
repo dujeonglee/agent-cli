@@ -9,7 +9,7 @@ from agent_cli.tools.result import ToolResult
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.tools import TOOLS, RunContext, _execute_tool
 from agent_cli.tools.base import default_oversized_nudge
-from agent_cli.tools.delegate import tool_delegate
+from agent_cli.subagent.oneshot import tool_delegate
 
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -282,7 +282,7 @@ class ToolBridge:
           루프에서는 tool_agent 가 "main 전용" 에러로 거부 (모드 축소).
         """
         from agent_cli.subagent.agents_live import tool_agent
-        from agent_cli.tools.delegate.exec import tool_delegate
+        from agent_cli.subagent.oneshot import tool_delegate
 
         args = tool_input if isinstance(tool_input, dict) else {"mode": str(tool_input)}
 
