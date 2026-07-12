@@ -307,6 +307,22 @@ class TestConsoleDispatchOutput:
             main_mod.console = saved_main
         return buf.getvalue()
 
+    def test_list_agents_live_status_brackets_survive(self):
+        # rich markup 이 [researcher] 를 스타일 태그로 삼키지 않아야 한다
+        # (markup=False — v4.62.1 과 동일 클래스의 회귀 가드).
+        out = _ConsoleDispatchOutput()
+        text = self._capture(
+            lambda: out.list_agents([("researcher", "")], "- agt-1 [researcher] idle")
+        )
+        assert "[researcher] idle" in text
+
+    def test_agent_dispatch_result_brackets_survive(self):
+        out = _ConsoleDispatchOutput()
+        text = self._capture(
+            lambda: out.agent_dispatch_result("- agt-1 [coder · ui] busy", True)
+        )
+        assert "[coder · ui] busy" in text
+
     def test_list_agents_empty(self):
         out = _ConsoleDispatchOutput()
         text = self._capture(lambda: out.list_agents([]))

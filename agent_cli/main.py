@@ -364,8 +364,10 @@ class _ConsoleDispatchOutput(DispatchOutput):
     """CLI-flavoured output — colour, Rich markup, plain ``console.print``."""
 
     def agent_dispatch_result(self, text: str, success: bool) -> None:
+        # markup=False — 상태 텍스트의 [researcher] 같은 브래킷이 rich
+        # 스타일 태그로 삼켜지지 않게 (v4.62.1 교훈과 동일 클래스).
         color = C["final"] if success else C["error"]
-        console.print(f"[{color}]{text}[/]")
+        console.print(text, style=color, markup=False)
 
     def list_agents(self, agents: list[tuple[str, str]], live_status: str = "") -> None:
         console.print(f"\n[{C['accent']}]Agent profiles:[/]")
@@ -377,7 +379,7 @@ class _ConsoleDispatchOutput(DispatchOutput):
                 console.print(f"  @{name}{suffix}")
         if live_status:
             console.print(f"\n[{C['accent']}]Live agents:[/]")
-            console.print(live_status)
+            console.print(live_status, markup=False)
         console.print(
             f"\n[{C['muted']}]Usage: @<profile> <task> (일회성 run) · "
             f"@<profile>-spawn <task> (상주) · @agt-<key> <메시지> (직접 전송)[/]"
