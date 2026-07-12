@@ -1476,26 +1476,10 @@
   const $dirSave = document.getElementById("insp-dir-save");
   const $dirCancel = document.getElementById("insp-dir-cancel");
   const $dirStatus = document.getElementById("insp-dir-status");
-  // Three axis rows: 성격 / 업무 / 지침. Each = dropdown + generate + 💾 + 🗑.
-  const $dirPersona = document.getElementById("insp-dir-persona");
-  const $dirPersonaTmpl = document.getElementById("insp-dir-persona-tmpl");
-  const $dirPersonaSave = document.getElementById("insp-dir-persona-save");
-  const $dirPersonaDel = document.getElementById("insp-dir-persona-del");
-  const $dirTask = document.getElementById("insp-dir-task");
-  const $dirTaskTmpl = document.getElementById("insp-dir-task-tmpl");
-  const $dirTaskSave = document.getElementById("insp-dir-task-save");
-  const $dirTaskDel = document.getElementById("insp-dir-task-del");
-  const $dirLearned = document.getElementById("insp-dir-learned");
-  const $dirLearnedSave = document.getElementById("insp-dir-learned-save");
-  const $dirLearnedDel = document.getElementById("insp-dir-learned-del");
+  const $dirTabs = document.getElementById("insp-dir-tabs");
+  const $dirBrief = document.getElementById("insp-dir-brief");
+  const $dirGen = document.getElementById("insp-dir-gen");
   // 💾 save modal
-  const $presetModal = document.getElementById("dir-preset-modal");
-  const $presetModalTitle = document.getElementById("dir-preset-modal-title");
-  const $presetModalLoc = document.getElementById("dir-preset-modal-loc");
-  const $presetModalName = document.getElementById("dir-preset-modal-name");
-  const $presetModalExisting = document.getElementById("dir-preset-modal-existing");
-  const $presetModalCancel = document.getElementById("dir-preset-modal-cancel");
-  const $presetModalSave = document.getElementById("dir-preset-modal-save");
   if (!$btn || !$drawer || !token) return;
 
   // Which system-prompt scope the drawer is showing: "" = main loop, a
@@ -1690,29 +1674,65 @@
     if (chip) selectScope(chip.getAttribute("data-scope"));
   });
 
-  // ── Directives editor (project .agent-cli/DIRECTIVE.md) ──
-  // Always shown (even when the file is absent) so the user can create/edit it.
-  // Saving writes the file + the loop rebuilds its system prompt at the next
-  // LLM call (immediate; idle → next query). Broadcast keeps editors in sync.
+  // ── Directives editor — 청중 스코프 탭 (5.4.0) ──
+  // 에디터 구조 = 파일 구조: 공통 / ## @main / ## @agents 세 버퍼.
+  // 분해(GET scopes)·조립(POST scopes)은 서버(Python 파서 단일 출처).
+  // ✨ 생성은 run 엔진 경유 초안 — 활성 탭에 미저장 반영, 검토 후 저장.
   let dirDirty = false; // user typed since last load → don't clobber on refetch
+  let dirAudience = "common";
+  const dirBuffers = { common: "", main: "", agents: "" };
+
+  function dirSyncActive() {
+    dirBuffers[dirAudience] = $dirText.value;
+  }
+  function dirUpdateTabs() {
+    if (!$dirTabs) return;
+    $dirTabs.querySelectorAll("button").forEach(function (b) {
+      const aud = b.getAttribute("data-aud");
+      b.classList.toggle("active", aud === dirAudience);
+      // ● 뱃지 — 내용 있는 탭 표시 (라벨 뒤에 부착/제거)
+      const base = b.textContent.replace(/ ●$/, "");
+      b.textContent = (aud === dirAudience ? base : base) +
+        ((aud === dirAudience ? $dirText.value : dirBuffers[aud]).trim() ? " ●" : "");
+    });
+  }
+  function selectDirTab(aud) {
+    if (!aud || aud === dirAudience) return;
+    dirSyncActive();
+    dirAudience = aud;
+    $dirText.value = dirBuffers[aud];
+    dirUpdateTabs();
+  }
+  if ($dirTabs)
+    $dirTabs.addEventListener("click", function (e) {
+      const b = e.target.closest("button[data-aud]");
+      if (b) selectDirTab(b.getAttribute("data-aud"));
+    });
+
   function loadDirectives() {
     return fetch("api/directives?" + qtoken())
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (dirDirty) return; // a concurrent edit shouldn't overwrite my typing
-        $dirText.value = (d && d.content) || "";
+        const s = (d && d.scopes) || {};
+        dirBuffers.common = s.common || "";
+        dirBuffers.main = s.main || "";
+        dirBuffers.agents = s.agents || "";
+        $dirText.value = dirBuffers[dirAudience];
         if ($dirPath) $dirPath.textContent = (d && d.path) || "";
         $dirStatus.textContent = "";
+        dirUpdateTabs();
       })
       .catch(function () {});
   }
   function saveDirectives() {
+    dirSyncActive();
     $dirSave.disabled = true;
     $dirStatus.textContent = "저장 중…";
     fetch("api/directives?" + qtoken(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: $dirText.value }),
+      body: JSON.stringify({ scopes: dirBuffers }),
     })
       .then(function (r) {
         if (!r.ok) throw new Error(r.status);
@@ -1726,7 +1746,7 @@
       .finally(function () { $dirSave.disabled = false; });
   }
   // Cancel: discard unsaved edits by re-loading the file's current content back
-  // into the textarea. Clear dirDirty FIRST so loadDirectives (which bails while
+  // into the buffers. Clear dirDirty FIRST so loadDirectives (which bails while
   // dirty to protect in-progress typing) actually overwrites, then note it.
   function cancelDirectives() {
     dirDirty = false;
@@ -1737,189 +1757,56 @@
   if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
   if ($dirCancel) $dirCancel.addEventListener("click", cancelDirectives);
 
-  // ── Three symmetric axes (성격 / 업무 / 지침) ─────────────────────────
-  // Each axis = a dropdown (내 프리셋), an action (📋 템플릿 for 성격/업무
-  // for 지침), a 💾 save (per-axis home preset), and a 🗑 delete. Dropdown option
-  // values are typed: "" = 없음 · "preset:<id>" = 저장분(선택 시 즉시 반영). Section
-  // merging + the static 📋 templates are all server-side — no LLM involved.
-  const AXIS = {
-    persona: { sel: $dirPersona, save: $dirPersonaSave, del: $dirPersonaDel, none: "성격 프리셋…", label: "성격" },
-    task: { sel: $dirTask, save: $dirTaskSave, del: $dirTaskDel, none: "업무 프리셋…", label: "업무" },
-    learned: { sel: $dirLearned, save: $dirLearnedSave, del: $dirLearnedDel, none: "지침 프리셋…", label: "학습된 지침" },
-  };
-  const axisPresets = { persona: [], task: [], learned: [] };
-
-  function fillAxis($sel, none, presets) {
-    if (!$sel) return;
-    let html = '<option value="">' + esc(none) + "</option>";
-    (presets || []).forEach(function (p) {
-      // 📦 = read-only built-in (shipped), 💾 = user's home preset.
-      const icon = p.source === "builtin" ? "📦 " : "💾 ";
-      html += '<option value="preset:' + esc(p.id) + '">' + icon + esc(p.label) + "</option>";
-    });
-    $sel.innerHTML = html;
-  }
-  // (Re)load one axis's dropdown = built-in + user presets (home library).
-  function loadAxis(axis) {
-    return fetch("api/directives/presets/library?axis=" + axis + "&" + qtoken())
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        axisPresets[axis] = (d && d.presets) || [];
-        fillAxis(AXIS[axis].sel, AXIS[axis].none, axisPresets[axis]);
-      })
-      .catch(function () {});
-  }
-  function loadAllAxes() {
-    return Promise.all([loadAxis("persona"), loadAxis("task"), loadAxis("learned")]);
-  }
-
-  // Selecting a "preset:<id>" loads it immediately (merge into that axis's zone).
-  function onAxisChange(axis) {
-    const v = AXIS[axis].sel ? AXIS[axis].sel.value : "";
-    if (v.indexOf("preset:") === 0) applyPreset(axis, v.slice(7));
-  }
-  function applyPreset(axis, id) {
-    fetch(
-      "api/directives/presets/library/" + encodeURIComponent(id) + "/apply?axis=" +
-        axis + "&" + qtoken(),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: $dirText.value }),
-      }
-    )
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (d) {
-        $dirText.value = (d && d.content) || $dirText.value;
-        dirDirty = true; // unsaved — review, then 저장 or 취소
-        $dirStatus.textContent = "📂 '" + id + "' 프리셋 반영 — 검토 후 저장";
-      })
-      .catch(function () { $dirStatus.textContent = "✗ 프리셋 불러오기 실패"; });
-  }
-
-  // 📋 insert a static fill-in skeleton into one axis's zone (server-side, no
-  // LLM — the leak-free replacement for auto-generation). User fills it by hand.
-  function insertTemplate(axis) {
-    fetch("api/directives/template?axis=" + axis + "&" + qtoken(), {
+  // ✨ 생성 — brief → 활성 탭의 directive 초안 (기존 내용은 병합/개정 대상).
+  // run 엔진 1회라 수십 초 걸릴 수 있음: 버튼을 진행 상태로 잠근다.
+  function generateDirective() {
+    const brief = ($dirBrief.value || "").trim();
+    if (!brief) {
+      $dirStatus.textContent = "· 넣고 싶은 내용을 먼저 적어주세요";
+      return;
+    }
+    dirSyncActive();
+    $dirGen.disabled = true;
+    const label = $dirGen.textContent;
+    $dirGen.textContent = "생성 중…";
+    $dirStatus.textContent = "✨ 초안 생성 중 — 수십 초 걸릴 수 있습니다";
+    fetch("api/directives/generate?" + qtoken(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: $dirText.value }),
-    })
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (d) {
-        $dirText.value = (d && d.content) || $dirText.value;
-        dirDirty = true; // unsaved — fill in, then 저장
-        $dirStatus.textContent = "📋 " + AXIS[axis].label + " 템플릿 삽입 — 손으로 채운 뒤 저장";
-      })
-      .catch(function () { $dirStatus.textContent = "✗ 템플릿 삽입 실패"; });
-  }
-
-  // ── 💾 preset save modal (fixed location) + 🗑 delete ─────────────────
-  let modalAxis = "persona";
-  function openSaveModal(axis) {
-    modalAxis = axis;
-    $presetModalTitle.textContent = AXIS[axis].label + " 프리셋 저장";
-    $presetModalLoc.value = "~/.agent-cli/directive-presets/" + axis + "/";
-    const sel = AXIS[axis].sel ? AXIS[axis].sel.value : "";
-    $presetModalName.value = sel.indexOf("preset:") === 0 ? sel.slice(7) : "";
-    const items = axisPresets[axis] || [];
-    $presetModalExisting.innerHTML = items.length
-      ? "기존: " +
-        items
-          .map(function (p) {
-            return '<button type="button" class="dir-modal-chip" data-name="' +
-              esc(p.id) + '">' + esc(p.label) + "</button>";
-          })
-          .join(" ")
-      : "";
-    $presetModal.hidden = false;
-    $presetModalName.focus();
-  }
-  function closeSaveModal() { $presetModal.hidden = true; }
-  function doSavePreset() {
-    const name = ($presetModalName.value || "").trim();
-    if (!name) { $presetModalName.focus(); return; }
-    // Only a USER preset is overwritten; a same-name built-in is just shadowed.
-    const exists = (axisPresets[modalAxis] || []).some(function (p) {
-      return p.id === name && p.source === "user";
-    });
-    if (exists && !window.confirm("'" + name + "' 프리셋이 이미 있어요. 덮어쓸까요?")) return;
-    fetch("api/directives/presets/library?axis=" + modalAxis + "&" + qtoken(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name, content: $dirText.value }),
+      body: JSON.stringify({
+        audience: dirAudience,
+        brief: brief,
+        current: $dirText.value,
+      }),
     })
       .then(function (r) {
-        if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || r.status); });
+        if (!r.ok) return r.json().then(function (e) { throw new Error((e && e.detail) || r.status); });
         return r.json();
       })
       .then(function (d) {
-        closeSaveModal();
-        const ax = modalAxis;
-        return loadAxis(ax).then(function () {
-          $dirStatus.textContent = "💾 " + AXIS[ax].label + " 프리셋 '" + ((d && d.id) || name) + "' 저장됨";
-        });
+        $dirText.value = (d && d.content) || $dirText.value;
+        dirDirty = true; // unsaved — review, then 저장 or 취소
+        $dirBrief.value = "";
+        $dirStatus.textContent = "✨ 초안 반영 — 검토 후 저장";
+        dirUpdateTabs();
       })
-      .catch(function (err) { $dirStatus.textContent = "✗ 프리셋 저장 실패: " + err.message; });
+      .catch(function (e) { $dirStatus.textContent = "✗ 생성 실패: " + e.message; })
+      .finally(function () {
+        $dirGen.disabled = false;
+        $dirGen.textContent = label;
+      });
   }
-  function delPreset(axis) {
-    const sel = AXIS[axis].sel ? AXIS[axis].sel.value : "";
-    if (sel.indexOf("preset:") !== 0) {
-      $dirStatus.textContent = "· 삭제할 " + AXIS[axis].label + " 프리셋을 먼저 선택";
-      return;
-    }
-    const id = sel.slice(7);
-    const meta = (axisPresets[axis] || []).find(function (p) { return p.id === id; });
-    if (meta && meta.source === "builtin") {
-      $dirStatus.textContent = "· 기본 제공(📦) 프리셋은 삭제할 수 없어요";
-      return;
-    }
-    if (!window.confirm(AXIS[axis].label + " 프리셋 '" + id + "' 을 삭제할까요?")) return;
-    fetch("api/directives/presets/library/" + encodeURIComponent(id) + "?axis=" + axis + "&" + qtoken(), {
-      method: "DELETE",
-    })
-      .then(function (r) { if (!r.ok) throw new Error(r.status); })
-      .then(function () {
-        return loadAxis(axis).then(function () {
-          $dirStatus.textContent = "🗑 프리셋 '" + id + "' 삭제됨";
-        });
-      })
-      .catch(function () { $dirStatus.textContent = "✗ 프리셋 삭제 실패"; });
-  }
-
-  // Wire up the three axis rows + modal.
-  if ($dirPersona) $dirPersona.addEventListener("change", function () { onAxisChange("persona"); });
-  if ($dirTask) $dirTask.addEventListener("change", function () { onAxisChange("task"); });
-  if ($dirLearned) $dirLearned.addEventListener("change", function () { onAxisChange("learned"); });
-  if ($dirPersonaTmpl) $dirPersonaTmpl.addEventListener("click", function () { insertTemplate("persona"); });
-  if ($dirTaskTmpl) $dirTaskTmpl.addEventListener("click", function () { insertTemplate("task"); });
-  if ($dirPersonaSave) $dirPersonaSave.addEventListener("click", function () { openSaveModal("persona"); });
-  if ($dirTaskSave) $dirTaskSave.addEventListener("click", function () { openSaveModal("task"); });
-  if ($dirLearnedSave) $dirLearnedSave.addEventListener("click", function () { openSaveModal("learned"); });
-  if ($dirPersonaDel) $dirPersonaDel.addEventListener("click", function () { delPreset("persona"); });
-  if ($dirTaskDel) $dirTaskDel.addEventListener("click", function () { delPreset("task"); });
-  if ($dirLearnedDel) $dirLearnedDel.addEventListener("click", function () { delPreset("learned"); });
-  if ($presetModalSave) $presetModalSave.addEventListener("click", doSavePreset);
-  if ($presetModalCancel) $presetModalCancel.addEventListener("click", closeSaveModal);
-  if ($presetModal)
-    $presetModal.addEventListener("click", function (e) {
-      if (e.target === $presetModal) closeSaveModal(); // backdrop click
-    });
-  if ($presetModalExisting)
-    $presetModalExisting.addEventListener("click", function (e) {
-      const chip = e.target.closest(".dir-modal-chip");
-      if (chip) { $presetModalName.value = chip.getAttribute("data-name"); $presetModalName.focus(); }
-    });
-  if ($presetModalName)
-    $presetModalName.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") doSavePreset();
-      if (e.key === "Escape") closeSaveModal();
+  if ($dirGen) $dirGen.addEventListener("click", generateDirective);
+  if ($dirBrief)
+    $dirBrief.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") generateDirective();
     });
 
   if ($dirText)
     $dirText.addEventListener("input", function () {
       dirDirty = true;
       $dirStatus.textContent = "● 미저장";
+      dirUpdateTabs();
     });
   // Directives changed on disk (a save) OR were just applied by the loop:
   // re-sync the editor and refresh the prompt view so its Directives section

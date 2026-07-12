@@ -684,6 +684,21 @@ def split_directive_scopes(text: str) -> dict[str, str]:
     return {k: "\n".join(v).strip() for k, v in parts.items()}
 
 
+def join_directive_scopes(scopes: dict[str, str]) -> str:
+    """스코프 dict → DIRECTIVE.md 본문 — :func:`split_directive_scopes` 의 역.
+
+    스코프 에디터(웹)의 저장 직렬화 단일 출처: 공통 본문 뒤에 비어 있지
+    않은 스코프만 ``## @main`` / ``## @agents`` 블록으로 잇는다.
+    split∘join = identity (정규화된 형태 기준 — 반복 마커는 누적 병합).
+    """
+    parts = [(scopes.get("common") or "").strip()]
+    for key, marker in (("main", "## @main"), ("agents", "## @agents")):
+        body = (scopes.get(key) or "").strip()
+        if body:
+            parts.append(f"{marker}\n{body}")
+    return "\n\n".join(p for p in parts if p)
+
+
 def _load_directives(audience: str = "main") -> str:
     """Load DIRECTIVE.md files from project and user paths.
 

@@ -473,3 +473,28 @@ class TestOneshotPackageSurface:
         assert _BUILTIN_PROFILES_DIR.is_dir()
         for name in ("explorer", "researcher", "coder", "code-reviewer"):
             assert (_BUILTIN_PROFILES_DIR / f"{name}.md").is_file()
+
+
+class TestExtractResultBody:
+    """run 관찰 포맷의 역추출 (5.4.0 directive 생성이 소비) — 포맷터와
+    같은 모듈이 계약을 소유한다."""
+
+    def test_extracts_body_before_activity(self):
+        from agent_cli.subagent.report import extract_result_body
+
+        formatted = (
+            "STATUS: success\nRESULT:\n지침 본문\n- 항목\n\n"
+            "[Subagent activity]\n- iter 1: complete\n\n"
+            "[Duration: 3.2s] [Subagent used 1 iterations]"
+        )
+        assert extract_result_body(formatted) == "지침 본문\n- 항목"
+
+    def test_no_sections_returns_body(self):
+        from agent_cli.subagent.report import extract_result_body
+
+        assert extract_result_body("STATUS: success\nRESULT:\n본문만") == "본문만"
+
+    def test_non_result_text_passthrough(self):
+        from agent_cli.subagent.report import extract_result_body
+
+        assert extract_result_body("그냥 텍스트") == "그냥 텍스트"

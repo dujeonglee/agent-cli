@@ -277,3 +277,9 @@ role_prompt = profile 파일 본문                (profile 지정 시)
     — 콜패스·컨텍스트·수명, file:line) / `kernel-reviewer`(읽기 전용 —
     race/atomic-sleep/누수/UAF, 심각도+시나리오+ACCEPT/REJECT). 기존
     범용 4종 유지(추천안).
+- 2026-07-12 (5.4.0 후속): U-C 의 3축 에디터 상호작용 특례
+  (`_append_before_scope_markers` — learned append 를 common 에)는
+  **스코프 에디터 전면 개편으로 소멸** — 에디터가 청중 탭 3개로 파일
+  구조(스코프)를 직접 소유하게 되어 관리 섹션/zone 규칙 자체가 폐지됨.
+  `split_directive_scopes` 는 역함수 `join_directive_scopes` 를 얻어
+  에디터 저장 직렬화의 단일 출처가 됨.

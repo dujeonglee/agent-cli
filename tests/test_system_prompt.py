@@ -1354,3 +1354,49 @@ class TestDirectiveScoping:
         self._write(tmp_path, monkeypatch, "## @main\nMAIN-ONLY-RULE")
         assert "MAIN-ONLY-RULE" in self._prompt(0)
         assert "## Directives" not in self._prompt(1)
+
+
+class TestJoinDirectiveScopes:
+    """5.4.0 스코프 에디터의 직렬화 — split 의 역함수 (단일 출처=Python)."""
+
+    def test_join_all_scopes(self):
+        from agent_cli.prompts.system_prompt import join_directive_scopes
+
+        out = join_directive_scopes(
+            {"common": "공통 A", "main": "메인 B", "agents": "서브 C"}
+        )
+        assert out == "공통 A\n\n## @main\n메인 B\n\n## @agents\n서브 C"
+
+    def test_join_omits_empty_scopes(self):
+        from agent_cli.prompts.system_prompt import join_directive_scopes
+
+        assert join_directive_scopes({"common": "A", "main": "", "agents": ""}) == "A"
+        assert (
+            join_directive_scopes({"common": "", "main": "B", "agents": ""})
+            == "## @main\nB"
+        )
+        assert join_directive_scopes({"common": "", "main": "", "agents": ""}) == ""
+
+    def test_round_trip(self):
+        from agent_cli.prompts.system_prompt import (
+            join_directive_scopes,
+            split_directive_scopes,
+        )
+
+        scopes = {
+            "common": "공통 규칙\n- 항목",
+            "main": "## 소제목\n- 메인 규칙",
+            "agents": "- 서브 규칙",
+        }
+        assert split_directive_scopes(join_directive_scopes(scopes)) == scopes
+
+    def test_join_normalizes_repeated_markers(self):
+        # split 이 반복 마커를 누적하므로 split→join 은 정규화된 형태.
+        from agent_cli.prompts.system_prompt import (
+            join_directive_scopes,
+            split_directive_scopes,
+        )
+
+        raw = "## @main\nA\n## @agents\nB\n## @main\nC"
+        joined = join_directive_scopes(split_directive_scopes(raw))
+        assert joined == "## @main\nA\nC\n\n## @agents\nB"

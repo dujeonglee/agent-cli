@@ -1,161 +1,126 @@
-"""DIRECTIVE.md 섹션/zone 조작 + 세션 학습 증류 — directive 도메인 로직.
+"""Directive 스코프 에디터 도메인 로직 — ✨ 생성 (5.4.0 전면 개편).
 
-C3: web 전송 계층(server.py)에서 분리. 섹션 헤딩·3축 zone(_AXIS_*)·학습
-프롬프트/파서/기록 전부 순수 로직 — FastAPI 무의존(단독 테스트 가능).
+구 3축(성격/업무/지침) zone 외과수술·프리셋 라이브러리는 폐지됐다 —
+에디터의 구조 = 파일의 구조(U-C 청중 스코프: 공통/``## @main``/``## @agents``)
+하나뿐이고, 분해/조립은 :mod:`agent_cli.prompts.system_prompt` 의
+``split_directive_scopes``/``join_directive_scopes`` 가 단일 출처다.
+
+이 모듈이 소유하는 것은 ✨ 생성 하나: 사용자의 대략적 의도(brief)를
+받아 **서브에이전트 루프로** directive 초안을 쓴다. 구 🪄 자동생성이
+죽었던 원인(독립 산문 메타-콜의 CoT 누출 — omlx/Qwen 실측, JSON wire
+경로는 안전)을 우회하는 형태: ``provider.call`` 직행 대신 run 엔진
+(``tool_delegate``, 도구 0 = complete 만)으로 돌려 wire format 이 CoT 를
+격리하고, complete 결과가 곧 초안이 된다. 진행은 일반 run 카드로 표면화.
+
+FastAPI import 0 (전송은 server.py) — 테스트 가드 유지.
 """
 
 from __future__ import annotations
 
+VALID_AUDIENCES = ("common", "main", "agents")
 
-_PERSONA_HEADING = "## 페르소나"
-# Template BODIES per axis, matching what ``_zone_set`` expects: the persona zone
-# gets its ``## 페르소나`` heading prepended by ``_zone_set`` (so the body is
-# heading-less bullets); the task zone is placed verbatim (so it carries its own
-# ``## 업무`` heading). learned has no template — it is filled by 📥 learn.
-_AXIS_TEMPLATES = {
-    "persona": (
-        "- 말투·톤:\n"
-        "- 적용 범위: 사용자 대면 답변(최종 결과·요약·질문)만 이 목소리로. 추론·도구 "
-        "호출·파일 경로·명령어·코드·사실은 캐릭터와 무관하게 정확하게(왜곡·누락 금지)."
+# 청중별 프레이밍 — 생성 태스크에 삽입되는 요약. DIRECTIVE 스코프 의미론
+# (U-C, docs/agent-unification/DESIGN.md §3.7)과 일치해야 한다.
+_AUDIENCE_FRAMING = {
+    "common": (
+        "AUDIENCE: every LLM in the session — the main conversation loop AND "
+        "all subagents. Write rules that hold everywhere (coding conventions, "
+        "verification discipline, project constraints)."
     ),
-    "task": (
-        "## 업무\n"
-        "- 역할:\n"
-        "- 작업 원칙:\n"
-        "- 착수 전 확인:\n"
-        "- 검증·품질 규율:\n"
-        "- 메모리 활용: 중요한 실패·발견·결정은 즉시 memory 도구(mode=add, "
-        "type=failure|discovery|decision)로 기록 — 컨텍스트 압축 후에도 잃지 않도록.\n"
-        "- 주의사항:"
+    "main": (
+        "AUDIENCE: the MAIN conversation LLM only (subagents never see this). "
+        "Good fits: user-facing reporting style/voice/language, when to ask "
+        "vs. proceed, how to summarize results for the user."
+    ),
+    "agents": (
+        "AUDIENCE: subagents only (one-shot runs and persistent agents — the "
+        "main LLM never sees this). Good fits: result format returned to the "
+        "caller, scope discipline, citation/verification requirements."
     ),
 }
 
+_WRITER_INSTRUCTIONS = """You are a directive writer for agent-cli. A DIRECTIVE.md is a set of
+persistent operating rules injected into the system prompt every turn —
+it is read by an LLM, so every line must be an actionable instruction.
 
-# Managed DIRECTIVE sections — code-owned blocks (persona voice, learned
-# guidance) that generation SWAPS in/out deterministically while leaving the
-# user's hand-written directive byte-identical. Each is a ``## <heading>`` run
-# from its heading through just before the next top-level ``## `` (or EOF).
-_LEARNED_HEADING = "## 학습된 지침"
+Rules for what you write:
+- Output ONLY the directive body: short markdown bullets (optionally under
+  `##` subheadings). No preamble, no explanation, no code fences.
+- NEVER emit scope markers (`## @main`, `## @agents`) — the caller places
+  your text into the right scope.
+- Imperative, specific, testable ("답변은 한국어로", not "be helpful").
+- Only rules that generalize beyond a single task; drop anything tied to
+  one file/error/date.
+- Keep it tight: prefer 3-8 bullets over prose. Merge overlapping rules.
+- Write in the language the user's brief is written in.
 
+When the task includes EXISTING directive content, produce the UPDATED
+full body: keep rules that still apply, merge duplicates, integrate the
+new intent — the result REPLACES the existing text.
 
-def _strip_section(md: str, heading: str) -> str:
-    """Remove the ``heading`` section (heading line through just before the next
-    top-level ``## `` heading, or EOF) from ``md``; return the rest, stripped.
-    A no-op (other than trimming) when the section is absent."""
-    lines = md.splitlines()
-    out: list[str] = []
-    i, n = 0, len(lines)
-    while i < n:
-        if lines[i].strip().startswith(heading):
-            i += 1  # skip the heading + its body up to the next `## `
-            while i < n and not lines[i].startswith("## "):
-                i += 1
-            continue
-        out.append(lines[i])
-        i += 1
-    return "\n".join(out).strip()
+Finish with a `complete` op whose result is exactly the directive body."""
 
 
-def _replace_managed_section(
-    md: str, heading: str, body: str, *, prepend: bool = False
+def build_generation_task(audience: str, brief: str, current: str) -> str:
+    """✨ 생성 서브에이전트에 넘길 task 텍스트."""
+    parts = [
+        _AUDIENCE_FRAMING[audience],
+        f"USER INTENT (rough — turn this into directive rules):\n{brief.strip()}",
+    ]
+    current = (current or "").strip()
+    if current:
+        parts.append(
+            "EXISTING directive content for this audience (revise/merge — "
+            f"your output replaces it):\n{current}"
+        )
+    return "\n\n".join(parts)
+
+
+def generate_directive_section(
+    audience: str, brief: str, current: str, *, runtime: dict
 ) -> str:
-    """Replace (or remove, when ``body`` is empty) the ``heading`` section in
-    ``md``, leaving all other content byte-identical. ``body`` is the section
-    body (heading added here). ``prepend`` places the block before the remaining
-    content (persona voice leads); default appends it after (learned guidance
-    trails the hand-written directive)."""
-    rest = _strip_section(md, heading)
-    body = (body or "").strip()
-    if not body:
-        return rest
-    block = f"{heading}\n{body}"
-    if not rest:
-        return block
-    if prepend:
-        return f"{block}\n\n{rest}"
-    return _append_before_scope_markers(rest, block)
+    """brief → directive 초안 (활성 스코프용, 미저장 반환).
 
+    run 엔진 1회: 도구 0(complete 만)·context none·짧은 턴 제한.
+    ``runtime`` 은 web 부트스트랩이 채운 LLM 배선
+    (provider/model/capabilities/provider_name/base_url/api_key/session).
+    실패는 ValueError 로 — 전송 계층이 상태코드로 변환.
+    """
+    from agent_cli.subagent.oneshot import tool_delegate
+    from agent_cli.subagent.report import extract_result_body
 
-def _append_before_scope_markers(rest: str, block: str) -> str:
-    """Append ``block`` at the end of the COMMON zone — before the first
-    ``## @main``/``## @agents`` scope marker if one exists, else at EOF.
+    if audience not in VALID_AUDIENCES:
+        raise ValueError(f"unknown audience: {audience}")
+    if not brief.strip():
+        raise ValueError("brief 가 비어 있습니다")
+    if not runtime or runtime.get("provider") is None:
+        raise ValueError("LLM 이 배선되지 않았습니다")
 
-    U-C(5.1.0) 상호작용: learned 지침을 파일 끝에 그대로 붙이면 마지막
-    스코프 블록 안으로 빨려 들어가 서브(or main) 전용이 돼 버린다 — 세션
-    교훈은 항상 common 이어야 하므로 마커 앞에 삽입한다."""
-    from agent_cli.prompts.system_prompt import DIRECTIVE_SCOPE_MARKER
-
-    lines = rest.splitlines()
-    for i, ln in enumerate(lines):
-        if DIRECTIVE_SCOPE_MARKER.fullmatch(ln.strip()):
-            head = "\n".join(lines[:i]).rstrip()
-            tail = "\n".join(lines[i:])
-            if head:
-                return f"{head}\n\n{block}\n\n{tail}"
-            return f"{block}\n\n{tail}"
-    return f"{rest}\n\n{block}"
-
-
-def _section_body(md: str, heading: str) -> str:
-    """Return just the body of the ``heading`` section (its lines up to the next
-    top-level ``## `` or EOF), or ``""`` if absent — the inverse of
-    ``_strip_section``, used to feed the existing learned list back for merge."""
-    lines = md.splitlines()
-    i, n = 0, len(lines)
-    while i < n:
-        if lines[i].strip().startswith(heading):
-            i += 1
-            body: list[str] = []
-            while i < n and not lines[i].startswith("## "):
-                body.append(lines[i])
-                i += 1
-            return "\n".join(body).strip()
-        i += 1
-    return ""
-
-
-# ── Directive axis zones ──────────────────────────────────────────────
-# A directive has three axes the editor edits independently: persona (the
-# ``## 페르소나`` section), learned guidance (``## 학습된 지침`` section), and
-# task — everything else (the free-form body). Each 🪄/📥 generator and each
-# per-axis preset save/load targets exactly ONE zone, leaving the other two
-# byte-identical. All zone parsing lives here (Python) so the frontend never
-# re-implements section splitting.
-_AXIS_HEADINGS = {"persona": _PERSONA_HEADING, "learned": _LEARNED_HEADING}
-
-
-def _task_zone(content: str) -> str:
-    """The task zone = the directive minus the persona and learned sections
-    (the free-form body the user writes / the 업무 🪄 generates)."""
-    return _strip_section(_strip_section(content, _PERSONA_HEADING), _LEARNED_HEADING)
-
-
-def _zone_get(content: str, axis: str) -> str:
-    """Current body of one axis's zone within ``content`` (heading excluded for
-    the section axes; the whole remainder for task)."""
-    if axis == "task":
-        return _task_zone(content)
-    return _section_body(content, _AXIS_HEADINGS[axis])
-
-
-def _zone_set(content: str, axis: str, body: str) -> str:
-    """Replace one axis's zone in ``content`` with ``body`` (empty removes it),
-    leaving the other two zones byte-identical. Persona leads (prepend), learned
-    trails (append), task is the middle remainder."""
-    if axis == "persona":
-        return _replace_managed_section(content, _PERSONA_HEADING, body, prepend=True)
-    if axis == "learned":
-        return _replace_managed_section(content, _LEARNED_HEADING, body)
-    # task: rebuild as persona(prepend) + new task body + learned(append), so
-    # regenerating/loading the task never disturbs the two managed sections.
-    persona = _section_body(content, _PERSONA_HEADING)
-    learned = _section_body(content, _LEARNED_HEADING)
-    out = _replace_managed_section(
-        (body or "").strip(), _PERSONA_HEADING, persona, prepend=True
+    result = tool_delegate(
+        {
+            "tasks": [
+                {
+                    "task": build_generation_task(audience, brief, current),
+                    "context": "none",
+                    "tools": [],
+                    "instructions": _WRITER_INSTRUCTIONS,
+                }
+            ]
+        },
+        parent_ctx=runtime.get("ctx"),
+        provider=runtime["provider"],
+        model=runtime.get("model", ""),
+        capabilities=runtime.get("capabilities"),
+        provider_name=runtime.get("provider_name", ""),
+        base_url=runtime.get("base_url", ""),
+        api_key=runtime.get("api_key", ""),
+        max_turns=4,
+        timeout=runtime.get("timeout", 120),
+        session=runtime.get("session"),
     )
-    return _replace_managed_section(out, _LEARNED_HEADING, learned)
-
-
-# Per-file cap for workspace uploads (POST /api/workspace/upload). A guard
-# against an accidental huge upload filling the on-prem disk — generous enough
-# for source trees / small assets, not for blobs.
+    if not result.success:
+        raise ValueError(f"생성 실패: {result.error or '(no detail)'}")
+    body = extract_result_body(result.output or "")
+    if not body:
+        raise ValueError("생성 결과가 비어 있습니다")
+    return body

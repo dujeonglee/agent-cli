@@ -1754,6 +1754,18 @@ def web(
         ctx=ctx,
         trust_local=trust_local,
         base_path=base_path,
+        # ✨ directive 생성(run 엔진 경유)의 LLM 배선.
+        runtime={
+            "provider": llm_provider,
+            "model": resolved_model,
+            "capabilities": capabilities,
+            "provider_name": provider,
+            "base_url": resolved_url,
+            "api_key": resolved_key,
+            "session": session,
+            "ctx": ctx,
+            "timeout": agent_timeout,
+        },
     )
 
     # Prime the session-info ``ready`` so a client opening the page

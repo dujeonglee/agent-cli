@@ -42,11 +42,7 @@ from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebConnection, WebRenderer
 
 # C3: 도메인 로직은 분리 모듈 소유 — server 는 전송(라우팅·SSE·미들웨어) 전용.
-from agent_cli.web.directives import (
-    _AXIS_TEMPLATES,
-    _zone_get,
-    _zone_set,
-)
+from agent_cli.web.directives import generate_directive_section
 from agent_cli.web.inspector import _dynamic_context_sections
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -54,13 +50,7 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
-# ── Directive axis templates (📋) ──
-# Static fill-in skeletons the user drops into the persona / task zone and fills
-# by hand — the leak-free replacement for LLM auto-generation (real 27B leaked
-# chain-of-thought into standalone prose meta-calls; docs/directive-learning
-# DESIGN §14). No model is involved: a template is inserted verbatim by
-# deterministic code (``_zone_set``), so it can never corrupt the section model.
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB (workspace upload 상한)
 
 
 class _NoCacheStaticFiles(StaticFiles):
@@ -154,8 +144,13 @@ class WebServer:
         ctx=None,
         trust_local: bool = False,
         base_path: str = "",
+        runtime: dict | None = None,
     ) -> None:
         self.renderer = renderer
+        # ✨ directive 생성이 쓰는 LLM 배선 (provider 객체·model·capabilities·
+        # provider_name·base_url·api_key·session·ctx). None(테스트/미배선)
+        # 이면 생성 엔드포인트가 503. run 엔진 경유라 worker 루프와 독립.
+        self.runtime = runtime or {}
         # --trust-local: skip token auth for loopback requests (the gateway in
         # front of a 127.0.0.1-bound instance already authenticated the user).
         self.trust_local = trust_local
@@ -539,131 +534,69 @@ def create_app(server: WebServer) -> FastAPI:
 
     @app.get("/api/directives")
     async def debug_directives(token: str = Query(...)):
-        """Current PROJECT ``DIRECTIVE.md`` content for the inspector editor.
-        Always available (empty string when the file doesn't exist yet), so the
-        editor is shown even with no directives. Project scope only — the
-        user-global file is never edited here."""
+        """프로젝트 ``DIRECTIVE.md`` — 스코프 에디터용으로 원문(content)과
+        스코프 분해(scopes: common/main/agents)를 함께 반환. 파일이 없어도
+        빈 폼으로 항상 표시. 프로젝트 파일 전용(전역 파일은 손편집)."""
         server._require_token(token)
         from agent_cli.prompts.system_prompt import (
             project_directive_file,
             read_project_directive,
+            split_directive_scopes,
         )
 
+        content = read_project_directive()
         return {
-            "content": read_project_directive(),
+            "content": content,
+            "scopes": split_directive_scopes(content),
             "path": str(project_directive_file()),
         }
 
     @app.post("/api/directives")
     async def debug_directives_save(body: dict, token: str = Query(...)):
-        """Write the project ``DIRECTIVE.md`` and flag the loop to rebuild its
-        system prompt at the next LLM call (applies immediately; idle → next
-        query). Broadcasts so other open inspectors re-fetch. KV cache prefix is
-        intentionally busted — the cost of a live directive edit."""
+        """저장 — ``{scopes:{common,main,agents}}``(에디터, 서버가 조립) 또는
+        ``{content}``(원문 그대로). 다음 LLM 콜에서 시스템 프롬프트 rebuild
+        (KV prefix 리셋), 다른 인스펙터에 브로드캐스트."""
         server._require_token(token)
-        from agent_cli.prompts.system_prompt import write_project_directive
+        from agent_cli.prompts.system_prompt import (
+            join_directive_scopes,
+            write_project_directive,
+        )
 
-        write_project_directive(body.get("content") or "")
+        if isinstance(body.get("scopes"), dict):
+            content = join_directive_scopes(body["scopes"])
+        else:
+            content = body.get("content") or ""
+        write_project_directive(content)
         server.renderer.mark_directives_dirty()
         server.renderer.broadcast_directives_changed()
         return {"ok": True}
 
-    @app.post("/api/directives/template")
-    async def debug_directives_template(
-        body: dict, axis: str = Query(...), token: str = Query(...)
-    ):
-        """📋 Insert a static fill-in skeleton into one axis's zone (persona or
-        task), returned UNSAVED for the user to fill by hand. Deterministic — no
-        LLM (the leak-free replacement for 🪄). Body: ``{content}``. 400 on a bad
-        axis or an axis without a template (learned 축은 수동 편집/프리셋 전용)."""
+    @app.post("/api/directives/generate")
+    async def directives_generate(body: dict, token: str = Query(...)):
+        """✨ 생성 — 대략적 의도(brief)를 해당 청중(audience)용 directive
+        초안으로. 서브에이전트 루프 경유(CoT-leak 안전 — 구 🪄 의 산문
+        메타-콜 경로가 아님), 결과는 **미저장** 반환(에디터가 활성 탭에
+        반영, 사용자 검토 후 저장). Body: ``{audience, brief, current?}``.
+        LLM 미배선 503. 수십 초 블로킹 — executor 오프로드."""
         server._require_token(token)
-        tmpl = _AXIS_TEMPLATES.get(axis)
-        if tmpl is None:
-            raise HTTPException(status_code=400, detail=f"no template for axis: {axis}")
-        return {"content": _zone_set(body.get("content") or "", axis, tmpl)}
+        if not server.runtime or server.runtime.get("provider") is None:
+            raise HTTPException(status_code=503, detail="LLM not available")
 
-    def _require_axis(axis: str) -> str:
-        """Validate the ``axis`` query param against the fixed enum → 400."""
-        from agent_cli import directive_presets
-
-        if axis not in directive_presets.AXES:
-            raise HTTPException(status_code=400, detail=f"unknown axis: {axis}")
-        return axis
-
-    @app.get("/api/directives/presets/library")
-    async def directives_presets_library(
-        axis: str = Query(...), token: str = Query(...)
-    ):
-        """User-saved presets for one axis (persona|task|learned) as
-        ``{presets: [{id, label, source}]}`` for that dropdown. Always available
-        (deterministic file store, no LLM)."""
-        server._require_token(token)
-        _require_axis(axis)
-        from agent_cli import directive_presets
-
-        return {"presets": directive_presets.list_presets(axis)}
-
-    @app.post("/api/directives/presets/library")
-    async def directives_presets_library_save(
-        body: dict, axis: str = Query(...), token: str = Query(...)
-    ):
-        """Save ONE axis's zone of the current editor content as a named preset in
-        the home library (shared across all rooms). Body: ``{name, content}`` —
-        the server extracts that axis's zone from ``content`` and saves only it.
-        Overwrites a same-name preset. 400 on empty zone / unsafe name / bad
-        axis."""
-        server._require_token(token)
-        _require_axis(axis)
-        from agent_cli import directive_presets
-
-        zone = _zone_get(body.get("content") or "", axis).strip()
-        if not zone:
-            raise HTTPException(
-                status_code=400, detail="이 축에 저장할 내용이 없습니다"
+        def _run() -> str:
+            return generate_directive_section(
+                str(body.get("audience") or ""),
+                str(body.get("brief") or ""),
+                str(body.get("current") or ""),
+                runtime=server.runtime,
             )
-        try:
-            pid = directive_presets.save(axis, body.get("name") or "", zone)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"ok": True, "id": pid}
-
-    @app.post("/api/directives/presets/library/{preset_id}/apply")
-    async def directives_presets_library_apply(
-        preset_id: str, body: dict, axis: str = Query(...), token: str = Query(...)
-    ):
-        """Load a saved preset INTO the current editor: merge its body into that
-        axis's zone of ``content`` (leaving the other two zones byte-identical),
-        returned UNSAVED. Body: ``{content}``. 404 when absent, 400 on bad
-        axis/id."""
-        server._require_token(token)
-        _require_axis(axis)
-        from agent_cli import directive_presets
 
         try:
-            preset_body = directive_presets.load(axis, preset_id)
+            content = await asyncio.get_event_loop().run_in_executor(None, _run)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        if preset_body is None:
-            raise HTTPException(status_code=404, detail="preset not found")
-        return {"content": _zone_set(body.get("content") or "", axis, preset_body)}
-
-    @app.delete("/api/directives/presets/library/{preset_id}")
-    async def directives_presets_library_delete(
-        preset_id: str, axis: str = Query(...), token: str = Query(...)
-    ):
-        """Delete a user preset from one axis. 404 when absent, 400 on bad
-        axis/id."""
-        server._require_token(token)
-        _require_axis(axis)
-        from agent_cli import directive_presets
-
-        try:
-            ok = directive_presets.delete(axis, preset_id)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        if not ok:
-            raise HTTPException(status_code=404, detail="preset not found")
-        return {"ok": True}
+        except Exception as e:  # provider/network — 502 로 표면화
+            raise HTTPException(status_code=502, detail=f"생성 실패: {e}") from e
+        return {"content": content}
 
     @app.get("/api/debug/prompt/scopes")
     async def debug_prompt_scopes(token: str = Query(...)):

@@ -2010,134 +2010,117 @@ class _FakeProvider:
         return _Resp(self._by_system.get(system, self._content))
 
 
-class TestManagedSectionHelpers:
-    """Generic ``## <heading>`` section replace/strip — the substrate the
-    persona merge and the learned-guidance merge both build on. Other content
-    (a user's hand-written directive) MUST stay byte-identical."""
+class TestDirectivesScopeContract:
+    """5.4.0 스코프 에디터 계약 — GET 은 scopes 분해 동봉, POST 는 scopes
+    를 서버가 조립(파서/직렬화 단일 출처=Python)."""
 
-    def test_strip_absent_heading_unchanged(self):
-        from agent_cli.web.directives import _strip_section
+    def _patch_dir(self, tmp_path, monkeypatch):
+        import agent_cli.prompts.system_prompt as sp
 
-        md = "## 수기 지시\n- A\n- B"
-        assert _strip_section(md, "## 학습된 지침") == md
-
-    def test_strip_named_section_preserves_rest(self):
-        from agent_cli.web.directives import _strip_section
-
-        md = "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2\n\n## 기타\n- Z"
-        out = _strip_section(md, "## 학습된 지침")
-        assert "학습된 지침" not in out and "L1" not in out
-        assert "## 수기" in out and "## 기타" in out
-
-    def test_replace_appends_by_default(self):
-        from agent_cli.web.directives import _replace_managed_section
-
-        md = "## 수기\n- A"
-        out = _replace_managed_section(md, "## 학습된 지침", "- L1\n- L2")
-        assert out == "## 수기\n- A\n\n## 학습된 지침\n- L1\n- L2"
-
-    def test_replace_prepend(self):
-        from agent_cli.web.directives import _replace_managed_section
-
-        out = _replace_managed_section(
-            "## 업무\n- 규칙", "## 페르소나", "- 목소리", prepend=True
+        monkeypatch.setattr(
+            sp, "_DIRECTIVE_PATHS", [tmp_path / ".agent-cli", tmp_path / "home"]
         )
-        assert out.startswith("## 페르소나\n- 목소리")
-        assert out.endswith("## 업무\n- 규칙")
 
-    def test_replace_swaps_existing_not_stacks(self):
-        from agent_cli.web.directives import _replace_managed_section
+    def test_get_includes_scopes(self, server_and_client, tmp_path, monkeypatch):
+        self._patch_dir(tmp_path, monkeypatch)
+        d = tmp_path / ".agent-cli"
+        d.mkdir()
+        (d / "DIRECTIVE.md").write_text(
+            "공통\n\n## @main\n메인\n\n## @agents\n서브", encoding="utf-8"
+        )
+        _, _, client = server_and_client
+        got = client.get("/api/directives?token=testtoken").json()
+        assert got["scopes"] == {"common": "공통", "main": "메인", "agents": "서브"}
+        assert "공통" in got["content"]
 
-        md = "## 수기\n- A\n\n## 학습된 지침\n- OLD"
-        out = _replace_managed_section(md, "## 학습된 지침", "- NEW")
-        assert "OLD" not in out and "- NEW" in out
-        assert out.count("## 학습된 지침") == 1  # swapped, not stacked
-        assert "## 수기\n- A" in out  # hand-written part untouched
+    def test_post_scopes_joins_and_marks_dirty(
+        self, server_and_client, tmp_path, monkeypatch
+    ):
+        self._patch_dir(tmp_path, monkeypatch)
+        _, renderer, client = server_and_client
+        r = client.post(
+            "/api/directives?token=testtoken",
+            json={"scopes": {"common": "A", "main": "B", "agents": ""}},
+        )
+        assert r.status_code == 200
+        saved = (tmp_path / ".agent-cli" / "DIRECTIVE.md").read_text(encoding="utf-8")
+        assert saved == "A\n\n## @main\nB"
+        assert renderer.consume_directives_dirty() is True
 
-    def test_replace_empty_body_removes_section(self):
-        from agent_cli.web.directives import _replace_managed_section
-
-        md = "## 수기\n- A\n\n## 학습된 지침\n- L1"
-        out = _replace_managed_section(md, "## 학습된 지침", "  ")
-        assert out == "## 수기\n- A"
-
-    def test_replace_into_empty_is_just_block(self):
-        from agent_cli.web.directives import _replace_managed_section
-
-        out = _replace_managed_section("", "## 학습된 지침", "- L1")
-        assert out == "## 학습된 지침\n- L1"
-
-
-class TestZoneAccessors:
-    """The three directive axes — persona / task / learned — as independently
-    get/set-able zones. Setting one MUST leave the other two byte-identical.
-    Persona & learned are ``## `` sections; task is the remainder (which, like
-    all generated task content, carries its own ``## `` heading)."""
-
-    FULL = "## 페르소나\n- 도도\n\n## 업무\n- 규칙\n\n## 학습된 지침\n- 교훈"
-
-    def test_get_each_zone(self):
-        from agent_cli.web.directives import _zone_get
-
-        assert _zone_get(self.FULL, "persona") == "- 도도"
-        assert _zone_get(self.FULL, "task") == "## 업무\n- 규칙"
-        assert _zone_get(self.FULL, "learned") == "- 교훈"
-
-    def test_task_zone_of_plain_directive_is_whole(self):
-        from agent_cli.web.directives import _zone_get
-
-        assert _zone_get("그냥 수기 지시\n- A", "task") == "그냥 수기 지시\n- A"
-
-    def test_set_persona_preserves_task_and_learned(self):
-        from agent_cli.web.directives import _zone_set
-
-        out = _zone_set(self.FULL, "persona", "- 냉정")
-        assert out.startswith("## 페르소나\n- 냉정")
-        assert "도도" not in out  # swapped
-        assert "## 업무\n- 규칙" in out and "## 학습된 지침\n- 교훈" in out
-
-    def test_set_task_preserves_persona_and_learned(self):
-        from agent_cli.web.directives import _zone_set
-
-        out = _zone_set(self.FULL, "task", "## 새업무\n- 새규칙")
-        assert "## 페르소나\n- 도도" in out and "## 학습된 지침\n- 교훈" in out
-        assert "## 새업무\n- 새규칙" in out and "- 규칙\n" not in out
-
-    def test_set_learned_preserves_persona_and_task(self):
-        from agent_cli.web.directives import _zone_set
-
-        out = _zone_set(self.FULL, "learned", "- 새교훈")
-        assert "## 페르소나\n- 도도" in out and "## 업무\n- 규칙" in out
-        assert "## 학습된 지침\n- 새교훈" in out
-
-    def test_set_empty_removes_section_zone(self):
-        from agent_cli.web.directives import _zone_set
-
-        out = _zone_set(self.FULL, "persona", "")
-        assert "## 페르소나" not in out
-        assert "## 업무\n- 규칙" in out and "## 학습된 지침" in out
-
-    def test_zone_set_roundtrips_with_get(self):
-        from agent_cli.web.directives import _zone_get, _zone_set
-
-        # setting a zone to its own current value leaves all three intact
-        for axis in ("persona", "task", "learned"):
-            same = _zone_set(self.FULL, axis, _zone_get(self.FULL, axis))
-            assert _zone_get(same, "persona") == "- 도도"
-            assert _zone_get(same, "task") == "## 업무\n- 규칙"
-            assert _zone_get(same, "learned") == "- 교훈"
+    def test_post_content_fallback(self, server_and_client, tmp_path, monkeypatch):
+        self._patch_dir(tmp_path, monkeypatch)
+        _, _, client = server_and_client
+        r = client.post(
+            "/api/directives?token=testtoken", json={"content": "raw 그대로"}
+        )
+        assert r.status_code == 200
+        assert (tmp_path / ".agent-cli" / "DIRECTIVE.md").read_text(
+            encoding="utf-8"
+        ) == "raw 그대로"
 
 
-class _FakeCtx:
-    """Minimal ContextManager stand-in for learn tests: a fixed message list and
-    a session dir for the memory store."""
+class TestDirectivesGenerate:
+    """POST /api/directives/generate — ✨ 생성 (run 엔진 경유, 미저장 반환)."""
 
-    def __init__(self, messages, session_dir):
-        self._messages = messages
-        self.session_dir = session_dir
+    def test_503_without_runtime(self, server_and_client):
+        _, _, client = server_and_client  # 기본 픽스처는 runtime 미배선
+        r = client.post(
+            "/api/directives/generate?token=testtoken",
+            json={"audience": "main", "brief": "결론 먼저"},
+        )
+        assert r.status_code == 503
 
-    def get_messages(self):
-        return list(self._messages)
+    def _client_with_runtime(self):
+        renderer = WebRenderer()
+        server = WebServer(
+            renderer, token="t", runtime={"provider": object(), "model": "m"}
+        )
+        return server, TestClient(create_app(server))
+
+    def test_400_on_bad_input(self, monkeypatch):
+        server, client = self._client_with_runtime()
+        r = client.post(
+            "/api/directives/generate?token=t",
+            json={"audience": "nope", "brief": "x"},
+        )
+        assert r.status_code == 400
+        r = client.post(
+            "/api/directives/generate?token=t",
+            json={"audience": "main", "brief": "  "},
+        )
+        assert r.status_code == 400
+
+    def test_success_returns_generated_body(self, monkeypatch):
+        from agent_cli.tools.result import ToolResult
+
+        seen = {}
+
+        def fake_tool_delegate(args, **kw):
+            seen["task"] = args["tasks"][0]["task"]
+            seen["instructions"] = args["tasks"][0]["instructions"]
+            seen["tools"] = args["tasks"][0]["tools"]
+            return ToolResult(
+                True,
+                output=(
+                    "STATUS: success\nRESULT:\n- 결론 먼저 보고\n\n"
+                    "[Subagent activity]\n- iter 1: complete\n\n[Duration: 2s]"
+                ),
+            )
+
+        import agent_cli.subagent.oneshot as oneshot_mod
+
+        monkeypatch.setattr(oneshot_mod, "tool_delegate", fake_tool_delegate)
+        server, client = self._client_with_runtime()
+        r = client.post(
+            "/api/directives/generate?token=t",
+            json={"audience": "main", "brief": "보고는 결론 먼저", "current": "- 기존"},
+        )
+        assert r.status_code == 200
+        assert r.json()["content"] == "- 결론 먼저 보고"
+        assert "MAIN conversation LLM only" in seen["task"]
+        assert "기존" in seen["task"]  # 기존 내용 병합 지시
+        assert seen["tools"] == []  # 도구 0 (complete 만)
+        assert "directive writer" in seen["instructions"]
 
 
 class TestWorkspaceCopyButton:
@@ -2164,235 +2147,6 @@ class TestWorkspaceCopyButton:
         assert "#ws-copy" in css
 
 
-class TestZoneScopeMarkerInteraction:
-    """U-C 3축 에디터 상호작용: 스코프 블록(``## @main``/``## @agents``)이 있는
-    지침에서 관리 섹션 조작이 스코프를 오염시키지 않는다 — 특히 learned
-    append 는 파일 끝(마지막 스코프 안)이 아니라 **첫 마커 앞(common)** 에."""
-
-    SCOPED = "공통 규칙\n\n## @main\n- main 전용\n\n## @agents\n- 서브 전용"
-
-    def test_learned_append_lands_in_common(self):
-        from agent_cli.prompts.system_prompt import split_directive_scopes
-        from agent_cli.web.directives import _zone_set
-
-        out = _zone_set(self.SCOPED, "learned", "- 새 교훈")
-        scopes = split_directive_scopes(out)
-        assert "## 학습된 지침" in scopes["common"]
-        assert "- 새 교훈" in scopes["common"]
-        # 스코프 블록은 바이트 그대로
-        assert scopes["main"] == "- main 전용"
-        assert scopes["agents"] == "- 서브 전용"
-
-    def test_learned_replace_in_scoped_file(self):
-        # 이미 common 에 있는 learned 갱신 — 위치 유지·스코프 불변.
-        from agent_cli.prompts.system_prompt import split_directive_scopes
-        from agent_cli.web.directives import _zone_set
-
-        base = _zone_set(self.SCOPED, "learned", "- 교훈1")
-        out = _zone_set(base, "learned", "- 교훈2")
-        scopes = split_directive_scopes(out)
-        assert "- 교훈2" in scopes["common"] and "교훈1" not in out
-        assert scopes["main"] == "- main 전용"
-
-    def test_persona_prepend_stays_common(self):
-        from agent_cli.prompts.system_prompt import split_directive_scopes
-        from agent_cli.web.directives import _zone_set
-
-        out = _zone_set(self.SCOPED, "persona", "- 침착")
-        scopes = split_directive_scopes(out)
-        assert "## 페르소나" in scopes["common"]
-        assert scopes["agents"] == "- 서브 전용"
-
-    def test_no_markers_learned_appends_at_end(self):
-        # 무마커 파일은 종전 동작 그대로 (끝에 append).
-        from agent_cli.web.directives import _zone_set
-
-        out = _zone_set("수기 지시", "learned", "- 교훈")
-        assert out == "수기 지시\n\n## 학습된 지침\n- 교훈"
-
-
-class TestTemplateEndpoint:
-    """📋 POST /api/directives/template — insert a static skeleton into one
-    axis's zone (deterministic, no LLM). The leak-free replacement for 🪄."""
-
-    def _client(self):
-        return TestClient(create_app(WebServer(WebRenderer(), token="t")))
-
-    def test_persona_template_inserts_heading_and_skeleton(self):
-        client = self._client()
-        out = client.post(
-            "/api/directives/template?axis=persona&token=t", json={"content": ""}
-        ).json()["content"]
-        assert out.startswith("## 페르소나")
-        # lean 2-field skeleton (말투·톤 + 적용 범위 guardrail); old 5 fields dropped
-        assert "- 말투·톤:" in out and "적용 범위" in out
-        assert "1인칭" not in out and "말버릇" not in out
-
-    def test_task_template_preserves_other_zones(self):
-        client = self._client()
-        existing = "## 페르소나\n- 도도\n\n## 학습된 지침\n- 교훈"
-        out = client.post(
-            "/api/directives/template?axis=task&token=t", json={"content": existing}
-        ).json()["content"]
-        assert "## 업무\n- 역할:" in out  # task skeleton inserted
-        # domain-neutral labels (not coding-specific 편집/빌드·테스트) + memory rule
-        assert "- 착수 전 확인:" in out and "- 검증·품질 규율:" in out
-        assert "편집 전 확인" not in out and "빌드·테스트" not in out
-        assert "메모리 활용" in out and "memory" in out
-        assert "## 페르소나\n- 도도" in out and "## 학습된 지침\n- 교훈" in out  # kept
-
-    def test_learned_has_no_template_400(self):
-        assert (
-            self._client()
-            .post("/api/directives/template?axis=learned&token=t", json={"content": ""})
-            .status_code
-            == 400
-        )
-
-    def test_bad_axis_400(self):
-        client = self._client()
-        assert (
-            client.post(
-                "/api/directives/template?axis=bogus&token=t", json={"content": ""}
-            ).status_code
-            == 400
-        )
-
-    def test_requires_token(self):
-        client = self._client()
-        assert (
-            client.post(
-                "/api/directives/template?axis=persona&token=bad", json={"content": ""}
-            ).status_code
-            != 200
-        )
-
-
-class TestPresetLibraryEndpoints:
-    """Per-axis preset library over HTTP — save extracts ONE zone, apply merges
-    it back. Store pointed at a tmp dir (never the real home)."""
-
-    @pytest.fixture(autouse=True)
-    def _tmp_presets(self, tmp_path, monkeypatch):
-        from agent_cli import directive_presets
-
-        monkeypatch.setattr(
-            directive_presets, "_presets_root", lambda: tmp_path / "presets"
-        )
-        # Isolate from shipped built-ins so these endpoint tests don't couple to
-        # built-in preset names/content.
-        monkeypatch.setattr(
-            directive_presets, "_BUILTIN_ROOT", tmp_path / "builtin-empty"
-        )
-
-    def _client(self):
-        server = WebServer(WebRenderer(), token="t")
-        return TestClient(create_app(server))
-
-    FULL = "## 페르소나\n- 도도\n\n## 업무\n- 규칙\n\n## 학습된 지침\n- 교훈"
-
-    def test_save_extracts_zone_and_apply_merges_back(self):
-        client = self._client()
-        # save the persona zone only
-        r = client.post(
-            "/api/directives/presets/library?axis=persona&token=t",
-            json={"name": "냉정이", "content": self.FULL},
-        )
-        assert r.status_code == 200
-        pid = r.json()["id"]
-        listed = client.get(
-            "/api/directives/presets/library?axis=persona&token=t"
-        ).json()["presets"]
-        assert any(p["id"] == pid and p["source"] == "user" for p in listed)
-        # apply it into a DIFFERENT editor content → only persona zone changes
-        target = "## 페르소나\n- 딴캐릭터\n\n## 업무\n- 다른규칙"
-        applied = client.post(
-            f"/api/directives/presets/library/{pid}/apply?axis=persona&token=t",
-            json={"content": target},
-        ).json()["content"]
-        assert applied.startswith("## 페르소나\n- 도도")  # preset persona applied
-        assert "## 업무\n- 다른규칙" in applied  # target's task kept
-
-    def test_save_empty_zone_400(self):
-        client = self._client()
-        r = client.post(
-            "/api/directives/presets/library?axis=learned&token=t",
-            json={"name": "x", "content": "## 페르소나\n- 도도"},  # no learned zone
-        )
-        assert r.status_code == 400
-
-    def test_axes_are_independent(self):
-        client = self._client()
-        client.post(
-            "/api/directives/presets/library?axis=task&token=t",
-            json={"name": "shared", "content": self.FULL},
-        )
-        # same name under a different axis doesn't exist
-        assert (
-            client.post(
-                "/api/directives/presets/library/shared/apply?axis=persona&token=t",
-                json={"content": ""},
-            ).status_code
-            == 404
-        )
-
-    def test_delete_removes(self):
-        client = self._client()
-        client.post(
-            "/api/directives/presets/library?axis=task&token=t",
-            json={"name": "tmp", "content": self.FULL},
-        )
-        assert (
-            client.delete(
-                "/api/directives/presets/library/tmp?axis=task&token=t"
-            ).status_code
-            == 200
-        )
-        assert (
-            client.delete(
-                "/api/directives/presets/library/tmp?axis=task&token=t"
-            ).status_code
-            == 404
-        )
-
-    def test_save_bad_name_400(self):
-        client = self._client()
-        r = client.post(
-            "/api/directives/presets/library?axis=persona&token=t",
-            json={"name": "../evil", "content": self.FULL},
-        )
-        assert r.status_code == 400
-
-    def test_bad_axis_400(self):
-        client = self._client()
-        assert (
-            client.get("/api/directives/presets/library?axis=bogus&token=t").status_code
-            == 400
-        )
-
-    def test_apply_missing_404(self):
-        client = self._client()
-        assert (
-            client.post(
-                "/api/directives/presets/library/nope/apply?axis=task&token=t",
-                json={"content": ""},
-            ).status_code
-            == 404
-        )
-
-    def test_library_requires_token(self):
-        client = self._client()
-        assert (
-            client.get(
-                "/api/directives/presets/library?axis=task&token=bad"
-            ).status_code
-            != 200
-        )
-
-
-# ── C3 분리 모듈 표면 (전송/도메인 분리 증명) ─────────────────────────
-
-
 class TestC3ModuleSeparation:
     def test_directives_module_has_no_fastapi_dependency(self):
         # directive 도메인 로직은 순수 — 웹 전송 없이 단독 임포트/사용 가능
@@ -2415,14 +2169,13 @@ class TestC3ModuleSeparation:
             mod = importlib.import_module(name)
             assert "web.server" not in open(mod.__file__).read(), name
 
-    def test_directives_roundtrip_standalone(self):
-        # zone set→get 왕복이 server 없이 동작
-        from agent_cli.web.directives import _zone_get, _zone_set
+    def test_directives_generation_task_standalone(self):
+        # 생성 태스크 빌더가 server 없이 동작 (5.4.0 스코프 에디터)
+        from agent_cli.web.directives import build_generation_task
 
-        content = _zone_set("", "persona", "친절하고 간결하게.")
-        content = _zone_set(content, "learned", "- 검증 먼저.")
-        assert _zone_get(content, "persona") == "친절하고 간결하게."
-        assert _zone_get(content, "learned") == "- 검증 먼저."
+        task = build_generation_task("main", "보고는 결론 먼저", "- 기존 규칙")
+        assert "MAIN conversation LLM only" in task
+        assert "보고는 결론 먼저" in task and "기존 규칙" in task
 
 
 class TestTeammateEndpoints:

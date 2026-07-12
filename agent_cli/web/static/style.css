@@ -911,6 +911,15 @@ footer {
   border: 1px solid var(--border); border-radius: 6px; padding: 8px;
 }
 .insp-dir-text:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--focus-ring-shadow); outline: none; }
+.insp-dir-tabs { display: flex; gap: 4px; margin: 6px 0 4px; }
+.insp-dir-tabs button {
+  background: none; border: 1px solid var(--border); border-radius: 6px 6px 0 0;
+  padding: 3px 10px; cursor: pointer; font-size: 12px; opacity: .65; color: inherit;
+}
+.insp-dir-tabs button.active { opacity: 1; border-bottom-color: transparent; background: rgba(255,255,255,.05); }
+.insp-dir-gen { display: flex; gap: 6px; margin-top: 6px; }
+.insp-dir-gen input { flex: 1; padding: 4px 8px; font-size: 12px; }
+.insp-dir-gen button { white-space: nowrap; }
 .insp-dir-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 6px; }
 .insp-dir-status { flex: 1 1 auto; order: 1; color: var(--text-2); font-size: 11px; }
 #insp-dir-cancel { order: 2; }
@@ -922,64 +931,8 @@ footer {
 .insp-dir-foot button:disabled { opacity: .5; cursor: default; }
 /* Three axis rows (성격/업무/지침): each = label + dropdown + subtle icon
    buttons. Each wraps to its own full-width line under the status text. */
-.insp-dir-axis {
-  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
-  flex: 1 1 100%; order: 3; margin-top: 4px;
-}
-.insp-dir-axlabel {
-  flex: 0 0 auto; min-width: 30px; font-size: 11px; color: var(--text-2);
-  font-weight: 600;
-}
-.insp-dir-sel {
-  font-size: 12px; padding: 3px 6px; border-radius: 6px;
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  flex: 1 1 auto; min-width: 90px; max-width: 150px;
-}
-.insp-dir-axis button {
-  background: transparent; color: var(--text-2);
-  border: 1px solid var(--border); padding: 3px 8px;
-}
-.insp-dir-axis button:hover:not(:disabled) {
-  color: var(--accent); border-color: var(--accent);
-}
-.insp-dir-axis button[hidden] { display: none; }
 
 /* 💾 preset save modal — fixed location (read-only) + name + existing chips. */
-.dir-modal {
-  position: fixed; inset: 0; z-index: 60;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, .45);
-}
-.dir-modal[hidden] { display: none; }
-.dir-modal-box {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  padding: 16px 18px; width: min(420px, 92vw); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; gap: 10px;
-}
-.dir-modal-title { font-size: 14px; font-weight: 600; color: var(--text); }
-.dir-modal-box label {
-  display: flex; flex-direction: column; gap: 3px;
-  font-size: 11px; color: var(--text-2);
-}
-.dir-modal-box input {
-  font-size: 13px; padding: 5px 8px; border-radius: 6px;
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-}
-.dir-modal-loc input {
-  color: var(--muted); background: var(--surface-2, var(--bg)); cursor: not-allowed;
-  font-family: "Jetendard", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
-}
-.dir-modal-existing { font-size: 11px; color: var(--text-2); display: flex;
-  flex-wrap: wrap; gap: 4px; align-items: center; }
-.dir-modal-chip {
-  font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
-  background: transparent; color: var(--text-2); border: 1px solid var(--border);
-}
-.dir-modal-chip:hover { color: var(--accent); border-color: var(--accent); }
-.dir-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-.dir-modal-foot button {
-  font-size: 12px; padding: 4px 14px; border-radius: 6px; cursor: pointer; border: 0;
-}
 #dir-preset-modal-cancel {
   background: transparent; color: var(--text-2); border: 1px solid var(--border);
 }

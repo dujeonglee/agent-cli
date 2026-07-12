@@ -178,6 +178,29 @@ def _persist_run_result(
         pass
 
 
+def extract_result_body(formatted: str) -> str:
+    """run 관찰 문자열에서 서브에이전트의 **원문 답**만 역추출.
+
+    ``STATUS: success\nRESULT:\n<본문>\n\n[Subagent activity]…`` 포맷의
+    역 — 포맷터(:func:`_format_delegate_output` + oneshot 의 STATUS 랩)와
+    같은 모듈이 소유해 드리프트를 막는다. directive 생성(웹 에디터)이
+    run 결과에서 초안 본문을 꺼낼 때 소비. 포맷이 아니면 그대로 반환.
+    """
+    body = formatted
+    if "RESULT:\n" in body:
+        body = body.split("RESULT:\n", 1)[1]
+    for section in (
+        "\n\n[Subagent activity]",
+        "\n\n[Last actions before failure]",
+        "\n\n[Files touched]",
+        "\n\n[Duration",
+    ):
+        idx = body.find(section)
+        if idx != -1:
+            body = body[:idx]
+    return body.strip()
+
+
 def _format_delegate_output(result: DelegateResult) -> str:
     """Format DelegateResult into observation string."""
     parts = []
