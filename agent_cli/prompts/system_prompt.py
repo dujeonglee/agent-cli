@@ -1061,7 +1061,8 @@ def build_live_agents_section(agent_registry) -> str:
         "files.",
     ]
     for s in alive:
-        who = " · ".join(p for p in (s.get("role", ""), s.get("name", "")) if p)
+        # (v5.0 스냅샷 키 개명 잔재 수정: role → profile)
+        who = " · ".join(p for p in (s.get("profile", ""), s.get("name", "")) if p)
         label = f"`{s['key']}`" + (f" ({who})" if who else "")
         desc = ""
         # 전문영역 요약 — registry 의 AgentInstance 가 description 을 들고 있다.
@@ -1070,7 +1071,12 @@ def build_live_agents_section(agent_registry) -> str:
             desc = tm.description
             if len(desc) > 140:
                 desc = desc[:137] + "..."
-        lines.append(f"- {label}" + (f" — {desc}" if desc else ""))
+        line = f"- {label}" + (f" — {desc}" if desc else "")
+        subs = s.get("subscriptions") or []
+        if subs:
+            # 구독 광고 — main 이 "이 도구를 쓰면 이 에이전트가 본다"를 안다.
+            line += f" [watching: {', '.join(subs)}]"
+        lines.append(line)
     return "\n".join(lines)
 
 

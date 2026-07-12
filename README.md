@@ -1016,7 +1016,7 @@ run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(
 
 - **프로파일 발견**: 사용 가능한 프로파일 목록(이름+description)이 시스템 프롬프트 `## Agent Profiles` 섹션에 광고되어 **모델이 스스로 적합한 전문가를 골라** run/spawn 합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
 - **내장 프로파일**:
-  - 범용 — `explorer`(읽기 전용 코드베이스 탐색) / `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
+  - 범용 — `explorer`(읽기 전용 코드베이스 탐색) / `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `code-reviewer`(읽기 전용 리뷰, file:line+심각도+실패 시나리오, 재리뷰 증분 — spawn 시 write/edit 구독 실시간 리뷰 기본 탑재) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
   - Linux 커널 (5.1.0) — `kernel-coder`(드라이버 구현: 커널 스타일·goto-cleanup 에러 경로·락 컨텍스트 규율·checkpatch/빌드 자가 검증) / `kernel-kunit`(KUnit 테스트: `kunit_test_suite` 설계·ops-table 페이크·`.kunitconfig`+`kunit.py run` 실행 검증) / `kernel-analyzer`(읽기 전용 분석: 콜패스·실행 컨텍스트(process/softirq/hardirq)·락·수명 추적, file:line 인용) / `kernel-reviewer`(읽기 전용 리뷰: race·atomic-sleep·에러경로 누수·UAF·API 오용, 심각도+실패 시나리오+ACCEPT/REJECT 판정).
 - **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}` (run 도 동일 지원). `profile` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시). 상주 에이전트의 인라인 지시는 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속).
 - **`/create-agent` 스킬**: 새 프로파일 md 를 대화형으로 생성 (run/spawn 겸용).
@@ -1058,6 +1058,7 @@ RESULT:
 
 spawn 하면 key 를 돌려받고, 그 key 로 몇 번이고 이어서 요청할 수 있습니다. 상주 에이전트는 자기 컨텍스트(이전 문답 전부)를 유지한 채 살아 있습니다.
 
+- **도구 이벤트 구독 (5.8.0)**: 상주 에이전트가 **main 의 특정 도구 실행을 구독**할 수 있습니다 — spawn 의 `subscribe:["write_file","edit_file"]` 또는 프로파일 frontmatter `subscribes:`. 매 턴의 매칭 실행이 **배치 1건**의 `[tool-events]` 요청으로 구독자 inbox 에 들어가고(main 루프만 탭 — 서브에이전트 작업은 제외), 회신은 관찰로 main 에 배달되되 **정확히 `LGTM` 인 회신은 억제**(🤝 창에만 — 무발견 노이즈가 컨텍스트를 먹지 않음)됩니다. `"*"`(전체 관찰 — 기록/학습 모듈), 가상 도구 `complete`(task reviewer — 완료 시 검증) 도 구독 가능. 내장 `code-reviewer` 는 write_file/edit_file 구독이 기본 탑재라 spawn 만 하면 실시간 리뷰가 켜집니다. Live Agents 광고에 `[watching: …]` 로 표시.
 - **비동기 + 자동 배달**: `request` 는 즉시 반환되고, 에이전트는 자기 스레드에서 작업합니다. 회신이 준비되면 **harness 가 다음 턴 경계에서 관찰로 자동 배달**합니다 — 모델이 status 를 폴링하거나 블록할 필요가 없습니다 (main 이 idle 이어도 자동 재기동으로 배달).
 - **양방향 문답 (ask 라우팅)**: 상주 에이전트가 작업 중 막혀서 `ask` 를 부르면 질문이 **main 의 mailbox 로** 옵니다 (사용자가 아니라 main LLM 이 그 에이전트의 "사용자"). main 은 같은 `request` 로 답하고, 에이전트는 답을 받을 때까지 `waiting_ask` 상태로 대기합니다. run 서브에이전트의 `ask` 는 종전대로 사용자에게 갑니다.
 - **다중 인스턴스**: 같은 프로파일을 여러 명 스폰할 수 있습니다 — coder 3명이 서로 다른 파일을 병렬 개발하는 식. spawn 의 `name`(예: `ui`/`api`)으로 인스턴스를 구분하며 광고·대화창·회신 헤더에 `agt-x (coder · ui)` 로 표시됩니다 (주소는 항상 key).

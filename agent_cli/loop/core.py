@@ -471,6 +471,10 @@ class AgentLoop:
                 self.turn += 1
                 self._begin_turn()
                 result = self._execute_turn()
+                # 도구 이벤트 구독 (5.8.0): 이 턴에 수집된 이벤트를 구독자
+                # inbox 로 발행 — 최종 턴(complete 포함)도 여기서 커버되고,
+                # 회신은 다음 턴 경계(또는 idle wake)의 mail 배달로 돌아온다.
+                self._publish_tool_events()
                 if result is not self._CONTINUE:
                     return result
             # Loop exited. Distinguish "interrupted between turns"
@@ -648,6 +652,22 @@ class AgentLoop:
                 self.messages = self.ctx.get_messages()
             return
         self._add_user_message(text, author)
+
+    def _publish_tool_events(self) -> None:
+        """턴 경계: 이 턴의 구독 대상 도구 이벤트를 registry 로 팬아웃
+        (5.8.0). 수집은 ToolBridge.note_tool_event/dispatcher 가 담당 —
+        depth 0 + 구독자 존재 시만 쌓이므로 평시 비용은 빈 리스트 체크."""
+        events = self._state.tool_events
+        if not events:
+            return
+        self._state.tool_events = []
+        registry = self._config.agent_registry
+        if registry is None:
+            return
+        try:
+            registry.publish_tool_events(events, turn=self.turn)
+        except Exception:  # noqa: BLE001 — 구독 배관이 본 루프를 죽이면 안 됨
+            pass
 
     def _deliver_agent_mail(self) -> None:
         """턴 경계 (teammate P1, D2): 미배달 teammate 회신을 관찰 레코드로

@@ -2315,3 +2315,203 @@ class TestRunMode:
         assert "[Task 2]" in c and "A-done" in c and "B-done" in c
         # 두 서브루프가 실제로 각각 돌았다 (main 2 + sub 2 = 4 콜)
         assert provider.call.call_count == 4
+
+
+class TestToolEventSubscriptions:
+    """도구 이벤트 구독 (5.8.0) — spawn 선언·팬아웃 배칭·LGTM 억제·영속."""
+
+    def _spawn_watcher(self, reg, subs, runner_reply="LGTM"):
+        key, err = reg.spawn(subscribe=subs)
+        assert err == ""
+        wait_until(lambda: reg.get(key).state == "idle")
+        return key
+
+    def test_spawn_param_sets_subscriptions(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key = self._spawn_watcher(reg, ["write_file", "edit_file"])
+        assert reg.get(key).subscriptions == ["write_file", "edit_file"]
+        assert "watching: write_file, edit_file" in reg.format_status(key)
+        reg.shutdown_all()
+
+    def test_profile_frontmatter_subscribes(self, tmp_path, renderer, monkeypatch):
+        import agent_cli.subagent.profiles as profiles_mod
+
+        roles_dir = tmp_path / "roles"
+        roles_dir.mkdir()
+        (roles_dir / "watcher.md").write_text(
+            "---\nsubscribes:\n  - shell\n---\nYou watch.", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            profiles_mod, "_profile_loader", ResourceLoader([roles_dir])
+        )
+        monkeypatch.setattr(profiles_mod, "_PROFILE_SEARCH_PATHS", [roles_dir])
+        reg = make_registry(tmp_path)
+        key, err = reg.spawn(profile="watcher")
+        assert err == "" and reg.get(key).subscriptions == ["shell"]
+        # 명시 파라미터가 frontmatter 를 오버라이드
+        key2, _ = reg.spawn(profile="watcher", subscribe=["*"])
+        assert reg.get(key2).subscriptions == ["*"]
+        reg.shutdown_all()
+
+    def test_invalid_subscribe_rejected(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, err = reg.spawn(subscribe=[1, 2])  # type: ignore[list-item]
+        assert key == "" and "subscribe" in err
+
+    def test_publish_batches_per_subscriber_and_wildcard(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        k_write = self._spawn_watcher(reg, ["write_file"])
+        k_all = self._spawn_watcher(reg, ["*"])
+        k_none = self._spawn_watcher(reg, ["fetch"])
+        events = [
+            {
+                "tool": "write_file",
+                "summary": "a.py",
+                "body": "diff-A",
+                "success": True,
+            },
+            {
+                "tool": "edit_file",
+                "summary": "b.py",
+                "body": "diff-B",
+                "success": False,
+            },
+        ]
+        n = reg.publish_tool_events(events, turn=3)
+        assert n == 2  # write 구독자(1건 매칭) + 와일드카드(2건) — fetch 구독자 제외
+        assert wait_until(lambda: reg.get(k_write).handled == 1)
+        assert wait_until(lambda: reg.get(k_all).handled == 1)
+        assert reg.get(k_none).handled == 0
+        # 수신 내용 검증 — 러너가 받은 메시지 (in 방향 렌더 기록)
+        ins = [
+            c[1] for c in renderer.named("agent_message") if c[1]["direction"] == "in"
+        ]
+        w_msg = next(m["text"] for m in ins if m["key"] == k_write)
+        assert "✓ write_file a.py" in w_msg and "diff-A" in w_msg
+        assert "edit_file" not in w_msg  # 구독 밖 이벤트는 미포함
+        all_msg = next(m["text"] for m in ins if m["key"] == k_all)
+        assert "✗ edit_file b.py" in all_msg and "2건" in all_msg
+        reg.shutdown_all()
+
+    def test_lgtm_reply_suppressed_from_main(self, tmp_path, renderer):
+        # LGTM 회신 → 창에만 (main mailbox 비오염); 발견 회신 → main 배달.
+        replies = iter(["LGTM", "MAJOR: a.py:3 — off-by-one"])
+
+        def runner(query, ctx, **kw):
+            class R:
+                success = True
+                output = next(replies)
+
+            return R(), 0.01
+
+        reg = make_registry(tmp_path, runner=runner)
+        key = self._spawn_watcher(reg, ["write_file"])
+        reg.publish_tool_events(
+            [{"tool": "write_file", "summary": "a.py", "body": "", "success": True}]
+        )
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        assert not reg.has_pending_replies()  # LGTM 억제
+        reg.publish_tool_events(
+            [{"tool": "write_file", "summary": "a.py", "body": "", "success": True}]
+        )
+        assert wait_until(lambda: reg.get(key).handled == 2)
+        assert wait_until(lambda: reg.has_pending_replies())  # 발견은 배달
+        out = reg.drain_replies()
+        assert "off-by-one" in out[0]["output"]
+        reg.shutdown_all()
+
+    def test_subscriptions_survive_manifest_roundtrip(self, tmp_path, renderer):
+        reg1 = make_registry(tmp_path)
+        key = self._spawn_watcher(reg1, ["write_file", "complete"])
+        reg1.shutdown_all()
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1
+        assert reg2.get(key).subscriptions == ["write_file", "complete"]
+        reg2.shutdown_all()
+
+    def test_wants_tool_events_gate(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        assert reg.wants_tool_events() is False
+        key = self._spawn_watcher(reg, ["shell"])
+        assert reg.wants_tool_events() is True
+        reg.kill(key)
+        wait_until(lambda: reg.get(key).state == "dead")
+        assert reg.wants_tool_events() is False
+        reg.shutdown_all()
+
+
+class TestLoopToolEventTap:
+    """루프 탭 통합 — 도구 실행/complete 이 턴 경계에 registry 로 발행."""
+
+    class _FakeRegistry:
+        def __init__(self):
+            self.published = []
+
+        def wants_tool_events(self):
+            return True
+
+        def publish_tool_events(self, events, *, turn=0):
+            self.published.append((turn, events))
+            return 1
+
+        def drain_replies(self):
+            return []
+
+    def _run_loop(self, responses, tmp_path, registry):
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        provider = MagicMock()
+        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        from agent_cli import wire_formats
+
+        loop = AgentLoop(
+            query="Q",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ContextManager(session_dir=tmp_path),
+            max_turns=5,
+            wire_format=wire_formats.get("react"),
+            agent_registry=registry,
+        )
+        return loop.run()
+
+    def test_tool_and_complete_events_published(self, tmp_path, renderer):
+        import json
+
+        reg = self._FakeRegistry()
+        turn1 = "## Thought\n쓰기\n\n## Action\n" + json.dumps(
+            [
+                {
+                    "action": "write_file",
+                    "path": str(tmp_path / "a.py"),
+                    "content": "x = 1\n",
+                }
+            ]
+        )
+        turn2 = "## Thought\n끝\n\n## Action\n" + json.dumps(
+            [{"action": "complete", "result": "done"}]
+        )
+        result = self._run_loop([turn1, turn2], tmp_path, reg)
+        assert result.success
+        # 턴 1: write_file 이벤트 / 턴 2(최종): complete 이벤트 — 둘 다 발행
+        tools_by_turn = {
+            turn: [e["tool"] for e in events] for turn, events in reg.published
+        }
+        assert tools_by_turn.get(1) == ["write_file"]
+        assert tools_by_turn.get(2) == ["complete"]
+        ev = reg.published[0][1][0]
+        assert ev["success"] is True and "a.py" in ev["summary"]

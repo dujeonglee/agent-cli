@@ -140,6 +140,9 @@ class ToolBridge:
         # 4. PostToolUse hooks
         self._run_post_hooks(tool_name, input_dict, result)
 
+        # 4b. 도구 이벤트 구독 (5.8.0) — 구독자 있으면 턴 이벤트로 수집
+        self.note_tool_event(tool_name, input_dict, result)
+
         # 5. Append to recent_tool_history (B1 detector input)
         self._record_tool_history(tool_name, tool_input, result)
 
@@ -295,6 +298,33 @@ class ToolBridge:
                 "hooks_config": self.cfg.hooks_config,
                 "compaction_enabled": self.cfg.compaction_enabled,
             },
+        )
+
+    # ── 도구 이벤트 구독 탭 (5.8.0) ─────────────────────────────────
+    def note_tool_event(self, tool_name: str, tool_input, result) -> None:
+        """구독자가 있으면 이 도구 실행을 턴 이벤트로 수집 — main 루프
+        (depth 0) 전용 (서브에이전트 작업 구독은 루프/폭주 위험). 페이로드
+        는 컴팩트(요약+본문 캡): 구독자는 read 도구로 전문을 직접 본다."""
+        registry = self.cfg.agent_registry
+        if registry is None or self.cfg.depth != 0 or not registry.wants_tool_events():
+            return
+        summary = ""
+        tool = TOOLS.get(tool_name)
+        if tool is not None and isinstance(tool_input, dict):
+            try:
+                summary = tool.summary_arg(tool_input)
+            except Exception:
+                summary = ""
+        body = (result.output if result.success else result.error) or ""
+        if len(body) > 600:
+            body = body[:600] + "\n… (truncated — read the file for full context)"
+        self.state.tool_events.append(
+            {
+                "tool": tool_name,
+                "summary": summary,
+                "body": body,
+                "success": bool(result.success),
+            }
         )
 
     # ── per-call loop context (execute + render seams share it) ─────
