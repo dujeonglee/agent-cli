@@ -56,9 +56,7 @@ _THINK_BLOCK_RE = re.compile(
     r"<(" + "|".join(_THINK_TAG_NAMES) + r")\b[^>]*>(.*?)</\1\s*>",
     re.S | re.I,
 )
-_THINK_OPEN_RE = re.compile(
-    r"<(" + "|".join(_THINK_TAG_NAMES) + r")\b[^>]*>", re.I
-)
+_THINK_OPEN_RE = re.compile(r"<(" + "|".join(_THINK_TAG_NAMES) + r")\b[^>]*>", re.I)
 
 
 def strip_think_blocks(text: str) -> tuple[str, str]:

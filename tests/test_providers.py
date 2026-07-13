@@ -732,6 +732,7 @@ class TestInterruptibleLines:
         with pytest.raises(ConnectionError):
             list(interruptible_lines(r, lambda: False, poll_interval=0.01))
 
+
 class TestStripThinkBlocks:
     """<think> 류 인라인 추론 태그 제거 (5.10.0) — MiMo 등이 content 에
     긴 추론 블록을 태그로 흘리는 것을 provider 응답 조립 지점에서 격리.
@@ -805,4 +806,3 @@ class TestStripThinkBlocks:
         resp = prov._parse_response(data)
         assert resp.content == "답"
         assert "필드" in resp.thinking and "tag" in resp.thinking
-

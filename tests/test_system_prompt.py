@@ -1401,6 +1401,7 @@ class TestJoinDirectiveScopes:
         joined = join_directive_scopes(split_directive_scopes(raw))
         assert joined == "## @main\nA\nC\n\n## @agents\nB"
 
+
 class TestAntiHtmlEmphasis:
     """HTML-편향 모델 대응 (5.10.1) — 두 wire format 모두 초기 규칙과
     파싱-실패 복구 힌트에서 HTML/XML 태그 발화를 강하게 금지한다
@@ -1423,4 +1424,3 @@ class TestAntiHtmlEmphasis:
         for name in ("md_array", "react"):
             hint = self._fmt(name).static_retry_hint_no_json()
             assert "HTML" in hint, name
-
