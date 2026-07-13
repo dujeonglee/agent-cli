@@ -16,7 +16,7 @@ from agent_cli.constants import (
     STREAM_MAX_RECONNECTS,
 )
 
-from agent_cli.providers.base import LLMResponse, TokenUsage
+from agent_cli.providers.base import LLMResponse, TokenUsage, strip_think_blocks
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
     StreamEvent,
@@ -143,22 +143,26 @@ class OpenAIProvider:
                 eval_ns=acc.decode_ns,
                 ttft_ns=acc.ttft_ns,
             )
+        content, inline_think = strip_think_blocks(acc.content)
+        thinking = "\n\n".join(x for x in (acc.thinking, inline_think) if x)
         return LLMResponse(
-            content=acc.content,
+            content=content,
             tool_calls=None,
             usage=usage,
             stop_reason=acc.stop_reason,
-            thinking=acc.thinking,
+            thinking=thinking,
         )
 
     def _parse_response(self, data: dict) -> LLMResponse:
         """Parse non-streaming response."""
         choice = data["choices"][0]
         message = choice["message"]
-        content = message.get("content") or ""
-        # vLLM convention for reasoning models served via OpenAI-compat.
-        # Empty string when the server doesn't expose it.
-        thinking = message.get("reasoning_content") or ""
+        # 인라인 <think> 류 태그 격리 (MiMo 등 — 5.10.0) + vLLM 관례
+        # reasoning_content 필드. 둘 다 thinking 으로 합류.
+        content, inline_think = strip_think_blocks(message.get("content") or "")
+        thinking = "\n\n".join(
+            x for x in (message.get("reasoning_content") or "", inline_think) if x
+        )
 
         # Parse tool calls if present
         tool_calls = None

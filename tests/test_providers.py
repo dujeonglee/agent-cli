@@ -731,3 +731,78 @@ class TestInterruptibleLines:
         r = self._FakeResp([b"a"], raise_after=0)
         with pytest.raises(ConnectionError):
             list(interruptible_lines(r, lambda: False, poll_interval=0.01))
+
+class TestStripThinkBlocks:
+    """<think> 류 인라인 추론 태그 제거 (5.10.0) — MiMo 등이 content 에
+    긴 추론 블록을 태그로 흘리는 것을 provider 응답 조립 지점에서 격리.
+    제거분은 버리지 않고 LLMResponse.thinking 으로 이동 (verbose 가시성)."""
+
+    def test_strips_closed_block_and_moves_to_thinking(self):
+        from agent_cli.providers.base import strip_think_blocks
+
+        content, think = strip_think_blocks(
+            "<think>아주 긴 추론...</think>\n## Thought\n간다\n\n## Action\n[]"
+        )
+        assert content.startswith("## Thought")
+        assert "아주 긴 추론" in think and "<think>" not in content
+
+    def test_strips_unclosed_block_to_eof(self):
+        # max_tokens 를 think 안에서 소진 — 열림 태그 이후 전부가 추론.
+        from agent_cli.providers.base import strip_think_blocks
+
+        content, think = strip_think_blocks("<think>끝나지 않는 추론이 계속")
+        assert content == ""
+        assert "끝나지 않는" in think
+
+    def test_multiple_tags_and_variants(self):
+        from agent_cli.providers.base import strip_think_blocks
+
+        content, think = strip_think_blocks(
+            "<THINK>a</THINK>본문1<reasoning>b</reasoning>본문2"
+        )
+        assert content == "본문1본문2"
+        assert "a" in think and "b" in think
+
+    def test_plain_content_untouched(self):
+        from agent_cli.providers.base import strip_think_blocks
+
+        raw = '## Thought\nx\n\n## Action\n[{"action": "complete"}]'
+        content, think = strip_think_blocks(raw)
+        assert content == raw and think == ""
+
+    def test_openai_parse_response_strips(self):
+        from agent_cli.providers.openai import OpenAIProvider
+
+        prov = OpenAIProvider(base_url="http://x/v1", api_key="k")
+        data = {
+            "choices": [
+                {
+                    "message": {"content": "<think>추론</think>답변"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        resp = prov._parse_response(data)
+        assert resp.content == "답변"
+        assert "추론" in resp.thinking
+
+    def test_openai_parse_appends_to_reasoning_content(self):
+        # 서버 reasoning_content 와 인라인 태그가 공존해도 둘 다 thinking 으로.
+        from agent_cli.providers.openai import OpenAIProvider
+
+        prov = OpenAIProvider(base_url="http://x/v1", api_key="k")
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "<think>tag</think>답",
+                        "reasoning_content": "필드",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        resp = prov._parse_response(data)
+        assert resp.content == "답"
+        assert "필드" in resp.thinking and "tag" in resp.thinking
+
