@@ -1400,3 +1400,27 @@ class TestJoinDirectiveScopes:
         raw = "## @main\nA\n## @agents\nB\n## @main\nC"
         joined = join_directive_scopes(split_directive_scopes(raw))
         assert joined == "## @main\nA\nC\n\n## @agents\nB"
+
+class TestAntiHtmlEmphasis:
+    """HTML-편향 모델 대응 (5.10.1) — 두 wire format 모두 초기 규칙과
+    파싱-실패 복구 힌트에서 HTML/XML 태그 발화를 강하게 금지한다
+    (self-contained 원칙: 포맷별 자체 문구, 공유 빌더 없음)."""
+
+    def _fmt(self, name):
+        from agent_cli import wire_formats
+
+        return wire_formats.get(name)
+
+    def test_format_rules_forbid_html_both_formats(self):
+        for name in ("md_array", "react"):
+            rules = self._fmt(name).format_rules()
+            assert "NEVER use HTML/XML tags" in rules, name
+            # 대표 태그 예시로 앵커링 (HTML-편향 prior 억제)
+            assert "<tool_call>" in rules and "<div>" in rules, name
+            assert "UNPARSEABLE" in rules, name
+
+    def test_retry_hint_reminds_no_html(self):
+        for name in ("md_array", "react"):
+            hint = self._fmt(name).static_retry_hint_no_json()
+            assert "HTML" in hint, name
+

@@ -115,11 +115,16 @@ Rules:
    list of items inside a single op (no nested arrays).
 4. When the task is DONE, end with a `complete` op carrying your final
    answer: {"action": "complete", "result": "<your final answer>"}.
+5. NEVER use HTML/XML tags of ANY kind — no <tool_call>, <function_call>,
+   <div>, <p>, <answer>, <output>, or anything tag-shaped. This protocol
+   is markdown `##` headings + a JSON array, NOTHING else. A turn
+   containing HTML/XML tags is UNPARSEABLE and completely wasted — if you
+   feel the urge to open a tag, write the `## Action` JSON array instead.
    Always finish this way — do NOT just stop or omit `## Action`.
-5. Every turn must include a `## Action` with at least one op (work, or
+6. Every turn must include a `## Action` with at least one op (work, or
    `complete` to finish).
-6. If an observation shows an error, fix parameters and retry.
-7. Respond in the user's language.
+7. If an observation shows an error, fix parameters and retry.
+8. Respond in the user's language.
 
 Several independent operations in one turn (read three files at once —
 they don't depend on each other):
@@ -733,7 +738,11 @@ class MdArrayFormat(WireFormat):
         )
 
     def static_retry_hint_no_json(self) -> str:
-        return f"{self.failure_framing_parse_fail()} {self.constraint_reminder_call()}"
+        return (
+            f"{self.failure_framing_parse_fail()} {self.constraint_reminder_call()} "
+            "Do NOT use HTML/XML tags (<tool_call>, <div>, …) — markdown "
+            "headings + JSON array only."
+        )
 
     def static_retry_hint_no_action(self) -> str:
         return (

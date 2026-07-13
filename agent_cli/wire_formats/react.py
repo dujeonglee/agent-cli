@@ -362,7 +362,8 @@ _STATIC_RETRY_HINT_NO_JSON = (
     "Your response was not valid JSON. "
     "Output ONLY a JSON object: "
     '{"thought": "...", "action": "tool_name", "action_input": {...}}. '
-    "No markdown fences, no extra text."
+    "No markdown fences, no extra text, and NO HTML/XML tags "
+    "(<tool_call>, <div>, …) — JSON only."
 )
 
 _STATIC_RETRY_HINT_NO_ACTION = (
@@ -440,8 +441,13 @@ Rules:
    finish this way — do NOT just stop or omit `actions`.
 5. Every turn must include `actions` with at least one op (work, or `complete`
    to finish).
-6. If an observation shows an error, fix parameters and retry.
-7. Respond in the user's language.
+6. NEVER use HTML/XML tags of ANY kind — no <tool_call>, <function_call>,
+   <div>, <p>, <answer>, <output>, or anything tag-shaped. This protocol is
+   ONE JSON object, NOTHING else. A turn containing HTML/XML tags is
+   UNPARSEABLE and completely wasted — if you feel the urge to open a tag,
+   write the JSON object instead.
+7. If an observation shows an error, fix parameters and retry.
+8. Respond in the user's language.
 
 Several independent operations in one turn (read three files at once — they
 don't depend on each other):
