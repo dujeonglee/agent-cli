@@ -443,8 +443,6 @@ class TurnDispatcher:
         path = batch_ops[0].action_input.get("path")
         edits = [op.action_input for op in batch_ops]
         result = apply_edits_batch(path, edits)
-        # 배치 경로는 bridge 를 우회하므로 구독 탭도 여기서 (5.8.0)
-        self.tools.note_tool_event("edit_file", batch_ops[0].action_input or {}, result)
         observation = self.tools._tool_observation(
             "edit_file", result, batch_ops[0].action_input
         )
@@ -541,20 +539,6 @@ class TurnDispatcher:
             unwrapped = unwrap_nested_envelope(raw)
             if unwrapped != raw:
                 answer = unwrapped or answer
-
-        # complete 도 구독 가능한 이벤트 (5.8.0 — task reviewer 유스케이스):
-        # 가상 도구라 bridge 를 안 지나므로 여기서 직접 수집. 발행은 core
-        # 의 턴-경계 publish 가 최종 턴까지 커버.
-        registry = self.cfg.agent_registry
-        if (
-            registry is not None
-            and self.cfg.depth == 0
-            and registry.wants_tool_events()
-        ):
-            body = answer if len(answer) <= 1500 else answer[:1500] + "\n… (truncated)"
-            self.state.tool_events.append(
-                {"tool": "complete", "summary": "", "body": body, "success": True}
-            )
 
         if self.ctx:
             self.ctx.add(

@@ -273,7 +273,7 @@ def _parse_at_profile(name: str) -> tuple[str, str]:
 
     규칙 (설계 §3.5): **전체 토큰이 실존 프로파일이면 그것 우선**, 아니면
     ``-run``/``-spawn`` 접미사 분리 — 하이픈 포함 프로파일명
-    (code-reviewer)과 극단 케이스(foo-run 이라는 프로파일)까지 결정적.
+    (kernel-coder)과 극단 케이스(foo-run 이라는 프로파일)까지 결정적.
     """
     from agent_cli.subagent.profiles import load_profile
 

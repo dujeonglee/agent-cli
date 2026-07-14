@@ -106,6 +106,19 @@ def compose_role_prompt(profile_body: str, instructions: str) -> str:
     return parts[0] if parts else ""
 
 
+def first_sentence(text: str, *, cap: int = 200) -> str:
+    """첫 문장만 (Live Agents 로스터·instant-agent 역할 요약용, v5.12).
+
+    문장 종결부호(.!?)+공백/끝에서 자른다. 종결부호가 없으면 ``cap`` 자로
+    폴백(단어 중간 절단 방지는 못 하지만 병리적 무-마침표 케이스 안전망).
+    """
+    text = (text or "").strip()
+    m = re.search(r"[.!?](\s|$)", text)
+    if m:
+        return text[: m.start() + 1]
+    return text if len(text) <= cap else text[: cap - 3] + "..."
+
+
 def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
     """표시 라벨 — 다중 인스턴스 구분: "agt-x (coder · ui)"."""
     parts = [p for p in (profile, name) if p]
@@ -239,7 +252,6 @@ class AgentInstance:
         instance_name: str = "",
         description: str = "",
         instructions: str = "",
-        subscriptions: list[str] | None = None,
     ):
         self.key = key
         self.profile_name = profile_name
@@ -253,10 +265,6 @@ class AgentInstance:
         # 합성 결과는 role_prompt 에 이미 들어있고, 이 필드는 manifest
         # 영속·인스펙터 가시성용.
         self.instructions = instructions
-        # 도구 이벤트 구독 (5.8.0): main 루프의 해당 도구 실행이 턴 경계에
-        # 배치 1건으로 inbox 에 들어온다. "*" = 전체 (학습/기록 모듈용),
-        # "complete" 같은 가상 도구도 구독 가능 (task reviewer).
-        self.subscriptions = list(subscriptions or [])
         self.allowed_tools = allowed_tools
         self.model = model
         self.hooks_config = hooks_config
@@ -296,7 +304,6 @@ class AgentInstance:
             "state": self.state,
             "handled": self.handled,
             "pending_requests": self.inbox.qsize(),
-            "subscriptions": list(self.subscriptions),
             "est_tokens": est_tokens,
             "error": self.error,
         }
@@ -381,7 +388,6 @@ class AgentRegistry:
         context_mode: str = "none",
         parent_ctx=None,
         runtime: dict | None = None,
-        subscribe: list[str] | None = None,
     ) -> tuple[str, str]:
         """teammate 생성 — ``(key, error)``. 성공 시 error 는 빈 문자열.
 
@@ -421,15 +427,11 @@ class AgentRegistry:
                 hooks_config=hooks_config,
             )
 
-        # 도구 이벤트 구독 (5.8.0): 명시 파라미터 > 프로파일 frontmatter
-        # `subscribes` > 없음. 문자열 리스트만 수용 (도구명 or "*").
-        profile_subs = config.get("subscribes") if profile else None
-        subscriptions = subscribe if subscribe is not None else profile_subs
-        if subscriptions is not None and (
-            not isinstance(subscriptions, list)
-            or not all(isinstance(s, str) and s for s in subscriptions)
-        ):
-            return "", "invalid subscribe: expected a list of tool names"
+        # instant-agent 역할 캡처 (v5.12): 프로파일 description 이 없고
+        # 인라인 instructions 만 있으면 그 첫 문장을 로스터 역할 요약으로.
+        # → 프로파일 없는 즉석 에이전트도 동료들에게 역할이 보인다.
+        if not description and instructions:
+            description = first_sentence(instructions)
 
         # instant-agent (U4): 인라인 지시를 파일 본문 뒤에 합성 —
         # 합성본이 이 개체의 정체성(role_prompt)이 되어 manifest 로 영속.
@@ -454,7 +456,6 @@ class AgentRegistry:
             instance_name=name,
             description=description,
             instructions=instructions,
-            subscriptions=subscriptions,
         )
         self._agents[key] = tm
         tm.worker = threading.Thread(
@@ -539,9 +540,18 @@ class AgentRegistry:
         tgt = self._agents.get(requester_key)
         if tgt is None or tgt.state == "dead":
             return
+        # 가이던스 꼬리표: 이 회신으로 작업을 이어가고, 마무리되면 요청자
+        # (예: main)에 보고할 게 있으면 message, 없으면 complete 하도록 유도
+        # (비동기라 "보고 단계"를 명시 안내 — build_reply_record 꼬리표와 동형).
+        text = (
+            f"{output}\n\n"
+            "(Use this reply to continue your task. When done, if there is a "
+            "result to report back to whoever requested your work (e.g. main), "
+            "send it with the `message` tool; otherwise just `complete`.)"
+        )
         self.request(
             requester_key,
-            output,
+            text,
             author=f"agent:{from_key}",
             hop=hop + 1,
             expects_reply=False,
@@ -605,51 +615,6 @@ class AgentRegistry:
 
     # ── status / kill / 종료 ────────────────────
 
-    def wants_tool_events(self) -> bool:
-        """구독자가 하나라도 살아 있나 — 루프 탭의 저비용 게이트."""
-        return any(
-            tm.subscriptions and tm.state != "dead" for tm in self._agents.values()
-        )
-
-    def publish_tool_events(self, events: list[dict], *, turn: int = 0) -> int:
-        """main 턴의 도구 이벤트를 구독자별 **배치 1건**으로 팬아웃 (5.8.0).
-
-        events 항목: ``{tool, summary, body, success}``. 구독 매칭 =
-        도구명 일치 or ``"*"``. 메시지는 author="watch" 로 큐잉 —
-        회신 라우팅은 main 과 같되 **LGTM 회신은 main 비배달**(창 전용,
-        무발견 노이즈가 컨텍스트를 먹지 않게). 발행 건수 반환.
-        """
-        if not events:
-            return 0
-        published = 0
-        for tm in list(self._agents.values()):
-            if tm.state == "dead" or not tm.subscriptions:
-                continue
-            subs = set(tm.subscriptions)
-            hits = [e for e in events if "*" in subs or e.get("tool") in subs]
-            if not hits:
-                continue
-            lines = [f"[tool-events] main 턴 {turn} 의 구독 도구 실행 {len(hits)}건:"]
-            for i, e in enumerate(hits, 1):
-                mark = "✓" if e.get("success") else "✗"
-                head = f"{i}. {mark} {e.get('tool')}"
-                if e.get("summary"):
-                    head += f" {e['summary']}"
-                lines.append(head)
-                body = (e.get("body") or "").strip()
-                if body:
-                    lines.append(body)
-            lines.append(
-                '— 조치/발견이 없으면 정확히 "LGTM" 한 줄로만 회신하세요 '
-                "(LGTM 회신은 main 에 배달되지 않습니다). 발견이 있으면 "
-                "구체적으로(예: 심각도+file:line) 회신하세요. 전문이 필요하면 "
-                "파일을 직접 읽으세요."
-            )
-            error = self.request(tm.key, "\n".join(lines), author="watch")
-            if not error:
-                published += 1
-        return published
-
     def format_status(self, key: str = "") -> str:
         if key:
             tm = self._agents.get(key)
@@ -672,8 +637,6 @@ class AgentRegistry:
                 f" | inbox {s['pending_requests']}"
                 f" | ctx ~{s['est_tokens']} tokens"
             )
-            if s.get("subscriptions"):
-                line += f" | watching: {', '.join(s['subscriptions'])}"
             if s["error"]:
                 line += f" | error: {s['error']}"
             if s["state"] == "dead":
@@ -806,7 +769,6 @@ class AgentRegistry:
                     "name": tm.instance_name,
                     "description": tm.description,
                     "instructions": tm.instructions,
-                    "subscriptions": list(tm.subscriptions),
                     # role_prompt 를 통째로 저장 — resume 시 역할 md 파일이
                     # 지워졌어도 teammate 는 갖고 있던 역할 그대로 살아난다.
                     "role_prompt": tm.role_prompt,
@@ -886,7 +848,6 @@ class AgentRegistry:
                 instance_name=e.get("name", ""),
                 description=e.get("description", ""),
                 instructions=e.get("instructions", ""),
-                subscriptions=e.get("subscriptions") or [],
             )
             tm.handled = int(e.get("handled", 0) or 0)
             tm.queued = tm.handled  # seq 이어가기 (reply-N.md 충돌 방지)
@@ -1009,26 +970,22 @@ class AgentRegistry:
                     to=author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
                 )
                 expects_reply = item.get("expects_reply", True)
-                is_lgtm = (output or "").strip().upper().startswith("LGTM")
                 if not expects_reply:
                     # 배달된 peer 회신(v5.11): 수신자는 소비만 — 산출물을
                     # 어디로도 라우팅하지 않는다(terminal, 핑퐁 방지). 결과에
                     # 이어 다른 주체에게 보낼 게 있으면 명시적 message 로.
                     self._save_state()
                 elif author.startswith("agent:"):
-                    # peer 요청의 회신 → 요청자 inbox 로 terminal 재주입
-                    # (LGTM/무발견 ack 은 억제 — watch 와 동형).
-                    if not is_lgtm:
-                        requester = author.split(":", 1)[1]
-                        self._deliver_peer_reply(
-                            requester, tm.key, output, item.get("hop", 0)
-                        )
-                    else:
-                        self._save_state()
-                elif author == "main" or (author == "watch" and not is_lgtm):
+                    # peer 요청의 회신 → 요청자 inbox 로 terminal 재주입.
+                    # 청탁된 응답이라 항상 배달(LGTM 억제 없음 — 구독 제거로
+                    # watch 노이즈 억제가 불필요해짐, v5.12).
+                    requester = author.split(":", 1)[1]
+                    self._deliver_peer_reply(
+                        requester, tm.key, output, item.get("hop", 0)
+                    )
+                elif author == "main":
                     # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
-                    # 개입 문답은 창에만, main 컨텍스트 비오염). watch 는
-                    # 발견 회신만(LGTM 억제).
+                    # 개입 문답은 창에만, main 컨텍스트 비오염).
                     self._push_reply(
                         {
                             "kind": "reply",
@@ -1042,7 +999,7 @@ class AgentRegistry:
                         }
                     )
                 else:
-                    self._save_state()  # push 를 건너뛰어도 상태는 미러
+                    self._save_state()  # user:* — 창만, push 건너뛰어도 상태 미러
                 tm.current_author = "main"
                 self._notify_roster()
         except BaseException as e:  # noqa: BLE001 — 루프 기계 자체의 사망 포착
@@ -1091,8 +1048,8 @@ class AgentRegistry:
                 text=question,
                 to=tm.current_author,  # 인간 발신 작업의 질문은 그 사람에게
             )
-            if tm.current_author in ("main", "watch"):
-                # main/구독 발신 작업의 질문만 main mailbox 로 (D8 대칭).
+            if tm.current_author == "main":
+                # main 발신 작업의 질문만 main mailbox 로 (D8 대칭).
                 self._push_reply(
                     {
                         "kind": "question",
@@ -1244,7 +1201,6 @@ def tool_agent(
             context_mode=args.get("context", "none"),
             parent_ctx=parent_ctx,
             runtime=runtime,
-            subscribe=args.get("subscribe"),
         )
         if error:
             return ToolResult(False, error=f"spawn rejected: {error}")

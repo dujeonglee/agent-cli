@@ -199,8 +199,8 @@ class TestBuiltinAgentPriority:
 class TestKernelProfiles:
     """내장 커널 4종 (5.1.0 협업 패치) — 로딩·도구 경계·정체성 핵심 계약."""
 
-    ALL = ("kernel-coder", "kernel-kunit", "kernel-analyzer", "kernel-reviewer")
-    READ_ONLY = ("kernel-analyzer", "kernel-reviewer")
+    ALL = ("kernel-coder", "kernel-kunit", "kernel-analyzer")
+    READ_ONLY = ("kernel-analyzer",)
     WRITING = ("kernel-coder", "kernel-kunit")
 
     def test_all_load_with_description(self):
@@ -247,51 +247,3 @@ class TestKernelProfiles:
         assert "file:line" in flat  # 인용 규율
         assert "softirq" in flat or "hardirq" in flat  # 컨텍스트 주석
         assert "cannot modify" in flat  # 읽기 전용 정체성
-
-    def test_reviewer_contract(self):
-        role, _, _ = load_profile("kernel-reviewer")
-        flat = role.lower()
-        assert "severity" in flat and "file:line" in flat
-        assert "accept" in flat and "reject" in flat  # 명시 판정
-        assert "checkpatch" in flat
-        assert "scenario" in flat  # 실패 시나리오 요구
-
-
-class TestWatcherProfiles:
-    """구독형 내장 프로파일 (5.9.0) — 구독 선언·도구 경계·회신 규율 계약."""
-
-    def test_kernel_reviewer_subscribes_like_code_reviewer(self):
-        for name in ("code-reviewer", "kernel-reviewer"):
-            role, config, err = load_profile(name)
-            assert err is None, name
-            assert config.get("subscribes") == ["write_file", "edit_file"], name
-            assert "LGTM" in role, name  # 무발견 회신 규율
-            tools = config["allowed-tools"]
-            assert "write_file" not in tools and "edit_file" not in tools, name
-
-    def test_task_reviewer_contract(self):
-        role, config, err = load_profile("task-reviewer")
-        assert err is None
-        assert config["subscribes"] == ["complete"]
-        tools = config["allowed-tools"]
-        assert "read_context" in tools  # 원 요청 회수 경로
-        assert "write_file" not in tools and "edit_file" not in tools
-        flat = role.lower()
-        assert "read_context" in flat  # 원 요청 회수 규율 명시
-        assert "lgtm" in flat
-        assert "never trust the summary" in flat  # 실검증 규율
-
-    def test_session_recorder_contract(self):
-        role, config, err = load_profile("session-recorder")
-        assert err is None
-        assert config["subscribes"] == ["*"]
-        tools = config["allowed-tools"]
-        assert "memory" in tools  # 연대기 저장소
-        assert "write_file" not in tools and "shell" not in tools
-        flat = role.lower()
-        # 무개입 계약 — 회신은 항상 정확히 LGTM 한 단어 (절대화 문구)
-        assert "lgtm" in flat
-        assert "always the single word" in flat
-        assert "record first" in flat  # 기록-우선 절차 (A3B inert 실측 대응)
-        for ev in ("failure", "discovery", "decision"):
-            assert ev in flat  # 사건 분류 규율

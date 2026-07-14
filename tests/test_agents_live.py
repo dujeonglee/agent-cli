@@ -1258,12 +1258,12 @@ class TestRoleDiscovery:
     def test_builtin_roles_loadable_and_advertised(self):
         from agent_cli.subagent.profiles import available_profiles, load_profile
 
-        for name in ("researcher", "code-reviewer"):
+        for name in ("researcher", "coder"):
             body, config, err = load_profile(name)
             assert err is None and body
             assert config.get("allowed-tools")
         advertised = dict(available_profiles())
-        assert "researcher" in advertised and "code-reviewer" in advertised
+        assert "researcher" in advertised and "coder" in advertised
         assert advertised["researcher"]  # description 필수 (발견 표면)
 
     def test_disable_model_invocation_hidden(self, tmp_path, monkeypatch):
@@ -1288,7 +1288,7 @@ class TestRoleDiscovery:
 
         desc = build_agent_profiles_section()
         assert "## Agent Profiles" in desc
-        assert "`researcher`" in desc and "`code-reviewer`" in desc
+        assert "`researcher`" in desc and "`coder`" in desc
         assert '"mode"' in desc and "spawn" in desc  # 스폰 예시 포함
 
     def test_prompt_section_gated_on_teammate_tool(self, tmp_path):
@@ -1418,7 +1418,8 @@ class TestLiveTeammatesSection:
 
         reg = make_registry(tmp_path)
         k1, _ = reg.spawn(name="ui")
-        reg.get(k1).description = "x" * 200  # 광고 요약은 절단
+        # 종결부 없는 초장문 → 200자 캡 폴백 (첫 문장이 없을 때만, v5.12)
+        reg.get(k1).description = "x" * 250
         k2, _ = reg.spawn()
         wait_until(lambda: reg.get(k2).state == "idle")
         reg.kill(k2)  # dead 는 광고에서 제외
@@ -1427,7 +1428,7 @@ class TestLiveTeammatesSection:
         assert "## Live Agents" in desc
         assert f"`{k1}`" in desc and "(ui)" in desc
         assert f"`{k2}`" not in desc
-        assert "..." in desc and "x" * 141 not in desc  # 140자 절단
+        assert "..." in desc and "x" * 198 not in desc  # 197자 + "..." 캡 폴백
         assert '"mode":"request"' in desc  # 재사용 유도
         assert "distinct `name`" in desc  # 다중 인스턴스 안내
         reg.shutdown_all()
@@ -1735,6 +1736,63 @@ class TestPeerMessaging:
         )
         assert result.success
         assert sent == [("agt-peer", "need help")]
+
+
+class TestUnifiedMessagingV512:
+    """구독 제거 후 메시징 유일화 (v5.12): peer 회신 가이던스 꼬리표 +
+    로스터 첫-문장 자체완결 + instant-agent 역할 캡처."""
+
+    def test_peer_reply_carries_guidance_tail(self, tmp_path, renderer):
+        runner = _RecordingRunner()
+        reg = make_registry(tmp_path, runner=runner)
+        a, _ = reg.spawn(name="alpha")
+        b, _ = reg.spawn(name="beta")
+        assert wait_until(
+            lambda: reg.get(a).state == "idle" and reg.get(b).state == "idle"
+        )
+        reg.request(b, "q", author=f"agent:{a}", expects_reply=True)
+        assert wait_until(lambda: reg.get(a).handled >= 1)
+        # A 가 받은 B 회신에 "계속 + 조건부 보고" 가이던스가 붙어 있다 —
+        # echo 회신엔 없을 두 단어(message·complete)로 확인.
+        got = [q for q in runner.queries() if f"[agent:{b}]" in q]
+        assert got, "A 가 B 회신을 못 받음"
+        assert "message" in got[0] and "complete" in got[0]
+        reg.shutdown_all()
+
+    def test_roster_uses_first_sentence_not_midword_cut(self, tmp_path, renderer):
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        reg = make_registry(tmp_path)
+        k, _ = reg.spawn(name="builder")
+        reg.get(k).profile_name = "coder"
+        reg.get(k).description = (
+            "Persistent implementation specialist. Writes and edits code across "
+            "many requests remembering decisions."
+        )
+        wait_until(lambda: reg.get(k).state == "idle")
+        desc = build_live_agents_section(reg)
+        assert "Persistent implementation specialist." in desc
+        assert "Writes and edits" not in desc  # 첫 문장만
+        # 로스터 라인 자체엔 중간 절단(...) 이 없어야 한다. 섹션 안내문의
+        # `message":"..."}` 예시와 충돌하지 않도록 roster 라인만 검사.
+        roster_line = next(ln for ln in desc.splitlines() if f"`{k}`" in ln)
+        assert "..." not in roster_line
+        reg.shutdown_all()
+
+    def test_instant_agent_role_captured_in_roster(self, tmp_path, renderer):
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        reg = make_registry(tmp_path)
+        # 프로파일 없이 instructions 만 (instant-agent)
+        k, err = reg.spawn(
+            instructions="You are a wire-format specialist for this repo. "
+            "You know every plugin."
+        )
+        assert not err
+        wait_until(lambda: reg.get(k).state == "idle")
+        assert reg.get(k).description.startswith("You are a wire-format specialist")
+        assert "wire-format specialist" in build_live_agents_section(reg)
+        reg.shutdown_all()
 
 
 class TestRendererSignatureRegression:
@@ -2523,203 +2581,3 @@ class TestRunMode:
         assert "[Task 2]" in c and "A-done" in c and "B-done" in c
         # 두 서브루프가 실제로 각각 돌았다 (main 2 + sub 2 = 4 콜)
         assert provider.call.call_count == 4
-
-
-class TestToolEventSubscriptions:
-    """도구 이벤트 구독 (5.8.0) — spawn 선언·팬아웃 배칭·LGTM 억제·영속."""
-
-    def _spawn_watcher(self, reg, subs, runner_reply="LGTM"):
-        key, err = reg.spawn(subscribe=subs)
-        assert err == ""
-        wait_until(lambda: reg.get(key).state == "idle")
-        return key
-
-    def test_spawn_param_sets_subscriptions(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        key = self._spawn_watcher(reg, ["write_file", "edit_file"])
-        assert reg.get(key).subscriptions == ["write_file", "edit_file"]
-        assert "watching: write_file, edit_file" in reg.format_status(key)
-        reg.shutdown_all()
-
-    def test_profile_frontmatter_subscribes(self, tmp_path, renderer, monkeypatch):
-        import agent_cli.subagent.profiles as profiles_mod
-
-        roles_dir = tmp_path / "roles"
-        roles_dir.mkdir()
-        (roles_dir / "watcher.md").write_text(
-            "---\nsubscribes:\n  - shell\n---\nYou watch.", encoding="utf-8"
-        )
-        monkeypatch.setattr(
-            profiles_mod, "_profile_loader", ResourceLoader([roles_dir])
-        )
-        monkeypatch.setattr(profiles_mod, "_PROFILE_SEARCH_PATHS", [roles_dir])
-        reg = make_registry(tmp_path)
-        key, err = reg.spawn(profile="watcher")
-        assert err == "" and reg.get(key).subscriptions == ["shell"]
-        # 명시 파라미터가 frontmatter 를 오버라이드
-        key2, _ = reg.spawn(profile="watcher", subscribe=["*"])
-        assert reg.get(key2).subscriptions == ["*"]
-        reg.shutdown_all()
-
-    def test_invalid_subscribe_rejected(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        key, err = reg.spawn(subscribe=[1, 2])  # type: ignore[list-item]
-        assert key == "" and "subscribe" in err
-
-    def test_publish_batches_per_subscriber_and_wildcard(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        k_write = self._spawn_watcher(reg, ["write_file"])
-        k_all = self._spawn_watcher(reg, ["*"])
-        k_none = self._spawn_watcher(reg, ["fetch"])
-        events = [
-            {
-                "tool": "write_file",
-                "summary": "a.py",
-                "body": "diff-A",
-                "success": True,
-            },
-            {
-                "tool": "edit_file",
-                "summary": "b.py",
-                "body": "diff-B",
-                "success": False,
-            },
-        ]
-        n = reg.publish_tool_events(events, turn=3)
-        assert n == 2  # write 구독자(1건 매칭) + 와일드카드(2건) — fetch 구독자 제외
-        assert wait_until(lambda: reg.get(k_write).handled == 1)
-        assert wait_until(lambda: reg.get(k_all).handled == 1)
-        assert reg.get(k_none).handled == 0
-        # 수신 내용 검증 — 러너가 받은 메시지 (in 방향 렌더 기록)
-        ins = [
-            c[1] for c in renderer.named("agent_message") if c[1]["direction"] == "in"
-        ]
-        w_msg = next(m["text"] for m in ins if m["key"] == k_write)
-        assert "✓ write_file a.py" in w_msg and "diff-A" in w_msg
-        assert "edit_file" not in w_msg  # 구독 밖 이벤트는 미포함
-        all_msg = next(m["text"] for m in ins if m["key"] == k_all)
-        assert "✗ edit_file b.py" in all_msg and "2건" in all_msg
-        reg.shutdown_all()
-
-    def test_lgtm_reply_suppressed_from_main(self, tmp_path, renderer):
-        # LGTM 회신 → 창에만 (main mailbox 비오염); 발견 회신 → main 배달.
-        replies = iter(["LGTM", "MAJOR: a.py:3 — off-by-one"])
-
-        def runner(query, ctx, **kw):
-            class R:
-                success = True
-                output = next(replies)
-
-            return R(), 0.01
-
-        reg = make_registry(tmp_path, runner=runner)
-        key = self._spawn_watcher(reg, ["write_file"])
-        reg.publish_tool_events(
-            [{"tool": "write_file", "summary": "a.py", "body": "", "success": True}]
-        )
-        assert wait_until(lambda: reg.get(key).handled == 1)
-        assert not reg.has_pending_replies()  # LGTM 억제
-        reg.publish_tool_events(
-            [{"tool": "write_file", "summary": "a.py", "body": "", "success": True}]
-        )
-        assert wait_until(lambda: reg.get(key).handled == 2)
-        assert wait_until(lambda: reg.has_pending_replies())  # 발견은 배달
-        out = reg.drain_replies()
-        assert "off-by-one" in out[0]["output"]
-        reg.shutdown_all()
-
-    def test_subscriptions_survive_manifest_roundtrip(self, tmp_path, renderer):
-        reg1 = make_registry(tmp_path)
-        key = self._spawn_watcher(reg1, ["write_file", "complete"])
-        reg1.shutdown_all()
-        reg2 = make_registry(tmp_path)
-        assert reg2.restore() == 1
-        assert reg2.get(key).subscriptions == ["write_file", "complete"]
-        reg2.shutdown_all()
-
-    def test_wants_tool_events_gate(self, tmp_path, renderer):
-        reg = make_registry(tmp_path)
-        assert reg.wants_tool_events() is False
-        key = self._spawn_watcher(reg, ["shell"])
-        assert reg.wants_tool_events() is True
-        reg.kill(key)
-        wait_until(lambda: reg.get(key).state == "dead")
-        assert reg.wants_tool_events() is False
-        reg.shutdown_all()
-
-
-class TestLoopToolEventTap:
-    """루프 탭 통합 — 도구 실행/complete 이 턴 경계에 registry 로 발행."""
-
-    class _FakeRegistry:
-        def __init__(self):
-            self.published = []
-
-        def wants_tool_events(self):
-            return True
-
-        def publish_tool_events(self, events, *, turn=0):
-            self.published.append((turn, events))
-            return 1
-
-        def drain_replies(self):
-            return []
-
-    def _run_loop(self, responses, tmp_path, registry):
-        from unittest.mock import MagicMock
-
-        from agent_cli.context.manager import ContextManager
-        from agent_cli.loop import AgentLoop
-        from agent_cli.providers.base import LLMResponse
-        from agent_cli.providers.capabilities import ModelCapabilities
-
-        provider = MagicMock()
-        provider.call.side_effect = [LLMResponse(content=r) for r in responses]
-        caps = ModelCapabilities(
-            context_window=32768,
-            max_output_tokens=4096,
-            supports_structured_output=False,
-            supports_thinking=False,
-            thinking_budget=0,
-            supports_strict_schema=False,
-        )
-        from agent_cli import wire_formats
-
-        loop = AgentLoop(
-            query="Q",
-            provider=provider,
-            capabilities=caps,
-            model="m",
-            ctx=ContextManager(session_dir=tmp_path),
-            max_turns=5,
-            wire_format=wire_formats.get("react"),
-            agent_registry=registry,
-        )
-        return loop.run()
-
-    def test_tool_and_complete_events_published(self, tmp_path, renderer):
-        import json
-
-        reg = self._FakeRegistry()
-        turn1 = "## Thought\n쓰기\n\n## Action\n" + json.dumps(
-            [
-                {
-                    "action": "write_file",
-                    "path": str(tmp_path / "a.py"),
-                    "content": "x = 1\n",
-                }
-            ]
-        )
-        turn2 = "## Thought\n끝\n\n## Action\n" + json.dumps(
-            [{"action": "complete", "result": "done"}]
-        )
-        result = self._run_loop([turn1, turn2], tmp_path, reg)
-        assert result.success
-        # 턴 1: write_file 이벤트 / 턴 2(최종): complete 이벤트 — 둘 다 발행
-        tools_by_turn = {
-            turn: [e["tool"] for e in events] for turn, events in reg.published
-        }
-        assert tools_by_turn.get(1) == ["write_file"]
-        assert tools_by_turn.get(2) == ["complete"]
-        ev = reg.published[0][1][0]
-        assert ev["success"] is True and "a.py" in ev["summary"]

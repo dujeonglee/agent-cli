@@ -111,19 +111,6 @@ class AgentTool(Tool):
                 "items": {"type": "string"},
                 "description": "run/spawn: allowed tools (omit for the default set)",
             },
-            "subscribe": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "spawn: tool names from the MAIN loop this agent watches "
-                    "('*' = all; virtual tools like 'complete' work too). "
-                    "Each turn's matching tool executions are delivered to it "
-                    "as ONE batched request; its reply comes back to you as "
-                    "an observation UNLESS it replies exactly 'LGTM' "
-                    "(no-findings replies are suppressed). Omit to use the "
-                    "profile's `subscribes` frontmatter."
-                ),
-            },
             "context": {
                 "type": "string",
                 "enum": ["none", "fork"],
@@ -149,11 +136,6 @@ class AgentTool(Tool):
 
     def validate(self, args: dict) -> str | None:
         mode = args.get("mode")
-        sub = args.get("subscribe")
-        if sub is not None and (
-            not isinstance(sub, list) or not all(isinstance(s, str) and s for s in sub)
-        ):
-            return "'subscribe' must be a list of tool names (or '*')"
         valid = ("run", "spawn", "request", "status", "resume", "kill")
         if mode not in valid:
             return f"unknown mode '{mode}' — must be one of {', '.join(valid)}"

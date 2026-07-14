@@ -235,8 +235,8 @@ def _build_agent_inline(wire_format) -> str:
             "With profile",
             {
                 "mode": "run",
-                "task": "Review this code for vulnerabilities",
-                "profile": "code-reviewer",
+                "task": "Analyze the auth module and cite risks",
+                "profile": "explorer",
             },
         ),
         (
@@ -1092,16 +1092,17 @@ def build_live_agents_section(
         label = f"`{s['key']}`" + (f" ({who})" if who else "")
         desc = ""
         # 전문영역 요약 — registry 의 AgentInstance 가 description 을 들고 있다.
+        # 첫 문장만 실어 로스터 줄을 자체완결시킨다(full 역할은 Agent Profiles
+        # 카탈로그가 담음). 단어 중간에서 자르지 않는다 (v5.12).
         tm = agent_registry.get(s["key"])
         if tm is not None and getattr(tm, "description", ""):
-            desc = tm.description
-            if len(desc) > 140:
-                desc = desc[:137] + "..."
+            desc = tm.description.strip()
+            m = re.search(r"[.!?](\s|$)", desc)
+            if m:
+                desc = desc[: m.start() + 1]
+            elif len(desc) > 200:
+                desc = desc[:197] + "..."
         line = f"- {label}" + (f" — {desc}" if desc else "")
-        subs = s.get("subscriptions") or []
-        if subs:
-            # 구독 광고 — main 이 "이 도구를 쓰면 이 에이전트가 본다"를 안다.
-            line += f" [watching: {', '.join(subs)}]"
         lines.append(line)
     return "\n".join(lines)
 

@@ -471,7 +471,7 @@ class TestOneshotPackageSurface:
         from agent_cli.subagent.profiles import _BUILTIN_PROFILES_DIR
 
         assert _BUILTIN_PROFILES_DIR.is_dir()
-        for name in ("explorer", "researcher", "coder", "code-reviewer"):
+        for name in ("explorer", "researcher", "coder"):
             assert (_BUILTIN_PROFILES_DIR / f"{name}.md").is_file()
 
 

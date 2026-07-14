@@ -62,7 +62,6 @@ You are a [role]. Your job is to [what you do].
 | allowed-tools | all | Tools this agent can use when run/spawned |
 | model | caller's | Override model for this agent |
 | auto-spawn | false | Spawn this profile automatically at session start (persistent experts only — costs a live worker from startup) |
-| subscribes | (none) | Tool names from the MAIN loop this agent watches when spawned (`"*"` = all; virtual tools like `complete` work too). Each turn's matching executions arrive as ONE batched `[tool-events]` request. Combine with `auto-spawn` for a fully declarative resident watcher (e.g. a live reviewer). |
 | hooks | (none) | Agent-local shell hooks merged on top of the caller's. See "Hook block shape" below. Useful for per-agent PreToolUse/PostToolUse policies that shouldn't apply when other agents or the top-level loop run. Example: auditing every shell call a security-reviewer agent makes, or blocking write_file for a sandbox agent. |
 
 ### Hook block shape (when `hooks:` is used)
@@ -114,11 +113,10 @@ Profiles are referenced by the `agent` tool:
 }}
 ```
 
-```json
-{"action": "agent", "action_input": {
-    "mode": "spawn", "profile": "my-watcher", "subscribe": ["write_file", "edit_file"]
-}}
-```
+A spawned resident agent can be reached at any time — main or any peer
+sends it a request with the `message` tool (a kernel default on every
+agent), and it replies with the same tool. Nothing is subscribed or
+declared up front; requests are explicit and directed.
 
 The profile's markdown body is injected as the subagent's role prompt —
 for a spawned agent it becomes the persistent identity for its whole life
@@ -132,8 +130,6 @@ file later changes).
    Do not issue sequential `ask` calls — ask everything at once:
    - What role should this agent have?
    - Is it mainly a one-shot task runner (run) or a persistent expert (spawn)?
-   - Should it WATCH the main agent's tool usage (subscribes — e.g. live
-     review on write/edit, record on "*", act on complete)?
    - What specific principles should it follow?
    - Should it have tool restrictions? (read-only, no shell, etc.)
    - Should it be project-local or user-global?
@@ -161,14 +157,13 @@ file later changes).
   - Writer agent: `[read_file, write_file, edit_file, shell]`
   - Analysis agent: `[read_file, shell]`
 - Keep it under 30 lines — the body becomes part of the subagent's system prompt
-- **description is the discovery surface** — the main model only sees
-  name + description when deciding to run or spawn. Say what the profile
-  is FOR (and, for persistent experts, that it remembers prior exchanges)
-- **Subscription profiles** (`subscribes:` set): the body MUST state the
-  reply discipline — reply with exactly `LGTM` when there is nothing to
-  act on (LGTM replies are shown to humans but NOT delivered to the main
-  agent), and reply with concrete actionable findings otherwise. Watchers
-  should read files directly for full context (events carry capped
-  summaries only). Examples: a live code reviewer subscribing to
-  write_file/edit_file, a session recorder subscribing to `"*"`, a task
-  reviewer subscribing to `complete`.
+- **description is the discovery surface** — every agent (main and peers)
+  sees each live agent's name + first-sentence role when deciding whether
+  to message it. Say what the profile is FOR in the first sentence (and,
+  for persistent experts, that it remembers prior exchanges)
+- **Resident experts that answer peers**: the body should state the reply
+  discipline for `message` requests — answer concisely and directly, read
+  files yourself for full context, and when the reply completes a piece of
+  another agent's task, report the result back to the requester with
+  `message`. Examples: a database expert peers ask for schema, a security
+  reviewer peers ask to vet a diff.

@@ -93,7 +93,3 @@ class LoopState:
     task_log: list = field(default_factory=list)
     interrupted: bool = False
     stop_event: threading.Event = field(default_factory=threading.Event)
-    # 도구 이벤트 구독 (5.8.0): 이 턴에 실행된 구독 대상 도구 이벤트 —
-    # ToolBridge/dispatcher 가 수집(depth 0 + 구독자 존재 시만), core 가
-    # 턴 경계마다 registry.publish_tool_events 로 drain.
-    tool_events: list = field(default_factory=list)

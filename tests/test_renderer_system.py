@@ -257,9 +257,7 @@ class TestBuildAgentDescriptions:
         )
 
         desc = build_agent_descriptions()
-        # 5.0.0: code-reviewer(광고 대상)가 부분 문자열로 겹치므로 정확 매치
-        assert "`reviewer`" not in desc
-        assert "`code-reviewer`" in desc
+        assert "`coder`" in desc  # 카탈로그에 내장 프로파일 광고
         assert "explorer" in desc  # normal agents still shown
 
     def test_includes_delegate_usage(self):

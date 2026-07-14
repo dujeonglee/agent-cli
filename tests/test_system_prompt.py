@@ -1020,7 +1020,7 @@ class TestDelegateInlineAgent:
 
     def test_delegate_inline_agent_example(self):
         guide = self._delegate_guide()
-        assert '"profile": "code-reviewer"' in guide  # 5.0.0: profile 파라미터
+        assert '"profile": "explorer"' in guide  # 5.0.0: profile 파라미터
 
 
 # ── Role + Recovery axis (formerly test_system_prompt_v2.py) ────────
