@@ -166,6 +166,34 @@ class TestRecovery:
         assert r.persistent_count == 2
 
 
+class TestTurnErrorEventName:
+    """A turn/tool error must emit under the ``turn_error`` SSE event name,
+    NEVER ``error``. The browser's ``EventSource`` dispatches a server-sent
+    ``event: error`` message under the same "error" type as a transport
+    failure, so naming this event ``error`` would fire the client's
+    connection ``onerror`` handler and latch the connection dot red on a
+    perfectly healthy stream (and then ``JSON.parse`` a data-less transport
+    error). This contract test guards against the name collision reappearing.
+    """
+
+    def test_error_emits_turn_error_not_error(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+
+        r.error("boom", turn=3)
+
+        event, data = conn.queue.get(timeout=0.5)
+        assert event == "turn_error", (
+            "turn errors must not reuse the reserved EventSource 'error' type"
+        )
+        assert event != "error"
+        assert data["content"] == "boom"
+        assert data["turn"] == 3
+        # Persistent so a reconnecting client replays it.
+        assert r.persistent_count == 1
+
+
 # ── Connection lifecycle ───────────────────────────
 
 

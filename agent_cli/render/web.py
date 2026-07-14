@@ -890,7 +890,15 @@ class WebRenderer(Renderer):
         self._pending_thought = None
 
     def error(self, content: str, turn: int) -> None:
-        self._emit("error", {"turn": turn, "content": content}, persistent=True)
+        # Event name is ``turn_error``, NOT ``error``: the browser's
+        # ``EventSource`` dispatches a server-sent ``event: error`` message
+        # under the SAME "error" type as a transport-level failure, so naming
+        # it ``error`` would fire the client's connection ``onerror`` handler
+        # and latch the connection dot red on a healthy stream. A distinct
+        # name keeps application errors and transport errors separate. This
+        # event is live-only (never written to history / replayed on resume),
+        # so the name is free to change without touching old sessions.
+        self._emit("turn_error", {"turn": turn, "content": content}, persistent=True)
 
     def recovery(
         self,

@@ -1211,7 +1211,12 @@
     renderCompaction(JSON.parse(e.data));
   });
 
-  es.addEventListener("error", function (e) {
+  // Application-level turn/tool errors arrive as ``turn_error`` — NOT
+  // ``error`` — precisely so they don't collide with the native EventSource
+  // "error" event type (which drives the connection dot via ``es.onerror``
+  // above). Listening for ``error`` here would also latch the dot red on a
+  // healthy stream and try to ``JSON.parse`` data-less transport errors.
+  es.addEventListener("turn_error", function (e) {
     const d = JSON.parse(e.data);
     renderError(d);
   });
