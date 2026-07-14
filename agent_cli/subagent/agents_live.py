@@ -508,9 +508,16 @@ class AgentRegistry:
         )
         from agent_cli.render import get_renderer
 
-        get_renderer().agent_message(
-            key=key, direction="in", author=author, text=message, seq=tm.queued
-        )
+        payload = {
+            "key": key,
+            "direction": "in",
+            "author": author,
+            "text": message,
+            "seq": tm.queued,
+            "ts": time.time(),
+        }
+        get_renderer().agent_message(**payload)
+        self._log_conversation(tm, payload)
         self._notify_roster()
         return ""
 
@@ -657,6 +664,13 @@ class AgentRegistry:
         tm.inbox.put(_SHUTDOWN)
         if tm.worker is not None:
             tm.worker.join(timeout=2.0)  # busy 면 다음 턴 경계에서 멈춤
+        # 5.13: kill=창 정리 — 표면(replay 버퍼+라이브 창)만 비우고
+        # conversation.jsonl 은 남긴다(mode:"resume" 시 _replay_conversation
+        # 소스). shutdown_all(세션 종료)은 정리하지 않음 — 다음 세션 resume
+        # 이 restore 재생으로 복원하게 둔다.
+        from agent_cli.render import get_renderer
+
+        get_renderer().clear_agent_conversation(key)
         self._save_state()
         self._notify_roster()
         notify_agents_changed(self)
@@ -721,6 +735,9 @@ class AgentRegistry:
             name=f"agent-{key}",
         )
         fresh.worker.start()
+        # 5.13: 부활 즉시 🤝 대화창 복원 (kill=정리와 대칭). 새 요청 처리
+        # 전에 재생해 순서가 과거→현재로 자연스럽게 이어진다.
+        self._replay_conversation(fresh)
         self._save_state()
         self._notify_roster()
         notify_agents_changed(self)
@@ -867,6 +884,12 @@ class AgentRegistry:
                 name=f"agent-{key}",
             )
             tm.worker.start()
+            # 5.13: 세션 resume(b) 근본 경로 — 새 프로세스라 replay 버퍼가
+            # 비어 🤝 대화창이 텅 비던 증상. conversation.jsonl 을 재생해
+            # 복원한다(restore 는 SSE 접속 전이라 buffer 에 쌓였다가 첫
+            # 접속 snapshot 으로 배달). dead(kill) 툼스톤은 재생 안 함 —
+            # kill=정리 일관(필요하면 mode:"resume" 이 그때 복원).
+            self._replay_conversation(tm)
             revived += 1
         self._save_state()
         self._notify_roster()
@@ -886,6 +909,53 @@ class AgentRegistry:
             return str(path)
         except OSError:
             return ""
+
+    def _conversation_path(self, tm: AgentInstance) -> Path:
+        return tm.home_dir / "conversation.jsonl"
+
+    def _log_conversation(self, tm: AgentInstance, payload: dict) -> None:
+        """🤝 대화창 메시지 1건을 ``conversation.jsonl`` 에 append (5.13).
+
+        이 파일이 대화창의 **진짜 소스** — resume 시 :meth:`_replay_conversation`
+        이 그대로 재발행해 창을 정확 복원한다(ctx 는 에이전트 내부 작업까지
+        담아 대화창과 추상화 레벨이 달라 소스가 못 됨). best-effort."""
+        try:
+            tm.home_dir.mkdir(parents=True, exist_ok=True)
+            with self._conversation_path(tm).open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def _replay_conversation(self, tm: AgentInstance) -> None:
+        """``conversation.jsonl`` 을 순회해 🤝 대화창을 재발행 (5.13).
+
+        라이브와 같은 ``agent_message`` 표면을 통과하므로 web 은 persistent
+        버퍼에 다시 쌓여 재접속 뷰어까지 복원되고, 저장해 둔 ``ts`` 로 원래
+        대화 시각이 유지된다. 파일 없으면 no-op. kill→resume 대칭: kill 이
+        표면을 정리(clear_agent_conversation)하고 resume 이 여기서 다시 채움."""
+        path = self._conversation_path(tm)
+        if not path.exists():
+            return
+        from agent_cli.render import get_renderer
+
+        renderer = get_renderer()
+        # 재생 전에 표면을 비운다 → 멱등: 비정상 사망(kill 아님)으로 옛
+        # agent_msg 가 버퍼에 남아 있어도 중복 없이 정확히 한 벌만 남는다.
+        renderer.clear_agent_conversation(tm.key)
+        try:
+            with path.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(rec, dict) and rec.get("key"):
+                        renderer.agent_message(**rec)
+        except OSError:
+            pass
 
     def _worker(self, tm: AgentInstance, parent_ctx) -> None:
         """teammate 의 전 생애: 스코프 열기 → ctx 생성 → inbox 루프 → 정리.
@@ -960,15 +1030,18 @@ class AgentRegistry:
                 tm.handled += 1
                 tm.state = "idle"
                 # 대화 창에는 화자 불문 항상 표시 (P4).
-                renderer.agent_message(
-                    key=tm.key,
-                    direction="out",
-                    author=tm.key,
-                    text=output,
-                    seq=seq,
-                    success=success,
-                    to=author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
-                )
+                out_payload = {
+                    "key": tm.key,
+                    "direction": "out",
+                    "author": tm.key,
+                    "text": output,
+                    "seq": seq,
+                    "success": success,
+                    "to": author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
+                    "ts": time.time(),
+                }
+                renderer.agent_message(**out_payload)
+                self._log_conversation(tm, out_payload)
                 expects_reply = item.get("expects_reply", True)
                 if not expects_reply:
                     # 배달된 peer 회신(v5.11): 수신자는 소비만 — 산출물을
@@ -1041,13 +1114,16 @@ class AgentRegistry:
             from agent_cli.render import get_renderer
 
             # 대화 창에는 항상 (P4) — 인간이 먼저 답할 수 있는 표면.
-            get_renderer().agent_message(
-                key=tm.key,
-                direction="question",
-                author=tm.key,
-                text=question,
-                to=tm.current_author,  # 인간 발신 작업의 질문은 그 사람에게
-            )
+            q_payload = {
+                "key": tm.key,
+                "direction": "question",
+                "author": tm.key,
+                "text": question,
+                "to": tm.current_author,  # 인간 발신 작업의 질문은 그 사람에게
+                "ts": time.time(),
+            }
+            get_renderer().agent_message(**q_payload)
+            self._log_conversation(tm, q_payload)
             if tm.current_author == "main":
                 # main 발신 작업의 질문만 main mailbox 로 (D8 대칭).
                 self._push_reply(

@@ -1008,6 +1008,7 @@ class MinimalRenderer(Renderer):
         seq: int = 0,
         success: bool = True,
         to: str = "main",
+        ts: float | str | None = None,
     ) -> None:
         """CLI 의 teammate 문답 수신 창 — @agt-<key> 명령(사용자 발신)의
         회신/질문은 main 관찰로 배달되지 않으므로(D8) 콘솔 라인이 유일한

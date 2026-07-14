@@ -194,6 +194,58 @@ class TestTurnErrorEventName:
         assert r.persistent_count == 1
 
 
+class TestAgentConversationSurface:
+    """🤝 대화창의 kill=정리 / resume=재생 대칭 (5.13): ``agent_message`` 는
+    resume 재생용 ``ts`` 를 보존하고, ``clear_agent_conversation`` 은 한
+    에이전트의 ``agent_msg`` 를 replay 버퍼에서 걷어내고(``omitted`` 계산이
+    어긋나지 않게 count 보정) 라이브 뷰어엔 ``agent_cleared`` 를 보낸다."""
+
+    def _agent_msgs(self, snapshot):
+        return [d for (ev, d) in snapshot if ev == "agent_msg"]
+
+    def test_agent_message_ts_preserved_for_replay(self):
+        r = WebRenderer()
+        r.agent_message(
+            key="agt-1", direction="out", author="agt-1", text="x", ts=12345.0
+        )
+        conn = WebConnection(id="c1")
+        snap = r.register_connection(conn)
+        msg = self._agent_msgs(snap)[0]
+        assert msg["ts"] == 12345.0  # 부활 순간이 아닌 원래 대화 시각
+
+    def test_clear_removes_only_that_key_and_adjusts_count(self):
+        r = WebRenderer()
+        r.agent_message(key="agt-1", direction="in", author="main", text="a", seq=1)
+        r.agent_message(key="agt-1", direction="out", author="agt-1", text="b", seq=1)
+        r.agent_message(key="agt-2", direction="in", author="main", text="c", seq=1)
+        assert r.persistent_count == 3
+
+        r.clear_agent_conversation("agt-1")
+
+        # 버퍼에서 agt-1 만 제거, agt-2 는 유지. count 도 제거분만큼 보정
+        # (안 하면 재접속 snapshot 의 ``transcript_truncated`` omitted 가 부풀음).
+        assert r.persistent_count == 1
+        conn = WebConnection(id="c1")
+        snap = r.register_connection(conn)
+        keys = [d.get("key") for d in self._agent_msgs(snap)]
+        assert keys == ["agt-2"]
+        assert not any(ev == "transcript_truncated" for (ev, _d) in snap)
+
+    def test_clear_emits_agent_cleared_live(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.agent_message(key="agt-1", direction="in", author="main", text="a", seq=1)
+
+        r.clear_agent_conversation("agt-1")
+
+        events = []
+        while not conn.queue.empty():
+            events.append(conn.queue.get_nowait())
+        cleared = [d for (ev, d) in events if ev == "agent_cleared"]
+        assert cleared and cleared[0]["key"] == "agt-1"
+
+
 # ── Connection lifecycle ───────────────────────────
 
 

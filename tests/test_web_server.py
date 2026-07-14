@@ -474,6 +474,18 @@ class TestStaticUI:
         assert "#export-bar[hidden]" in css
         assert "#export-jira-form[hidden]" in css
 
+    def test_agent_conversation_clear_wired(self, server_and_client):
+        # 5.13 대화창 kill=정리 계약: 서버가 보내는 ``agent_cleared`` 를
+        # app.js 가 받아 중계(tm-cleared)하고, 드로어 IIFE 가 그 key 의
+        # 대화(msgs[key])를 지운다. JS 는 엔진 미테스트라, 서버 emit 표면
+        # (clear_agent_conversation, TestAgentConversationSurface)과 프론트가
+        # 어긋나지 않게 배선을 고정한다.
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert '"agent_cleared"' in js  # SSE 리스너
+        assert "agentcli:tm-cleared" in js  # 드로어로 중계
+        assert "delete msgs[m.key]" in js  # 열린 탭의 대화 제거
+
     def test_agent_observation_renders_markdown(self, server_and_client):
         # An agent observation is a subagent's prose answer → it must be
         # markdown-rendered (escapeAndFormat → .obs-md div), not the raw <pre>

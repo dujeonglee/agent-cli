@@ -630,22 +630,48 @@ class WebRenderer(Renderer):
         seq: int = 0,
         success: bool = True,
         to: str = "main",
+        ts: float | str | None = None,
     ) -> None:
         """P4: teammate 대화 창 메시지 — persistent 라 재접속 replay 로
-        창 내용이 복원된다 (버퍼 윈도우 내에서)."""
-        self._emit(
-            "agent_msg",
-            {
-                "key": key,
-                "direction": direction,
-                "author": author,
-                "text": text,
-                "seq": seq,
-                "success": success,
-                "to": to,
-            },
-            persistent=True,
-        )
+        창 내용이 복원된다 (버퍼 윈도우 내에서).
+
+        ``ts`` (5.13): resume 재생 시 원래 발생 시각을 넘겨 카드가 부활
+        순간이 아닌 실제 대화 시각을 보이게 한다 (main 의 ``_replay_ts``
+        와 같은 의도 — 여기선 인자로 직접 전달). ``None`` = 라이브 경로
+        → ``_emit`` 이 wall-clock 을 찍는다."""
+        data = {
+            "key": key,
+            "direction": direction,
+            "author": author,
+            "text": text,
+            "seq": seq,
+            "success": success,
+            "to": to,
+        }
+        if ts is not None:
+            data["ts"] = ts
+        self._emit("agent_msg", data, persistent=True)
+
+    def clear_agent_conversation(self, key: str) -> None:
+        """5.13: 한 teammate 의 대화 기록을 표면에서 정리한다 (kill 시).
+
+        replay 버퍼에서 그 key 의 ``agent_msg`` 를 제거해 재접속 snapshot
+        에 남지 않게 하고(``_persistent_count`` 도 제거 수만큼 보정해
+        ``omitted`` 계산이 어긋나지 않게), 라이브 뷰어에게는
+        ``agent_cleared`` 를 보내 열려 있는 대화창(``msgs[key]``)도 비우게
+        한다. resume 시 ``conversation.jsonl`` 재생이 다시 채우므로,
+        "kill=정리 / resume=재생" 이 대칭을 이룬다."""
+        with self._lock:
+            kept: deque[tuple[str, dict[str, Any]]] = deque(maxlen=_EVENT_BUFFER_MAX)
+            removed = 0
+            for event, ready in self._event_buffer:
+                if event == "agent_msg" and ready.get("key") == key:
+                    removed += 1
+                    continue
+                kept.append((event, ready))
+            self._event_buffer = kept
+            self._persistent_count -= removed
+        self._emit("agent_cleared", {"key": key}, persistent=False)
 
     def set_thread_status(self, status: str) -> None:
         """Forward to the base ``_thread_status`` dict (CLI rich.Live

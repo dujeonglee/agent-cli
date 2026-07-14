@@ -1137,6 +1137,14 @@
     );
   });
 
+  es.addEventListener("agent_cleared", function (e) {
+    // 5.13: kill 시 그 에이전트 대화창 비움 (resume 재생과 대칭) — 대화
+    // 창 IIFE 로 중계해 열려 있는 탭의 msgs[key] 도 지우게 한다.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:tm-cleared", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("directives_changed", function () {
     // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
     // IIFE to re-fetch the editor so concurrent editors don't show stale text.
@@ -2914,6 +2922,16 @@
     const m = e.detail || {};
     if (!m.key) return;
     (msgs[m.key] = msgs[m.key] || []).push(m);
+    if ($drawer.classList.contains("open") && m.key === selected) renderConv();
+  });
+
+  document.addEventListener("agentcli:tm-cleared", function (e) {
+    // 5.13: kill → 그 에이전트 대화창 비움. resume 시 conversation.jsonl
+    // 재생(agent_msg)이 다시 채운다. 열려 있고 그 에이전트를 보고 있으면
+    // 즉시 다시 그린다.
+    const m = e.detail || {};
+    if (!m.key) return;
+    delete msgs[m.key];
     if ($drawer.classList.contains("open") && m.key === selected) renderConv();
   });
 

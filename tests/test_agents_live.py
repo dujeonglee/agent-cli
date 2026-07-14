@@ -67,6 +67,9 @@ class RecordingRenderer:
     def agent_message(self, **kw):
         self._rec("agent_message", **kw)
 
+    def clear_agent_conversation(self, key):
+        self._rec("clear_agent_conversation", key=key)
+
     def named(self, name):
         with self.lock:
             return [c for c in self.calls if c[0] == name]
@@ -1978,6 +1981,114 @@ class TestResumeMode:
             }
         )
         assert '"mode":"resume"' in rec["content"]
+
+
+# ── 🤝 대화창 resume 복원 + kill 정리 (5.13) ──
+
+
+class TestConversationReplay:
+    """conversation.jsonl 로 대화창을 정확 복원 + kill=정리/resume=재생 대칭."""
+
+    def _conv_records(self, tmp_path, key):
+        import json as _json
+
+        path = tmp_path / "agents" / key / "conversation.jsonl"
+        if not path.exists():
+            return []
+        return [
+            _json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def test_inbound_and_reply_logged(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "first job")
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        recs = self._conv_records(tmp_path, key)
+        dirs = [(r["direction"], r["text"]) for r in recs]
+        assert ("in", "first job") in dirs
+        assert ("out", "done:first job") in dirs
+        # 각 레코드는 대화창 페이로드 그대로 — 재생이 파싱 없이 재발행 가능.
+        out = next(r for r in recs if r["direction"] == "out")
+        assert out["key"] == key and out["to"] == "main" and out["seq"] == 1
+        assert "ts" in out  # resume 재생 시 원래 시각 보존
+        reg.shutdown_all()
+
+    def test_replay_reemits_records_after_clear(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "job")
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        with renderer.lock:
+            renderer.calls.clear()
+        reg._replay_conversation(reg.get(key))
+        names = [c[0] for c in renderer.calls]
+        # 멱등: 먼저 표면 비우고(clear) 그다음 재발행.
+        assert names[0] == "clear_agent_conversation"
+        msgs = renderer.named("agent_message")
+        texts = {(c[1]["direction"], c[1]["text"]) for c in msgs}
+        assert ("in", "job") in texts and ("out", "done:job") in texts
+        # 저장된 ts 가 재발행에 실린다.
+        assert all("ts" in c[1] for c in msgs)
+        reg.shutdown_all()
+
+    def test_kill_clears_surface_but_keeps_log(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "job")
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        with renderer.lock:
+            renderer.calls.clear()
+        reg.kill(key)
+        cleared = renderer.named("clear_agent_conversation")
+        assert cleared and cleared[0][1]["key"] == key
+        # 파일은 남는다 — mode:"resume" 재생 소스.
+        assert (tmp_path / "agents" / key / "conversation.jsonl").exists()
+        reg.shutdown_all()
+
+    def test_resume_restores_drawer(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "job")
+        assert wait_until(lambda: reg.get(key).handled == 1)
+        reg.drain_replies()
+        reg.kill(key)
+        with renderer.lock:
+            renderer.calls.clear()
+        assert reg.resume_teammate(key) == ""
+        assert wait_until(lambda: reg.get(key).state == "idle")
+        # 부활이 대화창을 다시 채웠다 (과거 in/out 재발행).
+        texts = {
+            (c[1]["direction"], c[1]["text"]) for c in renderer.named("agent_message")
+        }
+        assert ("in", "job") in texts and ("out", "done:job") in texts
+        reg.shutdown_all()
+
+    def test_session_restore_replays_conversation(self, tmp_path, renderer):
+        reg1 = make_registry(tmp_path)
+        key, _ = reg1.spawn()
+        assert wait_until(lambda: reg1.get(key).state == "idle")
+        reg1.request(key, "job")
+        assert wait_until(lambda: reg1.get(key).handled == 1)
+        reg1.drain_replies()
+        reg1.shutdown_all()
+
+        # 새 세션(새 프로세스 모사) — buffer 가 빈 상태에서 restore.
+        with renderer.lock:
+            renderer.calls.clear()
+        reg2 = make_registry(tmp_path)
+        assert reg2.restore() == 1
+        texts = {
+            (c[1]["direction"], c[1]["text"]) for c in renderer.named("agent_message")
+        }
+        assert ("in", "job") in texts and ("out", "done:job") in texts
+        reg2.shutdown_all()
 
 
 # ── 멤버십 변화의 인스펙터 즉시 반영 (v4.61.0) ──

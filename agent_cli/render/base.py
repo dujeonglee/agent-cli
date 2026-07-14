@@ -284,10 +284,16 @@ class Renderer(ABC):
         seq: int = 0,
         success: bool = True,
         to: str = "main",
+        ts: float | str | None = None,
     ) -> None:
         """teammate 대화 창의 메시지 1건 (P4). direction: "in"(요청/답변
         수신) | "out"(회신) | "question"(ask). ``to`` = 수신자("main" 또는
-        "user:닉네임" 등 — @agt 명령/창 개입 문답의 라우팅 표시). 기본 no-op."""
+        "user:닉네임" 등 — @agt 명령/창 개입 문답의 라우팅 표시). ``ts``
+        (5.13) = resume 재생 시 원래 발생 시각. 기본 no-op."""
+
+    def clear_agent_conversation(self, key: str) -> None:
+        """한 teammate 의 대화 기록을 표면에서 정리 (5.13, kill 시). web 은
+        replay 버퍼 정리 + 라이브 창 비움, CLI 는 no-op."""
 
     # ── Abstract render methods ──────────────────────
 
