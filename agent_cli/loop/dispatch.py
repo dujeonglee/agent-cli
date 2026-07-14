@@ -495,6 +495,11 @@ class TurnDispatcher:
         if op.action == "run_skill":
             return self._op_run_skill(llm_text, turn, op)
 
+        if op.action == "message":
+            handled = self._op_message(llm_text, turn, op, accumulate)
+            if handled is not _NOT_HANDLED:
+                return handled
+
         if op.action:
             return self._op_execute_tool(llm_text, turn, op, outcome, accumulate)
 
@@ -616,6 +621,49 @@ class TurnDispatcher:
             return _CONTINUE
 
         return _NOT_HANDLED
+
+    def _op_message(self, llm_text: str, turn, op, accumulate):
+        """``message`` op (v5.11) — 상주 에이전트끼리의 비동기 메시징.
+
+        ``message_handler`` 로 라우팅하고 즉시 관찰(배달 확인)을 돌려준다 —
+        회신은 나중에 새 메시지로 도착한다(발신자 비블록). 핸들러가 없으면
+        (main/일회성 루프) ``_NOT_HANDLED`` 로 폴스루 — 일반 도구 경로가
+        "message intercepted by loop" 플레이스홀더를 실행해 무해하게 끝난다.
+        """
+        handler = self.cfg.message_handler
+        if handler is None:
+            return _NOT_HANDLED
+        args = op.action_input if isinstance(op.action_input, dict) else {}
+        to = str(args.get("to", "")).strip()
+        text = str(args.get("text", "")).strip()
+        render_step(
+            "action",
+            "",
+            self.state.turn,
+            tool_name="message",
+            tool_input=json.dumps(args, ensure_ascii=False),
+        )
+        try:
+            result = handler(to, text)
+        except Exception as e:  # noqa: BLE001 — 핸들러 예외를 관찰로 보고
+            result = f"message failed: {type(e).__name__}: {e}"
+        obs = f"[message → {to or '?'}] {result}"
+        if accumulate is not None:
+            accumulate.append(
+                {"tool_name": "message", "observation": obs, "success": True}
+            )
+            return None
+        _append_observation(
+            self.state.messages,
+            self.ctx,
+            self.cfg.wire_format,
+            llm_text,
+            f"Observation: {obs}",
+            tool_name="message",
+            success=True,
+            turn=self.state.turn,
+        )
+        return _CONTINUE
 
     def _op_run_skill(self, llm_text: str, turn, op):
         """``run_skill`` op — 루프 레벨 인터셉트(깊이/사이클 가드는

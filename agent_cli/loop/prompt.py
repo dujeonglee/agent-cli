@@ -46,6 +46,7 @@ class SystemPromptSvc:
             depth=self.cfg.depth,
             max_depth=self.cfg.max_depth,
             agent_registry=self.cfg.agent_registry,
+            peer_agents_section=self.cfg.peer_agents_section,
         )
         self.system = "\n\n".join(t for _, t in self.sections)
 

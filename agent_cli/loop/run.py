@@ -55,6 +55,8 @@ def run_loop(
     compaction_enabled: bool = True,
     agent_registry=None,
     ask_handler=None,
+    message_handler=None,
+    peer_agents_section: str = "",
 ):
     """Run the agent loop with the given wire-format plugin. Returns ToolResult.
 
@@ -99,4 +101,6 @@ def run_loop(
         compaction_enabled=compaction_enabled,
         agent_registry=agent_registry,
         ask_handler=ask_handler,
+        message_handler=message_handler,
+        peer_agents_section=peer_agents_section,
     ).run()

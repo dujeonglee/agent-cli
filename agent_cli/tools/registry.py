@@ -30,6 +30,7 @@ from agent_cli.tools.agent_tool import AgentTool
 from agent_cli.tools.virtual import (
     AskTool,
     CompleteTool,
+    MessageTool,
     RunSkillTool,
 )
 from agent_cli.tools.write_file import WriteFileTool
@@ -47,6 +48,7 @@ _ALL_TOOLS: list[Tool] = [
     ReadContextTool(),
     MemoryTool(),
     AskTool(),
+    MessageTool(),
     RunSkillTool(),
     FetchTool(),
     AgentTool(),

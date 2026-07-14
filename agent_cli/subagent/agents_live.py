@@ -52,6 +52,12 @@ _SHUTDOWN = object()
 
 _DEFAULT_MAX_AGENTS = 4
 
+# 에이전트↔에이전트 메시지 재주입 상한 (v5.11). 배달된 회신은 terminal
+# (expects_reply=False)이라 자동으로 늘지 않으므로 이 상한은 에이전트들이
+# 명시적으로 서로 request 를 주고받는 사이클의 안전망일 뿐 — 데드락은
+# 비동기라 구조적으로 불가.
+_MAX_PEER_HOPS = 6
+
 # agents.json 스키마 버전 — 비호환 변경 시 bump (구버전 파일은 무시=fresh).
 AGENTS_STATE_VERSION = 1
 
@@ -171,6 +177,24 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
             "success": True,
             "content": content,
             "source": "agent_question",
+        }
+
+    if reply.get("kind") == "peer_message":
+        # 상주 에이전트가 main 에게 먼저 보낸 메시지 (v5.11) — 회신 대기
+        # 아님. main 은 필요하면 agent request 로 답한다.
+        msg = reply.get("output") or "(empty message)"
+        content = (
+            f"── agent {label} message ──\n{msg}\n"
+            f"(This agent messaged you directly. Reply if useful with "
+            f'{{"mode":"request","key":"{key}","message":"..."}} — otherwise '
+            f"just continue.)"
+        )
+        return {
+            "role": "user",
+            "tool": "agent",
+            "success": True,
+            "content": content,
+            "source": "agent_message",
         }
 
     body = reply.get("output") or "(empty reply)"
@@ -447,8 +471,22 @@ class AgentRegistry:
 
     # ── request / 회신 ──────────────────────────
 
-    def request(self, key: str, message: str, *, author: str = "main") -> str:
-        """request 큐잉 — 성공 시 빈 문자열, 실패 시 에러 메시지."""
+    def request(
+        self,
+        key: str,
+        message: str,
+        *,
+        author: str = "main",
+        hop: int = 0,
+        expects_reply: bool = True,
+    ) -> str:
+        """request 큐잉 — 성공 시 빈 문자열, 실패 시 에러 메시지.
+
+        ``expects_reply`` (v5.11): 이 아이템 처리 후 산출물을 발신자에게
+        되돌릴지. main/watch/user·peer 요청=True(회신 라우팅), 배달된 peer
+        회신=False(terminal — 수신자는 소비만, 재라우팅 없음 → 핑퐁 방지).
+        ``hop`` 은 peer 재주입 깊이(_MAX_PEER_HOPS 안전망).
+        """
         tm = self._agents.get(key)
         if tm is None:
             return f"unknown agent '{key}' (see mode:\"status\" for live keys)"
@@ -458,7 +496,15 @@ class AgentRegistry:
         if not message.strip():
             return "empty message"
         tm.queued += 1
-        tm.inbox.put({"seq": tm.queued, "text": message, "author": author})
+        tm.inbox.put(
+            {
+                "seq": tm.queued,
+                "text": message,
+                "author": author,
+                "hop": hop,
+                "expects_reply": expects_reply,
+            }
+        )
         from agent_cli.render import get_renderer
 
         get_renderer().agent_message(
@@ -478,6 +524,75 @@ class AgentRegistry:
                 cb(reply)
             except Exception:
                 pass  # 알림은 best-effort — 배달 경로를 막지 않는다
+
+    def _deliver_peer_reply(
+        self, requester_key: str, from_key: str, output: str, hop: int
+    ) -> None:
+        """peer 요청의 회신을 요청자 inbox 로 terminal 재주입 (v5.11).
+
+        ``expects_reply=False`` 로 넣어 요청자가 소비만 하고 되받아치지
+        않게 한다(핑퐁 방지). 상한(_MAX_PEER_HOPS) 초과나 요청자 부재/사망
+        시 조용히 드롭 — best-effort 배관(데드락은 비동기라 불가).
+        """
+        if hop >= _MAX_PEER_HOPS:
+            return
+        tgt = self._agents.get(requester_key)
+        if tgt is None or tgt.state == "dead":
+            return
+        self.request(
+            requester_key,
+            output,
+            author=f"agent:{from_key}",
+            hop=hop + 1,
+            expects_reply=False,
+        )
+
+    def message_to_main(
+        self, from_key: str, text: str, *, profile: str = "", name: str = ""
+    ) -> None:
+        """상주 에이전트 → main 메시지 (v5.11). main 은 inbox 대신 mailbox
+        (_pending)로 받아 턴 경계 관찰로 본다 (peer↔main 대칭)."""
+        self._push_reply(
+            {
+                "kind": "peer_message",
+                "key": from_key,
+                "profile": profile,
+                "name": name,
+                "success": True,
+                "output": text,
+            }
+        )
+
+    def _make_message_handler(self, tm: AgentInstance):
+        """상주 에이전트 서브루프의 ``message`` 도구 라우팅 훅 (v5.11).
+
+        ``message(to, text)`` → 대상 inbox(또는 main mailbox)로 비동기
+        전송하고 즉시 반환한다. 대상의 회신은 이 에이전트의 inbox 로 새
+        메시지처럼 도착한다(발신자는 블록하지 않음)."""
+
+        def handler(to: str, text: str) -> str:
+            to = (to or "").strip()
+            text = (text or "").strip()
+            if not to:
+                return "message needs a 'to' agent key (or 'main')"
+            if not text:
+                return "empty message — nothing sent"
+            if to == tm.key:
+                return "cannot message yourself"
+            if to == "main":
+                self.message_to_main(
+                    tm.key, text, profile=tm.profile_name, name=tm.instance_name
+                )
+                return "delivered to main — it will see your message at its next turn."
+            err = self.request(to, text, author=f"agent:{tm.key}", expects_reply=True)
+            if err:
+                return err
+            return (
+                f"delivered to {to} — its reply arrives to you as a new message. "
+                f"Keep working or complete; you'll be woken when it comes."
+            )
+
+        return handler
 
     def drain_replies(self) -> list[dict]:
         """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지."""
@@ -893,15 +1008,27 @@ class AgentRegistry:
                     success=success,
                     to=author,  # 수신자 — @agt 명령/창 개입이면 user:* (D8)
                 )
-                deliver = author == "main" or (
-                    # watch(구독 이벤트): 발견 회신만 main 으로 — "LGTM" 은
-                    # 창 전용 (무발견 노이즈가 매 턴 컨텍스트를 먹지 않게).
-                    author == "watch"
-                    and not (output or "").strip().upper().startswith("LGTM")
-                )
-                if deliver:
+                expects_reply = item.get("expects_reply", True)
+                is_lgtm = (output or "").strip().upper().startswith("LGTM")
+                if not expects_reply:
+                    # 배달된 peer 회신(v5.11): 수신자는 소비만 — 산출물을
+                    # 어디로도 라우팅하지 않는다(terminal, 핑퐁 방지). 결과에
+                    # 이어 다른 주체에게 보낼 게 있으면 명시적 message 로.
+                    self._save_state()
+                elif author.startswith("agent:"):
+                    # peer 요청의 회신 → 요청자 inbox 로 terminal 재주입
+                    # (LGTM/무발견 ack 은 억제 — watch 와 동형).
+                    if not is_lgtm:
+                        requester = author.split(":", 1)[1]
+                        self._deliver_peer_reply(
+                            requester, tm.key, output, item.get("hop", 0)
+                        )
+                    else:
+                        self._save_state()
+                elif author == "main" or (author == "watch" and not is_lgtm):
                     # main 발신 요청의 회신만 main mailbox 로 (D8 — 인간
-                    # 개입 문답은 창에만, main 컨텍스트 비오염).
+                    # 개입 문답은 창에만, main 컨텍스트 비오염). watch 는
+                    # 발견 회신만(LGTM 억제).
                     self._push_reply(
                         {
                             "kind": "reply",
@@ -1000,10 +1127,20 @@ class AgentRegistry:
 
             runner = run_subagent_message
         rt = self.runtime
+        # v5.11: 상주 에이전트끼리 서로를 알고(로스터) 부를 수 있게(message)
+        # — registry 자체는 서브루프에 넘기지 않는다(agent 상주 모드 차단
+        # 유지). 로스터 문자열은 자기 자신 제외.
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        peer_section = build_live_agents_section(
+            self, exclude_key=tm.key, via_message_tool=True
+        )
         return runner(
             query,
             tm.ctx,
             ask_handler=self._make_ask_handler(tm),
+            message_handler=self._make_message_handler(tm),
+            peer_agents_section=peer_section,
             provider=rt.get("provider"),
             capabilities=rt.get("capabilities"),
             model=tm.model or rt.get("model", ""),

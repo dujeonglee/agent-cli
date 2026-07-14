@@ -104,6 +104,25 @@ def make_runner(reply_text="done", block: threading.Event | None = None, exc=Non
     return runner
 
 
+class _RecordingRunner:
+    """query 를 기록하고 echo 회신을 돌려주는 가짜 러너 — peer 메시징
+    라우팅(누가 무엇을 몇 번 받았나) 검증용."""
+
+    def __init__(self, reply="ok"):
+        self.reply = reply
+        self.seen = []
+        self.lock = threading.Lock()
+
+    def __call__(self, query, ctx, **kwargs):
+        with self.lock:
+            self.seen.append(query)
+        return _FakeLoopResult(output=f"{self.reply}:{query}"), 0.01
+
+    def queries(self):
+        with self.lock:
+            return list(self.seen)
+
+
 def make_registry(tmp_path, *, runner=None, **runtime):
     reg = AgentRegistry(
         tmp_path,
@@ -1455,6 +1474,47 @@ class TestLiveTeammatesSection:
         assert "Live Agents" not in sub_names
         reg.shutdown_all()
 
+    def test_exclude_key_and_message_tool_intro(self, tmp_path, renderer):
+        # v5.11: 서브에이전트 프롬프트용 — 자기 자신 제외 + `message` 도구
+        # 안내(main 전용 agent op JSON 이 아니라).
+        from agent_cli.prompts.system_prompt import build_live_agents_section
+
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn(name="ui")
+        k2, _ = reg.spawn(name="db")
+        wait_until(lambda: reg.get(k2).state == "idle")
+
+        desc = build_live_agents_section(reg, exclude_key=k1, via_message_tool=True)
+        assert f"`{k2}`" in desc and f"`{k1}`" not in desc  # 자기 제외
+        assert "message" in desc  # message 도구 안내
+        assert '"mode":"request"' not in desc  # main 전용 JSON 아님
+        reg.shutdown_all()
+
+    def test_peer_section_injected_for_subloop(self):
+        # v5.11: registry 없이도(서브루프) 미리 만든 로스터 문자열을 주입하면
+        # Live Agents 섹션이 붙는다.
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        names = [
+            n
+            for n, _ in build_system_prompt_sections(
+                caps,
+                active_tools=["read_file"],
+                agent_registry=None,
+                peer_agents_section="## Live Agents\n- `x`",
+            )
+        ]
+        assert "Live Agents" in names
+
     def test_membership_flag_set_and_consumed(self, tmp_path, renderer):
         from agent_cli.subagent.agents_live import (
             consume_agents_reload,
@@ -1527,6 +1587,154 @@ class TestLiveTeammatesSection:
 
 
 # ── v4.60.1 회귀: 실렌더러 시그니처 (worker 부트 사망 사고) ──
+
+
+class TestPeerMessaging:
+    """에이전트↔에이전트 비동기 메시징 (v5.11): `message` 도구 → 대상 inbox,
+    회신은 요청자 inbox 로 terminal 재주입(핑퐁 없음), main 통신 대칭."""
+
+    def _reg_two(self, tmp_path, runner):
+        reg = make_registry(tmp_path, runner=runner)
+        a, _ = reg.spawn(name="alpha")
+        b, _ = reg.spawn(name="beta")
+        assert wait_until(
+            lambda: reg.get(a).state == "idle" and reg.get(b).state == "idle"
+        )
+        return reg, a, b
+
+    def test_peer_request_reply_is_terminal(self, tmp_path, renderer):
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        # A 가 B 에게 보낸 것을 시뮬레이션 (직접 request, author=agent:A)
+        err = reg.request(b, "hi-from-A", author=f"agent:{a}", expects_reply=True)
+        assert err == ""
+        # B 처리 → 회신이 A inbox 로 terminal 재주입 → A 1회 실행 후 멈춤
+        assert wait_until(lambda: reg.get(a).handled >= 1 and reg.get(b).handled >= 1)
+        time.sleep(0.2)  # 핑퐁이 있었다면 더 돌았을 시간
+        qs = runner.queries()
+        assert any("hi-from-A" in q and f"[agent:{a}]" in q for q in qs)  # B 가 받음
+        assert any(f"[agent:{b}]" in q for q in qs)  # A 가 B 회신 받음
+        # 총 실행 정확히 2회 — 핑퐁 없음
+        assert reg.get(a).handled == 1 and reg.get(b).handled == 1
+        # peer 트래픽은 main mailbox 를 건드리지 않음
+        assert reg.drain_replies() == []
+        reg.shutdown_all()
+
+    def test_message_handler_targets(self, tmp_path, renderer):
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        handler = reg._make_message_handler(reg.get(a))
+
+        # peer 로 전송 → 대상이 author=agent:A 로 받음
+        out = handler(b, "ping")
+        assert b in out
+        assert wait_until(lambda: reg.get(b).handled >= 1)
+        assert any("ping" in q and f"[agent:{a}]" in q for q in runner.queries())
+
+        # 자기 자신 / 빈 메시지 / 미지 대상 거부
+        assert "yourself" in handler(a, "x").lower()
+        assert "empty" in handler(b, "   ").lower()
+        assert "unknown" in handler("no-such", "x").lower()
+
+        # main 으로 → main mailbox
+        assert "main" in handler("main", "hello main").lower()
+        recs = reg.drain_replies()
+        assert any("hello main" in (r.get("output") or "") for r in recs)
+        reg.shutdown_all()
+
+    def test_build_reply_record_peer_message(self):
+        rec = build_reply_record(
+            {"kind": "peer_message", "key": "agt-x", "profile": "alpha", "output": "yo"}
+        )
+        assert rec["tool"] == "agent"
+        assert "yo" in rec["content"]
+        assert not is_format_intervention(rec)
+
+    def test_hop_cap_stops_peer_reply(self, tmp_path, renderer):
+        from agent_cli.subagent.agents_live import _MAX_PEER_HOPS
+
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        # 상한 도달 → 재주입 안 함 (A 안 돎)
+        reg._deliver_peer_reply(a, b, "x", hop=_MAX_PEER_HOPS)
+        assert not wait_until(lambda: reg.get(a).handled >= 1, timeout=0.4)
+        # 상한 미만 → 재주입 (A 돎)
+        reg._deliver_peer_reply(a, b, "y", hop=_MAX_PEER_HOPS - 1)
+        assert wait_until(lambda: reg.get(a).handled >= 1)
+        reg.shutdown_all()
+
+    def test_message_tool_gated_by_handler(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from agent_cli.loop import AgentLoop
+
+        # 핸들러 없음(main) → message 도구 부재
+        loop = AgentLoop(query="Q", provider=MagicMock(), capabilities=None, model="m")
+        assert "message" not in loop._config.tools_list
+        # 핸들러 있음(상주 서브에이전트) → active_tools 에 없어도 강제 탑재
+        loop2 = AgentLoop(
+            query="Q",
+            provider=MagicMock(),
+            capabilities=None,
+            model="m",
+            active_tools=["read_file"],
+            message_handler=lambda to, text: "",
+        )
+        assert "message" in loop2._config.tools_list
+
+    def test_message_op_routes_through_handler(self, tmp_path):
+        # 스크립트된 LLM 이 `message` op 을 내면 dispatch(_op_message)가
+        # message_handler 로 라우팅하고 배달 확인을 관찰로 기록한 뒤 계속 →
+        # 다음 턴 complete.
+        import json
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_structured_output=True,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+
+        def emit(action, ai):
+            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+
+        sent = []
+
+        def handler(to, text):
+            sent.append((to, text))
+            return f"delivered to {to}"
+
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
+        provider = MagicMock()
+
+        def scripted(*a, **k):
+            if provider.call.call_count == 1:
+                return LLMResponse(
+                    content=emit("message", {"to": "agt-peer", "text": "need help"})
+                )
+            return LLMResponse(content=emit("complete", {"result": "done"}))
+
+        provider.call = MagicMock(side_effect=scripted)
+
+        result = run_loop(
+            query="ask a peer",
+            provider=provider,
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            message_handler=handler,
+            max_turns=5,
+        )
+        assert result.success
+        assert sent == [("agt-peer", "need help")]
 
 
 class TestRendererSignatureRegression:

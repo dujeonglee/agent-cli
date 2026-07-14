@@ -65,6 +65,14 @@ class LoopConfig:
     # 있으면 ask 도구가 사용자 프롬프트 대신 이 callable(question)->answer
     # 로 간다 (worker 가 질문을 main mailbox 에 올리고 답변을 블록 대기).
     ask_handler: object = None
+    # v5.11: 에이전트↔에이전트 메시징 훅 — 상주 서브루프에서만 주입.
+    # 있으면 ``message`` 도구가 이 callable(to, text)->confirmation 으로
+    # 라우팅되고, __init__ 이 message 도구를 tools_list 에 강제 탑재한다.
+    message_handler: object = None
+    # v5.11: 상주 에이전트에 주입되는 미리 만든 ``## Live Agents`` 로스터
+    # 문자열(자기 제외) — registry 자체는 안 넘기고(상주 모드 차단 유지)
+    # 프롬프트 가시성만 준다.
+    peer_agents_section: str = ""
 
 
 @dataclass

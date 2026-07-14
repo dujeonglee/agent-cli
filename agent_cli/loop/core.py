@@ -90,6 +90,8 @@ class AgentLoop:
         compaction_enabled: bool = True,
         agent_registry=None,
         ask_handler=None,
+        message_handler=None,
+        peer_agents_section: str = "",
     ):
         # Wire format plugin — ReAct by default. Centralizes the
         # parser, recovery wording, prompt section, and lifecycle hooks
@@ -129,6 +131,15 @@ class AgentLoop:
         # Remove "ask" in non-interactive mode (no ctx)
         if not ctx and "ask" in tools_list:
             tools_list = [t for t in tools_list if t != "ask"]
+        # v5.11: ``message`` (에이전트↔에이전트) 는 상주 서브에이전트 전용 —
+        # message_handler 가 주입된 루프에만 커널 기본으로 강제 탑재하고
+        # (프로파일 allowed-tools 와 무관, ``ask`` 와 동형), 그 외(main·
+        # 일회성)에서는 제거해 비기능 도구를 광고하지 않는다.
+        if message_handler is not None:
+            if "message" not in tools_list:
+                tools_list = [*tools_list, "message"]
+        else:
+            tools_list = [t for t in tools_list if t != "message"]
         # agent 도구는 모든 루프에 존재 (5.0.0 모드 축소 노출, 설계 §3.2):
         # 서브루프(레지스트리 없음)는 run 만 문서화된 축소 설명을 받고,
         # 상주 모드는 디스패치가 거부한다. depth 상한에서는 run 도 불가라
@@ -174,6 +185,8 @@ class AgentLoop:
             verbose=verbose,
             agent_registry=agent_registry,
             ask_handler=ask_handler,
+            message_handler=message_handler,
+            peer_agents_section=peer_agents_section,
         )
         self._state = LoopState(
             query=query,

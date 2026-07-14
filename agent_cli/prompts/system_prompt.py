@@ -764,6 +764,7 @@ def build_system_prompt_sections(
     depth: int = 0,
     max_depth: int = 0,
     agent_registry=None,
+    peer_agents_section: str = "",
 ) -> list[tuple[str, str]]:
     """Build the system prompt as an ordered list of ``(name, text)`` sections.
 
@@ -836,6 +837,13 @@ def build_system_prompt_sections(
         live_desc = build_live_agents_section(agent_registry)
         if live_desc:
             sections.append(("Live Agents", live_desc))
+
+    # v5.11: 상주 서브에이전트는 registry 없이(상주 모드 차단 유지) 미리
+    # 만든 로스터 문자열로 peer 가시성을 받는다 — "agent" 도구 유무와 무관
+    # (message 도구가 접촉 경로). main 은 위 registry 경로로 받으므로 중복
+    # 주입 없음.
+    if peer_agents_section:
+        sections.append(("Live Agents", peer_agents_section))
 
     # ── Recency: passive reference → active rules → immediate constraint ──
     sections.append(("Environment", _build_environment_section()))
@@ -1031,7 +1039,9 @@ def build_agent_profiles_section(wire_format=None) -> str:
     return "\n".join(lines)
 
 
-def build_live_agents_section(agent_registry) -> str:
+def build_live_agents_section(
+    agent_registry, *, exclude_key: str = "", via_message_tool: bool = False
+) -> str:
     """현재 상주 중인 teammate 광고 (static 멤버십 층).
 
     설계: 멤버십(key·역할·인스턴스명·전문영역)만 — compaction 이 spawn
@@ -1039,6 +1049,10 @@ def build_live_agents_section(agent_registry) -> str:
     관찰이 아예 없는 경우도 커버한다. busy/idle 같은 휘발 상태는 넣지
     않는다 (매 턴 KV 프리픽스 버스트 방지 — 활동은 dynamic 관찰이 이미
     운반). 재조립 트리거는 멤버십 변화 플래그(consume_agents_reload).
+
+    ``exclude_key`` (v5.11): 이 key 는 목록에서 뺀다 — 상주 에이전트가
+    자기 자신을 로스터에서 보지 않게. ``via_message_tool``: 접촉 안내를
+    main 전용 agent op JSON 대신 ``message`` 도구로 (서브에이전트용).
     """
     if agent_registry is None:
         return ""
@@ -1046,20 +1060,32 @@ def build_live_agents_section(agent_registry) -> str:
         snapshot = agent_registry.roster_snapshot()
     except Exception:
         return ""
-    alive = [s for s in snapshot if s.get("state") != "dead"]
+    alive = [
+        s for s in snapshot if s.get("state") != "dead" and s.get("key") != exclude_key
+    ]
     if not alive:
         return ""
 
-    lines = [
-        "## Live Agents",
-        "These agents are ALREADY running and remember all previous "
-        "exchanges — send follow-up work with "
-        '`{"mode":"request","key":"<key>","message":"..."}` instead of '
-        "spawning a new one for the same thread of work. Spawn ADDITIONAL "
-        "instances of a profile (each with a distinct `name`) only for "
-        "parallel INDEPENDENT workstreams — e.g. several coders on disjoint "
-        "files.",
-    ]
+    if via_message_tool:
+        intro = (
+            "These peer agents are running alongside you, each with the role "
+            "below. Ask any of them directly with the `message` tool "
+            '(`{"to":"<key>","text":"..."}`, or `"to":"main"` to reach '
+            "the main agent). Their reply arrives to you as a NEW message — "
+            "you are not blocked; keep working or complete, and you'll be "
+            "woken when it comes."
+        )
+    else:
+        intro = (
+            "These agents are ALREADY running and remember all previous "
+            "exchanges — send follow-up work with "
+            '`{"mode":"request","key":"<key>","message":"..."}` instead of '
+            "spawning a new one for the same thread of work. Spawn ADDITIONAL "
+            "instances of a profile (each with a distinct `name`) only for "
+            "parallel INDEPENDENT workstreams — e.g. several coders on disjoint "
+            "files."
+        )
+    lines = ["## Live Agents", intro]
     for s in alive:
         # (v5.0 스냅샷 키 개명 잔재 수정: role → profile)
         who = " · ".join(p for p in (s.get("profile", ""), s.get("name", "")) if p)

@@ -72,6 +72,42 @@ class AskTool(Tool):
         return ToolResult(True, output="\n".join(str(x) for x in q) or "(ask)")
 
 
+class MessageTool(Tool):
+    name = "message"
+    # Present ONLY for resident (persistent) sub-agents — the loop injects a
+    # ``message_handler`` and force-adds this tool for them, and strips it
+    # everywhere else (the main agent talks to agents via the ``agent`` tool).
+    description = (
+        "Message another running agent (a peer, or `main`) and keep working. "
+        "Async: your message is delivered to them and its reply comes back to "
+        "YOU as a NEW message — you are NOT blocked. See `## Live Agents` for "
+        "who is running and their roles. Use to consult a specialist, hand off "
+        "a sub-question, or report a result. When you have nothing to add to a "
+        "peer's reply, just `complete` (or reply `LGTM`) so the exchange ends."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "to": {
+                "type": "string",
+                "description": "Target agent key (from `## Live Agents`), or 'main'.",
+            },
+            "text": {
+                "type": "string",
+                "description": "The message to send.",
+            },
+        },
+        "required": ["to", "text"],
+    }
+
+    def _run(self, args: dict, *, ctx=None) -> ToolResult:
+        # Placeholder — the loop intercepts `message` before dispatch and
+        # routes it through the injected ``message_handler``. Direct/test
+        # callers get a benign echo.
+        to = args.get("to", "")
+        return ToolResult(True, output=f"(message to {to}: intercepted by loop)")
+
+
 class RunSkillTool(Tool):
     name = "run_skill"
     description = (
