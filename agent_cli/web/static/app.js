@@ -1145,6 +1145,14 @@
     );
   });
 
+  es.addEventListener("compaction_ratio", function (e) {
+    // 5.13: 다른 뷰어가 압축 슬라이더를 바꾸면 sticky 로 전파 — 슬라이더
+    // IIFE 로 중계해 이 탭의 슬라이더도 동기화한다.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:compaction", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("directives_changed", function () {
     // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
     // IIFE to re-fetch the editor so concurrent editors don't show stale text.
@@ -2980,5 +2988,65 @@
   $backdrop.addEventListener("click", close);
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && $drawer.classList.contains("open")) close();
+  });
+})();
+
+// ── 컨텍스트 압축 임계 슬라이더 (5.13) ──────────────────────────────────
+// 헤더의 토큰 사용량 옆 슬라이더로 compaction 목표 비율을 세션 한정 변경.
+// web·loop 이 같은 ctx 를 공유하므로 저장 즉시 다음 LLM 콜에 반영. 다른
+// 뷰어는 sticky(compaction_ratio) 브로드캐스트로 동기화. 별도 IIFE — 메인
+// 렌더 루프 무수정(인스펙터·테마 등과 동일 패턴).
+(function () {
+  "use strict";
+  const token = new URLSearchParams(window.location.search).get("token");
+  const qt = () => "token=" + encodeURIComponent(token);
+  const $wrap = document.getElementById("compaction-wrap");
+  const $range = document.getElementById("compaction-range");
+  const $label = document.getElementById("compaction-label");
+  if (!$wrap || !$range || !$label) return;
+
+  const pctOf = (ratio) => Math.round(ratio * 100);
+  function setLabel(pct) {
+    $label.textContent = "압축 " + pct + "%";
+  }
+  function applyRatio(ratio) {
+    const pct = pctOf(ratio);
+    $range.value = pct;
+    setLabel(pct);
+  }
+
+  // 초기 로드: 현재 비율 + 슬라이더 범위(min/max/step). 성공 시 노출.
+  fetch("api/compaction?" + qt())
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d) return;
+      if (typeof d.min === "number") $range.min = pctOf(d.min);
+      if (typeof d.max === "number") $range.max = pctOf(d.max);
+      if (typeof d.step === "number") $range.step = Math.max(1, pctOf(d.step));
+      if (typeof d.ratio === "number") applyRatio(d.ratio);
+      $wrap.hidden = false;
+    })
+    .catch(() => {});
+
+  // 드래그 중엔 라벨만 실시간, 놓을 때 저장(POST). clamp 결과를 되반영.
+  $range.addEventListener("input", () => setLabel($range.value));
+  $range.addEventListener("change", () => {
+    const ratio = Number($range.value) / 100;
+    fetch("api/compaction?" + qt(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ratio: ratio }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.ratio === "number") applyRatio(d.ratio);
+      })
+      .catch(() => {});
+  });
+
+  // 다른 뷰어가 바꾸면 동기화.
+  document.addEventListener("agentcli:compaction", (e) => {
+    const d = e.detail || {};
+    if (typeof d.ratio === "number") applyRatio(d.ratio);
   });
 })();

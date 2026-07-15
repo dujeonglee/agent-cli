@@ -192,6 +192,19 @@ header {
 #viewers { font-size: 12px; color: var(--text-2); margin: 0 6px; white-space: nowrap; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; }
 #rename-btn { font-size: 13px; padding: 0 2px; flex-shrink: 0; }
 #rename-btn[hidden] { display: none; }
+#compaction-wrap {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-right: 12px; flex-shrink: 0;
+}
+#compaction-wrap[hidden] { display: none; }
+#compaction-label {
+  color: var(--muted); font-size: 11px; white-space: nowrap;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  cursor: default;
+}
+#compaction-range {
+  width: 84px; height: 3px; cursor: pointer; accent-color: var(--accent);
+}
 
 /* First-connect nickname bar */
 #name-bar {
@@ -221,7 +234,7 @@ main#messages {
   gap: 10px;
 }
 .card {
-  max-width: 800px;
+  max-width: 100%;
   width: 100%;
   position: relative;
 }
@@ -251,7 +264,8 @@ main#messages {
   border-radius: 12px 12px 4px 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
-  max-width: 80%;
+  max-width: 95%;
+  width: fit-content;
 }
 
 .card-assistant {
@@ -1168,8 +1182,8 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   display: flex; flex-direction: column; gap: 8px;
   border-top: 1px solid var(--border); padding-top: 10px;
 }
-.tm-msg { max-width: 88%; border-radius: 10px; padding: 6px 10px; font-size: 13px;
-  white-space: pre-wrap; word-break: break-word; }
+.tm-msg { max-width: 95%; width: fit-content; border-radius: 10px; padding: 6px 10px;
+  font-size: 13px; white-space: pre-wrap; word-break: break-word; }
 .tm-msg .tm-author { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
 .tm-msg.in { align-self: flex-end; background: var(--accent-soft-bg);
   border: 1px solid var(--accent-soft-border); }

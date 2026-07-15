@@ -28,11 +28,12 @@ from agent_cli.loop.state import LoopConfig, LoopState, _RETRY
 from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
 
 _MAX_OVERFLOW_RETRIES = 5
-# Compaction TARGET ratio: compact down to 80% of available headroom (leave a
-# 20% margin). Distinct from manager's _COMPACTION_THRESHOLD_RATIO (0.9 = when
-# to TRIGGER). Used by both the preventive (flow 1) and overflow-recovery
-# (flow 2) target computations in _call_llm.
-_COMPACTION_TARGET_RATIO = 0.8
+# Compaction TARGET ratio: compact down to this fraction of available headroom
+# (default 0.8 = leave a 20% margin). Distinct from manager's
+# _COMPACTION_THRESHOLD_RATIO (0.9 = when to TRIGGER). The value now lives on
+# the ContextManager (``self.ctx.compaction_ratio``) so the web slider can tune
+# it live; both the preventive (flow 1) and overflow-recovery (flow 2) target
+# computations in _call_llm read it from there.
 
 
 class LLMCaller:
@@ -84,7 +85,7 @@ class LLMCaller:
                         - sys_tokens
                         - self.cfg.capabilities.max_output_tokens
                     )
-                    * _COMPACTION_TARGET_RATIO
+                    * self.ctx.compaction_ratio
                 ),
                 1,
             )
@@ -184,7 +185,7 @@ class LLMCaller:
                 # estimate, shrink the cache toward the limit, and retry.
                 actual, limit = parse_overflow_amounts(str(e))
                 budget = self.ctx.max_context_tokens
-                target = int((limit or budget) * _COMPACTION_TARGET_RATIO)
+                target = int((limit or budget) * self.ctx.compaction_ratio)
                 if self.ctx.force_fit(target, actual_tokens=actual):
                     self.overflow_retries += 1
                     render_status(

@@ -77,10 +77,14 @@ def create_subagent_ctx(
     기본값). 생성된 live ctx 는 현재 스레드의 인스펙터 스코프에 등록 —
     CLI(minimal 렌더러)에선 no-op.
     """
-    from agent_cli.context.manager import ContextManager
+    from agent_cli.context.manager import DEFAULT_COMPACTION_RATIO, ContextManager
 
     inherited_wire_format = parent_ctx.wire_format if parent_ctx else None
 
+    # Inherit the parent's live compaction ratio at creation time (web slider
+    # value snapshot) — like max_context_tokens. Changing the slider later only
+    # affects newly spawned/resumed sub-agents; re-spawn to apply a new value.
+    ratio = parent_ctx.compaction_ratio if parent_ctx else DEFAULT_COMPACTION_RATIO
     if context_mode == "fork":
         if parent_ctx is None:
             return None, "fork requires parent context"
@@ -90,6 +94,7 @@ def create_subagent_ctx(
             max_context_tokens=parent_ctx.max_context_tokens,
             resume=True,
             wire_format=inherited_wire_format,
+            compaction_ratio=ratio,
         )
     elif context_mode == "resume":
         budget = parent_ctx.max_context_tokens if parent_ctx else 0
@@ -98,6 +103,7 @@ def create_subagent_ctx(
             max_context_tokens=budget,
             resume=True,
             wire_format=inherited_wire_format,
+            compaction_ratio=ratio,
         )
     else:
         budget = parent_ctx.max_context_tokens if parent_ctx else 0
@@ -105,6 +111,7 @@ def create_subagent_ctx(
             session_dir=subagent_dir,
             max_context_tokens=budget,
             wire_format=inherited_wire_format,
+            compaction_ratio=ratio,
         )
 
     from agent_cli.render import get_renderer

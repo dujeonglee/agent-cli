@@ -3476,6 +3476,36 @@ class TestFlow1PreventiveCompaction:
         spy.assert_called()
         assert spy.call_args.args[0] == 600  # 500 + 30 + 70
 
+    def test_target_scales_with_compaction_ratio(self, caps, tmp_path):
+        """flow-1 target = (context − system − output) × ctx.compaction_ratio.
+        The loop reads the ratio LIVE from ctx (web slider), so a lower ratio
+        yields a proportionally smaller (more aggressive) target — proves the
+        constant→ctx.compaction_ratio switch is wired to the runtime value."""
+        from unittest.mock import patch
+
+        def capture_target(ctx):
+            seen = []
+            with patch.object(ctx, "ensure_within", side_effect=seen.append):
+                run_loop(
+                    query="q",
+                    provider=_make_provider(_complete("ok")),
+                    capabilities=caps,
+                    model="test",
+                    ctx=ctx,
+                )
+            return seen[0]
+
+        ctx_lo = self._ctx(tmp_path / "lo")
+        ctx_lo.set_compaction_ratio(0.5)
+        ctx_hi = self._ctx(tmp_path / "hi")
+        ctx_hi.set_compaction_ratio(0.95)
+        t_lo = capture_target(ctx_lo)
+        t_hi = capture_target(ctx_hi)
+        # Same caps / query / tools → system+output identical; only the ratio
+        # differs, so the targets scale as 0.5 : 0.95.
+        assert t_lo < t_hi
+        assert t_lo == pytest.approx(t_hi * (0.5 / 0.95), rel=0.02)
+
     def test_no_reconcile_without_usage(self, caps, tmp_path):
         """Providers that report no usage leave the running estimate."""
         from unittest.mock import patch

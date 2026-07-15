@@ -57,6 +57,24 @@ DEFAULT_TOKEN_BUDGET = 100_000
 _COMPACTION_THRESHOLD_RATIO = 0.9  # trigger when cache > 90% of budget
 _SUMMARY_CHAR_CAP = 8000  # ≈ 2000 tokens at 4 chars/token
 
+# Compaction TARGET ratio: the loop squeezes the cache down to this fraction of
+# available headroom before each LLM call (``(context − system − output) ×
+# ratio``). Lower = compact earlier/more aggressively (more headroom, less
+# context kept); higher = compact later (more context, higher overflow risk).
+# Lives on the ContextManager (not a loop constant) so the web UI can adjust it
+# live — the loop and the web server share one ctx instance, so a slider write
+# is read by the next LLM call with no dirty-flag rebuild. Clamped to
+# [_MIN, _MAX] so a stray value can't disable compaction or over-squeeze.
+DEFAULT_COMPACTION_RATIO = 0.8
+COMPACTION_RATIO_MIN = 0.5
+COMPACTION_RATIO_MAX = 0.95
+COMPACTION_RATIO_STEP = 0.05
+
+
+def clamp_compaction_ratio(ratio: float) -> float:
+    return max(COMPACTION_RATIO_MIN, min(COMPACTION_RATIO_MAX, float(ratio)))
+
+
 # NOTE: oversized single-output protection lives in the loop now, not here.
 # A tool observation larger than ``context_window / 10`` is replaced with a
 # narrow-it nudge at the result→observation seam (``AgentLoop._tool_observation``)
@@ -119,6 +137,7 @@ class ContextManager:
         resume: bool = False,
         wire_format=None,
         compaction_enabled: bool = True,
+        compaction_ratio: float = DEFAULT_COMPACTION_RATIO,
     ):
         # Wire-format plugin attached to this ctx — drives the on-disk
         # → in-memory rendering of assistant turns when ``get_messages``
@@ -135,6 +154,9 @@ class ContextManager:
         self.max_context_tokens = (
             max_context_tokens if max_context_tokens > 0 else DEFAULT_TOKEN_BUDGET
         )
+        # Live-tunable compaction target (web slider). Clamped on set so the
+        # loop's per-call ``× compaction_ratio`` can never disable compaction.
+        self.compaction_ratio = clamp_compaction_ratio(compaction_ratio)
         self._cache: list[dict] = []
         self._cache_tokens: int = 0
         # Rendered (natural-language) mirror of the cache's dynamic slice —
@@ -328,6 +350,13 @@ class ContextManager:
     @property
     def compaction_count(self) -> int:
         return self._compaction_count
+
+    def set_compaction_ratio(self, ratio: float) -> float:
+        """Set the live compaction target ratio (web slider). Clamped to
+        [_MIN, _MAX]; returns the clamped value actually stored. Read by the
+        loop's next LLM call (shared ctx) — no rebuild needed."""
+        self.compaction_ratio = clamp_compaction_ratio(ratio)
+        return self.compaction_ratio
 
     @property
     def summary(self) -> str:

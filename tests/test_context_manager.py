@@ -30,6 +30,25 @@ def _add(ctx, msg):
     ctx.ensure_within(ctx.max_context_tokens)
 
 
+class TestCompactionRatio:
+    """Live-tunable compaction target ratio (web slider). Default 0.8,
+    clamped to [0.5, 0.95] on both construction and set."""
+
+    def test_default(self, tmp_path):
+        assert ContextManager(tmp_path).compaction_ratio == 0.8
+
+    def test_construction_clamps(self, tmp_path):
+        assert ContextManager(tmp_path, compaction_ratio=2.0).compaction_ratio == 0.95
+        assert ContextManager(tmp_path, compaction_ratio=0.1).compaction_ratio == 0.5
+
+    def test_set_clamps_and_returns_stored(self, tmp_path):
+        ctx = ContextManager(tmp_path)
+        assert ctx.set_compaction_ratio(0.6) == 0.6
+        assert ctx.compaction_ratio == 0.6
+        assert ctx.set_compaction_ratio(1.5) == 0.95  # over-cap → max
+        assert ctx.set_compaction_ratio(0.2) == 0.5  # under → min
+
+
 @pytest.fixture
 def wf():
     """ReAct wire-format plugin used by ``_to_natural_language`` tests.

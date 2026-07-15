@@ -571,6 +571,48 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_directives_changed()
         return {"ok": True}
 
+    @app.get("/api/compaction")
+    async def get_compaction(token: str = Query(...)):
+        """현재 compaction 목표 비율 + 슬라이더 범위(min/max/step). 라이브
+        ctx 가 없으면(headless) 기본값. 프론트가 슬라이더 초기화에 사용."""
+        server._require_token(token)
+        from agent_cli.context.manager import (
+            COMPACTION_RATIO_MAX,
+            COMPACTION_RATIO_MIN,
+            COMPACTION_RATIO_STEP,
+            DEFAULT_COMPACTION_RATIO,
+        )
+
+        ratio = (
+            server.ctx.compaction_ratio
+            if server.ctx is not None
+            else DEFAULT_COMPACTION_RATIO
+        )
+        return {
+            "ratio": ratio,
+            "min": COMPACTION_RATIO_MIN,
+            "max": COMPACTION_RATIO_MAX,
+            "step": COMPACTION_RATIO_STEP,
+        }
+
+    @app.post("/api/compaction")
+    async def set_compaction(body: dict, token: str = Query(...)):
+        """세션 한정 compaction 목표 비율 변경. web 과 loop 이 같은 ctx 를
+        공유하므로 다음 LLM 콜이 즉시 새 값을 읽는다(rebuild 불필요). 값은
+        [min,max] 로 clamp 되고, 다른 뷰어엔 sticky 브로드캐스트로 슬라이더
+        동기화. 서브에이전트는 spawn/resume 시점에 이 값을 상속(기존 서브는
+        불변 — 재spawn 으로 적용)."""
+        server._require_token(token)
+        if server.ctx is None:
+            return {"ok": False, "error": "no active context"}
+        try:
+            ratio = float(body.get("ratio"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "ratio must be a number"}
+        clamped = server.ctx.set_compaction_ratio(ratio)
+        server.renderer.broadcast_compaction_ratio(clamped)
+        return {"ok": True, "ratio": clamped}
+
     @app.post("/api/directives/generate")
     async def directives_generate(body: dict, token: str = Query(...)):
         """✨ 생성 — 대략적 의도(brief)를 해당 청중(audience)용 directive

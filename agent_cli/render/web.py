@@ -620,6 +620,11 @@ class WebRenderer(Renderer):
         복원 (다른 sticky 슬롯과 동일 기계)."""
         self.set_sticky("agent_roster", "agent_roster", {"roster": roster})
 
+    def broadcast_compaction_ratio(self, ratio: float) -> None:
+        """5.13: compaction 슬라이더 값 변경을 다른 뷰어에 sticky 로 전파 —
+        여러 브라우저의 슬라이더가 동기화되고, 재접속 snapshot 에도 실린다."""
+        self.set_sticky("compaction_ratio", "compaction_ratio", {"ratio": ratio})
+
     def agent_message(
         self,
         *,

@@ -27,6 +27,11 @@
   <header>
     <span id="info">connecting…</span>
     <span id="token-usage" title="token usage"></span>
+    <span id="compaction-wrap" title="컨텍스트 압축 임계 — 가용 컨텍스트가 이 %에 닿으면 압축(낮을수록 일찍/자주). 세션 한정. 서브에이전트는 spawn 시점 값 상속." hidden>
+      <label id="compaction-label" for="compaction-range">압축 80%</label>
+      <input id="compaction-range" type="range" min="50" max="95" step="5" value="80"
+             aria-label="컨텍스트 압축 임계 %">
+    </span>
     <span id="theme-wrap">
       <button id="theme-btn" class="btn-icon" type="button" title="테마 선택" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>

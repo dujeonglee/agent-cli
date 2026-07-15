@@ -118,6 +118,22 @@ class TestCreateSubagentCtx:
         bare = ContextManager(tmp_path / "bare", max_context_tokens=0)
         assert ctx.max_context_tokens == bare.max_context_tokens
 
+    def test_inherits_parent_compaction_ratio(self, tmp_path):
+        # Sub-agent snapshots the parent's live compaction ratio at creation
+        # (web-slider value), like max_context_tokens — all three modes.
+        parent = ContextManager(tmp_path / "parent", max_context_tokens=1000)
+        parent.set_compaction_ratio(0.6)
+        parent.add({"role": "user", "content": "hi"})  # fork needs history
+        for mode, sub in (("none", "s1"), ("fork", "s2"), ("resume", "s3")):
+            ctx, error = create_subagent_ctx(mode, parent, tmp_path / sub)
+            assert error == "" and ctx is not None
+            assert ctx.compaction_ratio == 0.6, mode
+
+    def test_no_parent_uses_default_ratio(self, tmp_path):
+        ctx, error = create_subagent_ctx("none", None, tmp_path / "sub")
+        assert error == "" and ctx is not None
+        assert ctx.compaction_ratio == 0.8  # DEFAULT_COMPACTION_RATIO
+
     def test_fork_without_parent_is_error(self, tmp_path):
         ctx, error = create_subagent_ctx("fork", None, tmp_path / "sub")
         assert ctx is None

@@ -474,6 +474,18 @@ class TestStaticUI:
         assert "#export-bar[hidden]" in css
         assert "#export-jira-form[hidden]" in css
 
+    def test_compaction_slider_wired(self, server_and_client):
+        # 5.13 compaction 슬라이더 배선 계약: index.html 요소 + app.js 가
+        # api/compaction GET/POST 를 치고, 다른 뷰어 sync 이벤트를 받는다.
+        _, _, client = server_and_client
+        html = client.get("/").text
+        assert 'id="compaction-range"' in html
+        js = client.get("/static/app.js").text
+        assert "api/compaction" in js
+        assert "agentcli:compaction" in js  # 타 뷰어 동기화
+        css = client.get("/static/style.css").text
+        assert "#compaction-range" in css
+
     def test_agent_conversation_clear_wired(self, server_and_client):
         # 5.13 대화창 kill=정리 계약: 서버가 보내는 ``agent_cleared`` 를
         # app.js 가 받아 중계(tm-cleared)하고, 드로어 IIFE 가 그 key 의
@@ -2392,3 +2404,52 @@ class TestTeammateEndpoints:
         assert reg.killed == ["agt-1"]
         r2 = client.post(f"/api/agent/agt-missing/kill?token={server.token}")
         assert r2.status_code == 404
+
+
+class TestCompactionEndpoint:
+    """GET/POST /api/compaction — 세션 한정 compaction 목표 비율. 공유 ctx
+    라 POST 가 loop 이 읽는 값을 즉시 바꾸고, sticky 로 타 뷰어에 전파."""
+
+    def _client_with_ctx(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        renderer = WebRenderer()
+        ctx = ContextManager(tmp_path)
+        server = WebServer(renderer, token="testtoken", ctx=ctx)
+        return server, renderer, TestClient(create_app(server)), ctx
+
+    def test_get_returns_ratio_and_range(self, tmp_path):
+        _, _, client, _ctx = self._client_with_ctx(tmp_path)
+        d = client.get("/api/compaction?token=testtoken").json()
+        assert d["ratio"] == 0.8
+        assert d["min"] == 0.5 and d["max"] == 0.95 and d["step"] == 0.05
+
+    def test_get_default_when_no_ctx(self, server_and_client):
+        _, _, client = server_and_client
+        d = client.get("/api/compaction?token=testtoken").json()
+        assert d["ratio"] == 0.8  # DEFAULT — no live ctx
+
+    def test_post_sets_ctx_and_clamps(self, tmp_path):
+        _, _, client, ctx = self._client_with_ctx(tmp_path)
+        d = client.post("/api/compaction?token=testtoken", json={"ratio": 0.6}).json()
+        assert d["ok"] and d["ratio"] == 0.6 and ctx.compaction_ratio == 0.6
+        d2 = client.post("/api/compaction?token=testtoken", json={"ratio": 1.5}).json()
+        assert d2["ratio"] == 0.95 and ctx.compaction_ratio == 0.95  # clamp
+
+    def test_post_bad_ratio_errors_unchanged(self, tmp_path):
+        _, _, client, ctx = self._client_with_ctx(tmp_path)
+        d = client.post("/api/compaction?token=testtoken", json={"ratio": "x"}).json()
+        assert d["ok"] is False and ctx.compaction_ratio == 0.8
+
+    def test_post_broadcasts_sticky_to_new_viewer(self, tmp_path):
+        _, renderer, client, _ctx = self._client_with_ctx(tmp_path)
+        client.post("/api/compaction?token=testtoken", json={"ratio": 0.65})
+        conn = WebConnection(id="v2")
+        snap = renderer.register_connection(conn)
+        ratios = [d.get("ratio") for (ev, d) in snap if ev == "compaction_ratio"]
+        assert ratios == [0.65]
+
+    def test_post_without_ctx_errors(self, server_and_client):
+        _, _, client = server_and_client
+        d = client.post("/api/compaction?token=testtoken", json={"ratio": 0.6}).json()
+        assert d["ok"] is False
