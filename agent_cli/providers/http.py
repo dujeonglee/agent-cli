@@ -26,10 +26,20 @@ Retryable exceptions
 - ``requests.Timeout`` (covers ``ConnectTimeout`` and ``ReadTimeout``)
 - ``requests.ConnectionError``
 
-HTTP error responses (4xx/5xx) are NOT retried — those are raised via
-``response.raise_for_status()`` by the caller after this function
-returns, and they represent a server decision that retrying won't
-change. This helper only wraps the underlying network call.
+Retryable HTTP statuses
+-----------------------
+Transient gateway errors — ``502``/``503``/``504`` — ARE retried (bounded, on a
+budget SEPARATE from the network-error one). A reverse proxy (nginx/caddy) in
+front of an on-prem LLM returns these while the upstream is restarting or
+overloaded, so a short re-send usually recovers — exactly like
+``ConnectionError`` does when connecting directly. The error response is closed
+and the request re-sent from scratch (no partial to resume).
+
+Other HTTP error responses (4xx, a bare 500) are NOT retried — they are raised
+via ``raise_for_status_with_body`` by the caller after this function returns and
+represent a server decision that retrying won't change. When the 5xx retries are
+exhausted the last error response is returned unchanged, so the caller still
+surfaces it (with body) exactly as before.
 
 Backoff
 -------
@@ -43,7 +53,10 @@ Config (env)
 ------------
 - ``AGENT_CLI_LLM_RETRY_ATTEMPTS``: total attempts including the first
   (default 10). Values below 1 are clamped to 1 so the call isn't
-  silently dropped.
+  silently dropped. Applies to Timeout / ConnectionError only.
+- ``AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS``: total attempts for a transient
+  gateway 5xx (502/503/504), including the first (default 3, clamped to
+  ≥1). Reuses ``AGENT_CLI_LLM_RETRY_DELAY`` for the pause between attempts.
 - ``AGENT_CLI_LLM_RETRY_DELAY``: seconds between attempts (default 1.0).
 """
 
@@ -63,6 +76,7 @@ from agent_cli.verbose import debug_log
 
 
 _DEFAULT_ATTEMPTS = 10
+_DEFAULT_STATUS_ATTEMPTS = 3
 _DEFAULT_DELAY = 1.0
 
 # Poll cadence for interrupt during a no-data stream gap (TTFT, between-token
@@ -144,6 +158,11 @@ _RETRYABLE: tuple[type[BaseException], ...] = (
     requests.ConnectionError,
 )
 
+# Transient gateway errors from a reverse proxy (nginx/caddy) in front of an
+# on-prem LLM server: the upstream is momentarily down/restarting/overloaded, so
+# a bounded re-send usually recovers — unlike 4xx (bad request) or a bare 500.
+_RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
@@ -170,6 +189,13 @@ def _attempts() -> int:
     return max(1, _env_int("AGENT_CLI_LLM_RETRY_ATTEMPTS", _DEFAULT_ATTEMPTS))
 
 
+def _status_attempts() -> int:
+    # Clamp minimum to 1: setting 0 would silently skip the request.
+    return max(
+        1, _env_int("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", _DEFAULT_STATUS_ATTEMPTS)
+    )
+
+
 def _delay() -> float:
     return max(0.0, _env_float("AGENT_CLI_LLM_RETRY_DELAY", _DEFAULT_DELAY))
 
@@ -177,9 +203,22 @@ def _delay() -> float:
 def post_with_retry(
     post_fn: Callable[..., requests.Response],
     url: str,
+    *,
+    retry_statuses: frozenset[int] = _RETRYABLE_STATUS,
     **kwargs,
 ) -> requests.Response:
-    """Invoke ``post_fn(url, **kwargs)`` with bounded retry on network errors.
+    """Invoke ``post_fn(url, **kwargs)`` with bounded retry on network errors
+    and on transient gateway ``5xx`` responses.
+
+    Two independent budgets: ``AGENT_CLI_LLM_RETRY_ATTEMPTS`` (default 10) for
+    ``Timeout``/``ConnectionError`` raised *before* any status arrives, and
+    ``AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS`` (default 3) for a response whose status
+    is in ``retry_statuses`` (default 502/503/504). Both share
+    ``AGENT_CLI_LLM_RETRY_DELAY`` for the pause between attempts.
+
+    When the 5xx budget is exhausted the last error response is returned
+    unchanged — the caller's ``raise_for_status_with_body`` then surfaces it
+    (with body). Any other status (2xx, 4xx, bare 500) returns immediately.
 
     ``post_fn`` is passed in explicitly (not imported from ``requests``
     here) so that existing test patches of
@@ -192,30 +231,59 @@ def post_with_retry(
     from agent_cli.render import render_status
 
     attempts = _attempts()
+    status_attempts = _status_attempts()
     delay = _delay()
     last_exc: BaseException | None = None
+    net_failures = 0
+    status_failures = 0
 
-    for i in range(attempts):
+    while True:
         try:
-            return post_fn(url, **kwargs)
+            r = post_fn(url, **kwargs)
         except _RETRYABLE as e:
             last_exc = e
-            remaining = attempts - i - 1
-            if remaining <= 0:
+            net_failures += 1
+            if net_failures >= attempts:
                 break
-            next_attempt = i + 2  # human-friendly: "retrying (2/3)"
             render_status(
                 "running",
                 f"LLM request failed ({type(e).__name__}) — "
-                f"retrying ({next_attempt}/{attempts})",
+                f"retrying ({net_failures + 1}/{attempts})",
             )
             debug_log(
                 f"[retry] {type(e).__name__} on {url}: "
-                f"attempt {i + 1}/{attempts} failed; sleeping {delay}s"
+                f"attempt {net_failures}/{attempts} failed; sleeping {delay}s"
             )
             time.sleep(delay)
+            continue
 
-    # Exhausted — surface the last exception to the caller.
+        # A response arrived. Transient gateway 5xx (502/503/504) is re-sent on
+        # its own budget; every other status returns to the caller.
+        if retry_statuses and r.status_code in retry_statuses:
+            status_failures += 1
+            if status_failures >= status_attempts:
+                debug_log(
+                    f"[retry] HTTP {r.status_code} on {url}: exhausted "
+                    f"{status_attempts} attempts; surfacing to caller"
+                )
+                return r
+            r.close()  # discard the error response before re-sending
+            render_status(
+                "running",
+                f"LLM request failed (HTTP {r.status_code}) — "
+                f"retrying ({status_failures + 1}/{status_attempts})",
+            )
+            debug_log(
+                f"[retry] HTTP {r.status_code} on {url}: "
+                f"attempt {status_failures}/{status_attempts} failed; "
+                f"sleeping {delay}s"
+            )
+            time.sleep(delay)
+            continue
+
+        return r
+
+    # Network-error retries exhausted — surface the last exception to the caller.
     render_status(
         "error",
         f"LLM request failed after {attempts} attempts: {type(last_exc).__name__}",

@@ -199,7 +199,8 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_RECORD_RAW_FAILURES` | — | `1`/`true`/`on`/`yes` 면 파싱 실패 시 raw 페이로드를 `turns.jsonl` 에 기록(복구 분석용). 기본 off. |
 | `AGENT_CLI_UNIFDEF` | — | code_index 의 C/C++ 전처리 모드: `auto`(기본, unifdef 있으면 씀)·`system`(시스템 unifdef 강제)·`pure`(순수 파이썬 폴백). 프로세스 시작 시 1회 읽어 고정. |
 | `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. **스트리밍**: post timeout `(connect 30초, read 30초)` 로 **헤더 대기·헤더 구간 interrupt 를 30초로 바운드**(broken 서버의 ~20분 행 제거) → 헤더 수신 후 소켓을 patient 로 리셋해 body 는 느긋. body 가 **30초** 무토큰이면 UI 에 대기 알림(`응답 대기 중 — …`), **20틱(10분) 연속 침묵**이면 연결 끊고 재전송(최대 3회). 토큰 오면 카운터 리셋. **비스트리밍**: `(30, 1200)` (전체 생성 read). interrupt 는 body 구간 ~8초, 헤더 구간 ≤30초. |
-| `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
+| `AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS` | — | 일시적 게이트웨이 5xx(**502/503/504**) 응답의 총 시도 횟수 (기본 3 = 최초 + 재시도 2회, 최소 1로 clamp). on-prem LLM 앞단 리버스 프록시(nginx/caddy)가 업스트림 재시작·과부하 중 내는 오류라 짧게 재전송하면 대개 회복 — `ConnectionError` 재시도와 동일 취지. 네트워크 에러 예산(`AGENT_CLI_LLM_RETRY_ATTEMPTS`)과 **독립 카운터**. 소진되면 마지막 에러 응답을 그대로 올려 기존처럼 body 포함해 실패 표면화. 4xx·bare 500 은 무재시도. |
+| `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 네트워크 에러·5xx 재시도 **공용**. 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
 
 ### 워크스페이스 경로 봉쇄
 

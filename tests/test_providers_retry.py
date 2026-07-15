@@ -26,10 +26,18 @@ def _ok_response() -> MagicMock:
     return resp
 
 
+def _status_response(status: int) -> MagicMock:
+    """Mock a requests.Response with a specific status code (no stream read)."""
+    resp = MagicMock()
+    resp.status_code = status
+    return resp
+
+
 @pytest.fixture(autouse=True)
 def _clear_retry_env(monkeypatch):
     """Start each test with defaults; individual tests set overrides."""
     monkeypatch.delenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", raising=False)
+    monkeypatch.delenv("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", raising=False)
     monkeypatch.delenv("AGENT_CLI_LLM_RETRY_DELAY", raising=False)
 
 
@@ -88,6 +96,113 @@ class TestRetryOnConnectionError:
         result = post_with_retry(post_fn, "http://x/llm")
         assert result is good
         assert post_fn.call_count == 2
+
+
+class TestRetryOnGatewayStatus:
+    """Transient gateway 5xx (502/503/504) is retried on a separate budget
+    (default 3); other statuses return immediately for the caller to handle."""
+
+    @pytest.mark.parametrize("status", [502, 503, 504])
+    def test_gateway_status_retried_then_success(self, status):
+        good = _ok_response()
+        post_fn = MagicMock(side_effect=[_status_response(status), good])
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is good
+        assert post_fn.call_count == 2
+
+    def test_error_response_closed_before_resend(self):
+        bad = _status_response(502)
+        good = _ok_response()
+        post_fn = MagicMock(side_effect=[bad, good])
+        post_with_retry(post_fn, "http://x/llm")
+        bad.close.assert_called_once()
+
+    def test_bare_500_not_retried(self):
+        bad = _status_response(500)
+        post_fn = MagicMock(return_value=bad)
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is bad
+        assert post_fn.call_count == 1
+
+    def test_4xx_not_retried(self):
+        bad = _status_response(400)
+        post_fn = MagicMock(return_value=bad)
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is bad
+        assert post_fn.call_count == 1
+
+    def test_exhaustion_returns_last_response_for_caller_to_raise(self):
+        # Default 3 attempts of 502: the helper does NOT raise — it returns the
+        # last error response so the caller's raise_for_status surfaces it
+        # (with body) exactly as an un-retried 502 would.
+        responses = [_status_response(502) for _ in range(3)]
+        post_fn = MagicMock(side_effect=responses)
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is responses[-1]
+        assert result.status_code == 502
+        assert post_fn.call_count == 3
+
+    def test_default_budget_is_three(self):
+        # 4 available, but only 3 attempts made (default budget).
+        responses = [_status_response(503) for _ in range(4)]
+        post_fn = MagicMock(side_effect=responses)
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result.status_code == 503
+        assert post_fn.call_count == 3
+
+    def test_status_attempts_env_override(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", "5")
+        responses = [_status_response(504) for _ in range(5)]
+        post_fn = MagicMock(side_effect=responses)
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result.status_code == 504
+        assert post_fn.call_count == 5
+
+    def test_status_attempts_zero_clamped_to_one(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", "0")
+        bad = _status_response(502)
+        post_fn = MagicMock(return_value=bad)
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is bad
+        assert post_fn.call_count == 1
+
+    def test_sleep_between_status_retries(self):
+        # 3 × 502 → 2 sleeps (between attempts, not after the last).
+        post_fn = MagicMock(side_effect=[_status_response(502) for _ in range(3)])
+        post_with_retry(post_fn, "http://x/llm")
+        assert http_mod.time.sleep.call_count == 2
+
+    def test_status_retry_reuses_delay_env(self, monkeypatch):
+        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_DELAY", "0.25")
+        post_fn = MagicMock(side_effect=[_status_response(502), _ok_response()])
+        post_with_retry(post_fn, "http://x/llm")
+        http_mod.time.sleep.assert_called_once_with(0.25)
+
+    def test_network_and_status_use_independent_budgets(self):
+        # A Timeout AND a 502 in the same call are both retried through to
+        # success — the two budgets don't consume each other.
+        good = _ok_response()
+        post_fn = MagicMock(
+            side_effect=[requests.Timeout("t"), _status_response(502), good]
+        )
+        result = post_with_retry(post_fn, "http://x/llm")
+        assert result is good
+        assert post_fn.call_count == 3
+
+    def test_retry_statuses_param_can_disable(self):
+        # Passing an empty set opts out — a 502 returns immediately.
+        bad = _status_response(502)
+        post_fn = MagicMock(return_value=bad)
+        result = post_with_retry(post_fn, "http://x/llm", retry_statuses=frozenset())
+        assert result is bad
+        assert post_fn.call_count == 1
+
+    def test_render_status_running_on_gateway_retry(self):
+        post_fn = MagicMock(side_effect=[_status_response(502), _ok_response()])
+        with patch("agent_cli.render.render_status") as mock_status:
+            post_with_retry(post_fn, "http://x/llm")
+        states = [call.args[0] for call in mock_status.call_args_list]
+        assert "running" in states
 
 
 class TestExhaustion:
@@ -333,6 +448,40 @@ class TestProviderWiring:
             resp = provider.call(messages=[], system="", model="m", capabilities=caps)
             assert resp.content == "ok"
             assert mock_post.call_count == 2
+
+    def test_anthropic_retries_on_gateway_502(self):
+        """Default retry_statuses reaches the provider: a 502 then success is
+        retried without the caller opting in."""
+        from agent_cli.providers.anthropic import AnthropicProvider
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        caps = ModelCapabilities(
+            context_window=4096,
+            max_output_tokens=1024,
+            supports_structured_output=False,
+            supports_thinking=False,
+            thinking_budget=0,
+            supports_strict_schema=False,
+        )
+        bad = MagicMock()
+        bad.status_code = 502
+        good = MagicMock()
+        good.status_code = 200
+        good.raise_for_status.return_value = None
+        good.json.return_value = {
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "stop_reason": "end_turn",
+        }
+        with patch(
+            "agent_cli.providers.anthropic.requests.post",
+            side_effect=[bad, good],
+        ) as mock_post:
+            provider = AnthropicProvider("https://api.anthropic.com/v1", "test-key")
+            resp = provider.call(messages=[], system="", model="m", capabilities=caps)
+            assert resp.content == "ok"
+            assert mock_post.call_count == 2
+            bad.close.assert_called_once()
 
 
 class TestRaiseForStatusWithBody:
