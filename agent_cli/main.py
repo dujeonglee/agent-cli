@@ -1061,7 +1061,7 @@ def run(
     response_format: Optional[str] = typer.Option(
         None,
         "--response-format",
-        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > md_array (markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-in: react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > md_array (markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-in: react (pure JSON), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
     resume: str = typer.Option(
         "",

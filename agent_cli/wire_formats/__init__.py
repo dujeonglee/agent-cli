@@ -191,9 +191,11 @@ __all__ = [
 def _register_builtin_plugins() -> None:
     from agent_cli.wire_formats.md_array import MdArrayFormat
     from agent_cli.wire_formats.react import ReActFormat
+    from agent_cli.wire_formats.xml_fc import XmlFcFormat
 
     register(ReActFormat())
     register(MdArrayFormat())  # default — multi-op (DESIGN §7)
+    register(XmlFcFormat())  # 태그-파라미터 (multi-wire-format PHASE2)
 
 
 _register_builtin_plugins()
