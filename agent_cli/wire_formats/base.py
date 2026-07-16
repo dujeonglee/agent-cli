@@ -538,8 +538,6 @@ class WireFormat(ABC):
         :meth:`sanitize_thought` here. This is what keeps a wire sentinel the
         model leaked from riding back into the next-turn prior (which is built
         by ``render`` from this record) and re-teaching the runaway shape.
-        The unsanitized raw is still kept in ``raw_failures.jsonl`` for failed
-        turns, so no postmortem fidelity is lost.
 
         Routing parse through this default also means the live-dispatch
         parser and the history-write parser share the same 3-stage

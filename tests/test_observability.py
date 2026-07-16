@@ -109,9 +109,9 @@ class TestTurnRecorderEnabled:
     def test_records_accumulate_across_recorder_instances(self, session_dir):
         """A fresh TurnRecorder per run_loop call (web spawns one per user
         message) appends to the SAME session turns.jsonl — rows accumulate
-        across instances. There is no per-row counter: row ordering and the
-        turns↔raw_failures join are by timestamp, not seq (seq was removed —
-        it was run-local and collided across run_loop invocations)."""
+        across instances. There is no per-row counter: row ordering is by
+        timestamp, not seq (seq was removed — it was run-local and collided
+        across run_loop invocations)."""
         a = TurnRecorder(session_dir=session_dir, enabled=True)
         b = TurnRecorder(session_dir=session_dir, enabled=True)
         a.record(model="m", parse_stage=1)
@@ -182,70 +182,3 @@ class TestSchemaInvariants:
         rec = TurnRecord(model="m", timestamp="t", parse_stage=1)
         assert rec.primitives_applied == []
         assert rec.failure_signal is None
-
-
-class TestRawFailureCapture:
-    """``record_raw=True`` dumps the raw LLM response of *failed* turns to
-    a separate ``raw_failures.jsonl`` (debug-only; turns.jsonl stays
-    metadata-only). Used to analyze how a turn drifted before strengthening
-    recovery rules.
-    """
-
-    def test_records_raw_on_failure_when_enabled(self, session_dir):
-        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
-        rec.record(
-            model="m",
-            parse_stage=0,
-            failure_signal=FAILURE_NO_JSON,
-            raw="I think we should read loop.py next.",
-        )
-        rows = _read_jsonl(session_dir / "raw_failures.jsonl")
-        assert len(rows) == 1
-        assert rows[0]["raw"] == "I think we should read loop.py next."
-        assert rows[0]["failure_signal"] == FAILURE_NO_JSON
-        assert rows[0]["parse_stage"] == 0
-        assert "timestamp" in rows[0]
-
-    def test_success_turn_not_recorded_to_raw(self, session_dir):
-        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
-        rec.record(
-            model="m", parse_stage=1, failure_signal=None, raw="## Action\nread_file"
-        )
-        # failure_signal None (성공) → raw_failures 에 안 남음
-        assert _read_jsonl(session_dir / "raw_failures.jsonl") == []
-
-    def test_record_raw_off_creates_no_raw_file(self, session_dir):
-        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=False)
-        rec.record(model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON, raw="blah")
-        assert not (session_dir / "raw_failures.jsonl").exists()
-        # turns.jsonl 은 정상 기록 (raw 비활성과 무관)
-        assert len(_read_jsonl(session_dir / "turns.jsonl")) == 1
-
-    def test_raw_timestamp_matches_turns_timestamp(self, session_dir):
-        # The failed turn's raw_failures.jsonl row shares the EXACT timestamp
-        # of its turns.jsonl row — the join key between the two logs (seq used
-        # to do this but was run-local and collided). Both rows take the
-        # timestamp from a single now() call inside record().
-        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
-        rec.record(model="m", parse_stage=1, failure_signal=None, raw="ok")  # success
-        rec.record(
-            model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON, raw="bad"
-        )  # failure
-        turns = _read_jsonl(session_dir / "turns.jsonl")
-        raw_rows = _read_jsonl(session_dir / "raw_failures.jsonl")
-        assert len(raw_rows) == 1
-        # raw row joins to the failure turn (2nd) by identical timestamp
-        assert raw_rows[0]["timestamp"] == turns[1]["timestamp"]
-        assert "seq" not in raw_rows[0] and "seq" not in turns[0]
-
-    def test_raw_none_not_recorded(self, session_dir):
-        # raw 를 안 줘도(None) 에러 없고 raw_failures 미기록
-        rec = TurnRecorder(session_dir=session_dir, enabled=True, record_raw=True)
-        rec.record(model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON)
-        assert _read_jsonl(session_dir / "raw_failures.jsonl") == []
-
-    def test_no_session_dir_raw_is_no_op(self):
-        rec = TurnRecorder(session_dir=None, enabled=True, record_raw=True)
-        rec.record(
-            model="m", parse_stage=0, failure_signal=FAILURE_NO_JSON, raw="x"
-        )  # must not raise

@@ -241,7 +241,7 @@ class TestRunSingleWithAgent:
 
     def test_compaction_disabled_propagates_to_run_loop(self, monkeypatch):
         """Parent's compaction_enabled=False threads into the delegate's
-        run_loop (matches the --no-compaction CLI flag flowing to subagents)."""
+        run_loop (the internal flag flowing to subagents)."""
         captured_kwargs = {}
 
         def mock_run_loop(**kwargs):

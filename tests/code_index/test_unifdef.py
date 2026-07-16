@@ -439,25 +439,21 @@ class TestParityWithSystemUnifdef:
 
 
 class TestPreprocBackendSelection:
-    """The selector in ``preproc.py`` lets the operator pick a backend
-    via ``AGENT_CLI_UNIFDEF`` env var (auto / system / pure). These
-    tests cover the wiring — the actual transformation correctness is
-    pinned by the cases above."""
+    """``preproc.py`` prefers the system ``unifdef`` binary when present
+    and falls back to the bundled pure-Python implementation otherwise.
+    These tests cover the wiring — the actual transformation correctness
+    is pinned by the cases above."""
 
-    def test_pure_backend_routes_through_python_impl(self, monkeypatch):
-        # Force pure mode and confirm the system binary path is not
-        # invoked even when it's available. ``preprocess_source``
-        # produces the same output either way for our test input, so
-        # we verify the routing by patching subprocess.run to raise —
-        # the pure path doesn't call it.
+    def test_pure_backend_used_when_binary_absent(self, monkeypatch):
+        # No system binary → the pure-Python path must produce output
+        # (and subprocess.run must not be invoked).
         import agent_cli.code_index.preproc as preproc
 
-        monkeypatch.setattr(preproc, "_UNIFDEF_MODE", "pure")
-        # If the pure path were bypassed, this raise would propagate.
+        monkeypatch.setattr(preproc, "UNIFDEF_BIN", None)
         monkeypatch.setattr(
             preproc.subprocess,
             "run",
-            lambda *a, **kw: pytest.fail("subprocess.run called in pure mode"),
+            lambda *a, **kw: pytest.fail("subprocess.run called with no system binary"),
         )
 
         src = b"#ifdef A\nx\n#endif\n"
@@ -466,21 +462,20 @@ class TestPreprocBackendSelection:
         # Directives blanked → no leftover #ifdef in output.
         assert b"#ifdef" not in out
 
-    def test_auto_backend_uses_system_when_available(self, monkeypatch):
-        # Auto mode + system binary present → ``subprocess.run`` must
-        # be the one producing output. Patch the pure-Python module to
-        # fail if called, so a regression that silently skipped to
-        # pure would scream.
+    def test_system_backend_used_when_available(self, monkeypatch):
+        # System binary present → ``subprocess.run`` must be the one
+        # producing output. Patch the pure-Python module to fail if
+        # called, so a regression that silently skipped to pure would
+        # scream.
         import agent_cli.code_index.preproc as preproc
 
         if preproc.UNIFDEF_BIN is None:
-            pytest.skip("system unifdef not on PATH — auto mode skips by design")
-        monkeypatch.setattr(preproc, "_UNIFDEF_MODE", "auto")
+            pytest.skip("system unifdef not on PATH")
         monkeypatch.setattr(
             preproc._unifdef,
             "run_unifdef",
             lambda *a, **kw: pytest.fail(
-                "pure-Python called in auto mode with system binary present"
+                "pure-Python called with system binary present"
             ),
         )
         src = b"#ifdef A\nx\n#endif\n"

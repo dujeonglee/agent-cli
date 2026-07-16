@@ -1,8 +1,8 @@
 """Tests for the LLM-request retry helper.
 
-Covers post_with_retry's scope (Timeout / ConnectionError only),
-attempt counting, env-var overrides, and exception propagation on
-exhaustion. Also verifies the provider modules route their
+Covers post_with_retry's scope (Timeout / ConnectionError plus
+transient gateway 5xx), attempt counting, and exception propagation
+on exhaustion. Also verifies the provider modules route their
 requests.post calls through post_with_retry so the retry applies
 uniformly.
 """
@@ -31,14 +31,6 @@ def _status_response(status: int) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status
     return resp
-
-
-@pytest.fixture(autouse=True)
-def _clear_retry_env(monkeypatch):
-    """Start each test with defaults; individual tests set overrides."""
-    monkeypatch.delenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", raising=False)
-    monkeypatch.delenv("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", raising=False)
-    monkeypatch.delenv("AGENT_CLI_LLM_RETRY_DELAY", raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -150,33 +142,16 @@ class TestRetryOnGatewayStatus:
         assert result.status_code == 503
         assert post_fn.call_count == 3
 
-    def test_status_attempts_env_override(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", "5")
-        responses = [_status_response(504) for _ in range(5)]
-        post_fn = MagicMock(side_effect=responses)
-        result = post_with_retry(post_fn, "http://x/llm")
-        assert result.status_code == 504
-        assert post_fn.call_count == 5
-
-    def test_status_attempts_zero_clamped_to_one(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", "0")
-        bad = _status_response(502)
-        post_fn = MagicMock(return_value=bad)
-        result = post_with_retry(post_fn, "http://x/llm")
-        assert result is bad
-        assert post_fn.call_count == 1
-
     def test_sleep_between_status_retries(self):
         # 3 × 502 → 2 sleeps (between attempts, not after the last).
         post_fn = MagicMock(side_effect=[_status_response(502) for _ in range(3)])
         post_with_retry(post_fn, "http://x/llm")
         assert http_mod.time.sleep.call_count == 2
 
-    def test_status_retry_reuses_delay_env(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_DELAY", "0.25")
+    def test_status_retry_uses_default_delay(self):
         post_fn = MagicMock(side_effect=[_status_response(502), _ok_response()])
         post_with_retry(post_fn, "http://x/llm")
-        http_mod.time.sleep.assert_called_once_with(0.25)
+        http_mod.time.sleep.assert_called_once_with(http_mod._DEFAULT_DELAY)
 
     def test_network_and_status_use_independent_budgets(self):
         # A Timeout AND a 502 in the same call are both retried through to
@@ -209,7 +184,7 @@ class TestExhaustion:
     # Pin attempts=3 so these exercise the exhaustion MECHANISM independent of
     # the default (10) — the default is covered separately below.
     def test_all_attempts_fail_raises_last(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
+        monkeypatch.setattr(http_mod, "_DEFAULT_ATTEMPTS", 3)
         post_fn = MagicMock(
             side_effect=[
                 requests.Timeout("t1"),
@@ -222,7 +197,7 @@ class TestExhaustion:
         assert post_fn.call_count == 3
 
     def test_mixed_exceptions_still_raises_last(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
+        monkeypatch.setattr(http_mod, "_DEFAULT_ATTEMPTS", 3)
         post_fn = MagicMock(
             side_effect=[
                 requests.ConnectionError("c1"),
@@ -253,59 +228,6 @@ class TestNonRetryable:
         assert post_fn.call_count == 1
 
 
-class TestEnvOverrides:
-    def test_attempts_env_var_honored(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "5")
-        post_fn = MagicMock(side_effect=[requests.Timeout(f"t{i}") for i in range(5)])
-        with pytest.raises(requests.Timeout):
-            post_with_retry(post_fn, "http://x/llm")
-        assert post_fn.call_count == 5
-
-    def test_attempts_zero_clamped_to_one(self, monkeypatch):
-        """0 must not silently skip the call — at least one attempt."""
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "0")
-        post_fn = MagicMock(return_value=_ok_response())
-        result = post_with_retry(post_fn, "http://x/llm")
-        assert result.status_code == 200
-        assert post_fn.call_count == 1
-
-    def test_attempts_one_disables_retry(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "1")
-        post_fn = MagicMock(side_effect=requests.Timeout("t1"))
-        with pytest.raises(requests.Timeout):
-            post_with_retry(post_fn, "http://x/llm")
-        assert post_fn.call_count == 1
-
-    def test_invalid_attempts_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "not-a-number")
-        post_fn = MagicMock(
-            side_effect=[requests.Timeout("t1"), requests.Timeout("t2"), _ok_response()]
-        )
-        result = post_with_retry(post_fn, "http://x/llm")
-        assert result.status_code == 200
-        # Invalid value → falls back to default (10), which is ≥ 3, so the
-        # call succeeds on the 3rd attempt here.
-        assert post_fn.call_count == 3
-
-    def test_delay_env_var_honored(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_DELAY", "0.25")
-        post_fn = MagicMock(side_effect=[requests.Timeout("t1"), _ok_response()])
-        post_with_retry(post_fn, "http://x/llm")
-        http_mod.time.sleep.assert_called_once_with(0.25)
-
-    def test_delay_zero_allowed(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_DELAY", "0")
-        post_fn = MagicMock(side_effect=[requests.Timeout("t1"), _ok_response()])
-        post_with_retry(post_fn, "http://x/llm")
-        http_mod.time.sleep.assert_called_once_with(0.0)
-
-    def test_invalid_delay_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_DELAY", "not-a-float")
-        post_fn = MagicMock(side_effect=[requests.Timeout("t1"), _ok_response()])
-        post_with_retry(post_fn, "http://x/llm")
-        http_mod.time.sleep.assert_called_once_with(1.0)
-
-
 class TestSleepBehavior:
     def test_sleep_called_only_between_attempts(self):
         """N attempts means N-1 sleeps (no sleep after the final attempt)."""
@@ -321,7 +243,7 @@ class TestSleepBehavior:
         assert http_mod.time.sleep.call_count == 0
 
     def test_no_sleep_after_final_exhausted_attempt(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
+        monkeypatch.setattr(http_mod, "_DEFAULT_ATTEMPTS", 3)
         post_fn = MagicMock(
             side_effect=[
                 requests.Timeout("t1"),
@@ -345,7 +267,7 @@ class TestUserVisibility:
         assert "running" in states
 
     def test_render_status_error_on_exhaustion(self, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_LLM_RETRY_ATTEMPTS", "3")
+        monkeypatch.setattr(http_mod, "_DEFAULT_ATTEMPTS", 3)
         post_fn = MagicMock(
             side_effect=[
                 requests.Timeout("t1"),

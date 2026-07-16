@@ -4,7 +4,7 @@ Coverage axes (TEST_PLAN.md):
   - Trigger / split / summary / file_list / get_messages
   - Fallback: LLM failure + cache-still-too-big belt-and-braces
   - Persistence: compaction.json schema + resume invariant
-  - CLI flag + env var (NFR-CC-5)
+  - Constructor flag (NFR-CC-5)
   - TurnRecorder integration (NFR-CC-6)
   - render_compaction_progress single entry point (UI invariant)
   - File path extraction (_file_extract)
@@ -863,7 +863,7 @@ class TestPersistence:
         assert len(ctx._cache) == 1
 
 
-# ── 8. CLI flag / env var ────────────────────────────
+# ── 8. Constructor flag ──────────────────────────────
 
 
 class TestCompactionToggle:
@@ -882,21 +882,6 @@ class TestCompactionToggle:
         assert called == []
         # Cache still under budget.
         assert ctx._cache_tokens <= ctx.max_context_tokens
-
-    def test_env_var_off_overrides_constructor_flag(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_COMPACTION", "off")
-        ctx = ContextManager(
-            tmp_path / "s",
-            max_context_tokens=80,
-            compaction_enabled=True,  # constructor says ON
-        )
-        called = []
-        ctx.set_compactor(lambda msgs: called.append(msgs) or "X")
-        _add(ctx, {"role": "system", "content": "sys"})
-        for _ in range(15):
-            _add(ctx, {"role": "user", "content": "x" * 30})
-        # Env var off wins → FIFO instead.
-        assert called == []
 
 
 # ── 9. TurnRecorder integration ──────────────────────

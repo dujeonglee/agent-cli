@@ -41,29 +41,20 @@ represent a server decision that retrying won't change. When the 5xx retries are
 exhausted the last error response is returned unchanged, so the caller still
 surfaces it (with body) exactly as before.
 
-Backoff
--------
-Fixed 1s between attempts, not exponential. Rationale: the target
-deployment is single-user on-prem, so thundering-herd and rate-limit
-concerns don't apply. The 1s exists only to give a restarting server
-a moment of headroom for ConnectionError; Timeout is already the result
-of a long wait so the pause has little effect but no harm.
-
-Config (env)
-------------
-- ``AGENT_CLI_LLM_RETRY_ATTEMPTS``: total attempts including the first
-  (default 10). Values below 1 are clamped to 1 so the call isn't
-  silently dropped. Applies to Timeout / ConnectionError only.
-- ``AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS``: total attempts for a transient
-  gateway 5xx (502/503/504), including the first (default 3, clamped to
-  ≥1). Reuses ``AGENT_CLI_LLM_RETRY_DELAY`` for the pause between attempts.
-- ``AGENT_CLI_LLM_RETRY_DELAY``: seconds between attempts (default 1.0).
+Budgets (fixed)
+---------------
+- Network errors (Timeout / ConnectionError): ``_DEFAULT_ATTEMPTS`` (10)
+  total attempts including the first.
+- Transient gateway 5xx (502/503/504): ``_DEFAULT_STATUS_ATTEMPTS`` (3),
+  a budget separate from the network one.
+- Backoff: fixed ``_DEFAULT_DELAY`` (1s) between attempts, not exponential —
+  single-user on-prem, so thundering-herd / rate-limit concerns don't apply;
+  the 1s just gives a restarting server headroom for ConnectionError.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import queue
 import threading
 import time
@@ -164,42 +155,6 @@ _RETRYABLE: tuple[type[BaseException], ...] = (
 _RETRYABLE_STATUS: frozenset[int] = frozenset({502, 503, 504})
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
-def _attempts() -> int:
-    # Clamp minimum to 1: setting 0 would silently skip the request.
-    return max(1, _env_int("AGENT_CLI_LLM_RETRY_ATTEMPTS", _DEFAULT_ATTEMPTS))
-
-
-def _status_attempts() -> int:
-    # Clamp minimum to 1: setting 0 would silently skip the request.
-    return max(
-        1, _env_int("AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS", _DEFAULT_STATUS_ATTEMPTS)
-    )
-
-
-def _delay() -> float:
-    return max(0.0, _env_float("AGENT_CLI_LLM_RETRY_DELAY", _DEFAULT_DELAY))
-
-
 def post_with_retry(
     post_fn: Callable[..., requests.Response],
     url: str,
@@ -210,11 +165,11 @@ def post_with_retry(
     """Invoke ``post_fn(url, **kwargs)`` with bounded retry on network errors
     and on transient gateway ``5xx`` responses.
 
-    Two independent budgets: ``AGENT_CLI_LLM_RETRY_ATTEMPTS`` (default 10) for
+    Two independent budgets: ``_DEFAULT_ATTEMPTS`` (10) for
     ``Timeout``/``ConnectionError`` raised *before* any status arrives, and
-    ``AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS`` (default 3) for a response whose status
-    is in ``retry_statuses`` (default 502/503/504). Both share
-    ``AGENT_CLI_LLM_RETRY_DELAY`` for the pause between attempts.
+    ``_DEFAULT_STATUS_ATTEMPTS`` (3) for a response whose status is in
+    ``retry_statuses`` (default 502/503/504). Both share ``_DEFAULT_DELAY``
+    (1s) for the pause between attempts.
 
     When the 5xx budget is exhausted the last error response is returned
     unchanged — the caller's ``raise_for_status_with_body`` then surfaces it
@@ -230,9 +185,9 @@ def post_with_retry(
     # even if the render subsystem isn't fully wired.
     from agent_cli.render import render_status
 
-    attempts = _attempts()
-    status_attempts = _status_attempts()
-    delay = _delay()
+    attempts = _DEFAULT_ATTEMPTS
+    status_attempts = _DEFAULT_STATUS_ATTEMPTS
+    delay = _DEFAULT_DELAY
     last_exc: BaseException | None = None
     net_failures = 0
     status_failures = 0

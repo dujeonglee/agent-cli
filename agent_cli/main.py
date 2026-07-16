@@ -1045,11 +1045,6 @@ def run(
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
-    no_compaction: bool = typer.Option(
-        False,
-        "--no-compaction",
-        help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. Useful for measurement baseline / debugging. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
-    ),
     response_format: str = typer.Option(
         DEFAULT_WIRE_FORMAT,
         "--response-format",
@@ -1163,7 +1158,6 @@ def run(
             "timeout": agent_timeout,
             "session": session,
             "hooks_config": _disk_hooks,
-            "compaction_enabled": not no_compaction,
         },
     )
 
@@ -1261,7 +1255,6 @@ def run(
             hooks_config=_disk_hooks,
             record_turns=record_turns,
             wire_format=wire_format_plugin,
-            compaction_enabled=not no_compaction,
             agent_registry=agent_registry,
         )
         if loop_result.success:
@@ -1631,11 +1624,6 @@ def web(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
-    no_compaction: bool = typer.Option(
-        False,
-        "--no-compaction",
-        help="Disable context compaction (LLM summarisation at 90% budget). Falls back to plain FIFO drop. ``AGENT_CLI_COMPACTION=off`` env var has the same effect.",
-    ),
     response_format: str = typer.Option(
         DEFAULT_WIRE_FORMAT,
         "--response-format",
@@ -1864,7 +1852,6 @@ def web(
                 "timeout": agent_timeout,
                 "session": session,
                 "hooks_config": None,
-                "compaction_enabled": not no_compaction,
             },
         )
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
@@ -1983,7 +1970,6 @@ def web(
                             stop_event=stop_event,
                             record_turns=record_turns,
                             wire_format=wire_format_plugin,
-                            compaction_enabled=not no_compaction,
                             mcp_manager=mcp_manager,
                             agent_registry=agent_registry,
                         )

@@ -126,14 +126,6 @@ class TestManagerFold:
         assert all(not is_format_intervention(r) for r in cache)
         assert any(r.get("role") == "assistant" and r.get("ops") for r in cache)
 
-    def test_env_off_disables(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_FOLD_INTERVENTIONS", "off")
-        ctx = self._ctx(tmp_path)
-        ctx.add(_fail_prior())
-        ctx.add(_intervention())
-        assert ctx.fold_resolved_interventions(assume_tail_resolved=True) == 0
-        assert any(is_format_intervention(r) for r in ctx.get_raw_messages())
-
 
 class TestDispatcherIntegration:
     def test_parse_success_folds_prior_intervention(self, tmp_path):

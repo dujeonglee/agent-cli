@@ -173,7 +173,7 @@ class TestParentRoleInheritance:
 
     def test_compaction_disabled_propagates_to_run_loop(self, caps, ctx):
         """Parent's compaction_enabled=False threads into the skill's run_loop
-        (matches the --no-compaction CLI flag flowing to subagents)."""
+        (the internal flag flowing to subagents)."""
         skill = _make_skill()
 
         with patch("agent_cli.skills.executor.run_loop") as mock_loop:

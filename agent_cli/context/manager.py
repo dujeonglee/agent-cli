@@ -23,15 +23,13 @@ When the LLM summariser fails OR the rebuilt cache is still over budget
 so the cache always returns under budget — no infinite-trigger loop.
 
 Compaction can be disabled entirely (NFR-CC-5) by passing
-``compaction_enabled=False`` at construction time or via the
-``AGENT_CLI_COMPACTION=off`` environment variable, both of which the
-``AgentLoop`` plumbs from CLI flags. With compaction off the manager
-reverts to the historical plain-FIFO behaviour.
+``compaction_enabled=False`` at construction time, which the
+``AgentLoop`` plumbs from its own constructor argument. With compaction
+off the manager reverts to the historical plain-FIFO behaviour.
 """
 
 from __future__ import annotations
 
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,14 +122,6 @@ def compute_token_budget(context_window: int) -> int:
     return max((context_window * 7) // 10, 4000)  # floor: at least 4K tokens
 
 
-def _compaction_disabled_via_env() -> bool:
-    """``AGENT_CLI_COMPACTION=off`` (or false/0/disabled) wins over the
-    constructor flag — operator-level kill switch for deployments where
-    the LLM summarisation cost is undesirable."""
-    val = os.environ.get("AGENT_CLI_COMPACTION", "").strip().lower()
-    return val in ("off", "false", "0", "disabled", "no")
-
-
 class CompactionError(RuntimeError):
     """Raised when the summariser callback fails (provider error,
     empty/non-string return, etc.). ``ensure_within`` catches this and
@@ -211,13 +201,9 @@ class ContextManager:
         self._last_compacted_at: str = ""
         self._dynamic_start_index: int = 0
 
-        # Compaction can be disabled either by constructor flag
-        # (CLI ``--no-compaction``) or by environment variable
-        # (``AGENT_CLI_COMPACTION=off``). Env wins over flag so a deploy
-        # can shut the feature off without re-deploying the agent loop.
-        self._compaction_enabled = compaction_enabled and not (
-            _compaction_disabled_via_env()
-        )
+        # Compaction can be disabled via the constructor flag, which the
+        # ``AgentLoop`` plumbs from its own constructor argument.
+        self._compaction_enabled = compaction_enabled
 
         # Injected by AgentLoop after construction. ``_compactor_callback``
         # = function ``(messages) -> summary text``; ``_recorder`` =
@@ -748,20 +734,11 @@ class ContextManager:
         - False: resume 경로 — 레코드만으로 재판정(개입 뒤 ops-보유
           assistant 존재). live 가 접은 뒤 저장된 순서와 동일 결과 →
           live↔resume 동일 뷰(사이드카 상태 불필요).
-        - ``AGENT_CLI_FOLD_INTERVENTIONS=off`` 로 비활성.
         - 연속 실패는 자연 처리: 미해소(꼬리) 개입은 남고, 새 개입이
           그 앞의 것을 해소 조건 충족 전이라도 live 호출로 접는다 —
           컨텍스트에는 항상 최신 개입 1개만.
         반환: 접은 레코드 수.
         """
-        import os
-
-        if os.environ.get("AGENT_CLI_FOLD_INTERVENTIONS", "").strip().lower() in (
-            "off",
-            "0",
-            "false",
-        ):
-            return 0
         from agent_cli.context.records import (
             fold_resolved_intervention_indices,
             is_format_intervention,

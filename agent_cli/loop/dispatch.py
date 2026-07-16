@@ -172,7 +172,6 @@ class TurnDispatcher:
                 parse_stage=turn.parse_stage,
                 failure_signal=outcome["failure_signal"],
                 primitives_applied=outcome["primitives"],
-                raw=llm_text,
             )
 
     def _dispatch_turn(self, llm_text: str, turn, outcome: dict):

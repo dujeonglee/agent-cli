@@ -85,7 +85,6 @@ class AgentLoop:
         mcp_manager=None,
         hook_runner=None,
         record_turns: bool = True,
-        record_raw_failures: bool | None = None,
         wire_format=None,
         compaction_enabled: bool = True,
         agent_registry=None,
@@ -212,21 +211,9 @@ class AgentLoop:
 
         # Observability — per-turn record. Disabled when no session
         # (headless / subagent) or when user opted out.
-        #
-        # raw_failures capture: debug-only dump of failed turns' raw
-        # response (recovery-rule analysis). Off by default; opt in via the
-        # AGENT_CLI_RECORD_RAW_FAILURES env var so every entry point
-        # (run / chat / web) is covered without a per-command CLI flag.
-        if record_raw_failures is None:
-            import os
-
-            record_raw_failures = os.environ.get(
-                "AGENT_CLI_RECORD_RAW_FAILURES", ""
-            ).strip().lower() in ("1", "true", "on", "yes")
         self.recorder = TurnRecorder(
             session_dir=(self.ctx.session_dir if self.ctx else None),
             enabled=record_turns,
-            record_raw=record_raw_failures,
         )
 
         # C1 PR-3: 턴 디스패치는 TurnDispatcher 소유(loop_detector 포함).
@@ -238,12 +225,11 @@ class AgentLoop:
         # The compactor callback and the TurnRecorder are injected
         # into the ContextManager so the manager can summarise
         # evicted messages via the same provider and emit compaction
-        # events for measurement. ``compaction_enabled=False`` (CLI
-        # ``--no-compaction``) skips the callback registration so the
-        # manager reverts to plain FIFO drop.
+        # events for measurement. ``compaction_enabled=False`` skips the
+        # callback registration so the manager reverts to plain FIFO drop.
         if self.ctx is not None:
             self.ctx.set_recorder(self.recorder)
-            if self._compaction_enabled():
+            if self.compaction_enabled:
                 self.ctx.set_compactor(self._llm_compact_summarize)
 
     # ── C1 PR-1 property 브리지 ──────────────────────────────────
@@ -395,22 +381,6 @@ class AgentLoop:
     @stop_event.setter
     def stop_event(self, v):
         self._state.stop_event = v
-
-    def _compaction_enabled(self) -> bool:
-        """Resolve the effective compaction-enabled flag (NFR-CC-5).
-
-        Order of precedence:
-          1. ``AGENT_CLI_COMPACTION`` env var (operator-level kill
-             switch, wins over constructor flag).
-          2. ``compaction_enabled`` constructor flag (CLI
-             ``--no-compaction``).
-        """
-        import os
-
-        env = os.environ.get("AGENT_CLI_COMPACTION", "").strip().lower()
-        if env in ("off", "false", "0", "disabled", "no"):
-            return False
-        return self.compaction_enabled
 
     def _llm_compact_summarize(self, messages: list[dict]) -> str:
         """LLMCaller.compact-summarize 위임 (ctx.set_compactor 등록 대상)."""

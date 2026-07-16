@@ -41,7 +41,7 @@ FAILURE_NESTED_ENVELOPE = (
     "NESTED_ENVELOPE"  # A6: complete result wraps another envelope
 )
 FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
-FAILURE_DEGENERATE = "DEGENERATE"  # A8: emission repeated the wire shape (e.g. multiple ## Thought/## Action blocks in one response) — format runaway. Observed (label + raw capture); the dispatch still proceeds on the parsed action. stop sequences (wire provider_call_kwargs) are the primary guard.
+FAILURE_DEGENERATE = "DEGENERATE"  # A8: emission repeated the wire shape (e.g. multiple ## Thought/## Action blocks in one response) — format runaway. Observed (labelled); the dispatch still proceeds on the parsed action. stop sequences (wire provider_call_kwargs) are the primary guard.
 
 
 @dataclass(frozen=True)
@@ -49,12 +49,11 @@ class TurnRecord:
     """One row in the per-turn observability log.
 
     Rows are ordered by append (file order) and carry a ``timestamp`` — the
-    natural ordering for walking records and the join key to the matching
-    ``raw_failures.jsonl`` row. (A per-row ``seq`` was removed: it counted
-    per TurnRecorder instance, and web spawns a fresh recorder per run_loop
-    call, so seq reset mid-session and collided.) ``failure_signal`` is None
-    on a successful turn; ``primitives_applied`` is empty when no recovery
-    happened.
+    natural ordering for walking records. (A per-row ``seq`` was removed: it
+    counted per TurnRecorder instance, and web spawns a fresh recorder per
+    run_loop call, so seq reset mid-session and collided.) ``failure_signal``
+    is None on a successful turn; ``primitives_applied`` is empty when no
+    recovery happened.
 
     Recovery rate is *not* stored on the record — it's derived at analysis
     time by walking forward from a failed turn until the next non-failed
@@ -87,24 +86,12 @@ class TurnRecorder:
         self,
         session_dir: Optional[Path],
         enabled: bool = True,
-        record_raw: bool = False,
     ):
         self._path: Optional[Path]
         if session_dir is None or not enabled:
             self._path = None
         else:
             self._path = Path(session_dir) / "turns.jsonl"
-        # raw_failures.jsonl — debug-only escape hatch from the
-        # metadata-only rule: the raw LLM response of *failed* turns, for
-        # recovery-rule analysis. Separate file so turns.jsonl keeps its
-        # no-prompts/no-responses guarantee. Written only when both the
-        # turns recorder is active (``_path`` set) and a failure_signal +
-        # raw text are present (see ``record``).
-        self._raw_path: Optional[Path] = (
-            Path(session_dir) / "raw_failures.jsonl"
-            if (session_dir is not None and record_raw)
-            else None
-        )
 
     @property
     def enabled(self) -> bool:
@@ -117,22 +104,11 @@ class TurnRecorder:
         parse_stage: int,
         failure_signal: Optional[str] = None,
         primitives_applied: Optional[list[str]] = None,
-        raw: Optional[str] = None,
     ) -> None:
-        """Append one record to ``turns.jsonl``. No-op when disabled.
-
-        ``raw`` is the turn's raw LLM response. It is written to
-        ``turns.jsonl`` *never* — only, when ``record_raw`` is enabled and
-        this turn carries a ``failure_signal``, to the separate
-        ``raw_failures.jsonl`` (debug capture for recovery-rule analysis).
-        """
+        """Append one record to ``turns.jsonl``. No-op when disabled."""
         if self._path is None:
             return
 
-        # Single timestamp shared by both files so a failed turn's
-        # turns.jsonl row and its raw_failures.jsonl row carry the SAME
-        # value — the join key between the two logs (seq used to do this
-        # but was run-local and collided across run_loop invocations).
         ts = datetime.now(timezone.utc).isoformat()
         rec = TurnRecord(
             model=model,
@@ -150,16 +126,6 @@ class TurnRecorder:
         # matching defensive mkdir in
         # ``ContextManager._append_to_history``.
         append_line(self._path, line)
-
-        # Debug-only raw capture: failed turns' raw response → separate file.
-        if self._raw_path is not None and failure_signal and raw is not None:
-            raw_rec = {
-                "timestamp": ts,
-                "parse_stage": parse_stage,
-                "failure_signal": failure_signal,
-                "raw": raw,
-            }
-            append_line(self._raw_path, json.dumps(raw_rec, ensure_ascii=False))
 
     def record_compaction(
         self,

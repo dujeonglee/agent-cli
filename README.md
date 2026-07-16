@@ -193,13 +193,10 @@ agent-cli run "task" -m gpt-4o-mini
 | `AGENT_CLI_WORKSPACE_CONFINE` | — | 워크스페이스 경로 봉쇄 (기본 on). `0` 으로 끄면 봉쇄 없음. [아래 참고](#워크스페이스-경로-봉쇄) |
 | `AGENT_CLI_WORKSPACE_ROOT` | — | 봉쇄 기준 루트 경로 override (기본: 프로세스 실행 디렉토리) |
 | `AGENT_CLI_DANGEROUS_SHELL_CONFIRM` | — | 위험 명령(`rm`/`rmdir`/`mv`) 확인 프롬프트 (기본 on). `0` 으로 끄면 비활성 |
-| `AGENT_CLI_COMPACTION` | — | 컨텍스트 컴팩션(90% 예산 LLM 요약) 비활성 스위치. `off`/`false`/`0`/`disabled`/`no` 중 하나면 끔(플레인 FIFO drop). `--no-compaction` 과 동일 효과(env 가 flag 보다 우선). |
-| `AGENT_CLI_FOLD_INTERVENTIONS` | `off` 로 형식-복구 개입 fold 비활성. 기본 on: 파싱/스키마 개입(NO_JSON·A4·A5 등)은 다음 파싱 성공 시 dynamic 컨텍스트에서 접혀 **성공 궤적만** 남음(실패 shape 재공급 방지 — v4.51.0). history.jsonl 에는 전부 보존 | (on) |
-| `AGENT_CLI_RECORD_RAW_FAILURES` | — | `1`/`true`/`on`/`yes` 면 파싱 실패 시 raw 페이로드를 `turns.jsonl` 에 기록(복구 분석용). 기본 off. |
-| `AGENT_CLI_UNIFDEF` | — | code_index 의 C/C++ 전처리 모드: `auto`(기본, unifdef 있으면 씀)·`system`(시스템 unifdef 강제)·`pure`(순수 파이썬 폴백). 프로세스 시작 시 1회 읽어 고정. |
-| `AGENT_CLI_LLM_RETRY_ATTEMPTS` | — | LLM 요청 총 시도 횟수 (기본 10 = 최초 + 재시도 9회). Timeout / ConnectionError에만 적용. 1로 설정하면 재시도 비활성. **스트리밍**: post timeout `(connect 30초, read 30초)` 로 **헤더 대기·헤더 구간 interrupt 를 30초로 바운드**(broken 서버의 ~20분 행 제거) → 헤더 수신 후 소켓을 patient 로 리셋해 body 는 느긋. body 가 **30초** 무토큰이면 UI 에 대기 알림(`응답 대기 중 — …`), **20틱(10분) 연속 침묵**이면 연결 끊고 재전송(최대 3회). 토큰 오면 카운터 리셋. **비스트리밍**: `(30, 1200)` (전체 생성 read). interrupt 는 body 구간 ~8초, 헤더 구간 ≤30초. |
-| `AGENT_CLI_LLM_5XX_RETRY_ATTEMPTS` | — | 일시적 게이트웨이 5xx(**502/503/504**) 응답의 총 시도 횟수 (기본 3 = 최초 + 재시도 2회, 최소 1로 clamp). on-prem LLM 앞단 리버스 프록시(nginx/caddy)가 업스트림 재시작·과부하 중 내는 오류라 짧게 재전송하면 대개 회복 — `ConnectionError` 재시도와 동일 취지. 네트워크 에러 예산(`AGENT_CLI_LLM_RETRY_ATTEMPTS`)과 **독립 카운터**. 소진되면 마지막 에러 응답을 그대로 올려 기존처럼 body 포함해 실패 표면화. 4xx·bare 500 은 무재시도. |
-| `AGENT_CLI_LLM_RETRY_DELAY` | — | 재시도 간 대기 시간(초, 기본 1.0). 네트워크 에러·5xx 재시도 **공용**. 지수 백오프 안 씀 (on-prem 단일 사용자 전제). |
+
+> **LLM 요청 재시도**는 고정 상수로 동작한다(더 이상 env 로 조정 불가). 네트워크 에러(Timeout / ConnectionError)는 최대 10회, 일시적 게이트웨이 5xx(**502/503/504**)는 **독립 카운터**로 최대 3회, 재시도 간격 1초. 4xx·bare 500 은 무재시도. 스트리밍은 헤더 대기를 30초로 바운드하고 body 10분 연속 침묵 시 연결을 끊고 재전송한다. 자세한 동작은 `agent_cli/providers/http.py` 참고.
+>
+> **컨텍스트 컴팩션**은 항상 켜져 있다(90% 예산 초과 시 LLM 요약; 실패/여전히 초과 시 플레인 FIFO drop 으로 폴백). 서브에이전트에도 전파된다.
 
 ### 워크스페이스 경로 봉쇄
 
@@ -259,7 +256,6 @@ agent-cli run "task description" [options]
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
-| `--no-compaction` | 토큰 budget 90% 초과 시 LLM 요약 압축 비활성. 평소대로 플레인 FIFO drop. `AGENT_CLI_COMPACTION=off` 환경 변수도 같은 효과 (env가 flag보다 우선). | `false` |
 | `--response-format` | Wire format 플러그인 이름. 빌트인: `md_array` (**기본** — 멀티-op: `## Thought`/`## Action` + flat `{action, params}` op 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. Phase-2 bakeoff 95.2%=react + 실전 150턴 형식실패 0.7%로 검증 후 기본 전환), `react` (순수 JSON `{thought, action, action_input}`). 두 포맷 compliance 는 omlx 27B/35B bakeoff에서 동등. `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패 | `md_array` |
 
 | `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |
@@ -917,7 +913,7 @@ C/C++는 dedicated grammar 각각 사용. 그 외 형식은 `read_file` 으로.
 
 #### C/C++ 전처리 — defconfig (kernel/driver 필수)
 
-C/C++ 코드의 `#define` / `#ifdef` 분기 처리는 **번들된 pure-Python `_unifdef.py`** 가 기본 수행합니다 — 별도 설치 불필요. 시스템에 `unifdef` 바이너리가 있으면 (`brew install unifdef` / `apt install unifdef`) 자동으로 그것을 우선 사용 (battle-tested C 구현). 명시적 강제는 `AGENT_CLI_UNIFDEF=pure|system|auto` 환경변수.
+C/C++ 코드의 `#define` / `#ifdef` 분기 처리는 **번들된 pure-Python `_unifdef.py`** 가 기본 수행합니다 — 별도 설치 불필요. 시스템에 `unifdef` 바이너리가 있으면 (`brew install unifdef` / `apt install unifdef`) 자동으로 그것을 우선 사용 (battle-tested C 구현).
 
 **기능상 차이 없음** — 두 백엔드는 ifdef/elif/else/endif + `defined()`/논리/비교/산술 표현식에서 byte-identical 출력 (parity 테스트로 보장).
 
@@ -1196,7 +1192,7 @@ Thinking 모델(`<think>...</think>`)은 파싱 전 자동 분리됩니다.
 6. **영속화**: `compaction.json` (version, summary, file_list, dynamic_start_index 등) — `--resume` 시 압축 상태 그대로 복원
 7. **Belt-and-braces fallback**: LLM 호출 실패 또는 재구성된 cache가 여전히 budget 초과면 플레인 FIFO drop으로 떨어뜨림 — 무한 트리거 루프 방지
 
-`--no-compaction` 플래그 또는 `AGENT_CLI_COMPACTION=off` 환경 변수로 압축을 끄면 기존 플레인 FIFO만 동작합니다 (LLM 호출 비용·외부 의존이 곤란한 배포 환경 대비). 이 설정은 agent·skill 서브에이전트에도 그대로 전파되어, 부모에서 압축을 끄면 중첩 실행도 모두 FIFO만 사용합니다.
+압축은 항상 켜져 있으며, LLM 요약이 실패하거나 재구성된 cache가 여전히 budget을 초과하면 belt-and-braces 플레인 FIFO drop으로 안전하게 폴백합니다. 이 동작은 agent·skill 서브에이전트에도 그대로 전파됩니다.
 
 압축이 일어나면 CLI는 한 줄 상태로, 웹은 **대화창 인라인 시스템 라인**(`⊙ 컨텍스트 압축됨 X→Y tok`)으로 진행을 표시합니다. 압축으로 흡수된 요약·파일 목록은 웹의 ⚡ Prompt Inspector 에서도 확인할 수 있습니다(위 참조).
 
