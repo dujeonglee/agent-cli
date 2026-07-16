@@ -46,13 +46,19 @@ _TOOL_CALL_CLOSE = re.compile(r"</tool_call>", re.I)
 _FUNC_CLOSE = re.compile(r"</function>", re.I)
 _PARAM_OPEN = re.compile(r"<parameter=([\w.\-]+)>", re.I)
 
-# 닫힌 파라미터 — lookahead 앵커 (§5.3): ``</parameter>`` 뒤에 (공백 지나)
-# 다음 구조 토큰이 따라올 때만 경계. 값 안의 고아 ``</parameter>`` 는
-# 앵커 불일치로 값에 포함된다. 비탐욕이라 앵커를 만족하는 **첫** 경계에서
-# 닫힘 — 값이 진짜 ``</parameter>\n<parameter=`` 시퀀스를 담는 최악
-# 케이스는 잘못 잘리지만 도구 에러/diff 로 표면화 (조용한 오염 없음).
+# 닫힌 파라미터 — lookahead 앵커 (§5.3): closer 뒤에 (공백 지나) 다음
+# 구조 토큰이 따라올 때만 경계. 값 안의 고아 closer 는 앵커 불일치로
+# 값에 포함된다. 비탐욕이라 앵커를 만족하는 **첫** 경계에서 닫힘 —
+# 값이 진짜 ``</parameter>\n<parameter=`` 시퀀스를 담는 최악 케이스는
+# 잘못 잘리지만 도구 에러/diff 로 표면화 (조용한 오염 없음).
+#
+# closer 는 ``</parameter>`` 또는 **키-이름** ``</KEY>`` (백레퍼런스 \1):
+# 실전(board 세션 2026-07-17) 35B 가 캐노니컬 블록 안에서
+# ``<parameter=path>…</path>`` 로 닫아, 종전 strict 미닫힘-복구가
+# ``</path>`` 를 값에 포함시킴 → 오염된 경로로 실행(ENOENT ×3).
+# lenient 경로(아무-이름 closer)엔 있던 처리의 strict 대칭.
 _PARAM_CLOSED = re.compile(
-    r"<parameter=([\w.\-]+)>(.*?)</parameter>\s*"
+    r"<parameter=([\w.\-]+)>(.*?)</(?:parameter|\1)>\s*"
     r"(?=<parameter=|</function>|</tool_call>|<function=|<tool_call>|\Z)",
     re.S | re.I,
 )

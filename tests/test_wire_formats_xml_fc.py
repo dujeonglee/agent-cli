@@ -192,6 +192,54 @@ class TestRepairAndPreservation:
         )
         assert turn.ops[0].action_input["content"] == body
 
+    def test_keyname_closer_in_canonical_block(self, wf):
+        # 실전 (board 세션 2026-07-17): 캐노니컬 블록 안에서
+        # <parameter=path>…</path> (키-이름 closer) — strict 미닫힘-복구가
+        # </path> 를 값에 포함시켜 ENOENT ×3 발생했던 오염 케이스.
+        turn = wf.parse_turn(
+            "<tool_call>\n<function=read_file>\n"
+            "<parameter=path>/ws/linked_list.h</path>\n"
+            "</function>\n</tool_call>"
+        )
+        assert turn.ops[0].action_input == {"path": "/ws/linked_list.h"}
+
+    def test_keyname_closer_multi_param_mixed(self, wf):
+        turn = wf.parse_turn(
+            "<tool_call>\n<function=read_file>\n"
+            "<parameter=path>a.c</path>\n"
+            "<parameter=line_start>3</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        assert turn.ops[0].action_input == {"path": "a.c", "line_start": 3}
+
+    def test_keyname_closer_multi_op_batch(self, wf):
+        # 실전 shape: 한 턴 3개 read_file 배치 전부 키-이름 closer
+        turn = wf.parse_turn(
+            "\n".join(
+                "<tool_call>\n<function=read_file>\n"
+                f"<parameter=path>/ws/{f}</path>\n"
+                "</function>\n</tool_call>"
+                for f in ("linked_list.h", "linked_list.c", "main.c")
+            )
+        )
+        assert [op.action_input["path"] for op in turn.ops] == [
+            "/ws/linked_list.h",
+            "/ws/linked_list.c",
+            "/ws/main.c",
+        ]
+
+    def test_orphan_keyname_tag_mid_value_still_preserved(self, wf):
+        # 충돌 규칙 유지: 값 속 </path> 유사 텍스트는 구조 토큰이 안
+        # 따라오면 값 (lookahead 앵커가 계속 보호)
+        body = "mentions </path> mid-value and continues"
+        turn = wf.parse_turn(
+            "<tool_call>\n<function=write_file>\n"
+            "<parameter=path>doc.md</parameter>\n"
+            f"<parameter=content>{body}</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        assert turn.ops[0].action_input["content"] == body
+
     def test_empty_function_name_preserves_params(self, wf):
         # parse 불변식: action 무효여도 action_input 보존 (infer/NO_ACTION echo)
         turn = wf.parse_turn(
