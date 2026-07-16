@@ -18,8 +18,10 @@ import agent_cli.render as render_mod
 from agent_cli.context.records import is_format_intervention
 from agent_cli.resource_loader import ResourceLoader
 from agent_cli.subagent.agents_live import (
+    _DEFAULT_MAX_AGENTS,
     AgentRegistry,
     build_reply_record,
+    clamp_max_agents,
     tool_agent,
 )
 
@@ -214,6 +216,59 @@ class TestBuildReplyRecord:
         assert "head excerpt" in rec["content"]
 
 
+# ── 에이전트 상한 (세션 한정, web UI 조절) ────────
+
+
+class TestMaxAgents:
+    def test_clamp(self):
+        assert clamp_max_agents(5) == 5
+        assert clamp_max_agents(1) == 1
+        assert clamp_max_agents(0) == 0  # unlimited sentinel
+        assert clamp_max_agents(-3) == 0  # ≤0 → unlimited
+        assert clamp_max_agents("7") == 7  # numeric string
+        assert clamp_max_agents("nope") == _DEFAULT_MAX_AGENTS  # non-numeric → default
+        assert clamp_max_agents(None) == _DEFAULT_MAX_AGENTS
+
+    def test_default_is_ten(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        assert reg.max_agents == 10 == _DEFAULT_MAX_AGENTS
+        reg.shutdown_all()
+
+    def test_set_max_agents_clamps_and_returns(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        assert reg.set_max_agents(3) == 3
+        assert reg.max_agents == 3
+        assert reg.set_max_agents(0) == 0  # unlimited
+        assert reg.set_max_agents(-1) == 0
+        reg.shutdown_all()
+
+    def test_unlimited_skips_cap(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        reg.set_max_agents(0)  # unlimited
+        keys = [reg.spawn()[0] for _ in range(5)]
+        assert all(k for k in keys)  # none rejected despite >default
+        assert not reg._at_agent_limit()
+        reg.shutdown_all()
+
+    def test_status_shows_infinity_when_unlimited(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        reg.set_max_agents(0)
+        reg.spawn()
+        assert "∞" in reg.format_status()
+        reg.shutdown_all()
+
+    def test_lowering_cap_does_not_kill_existing(self, tmp_path, renderer):
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn()
+        k2, _ = reg.spawn()
+        wait_until(lambda: reg.alive_count() == 2)
+        reg.set_max_agents(1)  # below current alive
+        assert reg.alive_count() == 2  # existing survive
+        k3, err = reg.spawn()  # but new spawn blocked
+        assert k3 == "" and "limit" in err
+        reg.shutdown_all()
+
+
 # ── 레지스트리 수명 ─────────────────────────────
 
 
@@ -235,9 +290,9 @@ class TestRegistryLifecycle:
         key, err = reg.spawn()
         assert key == "" and "session dir" in err
 
-    def test_spawn_limit(self, tmp_path, renderer, monkeypatch):
-        monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "1")
+    def test_spawn_limit(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
+        reg.set_max_agents(1)
         key, err = reg.spawn()
         assert err == ""
         key2, err2 = reg.spawn()
@@ -1885,14 +1940,14 @@ class TestResumeMode:
         assert (tm.home_dir / "replies" / "reply-1.md").is_file()
         reg.shutdown_all()
 
-    def test_resume_guards(self, tmp_path, renderer, monkeypatch):
+    def test_resume_guards(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         assert "unknown" in reg.resume_teammate("agt-nope")
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         assert "still alive" in reg.resume_teammate(key)  # 산 사람 부활 금지
         reg.kill(key)
-        monkeypatch.setenv("AGENT_CLI_MAX_AGENTS", "1")
+        reg.set_max_agents(1)
         k2, _ = reg.spawn()
         assert "limit" in reg.resume_teammate(key)  # 상한 존중
         reg.shutdown_all()

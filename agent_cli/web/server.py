@@ -613,6 +613,44 @@ def create_app(server: WebServer) -> FastAPI:
         server.renderer.broadcast_compaction_ratio(clamped)
         return {"ok": True, "ratio": clamped}
 
+    @app.get("/api/max-agents")
+    async def get_max_agents(token: str = Query(...)):
+        """현재 동시 생존 에이전트 상한 + 입력 최소값/기본값. 레지스트리가
+        없으면(headless·부트 전) 기본값. 프론트가 입력·체크박스 초기화에
+        사용. value=0 이면 무제한(unlimited=True)."""
+        server._require_token(token)
+        from agent_cli.subagent.agents_live import (
+            _DEFAULT_MAX_AGENTS,
+            MAX_AGENTS_MIN,
+        )
+
+        reg = server.agent_registry
+        value = reg.max_agents if reg is not None else _DEFAULT_MAX_AGENTS
+        return {
+            "value": value,
+            "min": MAX_AGENTS_MIN,
+            "default": _DEFAULT_MAX_AGENTS,
+            "unlimited": value == 0,
+        }
+
+    @app.post("/api/max-agents")
+    async def set_max_agents(body: dict, token: str = Query(...)):
+        """세션 한정 에이전트 상한 변경. ``value <= 0`` 이면 무제한. 레지스트리
+        가 즉시 새 값을 읽어(다음 spawn/resume 게이트) 반영되고, 다른 뷰어엔
+        sticky 브로드캐스트로 입력/체크박스 동기화. 상한을 낮춰도 기존 에이전트
+        는 안 죽임 — 새 spawn 만 막음."""
+        server._require_token(token)
+        reg = server.agent_registry
+        if reg is None:
+            return {"ok": False, "error": "agent registry not ready"}
+        try:
+            value = int(body.get("value"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "value must be an integer"}
+        stored = reg.set_max_agents(value)
+        server.renderer.broadcast_max_agents(stored)
+        return {"ok": True, "value": stored, "unlimited": stored == 0}
+
     @app.post("/api/directives/generate")
     async def directives_generate(body: dict, token: str = Query(...)):
         """✨ 생성 — 대략적 의도(brief)를 해당 청중(audience)용 directive

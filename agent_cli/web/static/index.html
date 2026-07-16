@@ -32,6 +32,12 @@
       <input id="compaction-range" type="range" min="50" max="95" step="5" value="80"
              aria-label="컨텍스트 압축 임계 %">
     </span>
+    <span id="maxagents-wrap" title="동시 생존 가능한 상주 에이전트 수 상한. 세션 한정. 무제한 체크 시 입력 비활성화. 상한을 낮춰도 기존 에이전트는 안 죽음(새 spawn만 막음)." hidden>
+      <label id="maxagents-label" for="maxagents-input">에이전트</label>
+      <input id="maxagents-input" type="number" min="1" step="1" value="10"
+             aria-label="동시 에이전트 상한">
+      <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">무제한</label>
+    </span>
     <span id="theme-wrap">
       <button id="theme-btn" class="btn-icon" type="button" title="테마 선택" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>

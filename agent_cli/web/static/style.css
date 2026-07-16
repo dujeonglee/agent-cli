@@ -205,6 +205,24 @@ header {
 #compaction-range {
   width: 84px; height: 3px; cursor: pointer; accent-color: var(--accent);
 }
+#maxagents-wrap {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-right: 12px; flex-shrink: 0;
+}
+#maxagents-wrap[hidden] { display: none; }
+#maxagents-label, #maxagents-unlim-label {
+  color: var(--muted); font-size: 11px; white-space: nowrap;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+}
+#maxagents-unlim-label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+#maxagents-unlimited { accent-color: var(--accent); cursor: pointer; }
+#maxagents-input {
+  width: 44px; font-size: 11px; padding: 1px 4px;
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+}
+#maxagents-input:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* First-connect nickname bar */
 #name-bar {

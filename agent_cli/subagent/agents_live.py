@@ -33,7 +33,6 @@ P1 경계: teammate 안 teammate 금지(레지스트리 미전파로 도구가 �
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 import time
@@ -50,7 +49,21 @@ if TYPE_CHECKING:
 # worker 를 inbox 블록에서 깨워 종료시키는 sentinel (identity 비교).
 _SHUTDOWN = object()
 
-_DEFAULT_MAX_AGENTS = 4
+_DEFAULT_MAX_AGENTS = 10
+MAX_AGENTS_MIN = 1  # smallest positive cap; 0 (or less) means unlimited
+
+
+def clamp_max_agents(value) -> int:
+    """Normalise a requested max-agent cap. ``value <= 0`` → 0 (unlimited);
+    otherwise floor to ``MAX_AGENTS_MIN``. Non-numeric → default."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_AGENTS
+    if n <= 0:
+        return 0  # unlimited sentinel
+    return max(MAX_AGENTS_MIN, n)
+
 
 # 에이전트↔에이전트 메시지 재주입 상한 (v5.11). 배달된 회신은 terminal
 # (expects_reply=False)이라 자동으로 늘지 않으므로 이 상한은 에이전트들이
@@ -123,13 +136,6 @@ def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
     """표시 라벨 — 다중 인스턴스 구분: "agt-x (coder · ui)"."""
     parts = [p for p in (profile, name) if p]
     return f"{key} ({' · '.join(parts)})" if parts else key
-
-
-def _max_agents() -> int:
-    try:
-        return int(os.environ.get("AGENT_CLI_MAX_AGENTS", _DEFAULT_MAX_AGENTS))
-    except ValueError:
-        return _DEFAULT_MAX_AGENTS
 
 
 def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
@@ -322,6 +328,7 @@ class AgentRegistry:
         *,
         runtime: dict | None = None,
         runner: Callable | None = None,
+        max_agents: int = _DEFAULT_MAX_AGENTS,
     ):
         # 회신을 처리할 provider/모델 등 실행 배선 — spawn 시점이 아니라
         # 레지스트리 생성 시점(부트스트랩)에 고정할 수도 있으나, provider
@@ -329,6 +336,8 @@ class AgentRegistry:
         self.runtime = runtime or {}
         self._runner = runner
         self.session_dir = Path(session_dir) if session_dir else None
+        # 동시 생존 상한 (세션 한정, web UI 조절). 0 = 무제한.
+        self.max_agents = clamp_max_agents(max_agents)
 
         self._agents: dict[str, AgentInstance] = {}
         self._cv = threading.Condition()
@@ -355,6 +364,17 @@ class AgentRegistry:
 
     def alive_count(self) -> int:
         return sum(1 for t in self._agents.values() if t.state != "dead")
+
+    def set_max_agents(self, value) -> int:
+        """Set the live-agent cap (session-only, web UI). ``value <= 0`` →
+        unlimited (0). Returns the stored value. Does not retroactively kill
+        agents over a lowered cap — it only gates new spawns/resumes."""
+        self.max_agents = clamp_max_agents(value)
+        return self.max_agents
+
+    def _at_agent_limit(self) -> bool:
+        """True when a new spawn/resume would exceed the cap. 0 = unlimited."""
+        return bool(self.max_agents) and self.alive_count() >= self.max_agents
 
     def has_pending_replies(self) -> bool:
         with self._cv:
@@ -397,10 +417,10 @@ class AgentRegistry:
         if runtime:
             self.runtime = runtime
 
-        if self.alive_count() >= _max_agents():
+        if self._at_agent_limit():
             return "", (
-                f"agent limit reached ({_max_agents()} alive). "
-                f'Kill one first (mode:"kill") or raise AGENT_CLI_MAX_AGENTS.'
+                f"agent limit reached ({self.max_agents} alive). "
+                f'Kill one first (mode:"kill") or raise the limit in the web UI.'
             )
 
         if name and not re.match(r"^[a-zA-Z0-9_-]{1,24}$", name):
@@ -632,7 +652,8 @@ class AgentRegistry:
             items = list(self._agents.values())
         if not items:
             return 'no live agents. Spawn one with mode:"spawn".'
-        lines = [f"agents ({self.alive_count()}/{_max_agents()} alive):"]
+        cap = self.max_agents or "∞"
+        lines = [f"agents ({self.alive_count()}/{cap} alive):"]
         for tm in items:
             s = tm.snapshot()
             role = s["profile"] or "anon"
@@ -703,9 +724,9 @@ class AgentRegistry:
             return (
                 f"agent '{key}' is still alive ({tm.state}) — send it a request instead"
             )
-        if self.alive_count() >= _max_agents():
+        if self._at_agent_limit():
             return (
-                f"agent limit reached ({_max_agents()} alive). "
+                f"agent limit reached ({self.max_agents} alive). "
                 f'Kill one first (mode:"kill").'
             )
 

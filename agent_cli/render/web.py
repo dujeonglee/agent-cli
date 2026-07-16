@@ -625,6 +625,12 @@ class WebRenderer(Renderer):
         여러 브라우저의 슬라이더가 동기화되고, 재접속 snapshot 에도 실린다."""
         self.set_sticky("compaction_ratio", "compaction_ratio", {"ratio": ratio})
 
+    def broadcast_max_agents(self, value: int) -> None:
+        """5.16: 에이전트 상한 변경을 다른 뷰어에 sticky 로 전파 — 여러
+        브라우저의 입력/무제한 체크박스가 동기화되고 재접속 snapshot 에도 실린다.
+        value=0 은 무제한."""
+        self.set_sticky("max_agents", "max_agents", {"value": value})
+
     def agent_message(
         self,
         *,

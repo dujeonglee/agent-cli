@@ -1153,6 +1153,14 @@
     );
   });
 
+  es.addEventListener("max_agents", function (e) {
+    // 5.16: 다른 뷰어가 에이전트 상한을 바꾸면 sticky 로 전파 — maxagents
+    // IIFE 로 중계해 이 탭의 입력/체크박스도 동기화한다.
+    document.dispatchEvent(
+      new CustomEvent("agentcli:maxagents", { detail: JSON.parse(e.data) }),
+    );
+  });
+
   es.addEventListener("directives_changed", function () {
     // Someone saved DIRECTIVE.md via the Prompt Inspector → tell the inspector
     // IIFE to re-fetch the editor so concurrent editors don't show stale text.
@@ -3048,5 +3056,77 @@
   document.addEventListener("agentcli:compaction", (e) => {
     const d = e.detail || {};
     if (typeof d.ratio === "number") applyRatio(d.ratio);
+  });
+})();
+
+// ── 에이전트 상한 제어 (5.16) ────────────────────────────────
+// 헤더의 압축 슬라이더 옆에서 동시 생존 에이전트 수를 세션 한정 변경.
+// 숫자 입력 + 무제한 체크박스(체크 시 입력 비활성화, value=0 전송). 레지스트리
+// 가 다음 spawn/resume 게이트에서 즉시 새 값을 읽고, 다른 뷰어는
+// sticky(max_agents) 로 동기화. 별도 IIFE — 메인 렌더 루프 무수정.
+(function () {
+  "use strict";
+  const token = new URLSearchParams(window.location.search).get("token");
+  const qt = () => "token=" + encodeURIComponent(token);
+  const $wrap = document.getElementById("maxagents-wrap");
+  const $input = document.getElementById("maxagents-input");
+  const $unlim = document.getElementById("maxagents-unlimited");
+  if (!$wrap || !$input || !$unlim) return;
+
+  let lastValue = 10; // 무제한 해제 시 되돌릴 마지막 유한값
+
+  // value=0 → 무제한(체크+입력 비활성). >0 → 유한(체크 해제+입력 활성).
+  function applyValue(value) {
+    if (value === 0) {
+      $unlim.checked = true;
+      $input.disabled = true;
+    } else {
+      $unlim.checked = false;
+      $input.disabled = false;
+      $input.value = value;
+      lastValue = value;
+    }
+  }
+
+  function post(value) {
+    fetch("api/max-agents?" + qt(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: value }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.value === "number") applyValue(d.value);
+      })
+      .catch(() => {});
+  }
+
+  // 초기 로드: 현재 값 + 최소값. 성공 시 노출.
+  fetch("api/max-agents?" + qt())
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (!d) return;
+      if (typeof d.min === "number") $input.min = d.min;
+      if (typeof d.value === "number") applyValue(d.value);
+      $wrap.hidden = false;
+    })
+    .catch(() => {});
+
+  // 숫자 입력 변경 → 저장 (min 미만/빈값은 min 으로 바닥).
+  $input.addEventListener("change", () => {
+    let v = parseInt($input.value, 10);
+    const min = parseInt($input.min, 10) || 1;
+    if (!Number.isFinite(v) || v < min) v = min;
+    post(v);
+  });
+  // 무제한 토글 → 체크면 0(무제한), 해제면 마지막 유한값 복원.
+  $unlim.addEventListener("change", () => {
+    post($unlim.checked ? 0 : lastValue);
+  });
+
+  // 다른 뷰어가 바꾸면 동기화.
+  document.addEventListener("agentcli:maxagents", (e) => {
+    const d = e.detail || {};
+    if (typeof d.value === "number") applyValue(d.value);
   });
 })();

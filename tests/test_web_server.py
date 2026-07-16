@@ -486,6 +486,19 @@ class TestStaticUI:
         css = client.get("/static/style.css").text
         assert "#compaction-range" in css
 
+    def test_maxagents_control_wired(self, server_and_client):
+        # 5.16 에이전트 상한 배선 계약: index.html 입력+체크박스 + app.js 가
+        # api/max-agents GET/POST 를 치고, 타 뷰어 sync 이벤트를 받는다.
+        _, _, client = server_and_client
+        html = client.get("/").text
+        assert 'id="maxagents-input"' in html
+        assert 'id="maxagents-unlimited"' in html
+        js = client.get("/static/app.js").text
+        assert "api/max-agents" in js
+        assert "agentcli:maxagents" in js  # 타 뷰어 동기화
+        css = client.get("/static/style.css").text
+        assert "#maxagents-input" in css
+
     def test_agent_conversation_clear_wired(self, server_and_client):
         # 5.13 대화창 kill=정리 계약: 서버가 보내는 ``agent_cleared`` 를
         # app.js 가 받아 중계(tm-cleared)하고, 드로어 IIFE 가 그 key 의
@@ -2452,4 +2465,62 @@ class TestCompactionEndpoint:
     def test_post_without_ctx_errors(self, server_and_client):
         _, _, client = server_and_client
         d = client.post("/api/compaction?token=testtoken", json={"ratio": 0.6}).json()
+        assert d["ok"] is False
+
+
+class TestMaxAgentsEndpoint:
+    """GET/POST /api/max-agents — 세션 한정 에이전트 상한. registry 가 즉시 새
+    값을 읽고(다음 spawn/resume 게이트), sticky 로 타 뷰어 동기화. value=0=무제한."""
+
+    def _client_with_registry(self, tmp_path):
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        server.agent_registry = AgentRegistry(tmp_path)
+        return server, renderer, TestClient(create_app(server)), server.agent_registry
+
+    def test_get_returns_value_and_min(self, tmp_path):
+        _, _, client, _reg = self._client_with_registry(tmp_path)
+        d = client.get("/api/max-agents?token=testtoken").json()
+        assert d["value"] == 10 and d["min"] == 1 and d["default"] == 10
+        assert d["unlimited"] is False
+
+    def test_get_default_when_no_registry(self, server_and_client):
+        _, _, client = server_and_client
+        d = client.get("/api/max-agents?token=testtoken").json()
+        assert d["value"] == 10 and d["unlimited"] is False
+
+    def test_post_sets_registry_and_clamps(self, tmp_path):
+        _, _, client, reg = self._client_with_registry(tmp_path)
+        d = client.post("/api/max-agents?token=testtoken", json={"value": 3}).json()
+        assert d["ok"] and d["value"] == 3 and reg.max_agents == 3
+
+    def test_post_zero_is_unlimited(self, tmp_path):
+        _, _, client, reg = self._client_with_registry(tmp_path)
+        d = client.post("/api/max-agents?token=testtoken", json={"value": 0}).json()
+        assert d["ok"] and d["value"] == 0 and d["unlimited"] is True
+        assert reg.max_agents == 0
+
+    def test_post_negative_is_unlimited(self, tmp_path):
+        _, _, client, _reg = self._client_with_registry(tmp_path)
+        d = client.post("/api/max-agents?token=testtoken", json={"value": -5}).json()
+        assert d["value"] == 0 and d["unlimited"] is True
+
+    def test_post_bad_value_errors_unchanged(self, tmp_path):
+        _, _, client, reg = self._client_with_registry(tmp_path)
+        d = client.post("/api/max-agents?token=testtoken", json={"value": "x"}).json()
+        assert d["ok"] is False and reg.max_agents == 10
+
+    def test_post_broadcasts_sticky_to_new_viewer(self, tmp_path):
+        _, renderer, client, _reg = self._client_with_registry(tmp_path)
+        client.post("/api/max-agents?token=testtoken", json={"value": 7})
+        conn = WebConnection(id="v2")
+        snap = renderer.register_connection(conn)
+        vals = [d.get("value") for (ev, d) in snap if ev == "max_agents"]
+        assert vals == [7]
+
+    def test_post_without_registry_errors(self, server_and_client):
+        _, _, client = server_and_client
+        d = client.post("/api/max-agents?token=testtoken", json={"value": 5}).json()
         assert d["ok"] is False
