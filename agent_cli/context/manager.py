@@ -70,6 +70,28 @@ COMPACTION_RATIO_MIN = 0.5
 COMPACTION_RATIO_MAX = 0.95
 COMPACTION_RATIO_STEP = 0.05
 
+# ── Observation complete-nudge ───────────────────────────────
+# get_messages() appends this reminder to the CURRENT observation only (the
+# last cache record, if it is a tool result). Applied at feed time and NEVER
+# stored — _cache and history.jsonl stay clean, and each get_messages call
+# re-derives it, so it does not accumulate across turns or in context.
+# Purpose: some models sometimes fail to terminate — they finish the work but
+# never emit `complete`, or spin re-checking a sub-agent instead of
+# completing-and-waiting. Reminding the model, right after each tool result
+# (the point where it decides whether it is done), that `complete` is the way
+# to finish OR to park on a pending async reply, steers it to terminate cleanly.
+# Names both legitimate reasons to complete: nothing left to do, or blocked
+# until a sub-agent replies (a pending reply is delivered + wakes it).
+# Unconditional (no flag): measured harmless on Qwen3.6-27B (no premature
+# completion — that model completes cleanly regardless, so the benefit shows
+# only on models that actually mis-terminate) and never persisted, so there is
+# nothing to gate. Observation-side text only → mimicry-safe.
+_OBS_COMPLETE_NUDGE = (
+    "\n\n(If nothing remains to do — or you can only continue after a "
+    "sub-agent's reply arrives — call `complete`; a pending reply will wake "
+    "you when it comes.)"
+)
+
 
 def clamp_compaction_ratio(ratio: float) -> float:
     return max(COMPACTION_RATIO_MIN, min(COMPACTION_RATIO_MAX, float(ratio)))
@@ -333,6 +355,16 @@ class ContextManager:
                 for msg in cache[rest_start:]
             ]
         result.extend(self._nl_cache)
+
+        # Append the complete-nudge to the CURRENT observation only, at feed
+        # time. A tool result is always in the dynamic slice, so when cache[-1]
+        # is one, result[-1] is its rendered form (nl_cache is non-empty). Copy
+        # before mutating so _nl_cache and the stored records stay clean (this
+        # never persists — see constant).
+        if cache and cache[-1].get("role") == "user" and cache[-1].get("tool"):
+            last = dict(result[-1])
+            last["content"] = last.get("content", "") + _OBS_COMPLETE_NUDGE
+            result[-1] = last
         return result
 
     def get_raw_messages(self) -> list[dict]:

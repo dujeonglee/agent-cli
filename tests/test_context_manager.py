@@ -826,3 +826,77 @@ class TestGetMessagesIncrementalCache:
         out1.append({"role": "user", "content": "INJECTED BY CALLER"})
         out2 = ctx.get_messages()
         assert all(m.get("content") != "INJECTED BY CALLER" for m in out2)
+
+
+class TestObsCompleteNudge:
+    """Complete-nudge appended (unconditionally) to the CURRENT observation at
+    feed time, never stored. Reminds the model that `complete` is the way to
+    finish or to park on a pending sub-agent reply, right where it decides
+    whether it is done. Measured harmless on Qwen3.6-27B (no premature
+    completion) and never persisted, so there is no flag to gate it."""
+
+    NUDGE = "call `complete`"  # distinctive fragment of _OBS_COMPLETE_NUDGE
+    OBS = {
+        "role": "user",
+        "tool": "read_file",
+        "args": {"path": "a.py"},
+        "content": "file body",
+    }
+
+    def _last_content(self, ctx):
+        return ctx.get_messages()[-1]["content"]
+
+    def test_appended_when_last_is_observation(self, ctx):
+        ctx.add(dict(self.OBS))
+        assert self.NUDGE in self._last_content(ctx)
+
+    def test_not_appended_when_last_is_user_input(self, ctx):
+        ctx.add({"role": "user", "content": "do the thing"})
+        assert self.NUDGE not in self._last_content(ctx)
+
+    def test_not_appended_when_last_is_assistant(self, ctx):
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "t",
+                "action": "read_file",
+                "action_input": {"path": "a.py"},
+            }
+        )
+        assert self.NUDGE not in self._last_content(ctx)
+
+    def test_not_stored_in_records_or_history(self, ctx):
+        ctx.add(dict(self.OBS))
+        _ = ctx.get_messages()  # trigger the feed-time append
+        # raw records untouched
+        raw = ctx.get_raw_messages()
+        assert all(self.NUDGE not in str(r.get("content", "")) for r in raw)
+        # history.jsonl untouched
+        hist = ctx.history_path.read_text() if ctx.history_path.exists() else ""
+        assert self.NUDGE not in hist
+
+    def test_only_current_observation_carries_it(self, ctx):
+        ctx.add(dict(self.OBS))  # earlier observation
+        ctx.add(
+            {
+                "role": "assistant",
+                "thought": "t",
+                "action": "shell",
+                "action_input": {"cmd": "ls"},
+            }
+        )
+        ctx.add(
+            {"role": "user", "tool": "shell", "args": {"cmd": "ls"}, "content": "out"}
+        )  # current observation
+        msgs = ctx.get_messages()
+        # nudge on the last (current) observation only, exactly once total
+        joined = "\n".join(m["content"] for m in msgs)
+        assert joined.count(self.NUDGE) == 1
+        assert self.NUDGE in msgs[-1]["content"]
+
+    def test_no_accumulation_across_repeated_calls(self, ctx):
+        ctx.add(dict(self.OBS))
+        a = self._last_content(ctx)
+        b = self._last_content(ctx)  # second call must not double-append
+        assert a == b
+        assert a.count(self.NUDGE) == 1
