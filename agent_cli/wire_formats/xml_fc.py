@@ -71,6 +71,53 @@ _DEGEN_OPEN_RUN = re.compile(r"<tool_call>(?=\s*<tool_call>)", re.I)
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
 _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
 
+# ── lenient 구제 (tool-name 태그 변종) ───────────────────────
+# 2026-07-17 bakeoff 실측: Qwen3.6-35B-A3B 가 `<function=X>` 를 `<X>` 로,
+# `<parameter=k>` 를 `<k>` 로 붕괴시키는 변종이 0-op(NO_ACTION) 마찰의
+# 83% (30건 캡처 중 25). strict 경로가 0-op 일 때만 발화하는 최후 폴백 —
+# 캐노니컬 emission 은 절대 이 경로에 안 들어온다 (bail-safe). 구제 턴은
+# parse_stage=2(drift) 로 계수되고, prior 는 캐노니컬 shape 로 재렌더되어
+# (B→C) 다음 턴부터 모델을 교정한다.
+
+# lenient 파라미터 오픈: `<parameter=k>` 또는 plain `<k>`. 닫는 태그는
+# 아무 이름이나 수용 (실측: `<parameter=line_start>1</line_start>` 처럼
+# 키-이름으로 닫는 혼합 스타일 존재).
+_LENIENT_PARAM_OPEN = re.compile(r"<(?:parameter=)?([\w.\-]+)>")
+_LENIENT_VALUE_STOP = re.compile(r"</[^>]*>|<(?:parameter=)?[\w.\-]+>")
+
+
+def _lenient_tool_open_re() -> re.Pattern:
+    """라인-단독 ``<TOOLNAME>`` 오픈 — 등록 도구명만 (매 파스 재조립: MCP
+    도구가 런타임에 등록될 수 있다). 라인-앵커가 산문 속 인라인 언급
+    (``use the <shell> tool``)의 오인 구제를 차단한다."""
+    from agent_cli.tools.registry import TOOLS
+
+    names = "|".join(re.escape(n) for n in sorted(TOOLS, key=len, reverse=True))
+    return re.compile(rf"^[ \t]*<({names})>[ \t]*\r?$", re.MULTILINE)
+
+
+def _extract_params_lenient(segment: str) -> dict:
+    """혼합 스타일 파라미터 추출 — plain ``<k>v</k>``, canonical
+    ``<parameter=k>v</parameter>``, 키-이름 closer ``<parameter=k>v</k>``
+    전부 수용. 값의 끝 = 다음 닫는 태그(이름 무관) / 다음 오픈(closer
+    생략 변종) / 세그먼트 끝."""
+    params: dict = {}
+    pos = 0
+    while True:
+        m = _LENIENT_PARAM_OPEN.search(segment, pos)
+        if m is None:
+            break
+        stop = _LENIENT_VALUE_STOP.search(segment, m.end())
+        if stop is None:
+            value, pos = segment[m.end() :], len(segment)
+        elif stop.group(0).startswith("</"):
+            value, pos = segment[m.end() : stop.start()], stop.end()
+        else:
+            # closer 생략 — 다음 오픈 직전까지가 값
+            value, pos = segment[m.end() : stop.start()], stop.start()
+        params[m.group(1)] = _trim_block(value.rstrip())
+    return params
+
 
 def _trim_block(value: str) -> str:
     """블록 스타일 허용: 여는 태그 직후·닫는 태그 직전 개행 1개만 트림.
@@ -210,6 +257,11 @@ class XmlFcFormat(WireFormat):
 
         first = _FIRST_STRUCT.search(text)
         if first is None:
+            # 캐노니컬 구조 토큰 부재 — tool-name 태그 변종 lenient 구제 시도.
+            lenient = self._parse_lenient(text)
+            if lenient is not None:
+                lenient.thinking = thinking
+                return lenient
             thought = self.sanitize_thought(text)
             if thought and thought.strip():
                 return ParsedTurn(
@@ -222,8 +274,13 @@ class XmlFcFormat(WireFormat):
         ops, drifted, truncated_any = self._extract_ops(body)
 
         if not ops:
-            # 구조 토큰은 있는데 쓸 수 있는 op 이 없음 (빈 골격 등) —
-            # thought 가 있으면 0-op 유효 턴 (NO_ACTION 넛지), 아니면 실패.
+            # 구조 토큰은 있는데 쓸 수 있는 op 이 없음 — 래퍼 안에 tool-name
+            # 태그 변종이 든 경우일 수 있으니 lenient 를 먼저 시도하고,
+            # 그래도 없으면 thought 유무로 0-op 유효 턴 / 실패 분기.
+            lenient = self._parse_lenient(text)
+            if lenient is not None:
+                lenient.thinking = thinking
+                return lenient
             if thought:
                 return ParsedTurn(
                     thought=thought, ops=[], raw=text, parse_stage=1, thinking=thinking
@@ -237,6 +294,33 @@ class XmlFcFormat(WireFormat):
             raw=text,
             parse_stage=2 if (drifted or truncated_any) else 1,
             thinking=thinking,
+        )
+
+    def _parse_lenient(self, text: str) -> ParsedTurn | None:
+        """tool-name 태그 변종 구제 — ``(None = 해당 shape 아님)``.
+
+        strict 0-op 확정 후에만 호출되는 최후 폴백. 라인-단독 ``<TOOL>``
+        (등록 도구명) 오픈들을 op 경계로, 혼합 스타일 파라미터를 수용해
+        parse_stage=2 턴을 재조립한다. 파라미터가 하나도 없어도 op 는
+        만든다 ({} — A5 가 required 누락을 도구-정밀 진단, generic
+        NO_ACTION 루프보다 낫다).
+        """
+        opens = list(_lenient_tool_open_re().finditer(text))
+        if not opens:
+            return None
+        thought = self.sanitize_thought(text[: opens[0].start()]) or None
+        ops: list[Op] = []
+        for i, m in enumerate(opens):
+            seg_end = opens[i + 1].start() if i + 1 < len(opens) else len(text)
+            segment = text[m.end() : seg_end]
+            name = m.group(1)
+            close_m = re.search(rf"</{re.escape(name)}>", segment, re.I)
+            if close_m is not None:
+                segment = segment[: close_m.start()]
+            params = _coerce_params(name, _extract_params_lenient(segment))
+            ops.append(Op(action=name, action_input=params, truncated=False))
+        return ParsedTurn(
+            thought=thought, ops=ops, terminal=False, raw=text, parse_stage=2
         )
 
     def _extract_ops(self, body: str) -> tuple[list[Op], bool, bool]:

@@ -71,7 +71,7 @@ MODELS = [
 
 PLUGINS = [
     p.strip()
-    for p in os.environ.get("BAKEOFF_PLUGINS", "react,prefix_md,md_array").split(",")
+    for p in os.environ.get("BAKEOFF_PLUGINS", "react,md_array,xml_fc").split(",")
     if p.strip()
 ]
 
@@ -108,12 +108,13 @@ TASKS: list[Task] = [
         active_tools=("read_file", "shell"),
     ),
     Task(
-        id="read_then_edit_then_review",
+        # (구 read_then_edit_then_review — ready_for_review 는 v4.4.0 제거,
+        # 2026-07-17 현행 도구로 갱신)
+        id="read_then_edit",
         query=(
             "In src/auth.py, replace `return md5(password.encode()).hexdigest()` "
             "with `return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()`. "
-            "Read the file first to confirm the line, then edit it, then verify with "
-            "ready_for_review before completing."
+            "Read the file first to confirm the line, then edit it, then complete."
         ),
         active_tools=("read_file", "edit_file", "shell"),
     ),
@@ -126,13 +127,14 @@ TASKS: list[Task] = [
         active_tools=("read_file", "shell"),
     ),
     Task(
-        id="delegate_then_complete",
+        # (구 delegate_then_complete — delegate 는 v5.0.0 에서 agent 로 통합)
+        id="agent_then_complete",
         query=(
-            "Delegate to the explorer agent to scan src/auth.py for which "
-            "functions depend on the md5 hash, then complete the task with the "
-            "delegate's findings."
+            "Use the agent tool (profile 'explorer', mode 'run') to scan "
+            "src/auth.py for which functions depend on the md5 hash, then "
+            "complete the task with the agent's findings."
         ),
-        active_tools=("read_file", "delegate", "shell"),
+        active_tools=("read_file", "agent", "shell"),
     ),
     Task(
         id="complete_direct",
@@ -140,13 +142,15 @@ TASKS: list[Task] = [
         active_tools=("read_file", "shell"),
     ),
     Task(
-        id="ready_for_review_path",
+        # (구 ready_for_review_path — 도구 제거로 대체. write_file 멀티라인
+        # 본문은 xml_fc raw-값·md_array JSON-escaping 의 대비 지점이라 채택)
+        id="write_multiline",
         query=(
-            "I just finished updating the README. Confirm with the user that "
-            "the documentation looks correct using ready_for_review, then "
-            "complete the task."
+            "Create notes/summary.md with exactly two lines: line 1 says what "
+            "src/auth.py does, line 2 names its hashing function (read the "
+            "file first). Then complete."
         ),
-        active_tools=("read_file", "shell"),
+        active_tools=("read_file", "write_file", "shell"),
     ),
     Task(
         id="recovery_after_misuse",
@@ -171,7 +175,16 @@ _MOCK_OUTPUTS = {
     ),
     "write_file": "wrote 42 bytes",
     "edit_file": "applied 1 edit (1 region replaced)",
-    "shell": "(mock shell output)\nexit_code=0",
+    # 과제-충족 가능한 실제-형태 출력 — 무의미한 "(mock shell output)" 은
+    # "목록을 보고하라" 류 과제에서 모델의 정당한 재시도→B1 발화를 유발해
+    # (2026-07-17 진단) 포맷과 무관한 recovery 를 계수시켰다.
+    "shell": (
+        "total 16\n"
+        "drwxr-xr-x  4 dev dev  128 Jul 17 09:00 .\n"
+        "-rw-r--r--  1 dev dev  214 Jul 17 09:00 auth.py\n"
+        "-rw-r--r--  1 dev dev  102 Jul 17 09:00 app.py\n"
+        "exit_code=0"
+    ),
     "read_symbols": "hash_password (function) :1-2",
     "read_context": "(mock context)",
     "code_index": "hash_password (function) src/auth.py:1-2",
@@ -180,6 +193,7 @@ _MOCK_OUTPUTS = {
     # loop before TOOLS lookup, so the entries below are only used
     # when the loop's interception path is bypassed.
     "delegate": "(mock delegate: subagent reported '...')",
+    "agent": "(mock agent: explorer reported 'md5 is used only by hash_password')",
     "run_skill": "(mock run_skill: skill reported '...')",
 }
 
@@ -193,7 +207,7 @@ def _make_mock_run(name: str) -> Callable[..., ToolResult]:
     the simulated tool result.
     """
 
-    def _run(args, *, session_dir=None):  # noqa: ARG001 — Tool._run signature
+    def _run(args, *, ctx=None):  # noqa: ARG001 — Tool._run signature (RunContext)
         return ToolResult(
             success=True, output=_MOCK_OUTPUTS.get(name, f"(mock {name} ok)")
         )
@@ -218,7 +232,7 @@ def install_mock_tools() -> dict[str, Any]:
     """
     from agent_cli.tools.registry import TOOLS
 
-    keep_real = {"complete", "ready_for_review", "ask"}
+    keep_real = {"complete", "ask"}
     originals: dict[str, Any] = {}
     for name, tool in TOOLS.items():
         if name in keep_real or not hasattr(tool, "_run"):
@@ -501,7 +515,7 @@ def format_markdown_report(
     lines.append(
         f"_{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, "
         f"{N_RUNS} runs per cell, max_turns={MAX_TURNS}, "
-        f"tools mocked (real virtual tools: complete / ready_for_review / ask)_"
+        f"tools mocked (real virtual tools: complete / ask)_"
     )
     lines.append("")
     lines.append(

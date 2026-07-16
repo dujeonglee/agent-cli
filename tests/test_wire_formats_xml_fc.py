@@ -373,6 +373,98 @@ class TestCrossFormatParity:
         assert xr == mr  # ops 레코드 shape 는 cross-format 계약
 
 
+# ── lenient 구제 — tool-name 태그 변종 (35B bakeoff 실측 지배 shape) ──
+
+
+class TestLenientToolNameTag:
+    """2026-07-17 bakeoff: Qwen3.6-35B-A3B 가 `<function=X>` 를 `<X>` 로,
+    `<parameter=k>` 를 `<k>` 로 붕괴시키는 변종이 0-op(NO_ACTION) 마찰의
+    83%. strict 경로가 0-op 일 때만 lenient 스캔 → stage 2 (drift 신호).
+    구제된 턴의 prior 는 캐노니컬 shape 로 재렌더(B→C) — 자기 교정."""
+
+    def test_plain_tag_params_rescued(self, wf):
+        # 실측 캡처 그대로 (shell plain-tag, closer 일부 생략)
+        turn = wf.parse_turn("<shell>\n<command>head -50 /Users/x/app.py</command>")
+        assert turn.parse_stage == 2
+        assert turn.ops[0].action == "shell"
+        assert turn.ops[0].action_input["command"] == "head -50 /Users/x/app.py"
+
+    def test_mixed_three_styles_rescued(self, wf):
+        # 실측 캡처: plain-tag + parameter= 열고 키-이름으로 닫기 + canonical
+        turn = wf.parse_turn(
+            "<read_file>\n"
+            "<path>/Users/x/app.py</path>\n"
+            "<parameter=line_start>1</line_start>\n"
+            "<parameter=line_end>50</parameter>"
+        )
+        assert turn.parse_stage == 2
+        assert turn.ops[0].action == "read_file"
+        assert turn.ops[0].action_input == {
+            "path": "/Users/x/app.py",
+            "line_start": 1,  # 스키마-주도 coercion 은 lenient 에도 적용
+            "line_end": 50,
+        }
+
+    def test_canonical_params_wrong_function_tag_rescued(self, wf):
+        turn = wf.parse_turn(
+            "<read_file>\n<parameter=path>a.py</parameter>\n</read_file>"
+        )
+        assert turn.parse_stage == 2
+        assert turn.ops[0].action_input == {"path": "a.py"}
+
+    def test_bare_tool_tag_yields_empty_op(self, wf):
+        # 파라미터 없음 (2/30) — {} op 로 구제 → A5 가 required 누락을 진단
+        turn = wf.parse_turn("checking the file.\n<shell>")
+        assert turn.parse_stage == 2
+        assert turn.ops[0].action == "shell"
+        assert turn.ops[0].action_input == {}
+
+    def test_multiple_tool_tags_multi_op(self, wf):
+        turn = wf.parse_turn(
+            "<read_file>\n<path>a.py</path>\n</read_file>\n"
+            "<shell>\n<command>ls</command>\n</shell>"
+        )
+        assert [op.action for op in turn.ops] == ["read_file", "shell"]
+        assert turn.parse_stage == 2
+
+    def test_prose_thought_captured_before_lenient_block(self, wf):
+        turn = wf.parse_turn("파일을 확인한다.\n<shell>\n<command>ls</command>")
+        assert turn.thought == "파일을 확인한다."
+        assert turn.ops[0].action == "shell"
+
+    def test_inline_prose_mention_not_rescued(self, wf):
+        # 산문 속 인라인 언급은 구제 대상 아님 (line-anchor 가드) — 0-op 유지
+        turn = wf.parse_turn(
+            "I could use the <shell> tool here, or maybe read the file first."
+        )
+        assert turn.ops == []
+        assert turn.parse_stage == 1  # thought-only
+
+    def test_unknown_tag_not_rescued(self, wf):
+        turn = wf.parse_turn("<div>\n<span>hello</span>\n</div>")
+        assert turn.ops == []
+
+    def test_canonical_emission_never_enters_lenient(self, wf):
+        # strict 성공 경로 무영향 — stage 1 유지
+        turn = wf.parse_turn(_call("read_file", {"path": "a.py"}))
+        assert turn.parse_stage == 1
+
+    def test_md_array_regression_not_rescued_here(self, wf):
+        # 타 포맷 누출(17%)은 이 구제 범위 밖 (Phase 3 소관) — thought-only
+        turn = wf.parse_turn(
+            '## Thought\nt\n\n## Action\n[{"action": "shell", "command": "ls"}]'
+        )
+        assert turn.ops == []
+
+    def test_rescued_turn_rerenders_canonical(self, wf):
+        # 자기 교정: 구제 턴의 history 재렌더 = 캐노니컬 <function=> shape
+        rec = wf.serialize_assistant_for_history("<shell>\n<command>ls -la</command>")
+        assert rec["ops"][0]["action"] == "shell"
+        msg = wf.render_assistant_from_history(rec)
+        assert "<function=shell>" in msg["content"]
+        assert "<parameter=command>ls -la</parameter>" in msg["content"]
+
+
 # ── loop e2e (mocked provider) ───────────────────────────────
 
 

@@ -7,8 +7,30 @@
 > 구현 노트: 선행 리팩토링(v5.19.1) = thinking-tag 스트리핑 단일 소스
 > `agent_cli/thinking_tags.py` — vocab 4곳 중복 제거, `WireFormat.strip_thinking`
 > (파서 stage 0 공용), md_array 의 provider-미경유 경로 ①② 무방비 갭 봉합.
-> **bakeoff 미실시** — non-default 플러그인으로 출하, models.json 바인딩
-> 권장/기본 전환 전 실측 게이트 (§6.4).
+
+## 8. Bakeoff 실측 결과 (2026-07-17, phase2 — §6.4 게이트)
+
+Qwen 라이브(omlx) 2모델 × md_array(베이스라인)/xml_fc × 7태스크 × 5회 =
+140 run + 35B 재측정 35 run. 리포트: `scripts/bakeoff/results/`.
+
+| | md_array | xml_fc (초판) | xml_fc (lenient 구제 후) |
+|---|---|---|---|
+| **27B** completed / pf / rec | 100% / 0 / 0 | 100% / 0 / 0.06 | (재측정 불요 — 동등) |
+| **35B-A3B** completed / pf / rec | 100% / 0 / 0 | 98.6% / 0 / ~1.5 | 97.1% / 0 / 0.63 |
+
+- **파싱 실패(pf)는 전 셀 0** — 파서는 한 번도 안 깨짐. 35B 마찰은 전부
+  NO_ACTION(0-op 턴).
+- **0-op 30건 캡처 분류**: tool-name 태그 변종(`<read_file><path>…`) 83% /
+  md_array 회귀(`## Thought/## Action`+JSON — **foreign-format 누출 첫 실측**,
+  Phase 3 근거) 17% / 순수 산문 0.
+- **lenient 구제 (v5.20.1)**: strict 0-op 일 때만 라인-단독 `<TOOLNAME>`
+  (등록 도구명) + 혼합 스타일 파라미터 수용 → stage 2. 효과: 35B
+  read_then_edit 80→100% (iters 8.6→4.8), write_multiline rec 2.2→0.4,
+  전체 rec ~1.5→0.63. 잔여 마찰은 md_array-회귀 계열 (설계상 미구제).
+
+**판정**: **27B = md_array 와 동등 → 바인딩 가능. 35B-A3B = 개선됐으나
+md_array 우위 유지 → xml_fc 바인딩 비권장** (md_array 그대로). `thought`
+지표(xml_fc 25% vs md_array 100%)는 D4 산문-선택 설계라 비교에서 제외.
 
 ## 1. Wire shape
 
