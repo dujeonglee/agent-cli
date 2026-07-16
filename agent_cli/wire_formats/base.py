@@ -319,6 +319,26 @@ class WireFormat(ABC):
             thinking=pa.thinking,
         )
 
+    @staticmethod
+    def strip_thinking(text: str) -> tuple[str, str | None]:
+        """파서 stage 0 — content 에 새어든 thinking 블록(완전 블록·미닫힘
+        opener) 격리. ``(cleaned, thinking|None)`` 반환; 격리분은
+        ``ParsedTurn.thinking``(verbose 전용, **비재공급**)으로 실린다.
+
+        openai provider 는 같은 함수를 이미 호출하므로(5.10.0) 그 경로에선
+        no-op 이고, provider 를 안 거치는 경로(anthropic/http 의 content-태그
+        leak, bench 의 provider 우회, 직접 파서 호출)의 유일한 방어가 이
+        stage 0 다. 구현은 ``agent_cli.thinking_tags`` 단일 소스 — 포맷 간
+        behavior 공유가 아니라 ABC 기계(serialize/render 기본 구현과 동일
+        관례)이므로 self-contained 불변식과 충돌하지 않는다. 고아/트레일링
+        태그(③)는 앵커 위치가 포맷 소유라 여기 없다 — 각 플러그인이
+        ``thinking_tags`` 의 정규식으로 자기 수리 파이프라인에서 처리.
+        """
+        from agent_cli.thinking_tags import strip_think_blocks
+
+        cleaned, thinking = strip_think_blocks(text)
+        return cleaned, (thinking or None)
+
     def is_degenerate(self, text: str) -> bool:
         """Whether *text* is a format runaway: the model repeated the wire
         shape instead of emitting one turn (e.g. several empty ``## Thought``

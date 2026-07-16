@@ -34,6 +34,10 @@ from __future__ import annotations
 import json
 import re
 
+from agent_cli.thinking_tags import (
+    ORPHAN_THINK_TAG_RE as _ORPHAN_THINK_TAG,
+    TRAILING_THINK_TAG_RE as _TRAILING_THINK_TAG,
+)
 from agent_cli.wire_formats._json_diag import describe_json_error
 from agent_cli.wire_formats._json_repair import (
     close_unbalanced,
@@ -58,9 +62,7 @@ _SENTINEL_LINE = re.compile(r"^\s*##\s*(?:Thought|Action|Input)\s*$", re.MULTILI
 # co-occurrence on Qwen3.6, session 1782027249). md_array splits on ``##``
 # headers, never on these tags, so they ride into the thought as cosmetic
 # noise (and into the next-turn prior). Drop the bare tags, keep the text.
-_ORPHAN_THINK_TAG = re.compile(
-    r"</?\s*(?:think|thinking|reasoning|reflection)\s*>", re.IGNORECASE
-)
+#
 # Same leak, but TRAILING the op array (``[{...}</think>``): the closer that
 # repairs an unclosed array appends ``]`` at the very end — AFTER the tag — so
 # the result stays invalid (``[{...}</think>]``) and the op is lost → NO_JSON
@@ -68,9 +70,10 @@ _ORPHAN_THINK_TAG = re.compile(
 # part of the JSON, so strip trailing ones before the repair path. Anchored to
 # the end → never touches a ``<think>`` inside a string value (valid JSON parses
 # strictly first and is returned untouched).
-_TRAILING_THINK_TAG = re.compile(
-    r"(?:\s*</?\s*(?:think|thinking|reasoning|reflection)\s*>)+\s*$", re.IGNORECASE
-)
+#
+# 정규식은 thinking_tags 단일 소스에서 (모듈 상단 import — vocab 드리프트
+# 방지, 선행 리팩토링); **적용 지점**(sanitize_thought / repair 파이프라인
+# 직전)은 이 포맷 소유 그대로.
 
 # Format runaway: an empty envelope section immediately followed by another
 # header (mirrors prefix_md's _DEGEN_RUNAWAY; Input included for the same
@@ -544,6 +547,17 @@ class MdArrayFormat(WireFormat):
     # ─── Parsing ────────────────────────────────────────────────
 
     def parse_turn(self, llm_text: str) -> ParsedTurn:
+        # Stage 0 — thinking 블록(완전 블록·미닫힘 opener) 격리 (선행
+        # 리팩토링): openai 경로는 provider 가 이미 벗겨 no-op, anthropic/
+        # http·bench(provider 우회) 경로의 ①② 무방비 갭을 메운다. 고아
+        # closer(③)는 여기 아님 — sanitize_thought·repair 파이프라인의
+        # 앵커드 처리 그대로 (문자열 값 안의 태그 보존 계약 유지).
+        llm_text, thinking = self.strip_thinking(llm_text)
+        turn = self._parse_turn_stripped(llm_text)
+        turn.thinking = thinking
+        return turn
+
+    def _parse_turn_stripped(self, llm_text: str) -> ParsedTurn:
         thought, body, has_action = _split_sections(llm_text)
         clean_thought = self.sanitize_thought(thought)
 

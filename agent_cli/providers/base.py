@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import re
-
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from agent_cli.providers.capabilities import ModelCapabilities
+
+# content 인라인 thinking 블록 격리 (5.10.0) — 구현은 thinking_tags 단일
+# 소스로 이주 (multi-wire-format Phase 2 선행 리팩토링). openai.py 와
+# 기존 테스트가 이 경로에서 import 하므로 re-export 로 유지.
+from agent_cli.thinking_tags import strip_think_blocks as strip_think_blocks
 
 
 @dataclass
@@ -49,41 +52,6 @@ class LLMResponse:
     # thinking blocks, OpenAI reasoning). Empty string when the provider
     # doesn't expose it or the model didn't produce any.
     thinking: str = ""
-
-
-_THINK_TAG_NAMES = ("think", "thinking", "reasoning", "reflection")
-_THINK_BLOCK_RE = re.compile(
-    r"<(" + "|".join(_THINK_TAG_NAMES) + r")\b[^>]*>(.*?)</\1\s*>",
-    re.S | re.I,
-)
-_THINK_OPEN_RE = re.compile(r"<(" + "|".join(_THINK_TAG_NAMES) + r")\b[^>]*>", re.I)
-
-
-def strip_think_blocks(text: str) -> tuple[str, str]:
-    """content 에 인라인으로 섞인 ``<think>`` 류 추론 블록 격리 (5.10.0).
-
-    일부 모델(MiMo 등)이 reasoning 을 별도 API 필드가 아니라 content 안의
-    태그로 흘린다 — 길면 wire 파싱을 깨고 컨텍스트를 태운다. 닫힌 블록은
-    전부, **안 닫힌 열림 태그는 EOF 까지**(max_tokens 를 추론 중 소진한
-    경우) 제거하고, 제거분은 버리지 않고 두 번째 반환값으로 돌려준다 —
-    호출자(provider)가 ``LLMResponse.thinking`` 에 실어 verbose 에서
-    보이게 한다. 태그 vocab 은 capabilities 탐지와 동일 4종.
-    """
-    if "<" not in text:
-        return text, ""
-    thinks: list[str] = []
-
-    def _grab(m: re.Match) -> str:
-        thinks.append(m.group(2).strip())
-        return ""
-
-    cleaned = _THINK_BLOCK_RE.sub(_grab, text)
-    # 안 닫힌 열림 태그 — 그 지점부터 전부 추론으로 간주.
-    m = _THINK_OPEN_RE.search(cleaned)
-    if m:
-        thinks.append(cleaned[m.end() :].strip())
-        cleaned = cleaned[: m.start()]
-    return cleaned.strip(), "\n\n".join(x for x in thinks if x)
 
 
 @runtime_checkable

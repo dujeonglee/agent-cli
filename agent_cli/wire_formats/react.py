@@ -52,15 +52,6 @@ def _ops_from_items(items: list) -> list[Op]:
 # pre-emptive extraction would impose ReAct's repair policy on
 # wire formats that may want a different recovery strategy.
 
-# Known thinking/reasoning block tag names (case-insensitive)
-_THINKING_TAGS = ["think", "thinking", "reasoning", "reflection"]
-
-# Build regex that matches any of the known thinking tags
-_THINKING_PATTERN = re.compile(
-    r"<(" + "|".join(_THINKING_TAGS) + r")>(.*?)</\1>",
-    re.S | re.I,
-)
-
 
 def _sanitize_surrogates(text: str) -> str:
     """Remove unpaired Unicode surrogates that break JSON parsing."""
@@ -68,26 +59,14 @@ def _sanitize_surrogates(text: str) -> str:
 
 
 def _strip_thinking_blocks(text: str) -> tuple[str, str | None]:
-    """Strip thinking/reasoning blocks from LLM output.
-
-    Handles: <think>...</think>, <thinking>...</thinking>,
-             <reasoning>...</reasoning>, <reflection>...</reflection>
-
-    Returns: (text_without_blocks, extracted_thinking_content or None)
+    """Stage 0 — thinking 블록 격리. 구현은 thinking_tags 단일 소스
+    (선행 리팩토링 — 종전 자체 재구현 대비: 속성 달린 태그·미닫힘 opener
+    까지 커버가 넓어졌고, provider 층과 같은 함수라 드리프트 불가).
     """
-    thinking_parts: list[str] = []
+    from agent_cli.thinking_tags import strip_think_blocks
 
-    def _collect(match):
-        content = match.group(2).strip()
-        if content:
-            thinking_parts.append(content)
-        return ""
-
-    cleaned = _THINKING_PATTERN.sub(_collect, text).strip()
-
-    if thinking_parts:
-        return cleaned, "\n\n".join(thinking_parts)
-    return text, None
+    cleaned, thinking = strip_think_blocks(text)
+    return cleaned, (thinking or None)
 
 
 def parse_react(text: str) -> ParsedAction:

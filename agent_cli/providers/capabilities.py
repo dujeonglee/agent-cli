@@ -12,6 +12,7 @@ import requests
 from agent_cli.constants import DETECTION_PROBE_TIMEOUT
 
 from agent_cli.config import get_model_entry, save_model_entry
+from agent_cli.thinking_tags import THINK_TAG_NAMES as _THINKING_TAGS
 
 
 # Optional progress callback — set by the caller (main.py) before
@@ -173,8 +174,8 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
     )
 
 
-# Compiled patterns for efficiency
-_THINKING_TAGS = ["think", "thinking", "reasoning", "reflection"]
+# Compiled patterns for efficiency. 태그 vocab 은 thinking_tags 단일 소스
+# (모듈 상단 import — strip 경로와 탐지 경로가 같은 4종을 봐야 한다).
 _THINKING_TAG_PATTERN = re.compile(
     r"<(" + "|".join(_THINKING_TAGS) + r")>",
     re.I,
