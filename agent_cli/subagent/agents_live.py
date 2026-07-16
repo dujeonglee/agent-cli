@@ -1246,6 +1246,22 @@ class MailWaker:
         if self.idle.is_set():
             self._arm()
 
+    def mark_idle(self) -> None:
+        """펌프가 큐 블록 직전에 호출 — idle 를 set 하고, **이미 미배달 회신이
+        있으면 즉시 재무장**한다. ``on_run_end()`` 반환 후 ``idle.set()`` 전
+        창에서 도착한 회신은 ``on_mail()`` 이 idle 미set 을 보고 wake 를
+        드롭하는데(web 은 timeout 없는 무한 블록이라 그대로 영구 park),
+        이 재확인이 그 lost-wakeup 을 봉합한다.
+
+        정합성: idle 를 **먼저** set 한 뒤 pending 을 확인하므로, 동시 도착
+        회신은 (a) 여기 ``_has_pending`` 에 잡히거나 (b) idle set 을 본
+        ``on_mail`` 이 무장한다 — 최소 한쪽은 반드시 무장(append 와
+        has_pending 은 registry cv 로 직렬화, idle 는 Event 로 순서 보장).
+        중복 무장은 ``_armed`` 가드로 무해(handle_dequeued 가 skip 처리)."""
+        self.idle.set()
+        if self._has_pending():
+            self._arm()
+
     def on_run_end(self) -> None:
         """run 종료 직후 — 마지막 턴 경계 이후 도착분 잔여 확인."""
         if self._has_pending():

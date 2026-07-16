@@ -1118,6 +1118,34 @@ class TestMailWaker:
         w.on_run_end()
         assert sent == []
 
+    def test_mark_idle_arms_when_mail_already_pending(self):
+        # Lost-wakeup closure: a reply that landed in the on_run_end()→idle
+        # window (on_mail() saw idle unset, dropped the wake) must still get a
+        # wake when the pump marks itself idle — else web parks forever.
+        w, sent = self._waker(pending=lambda: True)
+        w.on_mail()  # idle not set yet → dropped (the race)
+        assert sent == []
+        w.mark_idle()  # pump about to block → sets idle AND re-arms
+        assert len(sent) == 1
+        assert sent[0] == (None, w.WAKE_TEXT)
+        assert w.idle.is_set()
+
+    def test_mark_idle_no_arm_when_nothing_pending(self):
+        w, sent = self._waker(pending=lambda: False)
+        w.mark_idle()
+        assert sent == []
+        assert w.idle.is_set()
+
+    def test_mark_idle_then_later_mail_still_wakes(self):
+        # After mark_idle() (idle set), a fresh reply's on_mail() arms normally.
+        state = {"pending": False}
+        w, sent = self._waker(pending=lambda: state["pending"])
+        w.mark_idle()  # nothing pending yet → no arm, but idle set
+        assert sent == []
+        state["pending"] = True
+        w.on_mail()  # idle is set → arms
+        assert len(sent) == 1
+
     def test_handle_dequeued_verdicts(self):
         state = {"pending": True}
         w, sent = self._waker(pending=lambda: state["pending"])
@@ -1227,6 +1255,27 @@ class TestRunMessagePump:
         assert calls[0] == ("spawn and go", False)
         assert calls[1][1] is True  # wake run
         assert calls[1][0] == waker.WAKE_TEXT
+
+    def test_dropped_wake_reply_still_delivered(self):
+        # Lost-wakeup at the pump level: a reply is already pending but its
+        # on_mail() was dropped (arrived while idle unset — the race). With no
+        # wake in the queue, the pump must arm one via mark_idle and deliver it,
+        # not spin on the poll timeout (web would park forever).
+        from agent_cli.input_queue import InputQueue
+        from agent_cli.subagent.agents_live import MailWaker
+
+        q = InputQueue()
+        reg = self._FakeReg()
+        waker = MailWaker(q.enqueue, reg.has_pending_replies)
+        reg.pending = True  # reply pending, but NO wake was enqueued
+        calls = []
+
+        def run_one(text, *, wake):
+            calls.append((text, wake))
+            reg.pending = False  # the wake run's turn boundary delivers it
+
+        self._pump(q, waker, reg, run_one)
+        assert calls == [(waker.WAKE_TEXT, True)]
 
     def test_stale_wake_skipped(self):
         from agent_cli.input_queue import InputQueue

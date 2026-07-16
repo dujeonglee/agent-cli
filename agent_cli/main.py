@@ -1293,7 +1293,10 @@ def _run_message_pump(input_queue, waker, registry, run_one, *, poll_secs=0.5):
     while True:
         if input_queue.pending_count() == 0 and not registry.has_active_work():
             return
-        waker.idle.set()
+        # mark_idle (not bare idle.set): if a reply is already pending (e.g. it
+        # landed in the on_run_end()→idle window), arm a wake now so the reply
+        # is delivered instead of the pump spinning on the poll timeout.
+        waker.mark_idle()
         item = input_queue.dequeue_blocking(timeout=poll_secs)
         waker.idle.clear()
         if item is InputQueue.SHUTDOWN:
@@ -1879,7 +1882,9 @@ def web(
             # refreshed client also lands on the right send-button
             # state via snapshot replay, not just live listeners.
             renderer.worker_idle()
-            _waker.idle.set()
+            # mark_idle (not bare idle.set): re-arms if a reply landed in the
+            # on_run_end()→idle window — else web parks forever (no timeout).
+            _waker.mark_idle()
             item = server.dequeue_blocking()
             _waker.idle.clear()
             if item is server.SHUTDOWN:
