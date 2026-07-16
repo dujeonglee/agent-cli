@@ -39,10 +39,6 @@ class TestRegistration:
         assert wf.action_required is False
         assert wf.exposes_complete is True
 
-    def test_provider_kwargs_never_json_mode(self, wf):
-        # JSON-object 모드는 선두 `{` 강제 → 태그 envelope 불가능
-        assert wf.provider_call_kwargs(None) == {"json_mode": False}
-
 
 # ── 정상 파싱 (stage 1) ──────────────────────────────────────
 
@@ -576,10 +572,8 @@ class TestLoopE2E:
         return ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
 
     def test_read_then_complete(self, tmp_path):

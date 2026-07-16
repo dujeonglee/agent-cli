@@ -27,10 +27,6 @@ class TestRegistrationAndFlags:
         assert wf.action_required is False
         assert wf.exposes_complete is True
 
-    def test_json_mode_always_off(self, wf):
-        # 산문이 배열보다 먼저 — JSON-object 모드(선두 `{`)와 양립 불가
-        assert wf.provider_call_kwargs(None) == {"json_mode": False}
-
 
 class TestCanonicalParse:
     def test_prose_then_array_multi_op(self, wf):
@@ -180,10 +176,8 @@ class TestLoopE2E:
         return ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
 
     def test_read_then_complete(self, tmp_path):

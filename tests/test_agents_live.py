@@ -633,10 +633,8 @@ class TestFullLoopIntegration:
         return ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
 
     def test_spawn_request_delivery_roundtrip(self, tmp_path):
@@ -648,9 +646,7 @@ class TestFullLoopIntegration:
         from agent_cli.providers.base import LLMResponse
 
         def emit(action, action_input):
-            return json.dumps(
-                {"thought": "t", "action": action, "action_input": action_input}
-            )
+            return json.dumps({"action": action, **action_input})
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
         reg = AgentRegistry(tmp_path / "sess", runner=make_runner())
@@ -702,7 +698,7 @@ class TestFullLoopIntegration:
         from agent_cli.prompts.system_prompt import _build_tools_section
         from agent_cli.wire_formats import get as get_wf
 
-        wf = get_wf("react")
+        wf = get_wf("json_fc")
         sub = _build_tools_section(["agent"], wf, has_agent_registry=False)
         main = _build_tools_section(["agent"], wf, has_agent_registry=True)
         assert 'mode:"run" only here' in sub
@@ -1406,10 +1402,8 @@ class TestRoleDiscovery:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
         with_tool = build_system_prompt_sections(
             caps, active_tools=["read_file", "agent"]
@@ -1556,10 +1550,8 @@ class TestLiveTeammatesSection:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
         reg = make_registry(tmp_path)
         reg.spawn(name="ui")
@@ -1607,10 +1599,8 @@ class TestLiveTeammatesSection:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
         names = [
             n
@@ -1655,14 +1645,12 @@ class TestLiveTeammatesSection:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
 
         def emit(action, ai):
-            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+            return json.dumps({"action": action, **ai})
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
         reg = make_registry(tmp_path / "sess")
@@ -1805,14 +1793,12 @@ class TestPeerMessaging:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
 
         def emit(action, ai):
-            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+            return json.dumps({"action": action, **ai})
 
         sent = []
 
@@ -2694,10 +2680,8 @@ class TestRunMode:
         return ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
 
     def test_parallel_batchable_is_mode_aware(self):
@@ -2727,7 +2711,7 @@ class TestRunMode:
         from agent_cli.providers.base import LLMResponse
 
         def emit(action, ai):
-            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+            return json.dumps({"action": action, **ai})
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
         provider = MagicMock()
@@ -2762,7 +2746,7 @@ class TestRunMode:
         from agent_cli.providers.base import LLMResponse
 
         def emit(action, ai):
-            return json.dumps({"thought": "t", "action": action, "action_input": ai})
+            return json.dumps({"action": action, **ai})
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)
         provider = MagicMock()

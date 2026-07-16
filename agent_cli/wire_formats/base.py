@@ -50,7 +50,7 @@ serialize / render defaults compose those into the lifecycle automatically
 ``render`` calls ``self.render_full_example()`` to re-emit the wire shape
 from the stored record.
 
-See ``agent_cli/wire_formats/react.py`` for the reference implementation.
+See ``agent_cli/wire_formats/json_fc.py`` for the reference implementation.
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ class Op:
     """One tool invocation within a turn — the per-op unit of a ``ParsedTurn``.
 
     Mirrors the action-carrying fields of :class:`ParsedAction`. A
-    single-action wire format (react) yields a turn with exactly
+    single-action wire format (하나도 내장돼 있지 않음 — 미래 플러그인용 기본) yields a turn with exactly
     one ``Op``; a multi-op format yields several.
     """
 
@@ -188,7 +188,7 @@ class WireFormat(ABC):
     multi_op: bool = False
     """Whether the format expresses several tool ops in one turn.
 
-    False (default — react): one action per turn; per-tool batch
+    False (default — 단일-action 포맷용; 내장 둘은 True): one action per turn; per-tool batch
     fields (``read_file_reads`` etc.) let one turn touch several targets. The
     prompt shows wire-key-prefixed params and the tools' batch prose.
 
@@ -347,7 +347,7 @@ class WireFormat(ABC):
         the stream early, and labels the final emission ``FAILURE_DEGENERATE``.
 
         Default False — a wire shape with no observed runaway pattern (e.g.
-        react under json_object mode) opts out. Shapes that can run away
+        구 react 가 그랬듯 runaway-불가 shape) opts out. Shapes that can run away
         override with a cheap structural check (header count, etc.)."""
         return False
 
@@ -364,7 +364,7 @@ class WireFormat(ABC):
         save covers every consumer.
 
         Default identity: a wire whose thought cannot carry its own sentinels
-        (react: thought is a JSON string, escaped) opts out. json_fc
+        (예: thought 가 JSON-이스케이프 문자열인 포맷) opts out. json_fc
         overrides to drop stray ``##`` header lines. (``action`` / ``action_
         input`` need no cleaning — an invalid action token is already rejected,
         and action_input is JSON-escaped so its content can't form a line-start
@@ -500,23 +500,15 @@ class WireFormat(ABC):
     # ─── Provider / lifecycle (default) ─────────────────────────
 
     def provider_call_kwargs(self, capabilities) -> dict:
-        """Extra kwargs for ``provider.call()``, decided from model
-        ``capabilities`` — the single place where wire-shape ⨯ capability
-        is combined (so the provider layer never has to).
+        """Extra kwargs for ``provider.call()`` — wire-shape ⨯ capability 를
+        조합하는 단일 지점 (provider 는 capabilities 를 직접 안 본다).
 
-        Default — JSON-shaped formats (ReAct, envelope) request the
-        provider's JSON-object mode iff the model supports structured
-        output: ``{"json_mode": capabilities.supports_structured_output}``.
-        json_fc's markdown overrides to ``{"json_mode": False}``
-        regardless of capability — forcing JSON mode on a markdown-shaped
-        prompt makes the model degenerate (the ``[2025]`` / ``[1000,1000]``
-        bug).
-
-        Providers treat ``json_mode`` opaquely (openai → response_format;
-        anthropic ignores it) and never inspect ``capabilities`` for this
-        decision themselves.
+        기본 = 빈 dict. (json_mode 기계는 v7.0.0 에서 유일 소비자 react 와
+        함께 제거 — JSON-object 모드는 선두 ``{`` 를 강제해 산문-선행/태그
+        envelope 과 양립 불가했고, 실측 이점도 없었다. 미래 플러그인이
+        provider 힌트가 필요하면 이 훅을 override.)
         """
-        return {"json_mode": capabilities.supports_structured_output}
+        return {}
 
     def prefill(self) -> str:
         """Return assistant-turn prefill string, or empty for no prefill.

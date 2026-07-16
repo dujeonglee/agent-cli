@@ -116,13 +116,10 @@ class TestWireFormatStage0:
         assert turn.ops and turn.ops[0].action == "complete"
         assert "tail reasoning cut off" in (turn.thinking or "")
 
-    def test_react_stage0_still_captures_thinking(self):
+    def test_json_fc_stage0_still_captures_thinking(self):
         from agent_cli.wire_formats import get as get_wf
 
-        wf = get_wf("react")
-        pa = wf.parse(
-            "<think>scratch</think>"
-            '{"thought": "t", "action": "complete", "action_input": {"result": "r"}}'
-        )
+        wf = get_wf("json_fc")
+        pa = wf.parse('<think>scratch</think>[{"action": "complete", "result": "r"}]')
         assert pa.thinking is not None and "scratch" in pa.thinking
         assert pa.action == "complete"

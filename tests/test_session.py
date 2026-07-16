@@ -41,10 +41,10 @@ class TestCreateSession:
         assert create_session().response_format == "json_fc"
 
     def test_response_format_stored(self):
-        # An explicit non-default choice (react) is preserved — proves the
+        # An explicit non-default choice (xml_fc) is preserved — proves the
         # field stores what's asked, not just the json_fc default.
-        meta = create_session("/tmp/ws", response_format="react")
-        assert meta.response_format == "react"
+        meta = create_session("/tmp/ws", response_format="xml_fc")
+        assert meta.response_format == "xml_fc"
 
 
 class TestLoadSession:
@@ -59,11 +59,11 @@ class TestLoadSession:
         assert load_session("999999999") is None
 
     def test_response_format_round_trips(self, tmp_path):
-        meta = create_session("/tmp/ws", response_format="react")
+        meta = create_session("/tmp/ws", response_format="xml_fc")
         save_meta(meta)
         loaded = load_session(meta.session_id)
         assert loaded is not None
-        assert loaded.response_format == "react"
+        assert loaded.response_format == "xml_fc"
 
     def test_legacy_session_defaults_to_json_fc(self, tmp_path):
         """A session.jsonl written before the response_format field existed
@@ -297,11 +297,11 @@ class TestRecentExchanges:
         system-injected prefixes from a wire-format plugin extend that
         list automatically."""
         from agent_cli.constants import INTERRUPT_NOTICE
-        from agent_cli.wire_formats.react import ReActFormat
+        from agent_cli.wire_formats.json_fc import JsonFcFormat
 
         # Use the plugin's static fallback messages directly so the
         # test exercises the actual production retry-hint strings.
-        react = ReActFormat()
+        react = JsonFcFormat()
         retry_no_json = react.static_retry_hint_no_json()
         retry_no_action = react.static_retry_hint_no_action()
 

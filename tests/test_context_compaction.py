@@ -304,10 +304,9 @@ class TestSummaryTextRendering:
         from agent_cli import wire_formats
         from agent_cli.context.render import _to_summary_text
 
-        plugin = wire_formats.get("react")
+        plugin = wire_formats.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
-            '{"thought": "write it", "action": "write_file", '
-            '"action_input": {"path": "r.c", "content": "y"}}'
+            'write it\n\n[{"action": "write_file", "path": "r.c", "content": "y"}]'
         )
         line = _to_summary_text(rec)
         assert "write_file(r.c)" in line
@@ -531,10 +530,9 @@ class TestFileExtractHelper:
         hand-written dict. If serialization changes, this test moves with it."""
         from agent_cli import wire_formats
 
-        plugin = wire_formats.get("react")
+        plugin = wire_formats.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
-            '{"thought": "write it", "action": "write_file", '
-            '"action_input": {"path": "r.c", "content": "y"}}'
+            'write it\n\n[{"action": "write_file", "path": "r.c", "content": "y"}]'
         )
         assert rec["ops"][0]["action"] == "write_file"
         assert extract_file_paths([rec]) == ["r.c"]
@@ -1015,8 +1013,7 @@ class TestAgentLoopCompactorCallback:
 
       (1) provider.call() called with wrong signature (missing
           ``system`` / ``capabilities``).
-      (2) capabilities not overridden, so ``supports_structured_output=
-          True`` forced a JSON-mode response instead of plain text.
+      (2) capabilities not overridden, so ``          True`` forced a JSON-mode response instead of plain text.
     """
 
     def _make_loop(self, **overrides):
@@ -1039,12 +1036,10 @@ class TestAgentLoopCompactorCallback:
 
         caps = ModelCapabilities(
             context_window=4096,
-            max_output_tokens=512,
-            supports_structured_output=True,  # default-on; the callback
+            max_output_tokens=512,  # default-on; the callback
             #                                  must flip it off
             supports_thinking=True,  # ditto
             thinking_budget=2048,
-            supports_strict_schema=False,
         )
         loop = AgentLoop(
             query="x",
@@ -1079,11 +1074,9 @@ class TestAgentLoopCompactorCallback:
         loop._llm_compact_summarize([{"role": "user", "content": "x"}])
 
         passed_caps = received["capabilities"]
-        assert passed_caps.supports_structured_output is False
         assert passed_caps.supports_thinking is False
         # Original capabilities untouched (frozen dataclass — replace
         # returns a new instance, doesn't mutate).
-        assert loop.capabilities.supports_structured_output is True
         assert loop.capabilities.supports_thinking is True
 
     def test_summary_prompt_covers_agentic_resume_directives(self):

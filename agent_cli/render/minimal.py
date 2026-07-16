@@ -422,7 +422,6 @@ class MinimalRenderer(Renderer):
         self.con.print(
             f"    context={capabilities.context_window:,}  "
             f"output={capabilities.max_output_tokens:,}  "
-            f"structured={'yes' if capabilities.supports_structured_output else 'no'}  "
             f"thinking={thinking_info}",
             highlight=False,
         )

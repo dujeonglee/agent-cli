@@ -318,10 +318,8 @@ class TestDispatchAgent:
         caps = ModelCapabilities(
             context_window=8192,
             max_output_tokens=2048,
-            supports_structured_output=False,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
         provider = MagicMock()
 

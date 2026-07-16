@@ -56,10 +56,8 @@ FAIL_DUMP = os.environ.get("BAKEOFF_FAIL_DUMP", "/tmp/proto_md_array_fails.txt")
 CAPS = ModelCapabilities(
     context_window=262144,
     max_output_tokens=4096,
-    supports_structured_output=False,
     supports_thinking=False,
     thinking_budget=0,
-    supports_strict_schema=False,
 )
 
 _THOUGHT_RE = re.compile(r"^##\s*Thought\s*$", re.MULTILINE)

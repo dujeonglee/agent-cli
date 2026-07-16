@@ -12,7 +12,6 @@ import json
 from agent_cli.recovery.wf_recovery import format_no_json_retry
 from agent_cli.wire_formats._json_diag import describe_json_error
 from agent_cli.wire_formats.json_fc import JsonFcFormat
-from agent_cli.wire_formats.react import ReActFormat
 
 
 class TestDescribeJsonError:
@@ -70,33 +69,28 @@ class TestDescribeJsonError:
 
 
 class TestFormatDiagnose:
-    def test_react_diagnoses_broken_json(self):
-        bad = '{"thought":"x","action":"shell","action_input":{"command":"ls"}'
-        out = ReActFormat().diagnose_syntax_error(bad)
+    def test_json_fc_diagnoses_headerless_broken_array(self):
+        bad = 'reasoning prose\n\n[{"action":"shell","command":"ls"}'
+        out = JsonFcFormat().diagnose_syntax_error(bad)
         assert out is not None and "^" in out
 
-    def test_react_strips_fences_before_diagnosing(self):
-        bad = '```json\n{"a": 1 "b": 2}\n```'
-        out = ReActFormat().diagnose_syntax_error(bad)
-        assert out is not None and "delimiter" in out
-
-    def test_react_valid_returns_none(self):
-        ok = '{"thought":"x","action":"shell","action_input":{"command":"ls"}}'
-        assert ReActFormat().diagnose_syntax_error(ok) is None
+    def test_json_fc_valid_returns_none(self):
+        ok = 'x\n\n[{"action":"shell","command":"ls"}]'
+        assert JsonFcFormat().diagnose_syntax_error(ok) is None
 
     def test_json_fc_diagnoses_broken_action_body(self):
         bad = '## Thought\nreasoning\n\n## Action\n[{"action":"shell","command":"ls"}'
         out = JsonFcFormat().diagnose_syntax_error(bad)
         assert out is not None and "^" in out
 
-    def test_json_fc_valid_returns_none(self):
+    def test_json_fc_legacy_header_valid_returns_none(self):
         ok = '## Thought\nr\n\n## Action\n[{"action":"shell","command":"ls"}]'
         assert JsonFcFormat().diagnose_syntax_error(ok) is None
 
     def test_base_default_returns_none(self):
         # a format that does not implement diagnosis falls back to None,
         # so the generic hint path is used unchanged
-        class _Bare(ReActFormat):
+        class _Bare(JsonFcFormat):
             def diagnose_syntax_error(self, prior_content):  # seam default
                 return None
 
@@ -109,7 +103,7 @@ class TestCrossFormatParity:
         # location, not one silently returning None
         react_in = '{"thought":"t","action":"shell","action_input":{"command":"ls"'
         md_in = '## Thought\nt\n\n## Action\n[{"action":"shell","command":"ls"'
-        r = ReActFormat().diagnose_syntax_error(react_in)
+        r = JsonFcFormat().diagnose_syntax_error(react_in)
         m = JsonFcFormat().diagnose_syntax_error(md_in)
         assert r is not None and "^" in r
         assert m is not None and "^" in m
@@ -119,11 +113,13 @@ class TestNoJsonRetryEmbedding:
     def test_syntax_error_embedded_after_framing(self):
         intv = format_no_json_retry(
             prior_content='{"a": 1 "b": 2}',
-            wire_format=ReActFormat(),
+            wire_format=JsonFcFormat(),
             syntax_error='Expecting \',\' delimiter (line 1, column 9)\n    {"a": 1 "b"\n           ^',
         )
         # framing still leads (existing prefix-skip relies on it)
-        assert intv.message.startswith("Your response was not valid JSON.")
+        assert intv.message.startswith(
+            "Your response did not match the expected format"
+        )
         assert "Expecting ',' delimiter" in intv.message
         assert "^" in intv.message
         assert "diagnose_json_error" in intv.primitives
@@ -131,10 +127,10 @@ class TestNoJsonRetryEmbedding:
     def test_no_syntax_error_is_bit_for_bit_unchanged(self):
         # omitting syntax_error reproduces the legacy message exactly
         base = format_no_json_retry(
-            prior_content="some drift", wire_format=ReActFormat()
+            prior_content="some drift", wire_format=JsonFcFormat()
         )
         explicit_none = format_no_json_retry(
-            prior_content="some drift", wire_format=ReActFormat(), syntax_error=None
+            prior_content="some drift", wire_format=JsonFcFormat(), syntax_error=None
         )
         assert base.message == explicit_none.message
         assert base.primitives == explicit_none.primitives

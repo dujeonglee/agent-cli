@@ -115,7 +115,7 @@ def _build_edit_file_inline(wire_format) -> str:
     The op-semantics / hashline / constraints prose is wire-agnostic — every
     plugin gets the SAME explanatory text at the SAME level of detail. Only
     the worked example passes through ``wire_format.render_action_input`` so
-    each wire shows it in its own shape (react renders the JSON action_input
+    each wire shows it in its own shape (json_fc renders the JSON action_input
     verbatim; a future plugin whose action_input is not a JSON dict transforms
     here — same hook delegate/read_file already use). The wire-shape rules
     themselves live in each plugin's ``format_rules()`` — this guide stays

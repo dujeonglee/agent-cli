@@ -26,7 +26,7 @@ def models_file(tmp_path, monkeypatch):
     data = {
         "models": {
             "bound-md": {"context_window": 8192, "wire_format": "json_fc"},
-            "bound-react": {"context_window": 8192, "wire_format": "react"},
+            "bound-xml": {"context_window": 8192, "wire_format": "xml_fc"},
             "unbound": {"context_window": 8192},
             "bad-bound": {"context_window": 8192, "wire_format": "no_such_format"},
         }
@@ -41,10 +41,8 @@ def caps():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 
@@ -81,15 +79,15 @@ class TestWireFormatForModel:
 class TestResolveWireFormat:
     def test_explicit_beats_meta_and_binding(self, models_file):
         wf = resolve_wire_format(
-            explicit="react", session_format="json_fc", model="bound-md"
+            explicit="xml_fc", session_format="json_fc", model="bound-md"
         )
-        assert wf.name == "react"
+        assert wf.name == "xml_fc"
 
     def test_meta_beats_binding(self, models_file):
         wf = resolve_wire_format(
-            explicit=None, session_format="react", model="bound-md"
+            explicit=None, session_format="xml_fc", model="bound-md"
         )
-        assert wf.name == "react"
+        assert wf.name == "xml_fc"
 
     def test_binding_used_when_no_explicit_no_meta(self, models_file):
         wf = resolve_wire_format(explicit=None, session_format=None, model="bound-md")
@@ -121,7 +119,7 @@ class TestResolveWireFormat:
 
 
 class TestSubagentBinding:
-    def _parent(self, tmp_path, name="react"):
+    def _parent(self, tmp_path, name="xml_fc"):
         from agent_cli.context.manager import ContextManager
 
         return ContextManager(
@@ -131,7 +129,7 @@ class TestSubagentBinding:
     def test_bound_model_overrides_parent_format(self, tmp_path, models_file):
         from agent_cli.subagent.runner import create_subagent_ctx
 
-        parent = self._parent(tmp_path, "react")
+        parent = self._parent(tmp_path, "xml_fc")
         ctx, error = create_subagent_ctx(
             "none", parent, tmp_path / "sub", model="bound-md"
         )
@@ -141,7 +139,7 @@ class TestSubagentBinding:
     def test_unbound_model_inherits_parent(self, tmp_path, models_file):
         from agent_cli.subagent.runner import create_subagent_ctx
 
-        parent = self._parent(tmp_path, "react")
+        parent = self._parent(tmp_path, "xml_fc")
         ctx, error = create_subagent_ctx(
             "none", parent, tmp_path / "sub", model="unbound"
         )
@@ -152,7 +150,7 @@ class TestSubagentBinding:
         # 기존 동작 회귀 가드 — model 미전달 = 종전 부모 상속
         from agent_cli.subagent.runner import create_subagent_ctx
 
-        parent = self._parent(tmp_path, "react")
+        parent = self._parent(tmp_path, "xml_fc")
         ctx, error = create_subagent_ctx("none", parent, tmp_path / "sub")
         assert error == ""
         assert ctx.wire_format is parent.wire_format
@@ -161,7 +159,7 @@ class TestSubagentBinding:
         # D2: unknown 바인딩 이름 → spawn 거부 (세션은 안 죽음)
         from agent_cli.subagent.runner import create_subagent_ctx
 
-        parent = self._parent(tmp_path, "react")
+        parent = self._parent(tmp_path, "xml_fc")
         ctx, error = create_subagent_ctx(
             "none", parent, tmp_path / "sub", model="bad-bound"
         )
@@ -180,7 +178,7 @@ class TestSubagentBinding:
     def test_fork_mode_applies_binding(self, tmp_path, models_file):
         from agent_cli.subagent.runner import create_subagent_ctx
 
-        parent = self._parent(tmp_path, "react")
+        parent = self._parent(tmp_path, "xml_fc")
         parent.add({"role": "user", "content": "hi"})
         ctx, error = create_subagent_ctx(
             "fork", parent, tmp_path / "sub", model="bound-md"
@@ -219,9 +217,9 @@ class TestLoopCtxFallback:
             capabilities=caps,
             model="m",
             ctx=ctx,
-            wire_format=get_wf("react"),
+            wire_format=get_wf("xml_fc"),
         )
-        assert loop.wire_format.name == "react"
+        assert loop.wire_format.name == "xml_fc"
 
     def test_no_ctx_falls_to_default(self, caps):
         from agent_cli.loop.core import AgentLoop
@@ -239,10 +237,8 @@ class TestBootstrapWiring:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
         return (provider, caps, resolved_model, "http://x", "", "openai")
 
@@ -254,9 +250,9 @@ class TestBootstrapWiring:
             main_mod, "_setup_provider", lambda *a, **k: self._fake_setup()
         )
         boot = main_mod._bootstrap_provider(
-            "openai", None, None, None, None, 0, session_format="react"
+            "openai", None, None, None, None, 0, session_format="xml_fc"
         )
-        assert boot.wire_format.name == "react"
+        assert boot.wire_format.name == "xml_fc"
 
     def test_explicit_flag_beats_resume_meta(self, monkeypatch, models_file):
         import agent_cli.main as main_mod
@@ -265,7 +261,7 @@ class TestBootstrapWiring:
             main_mod, "_setup_provider", lambda *a, **k: self._fake_setup()
         )
         boot = main_mod._bootstrap_provider(
-            "openai", None, None, None, "json_fc", 0, session_format="react"
+            "openai", None, None, None, "json_fc", 0, session_format="xml_fc"
         )
         assert boot.wire_format.name == "json_fc"
 

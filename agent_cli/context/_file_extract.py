@@ -49,7 +49,7 @@ def extract_file_paths(messages: list[dict[str, Any]]) -> list[str]:
     for msg in messages:
         # Normalize single-op ({action, action_input}) and multi-op
         # ({ops:[...]}) records to one op list. Multi-op formats (json_fc,
-        # react) store `ops`, so reading only the top-level `action` extracted
+        # xml_fc) store `ops`, so reading only the top-level `action` extracted
         # NO paths from them — the compaction file list came out empty.
         ops = msg.get("ops")
         op_list = ops if isinstance(ops, list) else [msg]

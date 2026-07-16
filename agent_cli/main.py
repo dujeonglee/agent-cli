@@ -818,10 +818,8 @@ def _prompt_model_capabilities(model: str):
         caps = ModelCapabilities(
             context_window=context_window,
             max_output_tokens=max_output,
-            supports_structured_output=False,
             supports_thinking=supports_thinking,
             thinking_budget=thinking_budget,
-            supports_strict_schema=False,
             thinking_format=thinking_format,
         )
 
@@ -1090,7 +1088,7 @@ def run(
     response_format: Optional[str] = typer.Option(
         None,
         "--response-format",
-        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > json_fc (plain-prose reasoning + a flat JSON op array; multi-op). Other built-in: react (pure JSON object), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > json_fc (plain-prose reasoning + a flat JSON op array; multi-op). Other built-in: xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
     resume: str = typer.Option(
         "",

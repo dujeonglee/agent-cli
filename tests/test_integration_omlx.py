@@ -13,7 +13,7 @@ import pytest
 
 from agent_cli.loop import run_loop
 from agent_cli.providers.capabilities import get_capabilities
-from agent_cli.wire_formats.react import parse_react
+from agent_cli.wire_formats import get as _get_wf
 from tests.conftest import OMLX_BASE_URL
 
 # All tests in this file require a live omlx server.
@@ -130,7 +130,7 @@ class TestConstrainedDecoding:
             model=integration_model,
             capabilities=model_capabilities,
         )
-        parsed = parse_react(response.content)
+        parsed = _get_wf("json_fc").parse(response.content)
         # Should parse at stage 1 (direct JSON) or stage 2 (repair).
         assert parsed.parse_stage >= 1, (
             f"Failed to parse (stage={parsed.parse_stage}): {response.content[:200]}"

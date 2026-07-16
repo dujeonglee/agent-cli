@@ -55,12 +55,12 @@ def wf():
 
     The function takes the plugin as a parameter so the assistant
     branch can delegate to ``render_assistant_from_history``. Tests
-    against the plugin's behavior live in ``test_wire_formats_react``;
+    against the plugin's behavior live in ``test_wire_formats_json_fc``;
     here we only need a real plugin that produces the same string
     shapes the legacy free function used to."""
     from agent_cli.wire_formats import get as get_wire_format
 
-    return get_wire_format("react")
+    return get_wire_format("json_fc")
 
 
 # ── FIFO Behavior ─────────────────────────────────────
@@ -245,6 +245,15 @@ class TestSessionResume:
 # ── Natural Language Conversion ───────────────────────
 
 
+def _parse_json_fc(content: str):
+    """json_fc 렌더('thought\n\n[array]')를 (thought, ops-list) 로 분해."""
+    if "\n\n" in content:
+        thought, body = content.split("\n\n", 1)
+    else:
+        thought, body = None, content
+    return thought, json.loads(body)
+
+
 class TestNaturalLanguageConversion:
     def test_user_input(self, wf):
         msg = {"role": "user", "content": "인증 시스템을 리팩토링 해줘"}
@@ -260,12 +269,11 @@ class TestNaturalLanguageConversion:
         }
         result = _to_natural_language(msg, wf)
         assert result["role"] == "assistant"
-        # ReAct round-trips the ops record back to the multi-op JSON wire
-        # shape, so the model sees the same emission shape regardless of
-        # whether the turn came from live buffer or history.
-        parsed = json.loads(result["content"])
-        assert parsed["thought"] == "auth.py를 읽어 구조를 파악해야 한다"
-        assert parsed["actions"] == [{"action": "read_file", "path": "src/auth.py"}]
+        # json_fc 는 ops 레코드를 캐노니컬(산문+배열)로 재방출 — live/resume
+        # 어느 경로든 모델이 같은 emission shape 를 본다.
+        thought, ops = _parse_json_fc(result["content"])
+        assert thought == "auth.py를 읽어 구조를 파악해야 한다"
+        assert ops == [{"action": "read_file", "path": "src/auth.py"}]
 
     def test_assistant_complete(self, wf):
         msg = {
@@ -277,12 +285,9 @@ class TestNaturalLanguageConversion:
         }
         result = _to_natural_language(msg, wf)
         assert result["role"] == "assistant"
-        # complete uses the same JSON wire shape — no special-case
-        # natural-language formatting.
-        parsed = json.loads(result["content"])
-        assert parsed["actions"] == [
-            {"action": "complete", "result": "JWT 리팩토링 완료"}
-        ]
+        # complete 도 같은 wire shape — 특례 없음.
+        _, ops = _parse_json_fc(result["content"])
+        assert ops == [{"action": "complete", "result": "JWT 리팩토링 완료"}]
 
     def test_assistant_delegate(self, wf):
         msg = {
@@ -298,9 +303,9 @@ class TestNaturalLanguageConversion:
             ],
         }
         result = _to_natural_language(msg, wf)
-        parsed = json.loads(result["content"])
-        assert parsed["actions"][0]["action"] == "delegate"
-        assert parsed["actions"][0]["tasks"][0]["agent"] == "explorer"
+        _, ops = _parse_json_fc(result["content"])
+        assert ops[0]["action"] == "delegate"
+        assert ops[0]["tasks"][0]["agent"] == "explorer"
 
     def test_assistant_shell(self, wf):
         msg = {
@@ -311,8 +316,8 @@ class TestNaturalLanguageConversion:
             ],
         }
         result = _to_natural_language(msg, wf)
-        parsed = json.loads(result["content"])
-        assert parsed["actions"] == [{"action": "shell", "command": "pytest tests/ -v"}]
+        _, ops = _parse_json_fc(result["content"])
+        assert ops == [{"action": "shell", "command": "pytest tests/ -v"}]
 
     def test_assistant_run_skill(self, wf):
         msg = {
@@ -326,10 +331,10 @@ class TestNaturalLanguageConversion:
             ],
         }
         result = _to_natural_language(msg, wf)
-        parsed = json.loads(result["content"])
-        assert parsed["actions"][0]["action"] == "run_skill"
-        assert parsed["actions"][0]["name"] == "summarize"
-        assert parsed["actions"][0]["arguments"] == "src/"
+        _, ops = _parse_json_fc(result["content"])
+        assert ops[0]["action"] == "run_skill"
+        assert ops[0]["name"] == "summarize"
+        assert ops[0]["arguments"] == "src/"
 
     def test_observation_read_file(self, wf):
         # Tool-result records carry NO args (history.jsonl stores only
@@ -379,11 +384,10 @@ class TestNaturalLanguageConversion:
             "ops": [{"action": "read_file", "action_input": {"path": "test.py"}}],
         }
         result = _to_natural_language(msg, wf)
-        parsed = json.loads(result["content"])
-        assert parsed == {
-            "thought": "",
-            "actions": [{"action": "read_file", "path": "test.py"}],
-        }
+        # thought 없는 레코드 — json_fc 는 배열만 렌더 (산문 슬롯 생략)
+        assert json.loads(result["content"]) == [
+            {"action": "read_file", "path": "test.py"}
+        ]
 
     def test_assistant_plain_content(self, wf):
         """Fallback: assistant message with only content field."""
@@ -491,18 +495,16 @@ class TestGetMessagesIntegration:
         msgs = ctx.get_messages()
         assert len(msgs) == 4
         assert msgs[0] == {"role": "user", "content": "auth.py를 리팩토링 해줘"}
-        # Assistant turns round-trip back to the multi-op JSON wire shape.
-        parsed_call = json.loads(msgs[1]["content"])
-        assert parsed_call["actions"] == [
-            {"action": "read_file", "path": "src/auth.py"}
-        ]
+        # Assistant turns round-trip back to json_fc 캐노니컬 (산문+배열).
+        _, ops_call = _parse_json_fc(msgs[1]["content"])
+        assert ops_call == [{"action": "read_file", "path": "src/auth.py"}]
         # Observation stays in natural-language ``[tool]`` header form; the
         # tool-result record carries no args, so no path label here.
         assert "[read_file]" in msgs[2]["content"]
         assert "class AuthManager" in msgs[2]["content"]
-        # complete uses the same JSON wire shape.
-        parsed_complete = json.loads(msgs[3]["content"])
-        assert parsed_complete["actions"] == [
+        # complete 도 같은 wire shape.
+        _, ops_done = _parse_json_fc(msgs[3]["content"])
+        assert ops_done == [
             {"action": "complete", "result": "AuthManager 리팩토링 완료"}
         ]
 
@@ -535,16 +537,16 @@ class TestWireFormatAttachment:
     explicitly.
     """
 
-    def test_default_falls_back_to_react(self, session_dir):
-        from agent_cli.wire_formats.react import ReActFormat
+    def test_default_falls_back_to_json_fc(self, session_dir):
+        from agent_cli.wire_formats.json_fc import JsonFcFormat
 
         ctx = ContextManager(session_dir, max_context_tokens=1000)
-        assert isinstance(ctx.wire_format, ReActFormat)
+        assert isinstance(ctx.wire_format, JsonFcFormat)
 
     def test_explicit_wire_format_is_kept(self, session_dir):
         from agent_cli.wire_formats import get as get_wire_format
 
-        plugin = get_wire_format("react")
+        plugin = get_wire_format("xml_fc")
         ctx = ContextManager(session_dir, max_context_tokens=1000, wire_format=plugin)
         # Identity, not just equality — the same instance the caller
         # passed in must survive on the ctx.

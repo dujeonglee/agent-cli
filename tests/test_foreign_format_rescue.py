@@ -104,10 +104,8 @@ def caps():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 

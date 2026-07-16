@@ -13,7 +13,6 @@ from agent_cli.providers.capabilities import (
     set_progress_callback,
     _detect_openai_capabilities,
     _emit_progress,
-    _probe_structured_output,
 )
 
 
@@ -44,11 +43,9 @@ class TestGetCapabilities:
         caps = get_capabilities("unknown-model:latest")
         assert caps == DEFAULT_CAPABILITIES
         assert caps.context_window == 4096
-        assert caps.supports_structured_output is False
 
     def test_openai_model(self):
         caps = get_capabilities("gpt-4o")
-        assert caps.supports_structured_output is True
         assert caps.context_window == 128000
 
     def test_thinking_format_empty_for_non_thinking(self):
@@ -535,60 +532,6 @@ class TestModelRejectAndOutputScaling:
         assert caps.max_output_tokens == MIN_CONTEXT_WINDOW // 4
 
 
-class TestStructuredOutputProbe:
-    """Unit tests for _probe_structured_output (json_object + json_schema)."""
-
-    HEADERS = {"Content-Type": "application/json"}
-
-    @patch("agent_cli.providers.capabilities.requests.post")
-    def test_both_supported(self, mock_post):
-        """json_object returns valid JSON and strict schema conforms exactly."""
-        mock_post.side_effect = [
-            _chat_resp('{"primary_colors": ["red", "blue", "yellow"]}'),
-            _chat_resp('{"colors": ["red", "blue", "yellow"]}'),
-        ]
-        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
-        assert (so, ss) == (True, True)
-        assert mock_post.call_count == 2
-
-    @patch("agent_cli.providers.capabilities.requests.post")
-    def test_json_object_only_when_schema_not_conforming(self, mock_post):
-        """json_object works, but strict probe returns a non-conforming shape
-        (extra/wrong keys) → strict reported False."""
-        mock_post.side_effect = [
-            _chat_resp('{"anything": 1}'),
-            _chat_resp('{"primary_colors": ["red"]}'),  # wrong key → not strict
-        ]
-        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
-        assert (so, ss) == (True, False)
-
-    @patch("agent_cli.providers.capabilities.requests.post")
-    def test_unsupported_when_prose_returned(self, mock_post):
-        """Server ignores response_format and answers in prose → both False,
-        and the strict probe is never attempted."""
-        mock_post.return_value = _chat_resp("The primary colors are red, blue, yellow.")
-        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
-        assert (so, ss) == (False, False)
-        assert mock_post.call_count == 1  # step B skipped
-
-    @patch("agent_cli.providers.capabilities.requests.post")
-    def test_conservative_false_on_error(self, mock_post):
-        """Any transport error on the first probe → (False, False)."""
-        mock_post.side_effect = Exception("connection refused")
-        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
-        assert (so, ss) == (False, False)
-
-    @patch("agent_cli.providers.capabilities.requests.post")
-    def test_strict_probe_error_keeps_json_object(self, mock_post):
-        """json_object passes, strict probe errors → (True, False)."""
-        mock_post.side_effect = [
-            _chat_resp('{"colors": ["red"]}'),
-            Exception("schema mode unsupported"),
-        ]
-        so, ss = _probe_structured_output("http://x/v1", "m", self.HEADERS)
-        assert (so, ss) == (True, False)
-
-
 class TestDetectionWiresStructuredFlags:
     """_detect_openai_capabilities should reflect the structured-output probe."""
 
@@ -607,8 +550,6 @@ class TestDetectionWiresStructuredFlags:
         ]
         caps = _detect_openai_capabilities("http://x/v1", "m")
         assert caps is not None
-        assert caps.supports_structured_output is True
-        assert caps.supports_strict_schema is True
         assert caps.supports_thinking is False
 
 
@@ -667,28 +608,6 @@ class TestAnthropicRuntimeDetection:
         caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
         assert caps.supports_thinking is True
         assert caps.thinking_format == "think"
-
-    @patch("agent_cli.providers.capabilities.requests.get")
-    @patch("agent_cli.providers.capabilities.requests.post")
-    def test_structured_probe_prompt_only_no_strict(self, mock_post, mock_get):
-        mg = MagicMock(status_code=200)
-        mg.json.return_value = {"data": [{"id": "m", "max_model_len": 200000}]}
-        mg.raise_for_status.return_value = None
-        mock_get.return_value = mg
-
-        mp = MagicMock(status_code=200)
-        # model emits valid JSON when asked → structured True; strict always False
-        mp.json.return_value = {
-            "content": [{"type": "text", "text": '{"colors": ["red"]}'}]
-        }
-        mp.raise_for_status.return_value = None
-        mock_post.return_value = mp
-
-        from agent_cli.providers.capabilities import _detect_runtime_capabilities
-
-        caps = _detect_runtime_capabilities("anthropic", "http://x/v1", "m", "")
-        assert caps.supports_structured_output is True
-        assert caps.supports_strict_schema is False  # no OpenAI strict schema
 
     @patch("agent_cli.providers.capabilities.requests.get")
     @patch("agent_cli.providers.capabilities.requests.post")

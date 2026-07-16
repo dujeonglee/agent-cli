@@ -476,13 +476,6 @@ class JsonFcFormat(WireFormat):
     multi_op = True
     # exposes_complete 기본 True 상속 — 종료는 명시적 `complete` op.
 
-    # ─── Provider hints ─────────────────────────────────────────
-
-    def provider_call_kwargs(self, capabilities=None) -> dict:
-        # 산문이 배열보다 먼저 오는 shape — JSON-object 모드는 선두 `{` 를
-        # 강제해 불가능 (md_array 의 markdown envelope 과 같은 이유).
-        return {"json_mode": False}
-
     # ─── Prompt ─────────────────────────────────────────────────
 
     def format_rules(self) -> str:

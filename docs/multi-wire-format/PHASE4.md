@@ -70,3 +70,25 @@ md_array(구) vs json_fc(신) — 27B/35B × 7태스크 × 5회. **신 ≥ 구**
 3. 통과 시: md_array.py·테스트 제거 + 수리-기계 테스트를 json_fc 로 포팅
    + `DEFAULT_WIRE_FORMAT="json_fc"` + 전 참조 리네임 (react/xml_fc
    주석·docs·bench 기본값·foreign-rescue 테스트 픽스처) + v6.0.0
+
+
+## 7. Phase 5 — react 제거 (v7.0.0 MAJOR, 2026-07-17)
+
+2체제(json_fc + xml_fc) 확정 — 사용자 결정. react 존치 명분 소진:
+fallback 사이클 경과·bakeoff 우위 전무·json_mode 유일 소비자.
+- **근거 확인**: react-classic 셰이프 누출은 전 측정(0-op 캡처 30 +
+  bakeoff 전체 출력)에서 **0건** → 관용 라이더는 가설로 기각 (발생 시
+  A5 SCHEMA_MISMATCH 로 자연 표면화 — 실측 2건 나오면 그때).
+- **json_mode 기계 동반 제거**: openai provider 분기·`provider_call_kwargs`
+  기본 `{}`·두 포맷의 무의미 override·structured/strict **프로브+
+  capabilities 필드** (소비자 0, 프로브는 감지 시간 낭비였음). 구
+  models.json 엔트리의 잔존 키는 로더가 무시 (무해). agent-board admin
+  다이얼로그의 structured/strict 체크박스는 후속 정리 대상 (기록하는
+  필드를 agent-cli 가 무시할 뿐 — 무해).
+- 테스트 마이그레이션: conftest react-핀 제거, react JSON emission 전면
+  재저작 (AST 기반 변환 60+ 사이트 — regex 는 중첩에서 실패해 폐기),
+  react 소유 스위트(parser/repair) 삭제, NO_JSON 라벨 경계 갱신
+  (json_fc 에선 순수 산문 = thought-only NO_ACTION 이므로 NO_JSON 은
+  "action" 흔적 있는 깨진 JSON 으로만).
+- BREAKING: `--response-format react`·react 세션 resume·react 바인딩 →
+  fail-fast. 마이그레이션은 json_fc 재지정.

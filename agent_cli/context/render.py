@@ -73,7 +73,7 @@ def _estimate_message_tokens(msg: dict) -> int:
     action = msg.get("action", "")
     if action:
         total += estimate_tokens(action)
-    # Multi-op (json_fc / react default) assistant records carry their
+    # Multi-op (json_fc 기본 / xml_fc) assistant records carry their
     # action(s) + action_input + complete result inside ``ops`` — count them,
     # else every assistant turn is undercounted to just its ``thought`` (a
     # large write_file content arg / complete result would be invisible to the
@@ -173,7 +173,7 @@ def _to_summary_text(msg: dict) -> str:
         return f"Assistant: {msg.get('content', '')}"
     thought = (msg.get("thought") or "").strip()
     # Normalize single-op ({action, action_input}) and multi-op ({ops:[...]})
-    # records to one op list. Multi-op formats (json_fc, react) store `ops`,
+    # records to one op list. Multi-op formats (json_fc, xml_fc) store `ops`,
     # so reading only the top-level `action` here lost EVERY tool label for
     # them — the summariser saw thought-only prose with no record of which
     # tools ran.

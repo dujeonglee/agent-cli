@@ -45,19 +45,18 @@ _SNAPSHOT_TOOLS = ["read_file", "shell", "code_index", "edit_file", "agent", "as
 
 class TestToolsSectionSnapshot:
     """Regression guard for the format-aware-prompt refactor (DESIGN §5): the
-    single-action format (react) must render the Available Tools section
-    BYTE-IDENTICALLY through the change. ``_build_tools_section`` is
+    기본 포맷(json_fc)의 Available Tools 섹션 렌더를 바이트 고정한다. ``_build_tools_section`` is
     deterministic (unlike the full prompt, which carries CWD / directives), so
     it snapshots cleanly. Regenerate with::
 
         python -c "from agent_cli import wire_formats as w; \
 from agent_cli.prompts.system_prompt import _build_tools_section as b; \
 [open(f'tests/snapshots/tools_section_{n}.txt','w').write( \
-b(['read_file','shell','code_index','edit_file','delegate','ask'], w.get(n))) \
-for n in ('react',)]"
+b(['read_file','shell','code_index','edit_file','agent','ask'], w.get(n))) \
+for n in ('json_fc',)]"
     """
 
-    @pytest.mark.parametrize("name", ["react"])
+    @pytest.mark.parametrize("name", ["json_fc"])
     def test_tools_section_matches_snapshot(self, name):
         expected = (_SNAPSHOT_DIR / f"tools_section_{name}.txt").read_text(
             encoding="utf-8"
@@ -285,10 +284,8 @@ def _make_caps(ctx_window: int = 32768) -> ModelCapabilities:
     return ModelCapabilities(
         context_window=ctx_window,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 
@@ -297,10 +294,8 @@ def caps():
     return ModelCapabilities(
         context_window=8000,
         max_output_tokens=2000,
-        supports_structured_output=False,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 
@@ -673,9 +668,8 @@ class TestBuildSystemPrompt:
     def test_format_rules_present(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
         assert "## Response Format" in prompt
-        # Header must enforce "JSON object only" — the wording was tightened
-        # from "only valid JSON" but the contract is unchanged.
-        assert "single JSON object only" in prompt
+        # 기본 포맷(json_fc)의 캐노니컬 계약 — 산문 + ONE JSON array.
+        assert "ONE JSON" in prompt
 
     def test_section_order_primacy_before_tools(self):
         """Context Discipline → Task Guidelines → Response Format, all in
@@ -856,10 +850,8 @@ class TestBuildSystemPrompt:
         caps = ModelCapabilities(
             context_window=4096,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=True,
             thinking_budget=1024,
-            supports_strict_schema=False,
         )
         prompt = build_system_prompt(caps, ["shell"])
         assert "Thinking Budget" not in prompt
@@ -1011,7 +1003,7 @@ class TestDelegateInlineAgent:
     def _delegate_guide(self) -> str:
         from agent_cli import wire_formats
 
-        return _build_agent_inline(wire_formats.get("react"))
+        return _build_agent_inline(wire_formats.get("json_fc"))
 
     def test_delegate_inline_mentions_agent(self):
         guide = self._delegate_guide()
@@ -1089,9 +1081,11 @@ class TestContextRecoveryGuide:
 
 
 class TestThoughtGuidelines:
-    def test_thought_includes_purpose_and_reason(self, caps):
+    def test_reasoning_guidance_present(self, caps):
+        # react 의 Thought Guidelines 섹션은 react 와 함께 제거 —
+        # json_fc 는 rules 의 산문-선행 안내가 그 역할.
         prompt = build_system_prompt(caps, ["read_file"])
-        assert "purpose" in prompt.lower()
+        assert "plain prose" in prompt
         assert "reason" in prompt.lower()
 
 
@@ -1218,7 +1212,7 @@ class TestSystemSectionsSingleSource:
             capabilities=_make_caps(),
             model="m",
             wire_format=__import__("agent_cli.wire_formats", fromlist=["get"]).get(
-                "react"
+                "json_fc"
             ),
         )
         with patch("agent_cli.loop.llm.render_system_prompt_snapshot") as snap:
@@ -1413,7 +1407,7 @@ class TestAntiHtmlEmphasis:
         return wire_formats.get(name)
 
     def test_format_rules_forbid_html_both_formats(self):
-        for name in ("json_fc", "react"):
+        for name in ("json_fc",):
             rules = self._fmt(name).format_rules()
             assert "NEVER use HTML/XML tags" in rules, name
             # 대표 태그 예시로 앵커링 (HTML-편향 prior 억제)
@@ -1421,6 +1415,6 @@ class TestAntiHtmlEmphasis:
             assert "UNPARSEABLE" in rules, name
 
     def test_retry_hint_reminds_no_html(self):
-        for name in ("json_fc", "react"):
+        for name in ("json_fc",):
             hint = self._fmt(name).static_retry_hint_no_json()
             assert "HTML" in hint, name

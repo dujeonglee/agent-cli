@@ -256,7 +256,7 @@ agent-cli run "task description" [options]
 | `-v, --verbose` | 원시 LLM 응답 + thinking 블록 + 컨텍스트 덤프 표시 | |
 | `--style` | 렌더러 스타일 (minimal 또는 커스텀 — `agent_cli/render/<name>.py` 플러그인. 커스텀 렌더러의 필수 구현은 **9개**(출력 코어 7 + 입력 2, v4.50.0)로 축소 — 디버그/장식 메서드는 안전한 기본값) | `minimal` |
 | `--record-turns / --no-record-turns` | 세션 디렉토리에 `turns.jsonl` 기록 (회복률 통계용 메타데이터; prompt·응답 본문 미포함) | `--record-turns` |
-| `--response-format` | Wire format 플러그인 이름. 빌트인: `json_fc` (**기본** — 산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. json_fc 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `react` (순수 JSON `{thought, action, action_input}`), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능, zero-drift 원하면 json_fc — `docs/multi-wire-format/PHASE2.md` §8). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **미지정 시 해석 체인**: resume 세션의 기록 포맷 > models.json 모델별 `wire_format` 바인딩 > `json_fc` | (해석 체인) |
+| `--response-format` | Wire format 플러그인 이름. 빌트인: `json_fc` (**기본** — 산문 reasoning + flat `{action, params}` op 들의 bare JSON 배열로 한 턴에 여러 독립 도구 호출, 종료는 `complete` op. json_fc 의 리네임+리셰이프 후계 — 마크다운 헤더 제거, v6.0.0 bakeoff A/B 140run 에서 구형과 동등 확인. 구 `## Thought/## Action` emission 도 drift 로 관용), `xml_fc` (태그-파라미터 `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` — 파라미터 값이 raw 텍스트라 파일 본문/최종 답변에 JSON escaping 불필요. `<tool_call>` XML 프라이어 모델용. **2026-07-17 Qwen 실측**: 27B=natively 동등, 35B-A3B=구제 하니스(lenient+foreign, 무-왕복)로 완주 100%·실재시도 0.06/run — 양쪽 바인딩 가능, zero-drift 원하면 json_fc — `docs/multi-wire-format/PHASE2.md` §8). `agent_cli/wire_formats/`에 모듈을 추가하면 자동 등록. 미등록 이름은 LLM 호출 전에 즉시 실패. **미지정 시 해석 체인**: resume 세션의 기록 포맷 > models.json 모델별 `wire_format` 바인딩 > `json_fc` | (해석 체인) |
 
 | `--resume <id>` | 이전 세션을 로드해 복원된 컨텍스트 위에 QUERY 를 이어지는 요청으로 실행. `web --resume` 과 같은 on-disk 세션이라 **run↔web 상호 이어가기** 가능 (v4.46.0) | (새 세션) |
 
@@ -675,7 +675,6 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
   - OpenAI 호환: context window를 `/v1/models`의 `max_model_len`에서 읽고, 값이 없으면 컨텍스트 오버플로 프로브로 추정. 추가로 thinking 지원 여부를 프로브.
   - Anthropic: 동일한 로직을 Anthropic API(`/messages`, `x-api-key`+`anthropic-version`)로 프로브 — context window는 `/models` 메타(omlx) → `/messages` 오버플로 프로브 → 128K 폴백, structured-output 은 프롬프트 기반 JSON 검사. (`/v1/models` 메타가 없는 실 Anthropic 모델은 레지스트리/폴백 사용.)
   - Thinking 감지: 프로브 프롬프트 → `message.thinking` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동)
-  - Structured-output 감지: `response_format={"type":"json_object"}` 프로브로 `supports_structured_output`, 이어서 strict `json_schema` 프로브로 `supports_strict_schema` 판정. 산문이 자연스러운 프롬프트로 요청해 반환값이 유효 JSON(스키마 준수)일 때만 지원으로 인정(서버가 `response_format`을 무시하는 경우 오탐 방지). 프로브 실패 시 보수적으로 미지원 처리.
   - 자동 산출 규칙: `max_output = context_window // 4`. context window가 16K(`MIN_CONTEXT_WINDOW`) 미만이면 `UnsupportedModelError`로 거부.
 - 런타임 감지도 실패하면 사용자에게 대화형으로 context window, thinking 지원 여부, **wire format 바인딩**(auto = 기본 해석 체인; 등록된 포맷명만 수용, 오타는 재질문)을 질문 → `~/.agent-cli/models.json`에 저장
 - 이미 등록된 모델은 덮어쓰지 않음 (사용자 설정 보호)
@@ -685,12 +684,10 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 |------|------|
 | `context_window` | 컨텍스트 윈도우 크기 (토큰) |
 | `max_output_tokens` | 최대 출력 토큰 |
-| `supports_structured_output` | Basic JSON mode 사용 가능 (OpenAI `response_format={"type":"json_object"}` / Anthropic tool calling) |
 | `supports_thinking` | Thinking/reasoning 지원 |
 | `thinking_budget` | Thinking 토큰 예산 |
 | `thinking_format` | Thinking 블록 태그 (`"think"`, `""`) |
-| `supports_strict_schema` | (현재 미사용, dormant) strict JSON Schema 표식 — 현재 어떤 provider도 이 플래그로 동작 분기 안 함 |
-| `wire_format` | (선택) 이 모델의 wire format 바인딩 (`json_fc`, `react` 등). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--response-format` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 대화형 모델 등록 프롬프트("Wire format [auto]") / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
+| `wire_format` | (선택) 이 모델의 wire format 바인딩 (`json_fc`, `xml_fc`). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--response-format` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 대화형 모델 등록 프롬프트("Wire format [auto]") / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
 
 **설정 우선순위**: `.agent-cli/models.json` (프로젝트) > `~/.agent-cli/models.json` (전역) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
 
@@ -1294,7 +1291,7 @@ agent_cli/
 ├── render/              플러그인 렌더링 시스템 (minimal — 커스텀 추가 가능)
 ├── input_history.py     readline 히스토리 영속화
 ├── providers/           LLM 프로바이더 (Anthropic, OpenAI)
-├── wire_formats/        wire format 플러그인 (json_fc/react/xml_fc 내장, 추가 가능; 파서·복구·history 표현 self-contained)
+├── wire_formats/        wire format 플러그인 (json_fc/xml_fc 내장, 추가 가능; 파서·복구·history 표현 self-contained)
 ├── tools/               도구 (read/write/edit/shell/agent/context)
 ├── context/             컨텍스트 관리 (compaction + FIFO + history.jsonl + 세션 메타)
 ├── prompts/             조건부 시스템 프롬프트

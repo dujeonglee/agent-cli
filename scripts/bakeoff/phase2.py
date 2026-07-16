@@ -71,7 +71,7 @@ MODELS = [
 
 PLUGINS = [
     p.strip()
-    for p in os.environ.get("BAKEOFF_PLUGINS", "react,json_fc,xml_fc").split(",")
+    for p in os.environ.get("BAKEOFF_PLUGINS", "json_fc,xml_fc").split(",")
     if p.strip()
 ]
 
@@ -81,10 +81,8 @@ MAX_TURNS = int(os.environ.get("BAKEOFF_MAX_TURNS", "10"))
 CAPS = ModelCapabilities(
     context_window=262144,
     max_output_tokens=4096,
-    supports_structured_output=True,
     supports_thinking=False,
     thinking_budget=0,
-    supports_strict_schema=False,
 )
 
 

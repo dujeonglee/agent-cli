@@ -58,10 +58,8 @@ FAIL_DUMP = os.environ.get("BAKEOFF_FAIL_DUMP", "/tmp/proto_bakeoff_fails.txt")
 CAPS = ModelCapabilities(
     context_window=262144,
     max_output_tokens=4096,
-    supports_structured_output=True,
     supports_thinking=False,
     thinking_budget=0,
-    supports_strict_schema=False,
 )
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
-import json
 import re
 
 import requests
@@ -45,12 +44,13 @@ def _emit_progress(msg: str) -> None:
 
 @dataclass(frozen=True)
 class ModelCapabilities:
+    # v7.0.0: supports_structured_output / supports_strict_schema 필드 제거 —
+    # 유일 소비자(react 의 json_mode)가 react 와 함께 제거돼 소비자 0.
+    # 구 models.json 엔트리의 해당 키는 로더가 무시 (무해).
     context_window: int
     max_output_tokens: int
-    supports_structured_output: bool
     supports_thinking: bool
     thinking_budget: int
-    supports_strict_schema: bool
     thinking_format: str = ""  # "think", "reasoning", "" (none)
 
 
@@ -58,10 +58,8 @@ class ModelCapabilities:
 DEFAULT_CAPABILITIES = ModelCapabilities(
     context_window=4096,
     max_output_tokens=2048,
-    supports_structured_output=False,
     supports_thinking=False,
     thinking_budget=0,
-    supports_strict_schema=False,
     thinking_format="",
 )
 
@@ -143,10 +141,8 @@ def caps_to_entry(caps: ModelCapabilities, *, auto_detected: bool = False) -> di
     entry = {
         "context_window": caps.context_window,
         "max_output_tokens": caps.max_output_tokens,
-        "supports_structured_output": caps.supports_structured_output,
         "supports_thinking": caps.supports_thinking,
         "thinking_budget": caps.thinking_budget,
-        "supports_strict_schema": caps.supports_strict_schema,
         "thinking_format": caps.thinking_format,
     }
     if auto_detected:
@@ -166,10 +162,8 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
     return ModelCapabilities(
         context_window=entry.get("context_window", 4096),
         max_output_tokens=entry.get("max_output_tokens", 2048),
-        supports_structured_output=entry.get("supports_structured_output", False),
         supports_thinking=entry.get("supports_thinking", False),
         thinking_budget=entry.get("thinking_budget", 0),
-        supports_strict_schema=entry.get("supports_strict_schema", False),
         thinking_format=entry.get("thinking_format", ""),
     )
 
@@ -203,96 +197,6 @@ def _detect_runtime_capabilities(
 # enforce ``response_format`` it answers with markdown, which fails
 # ``json.loads`` — so a passing probe means the constraint was genuinely
 # honored, not that the model happened to emit JSON on its own.
-_STRUCTURED_PROBE_PROMPT = "List three primary colors."
-
-# Tiny, unambiguous schema for the strict probe: one required string-array
-# field, no extras allowed. A server that truly enforces strict mode emits
-# exactly ``{"colors": [...]}``; one that merely tolerates the key returns
-# a different shape and fails the conformance check below.
-_SCHEMA_PROBE = {
-    "type": "object",
-    "properties": {"colors": {"type": "array", "items": {"type": "string"}}},
-    "required": ["colors"],
-    "additionalProperties": False,
-}
-
-
-def _probe_structured_output(base: str, model: str, headers: dict) -> tuple[bool, bool]:
-    """Probe an OpenAI-compatible server for structured-output support.
-
-    Returns ``(supports_structured_output, supports_strict_schema)``.
-
-    Two requests, each judged on the *returned content* rather than a bare
-    2xx: a server that ignores ``response_format`` answers the prose prompt
-    with markdown, which fails ``json.loads`` and is correctly reported as
-    unsupported. Any error / timeout yields a conservative ``False`` so the
-    overall detection never breaks on the probe. The strict probe runs only
-    when json_object already passed.
-    """
-    url = f"{base}/chat/completions"
-
-    # Step A: json_object mode.
-    try:
-        _emit_progress(f"Probing JSON-object support ({model})")
-        r = requests.post(
-            url,
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "user", "content": _STRUCTURED_PROBE_PROMPT},
-                ],
-                "max_tokens": 256,
-                "temperature": 0.0,
-                "response_format": {"type": "json_object"},
-            },
-            headers=headers,
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
-        r.raise_for_status()
-        content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        json.loads(content)
-    except Exception:
-        return (False, False)
-
-    # Step B: strict json_schema mode (json_object already confirmed).
-    try:
-        _emit_progress(f"Probing strict JSON-schema support ({model})")
-        r = requests.post(
-            url,
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "user", "content": _STRUCTURED_PROBE_PROMPT},
-                ],
-                "max_tokens": 256,
-                "temperature": 0.0,
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "primary_colors",
-                        "strict": True,
-                        "schema": _SCHEMA_PROBE,
-                    },
-                },
-            },
-            headers=headers,
-            timeout=DETECTION_PROBE_TIMEOUT,
-        )
-        r.raise_for_status()
-        content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-        obj = json.loads(content)
-    except Exception:
-        return (True, False)
-
-    # Conformance check (no jsonschema dependency): exactly the required
-    # key, correct type. ``additionalProperties: false`` means a truly
-    # strict server returns no other keys.
-    strict_ok = (
-        isinstance(obj, dict)
-        and set(obj.keys()) == {"colors"}
-        and isinstance(obj.get("colors"), list)
-    )
-    return (True, strict_ok)
 
 
 def _detect_thinking(content: str) -> tuple[bool, str]:
@@ -309,7 +213,6 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
     response shape):
       - ``context_window()`` — 3-tier (metadata → overflow probe → fallback).
       - ``simple_chat(text, max_tokens)`` → response content (thinking probe).
-      - ``probe_structured()`` → ``(supports_structured, supports_strict)``.
     Everything else (reject-too-small, ``max_output = ctx//4``, ``<think>`` tag
     detection, assembly, error→None degradation) is shared. ``UnsupportedModel
     Error`` (window below the minimum) propagates; any other probe failure
@@ -334,18 +237,12 @@ def _detect_capabilities(model: str, transport) -> ModelCapabilities | None:
             )
         max_output = context_window // _OUTPUT_TOKEN_DIVISOR
 
-        # Structured probe runs only for an accepted model (no extra cost on
-        # a rejected one).
-        supports_structured, supports_strict = transport.probe_structured()
-
         _emit_progress(f"Detection complete for {model}")
         return ModelCapabilities(
             context_window=context_window,
             max_output_tokens=max_output,
-            supports_structured_output=supports_structured,
             supports_thinking=supports_thinking,
             thinking_budget=4096 if supports_thinking else 0,
-            supports_strict_schema=supports_strict,
             thinking_format=thinking_format,
         )
     except UnsupportedModelError:
@@ -390,9 +287,6 @@ class _OpenAITransport:
         )
         r.raise_for_status()
         return r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-
-    def probe_structured(self) -> tuple[bool, bool]:
-        return _probe_structured_output(self.base, self.model, self._headers())
 
 
 def _detect_openai_capabilities(
@@ -452,26 +346,6 @@ class _AnthropicTransport:
         )
         r.raise_for_status()
         return _anthropic_text(r.json())
-
-    def probe_structured(self) -> tuple[bool, bool]:
-        try:
-            r = requests.post(
-                f"{self.base}/messages",
-                json={
-                    "model": self.model,
-                    "max_tokens": 256,
-                    "messages": [
-                        {"role": "user", "content": _ANTHROPIC_STRUCTURED_PROMPT}
-                    ],
-                },
-                headers=self._headers(),
-                timeout=DETECTION_PROBE_TIMEOUT,
-            )
-            r.raise_for_status()
-            json.loads(_anthropic_text(r.json()))
-            return (True, False)
-        except Exception:
-            return (False, False)
 
 
 def _detect_anthropic_context_window(

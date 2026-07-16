@@ -21,15 +21,13 @@ from agent_cli.recovery.wf_recovery import (
 )
 from agent_cli.recovery.intervention import Intervention
 from agent_cli.wire_formats import all_system_user_prefixes
-from agent_cli.wire_formats.react import ReActFormat
+from agent_cli.wire_formats.json_fc import JsonFcFormat
 
-# Static fallbacks live on the ReAct plugin now (Step 7 cleanup).
-# Tests that compared the builder's empty-input fallback against the
-# legacy ``RETRY_HINT_NO_*`` constants now compare against the plugin
-# accessors — same string, single source of truth.
-_REACT = ReActFormat()
-RETRY_HINT_NO_JSON = _REACT.static_retry_hint_no_json()
-RETRY_HINT_NO_ACTION = _REACT.static_retry_hint_no_action()
+# Static fallbacks live on the wire plugin (Step 7 cleanup) — v7.0.0
+# react 제거 후 기본 플러그인(json_fc) 기준으로 비교.
+_WF = JsonFcFormat()
+RETRY_HINT_NO_JSON = _WF.static_retry_hint_no_json()
+RETRY_HINT_NO_ACTION = _WF.static_retry_hint_no_action()
 SYSTEM_USER_PREFIXES = all_system_user_prefixes()
 
 
@@ -58,9 +56,11 @@ class TestFormatNoJsonRetry:
         intv = format_no_json_retry(prior_content=content)
         assert content in intv.message
         assert "Your prior output:" in intv.message
-        assert intv.message.startswith("Your response was not valid JSON.")
+        assert intv.message.startswith(
+            "Your response did not match the expected format"
+        )
         assert "Honor that" in intv.message
-        assert '"action": "tool_name"' in intv.message
+        assert '{"action": ..., params}' in intv.message
 
     def test_content_path_records_composed_primitives(self):
         intv = format_no_json_retry(prior_content="something")
@@ -124,9 +124,9 @@ class TestFormatNoActionRetry:
         intv = format_no_action_retry(prior_content=content)
         assert content in intv.message
         assert "Your prior output:" in intv.message
-        assert intv.message.startswith("Your JSON was parsed but has no action.")
+        assert intv.message.startswith("Your JSON array had no usable tool call")
         # Both action paths still presented
-        assert '"action": "tool_name"' in intv.message
+        assert '"action"' in intv.message
         assert '"action": "complete"' in intv.message
 
     def test_content_path_records_composed_primitives(self):
@@ -142,65 +142,6 @@ class TestFormatNoActionRetry:
 
         with pytest.raises(TypeError):
             format_no_action_retry("positional")  # type: ignore[misc]
-
-
-class TestFormatNoThoughtRetry:
-    """A2 NO_THOUGHT — action present but the 'thought' field omitted.
-
-    Step 7 of the wire_format extraction moved this from
-    ``recovery/builders.format_no_thought_retry`` to
-    ``ReActFormat.format_no_thought_retry`` (instance method) because
-    NO_THOUGHT only applies to plugins where ``thought_required=True``.
-    The builder behavior is unchanged; the call shape is now
-    ``plugin.format_no_thought_retry(prior_content=…)``.
-    """
-
-    def _retry(self, **kwargs):
-        return _REACT.format_no_thought_retry(**kwargs)
-
-    def test_returns_intervention(self):
-        assert isinstance(self._retry(), Intervention)
-
-    def test_empty_falls_back_to_static_message(self):
-        intv = self._retry()
-        assert "thought" in intv.message
-        assert intv.primitives == []
-
-    def test_explicit_empty_string_falls_back(self):
-        intv = self._retry(prior_content="")
-        assert intv.primitives == []
-        assert "thought" in intv.message
-
-    def test_whitespace_only_falls_back(self):
-        intv = self._retry(prior_content="   \n\t")
-        assert intv.primitives == []
-
-    def test_content_is_echoed(self):
-        content = '{"action": "read_file", "action_input": {"path": "x.py"}}'
-        intv = self._retry(prior_content=content)
-        assert content in intv.message
-        assert "Your prior output:" in intv.message
-        assert intv.message.startswith("Your JSON was missing the 'thought' field.")
-        assert "Honor that" in intv.message
-        # Constraint asks for purpose + reason
-        assert "purpose" in intv.message
-        assert "reason" in intv.message
-
-    def test_content_path_records_composed_primitives(self):
-        # Constraint is inlined (not promoted to a primitive — anti-patchwork
-        # invariant: only one caller in v1). Only echo is a primitive.
-        intv = self._retry(prior_content="something")
-        assert intv.primitives == ["echo_prior_output"]
-
-    def test_prefix_matches_system_user_prefixes(self):
-        intv = self._retry(prior_content="some text")
-        assert any(intv.message.startswith(p) for p in SYSTEM_USER_PREFIXES)
-
-    def test_keyword_only_no_positional(self):
-        import pytest
-
-        with pytest.raises(TypeError):
-            _REACT.format_no_thought_retry("positional")  # type: ignore[misc]
 
 
 class TestFormatActionLoopIntervention:

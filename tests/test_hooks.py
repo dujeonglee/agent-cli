@@ -358,10 +358,8 @@ class TestSkillHooksWiring:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
             thinking_format="",
         )
 
@@ -406,10 +404,8 @@ class TestSkillHooksWiring:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
             thinking_format="",
         )
 
@@ -449,10 +445,8 @@ class TestSkillHooksEndToEnd:
         return ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
             thinking_format="",
         )
 
@@ -512,20 +506,8 @@ class TestSkillHooksEndToEnd:
         )
 
         provider = self._mock_provider(
-            json.dumps(
-                {
-                    "thought": "call shell",
-                    "action": "shell",
-                    "action_input": {"command": "printf marker"},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "done",
-                    "action": "complete",
-                    "action_input": {"result": "ok"},
-                }
-            ),
+            json.dumps({"action": "shell", **{"command": "printf marker"}}),
+            json.dumps({"action": "complete", **{"result": "ok"}}),
         )
 
         execute_skill(
@@ -574,20 +556,8 @@ class TestSkillHooksEndToEnd:
 
         skill = _parse_skill_file(skill_md)
         provider = self._mock_provider(
-            json.dumps(
-                {
-                    "thought": "call shell",
-                    "action": "shell",
-                    "action_input": {"command": "printf marker"},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "done",
-                    "action": "complete",
-                    "action_input": {"result": "ok"},
-                }
-            ),
+            json.dumps({"action": "shell", **{"command": "printf marker"}}),
+            json.dumps({"action": "complete", **{"result": "ok"}}),
         )
 
         execute_skill(
@@ -634,10 +604,8 @@ class TestDelegateHooksWiring:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
             thinking_format="",
         )
         parent_hooks = {
@@ -681,10 +649,8 @@ class TestDelegateHooksWiring:
         caps = ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
             thinking_format="",
         )
         captured: dict = {}
@@ -721,10 +687,8 @@ class TestAgentFrontmatterHooks:
         return ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=True,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
             thinking_format="",
         )
 
@@ -892,23 +856,9 @@ class TestAgentFrontmatterHooks:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
-                content=json.dumps(
-                    {
-                        "thought": "call shell",
-                        "action": "shell",
-                        "action_input": {"command": "printf marker"},
-                    }
-                )
+                content=json.dumps({"action": "shell", **{"command": "printf marker"}})
             ),
-            LLMResponse(
-                content=json.dumps(
-                    {
-                        "thought": "done",
-                        "action": "complete",
-                        "action_input": {"result": "ok"},
-                    }
-                )
-            ),
+            LLMResponse(content=json.dumps({"action": "complete", **{"result": "ok"}})),
         ]
 
         parent_ctx = ContextManager(

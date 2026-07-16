@@ -20,10 +20,8 @@ def caps():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
         thinking_format="",
     )
 
@@ -477,13 +475,7 @@ class TestSkillExecution:
     def test_execute_with_allowed_tools(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps(
-                {
-                    "thought": "reviewing",
-                    "action": "complete",
-                    "action_input": {"result": "looks good"},
-                }
-            )
+            content=json.dumps({"action": "complete", **{"result": "looks good"}})
         )
 
         skill = Skill(
@@ -505,13 +497,7 @@ class TestSkillExecution:
     def test_execute_uses_skill_max_turns(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps(
-                {
-                    "thought": "t",
-                    "action": "complete",
-                    "action_input": {"result": "done"},
-                }
-            )
+            content=json.dumps({"action": "complete", **{"result": "done"}})
         )
 
         skill = Skill(
@@ -595,13 +581,7 @@ class TestSkillExecution:
         """skill.model=None → run_loop called with the original model."""
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps(
-                {
-                    "thought": "t",
-                    "action": "complete",
-                    "action_input": {"result": "ok"},
-                }
-            )
+            content=json.dumps({"action": "complete", **{"result": "ok"}})
         )
 
         skill = Skill(
@@ -625,13 +605,7 @@ class TestSkillExecution:
         """skill.model set → run_loop called with the overridden model."""
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps(
-                {
-                    "thought": "t",
-                    "action": "complete",
-                    "action_input": {"result": "ok"},
-                }
-            )
+            content=json.dumps({"action": "complete", **{"result": "ok"}})
         )
 
         skill = Skill(

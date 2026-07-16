@@ -10,7 +10,6 @@ the 73 other op turns in a real json_fc session.
 
 from agent_cli.wire_formats.base import WireFormat
 from agent_cli.wire_formats.json_fc import JsonFcFormat
-from agent_cli.wire_formats.react import ReActFormat
 
 
 class TestTerminalSerialize:
@@ -23,17 +22,21 @@ class TestTerminalSerialize:
             {"action": "complete", "action_input": {"result": "the answer"}}
         ]
 
-    def test_react_uses_ops_shape(self):
-        rec = ReActFormat().serialize_terminal_for_history("done", "the answer")
+    def test_xml_fc_uses_ops_shape(self):
+        from agent_cli.wire_formats.xml_fc import XmlFcFormat
+
+        rec = XmlFcFormat().serialize_terminal_for_history("done", "the answer")
         assert "action" not in rec
         assert rec["ops"] == [
             {"action": "complete", "action_input": {"result": "the answer"}}
         ]
 
-    def test_json_fc_and_react_parity(self):
-        # both multi-op formats store a terminal turn identically
+    def test_json_fc_and_xml_fc_parity(self):
+        # both shipped formats store a terminal turn identically
+        from agent_cli.wire_formats.xml_fc import XmlFcFormat
+
         a = JsonFcFormat().serialize_terminal_for_history("t", "r")
-        b = ReActFormat().serialize_terminal_for_history("t", "r")
+        b = XmlFcFormat().serialize_terminal_for_history("t", "r")
         assert a == b
 
     def test_base_default_is_singular(self):

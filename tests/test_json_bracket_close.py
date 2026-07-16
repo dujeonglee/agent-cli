@@ -3,14 +3,13 @@ NO_JSON shape (a multi-op array the model finished but forgot to close).
 
 Covers the pure util (``close_unbalanced``), json_fc's recovery stage
 (incl. a real captured-failure fixture), the bail-to-retry boundary, and
-react/json_fc parity via the shared util.
+json_fc 가 소비하는 공용 util.
 """
 
 import json
 
 from agent_cli.wire_formats._json_repair import close_unbalanced
 from agent_cli.wire_formats.json_fc import _extract_op_json
-from agent_cli.wire_formats.react import _fix_missing_brackets
 
 # The captured shape: a 6-op read_file batch the model emitted in full but
 # never closed (session 1781336790, delegate_explorer_b763fb). Trimmed paths.
@@ -83,10 +82,3 @@ class TestMdArrayRecovery:
     def test_garbage_with_no_brackets_still_none(self):
         parsed, _ = _extract_op_json("not json and no brackets at all")
         assert parsed is None
-
-
-class TestParity:
-    def test_react_alias_matches_shared_util(self):
-        # react's _fix_missing_brackets is now a thin alias — identical output
-        for src in ('[{"a": 1}', '{"x": [1, 2', "[]", '{"ok": true}'):
-            assert _fix_missing_brackets(src) == close_unbalanced(src)

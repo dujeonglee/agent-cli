@@ -71,10 +71,8 @@ N_RUNS = int(os.environ.get("BAKEOFF_N_RUNS", "5"))
 CAPS = ModelCapabilities(
     context_window=262144,
     max_output_tokens=4096,
-    supports_structured_output=True,
     supports_thinking=False,
     thinking_budget=0,
-    supports_strict_schema=False,
 )
 
 
@@ -189,9 +187,6 @@ def call_once(model: str, plugin_name: str, task: Task) -> CallResult:
         wire_format=plugin,
     )
 
-    extra = plugin.provider_call_kwargs()
-    skip_json = bool(extra.get("skip_json_format"))
-
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": task.query},
@@ -207,8 +202,6 @@ def call_once(model: str, plugin_name: str, task: Task) -> CallResult:
         "temperature": 0.0,
         "stream": False,
     }
-    if not skip_json and CAPS.supports_structured_output:
-        body["response_format"] = {"type": "json_object"}
 
     headers = {"Content-Type": "application/json"}
     if API_KEY:
@@ -296,6 +289,7 @@ class CellResult:
         if not self.runs:
             return 0.0
         return statistics.mean(r.elapsed_seconds for r in self.runs)
+
 
 # ── Runner ───────────────────────────────────────────────────
 

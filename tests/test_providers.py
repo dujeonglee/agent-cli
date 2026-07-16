@@ -18,10 +18,8 @@ def caps_structured():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 
@@ -30,10 +28,8 @@ def caps_basic():
     return ModelCapabilities(
         context_window=4096,
         max_output_tokens=2048,
-        supports_structured_output=False,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 
@@ -217,33 +213,6 @@ class TestAnthropicProvider:
 
 class TestOpenAIProvider:
     @patch("agent_cli.providers.openai.requests.post")
-    def test_with_structured_output(self, mock_post, caps_structured):
-        mock_post.return_value = _mock_response(
-            {
-                "choices": [
-                    {
-                        "message": {"content": '{"thought": "ok"}'},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-            }
-        )
-
-        provider = OpenAIProvider("https://api.openai.com/v1", "test-key")
-        result = provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="gpt-4o",
-            capabilities=caps_structured,
-            json_mode=True,  # wire plugin decided JSON mode from capabilities
-        )
-
-        assert isinstance(result, LLMResponse)
-        body = mock_post.call_args.kwargs["json"]
-        assert body["response_format"] == {"type": "json_object"}
-
-    @patch("agent_cli.providers.openai.requests.post")
     def test_degeneration_check_breaks_stream(self, mock_post, caps_structured):
         # As the streamed text accumulates into a runaway, degeneration_check
         # returns True mid-stream → the provider closes the stream and never
@@ -378,37 +347,6 @@ class TestOpenAIProvider:
         assert result.content == "plain text"
 
     @patch("agent_cli.providers.openai.requests.post")
-    def test_no_json_mode_omits_response_format(self, mock_post, caps_structured):
-        """When the wire plugin decides ``json_mode=False`` (json_fc's
-        markdown shape), the provider must NOT force the server's JSON-object
-        mode even though the model *supports* structured output — the
-        provider honors the wire's decision and never re-derives it from
-        capabilities. Forcing JSON against a markdown prompt makes omlx/mlx
-        degenerate (the ``[2025]`` / ``[1000, 1000]`` bug)."""
-        mock_post.return_value = _mock_response(
-            {
-                "choices": [
-                    {
-                        "message": {"content": "## Thought\nok"},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-        )
-
-        provider = OpenAIProvider("http://localhost:8080/v1", "")
-        provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            system="sys",
-            model="local-model",
-            capabilities=caps_structured,  # supports_structured_output=True
-            json_mode=False,  # wire (markdown shape) said no JSON mode
-        )
-
-        body = mock_post.call_args.kwargs["json"]
-        assert "response_format" not in body  # honored despite structured support
-
-    @patch("agent_cli.providers.openai.requests.post")
     def test_api_key_sets_auth_header(self, mock_post, caps_basic):
         """Non-empty API key → Authorization header present."""
         mock_post.return_value = _mock_response(
@@ -450,10 +388,8 @@ def caps_thinking():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=True,
         thinking_budget=4096,
-        supports_strict_schema=False,
     )
 
 
@@ -462,10 +398,8 @@ def caps_no_thinking():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 

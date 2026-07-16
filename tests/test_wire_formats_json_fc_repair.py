@@ -42,20 +42,6 @@ class TestFlags:
         assert WF.thought_required is False
         assert WF.action_required is False
 
-    def test_json_mode_always_off(self):
-        # Phase-2 regression: the base default leaked json_mode=True
-        # (supports_structured_output), which forces a leading `{` and makes
-        # the markdown envelope impossible — every turn degraded to bare JSON.
-        caps = ModelCapabilities(
-            context_window=1,
-            max_output_tokens=1,
-            supports_structured_output=True,
-            supports_thinking=False,
-            thinking_budget=0,
-            supports_strict_schema=False,
-        )
-        assert WF.provider_call_kwargs(caps) == {"json_mode": False}
-
     def test_registered(self):
         from agent_cli.wire_formats import list_names
 
@@ -607,10 +593,8 @@ class TestEndToEnd:
         return ModelCapabilities(
             context_window=32768,
             max_output_tokens=4096,
-            supports_structured_output=False,
             supports_thinking=False,
             thinking_budget=0,
-            supports_strict_schema=False,
         )
 
     def test_two_ops_then_complete_finish(self, tmp_path):

@@ -13,20 +13,18 @@ The parser-side invariant (``WireFormat.parse`` contract) is that
 action_input is preserved even when the action slot is empty/invalid, so
 both flag branches have something to work with. This file pins:
 
-  1. Both parsers preserve action_input across every dropped-action shape.
-  2. prefix_md and react reach the SAME recovery outcome for the same
-     semantic input (cross-wire parity — the gap that regressed when
-     prefix_md became the default and dropped Input JSON on empty actions).
+  1. Both shipped parsers (json_fc / xml_fc) preserve action_input across
+     dropped-action shapes (v7.0.0 — react 제거로 쌍이 json_fc/xml_fc 로).
+  2. Cross-wire parity: same semantic emission → same recovery outcome.
   3. The loop honors each flag: False → infer/tolerate, True → recover.
      The shipped plugins both set False, so the True branches are pinned
-     against a synthetic strict plugin.
-  4. The exact real-world shape (session 1780718751: '## Action' header +
-     empty body + prefixed Input JSON, 18/188 turns) recovers.
+     against a synthetic strict plugin. NOTE: ``format_no_thought_retry``
+     는 react 전용 메서드였으므로 (thought_required=True 포맷만 필요)
+     synthetic 이 직접 정의한다.
 """
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,9 +32,10 @@ import pytest
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.recovery.intervention import Intervention
 from agent_cli.tools.registry import infer_action
 from agent_cli.wire_formats import get
-from agent_cli.wire_formats.react import ReActFormat
+from agent_cli.wire_formats.json_fc import JsonFcFormat
 
 
 # ── Fixtures / helpers ───────────────────────────────
@@ -47,10 +46,8 @@ def caps():
     return ModelCapabilities(
         context_window=32768,
         max_output_tokens=4096,
-        supports_structured_output=True,
         supports_thinking=False,
         thinking_budget=0,
-        supports_strict_schema=False,
     )
 
 
@@ -61,79 +58,76 @@ def _make_provider(*responses):
 
 
 def _complete(result: str) -> str:
-    return json.dumps(
-        {"thought": "done", "action": "complete", "action_input": {"result": result}}
-    )
+    return f'done\n\n[{{"action": "complete", "result": "{result}"}}]'
 
 
-def _msgs(call_obj) -> list:
-    args, kwargs = call_obj
-    return (args[0] if args else kwargs.get("messages")) or []
-
-
-def _joined(call_obj) -> str:
-    return " ".join(m.get("content", "") or "" for m in _msgs(call_obj))
-
-
-class _StrictReact(ReActFormat):
-    """Synthetic plugin pinning the True branches of both flags. The two
-    shipped plugins are both False, so without this the recovery paths for
-    a *required* field would be untested. parse() is inherited — only the
-    loop's flag-gated branches differ."""
+class _StrictJson(JsonFcFormat):
+    """Synthetic plugin pinning the True branches of both flags. The
+    shipped plugins are all False, so without this the recovery paths for
+    a *required* field would be untested. parse 는 상속 — loop 의
+    플래그-게이트 분기만 다르다."""
 
     thought_required = True
     action_required = True
 
+    def format_no_thought_retry(self, *, prior_content: str) -> Intervention:
+        # react 전용이던 메서드 — thought_required=True 포맷만 필요해
+        # ABC 에 없다. strict 게이트 검증용 최소 구현.
+        return Intervention(
+            message="Add reasoning prose before the array, then re-emit.",
+            primitives=["no_thought_retry"],
+        )
+
 
 # ── 1. Parser preserves action_input across dropped-action shapes ──
 
-# NOTE: prefix_md cases removed with the plugin (wire-format consolidation
-# Step 1, 2026-06-13). The json_fc side of the cross-wire dropped-action
-# parity is rebuilt in Step 2, once react becomes multi-op and its shape
-# settles — see project-wire-format-consolidation-roadmap memory.
-
-# react JSON shapes — action dropped under several drift forms.
-_REACT_CASES = [
+_JSON_FC_CASES = [
+    (
+        "actionless_op_in_array",
+        'x\n\n[{"shell_command": "make"}]',
+        {"shell_command": "make"},
+    ),
+    (
+        "bare_actionless_object",
+        '{"shell_command": "make"}',
+        {"shell_command": "make"},
+    ),
     (
         "empty_action_string",
-        '{"thought":"x","action":"","action_input":{"shell_command":"make"}}',
-        {"shell_command": "make"},
-    ),
-    (
-        "no_action_key",
-        '{"action_input":{"shell_command":"make"}}',
-        {"shell_command": "make"},
-    ),
-    (
-        "siblings_only_no_action",
-        '{"shell_command":"make"}',
-        {"shell_command": "make"},
-    ),
-    (
-        "siblings_with_thought",
-        '{"thought":"x","shell_command":"make"}',
+        '[{"action": "", "shell_command": "make"}]',
         {"shell_command": "make"},
     ),
 ]
 
 
-class TestReactPreservation:
+class TestJsonFcPreservation:
     @pytest.mark.parametrize(
         "name,raw,exp_input",
-        _REACT_CASES,
-        ids=[c[0] for c in _REACT_CASES],
+        _JSON_FC_CASES,
+        ids=[c[0] for c in _JSON_FC_CASES],
     )
     def test_parse_preserves_input(self, name, raw, exp_input):
-        parsed = get("react").parse(raw)
+        parsed = get("json_fc").parse(raw)
         assert parsed.action_input == exp_input
-        # action is falsy in every dropped case → loop will infer
-        assert not parsed.action
+        assert not parsed.action  # dropped → loop will infer / NO_ACTION echo
         assert infer_action(parsed.action_input) == "shell"
 
     def test_thought_only_is_unrecoverable(self):
-        parsed = get("react").parse('{"thought":"just thinking"}')
+        parsed = get("json_fc").parse("just thinking, no ops")
         assert not parsed.action
         assert parsed.action_input is None
+
+
+class TestXmlFcPreservation:
+    def test_empty_function_name_preserves_params(self):
+        parsed = get("xml_fc").parse(
+            "<tool_call>\n<function=>\n"
+            "<parameter=shell_command>make</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        assert parsed.action_input == {"shell_command": "make"}
+        assert not parsed.action
+        assert infer_action(parsed.action_input) == "shell"
 
 
 # ── 2. Cross-wire parity ─────────────────────────────
@@ -141,60 +135,43 @@ class TestReactPreservation:
 
 class TestCrossWireParity:
     def test_dropped_action_same_outcome(self):
-        # The two shipped multi-op formats reach the SAME dropped-action
-        # recovery from the same semantic emission (an op with no `action`,
-        # only a tool-prefixed param). react (JSON) and json_fc (markdown)
-        # differ only in envelope; the op shape + infer_action are identical.
-        rt = get("react").parse_turn(
-            '{"thought": "x", "actions": [{"shell_command": "ls"}]}'
+        # 두 내장 포맷이 같은 의미의 emission(action 없는 op, prefixed
+        # param)에서 같은 dropped-action 복구 지점에 도달한다.
+        jt = get("json_fc").parse_turn('x\n\n[{"shell_command": "ls"}]')
+        xt = get("xml_fc").parse_turn(
+            "x\n\n<tool_call>\n<function=>\n"
+            "<parameter=shell_command>ls</parameter>\n</function>\n</tool_call>"
         )
-        mt = get("json_fc").parse_turn(
-            '## Thought\nx\n\n## Action\n[{"shell_command": "ls"}]'
-        )
-        assert len(rt.ops) == len(mt.ops) == 1
-        assert rt.ops[0].action is None and mt.ops[0].action is None
+        assert len(jt.ops) == len(xt.ops) == 1
+        assert jt.ops[0].action is None and xt.ops[0].action is None
         assert (
-            rt.ops[0].action_input == mt.ops[0].action_input == {"shell_command": "ls"}
+            jt.ops[0].action_input == xt.ops[0].action_input == {"shell_command": "ls"}
         )
         assert (
-            infer_action(rt.ops[0].action_input)
-            == infer_action(mt.ops[0].action_input)
+            infer_action(jt.ops[0].action_input)
+            == infer_action(xt.ops[0].action_input)
             == "shell"
         )
 
     def test_shipped_plugins_optional_by_default(self):
-        for name in ("react", "json_fc"):
+        for name in ("json_fc", "xml_fc"):
             plugin = get(name)
             assert plugin.thought_required is False, name
             assert plugin.action_required is False, name
 
 
 # ── 3. Loop honors the flags ─────────────────────────
-
-
-# A dropped/missing field is recovered or not — measured by whether the
-# tool actually ran (its file side-effect), NOT by scanning message text:
-# NO_ACTION / NO_THOUGHT interventions echo the raw emission back, so the
-# inferred tool's args would appear in the transcript even when it never
-# executed. The file side-effect is unambiguous.
+# 복구 여부는 도구의 파일 부수효과로 측정 (메시지 텍스트 스캔 금지 —
+# NO_ACTION/NO_THOUGHT 개입이 raw 를 echo 하므로 텍스트는 오탐).
 
 
 class TestActionRequiredGate:
     def test_false_flat_dropped_action_falls_to_no_action(self, caps, tmp_path):
-        # Step 3 (flat-native): a dropped action with FLAT input cannot be
-        # inferred — many tools share `path`, so claims is ambiguous (None).
-        # So even with action_required=False the loop falls to NO_ACTION
-        # recovery rather than auto-dispatching. (The infer MACHINERY is kept,
-        # latent — see test_infer_machinery_preserved_for_prefixed_input — but
-        # no shipped format emits the prefixed keys it needs.)
+        # flat input 의 dropped action 은 infer 불가(다수 도구가 `path` 공유)
+        # → action_required=False 여도 NO_ACTION 복구로 (자동 디스패치 없음).
         target = tmp_path / "made.txt"
         provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "x",
-                    "action_input": {"path": str(target), "content": "data"},
-                }
-            ),
+            f'x\n\n[{{"path": "{target}", "content": "data"}}]',
             _complete("done"),
         )
         result = run_loop(
@@ -202,44 +179,25 @@ class TestActionRequiredGate:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=ReActFormat(),
+            wire_format=JsonFcFormat(),
         )
         assert result.success
         assert provider.call.call_count == 2  # NO_ACTION retry (infer can't help)
         assert not target.exists()  # not auto-dispatched
 
     def test_infer_machinery_preserved_for_prefixed_input(self):
-        # The authoritative pin for the dropped-action recovery SEAM. After
-        # ALL builtin tools went flat-native (Step 3) the seam was DELIBERATELY
-        # kept, not removed (Step 4 decision — extensibility for a future
-        # prefixed tool/format; MCP is prefix-less so it never used it anyway):
-        # claims/infer_action still recover a tool from a wire-key-prefixed
-        # payload. No shipped format emits these keys, but the capability is
-        # intact (latent stub), so this is the one place that exercises it.
+        # dropped-action 복구 SEAM 의 권위 pin — 전 도구 flat-native 후에도
+        # 의도적으로 보존된 latent 기계 (미래 prefixed 도구/포맷용).
         assert (
             infer_action({"write_file_path": "x", "write_file_content": "y"})
             == "write_file"
         )
-        # The user's target case — a FLAT action-less payload — is ambiguous
-        # (many tools have `path`) → not inferred → NO_ACTION. This is the
-        # documented extension point where a future schema-based resolver would
-        # plug into the same seam.
-        assert infer_action({"path": "x"}) is None
+        assert infer_action({"path": "x"}) is None  # flat = ambiguous
 
     def test_true_skips_infer_and_recovers(self, caps, tmp_path):
-        # Same input, action_required=True → inference skipped, NO_ACTION
-        # recovery fires (write_file never runs), then the model completes.
         target = tmp_path / "made.txt"
         provider = _make_provider(
-            json.dumps(
-                {
-                    "thought": "x",
-                    "action_input": {
-                        "path": str(target),
-                        "content": "data",
-                    },
-                }
-            ),
+            f'x\n\n[{{"path": "{target}", "content": "data"}}]',
             _complete("done"),
         )
         result = run_loop(
@@ -247,28 +205,19 @@ class TestActionRequiredGate:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=_StrictReact(),
+            wire_format=_StrictJson(),
         )
         assert result.success
         assert provider.call.call_count == 2  # NO_ACTION retry happened
-        assert not target.exists()  # infer skipped → file NOT created
+        assert not target.exists()
 
 
 class TestThoughtRequiredGate:
     def test_false_tolerates_missing_thought(self, caps, tmp_path):
-        # action present, no thought; thought_required=False (react) →
-        # dispatched without a NO_THOUGHT retry.
+        # 산문 없이 배열만 — thought_required=False (json_fc) → 그대로 실행.
         target = tmp_path / "made.txt"
         provider = _make_provider(
-            json.dumps(
-                {
-                    "action": "write_file",
-                    "action_input": {
-                        "path": str(target),
-                        "content": "data",
-                    },
-                }
-            ),
+            f'[{{"action": "write_file", "path": "{target}", "content": "data"}}]',
             _complete("done"),
         )
         result = run_loop(
@@ -276,25 +225,15 @@ class TestThoughtRequiredGate:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=ReActFormat(),
+            wire_format=JsonFcFormat(),
         )
         assert result.success
         assert target.exists()  # ran despite missing thought
 
     def test_true_fires_no_thought_recovery(self, caps, tmp_path):
-        # Same input, thought_required=True → NO_THOUGHT recovery fires
-        # before the action runs (write deferred to after the retry).
         target = tmp_path / "made.txt"
         provider = _make_provider(
-            json.dumps(
-                {
-                    "action": "write_file",
-                    "action_input": {
-                        "path": str(target),
-                        "content": "data",
-                    },
-                }
-            ),
+            f'[{{"action": "write_file", "path": "{target}", "content": "data"}}]',
             _complete("done"),
         )
         result = run_loop(
@@ -302,20 +241,14 @@ class TestThoughtRequiredGate:
             provider=provider,
             capabilities=caps,
             model="m",
-            wire_format=_StrictReact(),
+            wire_format=_StrictJson(),
         )
         assert result.success
         assert provider.call.call_count == 2  # NO_THOUGHT retry happened
-        assert not target.exists()  # recovery before write → file NOT created
+        assert not target.exists()  # recovery before write
 
 
-# ── 4. Real-world failure shape (session 1780718751) ──
-# NOTE: this guarded prefix_md's specific '## Action'+empty+'## Input' bug
-# (18/188 turns). Removed with prefix_md (Step 1); the json_fc-equivalent
-# real-shape guard is added in Step 2. See the consolidation-roadmap memory.
-
-
-# ── 5. Prompt flag hook (output unchanged, gate wired) ──
+# ── 4. Prompt flag hook (output unchanged, gate wired) ──
 
 
 class TestPromptFlagHook:
@@ -328,27 +261,22 @@ class TestPromptFlagHook:
 
         assert WireFormat._gated_rule(True, "S", "soft") == "S"
         assert WireFormat._gated_rule(False, "S", "soft") == "soft"
-        # Inert without a soft variant — strong wording regardless of flag.
         assert WireFormat._gated_rule(False, "S") == "S"
         assert WireFormat._gated_rule(True, "S") == "S"
 
     def test_prompts_keep_strong_wording(self):
-        # Flags are False but no soft variant is wired, so the strong
-        # obligation still shows in react's Format Rules (unchanged).
-        fr = get("react").format_rules()
-        assert "Do not leave it empty" in fr
+        # 플래그는 False 지만 soft 미공급 — 강한 의무 문구가 유지된다.
+        fr = get("json_fc").format_rules()
+        assert 'must have an "action"' in fr
 
     def test_field_specific_composes_numbered_rules(self):
-        for name in ("react", "json_fc"):
+        for name in ("json_fc", "xml_fc"):
             fs = get(name).format_rules_field_specific()
             assert fs.startswith("1. "), name
             assert "\n2. " in fs, name
 
     def test_softening_takes_effect_via_synthetic_plugin(self):
-        # Prove the gate actually drives the section: a plugin that both
-        # sets thought_required=False AND supplies a soft variant drops the
-        # strong thought wording. (Shipped plugins don't do this yet.)
-        class _SoftThought(ReActFormat):
+        class _SoftThought(JsonFcFormat):
             def format_rules_field_specific(self) -> str:
                 return f"1. {self._gated_rule(self.thought_required, 'STRONG', 'thought optional')}"
 

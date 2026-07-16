@@ -227,9 +227,6 @@ class LLMCaller:
         via the wire_format plugin before calling here.
 
         Capabilities are overridden for this one call:
-          - ``supports_structured_output=False`` — we want a plain text
-            summary, not a JSON object. The agent-loop's normal ReAct
-            calls force JSON; here we explicitly opt out.
           - ``supports_thinking=False`` — summarisation doesn't benefit
             from a reasoning trace, and the thinking tokens would
             consume the response budget without ending up in the
@@ -263,7 +260,6 @@ class LLMCaller:
         )
         summary_capabilities = replace(
             self.cfg.capabilities,
-            supports_structured_output=False,
             supports_thinking=False,
         )
         response = self.provider.call(

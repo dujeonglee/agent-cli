@@ -130,7 +130,7 @@ class TurnDispatcher:
         # explicit action (action_required=True), a dropped action is a
         # drift to be corrected by the model, so we skip inference and fall
         # through to the NO_ACTION recovery below. When False (the namespaced
-        # format — react), the action is recoverable from the
+        # format), the action is recoverable from the
         # preserved action_input, so we infer it. Mirror of how
         # ``thought_required`` gates the NO_THOUGHT recovery.
         action_inferred = False

@@ -2,7 +2,7 @@
 
 Covers ``agent_cli/wire_formats/base.py`` (``ParsedAction`` + the
 ``WireFormat`` ABC and its concrete defaults) and the registry in
-``agent_cli/wire_formats/__init__.py``. Concrete plugins (``ReActFormat``
+``agent_cli/wire_formats/__init__.py``. Concrete plugins (``JsonFcFormat``
 etc.) are tested in their own files.
 
 A small mock subclass implements every abstract method but inherits the
@@ -197,7 +197,7 @@ class TestParseTurnDefaultWrapper:
         # always False (completion is an explicit `complete` op). parse() is
         # the single-op projection and no longer mirrors parse_turn for a
         # multi-op format, so we verify parse_turn directly.
-        wf = get("react")
+        wf = get("json_fc")
         text = wf.render_full_example(
             thought="reason",
             action="shell",
@@ -360,14 +360,12 @@ class TestAllSystemUserPrefixes:
         assert "You were asked to:" in prefixes
 
     def test_includes_registered_plugin_prefixes(self):
-        # ReAct is registered at import time; its three framings must
-        # show up in the union without any extra wiring.
+        # 내장 플러그인은 import 시 등록 — framing prefix 가 자동 합류.
         from agent_cli.wire_formats import all_system_user_prefixes
 
         prefixes = all_system_user_prefixes()
-        assert "Your response was not valid JSON." in prefixes
-        assert "Your JSON was parsed but has no action." in prefixes
-        assert "Your JSON was missing the 'thought' field." in prefixes
+        assert "Your response did not match the expected format" in prefixes
+        assert "Your JSON array had no usable tool call" in prefixes
 
     def test_isolated_registry_yields_only_format_agnostic(self, isolated_registry):
         # With a fresh empty registry no plugins contribute prefixes —

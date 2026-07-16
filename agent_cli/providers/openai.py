@@ -57,16 +57,6 @@ class OpenAIProvider:
             "messages": msgs,
         }
 
-        # JSON-object mode is requested by the wire plugin via ``json_mode``
-        # (computed in ``WireFormat.provider_call_kwargs`` from the model's
-        # capabilities — the single wire ⨯ capability decision point). The
-        # provider does NOT inspect ``capabilities`` for this; it just
-        # honors the wire's decision. Forcing JSON on a non-JSON wire
-        # (json_fc's markdown) makes the model degenerate (the ``[2025]``
-        # / ``[1000, 1000]`` bug).
-        if kwargs.get("json_mode"):
-            body["response_format"] = {"type": "json_object"}
-
         # Thinking/reasoning effort for reasoning models (o1, o3, etc.)
         if capabilities.supports_thinking and capabilities.thinking_budget > 0:
             if capabilities.thinking_budget <= 1024:

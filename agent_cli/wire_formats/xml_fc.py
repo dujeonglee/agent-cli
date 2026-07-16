@@ -203,13 +203,6 @@ class XmlFcFormat(WireFormat):
     multi_op = True
     # exposes_complete 기본 True 상속 — 종료는 명시적 complete op.
 
-    # ─── Provider hints ─────────────────────────────────────────
-
-    def provider_call_kwargs(self, capabilities=None) -> dict:
-        # JSON-object 모드는 선두 `{` 를 강제해 태그 envelope 이 불가능
-        # (json_fc 의 markdown 과 같은 이유) — capability 무관 항상 끔.
-        return {"json_mode": False}
-
     # ─── Prompt ─────────────────────────────────────────────────
 
     def format_rules(self) -> str:

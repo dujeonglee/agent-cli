@@ -13,8 +13,7 @@ file into this directory; obsolete ones are deleted by removing the
 file. Main code is not edited either way.
 
 The CLI ``--response-format <name>`` option resolves through
-:func:`get`. The default ``"react"`` plugin is registered when its
-module is imported (see ``agent_cli/wire_formats/react.py``).
+:func:`get`. 내장 플러그인(json_fc·xml_fc)은 패키지 import 시 등록된다.
 """
 
 from __future__ import annotations
@@ -46,7 +45,7 @@ def register(wire_format: WireFormat) -> None:
 
     Plugins call this at the bottom of their module:
 
-        register(ReActFormat())
+        register(JsonFcFormat())
     """
     name = wire_format.name
     existing = _registry.get(name)
@@ -227,17 +226,13 @@ __all__ = [
 
 # ── Builtin plugin registration ──────────────────────────────
 # Plugins shipped with agent-cli register at package-import time so
-# ``get("react")`` works out of the box. The import is at the bottom
+# ``get("json_fc")`` works out of the box. The import is at the bottom
 # (not the top) so the ``register`` symbol it depends on is already
-# defined when ``react.py`` is loaded — the alternative (top-level
-# import + explicit register call) would fail because ``react`` would
-# not yet see ``register`` in this module's namespace.
+# defined when the plugin module is loaded.
 def _register_builtin_plugins() -> None:
     from agent_cli.wire_formats.json_fc import JsonFcFormat
-    from agent_cli.wire_formats.react import ReActFormat
     from agent_cli.wire_formats.xml_fc import XmlFcFormat
 
-    register(ReActFormat())
     register(JsonFcFormat())  # default — md_array 후계 (PHASE4, bakeoff 게이트 통과)
     register(XmlFcFormat())  # 태그-파라미터 (multi-wire-format PHASE2)
 

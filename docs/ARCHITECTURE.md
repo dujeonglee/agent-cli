@@ -60,11 +60,8 @@ agent_cli/
 ├── constants.py             (~25)  공유 상수 (timeout, observation 템플릿, INTERRUPT_NOTICE). 외부 모듈 의존 없음 — 저층 레이어. wire-format-specific 상수 (FORMAT_RULES, RETRY_HINT_*, SYSTEM_USER_PREFIXES) 는 ``wire_formats/`` 의 plugin이 소유
 ├── thinking_tags.py         (69, v5.19.1)  **thinking-tag 스트리핑 단일 소스** — 모델이 CoT 를 content 태그로 흘리는 leak(모델-런타임 quirk, wire-shape 속성 아님)의 vocab 4종 + 정규식(①완전 블록 ②미닫힘 opener ③고아/트레일링) + `strip_think_blocks()`(①②). 종전 4곳 중복(providers/base·react·json_fc 정규식 2개·capabilities vocab)을 이주 — 소비자: openai provider(content 정규화, 비-파서 소비자 보호 5.10.0)·`WireFormat.strip_thinking`(파서 stage 0 — provider 미경유 경로 anthropic/http leak·bench 우회의 유일 방어)·capabilities(탐지 vocab)·json_fc(③ 정규식만 — 적용 지점은 포맷 소유). ①②는 blind sub(문자열 값 안 완전 블록도 제거 — openai 경로 5.10.0 부터의 기존 동작과 경로 간 일관), ③은 앵커드(문자열 값 안 고아 태그 보존 — json_fc 계약 테스트). 의존 0 (re 만) — 최저층
 ├── wire_formats/                   Wire format 플러그인 시스템 — 모델 응답 형식 추상화
-│   ├── __init__.py          (245)  Registry (`register` / `get(name=None)` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (react, json_fc, xml_fc) 자동 등록. **`DEFAULT_WIRE_FORMAT = "json_fc"`** — 기본 wire format 의 single source of truth: `get(None)`/unspecified fallback, CLI `--response-format` 기본, 새 세션 default 가 모두 여기로 resolve (변경은 1곳). **모델별 바인딩 (v5.19.0 — docs/multi-wire-format/DESIGN.md Phase 1)**: `wire_format_for_model(model)` = models.json 엔트리의 선택 필드 `wire_format` 조회(모델명-키 — `ModelCapabilities` 에 안 태움: role model 오버라이드 경로가 capabilities 를 재해석하지 않아서) + `resolve_wire_format(explicit, session_format, model)` = 해석 체인 **명시 `--response-format` > resume 세션 메타 > 모델 바인딩 > DEFAULT** (unknown 이름은 어느 소스든 KeyError fail-fast, D2). config lazy import (wire_formats→config 단방향). **`try_foreign_parse(bound, text)` (Phase 3, v5.21.0)**: 0-op emission 을 타 등록 포맷 파서로 구제 — DEFAULT 먼저·이름순, 수용=stage 1·2 + action·dict-input op (stage 3 regex 긁기는 키메라 저신뢰라 배제), bound 제외. 조합은 레지스트리 소유 = 포맷 간 코드 결합 0 (self-contained 유지). 소비자는 dispatch (라벨·corrected_record 재렌더). **2026-06-11 prefix_md→md_array 전환**(현 json_fc 의 전신): Phase-2 풀루프 95.2%(=react) + 실전 150턴 형식실패 0.7%(prefix_md 동급) 검증 후. json_fc 는 prefix_md 의 기능적 상위집합(단일-op + 멀티-op). prefix_md 는 2026-06-13 제거(wire-format 정리 Step 1 — json_fc 가 마크다운 shape 흡수, 남은 등록 포맷은 json_fc·react 둘). 멀티-op 자발 활용률은 아직 낮음(~0.7%) — 다음 거리는 자발 배칭 유도 프롬프트.
-│   ├── base.py              (632)  `WireFormat` ABC + `ParsedAction` dataclass. Plugin 베이스 클래스 — abstract method (format-specific 부분만, plugin이 반드시 구현)와 concrete default (lifecycle / 식별 hook, 보통 그대로 상속) 분리. **멀티-op 추상화 (additive, 멀티-op wire format 1단계 — docs/inputs-array-schema/DESIGN.md)**: `Op`(action+action_input+truncated 1개) + `ParsedTurn`(thought + ops 리스트 + terminal + parse_stage) dataclass, 그리고 concrete **`parse_turn(text)->ParsedTurn`** = 기본적으로 기존 `parse()`를 감싸 단수 action을 1-op turn으로 매핑(action 없어도 action_input 있으면 Op 보존 → infer 복구 전제 유지; terminal 항상 False — 단수 포맷은 `complete` op로 종료). **단수 포맷(react)은 무변경**, 멀티-op 포맷만 `parse_turn` override. 루프는 아직 `parse()`를 쓰므로 현재 inert(동작 0 변화); 루프의 `parse_turn` 전환은 후속 단계. **`is_degenerate(text)`** (default False): emission 이 wire shape 을 반복(format runaway)했는지 — 두 용도: (1) loop 이 `provider.call(degeneration_check=...)` 로 넘겨 **streaming 중 조기 break**(토큰 절약), (2) loop 이 최종 emission 을 `FAILURE_DEGENERATE` 로 라벨·raw 캡처. runaway 가능 shape 만 override(prefix_md). **`sanitize_thought(thought)`** (default identity): 모델이 thought 에 흘린 wire sentinel(줄단독 `## 헤더`)을 제거 — raw 가 prior 로 재주입되면 `## Thought … ## Thought` 중복이 self-reinforcement→mimicry→runaway 의 **근본 원인**이라 save-time 에 두 곳에서 정제: `parse`(structured thought) + `serialize_assistant_for_history`(bare content, action 무효 turn). 정제된 record 가 history→prior(render)+화면 일괄로 흐름. react 는 thought 가 JSON string(이스케이프)이라 무관(identity 상속). Abstract: render_full_example / format_rules_anchor / format_rules_field_specific / parse / 6개 recovery wording / system_user_prefixes. Default: format_rules = `build_format_rules(self)`, render_action_input = dict→JSON via json.dumps (wire가 직렬화 — 호출자는 dict만 전달, JSON 가정은 이 hook 한 곳에; render_full_example/history round-trip도 이 hook 경유), provider_call_kwargs = `{}`, prefill = `""`, serialize_assistant_for_history = `self.parse()` + 구조화 필드 추출(+ bare content `sanitize_thought` save-time 정제), render_assistant_from_history = `self.render_full_example()` 호출로 wire shape 재방출 (live + resume prior 둘 다 이 경로 — `normalize_assistant_for_messages` 는 제거됨, 매 턴 prior 가 record 에서 render 됨). **대칭 플래그 `thought_required`/`action_required`** (기본 True): 각각 thought/action 누락 시 **recovery(LLM 재발화) vs 관용·infer** 를 게이트 — loop(복구 측)과 프롬프트(`_gated_rule`)가 같은 플래그를 읽음. **프롬프트 게이트 플래그 `multi_op`/`exposes_complete`** (기본 False/True): multi_op=한 턴 여러 op — 프롬프트 레이어(registry `get_tool_descriptions` + system_prompt 인라인 빌더)가 per-tool 배치 prose 생략·prefix strip; exposes_complete=False — `complete` 를 도구 목록에서 제외(thought-only terminal 로 종료하는 포맷용). **`_gated_rule(required, strong, soft=None)`** = Format-Rules clause 강도를 플래그로 약화/생략하는 hook (현재 soft 미제공이라 inert — 출력 불변, 미래에 soft 채우면 plugin·loop 무변경으로 완화). **parse 계약**: action 슬롯이 무효/없음이어도 식별된 action_input 은 **보존**한다 (infer_action 복구 / NO_ACTION echo 의 전제 — 드롭한 action 을 wire-key prefix 로 복원하려면 파서가 input 을 남겨야 함). 모듈 docstring에 assistant turn lifecycle (A → B → C; render 가 live+resume prior 둘 다 빌드) 표 포함. **`diagnose_syntax_error(prior_content)->str|None`** (concrete default `None`): NO_JSON 회복 시 JSON 이 *어디서* 깨졌는지(line/col + 캐럿) 짚는 opt-in seam — base 는 None(JSON 없는 포맷·미구현 포맷은 generic 힌트 유지), JSON 포맷이 자기 후보 추출 후 `_json_diag.describe_json_error` 에 위임. **`serialize_terminal_for_history(thought, result)`** (concrete default 단수 `{action:complete, action_input}`): loop 의 complete 핸들러가 (nested-envelope 언랩된) result 를 들고 있어 `serialize_assistant_for_history`(raw 입력) 를 못 타므로, terminal turn 을 **이 포맷이 다른 op 와 같은 모양으로** 기록하는 병렬 진입점 — 멀티-op 포맷(json_fc·react)은 `{ops:[{complete}]}` 로 override 해 history 동질성 유지(과거 complete 핸들러가 직접 단수 dict 를 `ctx.add` 해 73개 op 와 다른 모양으로 새던 불일치 수리; render·summary 는 양쪽 관용이라 무해했으나 shape 읽는 외부 도구를 속임). **`strip_thinking(text)` (concrete static, v5.19.1)**: 파서 stage 0 — thinking 블록(①완전·②미닫힘 opener) 격리해 `(cleaned, thinking|None)` 반환; 구현은 thinking_tags 단일 소스(openai provider 와 같은 함수 — 그 경로에선 no-op, provider 미경유 경로의 유일 방어). react `_strip_thinking_blocks`·json_fc `parse_turn` 진입부가 위임(json_fc 는 종전 ①② 자체 처리가 없어 provider 미경유 경로 무방비였던 갭 봉합). 포맷 간 behavior 공유가 아니라 ABC 기계라 self-contained 불변식 합치. plugin 추가 = WireFormat 상속한 새 파일 1개, main code 0 변경.
-│   ├── react.py             (910)  ReActFormat — **multi-op JSON wire format (json_fc 의 JSON 쌍둥이 — 엔벨로프만 다름; wire-format consolidation roadmap Step 2, 2026-06-13)**. 셰이프: `{"thought": ..., "actions": [{"action": tool, ...flat params}, ...]}` — 한 턴 여러 op, op 셰이프는 json_fc 와 **바이트 동일**(cross-format parity 테스트로 고정, 코드는 self-contained 복제). **`parse_turn` override (가산·backward-compat)**: `actions` 배열 → N-op ParsedTurn(`_ops_from_items`); 없으면 classic 단일-op `{thought, action, action_input}` 를 1-op 처리 — classic ReAct 는 가장 많이 학습된 prior 라 수용=견고성. **classic 경로 단일 파스(v4.39.0)**: parse_turn 자신의 3-stage 파스가 만든 dict 로 Op 를 직조(populate+normalize+base wrap 동형·old-path 동등성 테스트 고정, repair 의 `truncated` 플래그도 Op 에 보존) — 이전엔 `super().parse_turn()`→`parse_react` 로 같은 텍스트를 두 번 파싱. dict 실패(stage-3 regex 영역)만 `super()` 폴백. **`multi_op=True`** → `_multi_op_flat_params`(프롬프트 flat 노출) + `wrap_single_op`(dispatch flat→canonical) 공유 게이트 자동 합류(json_fc 와 같은 경로). 자체 multi-op `_FORMAT_RULES`(공유 `build_format_rules` 의 "ONE action per turn" 단일-op tail 회피), `render_action_input`(prefixed dict→flat op `{action, ...}`)·`render_full_example`(`{thought, actions:[op]}`)·`serialize/render_assistant`(history `{role,thought,ops}` 저장→JSON 재방출) 모두 override(self-contained). **json_mode 유지** — JSON object 라 `json_object` 모드 호환(structured-output 모델용; json_fc 는 markdown 이라 json_mode off). 완료=명시 `complete` op(rfr-게이트 문구 없음, json_fc 와 수렴). recovery wording + 3-stage fallback parser (`parse_react`) + stage-2 JSON repair helper (`repair_json`) 모두 self-contained. **`diagnose_syntax_error` override**: `strip_markdown_fences`+`_extract_json_block` 로 JSON 후보 뽑아 `describe_json_error` 위임(NO_JSON 힌트에 line/col+캐럿). **`_fix_missing_brackets` 는 `_json_repair.close_unbalanced` 의 thin alias**(repair_json 호출처 보존, 괄호-밸런서는 json_fc 와 공유·중복 0). **stage-2a lenient parse (`_try_json_parse(strict=False)`, json_fc 와 동일 class — 1781213377)**: 모델이 대용량 `content`/`result` 를 `\n` 이스케이프 없이 리터럴 개행/탭으로 내면 strict `json.loads` 가 거부 → 예전엔 stage-3 regex 로 떨어져 action_input 이 dict 가 아닌 raw 문자열(도구가 못 씀)이 됨. stage 1(strict) 실패 후 `strict=False` 재파스를 stage-2a 로 시도해 dict 복구(repair_json 보다 먼저). WireFormat ABC 상속해 lifecycle default 사용 — format-specific 메서드만 정의. **`thought_required=False`·`action_required=False`**: `_normalize_action_input` 이 action 없어도 non-reserved sibling 을 action_input 으로 bundle 해 dropped-action 을 infer 로 복구 (Layer 1 virtual-tool alias 는 action 있을 때만). (이전 EnvelopeFormat은 2026-05-10 측정 후 폐기 — Phase 1 bakeoff에서 mistral 0% / qwen thought 9.5%로 wire-shape 결정성 약점 확인)
-│   ├── _json_diag.py        (76)   **JSON 구문 진단 (recovery 표면)** — `describe_json_error(text)`: `json.loads(strict=False)` 의 `JSONDecodeError`(msg/lineno/colno/pos)를 `메시지 (line L, column C)` + 오류 문자 아래 캐럿 스니펫으로 렌더. 순수 JSON-레이어 유틸(react/json_fc 모름) — wire-format *행위* 가 아니라 `json.loads` 류라 WireFormat base 가 아닌 sibling 모듈에 둠(캐럿 포매터 2벌 복제 회피, "base 공유 금지" 규칙 무관). `{`/`[` 로 시작하는 **실제 JSON 시도** 일 때만 진단(프로즈는 None → 기존 generic 힌트 유지). 후보 추출(어느 부분이 JSON인지)은 포맷별 `diagnose_syntax_error` 가 담당. `repair_json`+strict=False 폴백이 모두 실패해 NO_JSON 까지 떨어진 잔여 케이스에만 발화.
-│   ├── _json_repair.py      (242)  **JSON 구조 수리 (순수 string→string, bail-if-invalid)** — 넷 다 호출처가 재파싱해 valid 일 때만 채택(아니면 None→진단+재시도, 가짜 op 강제 안 함). `_json_diag` 와 동성격(포맷 모르는 순수 JSON 유틸 → base 아닌 sibling). **(1) `close_unbalanced(text)`**: 문자열-인식 깊이 스택으로 EOF 미닫힘 `]`/`}` 만 **추가**. 실전 NO_JSON 지배 shape(세션 1781336790: 6-op 배치 `]` 누락, 캡처 3/3). react `_fix_missing_brackets` 도 수렴. **(1b) `drop_unbalanced_closers(text)`**: close_unbalanced 의 **거울** — 열린 프레임과 매칭 안 되는 닫기(`}`/`]`)를 **드롭**(over-close). 실측 shape=op 닫는 중괄호 중복 `[{...}}]`(세션 1783001191: 27B shell op `}}]`→NO_JSON). 문자열-인식이라 content 속 `{}`/`]` 안전, 정상 JSON 무변경. `_extract_op_json` 에서 close_unbalanced 와 합성(over-close+미닫힘 동시). **(2) `repair_value_quotes(text)`**: 문자열 값/키가 **따옴표 하나(앞 OR 뒤) 누락** — `"path": mgt.c"`(여는 따옴표 누락→`Expecting value`) / `"path": "mgt.c}`(닫는 따옴표 누락→`Unterminated string`). 파서 에러-위치 가이드 + bounded loop(한 페이로드 여러 개 수리). **명확한 신호일 때만 발화**: stray 따옴표(없으면 bare `true`/`42` 안 건드림) 또는 EOF 전 구분자 있는 미종료 문자열(EOF까지 미종료=진짜 truncation→bail). close_unbalanced 와 합성(따옴표+미닫힘 동시 복구). **(3) `fix_invalid_escapes(text)`**: 유효 JSON escape(`" \ / b f n r t`·`\uXXXX`)를 **시작하지 않는** 고립 백슬래시를 두 배로(`\d`→`\\d`) — 모델이 raw-string regex(`[^\s]`)·char class(`[\x00-\x1f]`)·Windows 경로(`C:\Users`)를 한 번만 이스케이프해 `json.loads` 가 `Invalid \escape` 로 거부하는 **실측 지배 backslash-heavy 실패**를 복구(모델 의도=리터럴 백슬래시). 문자 단위 1-pass, 유효 escape 쌍은 그대로 소비→정상 JSON 은 무변경(`changed=False`) 반환. string-aware 불필요(문자열 밖 백슬래시는 이미 invalid JSON→구조 훼손 불가). `json_fc._extract_op_json` 이 close_unbalanced 와 합성(under-escape+`]` 누락 동시 복구).
+│   ├── __init__.py          (245)  Registry (`register` / `get(name=None)` / `list_names`) + `all_system_user_prefixes()` (format-agnostic + plugin prefix 통합 entry point). builtin plugin (json_fc, xml_fc) 자동 등록. **react 는 v7.0.0 제거** — 존치 명분(fallback 사이클·json_mode 유일 소비자) 소진, 실측 우위 없음. json_mode/structured-output 프로브·capabilities 필드도 소비자 0 으로 동반 제거. **`DEFAULT_WIRE_FORMAT = "json_fc"`** — 기본 wire format 의 single source of truth: `get(None)`/unspecified fallback, CLI `--response-format` 기본, 새 세션 default 가 모두 여기로 resolve (변경은 1곳). **모델별 바인딩 (v5.19.0 — docs/multi-wire-format/DESIGN.md Phase 1)**: `wire_format_for_model(model)` = models.json 엔트리의 선택 필드 `wire_format` 조회(모델명-키 — `ModelCapabilities` 에 안 태움: role model 오버라이드 경로가 capabilities 를 재해석하지 않아서) + `resolve_wire_format(explicit, session_format, model)` = 해석 체인 **명시 `--response-format` > resume 세션 메타 > 모델 바인딩 > DEFAULT** (unknown 이름은 어느 소스든 KeyError fail-fast, D2). config lazy import (wire_formats→config 단방향). **`try_foreign_parse(bound, text)` (Phase 3, v5.21.0)**: 0-op emission 을 타 등록 포맷 파서로 구제 — DEFAULT 먼저·이름순, 수용=stage 1·2 + action·dict-input op (stage 3 regex 긁기는 키메라 저신뢰라 배제), bound 제외. 조합은 레지스트리 소유 = 포맷 간 코드 결합 0 (self-contained 유지). 소비자는 dispatch (라벨·corrected_record 재렌더). **2026-06-11 prefix_md→md_array 전환**(현 json_fc 의 전신): Phase-2 풀루프 95.2%(=react) + 실전 150턴 형식실패 0.7%(prefix_md 동급) 검증 후. json_fc 는 prefix_md 의 기능적 상위집합(단일-op + 멀티-op). prefix_md 는 2026-06-13 제거(wire-format 정리 Step 1 — json_fc 가 마크다운 shape 흡수, 남은 등록 포맷은 json_fc·react 둘). 멀티-op 자발 활용률은 아직 낮음(~0.7%) — 다음 거리는 자발 배칭 유도 프롬프트.
+│   ├── base.py              (632)  `WireFormat` ABC + `ParsedAction` dataclass. Plugin 베이스 클래스 — abstract method (format-specific 부분만, plugin이 반드시 구현)와 concrete default (lifecycle / 식별 hook, 보통 그대로 상속) 분리. **멀티-op 추상화 (additive, 멀티-op wire format 1단계 — docs/inputs-array-schema/DESIGN.md)**: `Op`(action+action_input+truncated 1개) + `ParsedTurn`(thought + ops 리스트 + terminal + parse_stage) dataclass, 그리고 concrete **`parse_turn(text)->ParsedTurn`** = 기본적으로 기존 `parse()`를 감싸 단수 action을 1-op turn으로 매핑(action 없어도 action_input 있으면 Op 보존 → infer 복구 전제 유지; terminal 항상 False — 단수 포맷은 `complete` op로 종료). **단수 포맷(react)은 무변경**, 멀티-op 포맷만 `parse_turn` override. 루프는 아직 `parse()`를 쓰므로 현재 inert(동작 0 변화); 루프의 `parse_turn` 전환은 후속 단계. **`is_degenerate(text)`** (default False): emission 이 wire shape 을 반복(format runaway)했는지 — 두 용도: (1) loop 이 `provider.call(degeneration_check=...)` 로 넘겨 **streaming 중 조기 break**(토큰 절약), (2) loop 이 최종 emission 을 `FAILURE_DEGENERATE` 로 라벨·raw 캡처. runaway 가능 shape 만 override(prefix_md). **`sanitize_thought(thought)`** (default identity): 모델이 thought 에 흘린 wire sentinel(줄단독 `## 헤더`)을 제거 — raw 가 prior 로 재주입되면 `## Thought … ## Thought` 중복이 self-reinforcement→mimicry→runaway 의 **근본 원인**이라 save-time 에 두 곳에서 정제: `parse`(structured thought) + `serialize_assistant_for_history`(bare content, action 무효 turn). 정제된 record 가 history→prior(render)+화면 일괄로 흐름. react 는 thought 가 JSON string(이스케이프)이라 무관(identity 상속). Abstract: render_full_example / format_rules_anchor / format_rules_field_specific / parse / 6개 recovery wording / system_user_prefixes. Default: format_rules = `build_format_rules(self)`, render_action_input = dict→JSON via json.dumps (wire가 직렬화 — 호출자는 dict만 전달, JSON 가정은 이 hook 한 곳에; render_full_example/history round-trip도 이 hook 경유), provider_call_kwargs = `{}`, prefill = `""`, serialize_assistant_for_history = `self.parse()` + 구조화 필드 추출(+ bare content `sanitize_thought` save-time 정제), render_assistant_from_history = `self.render_full_example()` 호출로 wire shape 재방출 (live + resume prior 둘 다 이 경로 — `normalize_assistant_for_messages` 는 제거됨, 매 턴 prior 가 record 에서 render 됨). **대칭 플래그 `thought_required`/`action_required`** (기본 True): 각각 thought/action 누락 시 **recovery(LLM 재발화) vs 관용·infer** 를 게이트 — loop(복구 측)과 프롬프트(`_gated_rule`)가 같은 플래그를 읽음. **프롬프트 게이트 플래그 `multi_op`/`exposes_complete`** (기본 False/True): multi_op=한 턴 여러 op — 프롬프트 레이어(registry `get_tool_descriptions` + system_prompt 인라인 빌더)가 per-tool 배치 prose 생략·prefix strip; exposes_complete=False — `complete` 를 도구 목록에서 제외(thought-only terminal 로 종료하는 포맷용). **`_gated_rule(required, strong, soft=None)`** = Format-Rules clause 강도를 플래그로 약화/생략하는 hook (현재 soft 미제공이라 inert — 출력 불변, 미래에 soft 채우면 plugin·loop 무변경으로 완화). **parse 계약**: action 슬롯이 무효/없음이어도 식별된 action_input 은 **보존**한다 (infer_action 복구 / NO_ACTION echo 의 전제 — 드롭한 action 을 wire-key prefix 로 복원하려면 파서가 input 을 남겨야 함). 모듈 docstring에 assistant turn lifecycle (A → B → C; render 가 live+resume prior 둘 다 빌드) 표 포함. **`diagnose_syntax_error(prior_content)->str|None`** (concrete default `None`): NO_JSON 회복 시 JSON 이 *어디서* 깨졌는지(line/col + 캐럿) 짚는 opt-in seam — base 는 None(JSON 없는 포맷·미구현 포맷은 generic 힌트 유지), JSON 포맷이 자기 후보 추출 후 `_json_diag.describe_json_error` 에 위임. **`serialize_terminal_for_history(thought, result)`** (concrete default 단수 `{action:complete, action_input}`): loop 의 complete 핸들러가 (nested-envelope 언랩된) result 를 들고 있어 `serialize_assistant_for_history`(raw 입력) 를 못 타므로, terminal turn 을 **이 포맷이 다른 op 와 같은 모양으로** 기록하는 병렬 진입점 — 멀티-op 포맷(json_fc·xml_fc)은 `{ops:[{complete}]}` 로 override 해 history 동질성 유지(과거 complete 핸들러가 직접 단수 dict 를 `ctx.add` 해 73개 op 와 다른 모양으로 새던 불일치 수리; render·summary 는 양쪽 관용이라 무해했으나 shape 읽는 외부 도구를 속임). **`strip_thinking(text)` (concrete static, v5.19.1)**: 파서 stage 0 — thinking 블록(①완전·②미닫힘 opener) 격리해 `(cleaned, thinking|None)` 반환; 구현은 thinking_tags 단일 소스(openai provider 와 같은 함수 — 그 경로에선 no-op, provider 미경유 경로의 유일 방어). react `_strip_thinking_blocks`·json_fc `parse_turn` 진입부가 위임(json_fc 는 종전 ①② 자체 처리가 없어 provider 미경유 경로 무방비였던 갭 봉합). 포맷 간 behavior 공유가 아니라 ABC 기계라 self-contained 불변식 합치. plugin 추가 = WireFormat 상속한 새 파일 1개, main code 0 변경.
 │   ├── json_fc.py          (~745) **JsonFcFormat (기본 wire format — 멀티-op; md_array 의 v6.0.0 리네임+리셰이프 후계, docs/multi-wire-format/PHASE4.md)** — **산문 thought + flat `{action, ...params}` op 들의 bare JSON 배열** (D7: 래퍼·헤더 없음 — xml_fc D4 동형). 구 `## Thought`/`## Action` 헤더 emission 은 **legacy 관용(stage 2 drift)** 으로 계속 수용하고 prior 는 캐노니컬로 재렌더(자기 교정); 헤더-runaway 클래스는 shape 차원 소멸. actionless-op 보존은 위치 신호(배열=emission 끝)로, `"action"` 흔적 있는 깨진 JSON 은 stage 0 진단. bakeoff A/B(140run)=구형과 동등 확인 후 교체. 한 턴 여러 INDEPENDENT op(배열 원소), plain 키(no prefix), **op 하나=대상 하나(per-tool 배치 금지 — 배치 중첩이 27B 90% 깨뜨린 실측)**. bare 객체=1-op 관용. **`_repair_anonymous_op_objects`/`_extract_op_json` (DESIGN Exp 8 — 실전 1781208482 5/6 실패)**: 27B 가 대용량 param op 배치 시 `{"action":X, {params}}`(params 를 익명 중첩 객체로 = invalid JSON)를 내면 strict 파싱 실패 후 **익명 `{` 를 제거해 복구** → parse_stage 2(drift). 두 shape: A `{"action":X, {params}}`(균형 `}}`, 27B)·B `{"action":X, {params}`(닫는 `}` 하나, 35B — array 에 N개 `{` 불균형) — `_extract_op_json` 가 양쪽 시도해 valid 채택. 컨텍스트+문자열 인식 단일 패스(키-자리 `{`만 unwrap; array 원소·`:`-값·문자열 내 brace 무시 — C코드 content 안전). **unwrap 후 merge+close 합성 (세션 1783129061, 27B write_file 배치)**: 모델이 anon-wrap 과 함께 배열 `]` 도 빠뜨리고, 심지어 배치를 여러 개의 별도 `[{...}` 배열로 쪼개 내면(3줄 각각 미닫힘) unwrap 만으론 `[{...}`(미닫힘·다중배열) → 여전히 NO_JSON. `_merge_reopened_op_arrays`(문자열-인식: 구조적 `}`↦옵션 `]`↦ws↦`[{` 경계를 `},{` 로 접어 재-오픈된 배열을 하나로 병합)와 `close_unbalanced`(EOF `]` 추가)를 unwrap 결과에 합성해 전 op 복구(parse_stage 2). 병합은 정상 단일-배열 무변경(`changed=False`), content 속 `}[{` 무시(문자열-인식). **happy-path 다중배열 유실도 수정**: 모델이 배치를 여러 개의 **잘 닫힌** 별도 배열(`[{op1}] [{op2}]`)로 내면 각각 유효 JSON 이라 strict 파싱 성공하지만 `_extract_first_json` 이 첫 배열만 취해 나머지를 **신호 없이 유실**(parse_stage 1) → `_extract_op_json` 첫 성공 후에도 merge 로 재-오픈 배열을 접어 **op 수가 늘 때만**(`_op_count`) 병합 채택(drift→parse_stage 2). 보수적: `}…[{` 경계에서만 발화, trailing `</think>`·배열 사이 텍스트는 미병합("첫 배열 우선" 방어 유지). **strict=False 폴백 (실전 1781213377 `complete` 거부)**: 모델이 대용량 `result`/`content` 마크다운을 `\n` 이스케이프 없이 **리터럴 개행/탭(control char)** 으로 내면 strict `json.loads` 가 "Invalid control character" 로 거부(echo/터미널엔 `\n`과 리터럴 개행이 동일 렌더라 안 보임) — `_extract_op_json` 의 **마지막 폴백으로 `_extract_first_json(strict=False)` 재파스**해 구제(parse_stage 2). brace 스캐너는 이미 문자열-인식이라 무관, `json.loads` 의 strict 만 완화 → valid/escaped JSON 은 stage 1 그대로, control char 만 stage 2 로 복구(신호 유지). strict=False 는 control char 만 허용 — 진짜 깨진 JSON(값 누락 등)은 여전히 None(가짜 op 강제 안 함). 헤더-없는 경로·`## Action` 본문 둘 다 적용. **미닫힘 괄호 EOF 닫기 (실전 NO_JSON 지배 shape — 세션 1781336790, 캡처 3/3)**: 모델이 멀티-op 배열을 완결해 놓고 닫는 `]` 만 빠뜨리면 `_extract_first_json` 이 depth 0 복귀 못 해 None → 최후 폴백으로 `_json_repair.close_unbalanced`(문자열-인식 깊이 스택)로 EOF에 닫고 strict→strict=False 재파싱, valid 면 채택(parse_stage 2)·6 op 전부 보존. truncation(미종료 문자열 등 더 깊은 깨짐)은 괄호만 닫아선 파싱 실패 → None 유지(진단+재시도). react `repair_json` 재사용 안 함(그건 첫 `{}`만 잡아 5/6 op 유실 — 배열-인식 닫기가 정답). **따옴표 하나 누락 수리(`repair_value_quotes`)**: `"path": mgt.c"`(앞)·`"path": "mgt.c}`(뒤) 같이 문자열 따옴표 한쪽이 빠진 경우 `_extract_op_json` 최후 폴백에서 에러-위치 가이드로 복구(close_unbalanced 와 합성, bail-if-invalid; bare keyword·EOF-truncation 은 안 건드림). **under-escaped 백슬래시 복구(`fix_invalid_escapes`)**: 모델이 raw-string regex(`[^\s]`)·char class(`[\x00-\x1f]`)·Windows 경로를 한 번만 이스케이프해 strict/strict=False 둘 다 `Invalid \escape` 로 거부하는 **실측 지배 backslash-heavy 실패**(diag_2 7899자·diag_3 3964자 복구)를 stage-2 에서 구제 — 고립 백슬래시를 두 배로 재파싱하고, close_unbalanced 와 합성(under-escape+`]` 누락 동시). 정상 JSON 은 `changed=False`(무변경)라 clean 경로 무영향, bail-if-invalid 로 틀린 추측 채택 불가. 실측: backslash-heavy 3/9→4/4. **여분 닫힘 드롭(`drop_unbalanced_closers`)**: 모델이 op 닫는 중괄호를 중복해 `[{...}}]` 로 내면(세션 1783001191, 27B shell op `}}]`→NO_JSON 실측) close_unbalanced 의 거울로 매칭 안 되는 closer 를 드롭하고 재파싱(close_unbalanced 와 합성해 over-close+미닫힘 동시). 문자열-인식이라 content 속 괄호 무변경, bail-if-invalid. **종료=명시적 `complete` op** (`{"action":"complete","result":...}`, 검증된 prefix_md/react 모델). `multi_op=True`/`exposes_complete=True`/`thought_required=False`/`action_required=False` — prefix_md 패리티 + multi_op. thought-only/빈/no-op 턴은 **완료가 아니라** 0 ops → loop NO_ACTION 넌지(complete 부르거나 op emit). **`parse_turn` override**가 본 경로(ParsedTurn: N ops, terminal 항상 False); `## Input` 잔재 strip·bare-object=1op·actionless-op 보존(infer)·헤더없는 op JSON=work 유지. **`## Thought` 헤더 누락 보정(`_split_sections`)**: `## Action` 은 있는데 `## Thought` 헤더가 없으면 그 앞 prose 를 thought 로 회수(예전엔 drop→None) — 헤더 빠뜨린 reasoning·오타 헤더 구제. `parse` 는 1st-op 단수 투영(ABC). **history 직렬화 override**: ops 레코드 `{role, thought, ops:[{action, action_input}]}` — render 가 wire 모양 재방출(round-trip). **`serialize_terminal_for_history` override** 로 complete 턴도 `{ops:[{complete}]}` 동질 모양(과거 complete 만 단수 `{action}` 으로 새던 불일치 수리). sanitize_thought 는 prefix_md 동형 + **외톨이 thinking 태그 strip(`_ORPHAN_THINK_TAG`)**: thinking 학습 모델이 visible thought 에 흘린 짝없는 `</thinking>`(여는 태그는 reasoning 채널이 소비; 세션 1782027249 NO_JSON 동반 지배)를 save-time 에 제거 — 파싱은 `## Action` JSON 따로라 무영향, prior 재주입·렌더 cosmetic 청소. json_fc origin 한정(react 미적용 — 발생 origin 에만). is_degenerate 는 prefix_md 동형. **`diagnose_syntax_error` override**: `_split_sections` 로 `## Action` 본문(op 배열) 추출 후 `describe_json_error` 위임(헤더 없으면 전체 텍스트 — 미닫힘 배열도 위치 표시). **2026-06-11 기본 전환** (Phase-2 95.2%=react + 실전 150턴 0.7% 검증) — `DEFAULT_WIRE_FORMAT`. **format_rules 능동 배치 유도(B, DESIGN §6)**: 독립 op 를 한 턴에 묶도록 결정 휴리스틱+3-op read 예시로 steering — 의존-분리·중첩 금지 두 가드레일 동등 비중 유지. read_file 인라인 가이드에도 same-turn 배치 힌트. **종료 모델 변경 (DESIGN Exp 8)**: 원래 thought-only 종료 + ready_for_review 게이트였으나 마무리 버그 class(false-terminate, NO_JSON 종료-전환, 빈 `[]`, 리뷰지시문 불일치로 deliverable 폐기)를 누적 → `complete` 부활로 origin 수리 + lenient-terminal·게이트(`_finish_terminal_turn`/`_terminal_reviewed`) 제거. ready_for_review 도구는 이후 v4.4.0 에서 제거(사용률 0).
 │   └── xml_fc.py            (582, v5.20.1)  **XmlFcFormat — 태그-파라미터 function call (멀티-op, docs/multi-wire-format/PHASE2.md)** — `<tool_call><function=X><parameter=k>v</parameter></function></tool_call>` 블록 반복, 종료=명시 `complete` op. **2026-07-17 Qwen bakeoff 실측(PHASE2 §8): 27B=json_fc 동등(바인딩 가능) / 35B-A3B=json_fc 우위(비권장)**. **lenient 구제(v5.20.1, `_parse_lenient`)**: 35B 실측 지배 shape(0-op 의 83%) — `<function=X>`→`<X>`·`<parameter=k>`→`<k>` 로 붕괴한 tool-name 태그 변종(키-이름 closer `<parameter=k>v</k>`·closer 생략 혼합 포함)을 strict 0-op 일 때만 라인-단독 `<TOOLNAME>`(등록 도구명, 매 파스 재조립=MCP 커버) 앵커로 재조립 → stage 2 drift. 라인-앵커가 산문 인라인 언급 오인 차단, 캐노니컬 emission 은 이 경로 미진입(bail-safe), 구제 턴 prior 는 캐노니컬 shape 재렌더(B→C)로 자기 교정. json_fc-회귀 누출(0-op 의 17%, foreign-format 첫 실측)은 범위 밖 — Phase 3 소관. **파라미터 값=raw 텍스트** (JSON 아님): write_file content·complete result 의 literal-control-char/under-escape 실패 클래스가 구조적으로 소멸 — json_fc 가 쌓은 JSON 수리 기계 대부분이 불필요. 트레이드=구분자 충돌: 값 안의 `</parameter>` 는 **lookahead 앵커**(닫는 태그 뒤에 구조 토큰이 따라올 때만 경계, `_PARAM_CLOSED`)로 방어 — 고아 closer 는 값에 보존, 최악 케이스(값이 진짜 `</parameter>\n<parameter=` 시퀀스 포함)만 잘못 잘리고 도구 에러로 표면화(조용한 오염 없음). **타입=스키마-주도 강제(`_coerce_params`)**: 도구 스키마 non-string param 만 JSON parse(strict=False), 실패=raw 유지(진단은 기존 A5 경로 — 파서가 검증 중복 안 함), string/미선언=항상 raw. **thought=첫 구조 토큰 앞 산문(D4)** — `<think>` 는 wire 슬롯이 아님(provider+stage 0 두 층이 격리하는 CoT 채널; 요구하면 파서 도달 전 소실). 파서 3-단계: 정상(stage 1) / 수리(stage 2 — bare `<function=` 래퍼-생략 관용, EOF 미닫힘 태그·closerless 파라미터 회수, drift=래퍼/closer 계수 불일치) / 보존(빈 `<function=>` 이름이어도 파라미터 op 유지 — infer/NO_ACTION echo 재료). 블록 스타일 값=여닫이 개행 1개씩 트림(`_trim_block`) — render 의 멀티라인 블록 스타일과 대칭(round-trip). **키-이름 closer(v5.22.1)**: strict `_PARAM_CLOSED` 가 `</parameter>` 외에 백레퍼런스 `</KEY>` 수용 — 실전(board 세션) 35B 가 캐노니컬 블록에서 `<parameter=path>…</path>` 로 닫아 미닫힘-복구가 closer 를 값에 포함(오염 경로 ENOENT ×3)했던 수리; lenient 의 아무-이름 closer 처리의 strict 대칭. history 레코드=json_fc 와 동일 `{role,thought,ops:[…]}` shape(cross-format parity 테스트 고정, `iter_record_ops` 호환), legacy 단수 레코드=base 폴백(포맷-전환 resume). `multi_op=True`/`thought_required=False`/`action_required=False`/`exposes_complete=True`(json_fc 동형 플래그), `provider_call_kwargs={"json_mode": False}` 무조건(JSON-object 모드=선두 `{` 강제→태그 envelope 불가). 자체 `_FORMAT_RULES` 전면 override(positive 규칙 — json_fc 의 HTML-태그 금지 조항 같은 negative 나열 없음, 이 포맷의 본질이 태그) + 배치 유도 문구 json_fc 동형. is_degenerate=빈 `<tool_call>` 골격 반복 ≥2. sanitize_thought=고아 think 태그(thinking_tags 공용 정규식)+구조 센티널 라인 strip. D6=관찰 되먹임 현행 유지("Observation:" 산문 — loop 소유, 랩 훅 신설 없음).
 ├── recovery/                       Robust Harness Recovery Layer (docs/robust-harness/DESIGN.md)
@@ -170,7 +167,7 @@ agent_cli/
 │   ├── render.py            (219, v4.47.0 C5) record → LLM 표현 — _to_natural_language(재공급)+_convert_observation+_context_view·_estimate_message_tokens(예산 — 재공급과 같은 view 를 세는 쌍둥이)·_to_summary_text(압축 요약 입력). 전부 무상태(인자만)
 │   ├── store.py             (95, v4.47.0 C5)  영속화 I/O primitive(정책 0) — append_record/load_records(history.jsonl)·save/load_compaction(원자·버전 스탬프)·fork_history. 경계는 A/B 비교 후 함수형 확정(_dynamic_start_index 소유권 역전으로 상태-소유 클래스 성립 불가; 승격 트리거=두 번째 백엔드/fake-store 수요)
 │   ├── manager.py           (888, C5 후 캐시+압축 정책 본연 — record 계약은 records·LLM 표현은 render·디스크 I/O 는 store 소비) ContextManager (토큰 budget 압축 + FIFO fallback). **`compaction_ratio` (5.14)**: 라이브 압축 목표 비율 필드(기본 `DEFAULT_COMPACTION_RATIO`=0.8, `set_compaction_ratio` 가 [0.5,0.95] clamp). loop 이 상수 대신 `self.ctx.compaction_ratio` 를 매 콜 읽으므로(llm.py), web·loop 공유 ctx 인 웹 슬라이더가 dirty-flag 없이 즉시 반영. 서브에이전트는 `create_subagent_ctx` 가 parent 값 상속(spawn 시점 스냅샷). **`get_messages` 증분 렌더 캐시 (`_nl_cache`, v4.37.0)**: 동적 슬라이스(선두 system 제외)의 자연어 변환을 record 당 **1회**만 수행 — `add` 가 렌더 결과를 미러 리스트에 append, `get_messages` 는 포인터 복사로 서빙(이전엔 턴당 3-4회 호출 × 전체 재변환 = 세션 O(n²), 유일한 초선형 경로). 벌크 변형 4곳(`_compact` 재할당·`_evict_fifo` pop·`force_fit` pop·`_restore_cache`)이 `None` 무효화 → 다음 get 에서 1회 전체 재렌더; 길이 불일치 backstop 이 누락 변형 방어. **전제**: 렌더가 record 의 순수 함수(현재 `_context_view`=identity) — 미래 턴-의존 context view 는 캐시 무효화 필요(코드 주석 명시). **관찰 complete-nudge (5.15.0)**: `get_messages` 가 피드 시점에 **현재 관찰(마지막 cache 레코드가 도구 결과일 때)**에만 complete-리마인더 한 줄(`_OBS_COMPLETE_NUDGE`)을 붙임 — 복사본에 append 라 `_nl_cache`·`_cache`·history.jsonl 무변경(**미저장·비누적**, 매 콜 재파생, resume 무영향). 모델이 작업 후 `complete` 를 안 내고 멈추거나 서브에이전트를 재확인하며 헛도는 것을 종결 결정 지점(관찰 직후)에서 유도 — complete 정당 사유 2종(할 일 없음 / 다음 진행이 서브에이전트 회신에 막힘) 명시. 무조건(플래그 없음): Qwen3.6-27B 실측 무해(조기완료 0; 그 모델은 항상 clean 종결이라 혜택은 mis-terminate 하는 모델에서만) + 비저장이라 게이트 불필요, 관찰-측 텍스트 변형이라 mimicry-safe. **개입 fold (v4.51.0)**: `fold_resolved_interventions()` — 형식-복구 개입(NO_THOUGHT/NO_JSON/NO_ACTION/A4/A5, additive `recovery:"format"` 마킹+레거시 `tool==""` 백스톱 — `records.is_format_intervention` 계약)은 교정의 일회성 재료라, 다음 파싱 성공 시 [실패 prior, 개입] 쌍을 **캐시 뷰에서 전량 접음**(dynamic context=성공 궤적만; 연속 실패도 성공 순간 일괄). live=dispatcher 파싱-성공 지점 호출(`assume_tail_resolved`), resume=`_restore_cache` 가 레코드-기반 재판정(개입 뒤 ops-보유 assistant 존재)으로 동일 뷰 재현 — 사이드카 무상태. **history.jsonl 불변**(관측·디버그 보존, turns.jsonl 통계 무손실). B1(행동 루프) 개입·도구 실행 실패는 과제 정보라 비대상. v3.16.1 mimicry 교훈의 관찰-측 확장 — 단 변형이 아닌 **제거**라 모방 표면 없음. **`iter_record_ops(record)`** (public): assistant 레코드 한 건에서 `(action, action_input)` 쌍 추출 — 멀티-op `ops` 레코드와 단수 legacy `action` 레코드 **양쪽 shape 의 단일 reader**. delegate activity-log 추출기·loop review tool-calls 빌더가 소비(각자 shape 을 재추측하다 423608e 이후 silent 하게 깨졌던 회귀의 수리, v4.35.1). **`_context_view(message)`**: 어시스턴트 turn 의 재공급 표현 — op별 `Tool.render_action_input_for_context`(기본 identity) 적용한 **복사본**(원본 record 불변). render(`_to_natural_language`)+estimate(`_estimate_message_tokens`) 양쪽에서 호출 → 재공급=카운트 일관(큰 write/edit 본문 elide 대비 seam; 현재 identity 라 무영향). **history.jsonl retrieval enrich**: `_append_to_history` 가 round-trip 메시지에 **검색 키를 가산**해 파일에 기록(`_enrich_record`; 세션dir 소실 가드 `mkdir` 는 v4.39.0 부터 **실패 시에만**(FileNotFoundError→mkdir+재시도) — add 당 stat 1회 절약, 외부 wipe 복구 의미 보존. 파일핸들 유지는 의도적 비채택: fd 가 unlink 된 inode 에 계속 쓰면 소리 없는 유실) — `kind`/`turn`/`ts`/`tools`/`files`(`extract_file_paths` 재사용 — 조작 파일 경로)/`text`(+`author` passthrough). `kind`/`tools`/`text` 는 `_classify_record`(레코드 shape → query/action/observation/final/raw/system, `[author]:`·`Observation:` prefix 벗긴 평탄 text)로 유도, `turn` 은 loop 이 매 턴 경계 `set_turn`. **파일만 enrich** — `_cache`/`get_messages`(LLM 경로)는 무변경(round-trip 필드 그대로, extra 키 무시). read_context(JSON 쿼리)와 외부 jq 가 이 키들을 쓴다. (하위호환 무시 — 구 세션은 키 없어 쿼리에서 자연 제외.) **`ensure_within(target)`** (flow 1 예방형): loop이 매 호출 직전 `target=(C−S−O)×0.8`(S=system 실측)로 호출 — `_cache_tokens > target`면 LLM 요약 compaction 시도 (system anchor만 보존 → oldest 절반 evict → 단일 호출로 요약, 이전 summary가 있으면 같은 호출에 prepend하여 recursive 갱신 → `_file_extract`로 touched paths 누적 dedup → `[system][summary][file_list][retained]`로 캐시 재구성 → `compaction.json` atomic write). **요약 입력은 `_to_summary_text`로 만든 자연어 transcript를 user 메시지 하나로 감싼 형태** — `get_messages`의 `_to_natural_language`(assistant를 ReAct JSON으로 round-trip)와 달리, 요약 경로에선 assistant를 산문으로 풀고 action_input을 owning `Tool`의 **`Tool.summary_arg`**(`touched_paths`의 sibling — `strip_prefix`로 표준 키를 읽어 prefix/배열 셰이프 흡수; registry lazy import로 순환 회피)로 축약(파일 본문 제거)해 모델이 "transcript를 요약"하게 함(이전엔 ReAct JSON 대화로 보여 소형 모델이 요약 대신 다음 `write_file` 액션을 생성하던 버그). **(이전 버그: 구 `summarize_tool_args`가 bare `args.get("path")`를 읽어 wire-key prefix 도입 후 모든 실 레코드에서 빈 라벨 — `write_file()`처럼 인자 누락. tool-result 레코드는 args가 없으므로(=`{role,tool,success,content}`) 라벨은 assistant 액션 레코드에서만 나옴. 테스트가 가짜 `args:{path}`·bare `action_input:{path}` shape을 써서 미검출 — `_file_extract`와 동일하게 `serialize_assistant_for_history` 실제 출력 기반 회귀가드 추가) **멀티-op record 처리(`_file_extract` 동형)**: 멀티-op 포맷은 `{ops:[...]}` 저장 → op 순회로 각 op 라벨, flat op 은 `wrap_single_op` 으로 캐노니컬 정규화 후 `summary_arg`. (이전엔 top-level `action` 만 읽어 json_fc 기본값 요약이 thought-only 였음 — 도구 호출 기록 증발; json_fc 회귀가드 추가) dangling assistant 턴 없음 → 연속 유인 제거. 요약 실패하거나 재구성된 캐시가 여전히 target 초과면 belt-and-braces로 `_evict_fifo(target)` 발동 — 무한 트리거 루프 방지. `add()`는 compaction 트리거 안 함(append만). **`compact_now()`** (수동 `/compact`): `_compact` 1회 실행 후 `(before, after)` 토큰 반환 — disabled/compactor 없음/evict 대상 없으면 no-op(equal), 실패 시 warning만(강제 FIFO 안 함). **`reconcile_actual_tokens(actual, system_tokens)`**: 호출 직후 서버 실측(`usage.input_tokens`+cache)으로 `_cache_tokens = actual − system`으로 re-anchor → chars/4의 CJK 과소평가가 턴 간 누적되지 않음(drift 1턴치). **`force_fit(target, actual_tokens)`** (flow 2 반응형): 서버가 400(prompt too long)으로 거부하면 loop이 호출 — 로컬 추정(chars/4, CJK 과소)을 못 믿으므로 서버가 알려준 `actual_tokens`로 reconcile 후 compact→FIFO로 비율 축소. keep_ratio=target/actual로 줄여 추정 과소배율이 분자분모에서 상쇄(추정 절대정확도 불필요); progress 보장(매 호출 최소 1개 evict, anchor=최신 1개 보존). `actual_tokens` 없으면 ~25% trim fallback. `compaction_enabled=False`로 끄면 기존 FIFO만 동작. Resume: `compaction.json`의 `dynamic_start_index`로 history.jsonl 후방 슬라이스만 cache 복원해 summarised tail과 중복 방지. 인스턴스마다 wire_format plugin attach (`__init__(wire_format=...)`, default fallback="react"). `get_messages()`는 system은 verbatim, user/tool branch만 자체 처리하고 assistant branch는 `wire_format.render_assistant_from_history`에 위임 — 한 세션 = 한 wire_format으로 격리. Compactor 콜백(`set_compactor`)과 `TurnRecorder`(`set_recorder`)는 `AgentLoop`가 후입식으로 주입 — unit-test 경로는 미주입 상태로 즉시 사용 가능.
-│   ├── _file_extract.py     (74)   `extract_file_paths(messages)` — evict 된 assistant record 의 `action`→owning `Tool` 의 **`Tool.touched_paths(action_input)`** 에 위임. path/prefix 키 지식을 각 도구에 둠(=`strip_prefix` 재사용; write/edit/read/code_index=flat `{path}`, delegate=flat `{agent}` placeholder — 전부 flat-native Step 3) → 도구가 입력 셰이프를 바꿔도(예: read_file 의 flat-native 전환) extract 가 자동 추적. **멀티-op record 처리**: 멀티-op 포맷(json_fc·react)은 `{ops:[...]}` 로 저장하므로 op 리스트 순회(single-op `{action,action_input}` 은 `[msg]` 로 정규화); 저장 op 은 flat(모델 emission)이라 `touched_paths` 전에 **`Tool.wrap_single_op` 으로 정규화**(현재 모든 builtin 도구 identity 라 사실상 no-op — MCP/미래 도구용 단계). registry 는 함수 내 lazy import 로 module-load 순환(registry→context-tool→manager→_file_extract) 회피. 입력 순서 dedup. compaction 시 file_list 단일 진입점. **(이전 버그: ① bare `path`/`tool-result args` 가정으로 wire-key prefix 도입 후 file_list 빈 채 — 회귀가드 추가. ② top-level `action` 만 읽어 멀티-op `{ops}` record 의 경로를 전부 놓침 — json_fc 기본값(2026-06-11~) file_list 가 줄곧 비었음; ops 순회+wrap 정규화로 수정, json_fc 회귀가드 추가)**
+│   ├── _file_extract.py     (74)   `extract_file_paths(messages)` — evict 된 assistant record 의 `action`→owning `Tool` 의 **`Tool.touched_paths(action_input)`** 에 위임. path/prefix 키 지식을 각 도구에 둠(=`strip_prefix` 재사용; write/edit/read/code_index=flat `{path}`, delegate=flat `{agent}` placeholder — 전부 flat-native Step 3) → 도구가 입력 셰이프를 바꿔도(예: read_file 의 flat-native 전환) extract 가 자동 추적. **멀티-op record 처리**: 멀티-op 포맷(json_fc·xml_fc)은 `{ops:[...]}` 로 저장하므로 op 리스트 순회(single-op `{action,action_input}` 은 `[msg]` 로 정규화); 저장 op 은 flat(모델 emission)이라 `touched_paths` 전에 **`Tool.wrap_single_op` 으로 정규화**(현재 모든 builtin 도구 identity 라 사실상 no-op — MCP/미래 도구용 단계). registry 는 함수 내 lazy import 로 module-load 순환(registry→context-tool→manager→_file_extract) 회피. 입력 순서 dedup. compaction 시 file_list 단일 진입점. **(이전 버그: ① bare `path`/`tool-result args` 가정으로 wire-key prefix 도입 후 file_list 빈 채 — 회귀가드 추가. ② top-level `action` 만 읽어 멀티-op `{ops}` record 의 경로를 전부 놓침 — json_fc 기본값(2026-06-11~) file_list 가 줄곧 비었음; ops 순회+wrap 정규화로 수정, json_fc 회귀가드 추가)**
 │   └── session.py           (211)  세션 메타데이터 (session.jsonl — id/workspace/updated_at/`response_format`. response_format 은 세션이 돈 wire format 을 기록 — **v5.19.0 부터 resume 이 실제로 읽음**: 해석 체인 순위 2(명시 플래그 다음), 명시 플래그로 전환 resume 하면 활성 포맷으로 메타 갱신(meta=마지막 실행의 truth). default 는 `DEFAULT_WIRE_FORMAT`(json_fc); response_format 키가 없는 옛 세션도 현재 default(json_fc) 로 로드 — backward-compat to 이전 default(react→prefix_md) 는 의도적으로 미보존) + resume용 user↔assistant 페어 추출 (recent_exchanges) + `session_summary(meta)` = 마지막 (user 요청, 결과) 한 쌍을 history 에서 읽어 반환 (제거된 `query` 메타 필드의 대체 — sessions 목록/resume 프롬프트가 공유). System-injected user 메시지 필터는 `wire_formats.all_system_user_prefixes()` (format-agnostic 프리픽스 + 등록된 모든 plugin의 framing prefix) 단일 진입점 사용 — 새 wire format plugin 추가가 자동 반영
 │
 ├── prompts/                        프롬프트 템플릿
@@ -239,7 +236,7 @@ agent-cli.py                        하위 호환 래퍼 (4줄)
 │providers/││tools/ ││context/││prompts/││wire_     │
 │          ││       ││        ││        ││formats/  │
 │anthropic ││regis- ││manager ││system_ ││base      │
-│openai_   ││try    ││overflow││prompt  ││react     │
+│openai_   ││try    ││overflow││prompt  ││json_fc   │
 │compat    ││read_  ││token_  ││        ││  (parser │
 │http      ││write_ ││estima- ││        ││  + repair│
 │capab.    ││edit_  ││tor     ││        ││  + rules)│
@@ -273,13 +270,11 @@ providers/*.py      → providers/base, providers/capabilities, providers/http
 wire_formats/base   → (외부만: dataclasses, typing)
 wire_formats/_json_diag → (외부만: json) — 순수 JSON 진단 유틸, 저층
 wire_formats/_json_repair → (외부만: 없음) — 순수 JSON 구조수리 유틸, 저층
-wire_formats/react  → recovery/intervention, recovery/primitives,
-                      wire_formats/base, wire_formats/_json_diag,
-                      wire_formats/_json_repair
 wire_formats/json_fc → recovery/intervention, recovery/primitives,
                       wire_formats/base, wire_formats/_json_diag,
                       wire_formats/_json_repair
-wire_formats/__init.→ wire_formats/base, wire_formats/react, wire_formats/json_fc
+wire_formats/xml_fc → wire_formats/base, thinking_tags
+wire_formats/__init.→ wire_formats/base, wire_formats/json_fc, wire_formats/xml_fc
                       (builtin 등록)
 tools/result.py     → (외부만: dataclasses, 순수 데이터 타입)
 tools/read_file.py  → tools/result, (외부만: re, zlib, pathlib)
@@ -342,7 +337,7 @@ class LLMResponse:
 - **Anthropic**: `content[].type == "thinking"` 블록 + 스트리밍 `thinking_delta`
 - **OpenAI 호환**: `choice.message.reasoning_content` (vLLM 컨벤션)
 - 위 채널이 없으면 `""` (plain OpenAI Chat Completions 등 — graceful)
-- `<think>...</think>` 태그가 content 안에 있는 경우는 별도 — `parse_react`가 `ParsedAction.thinking`으로 분리 추출
+- `<think>...</think>` 태그가 content 안에 있는 경우는 별도 — 각 플러그인의 stage 0(`strip_thinking` — thinking_tags 단일 소스)가 `ParsedTurn.thinking`으로 분리 추출
 
 **소비처 (v1):** verbose 모드의 `render_thinking` 디버그 출력 *전용*. recovery 레이어(`format_no_*_retry`, `recovery/primitives.py`)는 thinking을 *읽지 않음* — primitive contract가 channel-agnostic이어야 누더기를 막기 때문 (`docs/robust-harness/DESIGN.md` §2.2).
 
@@ -379,7 +374,7 @@ class ModelCapabilities:
 
 ### 4.3 파서 결과 — `ParsedAction` (`wire_formats/base.py`)
 
-모든 wire-format plugin이 반환하는 boundary 데이터타입. ReActFormat의 `parse_react`(같은 plugin 안)는 이 타입을 *직접* 반환하며, 미래 plugin도 같은 타입을 사용해 loop이 plugin과 무관하게 동작.
+모든 wire-format plugin이 반환하는 boundary 데이터타입 — loop 은 plugin 과 무관하게 이 타입만 소비.
 
 ```python
 @dataclass
@@ -564,209 +559,34 @@ depth 기반 prefix(`│ `)를 사용. 병렬 run 은 worker별 capture 후 Live
   모든 경우: 3단계 폴백 파서 (json.loads → json_repair → regex)가 도구 호출 추출
 ```
 
-### 5.3 3단계 파싱 폴백 (`wire_formats/react.py`)
+### 5.3 단계적 파싱 폴백 (`wire_formats/json_fc.py`)
 
 ```
 LLM 텍스트 응답
     │
     ▼
-유니코드 서로게이트 제거 (_sanitize_surrogates)
+Stage 0: thinking 격리 (WireFormat.strip_thinking — thinking_tags 단일 소스)
     │
     ▼
-Thinking 블록 분리 (_strip_thinking_blocks)
-    │  ├─ <think>...</think> 제거 → thinking 필드에 보존
-    │  ├─ <thinking>...</thinking> 제거
-    │  ├─ <reasoning>...</reasoning> 제거
-    │  └─ <reflection>...</reflection> 제거
+legacy 헤더(`## Action`) 관용 경로 (stage 2 drift) ── 구 md_array emission
     │
-    ▼
-Stage 1: 마크다운 펜스 제거 → json.loads()
-    ├─ 성공 → ParsedAction (parse_stage=1)
-    │
+    ▼ 헤더 없음
+캐노니컬: 첫 [/{ 앞 산문 = thought, 이후 = op JSON
+    ├─ strict 파스 성공 → ParsedTurn (parse_stage=1)
     ▼ 실패
-Stage 2: repair_json() — 6단계 복구 파이프라인 (같은 모듈 안 helper)
-    │  ├─ JSON 블록 추출 (brace depth tracking)
-    │  ├─ 작은따옴표 → 큰따옴표
-    │  ├─ 따옴표 없는 키 수정
-    │  ├─ trailing comma 제거
-    │  ├─ 닫히지 않은 문자열 닫기
-    │  └─ 누락된 괄호 추가
-    ├─ 성공 → ParsedAction (parse_stage=2)
-    │
-    ▼ 실패
-Stage 3: regex 필드 추출
-    │  ├─ "thought": "..." 추출
-    │  ├─ "action": "..." 추출
-    │  └─ "action_input": {...} 추출
-    ├─ 성공 → ParsedAction (parse_stage=3)
-    │
-    ▼ 실패
-ParsedAction (parse_stage=0, 모든 필드 None)
+_extract_op_json 수리 아스널 (전부 bail-if-invalid, 성공 시 parse_stage=2):
+    anon-객체 unwrap · 재-오픈 배열 병합 · 미닫힘 괄호 EOF 닫기 ·
+    여분 closer 드롭 · 따옴표 수리 · under-escape 배증 · strict=False 재파스
+    ▼ 전부 실패
+"action" 흔적 있으면 parse_stage=0 (NO_JSON 진단), 아니면 thought-only (NO_ACTION)
 ```
 
-`repair_json` 등 stage 2/3 helper는 모두 ReAct plugin 모듈(`wire_formats/react.py`) 안에 함께 산다. `parsing/` 별도 패키지를 두지 않음으로써 plugin이 *폴더 째 삭제 가능*한 boundary를 유지 — 다른 plugin은 자기만의 recovery 전략을 정의 (의존 X). 같은 algorithm을 재사용해야 할 plugin이 등장하면 그 시점에 공통화 결정.
+수리 helper 는 plugin 모듈 안에 산다 (공용 구조수리 유틸 `_json_repair`
+제외) — plugin 이 *폴더째 삭제 가능*한 boundary 유지. xml_fc 는 자기만의
+lenient/하이브리드 수리를 소유 (self-contained).
 
-#### 형제 키 정규화 (action_input hoist, 2-레이어)
 
-일부 소형 모델은 action 인자를 `action_input` 안에 **중첩하지 않고 top-level 형제 키로** 뱉는 드리프트를 보입니다:
-
-```json
-// 드리프트 A: 가상 툴 payload가 top-level
-{"thought": "done", "action": "complete", "result": "final answer"}
-
-// 드리프트 B: 실제 툴 인자가 top-level (pcie_scsc 세션에서 관찰)
-{"thought": "find files", "action": "shell", "command": "ls"}
-
-// 둘 다의 기대 형태
-{"thought": "...", "action": "...", "action_input": {...}}
-```
-
-JSON 자체는 valid하고 action 이름도 올바른데, loop이 `action_input.X`를 찾기 때문에 조용히 실패 (가상 툴은 "Completed without result", 실제 툴은 "Missing required field" → repeated-call guard). strict JSON Schema로도 막히지 않음 — 과거 schema가 `thought`만 required로 두고 `additionalProperties` 제한이 없었기 때문.
-
-`_normalize_action_input()`이 파싱 직후 두 레이어로 정규화합니다 (`wire_formats/react.py`):
-
-**Layer 1 — 가상 툴 별칭 매핑.** `complete` / `ask`에 대해 정해진 후보 키를 canonical target 키로 매핑:
-
-| action | target key | top-level fallback 순위 |
-|---|---|---|
-| `complete` | `action_input.result` | `result` > `answer` > `response` > `final` > `output` |
-| `ask` | `action_input.questions` | `questions` > `question` (`_extract_questions`가 str→list 처리) |
-
-알려진 가상 툴인데 후보가 하나도 없으면 **fall-through 안 함** — `action_input=None` 유지해서 downstream이 "no payload" 경로로 처리 (복귀 가능).
-
-**Layer 2 — 실제 툴 / 미지의 action의 형제 키 번들링.** 가상 툴이 아니고 `action_input`이 없으면, 예약되지 않은 top-level 키 전부를 `action_input`으로 모아줌:
-
-```json
-// 입력
-{"thought":"...", "action":"shell", "command":"ls", "timeout":10}
-// 정규화 후
-{"thought":"...", "action":"shell", "action_input":{"command":"ls","timeout":10}}
-```
-
-MCP 제공 툴처럼 `action` 이름이 레지스트리에 없어도 같은 룰 적용.
-
-**예약어 블랙리스트 (`_REACT_RESERVED`).** 다음 키들은 형제로 나타나도 `action_input`에 담기지 않습니다:
-
-- `thought` / `action` / `action_input` — ReAct 프로토콜 필드
-- `observation` — 시스템 프롬프트가 금지하지만 드리프트 시 혼입 가능
-- `reasoning` / `reflection` — thinking 태그 변종 (태그로 나타나면 `_strip_thinking_blocks`가 잡지만 top-level 키 형태로도 등장 가능)
-- `role` / `_meta` — 저장/세션 계층 메타 필드
-
-**우선순위 규칙.** `action_input`이 이미 있고 truthy면 Layer 1, 2 모두 skip — 모델이 명시적으로 nested를 선택했다고 보고 형제 키는 무시. `action_input`이 `None` 또는 `{}`면 레이어 로직 발동.
-
-이 정규화는 strict JSON Schema 도입 없이 작동하며, flat form을 정식 canonical로 승격하는 미래 변경(`plan/schema-flatten.md` 참조)의 파서 기반이 됩니다.
-
-#### Failure Grounding Retry (`recovery/primitives.py` + `constants.py` + `loop.py`)
-
-> 설계 문서: `docs/robust-harness/DESIGN.md` (4-layer 디자인, primitive 도구함, playbook)
-
-3단계 파싱이 모두 실패하거나(JSON 깨짐 — `parse_stage=0`) JSON은 파싱됐는데 `action`이 없으면 (`parse_stage>0` & `action=None`), `loop.py`가 user role 메시지를 한 개 주입하고 같은 turn을 재시도합니다 (`turn -= 1`로 카운트 제외). 메시지는 `recovery/primitives.py`의 순수 함수들을 합성한 결과:
-
-```
-Your response was not valid JSON.
-Expecting ',' delimiter (line 1, column 39)   ← diagnose_syntax_error (있을 때만)
-    [{"action":"shell","command":"ls -la"}
-                                          ^
-
-Your prior output:               ← echo_prior_output: head 400자 (구조 마커 보존)
----
-{LLM이 방금 토출한 content}
----
-
-Honor that. Output ONLY a JSON object: {...}.   ← constrain_format_json
-```
-
-**JSON 구문 진단 (NO_JSON 한정, opt-in).** parse_stage=0 회복 시 `loop._recover_unparsed` 가 `wire_format.diagnose_syntax_error(llm_text)` 를 호출 — 결과(메시지 + line/column + 캐럿)가 있으면 `format_no_json_retry(syntax_error=…)` 가 framing 바로 다음에 끼워 모델에게 *정확히 어디서* 깨졌는지 알려줌(`primitives_applied` 에 `diagnose_json_error` 기록). 표준 `json.JSONDecodeError` 가 이미 가진 위치 정보를 살리는 것(라이브러리 추가 0). `{`/`[` 로 시작하는 실제 JSON 시도일 때만 발화 — 프로즈/빈 출력은 None 이라 generic 힌트·`primitives_applied=[]` 경로 그대로(A1b 무영향). `repair_json`+strict=False 폴백이 상당수를 이미 자동 수리하므로 효과는 그 잔여 NO_JSON 케이스에 한정. 캐럿 line/col 은 추출된 JSON 후보 기준(펜스/프로즈 없는 단일라인 flat 케이스는 원문과 일치, 펜스 있으면 절대 line 에 오프셋이나 국소 캐럿이 자가-위치확인). 진단 포매팅은 `wire_formats/_json_diag.describe_json_error`(순수 JSON 유틸), 후보 추출은 각 포맷의 `diagnose_syntax_error`.
-
-**v1 design — content-only echo.** thinking 채널 echo는 격리 측정값 없이 runtime 의존성만 유발하므로 v1에서 제외. Step 2 observability (TurnRecord JSONL) 데이터로 필요성이 검증되면 별도 primitive로 추가. (자세한 결정 배경은 `docs/robust-harness/DESIGN.md` §2.2.)
-
-`prior_content`가 비면 정적 fallback (`RETRY_HINT_NO_JSON` / `RETRY_HINT_NO_ACTION`) — graceful path.
-
-**라벨 우선순위 — DEGENERATE 가 parse_stage 보다 먼저.** degeneration(wire shape 반복 runaway)은 **생성-레벨 병리**(스트림이 안 끝남)라 파싱 실패라는 *증상*보다 논리적으로 앞선다. 그래서 `_handle_text_path` 는 `wire_format.is_degenerate(llm_text)` 를 **parse_stage 검사 이전에** 평가 → 마크다운 runaway(`## Thought/## Action` 빈 블록 반복)는 JSON 이 없어 parse_stage 0 이지만 `FAILURE_NO_JSON` 이 아니라 **`FAILURE_DEGENERATE`** 로 정확히 집계된다(더 구체적 원인). 빈 출력은 `is_degenerate("")=False` 라 아래 NO_OUTPUT 로 떨어진다. **회복 경로는 `turn.parse_stage` 로 구동되므로**(`_recover_unparsed`) 라벨 재배치는 telemetry(turns.jsonl)만 정확하게 할 뿐 동작 불변. (이전엔 is_degenerate 가 parse_stage 0 *뒤* 에 있어 json_fc runaway 가 NO_JSON 으로 가려졌음 — react 는 `is_degenerate=False` 라 무영향.)
-
-**A1a (NO_JSON) vs A1b (NO_OUTPUT) 라벨 분리.** parse stage 0 실패(=degenerate 아님)는 두 가지 운영 모드가 섞여 있음 — (a) 모델이 *내용은 있는데* JSON 형식에서 드리프트 (YAML 키, prose, code fence 등), (b) 모델이 *아무것도* 안 뱉음 (whitespace-only). `loop.py`의 `_handle_text_path`가 `llm_text.strip()` 검사로 둘을 분리해 `failure_signal` 을 `FAILURE_NO_JSON` 또는 `FAILURE_NO_OUTPUT` 으로 기록. 회복 경로는 동일(둘 다 `format_no_json_retry`) — A1b는 echo 대상이 없어 자연스럽게 정적 fallback path로 떨어지고 `primitives_applied=[]` 가 됨. 라벨 분리의 목적은 *관찰성*이며, 두 모드가 회복률 분포에서 어떻게 갈리는지 데이터를 모은 뒤 별도 primitive 도입 여부를 결정 (DESIGN.md §1, A1a/A1b).
-
-**근거 (failure grounding):** 추상적 *"your response was invalid"*는 모델이 무엇을 위반했는지 모르게 함 — 같은 출력을 반복할 가능성 높음. retry에 자기 출력을 인용해 보여주면 모델이 자기 드리프트(YAML-style 키, 함수-호출 신택스, bare prose 등)를 직접 보고 self-diagnose 가능. 구조 마커가 보통 출력 시작 부분이라 head-truncate.
-
-**Primitive 계약 (누더기 방지):** primitive는 provider/모델/채널 이름을 절대 참조하지 않음. 새 실패 모드는 *primitive 합성과 매핑 한 줄*로 처리 — `if "anthropic"`, `response.thinking` 같은 분기를 primitive 시그니처에 두면 invariant 위반.
-
-**Prefix 호환성:** retry 메시지 시작은 항상 정적 템플릿과 같은 문장 (`"Your response was not valid JSON."` / `"Your JSON was parsed but has no action."` / `"Your JSON was missing the 'thought' field."`)으로 시작하므로 `SYSTEM_USER_PREFIXES` 매칭이 그대로 유지됨 → resume 시 자연어 변환에서 noise로 표시되지 않음.
-
-**A7 (NO_THOUGHT) — mimicry-strengthening loop 차단.** parser 가 성공해 `action`은 있지만 `thought`가 비어 있으면(또는 `None`/whitespace-only) `_dispatch_text_path` 가 dispatch 직전에 차단하고 `format_no_thought_retry`로 retry. drift-shaped 응답 1건이 transcript에 들어가면 in-context learning 으로 이어지는 turn 들이 같은 구조를 mimicry해 thought-drop 이 연쇄로 번지는 패턴(일부 소형 모델)을 끊는 것이 목적. 정적 fallback 메시지 + echo path 모두 "Your JSON was missing the 'thought' field." 로 시작 — `SYSTEM_USER_PREFIXES` 에 동일 prefix 등록. constraint 메시지("must include 'thought' stating purpose / reason")는 builder 내부에 inline — primitive로 승격하면 v1 단일-caller 상황에서 anti-patchwork invariant ("primitive reused by ≥2 failures") 위반이라 두 번째 caller 등장 시점까지 보류. **예외: `complete` 액션은 검사에서 제외** — 최종 답 액션이라 reasoning slot이 next-turn 의무를 지지 않음. Phase 2 bakeoff (2026-05-18) 측정: 27b prefix_md `complete_direct`에서 5/5 unnecessary recovery + 평균 +3.1s latency, 35b는 영향 없음 (이미 thought 100% 채움).
-
-#### Per-Turn Observability (`recovery/observability.py`)
-
-`format_no_*_retry`는 단순 문자열이 아니라 `Intervention` (message + primitives 이름) 을 반환합니다. `_handle_text_path`는 try/finally로 매 턴 한 번씩 `TurnRecorder.record()`를 호출 — 성공/실패/예외 모든 경로에서 정확히 한 줄이 기록됩니다.
-
-**스키마 (`TurnRecord`, `{session_dir}/turns.jsonl` 한 줄당 한 row):**
-- `model` — 어떤 모델이 응답했는지 (분석 시 그룹 키)
-- `timestamp` — ISO 8601 UTC. row 정렬 키. (이전엔 `seq` 가 있었으나 제거 — TurnRecorder 인스턴스별 카운터라 web 이 run_loop 마다 새 recorder 를 만들면 세션 중간에 0 으로 리셋·충돌. 정렬/매칭은 append 순서 + timestamp 로.)
-- `parse_stage` — 0(실패), 1(json.loads), 2(json_repair), 3(regex)
-- `failure_signal` — `"NO_JSON"` / `"NO_OUTPUT"` / `"NO_ACTION"` / `"NO_THOUGHT"` / `"UNKNOWN_TOOL"` / `"SCHEMA_MISMATCH"` / `"NESTED_ENVELOPE"` / `"ACTION_LOOP"` / `null`
-- `primitives_applied` — 합성된 primitive 이름 list (실패 retry 시에만 채워짐)
-
-**프라이버시 계약:** `turns.jsonl`에는 사용자 prompt나 LLM 응답 본문이 절대 기록되지 않음 — 구조 메타만. 회복률은 *저장하지 않고* 분석 시 walk-forward로 계산 (실패 row 다음 row의 failure_signal을 봐서 회복 여부 판단). retrospective 쓰기 회피.
-
-**활성화 조건:**
-- `ctx is not None` (in-process subagent 의 일부 헬퍼 경로에선 ctx 미주입 → 비활성)
-- `record_turns=True` (CLI: `--record-turns/--no-record-turns`, 기본 켜짐)
-
-**활용:** Step 3·4의 playbook 튜닝 데이터 누적이 주 목적. 분석은 별도 스크립트 (`jq`로도 충분). 자세한 설계는 `docs/robust-harness/DESIGN.md` §3.3.
-
-#### B1 — Action Loop 감지 + 회복 (`recovery/detectors.py` + B1 playbook)
-
-같은 `(action, args)` 호출이 연속 2회 이상이면 모델이 막힌 상태로 보고 단계적 개입을 발동합니다. 기존 hard-fail (`_detect_repeated_calls`)을 대체.
-
-**Detector (`ActionLoopDetector`):** turn 간 stateful — `_last_signature`, `_consecutive_count`, `_fire_count` 보유. `observe(action, args, prev_was_error=False)`가 호출될 때마다 escalation level 반환:
-- 0 — 임계값 미만 또는 error retry로 카운터 리셋
-- 1 — 첫 발동 (probe_progress)
-- 2 — 두 번째 발동 (restate_task)
-- 3+ — 회복 소진, hard-fail
-
-`prev_was_error=True`면 카운터 리셋 — 정당한 재시도 false-positive 방지. 다른 action이 끼면 카운터 리셋. Args canonicalization은 `json.dumps(sort_keys=True)` (dict 키 순서 무시).
-
-**Playbook (`format_action_loop_intervention`):**
-- Level 1: `probe_progress` — 가벼운 nudge ("이미 가진 응답을 다시 봐, complete 또는 다른 action 선택")
-- Level 2: `restate_task` — 원본 task 재고정 + 진단 질문 ("task가 이 호출을 왜 필요로 하나? 못 얻고 있는 정보가 뭔가?")
-- Level 3+: `None` 반환 — caller가 hard-fail (어떤 primitive를 시도했는지 에러 메시지에 포함)
-
-**Temperature-down 컬럼 의도적 누락:** DESIGN.md §2.3에 명시된 escalation 컬럼 중 "+temp↓"은 v1에서 제외. provider별 temperature 처리가 다양해 primitive 계약(provider-agnostic) 위반 위험. Step 4에서 데이터 보고 재검토.
-
-**감지 시점:** dispatch *전*. tool은 실행되지 않고, 모델은 다음 turn에 새 prompt(`probe_progress` 또는 `restate_task`)와 함께 같은 결정을 다시 내림. 중복 비용 0.
-
-#### A4 / A5 — Pre-dispatch Detection (`recovery/detectors.py`)
-
-LLM이 emit한 action·input이 도구 레지스트리·스키마와 안 맞을 때:
-
-- **A4 (Unknown tool)** — `detect_unknown_tool(action, tools_list)` → `action not in tools_list`
-- **A5 (Schema mismatch)** — `detect_schema_mismatch(action, action_input)` → `validate_tool_input` wrap, `(mismatched, error_message, normalized_input)` 반환
-
-**감지 위치:** `_dispatch_text_path` 안, B1 detector → render_action 직후, `_dispatch_tool_with_hooks` 호출 직전. 모든 *pre-dispatch* 검사가 한 자리에 모임 (DESIGN.md §3.1 detection layer).
-
-**처리:** 라벨링 + observation 주입 + dispatch 우회.
-```
-A4: outcome["failure_signal"] = FAILURE_UNKNOWN_TOOL
-    Observation: "Unknown tool 'X'. Available: ..."
-A5: outcome["failure_signal"] = FAILURE_SCHEMA_MISMATCH
-    Observation: "Missing required field(s) for 'X': ... Expected: {...} Fix action_input and retry."
-```
-
-**v1은 라벨링만 — 별도 primitive 없음.** 이유: 현재 메시지(레지스트리·스키마 정보 포함)가 이미 grounding 역할 수행 중. 별도 primitive(`probe_tool_name`, `echo_diff` 등)가 *측정 효과*를 내는지는 TurnRecord 통계 보고 결정 (Step 4b).
-
-**B1 detector와의 순서:** B1이 먼저 (A4·A5 무관 *반복 자체*가 더 큰 신호). 같은 unknown tool을 2번 emit하면 B1이 잡아 `probe_progress`를 줌 — A4 메시지가 무한 반복되지 않음.
-
-**`_dispatch_tool_with_hooks` 내부 검증 제거됨:** Step 4a 전엔 `_execute_single_tool` 안에서도 `validate_tool_input` 호출 + `tool_name in tools_list` 체크가 있었음. 이젠 recovery 레이어가 단일 진실 원천 — 중복 제거. 2026-05-03: `tools/__init__.py:execute_tool`의 boundary 방어도 제거 + `_execute_tool`로 internal rename (REMAINING_DEBT.md #2/#3 청산).
-
-**남은 부채:** 이 작업 중 *알면서 남긴* 부채는 `docs/robust-harness/REMAINING_DEBT.md`에 명시 기록.
-
-#### A6 — Nested Envelope Detection (관찰 전용)
-
-`complete` action의 결과 페이로드가 다시 `{"result": "..."}` JSON 객체로 래핑되어 들어오는 경우 — 일부 소형 모델에서 산발적으로 관찰됨. 사용자에게 `✅ {"result": "..."}` 같은 문자열이 그대로 표시되는 UX 회귀로 이어짐.
-
-- **감지** — `detect_nested_envelope(result_value)` → `str` 인지 확인 → `lstrip().startswith('{"result"')` → `json.loads` 성공 → 결과 dict의 top-level `result` 키 존재. 한 단계라도 실패하면 false (오탐 방지).
-- **위치** — `loop.py`의 `complete` 분기, `answer` 결정 *직후*. 라벨링만 하고 출력은 그대로 둠.
-- **라벨** — `outcome["failure_signal"] = FAILURE_NESTED_ENVELOPE` (TurnRecord에 기록).
-- **자동 unwrap 안 함 (의도적)** — 빈도·재현 모델 분포 측정 후 4b에서 결정. v1에서 unwrap을 하면 (a) 모델이 의도적으로 그렇게 답한 경우 데이터를 잃고 (b) anti-patchwork 원칙(측정 후 결정) 위반.
+(react 의 형제-키 hoist/`_normalize_action_input` 기계는 v7.0.0 에서 react 와 함께 제거 — json_fc 는 flat op 이라 해당 드리프트 class 자체가 없음.)
 
 ### 5.4 컨텍스트 관리 (`context/manager.py`)
 
@@ -1123,7 +943,7 @@ OpenAIProvider 하나로 OpenAI, vLLM, LM Studio, mlx-lm을 `--base-url`만 바�
 
 Thinking 블록 처리 플로우:
 1. thinking 모델(`thinking_format="think"`) → `<think>...</think>` 블록을 텍스트에 출력
-2. `parse_react()`가 `_strip_thinking_blocks()`로 블록 분리
+2. 각 플러그인 stage 0(`strip_thinking`)이 블록 분리 (thinking_tags 단일 소스)
 3. 분리된 thinking 내용은 `ParsedAction.thinking`에 보존
 4. 나머지 텍스트(JSON)만 파싱 → Stage 1 직접 성공률 향상
 
@@ -1341,7 +1161,7 @@ build_system_prompt(capabilities, active_tools, skill_stack, session_id, agent_r
 pytest tests/ -v
 
 # 특정 모듈
-pytest tests/test_react_parser.py -v
+pytest tests/test_wire_formats_json_fc.py -v
 
 # omlx 통합 E2E (실 서버 필요)
 pytest tests/ -m omlx_integration -v
