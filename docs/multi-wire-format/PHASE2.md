@@ -28,9 +28,28 @@ Qwen 라이브(omlx) 2모델 × md_array(베이스라인)/xml_fc × 7태스크 �
   read_then_edit 80→100% (iters 8.6→4.8), write_multiline rec 2.2→0.4,
   전체 rec ~1.5→0.63. 잔여 마찰은 md_array-회귀 계열 (설계상 미구제).
 
-**판정**: **27B = md_array 와 동등 → 바인딩 가능. 35B-A3B = 개선됐으나
-md_array 우위 유지 → xml_fc 바인딩 비권장** (md_array 그대로). `thought`
-지표(xml_fc 25% vs md_array 100%)는 D4 산문-선택 설계라 비교에서 제외.
+**판정 (1차, lenient 까지)**: 27B = md_array 와 동등 → 바인딩 가능.
+35B-A3B = 개선됐으나 md_array 우위 유지. `thought` 지표(xml_fc 25% vs
+md_array 100%)는 D4 산문-선택 설계라 비교에서 제외.
+
+### Phase 3 (foreign-format 구제) 적용 후 — 3차 측정 (v5.21.0)
+
+| 35B-A3B xml_fc | 초판 | +lenient (v5.20.1) | +foreign (v5.21.0) |
+|---|---|---|---|
+| completed | 98.6% | 97.1% | **100% (전 태스크)** |
+| 실제 NO_ACTION 재시도/run | ~1.3 | ~0.4 | **0.06** (27B 와 동일 수준) |
+| rec/run (라벨 포함) | ~1.5 | 0.63 | 0.46* |
+
+*rec 0.46 의 대부분은 무비용 rescue 라벨 (`foreign_parse:*` — LLM 왕복
+없음, turns.jsonl 계수만). 실제 낭비는 no_action 2건/35run.
+
+**최종 판정**: **양 모델 모두 xml_fc 바인딩 가능** — 27B 는 natively
+동등, 35B 는 구제 하니스(lenient+foreign, 둘 다 무-왕복)가 drift 를
+흡수해 기능적 동등 도달. 단 35B 의 drift 자체는 잔존(rescue 라벨이 계속
+찍힘 — turns.jsonl 로 관찰 지속)하므로 **zero-drift 를 원하면 md_array
+가 여전히 기본**. 하이브리드 변종(`<function=X>` + plain-tag 파라미터)의
+조용한 파라미터 유실도 v5.21.0 에서 봉합 (strict 0-param 시 lenient
+파라미터 폴백, drift 신호).
 
 ## 1. Wire shape
 

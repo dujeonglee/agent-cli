@@ -280,9 +280,19 @@ ctx 없는 headless 호출은 현행(전역 기본) 유지 — 동작 무변경.
   (Hermes JSON-inside-tags vs `<function=/parameter=` 태그-파라미터)은
   대상 모델 chat template 실측 후. 관찰 되먹임(`<tool_response>`) 포함
   여부 검토. self-contained + parity 테스트 3-포맷 확장 + **bakeoff 필수**.
-- **Phase 3 — foreign-format 구제**: 바인딩 포맷 parse 실패 시 타 등록
-  포맷 파서 시도 → `FAILURE_FOREIGN_FORMAT` 라벨. B→C 재조립 특성 덕에
-  mimicry-safe. 모델별 누출 실측 데이터 확보용.
+- **Phase 3 — foreign-format 구제** (★구현 완료, v5.21.0 — 2026-07-17):
+  바인딩 포맷이 **0-op** 로 읽은 emission 을 타 등록 포맷 파서로 시도
+  (`wire_formats.try_foreign_parse` — 레지스트리 소유, 포맷 간 코드 결합
+  0). 실측 근거: 35B bakeoff 0-op 캡처의 17%가 md_array 회귀 (PHASE2 §8).
+  - 순서: DEFAULT 먼저(누출 최빈), 나머지 이름순 — 결정적.
+  - 수용 게이트: parse_stage 1·2 만 (stage 3 regex 긁기는 키메라에서
+    input 없는 조각 op 를 내는 저신뢰라 배제) + action·dict input 보유 op.
+  - dispatch 훅: parse 직후 0-op 시 1회 — 성공하면 그 turn 으로 정상
+    진행, `FAILURE_FOREIGN_FORMAT` 라벨 + primitives `foreign_parse:<src>`
+    (turns.jsonl 이 모델별 누출 분포의 소스 = 바인딩 재조정 근거).
+  - 직렬화: corrected_record(ops shape = cross-format 계약)로 저장 →
+    prior 는 **바인딩 포맷의 캐노니컬 shape** 재렌더 (B→C) — 누출 raw
+    재공급 없는 자기 교정 (mimicry-safe).
 
 ## 10. 결정 포인트 (승인 요청)
 

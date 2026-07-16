@@ -23,6 +23,7 @@ from agent_cli.recovery.detectors import (
 from agent_cli.recovery.observability import (
     FAILURE_ACTION_LOOP,
     FAILURE_DEGENERATE,
+    FAILURE_FOREIGN_FORMAT,
     FAILURE_NESTED_ENVELOPE,
     FAILURE_NO_ACTION,
     FAILURE_NO_JSON,
@@ -31,6 +32,7 @@ from agent_cli.recovery.observability import (
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
 )
+from agent_cli.wire_formats import try_foreign_parse
 from agent_cli.render import (
     render_recovery,
     render_status,
@@ -92,6 +94,17 @@ class TurnDispatcher:
         the record.
         """
         turn = self.cfg.wire_format.parse_turn(llm_text)
+        # Phase 3 — foreign-format 구제 (multi-wire-format DESIGN §9): 바인딩
+        # 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 action-보유
+        # ops 로 읽어내면 그 turn 으로 진행한다 (실측: 35B xml_fc 스트림의
+        # md_array 회귀 — 0-op 마찰의 17%, PHASE2.md §8). 라벨은 아래
+        # 분류에서 FOREIGN_FORMAT, 직렬화는 corrected_record 로 바인딩
+        # 포맷의 캐노니컬 shape 재렌더 (누출 raw 재공급 없음 — 자기 교정).
+        foreign_source: str | None = None
+        if not turn.ops:
+            rescued = try_foreign_parse(self.cfg.wire_format, llm_text)
+            if rescued is not None:
+                turn, foreign_source = rescued
         # fold (v4.51.0): 이 emission 이 파싱 성공(ops 보유)이면 직전의
         # 형식-복구 개입은 소비 완료 — dynamic 캐시 뷰에서 [실패 prior,
         # 개입] 쌍을 접는다(성공 궤적만 유지). messages 는 다음 _call_llm
@@ -144,6 +157,10 @@ class TurnDispatcher:
         # NO_OUTPUT below.
         if self.cfg.wire_format.is_degenerate(llm_text):
             initial_signal = FAILURE_DEGENERATE
+        elif foreign_source is not None:
+            # 구제 성공 — 실행은 진행하되 라벨로 계수 (turns.jsonl 이 모델별
+            # 누출 포맷 분포의 소스: 바인딩 재조정 근거).
+            initial_signal = FAILURE_FOREIGN_FORMAT
         elif turn.parse_stage == 0:
             # Split A1 into two sub-modes — empty/whitespace-only output
             # vs non-empty content that drifted from JSON. The recovery
@@ -163,6 +180,21 @@ class TurnDispatcher:
             "primitives": ["action_inferred"] if action_inferred else [],
             "action_inferred": action_inferred,
         }
+        if foreign_source is not None:
+            outcome["primitives"].append(f"foreign_parse:{foreign_source}")
+            # 구제 turn 의 직렬화 원본 — 바인딩 포맷의 serialize 가 raw 를
+            # 재파싱하면 0-op(bare content)로 돌아가므로, 관찰 append 가
+            # 이 레코드를 쓰게 한다 (ops shape = cross-format 계약이라
+            # 바인딩 포맷의 render 가 캐노니컬로 재방출). inference 이후에
+            # 조립해 복원된 action 이름까지 반영.
+            outcome["corrected_record"] = {
+                "role": "assistant",
+                "thought": turn.thought or "",
+                "ops": [
+                    {"action": op.action, "action_input": op.action_input or {}}
+                    for op in turn.ops
+                ],
+            }
 
         try:
             return self._dispatch_turn(llm_text, turn, outcome)
@@ -261,7 +293,9 @@ class TurnDispatcher:
             # the branch runs so its observation lands after the work done
             # so far (chronological order for the model).
             if op.action in ("complete", "run_skill"):
-                self._flush_op_results(llm_text, results)
+                self._flush_op_results(
+                    llm_text, results, corrected_record=outcome.get("corrected_record")
+                )
                 results = []
                 return self._dispatch_op(llm_text, turn, op, outcome)
             # Parallel batch: a run of ≥2 consecutive ops of the SAME
@@ -322,18 +356,30 @@ class TurnDispatcher:
                 # its intervention observation is already appended; flush the
                 # accumulated work after it (rare mid-array edge — order is
                 # intervention-first, results still preserved).
-                self._flush_op_results(llm_text, results)
+                self._flush_op_results(
+                    llm_text, results, corrected_record=outcome.get("corrected_record")
+                )
                 return r
             i += 1
-        self._flush_op_results(llm_text, results)
+        self._flush_op_results(
+            llm_text, results, corrected_record=outcome.get("corrected_record")
+        )
         return _CONTINUE
 
-    def _flush_op_results(self, llm_text: str, results: list[dict]) -> None:
+    def _flush_op_results(
+        self,
+        llm_text: str,
+        results: list[dict],
+        *,
+        corrected_record: dict | None = None,
+    ) -> None:
         """Append ONE combined observation for accumulated op results.
 
         Per-op header lines (``[i/N] tool — OK/FAILED``) frame each op's
         output; turn success = all ops succeeded (any-fail ⇒ failed so the
         model retries the failed op next turn). No-op when nothing ran.
+        ``corrected_record`` (foreign-format 구제 턴) — raw 재파싱 대신 이
+        레코드로 직렬화해 prior 가 바인딩 포맷 캐노니컬로 재렌더되게.
         """
         if not results:
             return
@@ -353,6 +399,7 @@ class TurnDispatcher:
             tool_name=_combined_tool_label([r["tool_name"] for r in results]),
             success=all_ok,
             turn=self.state.turn,
+            corrected_record=corrected_record,
         )
 
     def _dispatch_parallel_batch(
@@ -895,8 +942,10 @@ class TurnDispatcher:
         # to the corrected wire shape so neither the next turn nor a
         # resume re-feeds the raw drift (mimicry-strengthening).
         obs_msg = f"Observation: {observation}"
-        corrected = None
-        if outcome.get("action_inferred"):
+        # foreign-format 구제(ops 레코드)가 우선 — 단수 inference 보정은
+        # 구제가 없을 때만 (구제 레코드는 inference 결과까지 이미 반영).
+        corrected = outcome.get("corrected_record")
+        if corrected is None and outcome.get("action_inferred"):
             corrected = {
                 "role": "assistant",
                 "thought": turn.thought or "",

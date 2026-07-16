@@ -464,6 +464,39 @@ class TestLenientToolNameTag:
         )
         assert turn.ops == []
 
+    def test_hybrid_canonical_function_plain_params_recovered(self, wf):
+        # 하이브리드: 캐노니컬 <function=X> + plain-tag 파라미터 —
+        # strict 가 0개일 때 lenient 파라미터 폴백 (종전엔 조용히 유실)
+        turn = wf.parse_turn(
+            "<tool_call>\n<function=read_file>\n<path>aaa</path>\n"
+            "</function>\n</tool_call>"
+        )
+        assert turn.parse_stage == 2  # 회수 = drift 신호
+        assert turn.ops[0].action == "read_file"
+        assert turn.ops[0].action_input == {"path": "aaa"}
+
+    def test_hybrid_fallback_not_triggered_when_strict_params_exist(self, wf):
+        # strict 파라미터가 있으면 폴백 미발화 — 값 안의 태그-유사 raw
+        # content 를 파라미터로 오인하지 않는다
+        turn = wf.parse_turn(
+            "<tool_call>\n<function=write_file>\n"
+            "<parameter=path>a.html</parameter>\n"
+            "<parameter=content>\n<div>hello</div>\n</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        assert turn.parse_stage == 1
+        assert turn.ops[0].action_input == {
+            "path": "a.html",
+            "content": "<div>hello</div>",
+        }
+
+    def test_paramless_canonical_function_unaffected_by_hybrid_fallback(self, wf):
+        turn = wf.parse_turn(
+            "<tool_call>\n<function=read_context>\n</function>\n</tool_call>"
+        )
+        assert turn.parse_stage == 1
+        assert turn.ops[0].action_input == {}
+
     def test_rescued_turn_rerenders_canonical(self, wf):
         # 자기 교정: 구제 턴의 history 재렌더 = 캐노니컬 <function=> shape
         rec = wf.serialize_assistant_for_history("<shell>\n<command>ls -la</command>")

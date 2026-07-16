@@ -339,6 +339,20 @@ class XmlFcFormat(WireFormat):
             )
             segment = body[fm.end() : seg_end]
             params, trunc = _extract_params(segment)
+            hybrid = False
+            if not params:
+                # 하이브리드 변종: 캐노니컬 <function=X> 안에 plain-tag
+                # 파라미터(<path>aaa</path>). strict 는 <parameter= 만 알아
+                # 조용히 유실됐었다(stage 1 "클린" — drift 신호도 없이).
+                # strict 가 0개일 때만 lenient 폴백 — 값 안의 태그-유사
+                # 텍스트(raw content) 오인은 strict 성공 케이스에선 원천
+                # 차단되고, 폴백 범위도 </function> 앞으로 한정.
+                inner = segment
+                close_m = _FUNC_CLOSE.search(inner)
+                if close_m is not None:
+                    inner = inner[: close_m.start()]
+                params = _extract_params_lenient(inner)
+                hybrid = bool(params)
             name = fm.group(1).strip() or None
             if name is None and not params:
                 continue  # 이름도 파라미터도 없는 빈 골격
@@ -347,7 +361,7 @@ class XmlFcFormat(WireFormat):
             # parse 불변식: name 무효여도 식별된 파라미터는 보존 —
             # infer_action / NO_ACTION echo 의 재료.
             ops.append(Op(action=name, action_input=params, truncated=trunc))
-            truncated_any |= trunc
+            truncated_any |= trunc or hybrid  # hybrid 회수도 drift 신호(stage 2)
 
         n_func = len(func_opens)
         n_tc_open = len(_TOOL_CALL_OPEN.findall(body))

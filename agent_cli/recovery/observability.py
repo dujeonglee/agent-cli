@@ -42,6 +42,7 @@ FAILURE_NESTED_ENVELOPE = (
 )
 FAILURE_ACTION_LOOP = "ACTION_LOOP"  # B1: same (action, args) repeated
 FAILURE_DEGENERATE = "DEGENERATE"  # A8: emission repeated the wire shape (e.g. multiple ## Thought/## Action blocks in one response) — format runaway. Observed (labelled); the dispatch still proceeds on the parsed action. stop sequences (wire provider_call_kwargs) are the primary guard.
+FAILURE_FOREIGN_FORMAT = "FOREIGN_FORMAT"  # A9 (Phase 3): 바인딩 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 구제 — 실행은 진행(라벨만), 구제 소스는 primitives 의 "foreign_parse:<name>" 로 기록. 실측: 35B xml_fc 스트림의 md_array 회귀 (PHASE2.md §8)
 
 
 @dataclass(frozen=True)

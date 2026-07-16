@@ -111,6 +111,49 @@ def wire_format_for_model(model: str) -> str | None:
     return binding if isinstance(binding, str) and binding else None
 
 
+def try_foreign_parse(bound: WireFormat, llm_text: str):
+    """foreign-format 구제 (Phase 3 — multi-wire-format DESIGN §9).
+
+    바인딩 포맷(``bound``)이 0-op 로 읽은 emission 을 **타 등록 포맷**
+    파서로 시도해, action-보유 ops 를 내는 첫 포맷의
+    ``(ParsedTurn, format_name)`` 을 반환 (없으면 None). 실측 근거:
+    35B bakeoff 0-op 캡처의 17%가 md_array 회귀 (PHASE2.md §8).
+
+    - 순서: ``DEFAULT_WIRE_FORMAT`` 먼저 (누출 최빈 — 모델들이 가장 많이
+      노출된 포맷), 나머지는 이름순 (결정적).
+    - 수용 게이트 = ops 존재 + action 보유 op 존재: 각 파서의 자체 가드
+      (md_array 헤더리스 경로의 ``"action"`` 키 요구, xml_fc 의 라인-앵커
+      등록-도구명)와 합쳐져 산문 오인을 차단한다.
+    - 포맷 간 코드 결합 없음 — 각 플러그인은 서로를 모르고, 조합은
+      레지스트리(여기)가 소유 (self-contained 불변식 유지).
+    - caller(dispatch)는 구제 turn 을 corrected_record 로 직렬화해 prior 가
+      **바인딩 포맷의 캐노니컬 shape** 로 재렌더되게 한다 — 누출 raw 의
+      재공급(mimicry 강화) 없이 다음 턴부터 모델을 교정.
+    """
+    if not (llm_text or "").strip():
+        return None
+    names = [DEFAULT_WIRE_FORMAT] + [
+        n for n in sorted(_registry) if n != DEFAULT_WIRE_FORMAT
+    ]
+    for name in names:
+        plugin = _registry.get(name)
+        if plugin is None or plugin is bound:
+            continue
+        try:
+            turn = plugin.parse_turn(llm_text)
+        except Exception:
+            continue  # 타 파서의 예외가 구제 시도를 죽이면 안 됨
+        # 수용 게이트: stage 1(정상)·2(수리)만 — stage 3(regex 긁기)은
+        # 키메라(예4 실측)에서 action 이름만 긁고 input 을 잃는 저신뢰
+        # 조각이라 cross-format 추측으로는 배제. op 는 action + dict input
+        # 둘 다 있어야 유효 (input 없는 조각 op 로 도구를 잘못 쏘지 않게).
+        if turn.parse_stage in (1, 2) and any(
+            op.action and isinstance(op.action_input, dict) for op in turn.ops
+        ):
+            return turn, name
+    return None
+
+
 def resolve_wire_format(
     *,
     explicit: str | None,
@@ -177,6 +220,7 @@ __all__ = [
     "list_names",
     "wire_format_for_model",
     "resolve_wire_format",
+    "try_foreign_parse",
     "all_system_user_prefixes",
 ]
 
