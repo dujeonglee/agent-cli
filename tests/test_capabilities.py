@@ -231,7 +231,7 @@ class TestPromptModelCapabilities:
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
 
-        inputs = iter(["131072", "y", "8192"])
+        inputs = iter(["131072", "y", "8192", ""])  # 마지막 "" = wire format auto
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         caps = _prompt_model_capabilities("test-model")
@@ -270,6 +270,73 @@ class TestPromptModelCapabilities:
 
         caps = _prompt_model_capabilities("test-model")
         assert caps is None
+
+
+class TestPromptWireFormatBinding:
+    """바인딩 UX ② (multi-wire-format): 대화형 모델 등록 지점에 wire format
+    질문 한 줄 — 엔트리 생성 위치 = 발생 원인 위치. auto/빈 입력 = 필드
+    미기록 (해석 체인 위임), 등록된 이름만 수용 (오타는 재질문)."""
+
+    def _saved_entry(self, tmp_path):
+        import json
+
+        saved = json.loads((tmp_path / "models.json").read_text())
+        return saved["models"]["test-model"]
+
+    def test_named_format_saved_as_binding(self, monkeypatch, tmp_path):
+        from agent_cli.main import _prompt_model_capabilities
+        import agent_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        inputs = iter(["131072", "n", "xml_fc"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        caps = _prompt_model_capabilities("test-model")
+        assert caps is not None
+        assert self._saved_entry(tmp_path)["wire_format"] == "xml_fc"
+
+    def test_auto_omits_field(self, monkeypatch, tmp_path):
+        from agent_cli.main import _prompt_model_capabilities
+        import agent_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        inputs = iter(["4096", "n", "auto"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        assert _prompt_model_capabilities("test-model") is not None
+        assert "wire_format" not in self._saved_entry(tmp_path)
+
+    def test_empty_omits_field(self, monkeypatch, tmp_path):
+        from agent_cli.main import _prompt_model_capabilities
+        import agent_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        monkeypatch.setattr("builtins.input", lambda _: "")
+
+        assert _prompt_model_capabilities("test-model") is not None
+        assert "wire_format" not in self._saved_entry(tmp_path)
+
+    def test_unknown_name_reprompts_until_valid(self, monkeypatch, tmp_path):
+        from agent_cli.main import _prompt_model_capabilities
+        import agent_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        inputs = iter(["4096", "n", "xml_fx", "md_array"])  # 오타 → 재질문
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        assert _prompt_model_capabilities("test-model") is not None
+        assert self._saved_entry(tmp_path)["wire_format"] == "md_array"
+
+    def test_case_normalized(self, monkeypatch, tmp_path):
+        from agent_cli.main import _prompt_model_capabilities
+        import agent_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
+        inputs = iter(["4096", "n", "XML_FC"])
+        monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+        assert _prompt_model_capabilities("test-model") is not None
+        assert self._saved_entry(tmp_path)["wire_format"] == "xml_fc"
 
 
 class TestProgressCallback:

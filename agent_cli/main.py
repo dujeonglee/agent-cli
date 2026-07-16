@@ -825,9 +825,38 @@ def _prompt_model_capabilities(model: str):
             thinking_format=thinking_format,
         )
 
+        # Wire format 바인딩 (바인딩 UX ② — multi-wire-format): 엔트리가
+        # 대화형으로 생성되는 바로 이 지점에서 선택. auto/빈 입력 = 필드
+        # 미기록(해석 체인 위임 — 기본 md_array), 등록된 이름만 수용
+        # (D2: 조용한 오타 폴백 금지 — 재질문).
+        from agent_cli.wire_formats import list_names
+
+        names = list_names()
+        wf_input = (
+            renderer.prompt_user(
+                f"  Wire format ({' / '.join(['auto'] + names)}) [auto]: ",
+                multiline=False,
+            )
+            .strip()
+            .lower()
+        )
+        while wf_input and wf_input != "auto" and wf_input not in names:
+            console.print(
+                f"[{C['muted']}]  Unknown wire format '{wf_input}'. "
+                f"Available: auto, {', '.join(names)}[/]"
+            )
+            wf_input = (
+                renderer.prompt_user("  Wire format [auto]: ", multiline=False)
+                .strip()
+                .lower()
+            )
+
         from agent_cli.providers.capabilities import caps_to_entry
 
-        save_model_entry(model, caps_to_entry(caps))
+        entry = caps_to_entry(caps)
+        if wf_input and wf_input != "auto":
+            entry["wire_format"] = wf_input
+        save_model_entry(model, entry)
         console.print(f"[{C['muted']}]Saved to ~/.agent-cli/models.json[/]\n")
         return caps
     except (EOFError, KeyboardInterrupt, ValueError):

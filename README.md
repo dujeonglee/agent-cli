@@ -677,7 +677,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
   - Thinking 감지: 프로브 프롬프트 → `message.thinking` 필드 또는 `<think>` 태그 확인 (하드코딩 없이 자동)
   - Structured-output 감지: `response_format={"type":"json_object"}` 프로브로 `supports_structured_output`, 이어서 strict `json_schema` 프로브로 `supports_strict_schema` 판정. 산문이 자연스러운 프롬프트로 요청해 반환값이 유효 JSON(스키마 준수)일 때만 지원으로 인정(서버가 `response_format`을 무시하는 경우 오탐 방지). 프로브 실패 시 보수적으로 미지원 처리.
   - 자동 산출 규칙: `max_output = context_window // 4`. context window가 16K(`MIN_CONTEXT_WINDOW`) 미만이면 `UnsupportedModelError`로 거부.
-- 런타임 감지도 실패하면 사용자에게 대화형으로 context window, thinking 지원 여부를 질문 → `~/.agent-cli/models.json`에 저장
+- 런타임 감지도 실패하면 사용자에게 대화형으로 context window, thinking 지원 여부, **wire format 바인딩**(auto = 기본 해석 체인; 등록된 포맷명만 수용, 오타는 재질문)을 질문 → `~/.agent-cli/models.json`에 저장
 - 이미 등록된 모델은 덮어쓰지 않음 (사용자 설정 보호)
 - 다음 실행 시 저장된 설정에서 로딩 (프로브/질문 재실행 없음)
 
@@ -690,7 +690,7 @@ System prompt에 자동으로 prompt cache(`cache_control: ephemeral`)가 적용
 | `thinking_budget` | Thinking 토큰 예산 |
 | `thinking_format` | Thinking 블록 태그 (`"think"`, `""`) |
 | `supports_strict_schema` | (현재 미사용, dormant) strict JSON Schema 표식 — 현재 어떤 provider도 이 플래그로 동작 분기 안 함 |
-| `wire_format` | (선택) 이 모델의 wire format 바인딩 (`md_array`, `react` 등). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--response-format` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 자동 감지가 쓰는 필드가 아니라 손으로 추가하며, 자동 감지 refresh 에도 보존됩니다 |
+| `wire_format` | (선택) 이 모델의 wire format 바인딩 (`md_array`, `react` 등). 모델마다 학습된 tool-call 포맷 프라이어가 다를 때 사용 — 지정하면 `--response-format` 미지정 시 이 포맷으로 실행되고, **서브에이전트도 자기 모델의 바인딩을 따릅니다** (프로필 `model` 오버라이드 포함 — main 과 다른 포맷으로 도는 서브에이전트 가능). 미등록 이름은 부트/spawn 시 즉시 실패. 설정 경로: 손편집 / 대화형 모델 등록 프롬프트("Wire format [auto]") / agent-board ⚙ admin 모델 행 드롭다운. 자동 감지 refresh 에도 보존됩니다 |
 
 **설정 우선순위**: `.agent-cli/models.json` (프로젝트) > `~/.agent-cli/models.json` (전역) > `default_models.json` (패키지) > 런타임 감지 > 보수적 기본값
 
