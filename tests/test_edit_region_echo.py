@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import re
 
-from agent_cli.tools.edit_file import (
+from agent_cli.tools._change_echo import (
     _MAX_REGION_LINES,
     _REGION_HEADER,
     _REGION_TRUNCATION_PREFIX,
     _updated_region_echo,
+)
+from agent_cli.tools.edit_file import (
     apply_edits_batch,
     tool_edit_file,
 )

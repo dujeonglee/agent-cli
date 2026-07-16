@@ -766,7 +766,7 @@ LLM이 사용할 수 있는 도구 목록:
 
 편집이 성공하면 결과에 **unified diff** 와 함께 **`Updated region` 블록**(바뀐 영역 ±3줄의 fresh hashline 태그)이 붙습니다 — 방금 편집한 자리를 이어서 다시 편집할 때 `read_file` 재왕복 없이 이 ref 를 바로 쓸 수 있습니다(`write_file` 의 hashline echo 와 같은 목적). 줄번호는 편집 후 실제 파일 기준(절대)이고, 파일 대부분을 갈아엎은 편집은 이 블록을 상한(~100줄)까지만 내보내고 나머지는 `read_file` 로 안내합니다.
 
-`edit_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). `write_file` 성공 시엔 작성한 content 가 **hashline(LINE#HASH:content)** 포맷으로 반환되어, `read_file` 없이 방금 쓴 파일을 바로 `edit_file` 로 수정할 수 있습니다 (write→edit 직결 — 작은 변경 시 전체 재작성 대신 부분 edit 유도). 또한 `write_file` 이 **기존 파일을 덮어쓰는데 바뀐 줄이 30% 미만**이면(작은 overwrite), 관찰에 *"~N% of lines changed … edit_file costs only the changed lines"* 넛지가 붙고 **echo 가 파일 전체 hashline 대신 바뀐 줄만의 diff** 로 바뀝니다 — churn 케이스의 컨텍스트 점유를 줄이고 모델에게 "edit 했어야 할 줄"을 보여줍니다(쓰기는 정상 수행, 거부 아님). 신규 파일·전면 재작성(≥30%)은 hashline echo 를 유지합니다(write→edit 직결용).
+`edit_file` 성공 시 응답에 **변경 사항 unified diff** 가 포함됩니다 (`+` 녹색 / `-` 빨강, 100줄 초과 시 truncate). `write_file` 성공 시엔 작성한 content 가 **hashline(LINE#HASH:content)** 포맷으로 반환되어, `read_file` 없이 방금 쓴 파일을 바로 `edit_file` 로 수정할 수 있습니다 (write→edit 직결 — 작은 변경 시 전체 재작성 대신 부분 edit 유도). 또한 `write_file` 이 **기존 파일을 덮어쓰는데 바뀐 줄이 30% 미만**이면(작은 overwrite), 관찰에 *"~N% of lines changed … edit_file costs only the changed lines"* 넛지가 붙고 **echo 가 파일 전체 hashline 대신 `unified diff` + 바뀐 영역의 fresh hashline 태그(`Updated region` 블록)** 로 바뀝니다 — `edit_file` 성공 echo 와 **동일한 조립**(공용 `render_change_echo`)이라, churn 케이스의 컨텍스트 점유를 줄이면서도 "edit 했어야 할 줄"을 보여주고 **후속 `edit_file` 을 `read_file` 재왕복 없이** 바로 할 수 있는 ref 를 함께 줍니다(쓰기는 정상 수행, 거부 아님). 신규 파일·전면 재작성(≥30%)은 파일 전체 hashline echo 를 유지합니다(write→edit 직결용, diff 대상 없음).
 
 ### complete — 작업 완료
 

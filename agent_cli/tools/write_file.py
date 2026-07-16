@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 from pathlib import Path
 
-from agent_cli.tools._diff import format_diff
+from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
 from agent_cli.tools.read_file import format_hashlines
 from agent_cli.tools.result import ToolResult
@@ -15,10 +15,12 @@ from agent_cli.tools.result import ToolResult
 # — re-writing re-sends the whole file into context each turn. Below this
 # changed-line fraction the write counts as a "small overwrite", which drives
 # BOTH effects in one decision: (1) a one-line steering nudge, and (2) the
-# observation echoes a DIFF (just the changed lines) instead of the whole
-# file's hashlines, so the echo for the churn case shrinks to ~diff size.
-# Both are observation-side (no mimicry); the write itself is unchanged. Tuned
-# from a real session: small edits sat at 2-3% changed, full rewrites at 100%+.
+# observation echoes a DIFF + fresh hashline refs for the changed region
+# (render_change_echo, shared with edit_file) instead of the whole file's
+# hashlines, so the churn-case echo shrinks to ~diff+region size while still
+# handing the model the refs to edit_file next. Both are observation-side (no
+# mimicry); the write itself is unchanged. Tuned from a real session: small
+# edits sat at 2-3% changed, full rewrites at 100%+.
 _REWRITE_NUDGE_RATIO = 0.30
 
 
@@ -74,8 +76,10 @@ def tool_write_file(args: dict) -> ToolResult:
     same file rewritten in full 4× in one session, edit_file used 0×).
 
     A SMALL overwrite (< 30% lines changed) is the exception: instead of the
-    full hashline echo it shows a diff of just the changed lines (paired with
-    the steering nudge) — the churn-case echo shrinks to ~diff size.
+    full hashline echo it shows a diff plus fresh hashline refs for the changed
+    region (``render_change_echo``, shared with edit_file), paired with the
+    steering nudge — the churn-case echo shrinks to ~diff+region size while
+    still handing the model the refs to edit_file next.
     """
 
     path = args.get("path", "")
@@ -95,10 +99,12 @@ def tool_write_file(args: dict) -> ToolResult:
         if nudge:
             header += f"\n{nudge}"
         if is_small:
-            # Small overwrite: echo a diff of the changed lines (small, and it
-            # shows the model exactly what it should have edit_file'd) instead
-            # of dumping every line as a hashline.
-            body = format_diff(old_content, content, path)
+            # Small overwrite: echo a diff of the changed lines PLUS fresh
+            # hashline refs for the changed region (shared with edit_file via
+            # render_change_echo) — shows the model exactly what it should have
+            # edit_file'd AND gives it the refs to do so next without a
+            # read_file. Far cheaper than dumping every line as a hashline.
+            body = render_change_echo(old_content, content, path)
             msg = f"{header}\n{body}" if body else header
         else:
             # New file or genuine rewrite: full hashline echo — the same format

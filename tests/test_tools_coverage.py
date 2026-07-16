@@ -193,11 +193,13 @@ class TestWriteFileRewriteNudge:
 
 class TestWriteFileSmallOverwriteDiff:
     """When a write_file is a SMALL overwrite (same condition as the nudge,
-    < 30% lines changed), its observation echoes a DIFF (just the changed
-    lines) instead of the whole file's hashlines — the echo for the churn
-    case shrinks to ~diff size. New files / genuine rewrites keep the full
-    hashline echo (write→edit-direct preserved; a diff would ≈ the file).
-    Observation-side only → no mimicry; the write itself is unchanged."""
+    < 30% lines changed), its observation echoes a DIFF plus fresh hashline
+    refs for the CHANGED REGION (shared with edit_file via render_change_echo)
+    instead of the whole file's hashlines — the echo shrinks to ~diff+region
+    size while still giving the model refs to edit_file next without a re-read.
+    New files / genuine rewrites keep the full hashline echo (write→edit-direct
+    preserved; a diff would ≈ the file). Observation-side only → no mimicry;
+    the write itself is unchanged."""
 
     def _lines(self, n, label="x"):
         return "".join(f"{label} line {i}\n" for i in range(n))
