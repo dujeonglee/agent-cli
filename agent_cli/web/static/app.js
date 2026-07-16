@@ -567,6 +567,18 @@
     scrollToBottom();
   }
 
+  // Agent mail-arrival hint: a live "📨 회신 도착" system line (❓ for a
+  // question). Transient — not replayed on reconnect (mirrors the compaction
+  // marker: it only means something at the instant it arrives). The reply
+  // itself is delivered as main's next observation; this is just the cue.
+  function renderAgentMail(d) {
+    const line = el("div", ["card", "card-sys"]);
+    line.appendChild(el("span", ["sys-icon"], d.kind === "question" ? "❓" : "📨"));
+    line.appendChild(el("span", ["sys-text"], d.text || "에이전트 회신 도착"));
+    appendToTimeline(line, d.task_id);
+    scrollToBottom();
+  }
+
   // ── Card renderers ─────────────────────────
   function renderUserMessage(content, ts) {
     const card = el("div", ["card", "card-user"]);
@@ -1233,6 +1245,10 @@
 
   es.addEventListener("compaction", function (e) {
     renderCompaction(JSON.parse(e.data));
+  });
+
+  es.addEventListener("agent_mail", function (e) {
+    renderAgentMail(JSON.parse(e.data));
   });
 
   // Application-level turn/tool errors arrive as ``turn_error`` — NOT

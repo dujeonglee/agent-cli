@@ -499,6 +499,16 @@ class TestStaticUI:
         css = client.get("/static/style.css").text
         assert "#maxagents-input" in css
 
+    def test_agent_mail_hint_wired(self, server_and_client):
+        # 회신-도착 힌트 배선 계약 (v5.18.2): 백엔드가 전용 ``agent_mail``
+        # 이벤트를 내고(WebRenderer.agent_mail_hint) app.js 가 그걸 듣는다.
+        # 구 ``status`` 직접 호출은 프론트 리스너가 없어 웹에서 드롭됐던
+        # 갭의 봉합 — JS 는 엔진 미테스트라 이벤트명 드리프트를 여기서 고정.
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert 'addEventListener("agent_mail"' in js
+        assert "renderAgentMail" in js
+
     def test_agent_conversation_clear_wired(self, server_and_client):
         # 5.13 대화창 kill=정리 계약: 서버가 보내는 ``agent_cleared`` 를
         # app.js 가 받아 중계(tm-cleared)하고, 드로어 IIFE 가 그 key 의

@@ -972,6 +972,18 @@ class WebRenderer(Renderer):
             persistent=False,
         )
 
+    def agent_mail_hint(self, *, key: str, kind: str, text: str) -> None:
+        """상주 에이전트 회신/질문/사망 도착 힌트 — 프론트가 듣는 전용
+        이벤트. (기본 구현이 쓰는 ``status`` 이벤트엔 app.js 리스너가 없어
+        웹에선 드롭됐다.) **persistent=False**: 도착 순간에만 의미 있는 라이브
+        신호라 재접속 replay 에 안 실린다(지난 힌트 부활 방지 — compaction
+        마커와 동형). 배달 자체(회신을 main 관찰로 주입)는 별개 경로."""
+        self._emit(
+            "agent_mail",
+            {"key": key, "kind": kind, "text": text},
+            persistent=False,
+        )
+
     def compaction(
         self,
         *,

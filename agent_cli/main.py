@@ -1331,14 +1331,16 @@ def _agent_mail_notice(reply: dict) -> None:
     from agent_cli.render import get_renderer
 
     key = reply.get("key", "?")
-    if reply.get("kind") == "question":
+    kind = reply.get("kind", "reply")
+    if kind == "question":
         line = f"❓ 에이전트 {key} 질문 도착 (답변 대기 중)"
     else:
         line = f"📨 에이전트 {key} 회신 도착"
     try:
-        # status(state, message) — 시그니처 오호출이 try 에 삼켜져 알림이
-        # 조용히 죽어 있던 회귀의 수리 지점 (v4.60.1).
-        get_renderer().status("running", line)
+        # 전용 ``agent_mail`` 표면 — web 은 전용 이벤트로 프론트에 표시,
+        # CLI·커스텀 렌더러는 기본 구현이 status 로 위임(종전 동작 보존).
+        # 구 status 직접 호출은 web 프론트 리스너가 없어 드롭됐다(v5.18.2).
+        get_renderer().agent_mail_hint(key=key, kind=kind, text=line)
     except Exception:
         pass  # 알림은 best-effort
 

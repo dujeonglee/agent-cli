@@ -1902,6 +1902,14 @@ class TestUnifiedMessagingV512:
         reg.shutdown_all()
 
 
+def _drain(conn):
+    """WebConnection 큐를 비우며 (event, data) 튜플 리스트로 반환."""
+    out = []
+    while not conn.queue.empty():
+        out.append(conn.queue.get_nowait())
+    return out
+
+
 class TestRendererSignatureRegression:
     """status() 오호출이 (1) web 부트에서 worker 를 죽이고 (2) 📨 알림을
     try/except 가 조용히 삼키던 사고 — mock 이 아닌 **실렌더러**로 호출을
@@ -1939,8 +1947,9 @@ class TestRendererSignatureRegression:
         _announce_agent_boot(r, revived=1, auto=1)  # TypeError 면 즉사
 
     def test_reply_notice_actually_emits_on_web(self):
-        # try/except 가 시그니처 에러를 삼켜 알림이 조용히 죽어 있었다 —
-        # 실렌더러에서 이벤트가 실제로 나가는지 검사.
+        # 도착 힌트는 전용 ``agent_mail`` 이벤트로 나간다(5.18.2) — 구
+        # ``status`` 는 프론트 리스너가 없어 드롭됐다. 실렌더러에서 이벤트가
+        # 실제로 나가는지 + 구조 필드(key/kind/text)를 검사.
         from unittest.mock import patch
 
         from agent_cli.main import _agent_mail_notice
@@ -1952,12 +1961,46 @@ class TestRendererSignatureRegression:
         with patch("agent_cli.render.get_renderer", return_value=r):
             _agent_mail_notice({"kind": "reply", "key": "agt-1"})
             _agent_mail_notice({"kind": "question", "key": "agt-2"})
-        events = []
-        while not conn.queue.empty():
-            events.append(conn.queue.get_nowait())
-        texts = [str(d) for e, d in events if e == "status"]
-        assert any("📨" in x and "agt-1" in x for x in texts), texts
-        assert any("❓" in x and "agt-2" in x for x in texts), texts
+        events = [(e, d) for e, d in _drain(conn)]
+        mail = [d for e, d in events if e == "agent_mail"]
+        # 구 status 경로로는 안 나간다(프론트 미수신 경로 폐기)
+        assert not any(e == "status" for e, _ in events), events
+        assert any(
+            d["kind"] == "reply" and d["key"] == "agt-1" and "📨" in d["text"]
+            for d in mail
+        ), mail
+        assert any(
+            d["kind"] == "question" and d["key"] == "agt-2" and "❓" in d["text"]
+            for d in mail
+        ), mail
+
+    def test_agent_mail_hint_is_transient_on_web(self):
+        # 도착 순간에만 의미 있는 라이브 신호 → persistent 버퍼에 안 쌓인다
+        # (재접속 replay 로 지난 힌트가 되살아나지 않도록, compaction 과 동형).
+        from agent_cli.render.web import WebConnection, WebRenderer
+
+        r = WebRenderer()
+        conn = WebConnection(id="c")
+        r.register_connection(conn)
+        before = r._persistent_count
+        r.agent_mail_hint(key="agt-1", kind="reply", text="📨 도착")
+        assert r._persistent_count == before  # transient — 버퍼 무증가
+        assert any(e == "agent_mail" for e, _ in _drain(conn))
+
+    def test_agent_mail_hint_default_delegates_to_status(self):
+        # 커스텀·CLI 렌더러는 override 안 함 → 기본 구현이 status 로 위임해
+        # 종전 동작 보존(MinimalRenderer 는 콘솔에 라인 출력).
+        import io
+
+        from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
+
+        buf = io.StringIO()
+        r = MinimalRenderer(Console(file=buf, force_terminal=False))
+        r.agent_mail_hint(key="agt-9", kind="reply", text="📨 에이전트 agt-9 회신 도착")
+        out = buf.getvalue()
+        assert "📨" in out and "agt-9" in out, out
 
 
 # ── mode:"resume" — 죽은 teammate 부활 (v4.61.0) ──

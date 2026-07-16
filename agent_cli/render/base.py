@@ -295,6 +295,16 @@ class Renderer(ABC):
         """한 teammate 의 대화 기록을 표면에서 정리 (5.13, kill 시). web 은
         replay 버퍼 정리 + 라이브 창 비움, CLI 는 no-op."""
 
+    def agent_mail_hint(self, *, key: str, kind: str, text: str) -> None:
+        """상주 에이전트 mailbox 도착 힌트 (배달과 별개의 라이브 신호 —
+        도착 순간에만 의미). ``kind``: "reply"|"question"|"died" 등,
+        ``text``: 이미 조립된 사람용 한 줄. **기본 구현은 ``status`` 로 위임**
+        해 CLI·커스텀 렌더러의 종전 동작을 보존한다. web 은 이 메서드를
+        전용 transient ``agent_mail`` 이벤트로 override 해 프론트 인라인
+        라인으로 표시 — ``status`` 이벤트엔 프론트 리스너가 없어 웹에선
+        드롭됐기 때문(필수 구현 아님: 기본값 존재)."""
+        self.status("running", text)
+
     # ── Abstract render methods ──────────────────────
 
     @abstractmethod
