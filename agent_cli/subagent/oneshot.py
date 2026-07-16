@@ -136,10 +136,10 @@ def _run_single(
     run_dir_name = _generate_run_dir_name(agent_name or "task")
     run_dir = parent_session_dir / run_dir_name
 
-    # Context + run_loop — 공용 러너 (subagent/runner.py). wire_format·
-    # 예산 상속, fork 히스토리 복사, 인스펙터 스코프 등록(v4.52.0)이
-    # 전부 러너 안이다.
-    ctx, ctx_error = create_subagent_ctx(context_mode, parent_ctx, run_dir)
+    # Context + run_loop — 공용 러너 (subagent/runner.py). wire_format
+    # 해석(effective model 바인딩 > 부모 상속)·예산 상속, fork 히스토리
+    # 복사, 인스펙터 스코프 등록(v4.52.0)이 전부 러너 안이다.
+    ctx, ctx_error = create_subagent_ctx(context_mode, parent_ctx, run_dir, model=model)
     if ctx is None:
         return ToolResult(False, error=f"Delegation rejected: {ctx_error}")
 

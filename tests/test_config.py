@@ -136,6 +136,36 @@ class TestSaveModelEntry:
         assert data["models"]["gemma4:31b"]["context_window"] == 131072
         assert data["models"]["gemma4:31b"]["supports_thinking"] is True
 
+    def test_refresh_preserves_hand_added_keys(self, tmp_path, monkeypatch):
+        """auto-detected refresh 는 프로브 필드만 갱신 — 사용자가 손으로
+        추가한 키(wire_format 바인딩 등)는 보존 (multi-wire-format §7-A1)."""
+        target = tmp_path / "models.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "qwen5:35b": {
+                            "context_window": 4096,
+                            "wire_format": "md_array",  # 손으로 추가한 바인딩
+                            "_auto_detected": True,
+                        }
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(_config, "_GLOBAL_MODELS_PATH", target)
+        monkeypatch.setattr(_config, "_SEARCH_PATHS", [target])
+
+        result = save_model_entry(
+            "qwen5:35b",
+            {"context_window": 131072, "_auto_detected": True},
+        )
+
+        assert result is True
+        data = json.loads(target.read_text())
+        assert data["models"]["qwen5:35b"]["context_window"] == 131072
+        assert data["models"]["qwen5:35b"]["wire_format"] == "md_array"  # 보존
+
     def test_no_overwrite_manual_entry(self, tmp_path, monkeypatch):
         """Manually registered entries (no _auto_detected) must be protected."""
         target = tmp_path / "models.json"

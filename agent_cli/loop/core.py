@@ -92,13 +92,17 @@ class AgentLoop:
         message_handler=None,
         peer_agents_section: str = "",
     ):
-        # Wire format plugin — ReAct by default. Centralizes the
-        # parser, recovery wording, prompt section, and lifecycle hooks
-        # so adding a new format means dropping a file in
-        # ``agent_cli/wire_formats/`` and re-running with
+        # Wire format plugin. Centralizes the parser, recovery wording,
+        # prompt section, and lifecycle hooks so adding a new format means
+        # dropping a file in ``agent_cli/wire_formats/`` and re-running with
         # ``--response-format <name>``.
+        #
+        # None 폴백은 ctx-우선 (I2 불변식: loop cfg.wire_format ≡
+        # ctx.wire_format). 종전엔 전역 기본으로 떨어져, 비기본 포맷
+        # 세션의 서브에이전트가 ctx(히스토리 렌더)와 loop(파서·프롬프트)
+        # 포맷이 어긋나는 split-brain 이었다 (G2, multi-wire-format §3).
         if wire_format is None:
-            wire_format = _get_wire_format()
+            wire_format = ctx.wire_format if ctx is not None else _get_wire_format()
         # Web multi-user intake. ``query_author`` = nickname of whoever sent the
         # run-STARTING message (None for CLI / single user). ``dequeue_user_message``
         # pulls ONE queued message at each turn boundary; ``route_message(text)``

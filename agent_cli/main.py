@@ -12,6 +12,7 @@ from typing import Optional
 
 import typer
 from dataclasses import dataclass
+import dataclasses
 
 from agent_cli.config import get_provider_defaults
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT, AGENT_DEFAULT_TIMEOUT
@@ -23,7 +24,10 @@ from agent_cli.providers import (
     UnsupportedModelError,
 )
 from agent_cli.render import C, console, get_renderer
-from agent_cli.wire_formats import DEFAULT_WIRE_FORMAT, get as _get_wire_format
+from agent_cli.wire_formats import (
+    get as _get_wire_format,
+    resolve_wire_format as _resolve_wire_format,
+)
 
 app = typer.Typer(
     name="agent-cli",
@@ -926,21 +930,30 @@ def _bootstrap_provider(
     model,
     base_url,
     api_key,
-    response_format: str,
+    response_format: str | None,
     max_context_tokens: int,
     *,
+    session_format: str | None = None,
     quiet: bool = False,
 ) -> SessionBootstrap:
-    """provider 셋업 → wire format fail-fast → 예산 폴백(70% 통일 공식)."""
+    """provider 셋업 → wire format 해석 fail-fast → 예산 폴백(70% 통일 공식).
+
+    wire format 해석 체인 (multi-wire-format Phase 1): 명시
+    ``--response-format`` > resume 세션 메타(``session_format``) >
+    models.json 모델 바인딩 > DEFAULT. unknown 이름은 어느 소스든
+    세션 생성 전에 fail-fast (D2).
+    """
     llm_provider, capabilities, resolved_model, resolved_url, resolved_key, name = (
         _setup_provider(provider, model, base_url, api_key, quiet=quiet)
     )
-    # Resolve the wire-format plugin up front so an unknown name fails
-    # before the session is even created.
     try:
-        wire_format_plugin = _get_wire_format(response_format)
+        wire_format_plugin = _resolve_wire_format(
+            explicit=response_format,
+            session_format=session_format,
+            model=resolved_model,
+        )
     except KeyError as exc:
-        console.print(f"[{C['error']}]{exc}[/]")
+        console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
         raise typer.Exit(2) from exc
     if max_context_tokens <= 0:
         from agent_cli.context.manager import compute_token_budget
@@ -1045,10 +1058,10 @@ def run(
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
-    response_format: str = typer.Option(
-        DEFAULT_WIRE_FORMAT,
+    response_format: Optional[str] = typer.Option(
+        None,
         "--response-format",
-        help="Wire format plugin name (default: md_array — markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-in: react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > md_array (markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-in: react. Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
     resume: str = typer.Option(
         "",
@@ -1076,10 +1089,17 @@ def run(
         raise typer.Exit(0)
 
     # C4: run/web 공용 부트스트랩 — provider 6-튜플 + wire format fail-fast +
-    # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저.
+    # 예산 폴백(70% 통일 공식). resume pre-check 는 핸드셰이크보다 먼저 —
+    # 그 메타의 response_format 이 해석 체인 순위 2 (명시 플래그 다음).
     session_resumed = _load_resume_session(resume) if resume else None
     boot = _bootstrap_provider(
-        provider, model, base_url, api_key, response_format, max_context_tokens
+        provider,
+        model,
+        base_url,
+        api_key,
+        response_format,
+        max_context_tokens,
+        session_format=(session_resumed.response_format if session_resumed else None),
     )
     llm_provider = boot.llm_provider
     capabilities = boot.capabilities
@@ -1102,7 +1122,10 @@ def run(
     if session_resumed is not None:
         session = session_resumed
     else:
-        session = create_session(response_format=response_format)
+        session = create_session(response_format=boot.wire_format.name)
+    # 활성 포맷을 메타에 기록 — 명시 플래그로 전환한 resume 도 다음
+    # resume 가 이어받는다 (meta = 마지막 실행의 truth).
+    session.response_format = boot.wire_format.name
     save_meta(session)
     ctx = _build_context(session, boot, resume=session_resumed is not None)
 
@@ -1432,6 +1455,10 @@ def _maybe_resume_recent(workspace: str, response_format: str, prompt_fn) -> tup
     format as the ``sessions`` command) and ask [y/N]. 'y' resumes it; anything
     else (incl. Enter) starts a new session.
 
+    ``response_format`` 은 **해석 완료된** 플러그인 이름 — 새 세션 생성
+    branch 의 메타 기록용. resume branch 의 포맷 재해석(기록 포맷 존중)은
+    caller(web) 책임 (부트 후 결정되는 경로라 여기선 알 수 없다).
+
     ``prompt_fn`` is the y/N reader — ``input`` on a TTY, ``None`` when
     non-interactive (pipes / cron), in which case we never prompt and always
     start new. Returns ``(SessionMeta, is_resume)``.
@@ -1629,10 +1656,12 @@ def web(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
-    response_format: str = typer.Option(
-        DEFAULT_WIRE_FORMAT,
+    response_format: Optional[str] = typer.Option(
+        None,
         "--response-format",
-        help="Wire format plugin name (default: md_array).",
+        help="Wire format plugin name. Unset resolves: resumed session's "
+        "recorded format > models.json per-model 'wire_format' binding > "
+        "md_array.",
     ),
     host: str = typer.Option(
         "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"
@@ -1712,7 +1741,8 @@ def web(
     from agent_cli.render import set_renderer
 
     # C4: run/web 공용 부트스트랩. --resume pre-check(fail-fast)가 provider
-    # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거).
+    # 핸드셰이크보다 먼저 — 로드된 SessionMeta 를 그대로 재사용(재로드 제거),
+    # 그 메타의 response_format 이 해석 체인 순위 2 (명시 플래그 다음).
     session_resumed = _load_resume_session(resume) if resume else None
     boot = _bootstrap_provider(
         provider,
@@ -1721,6 +1751,7 @@ def web(
         api_key,
         response_format,
         max_context_tokens,
+        session_format=(session_resumed.response_format if session_resumed else None),
         quiet=True,
     )
     llm_provider = boot.llm_provider
@@ -1755,10 +1786,26 @@ def web(
         # No --resume: offer the most recent session ([y/N]) or start new.
         prompt_fn = input if sys.stdin.isatty() else None
         session, is_resume = _maybe_resume_recent(
-            os.getcwd(), response_format, prompt_fn
+            os.getcwd(), wire_format_plugin.name, prompt_fn
         )
         if is_resume:
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
+            # 대화형 resume 는 부트 **후에** 결정된다 — 명시 플래그가 없으면
+            # 기록된 포맷으로 재해석 (--resume 경로의 체인 순위 2 와 동형).
+            if response_format is None and session.response_format != (
+                wire_format_plugin.name
+            ):
+                try:
+                    wire_format_plugin = _get_wire_format(session.response_format)
+                except KeyError as exc:
+                    console.print(
+                        f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]"
+                    )
+                    raise typer.Exit(2) from exc
+                boot = dataclasses.replace(boot, wire_format=wire_format_plugin)
+    # 활성 포맷을 메타에 기록 — 명시 플래그로 전환한 resume 도 다음
+    # resume 가 이어받는다 (meta = 마지막 실행의 truth).
+    session.response_format = wire_format_plugin.name
     save_meta(session)
     ctx = _build_context(session, boot, resume=is_resume)
 

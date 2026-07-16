@@ -87,6 +87,54 @@ def list_names() -> list[str]:
     return sorted(_registry)
 
 
+# ── 모델별 바인딩 (Phase 1 — docs/multi-wire-format/DESIGN.md) ─
+
+
+def wire_format_for_model(model: str) -> str | None:
+    """models.json 모델 엔트리의 ``wire_format`` 바인딩 이름 (없으면 None).
+
+    바인딩은 capabilities(모델이 뭘 할 수 있나)가 아니라 "우리가 어떤
+    shape 로 말할까"라 ``ModelCapabilities`` 에 태우지 않고 모델명-키로
+    직접 조회한다 — role md 의 model 오버라이드 경로는 capabilities 를
+    재해석하지 않으므로, dataclass 필드로는 그 경로에 닿지 않는다.
+    이름의 등록 여부는 여기서 검증하지 않는다(:func:`resolve_wire_format`
+    / caller 의 ``get()`` 이 fail-fast 담당).
+    """
+    if not model:
+        return None
+    from agent_cli.config import get_model_entry
+
+    entry = get_model_entry(model)
+    if not entry:
+        return None
+    binding = entry.get("wire_format")
+    return binding if isinstance(binding, str) and binding else None
+
+
+def resolve_wire_format(
+    *,
+    explicit: str | None,
+    session_format: str | None,
+    model: str = "",
+) -> WireFormat:
+    """해석 체인: 명시 플래그 > resume 세션 메타 > 모델 바인딩 > DEFAULT.
+
+    - ``explicit``: 사용자가 직접 준 ``--response-format`` (미지정 = None).
+      사용자의 말이 항상 최우선 (D1).
+    - ``session_format``: resume 세션 메타의 ``response_format`` — 세션이
+      그 포맷으로 축적한 transcript 와의 정합 우선. 바인딩이 나중에
+      바뀌어도 기존 세션은 기록된 포맷으로 안정 resume (새 바인딩은
+      새 세션부터).
+    - ``model``: 해석된 모델명 — models.json 바인딩 조회용.
+
+    unknown 이름은 어느 소스든 ``KeyError`` (D2: 조용한 폴백은 "바인딩
+    됐다고 믿는" 오진을 만든다 — fail-fast). 전부 None 이면
+    ``DEFAULT_WIRE_FORMAT`` — 종전과 바이트 동일 경로.
+    """
+    name = explicit or session_format or wire_format_for_model(model)
+    return get(name)
+
+
 # ── Format-agnostic system-injected user-message prefixes ─────
 # Used by ``all_system_user_prefixes`` below. These three are emitted
 # by code paths that don't belong to any single wire format:
@@ -127,6 +175,8 @@ __all__ = [
     "register",
     "get",
     "list_names",
+    "wire_format_for_model",
+    "resolve_wire_format",
     "all_system_user_prefixes",
 ]
 
