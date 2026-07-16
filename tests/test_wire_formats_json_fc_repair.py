@@ -1,4 +1,7 @@
-"""md_array wire format — parser, completion (`complete` op), history round-trip.
+"""json_fc wire format — 수리 기계·completion·history round-trip (md_array 포팅).
+
+md_array 시절 실측 수리 케이스 전량을 신 셰이프(산문 + bare 배열)로 포팅 —
+body 가 동일하므로 수리 기계는 무변경 승계 (PHASE4).
 
 Flat multi-op arrays parse at 100% (the shape the omlx bakeoffs measured,
 DESIGN §3). Completion is an explicit `complete` op — the proven
@@ -18,14 +21,14 @@ from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.wire_formats import get as get_wire_format
 
-WF = get_wire_format("md_array")
+WF = get_wire_format("json_fc")
 
 
 def _wire(thought: str, action_body: str | None) -> str:
-    out = f"## Thought\n{thought}"
-    if action_body is not None:
-        out += f"\n\n## Action\n{action_body}"
-    return out
+    # 캐노니컬 셰이프: 산문 thought + bare op 배열 (헤더 없음 — PHASE4)
+    if action_body is None:
+        return thought
+    return f"{thought}\n\n{action_body}"
 
 
 class TestFlags:
@@ -56,7 +59,7 @@ class TestFlags:
     def test_registered(self):
         from agent_cli.wire_formats import list_names
 
-        assert "md_array" in list_names()
+        assert "json_fc" in list_names()
 
 
 class TestParseTurnWork:
@@ -113,7 +116,8 @@ class TestParseTurnWork:
         assert [(o.action, o.action_input) for o in t.ops] == [
             ("read_file", {"path": "mgt.c"})
         ]
-        assert t.parse_stage == 1
+        # PHASE4: 헤더는 legacy 관용 — 파싱은 되지만 drift(stage 2) 계수
+        assert t.parse_stage == 2
 
     def test_action_first_no_thought(self):
         # `## Action` is the very first thing → no leading prose → thought None.
@@ -189,7 +193,7 @@ class TestAnonymousObjectRepair:
         assert t.parse_stage == 2
 
     def test_valid_json_unchanged_and_stage1(self):
-        from agent_cli.wire_formats.md_array import _repair_anonymous_op_objects
+        from agent_cli.wire_formats.json_fc import _repair_anonymous_op_objects
 
         valid = '[{"action": "read_file", "path": "a"}, {"action": "shell", "command": "ls"}]'
         # both variants leave valid JSON untouched
@@ -337,7 +341,7 @@ class TestTrailingThinkTagRepair:
 
 
 class TestCompletionAndNoAction:
-    """md_array completes via an explicit `complete` op (DESIGN Exp 8) — NOT
+    """json_fc completes via an explicit `complete` op (DESIGN Exp 8) — NOT
     thought-only. A thought-only / empty / no-op emission is therefore NOT a
     completion: it parses to 0 ops so the loop's NO_ACTION recovery nudges the
     model to call `complete` or emit work. ``terminal`` is never set."""
@@ -569,7 +573,7 @@ class TestFormatRulesBatchSteering:
             '{"action": "read_file", "path": "b.py"}, '
             '{"action": "read_file", "path": "c.py"}]'
         )
-        t = _get("md_array").parse_turn(ex)
+        t = _get("json_fc").parse_turn(ex)
         assert len(t.ops) == 3 and all(o.action == "read_file" for o in t.ops)
 
 
@@ -597,7 +601,7 @@ class TestRenderHelpers:
 
 
 class TestEndToEnd:
-    """Real md_array plugin driving the real loop (no mock format)."""
+    """Real json_fc plugin driving the real loop (no mock format)."""
 
     def _caps(self):
         return ModelCapabilities(
@@ -781,7 +785,7 @@ class TestAnonWrapMissingCloserRecovery:
         assert t.ops[0].action_input["content"] == "if (a) {}\n[{bad}]"
 
     def test_merge_helper_noop_on_single_array(self):
-        from agent_cli.wire_formats.md_array import _merge_reopened_op_arrays
+        from agent_cli.wire_formats.json_fc import _merge_reopened_op_arrays
 
         one = '[{"action": "shell", "command": "ls"}]'
         assert _merge_reopened_op_arrays(one) == (one, False)

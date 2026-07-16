@@ -1,7 +1,7 @@
 """Generalized missing-quote repair — a string value/key missing ONE quote
 (open or close) anywhere in the JSON.
 
-Covers the pure util (``repair_value_quotes``), md_array's recovery stage
+Covers the pure util (``repair_value_quotes``), json_fc's recovery stage
 (``_extract_op_json`` + ``parse_turn`` end-to-end), composition with the
 bracket-close repair, and the bail-to-retry boundary (a wrong guess must NOT
 force a bogus op — notably bare keywords like ``true`` are left alone).
@@ -10,12 +10,13 @@ force a bogus op — notably bare keywords like ``true`` are left alone).
 import json
 
 from agent_cli.wire_formats._json_repair import repair_value_quotes
-from agent_cli.wire_formats.md_array import _extract_op_json
+from agent_cli.wire_formats.json_fc import _extract_op_json
 import agent_cli.wire_formats as wf_mod
 
 
 def _action(body: str) -> str:
-    return f"## Thought\nx\n\n## Action\n{body}"
+    # 캐노니컬 셰이프 (PHASE4): 산문 thought + bare 배열
+    return f"x\n\n{body}"
 
 
 class TestRepairValueQuotesUtil:
@@ -72,7 +73,7 @@ class TestRepairValueQuotesUtil:
         assert not changed
 
 
-class TestMdArrayRecovery:
+class TestJsonFcRecovery:
     def test_extract_op_json_recovers_missing_open(self):
         parsed, repaired = _extract_op_json('[{"action": "read_file", "path": mgt.c"}]')
         assert repaired
@@ -90,7 +91,7 @@ class TestMdArrayRecovery:
         assert parsed == [{"action": "read_file", "path": "mgt.c"}]
 
     def test_parse_turn_end_to_end(self):
-        wf = wf_mod.get("md_array")
+        wf = wf_mod.get("json_fc")
         turn = wf.parse_turn(_action('[{"action": "read_file", "path": mgt.c"}]'))
         assert turn.parse_stage == 2  # recovered via repair
         assert [(o.action, o.action_input) for o in turn.ops] == [
@@ -98,12 +99,12 @@ class TestMdArrayRecovery:
         ]
 
     def test_parse_turn_valid_stays_stage_1(self):
-        wf = wf_mod.get("md_array")
+        wf = wf_mod.get("json_fc")
         turn = wf.parse_turn(_action('[{"action": "read_file", "path": "mgt.c"}]'))
         assert turn.parse_stage == 1  # no repair needed
 
     def test_unrepairable_stays_no_json(self):
         # bare keyword typo isn't a missing-quote case → NO_JSON, model retries
-        wf = wf_mod.get("md_array")
+        wf = wf_mod.get("json_fc")
         turn = wf.parse_turn(_action('[{"action":"complete","ok": ture}]'))
         assert turn.parse_stage == 0

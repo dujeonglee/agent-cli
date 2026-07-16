@@ -70,7 +70,7 @@ for n in ('react',)]"
 
 
 class _MultiOpFormat:
-    """Minimal stand-in for a multi-op wire format (md_array-style): flat
+    """Minimal stand-in for a multi-op wire format (json_fc-style): flat
     ``{action, plain params}`` ops, no per-tool batch, no `complete` tool.
     Duck-typed — the prompt layer only reads ``multi_op`` /
     ``exposes_complete`` and calls ``render_action_input``."""
@@ -134,7 +134,7 @@ class TestMultiOpPromptBranches:
 
     def test_read_file_guide_avoids_reads_plural_seed(self, section):
         # DESIGN Exp 8: the 27B composed `read_file` + the plural noun "reads"
-        # into the invented key `read_file_reads`. The md_array read_file guide
+        # into the invented key `read_file_reads`. The json_fc read_file guide
         # must not put "reads" as a plural noun next to the tool name — guard
         # the specific phrasings that were the seed.
         assert "independent reads" not in section
@@ -347,7 +347,7 @@ class TestBuildSystemPrompt:
 
         (The single-op shared-tail had a shell-batching nudge — "one shell
         call replaces many read turns" — that the multi-op format rules
-        dropped. Restoring that to the multi-op rules is a separate md_array
+        dropped. Restoring that to the multi-op rules is a separate json_fc
         prompt-content improvement, behavior-affecting so bakeoff-validated.)"""
         import re
 
@@ -488,7 +488,7 @@ class TestBuildSystemPrompt:
 
         section = _build_tools_section(
             ["read_file", "code_index", "edit_file", "agent", "shell"],
-            get_wf("md_array"),
+            get_wf("json_fc"),
         )
         first_example = section.index('{"action"')
         for tool in ("read_file", "code_index", "edit_file", "agent", "shell"):
@@ -546,7 +546,7 @@ class TestBuildSystemPrompt:
 
     # NOTE: the ready_for_review→complete workflow tests were removed when
     # react became multi-op (Step 2). The multi-op format rules (react +
-    # md_array) drop the "first verify with ready_for_review, then call
+    # json_fc) drop the "first verify with ready_for_review, then call
     # complete" gate wording — completion is an explicit `complete` op and
     # ready_for_review is model-invoked (DESIGN Exp 8). The single-op shared
     # builder carried that gate; the multi-op rules deliberately don't.
@@ -1413,7 +1413,7 @@ class TestAntiHtmlEmphasis:
         return wire_formats.get(name)
 
     def test_format_rules_forbid_html_both_formats(self):
-        for name in ("md_array", "react"):
+        for name in ("json_fc", "react"):
             rules = self._fmt(name).format_rules()
             assert "NEVER use HTML/XML tags" in rules, name
             # 대표 태그 예시로 앵커링 (HTML-편향 prior 억제)
@@ -1421,6 +1421,6 @@ class TestAntiHtmlEmphasis:
             assert "UNPARSEABLE" in rules, name
 
     def test_retry_hint_reminds_no_html(self):
-        for name in ("md_array", "react"):
+        for name in ("json_fc", "react"):
             hint = self._fmt(name).static_retry_hint_no_json()
             assert "HTML" in hint, name

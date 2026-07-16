@@ -5,17 +5,17 @@ records the terminal turn via ``WireFormat.serialize_terminal_for_history``
 rather than ``serialize_assistant_for_history``. This must produce the SAME
 shape the format uses for every other op (homogeneous history), not the base
 singular shape — a regression that once stored `complete` differently from
-the 73 other op turns in a real md_array session.
+the 73 other op turns in a real json_fc session.
 """
 
 from agent_cli.wire_formats.base import WireFormat
-from agent_cli.wire_formats.md_array import MdArrayFormat
+from agent_cli.wire_formats.json_fc import JsonFcFormat
 from agent_cli.wire_formats.react import ReActFormat
 
 
 class TestTerminalSerialize:
-    def test_md_array_uses_ops_shape(self):
-        rec = MdArrayFormat().serialize_terminal_for_history("done", "the answer")
+    def test_json_fc_uses_ops_shape(self):
+        rec = JsonFcFormat().serialize_terminal_for_history("done", "the answer")
         assert rec["role"] == "assistant"
         assert rec["thought"] == "done"
         assert "action" not in rec  # NOT the singular shape
@@ -30,9 +30,9 @@ class TestTerminalSerialize:
             {"action": "complete", "action_input": {"result": "the answer"}}
         ]
 
-    def test_md_array_and_react_parity(self):
+    def test_json_fc_and_react_parity(self):
         # both multi-op formats store a terminal turn identically
-        a = MdArrayFormat().serialize_terminal_for_history("t", "r")
+        a = JsonFcFormat().serialize_terminal_for_history("t", "r")
         b = ReActFormat().serialize_terminal_for_history("t", "r")
         assert a == b
 
@@ -83,9 +83,9 @@ class TestTerminalSerialize:
     def test_round_trips_through_render(self):
         # the stored terminal record renders to the format's wire prior, same
         # as any other op turn (resume consistency)
-        fmt = MdArrayFormat()
+        fmt = JsonFcFormat()
         rec = fmt.serialize_terminal_for_history("all done", "final result text")
         content = fmt.render_assistant_from_history(rec)["content"]
-        assert "## Thought\nall done" in content
+        assert content.startswith("all done\n\n[")  # PHASE4: 헤더 없는 캐노니컬
         assert '"action": "complete"' in content
         assert '"result": "final result text"' in content

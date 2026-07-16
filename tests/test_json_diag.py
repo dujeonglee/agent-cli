@@ -11,7 +11,7 @@ import json
 
 from agent_cli.recovery.wf_recovery import format_no_json_retry
 from agent_cli.wire_formats._json_diag import describe_json_error
-from agent_cli.wire_formats.md_array import MdArrayFormat
+from agent_cli.wire_formats.json_fc import JsonFcFormat
 from agent_cli.wire_formats.react import ReActFormat
 
 
@@ -84,14 +84,14 @@ class TestFormatDiagnose:
         ok = '{"thought":"x","action":"shell","action_input":{"command":"ls"}}'
         assert ReActFormat().diagnose_syntax_error(ok) is None
 
-    def test_md_array_diagnoses_broken_action_body(self):
+    def test_json_fc_diagnoses_broken_action_body(self):
         bad = '## Thought\nreasoning\n\n## Action\n[{"action":"shell","command":"ls"}'
-        out = MdArrayFormat().diagnose_syntax_error(bad)
+        out = JsonFcFormat().diagnose_syntax_error(bad)
         assert out is not None and "^" in out
 
-    def test_md_array_valid_returns_none(self):
+    def test_json_fc_valid_returns_none(self):
         ok = '## Thought\nr\n\n## Action\n[{"action":"shell","command":"ls"}]'
-        assert MdArrayFormat().diagnose_syntax_error(ok) is None
+        assert JsonFcFormat().diagnose_syntax_error(ok) is None
 
     def test_base_default_returns_none(self):
         # a format that does not implement diagnosis falls back to None,
@@ -110,7 +110,7 @@ class TestCrossFormatParity:
         react_in = '{"thought":"t","action":"shell","action_input":{"command":"ls"'
         md_in = '## Thought\nt\n\n## Action\n[{"action":"shell","command":"ls"'
         r = ReActFormat().diagnose_syntax_error(react_in)
-        m = MdArrayFormat().diagnose_syntax_error(md_in)
+        m = JsonFcFormat().diagnose_syntax_error(md_in)
         assert r is not None and "^" in r
         assert m is not None and "^" in m
 

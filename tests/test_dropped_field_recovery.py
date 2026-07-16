@@ -88,7 +88,7 @@ class _StrictReact(ReActFormat):
 # ── 1. Parser preserves action_input across dropped-action shapes ──
 
 # NOTE: prefix_md cases removed with the plugin (wire-format consolidation
-# Step 1, 2026-06-13). The md_array side of the cross-wire dropped-action
+# Step 1, 2026-06-13). The json_fc side of the cross-wire dropped-action
 # parity is rebuilt in Step 2, once react becomes multi-op and its shape
 # settles — see project-wire-format-consolidation-roadmap memory.
 
@@ -143,12 +143,12 @@ class TestCrossWireParity:
     def test_dropped_action_same_outcome(self):
         # The two shipped multi-op formats reach the SAME dropped-action
         # recovery from the same semantic emission (an op with no `action`,
-        # only a tool-prefixed param). react (JSON) and md_array (markdown)
+        # only a tool-prefixed param). react (JSON) and json_fc (markdown)
         # differ only in envelope; the op shape + infer_action are identical.
         rt = get("react").parse_turn(
             '{"thought": "x", "actions": [{"shell_command": "ls"}]}'
         )
-        mt = get("md_array").parse_turn(
+        mt = get("json_fc").parse_turn(
             '## Thought\nx\n\n## Action\n[{"shell_command": "ls"}]'
         )
         assert len(rt.ops) == len(mt.ops) == 1
@@ -163,7 +163,7 @@ class TestCrossWireParity:
         )
 
     def test_shipped_plugins_optional_by_default(self):
-        for name in ("react", "md_array"):
+        for name in ("react", "json_fc"):
             plugin = get(name)
             assert plugin.thought_required is False, name
             assert plugin.action_required is False, name
@@ -311,7 +311,7 @@ class TestThoughtRequiredGate:
 
 # ── 4. Real-world failure shape (session 1780718751) ──
 # NOTE: this guarded prefix_md's specific '## Action'+empty+'## Input' bug
-# (18/188 turns). Removed with prefix_md (Step 1); the md_array-equivalent
+# (18/188 turns). Removed with prefix_md (Step 1); the json_fc-equivalent
 # real-shape guard is added in Step 2. See the consolidation-roadmap memory.
 
 
@@ -339,7 +339,7 @@ class TestPromptFlagHook:
         assert "Do not leave it empty" in fr
 
     def test_field_specific_composes_numbered_rules(self):
-        for name in ("react", "md_array"):
+        for name in ("react", "json_fc"):
             fs = get(name).format_rules_field_specific()
             assert fs.startswith("1. "), name
             assert "\n2. " in fs, name

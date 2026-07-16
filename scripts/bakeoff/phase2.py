@@ -71,7 +71,7 @@ MODELS = [
 
 PLUGINS = [
     p.strip()
-    for p in os.environ.get("BAKEOFF_PLUGINS", "react,md_array,xml_fc").split(",")
+    for p in os.environ.get("BAKEOFF_PLUGINS", "react,json_fc,xml_fc").split(",")
     if p.strip()
 ]
 

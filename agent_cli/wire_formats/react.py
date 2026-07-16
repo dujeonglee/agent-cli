@@ -29,7 +29,7 @@ from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 def _ops_from_items(items: list) -> list[Op]:
     """Convert a list of op-dicts (``{"action": tool, ...flat params}``) into
-    ``Op`` objects. Self-contained copy of the same extraction md_array uses —
+    ``Op`` objects. Self-contained copy of the same extraction json_fc uses —
     the op SHAPE is a cross-format contract (guarded by a parity test), but the
     code stays per-plugin so the two formats evolve independently."""
     return [
@@ -381,11 +381,11 @@ _NO_THOUGHT_CONSTRAINT = (
 )
 
 
-# ── Multi-op Response Format (JSON twin of md_array) ─────────
+# ── Multi-op Response Format (JSON twin of json_fc) ─────────
 # react owns its own format-rules text rather than composing via
 # ``build_format_rules`` — the shared builder's tail hardcodes "Exactly ONE
 # action per turn", which is single-op. Self-contained per the plugin
-# philosophy: react and md_array carry the same multi-op CONTRACT but each
+# philosophy: react and json_fc carry the same multi-op CONTRACT but each
 # owns its wording so either can change without touching the other.
 _FORMAT_RULES = """\
 ## Response Format
@@ -472,7 +472,7 @@ class ReActFormat(WireFormat):
     # Multi-op: a turn carries `actions: [op, ...]`. Setting this engages the
     # shared multi-op machinery — prompt renders flat per-tool params
     # (`_multi_op_flat_params`) and dispatch re-wraps flat ops to canonical
-    # input (`wrap_single_op`), the same path md_array uses.
+    # input (`wrap_single_op`), the same path json_fc uses.
     multi_op = True
 
     # ─── Prompt ────────────────────────────────────────────────
@@ -485,7 +485,7 @@ class ReActFormat(WireFormat):
     def render_action_input(self, action_input: dict) -> str:
         # Inline guides hand in a wire-key-prefixed dict (`_rai_prefixed`);
         # render it as a flat op: {"action": tool, plain params} — the same
-        # multi-op op shape parse_turn reads. Self-contained copy of md_array's
+        # multi-op op shape parse_turn reads. Self-contained copy of json_fc's
         # transform (the op shape is a cross-format contract; the code stays
         # per-plugin). Without this react's inline examples render the prefixed
         # `{"delegate_task": ...}` shape, not the flat `{"action": ...}` op.
@@ -514,7 +514,7 @@ class ReActFormat(WireFormat):
         # Multi-op JSON: {"thought": ..., "actions": [{"action": tool, ...flat
         # params}]}. ``action_input`` is a JSON string of the params; splice
         # the action into it to form one flat op, then wrap in the actions
-        # array (a one-op example of the multi-op shape — mirrors md_array).
+        # array (a one-op example of the multi-op shape — mirrors json_fc).
         # ``thought=None`` (skill / agent invocation example) substitutes a
         # short placeholder so the reasoning slot stays visible.
         reasoning = thought if thought is not None else "reasoning here"
@@ -543,14 +543,14 @@ class ReActFormat(WireFormat):
     def parse_turn(self, llm_text: str) -> ParsedTurn:
         """Multi-op JSON: ``{"thought": ..., "actions": [{"action": ...,
         ...flat params}, ...]}`` — several independent ops in one turn, each op
-        the same flat shape md_array uses.
+        the same flat shape json_fc uses.
 
         Falls back to the CLASSIC single-op shape ``{"thought": ..., "action":
         ..., "action_input": ...}`` as a one-op turn. That shape is the most
         heavily-trained ReAct prior, so accepting it is genuine resilience (not
         just back-compat). Discrimination is unambiguous: an ``actions`` array
         → multi-op; anything else → the base wraps ``parse()`` as one op.
-        Completion is an explicit ``complete`` op (parity with md_array)."""
+        Completion is an explicit ``complete`` op (parity with json_fc)."""
         text = _sanitize_surrogates(llm_text)
         stripped, thinking = _strip_thinking_blocks(text)
         truncated = False
@@ -606,9 +606,9 @@ class ReActFormat(WireFormat):
         return super().parse_turn(llm_text)
 
     # ─── History round-trip (multi-op record) ──────────────────
-    # Self-contained: react stores the same logical record shape as md_array
+    # Self-contained: react stores the same logical record shape as json_fc
     # ({role, thought, ops}) but owns the code, and renders it back as a JSON
-    # object (md_array renders markdown). The op shape is the cross-format
+    # object (json_fc renders markdown). The op shape is the cross-format
     # contract; the envelope is per-plugin.
 
     def serialize_assistant_for_history(self, raw_text: str) -> dict:
@@ -633,7 +633,7 @@ class ReActFormat(WireFormat):
 
     def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
         # Terminal `complete` turn in react's `ops` shape (parity with
-        # md_array), keeping history homogeneous with every other op turn
+        # json_fc), keeping history homogeneous with every other op turn
         # rather than the base singular shape.
         return {
             "role": "assistant",

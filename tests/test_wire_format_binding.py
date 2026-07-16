@@ -25,7 +25,7 @@ def models_file(tmp_path, monkeypatch):
     target = tmp_path / "models.json"
     data = {
         "models": {
-            "bound-md": {"context_window": 8192, "wire_format": "md_array"},
+            "bound-md": {"context_window": 8192, "wire_format": "json_fc"},
             "bound-react": {"context_window": 8192, "wire_format": "react"},
             "unbound": {"context_window": 8192},
             "bad-bound": {"context_window": 8192, "wire_format": "no_such_format"},
@@ -53,7 +53,7 @@ def caps():
 
 class TestWireFormatForModel:
     def test_binding_returned(self, models_file):
-        assert wire_format_for_model("bound-md") == "md_array"
+        assert wire_format_for_model("bound-md") == "json_fc"
 
     def test_entry_without_field_returns_none(self, models_file):
         assert wire_format_for_model("unbound") is None
@@ -81,7 +81,7 @@ class TestWireFormatForModel:
 class TestResolveWireFormat:
     def test_explicit_beats_meta_and_binding(self, models_file):
         wf = resolve_wire_format(
-            explicit="react", session_format="md_array", model="bound-md"
+            explicit="react", session_format="json_fc", model="bound-md"
         )
         assert wf.name == "react"
 
@@ -93,7 +93,7 @@ class TestResolveWireFormat:
 
     def test_binding_used_when_no_explicit_no_meta(self, models_file):
         wf = resolve_wire_format(explicit=None, session_format=None, model="bound-md")
-        assert wf.name == "md_array"
+        assert wf.name == "json_fc"
 
     def test_all_absent_falls_to_default(self, models_file):
         wf = resolve_wire_format(explicit=None, session_format=None, model="unbound")
@@ -136,7 +136,7 @@ class TestSubagentBinding:
             "none", parent, tmp_path / "sub", model="bound-md"
         )
         assert error == ""
-        assert ctx.wire_format.name == "md_array"
+        assert ctx.wire_format.name == "json_fc"
 
     def test_unbound_model_inherits_parent(self, tmp_path, models_file):
         from agent_cli.subagent.runner import create_subagent_ctx
@@ -175,7 +175,7 @@ class TestSubagentBinding:
             "none", None, tmp_path / "sub", model="bound-md"
         )
         assert error == ""
-        assert ctx.wire_format.name == "md_array"
+        assert ctx.wire_format.name == "json_fc"
 
     def test_fork_mode_applies_binding(self, tmp_path, models_file):
         from agent_cli.subagent.runner import create_subagent_ctx
@@ -186,7 +186,7 @@ class TestSubagentBinding:
             "fork", parent, tmp_path / "sub", model="bound-md"
         )
         assert error == ""
-        assert ctx.wire_format.name == "md_array"
+        assert ctx.wire_format.name == "json_fc"
 
 
 # ── AgentLoop ctx-우선 폴백 (G2 — split-brain 수리) ──────────
@@ -199,7 +199,7 @@ class TestLoopCtxFallback:
         from agent_cli.loop.core import AgentLoop
 
         ctx = ContextManager(
-            tmp_path / "s", max_context_tokens=1000, wire_format=get_wf("md_array")
+            tmp_path / "s", max_context_tokens=1000, wire_format=get_wf("json_fc")
         )
         loop = AgentLoop(
             query="q", provider=MagicMock(), capabilities=caps, model="m", ctx=ctx
@@ -211,7 +211,7 @@ class TestLoopCtxFallback:
         from agent_cli.loop.core import AgentLoop
 
         ctx = ContextManager(
-            tmp_path / "s", max_context_tokens=1000, wire_format=get_wf("md_array")
+            tmp_path / "s", max_context_tokens=1000, wire_format=get_wf("json_fc")
         )
         loop = AgentLoop(
             query="q",
@@ -265,9 +265,9 @@ class TestBootstrapWiring:
             main_mod, "_setup_provider", lambda *a, **k: self._fake_setup()
         )
         boot = main_mod._bootstrap_provider(
-            "openai", None, None, None, "md_array", 0, session_format="react"
+            "openai", None, None, None, "json_fc", 0, session_format="react"
         )
-        assert boot.wire_format.name == "md_array"
+        assert boot.wire_format.name == "json_fc"
 
     def test_model_binding_used_for_new_session(self, monkeypatch, models_file):
         import agent_cli.main as main_mod
@@ -280,7 +280,7 @@ class TestBootstrapWiring:
         boot = main_mod._bootstrap_provider(
             "openai", None, None, None, None, 0, session_format=None
         )
-        assert boot.wire_format.name == "md_array"
+        assert boot.wire_format.name == "json_fc"
 
     def test_no_sources_falls_to_default(self, monkeypatch, models_file):
         import agent_cli.main as main_mod

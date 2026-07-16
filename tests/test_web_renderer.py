@@ -1226,7 +1226,7 @@ class TestReplayFromHistory:
 
     # ── Real ``ops`` shape (what both wire formats actually serialize) ──
     # The tests above use the legacy singular ``{action, action_input}`` shape
-    # (kept working for old history files). md_array / react store EVERY
+    # (kept working for old history files). json_fc / react store EVERY
     # assistant turn — including terminal ``complete`` — in the ``ops`` shape,
     # so these guard the path that real resumes exercise.
 

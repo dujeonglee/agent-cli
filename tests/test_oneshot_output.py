@@ -20,7 +20,7 @@ from agent_cli.subagent.report import (
 # ── Test helpers ─────────────────────────────────────────────
 # Fixtures produce the REAL on-disk assistant record shapes the extractors
 # read (via ``iter_record_ops``): the multi-op ``ops`` record — what
-# md_array / react ``serialize_assistant_for_history`` writes today — and
+# json_fc / react ``serialize_assistant_for_history`` writes today — and
 # the base singular ``{action, action_input}`` record (legacy sessions +
 # non-multi-op formats). The old fixture encoded the pre-423608e
 # JSON-in-``content`` shape, which production never writes anymore — the

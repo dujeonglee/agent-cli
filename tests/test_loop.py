@@ -673,7 +673,7 @@ class TestActionRenderShowsRawEmission:
         target.write_text("hello world\n")
         recorded = self._capture_render(monkeypatch)
 
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -692,7 +692,7 @@ class TestActionRenderShowsRawEmission:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="md_array",
+            wire_format="json_fc",
         )
 
         action_inputs = [
@@ -716,7 +716,7 @@ class TestActionRenderShowsRawEmission:
         target.write_text("UNIQUE_MARKER_LINE\n")
         recorded = self._capture_render(monkeypatch)
 
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -735,7 +735,7 @@ class TestActionRenderShowsRawEmission:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="md_array",
+            wire_format="json_fc",
         )
         observations = [r["content"] for r in recorded if r["type"] == "observation"]
         assert any("UNIQUE_MARKER_LINE" in (o or "") for o in observations)
@@ -774,7 +774,7 @@ class TestObservationRenderFromStored:
         big.write_text("\n".join(f"/p/file_{i:04}.py MARKER" for i in range(1500)))
         recorded = self._capture(monkeypatch)
 
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -793,7 +793,7 @@ class TestObservationRenderFromStored:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="md_array",
+            wire_format="json_fc",
         )
         obs = [r["content"] for r in recorded if r["type"] == "observation"]
         assert obs, "no observation rendered"
@@ -810,7 +810,7 @@ class TestObservationRenderFromStored:
         from agent_cli.wire_formats import get
 
         recorded = self._capture(monkeypatch)
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
@@ -829,7 +829,7 @@ class TestObservationRenderFromStored:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="md_array",
+            wire_format="json_fc",
         )
         # the recovery intervention is surfaced by render_recovery, not as a
         # second render_step("observation") card.
@@ -912,7 +912,7 @@ class TestRunLoopObservability:
         # ordering. Recovery then re-prompts and the model completes. (Real
         # runs break this mid-stream via degeneration_check; the mock provider
         # returns the full text so this exercises the loop's labeling branch.)
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get("md_array"))
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get("json_fc"))
         degen = "## Thought\n\n## Action\n\n## Thought\n\n## Action\n"
         provider = MagicMock()
         provider.call.side_effect = [
@@ -929,7 +929,7 @@ class TestRunLoopObservability:
             model="m",
             ctx=ctx,
             max_turns=5,
-            wire_format="md_array",
+            wire_format="json_fc",
         )
         rows = self._read_turns(tmp_path)
         assert rows[0]["failure_signal"] == "DEGENERATE"

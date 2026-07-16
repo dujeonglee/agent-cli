@@ -1,32 +1,28 @@
-"""md_array wire format — markdown envelope + flat action-array (multi-op).
+"""json_fc wire format — 산문 thought + flat op JSON 배열 (multi-op).
 
-The shape (DESIGN §3; multi-op validated by single-turn bakeoffs):
+md_array 의 후계 (multi-wire-format PHASE4 — v6.0.0 리네임+리셰이프):
+마크다운 envelope(`## Thought`/`## Action`)를 제거하고 xml_fc 의 D4 와
+동형인 "산문 + 구조 블록" shape 로 통일했다. shape::
 
-    ## Thought
-    read auth.py and list src/
+    read auth.py and list src/ — independent, so one turn.
 
-    ## Action
     [{"action": "read_file", "path": "src/auth.py"},
      {"action": "shell", "command": "ls src/"}]
 
-- ``## Thought`` / ``## Action`` markdown envelope — the prefix_md shape the
-  models already emit reliably (fixes the pure-JSON terminal envelope-drop).
-- ``## Action`` body = JSON array of flat ``{action, ...params}`` ops.
-  Several INDEPENDENT ops per turn; plain param keys (no wire-key prefix);
-  ONE target per op (no per-tool batch — nesting a batch array inside the op
-  array is what broke the 27B model, DESIGN §3 Exp 4/5). A bare object is
-  accepted as a one-op array (the model's natural form for one op).
-- Termination = an explicit ``complete`` op (``exposes_complete=True``), the
-  proven prefix_md/react model. md_array originally ended thought-only
-  (``## Action`` omitted) with a loop-side ready_for_review gate, but that
-  produced a recurring class of finish bugs (false-terminate, NO_JSON
-  finishing-transitions, empty ``[]``, a review-instruction mismatch that lost
-  the deliverable — DESIGN Exp 8). Reviving ``complete`` fixes the class at the
-  origin and lets the lenient-terminal parsing + the gate be removed. A
-  thought-only / actionless turn is now a NO_ACTION nudge (call ``complete`` or
-  emit ops), never a silent completion. (The old loop-side review gate and the
-  model-invoked ``ready_for_review`` tool were both later removed — review is
-  not a model tool.)
+- **thought = 배열 앞 자유 산문** (선택). 헤더-runaway 실패 클래스
+  (`## Thought` 반복 등)가 shape 차원에서 소멸.
+- **body = flat ``{action, ...params}`` op 들의 bare JSON 배열** —
+  md_array body 와 동일 (D7 결정: ``{"tool_call": […]}`` 래퍼 기각 —
+  중첩 민감성 실측 + 검증된 body 승계). bare 객체 = 1-op 관용.
+  op 하나 = 대상 하나 (배치 중첩 금지 — 27B 90% 파괴 실측).
+- **종료 = 명시적 ``complete`` op** — 산문-only 는 NO_ACTION 넛지
+  (md_array 시절 thought-only 종결의 false-terminate 버그 클래스 교훈,
+  DESIGN Exp 8).
+- **legacy 관용**: 구 md_array 헤더 emission 은 stage 2(drift) 로 계속
+  수용 — 전환기 모델 습관 + foreign 누출 실측 shape. prior 는 캐노니컬
+  (헤더 없는) shape 로 재렌더 (B→C 자기 교정).
+- JSON 수리 기계(_extract_op_json 이하)는 md_array 의 실전 검증분을
+  그대로 승계 — body 가 동일하므로 무변경.
 """
 
 from __future__ import annotations
@@ -90,17 +86,15 @@ _INPUT_RESIDUE = re.compile(r"^\s*##\s*Input\s*$", re.MULTILINE)
 _FORMAT_RULES = """\
 ## Response Format
 
-Respond in TWO markdown sections:
+Write brief reasoning as plain prose, then end your turn with ONE JSON
+array of tool calls:
 
-## Thought
-<your reasoning>
+Your reasoning goes here, as plain prose.
 
-## Action
-<a JSON array of one or more tool calls>
+[{"action": "<tool name>", <its parameters>}]
 
-Each array element is one tool call: {"action": "<tool name>", <its
-parameters>}. Use the parameter names shown in each tool's guide above
-(plain, no prefix).
+Each array element is one tool call: {"action": ..., params}. Use the
+parameter names shown in each tool's guide above (plain, no prefix).
 
 Batch independent work into ONE turn. Before you emit, look at everything
 you intend to do: every operation that does NOT need another's output goes
@@ -111,38 +105,33 @@ earlier step's result (then emit just the first now — its observation
 arrives next turn).
 
 Rules:
-1. Always include a `## Thought`.
-2. Each `## Action` element must have an "action" naming one tool.
-3. Each op acts on ONE target. To read N files, emit N separate
-   {"action": "read_file", "path": ...} ops in the SAME turn. NEVER put a
+1. Reasoning (optional) is plain prose BEFORE the array — never after it.
+2. Every turn must END with one JSON array containing at least one op
+   (work, or `complete` to finish). Do NOT just stop after prose.
+3. Each op must have an "action" naming one tool.
+4. Each op acts on ONE target. To read N files, emit N separate
+   {"action": "read_file", "path": ...} ops in the SAME array. NEVER put a
    list of items inside a single op (no nested arrays).
-4. When the task is DONE, end with a `complete` op carrying your final
+5. When the task is DONE, end with a `complete` op carrying your final
    answer: {"action": "complete", "result": "<your final answer>"}.
-5. NEVER use HTML/XML tags of ANY kind — no <tool_call>, <function_call>,
-   <div>, <p>, <answer>, <output>, or anything tag-shaped. This protocol
-   is markdown `##` headings + a JSON array, NOTHING else. A turn
-   containing HTML/XML tags is UNPARSEABLE and completely wasted — if you
-   feel the urge to open a tag, write the `## Action` JSON array instead.
-   Always finish this way — do NOT just stop or omit `## Action`.
-6. Every turn must include a `## Action` with at least one op (work, or
-   `complete` to finish).
+6. NEVER use HTML/XML tags of ANY kind — no <tool_call>, <function_call>,
+   <div>, <answer>, or anything tag-shaped — and NO markdown headers
+   (## ...). This protocol is plain prose + ONE JSON array, NOTHING else.
+   A turn containing tags or headers is UNPARSEABLE and completely wasted —
+   if you feel the urge to open a tag, write the JSON array instead.
 7. If an observation shows an error, fix parameters and retry.
 8. Respond in the user's language.
 
 Several independent operations in one turn (read three files at once —
 they don't depend on each other):
-## Thought
 To see how auth, session, and the login route fit together I need all
 three files; none depends on another's output, so read them together.
 
-## Action
 [{"action": "read_file", "path": "src/auth.py"}, {"action": "read_file", "path": "src/session.py"}, {"action": "read_file", "path": "src/routes/login.py"}]
 
 Finishing the task:
-## Thought
 The login() function is implemented and the tests pass.
 
-## Action
 [{"action": "complete", "result": "Implemented login() in src/auth.py; all tests pass."}]"""
 
 
@@ -478,24 +467,20 @@ def _split_sections(text: str) -> tuple[str | None, str | None, bool]:
     return thought, text[am.end() :].strip(), True
 
 
-class MdArrayFormat(WireFormat):
-    """Markdown envelope + flat action-array (multi-op, complete-terminated)."""
+class JsonFcFormat(WireFormat):
+    """산문 thought + flat action-array (multi-op, complete 종결)."""
 
-    name = "md_array"
+    name = "json_fc"
     thought_required = False
     action_required = False
     multi_op = True
-    # exposes_complete inherits the default True: completion is an explicit
-    # `complete` op (the proven prefix_md/react model), not thought-only.
+    # exposes_complete 기본 True 상속 — 종료는 명시적 `complete` op.
 
     # ─── Provider hints ─────────────────────────────────────────
 
     def provider_call_kwargs(self, capabilities=None) -> dict:
-        # Same rationale as prefix_md: JSON-object mode forces a leading `{`,
-        # which makes the markdown envelope (`## ` headers) impossible — the
-        # model is then locked into bare JSON and every turn misparses.
-        # Phase-2 bakeoff caught exactly this: the base default leaked
-        # json_mode=True and 100% of turns degraded to header-less JSON.
+        # 산문이 배열보다 먼저 오는 shape — JSON-object 모드는 선두 `{` 를
+        # 강제해 불가능 (md_array 의 markdown envelope 과 같은 이유).
         return {"json_mode": False}
 
     # ─── Prompt ─────────────────────────────────────────────────
@@ -505,14 +490,14 @@ class MdArrayFormat(WireFormat):
 
     def format_rules_anchor(self) -> str:
         return (
-            "Respond with `## Thought` and a `## Action` JSON array of ops "
-            "(finish with a `complete` op)."
+            "Write brief reasoning as plain prose, then end the turn with "
+            "ONE JSON array of ops (finish with a `complete` op)."
         )
 
     def format_rules_field_specific(self) -> str:
         return (
-            "1. Always include a `## Thought`.\n"
-            '2. `## Action` is a JSON array of {"action": ..., params} ops.'
+            "1. Optional reasoning is plain prose BEFORE the array.\n"
+            '2. The turn ends with a JSON array of {"action": ..., params} ops.'
         )
 
     def render_action_input(self, action_input: dict) -> str:
@@ -530,10 +515,9 @@ class MdArrayFormat(WireFormat):
 
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         th = thought if thought is not None else "your reasoning"
-        # ``action_input`` is already this format's flat op JSON (it comes
-        # through render_action_input); wrap it as a one-element array. The
-        # op carries its own "action" except for virtual tools whose input
-        # was authored with standard keys — splice the action in then.
+        # ``action_input`` is already this format's flat op JSON (via
+        # render_action_input); wrap as a one-element array, splicing the
+        # action in for standard-key inputs (md_array 동형).
         op = action_input
         if '"action"' not in op:
             try:
@@ -542,25 +526,18 @@ class MdArrayFormat(WireFormat):
                     op = json.dumps({"action": action, **obj}, ensure_ascii=False)
             except json.JSONDecodeError:
                 pass
-        return f"## Thought\n{th}\n\n## Action\n[{op}]"
+        return f"{th}\n\n[{op}]"
 
     # ─── Parsing ────────────────────────────────────────────────
 
     def parse_turn(self, llm_text: str) -> ParsedTurn:
-        # Stage 0 — thinking 블록(완전 블록·미닫힘 opener) 격리 (선행
-        # 리팩토링): openai 경로는 provider 가 이미 벗겨 no-op, anthropic/
-        # http·bench(provider 우회) 경로의 ①② 무방비 갭을 메운다. 고아
-        # closer(③)는 여기 아님 — sanitize_thought·repair 파이프라인의
-        # 앵커드 처리 그대로 (문자열 값 안의 태그 보존 계약 유지).
+        # Stage 0 — thinking 격리 (provider 미경유 경로의 유일 방어).
         llm_text, thinking = self.strip_thinking(llm_text)
         turn = self._parse_turn_stripped(llm_text)
         turn.thinking = thinking
         return turn
 
     def _parse_turn_stripped(self, llm_text: str) -> ParsedTurn:
-        thought, body, has_action = _split_sections(llm_text)
-        clean_thought = self.sanitize_thought(thought)
-
         def _ops(items) -> list:
             return [
                 Op(
@@ -572,83 +549,85 @@ class MdArrayFormat(WireFormat):
                 for it in items
             ]
 
-        if not has_action or not body:
-            # Header-less op JSON: the model dropped the `## Action` envelope
-            # but emitted a JSON op array. Read it as ops — even when prose
-            # precedes the array (a FINISHING model often writes its reasoning
-            # then appends `[{"action":"complete","result":<full answer>}]`
-            # with no header; the deliverable lives in `result` and must not be
-            # discarded). Extract the first JSON anywhere in the text, not only
-            # at position 0. The `any("action")` guard means a stray bracket in
-            # prose (`[1,2,3]`) falls through to the NO_ACTION nudge.
-            if not has_action:
-                # (repair fallback covers the malformed `{"action":X, {params}}`
-                # shape the model emits header-less too — DESIGN Exp 8.)
-                bare, _ = _extract_op_json(llm_text.strip())
-                bare_items = (
-                    [x for x in bare if isinstance(x, dict)]
-                    if isinstance(bare, list)
-                    else ([bare] if isinstance(bare, dict) else [])
-                )
-                if any("action" in it for it in bare_items):
-                    return ParsedTurn(
-                        thought=None, ops=_ops(bare_items), raw=llm_text, parse_stage=2
-                    )
-            # No `## Action` (thought-only) or an empty one: a valid markdown
-            # parse with no op. NOT a completion — completion is an explicit
-            # `complete` op. 0 ops → the loop's NO_ACTION recovery nudges the
-            # model to call `complete` or emit work. A truly blank emission is
-            # a parse failure (NO_OUTPUT / NO_JSON, stage 0).
+        # ── legacy 관용: 구 md_array 헤더 (`## Action`) — 전환기 모델
+        # 습관 + foreign 누출 실측 shape. 성공해도 **stage 2** (drift 신호);
+        # prior 는 캐노니컬(헤더 없는) shape 로 재렌더 → 자기 교정.
+        thought_h, body_h, has_action = _split_sections(llm_text)
+        if has_action:
+            clean_thought = self.sanitize_thought(thought_h)
+            body = _INPUT_RESIDUE.sub("", body_h or "").strip()
+            if body:
+                parsed, _repaired = _extract_op_json(body)
+                if parsed is not None:
+                    arr = parsed if isinstance(parsed, list) else [parsed]
+                    items = [x for x in arr if isinstance(x, dict)]
+                    if items and not all(not it for it in items):
+                        return ParsedTurn(
+                            thought=clean_thought,
+                            ops=_ops(items),
+                            raw=llm_text,
+                            parse_stage=2,
+                        )
+            if body:
+                # 헤더로 action body 를 선언했는데 수리 기계까지 실패한
+                # 진짜 파손 — NO_JSON 진단 대상 (구 md_array 의미 유지).
+                return ParsedTurn(thought=clean_thought, raw=llm_text, parse_stage=0)
             if clean_thought and clean_thought.strip():
                 return ParsedTurn(
-                    thought=clean_thought, ops=[], raw=llm_text, parse_stage=1
+                    thought=clean_thought, ops=[], raw=llm_text, parse_stage=2
                 )
             return ParsedTurn(raw=llm_text, parse_stage=0)
-        # prefix_md-residue tolerance: strip stray `## Input` header lines the
-        # model appends (its prefix_md prior) so a body that was ONLY residue
-        # parses cleanly to 0 ops (→ NO_ACTION nudge), not a spurious NO_JSON.
-        body = _INPUT_RESIDUE.sub("", body).strip()
-        if not body:
-            return (
-                ParsedTurn(thought=clean_thought, ops=[], raw=llm_text, parse_stage=1)
-                if clean_thought
-                else ParsedTurn(raw=llm_text, parse_stage=0)
-            )
 
-        # Strict parse, then the anonymous-nested-object repair (DESIGN Exp 8):
-        # `{"action":X, {params}}` → `{"action":X, params}`. A repaired turn is
-        # a drift-recovery (parse_stage 2) for observability.
-        parsed, repaired = _extract_op_json(body)
-        if parsed is None:
-            return ParsedTurn(thought=clean_thought, raw=llm_text, parse_stage=0)
-        arr = parsed if isinstance(parsed, list) else [parsed]  # bare obj = 1 op
-        items = [x for x in arr if isinstance(x, dict)]
-        # No usable ops: an empty array `[]`, an empty op `{}`/`[{}]`, or a
-        # non-dict payload. With a thought this is a valid 0-op turn (NO_ACTION
-        # nudge to call `complete`); blank → parse failure. Items that DO carry
-        # input but no action stay ops (NO_ACTION recovery / infer).
-        if not items or all(not it for it in items):
-            return ParsedTurn(
-                thought=clean_thought,
-                ops=[],
-                raw=llm_text,
-                parse_stage=1 if clean_thought else 0,
-            )
-        return ParsedTurn(
-            thought=clean_thought,
-            ops=_ops(items),
-            raw=llm_text,
-            parse_stage=2 if repaired else 1,
-        )
+        # ── 캐노니컬: 산문 + 첫 JSON 배열/객체 (bare 객체 = 1-op 관용)
+        start = next((i for i, c in enumerate(llm_text) if c in "[{"), -1)
+        if start >= 0:
+            thought = self.sanitize_thought(llm_text[:start]) or None
+            body = llm_text[start:]
+            parsed, repaired = _extract_op_json(body)
+            if parsed is not None:
+                arr = parsed if isinstance(parsed, list) else [parsed]
+                items = [x for x in arr if isinstance(x, dict)]
+                stage = 2 if repaired else 1
+                # `any("action")` 가드: 산문 속 `[1,2,3]` 같은 비-op 배열은
+                # 통과시키지 않고 thought-only 로 (NO_ACTION 넛지).
+                if any("action" in it for it in items):
+                    return ParsedTurn(
+                        thought=thought,
+                        ops=_ops(items),
+                        raw=llm_text,
+                        parse_stage=stage,
+                    )
+                # actionless-op 보존 불변식 (ABC parse 계약): action 은 없지만
+                # input 을 실은 dict-op 는 infer/NO_ACTION echo 의 재료로
+                # 보존한다. 구 md_array 는 `## Action` 헤더가 "이건 action
+                # body" 신호였는데, 캐노니컬은 **위치 신호**로 대체 — 배열이
+                # emission 의 끝이면(rule 2: 턴은 배열로 끝난다) op 의도.
+                # 산문 중간의 예시 dict-배열은 이 앵커에 안 걸린다.
+                if (
+                    items
+                    and all(isinstance(x, dict) and x for x in arr)
+                    and llm_text.rstrip().endswith(("]", "}"))
+                ):
+                    return ParsedTurn(
+                        thought=thought,
+                        ops=_ops(items),
+                        raw=llm_text,
+                        parse_stage=stage,
+                    )
+            elif '"action"' in body:
+                # op 시도 흔적("action" 키)이 있는 깨진 JSON — 수리 기계까지
+                # 전부 실패한 진짜 파손. thought-only 로 삼키지 않고 stage 0
+                # (NO_JSON 진단 + 캐럿이 위치를 짚음).
+                return ParsedTurn(thought=thought, raw=llm_text, parse_stage=0)
+
+        # ── thought-only / blank — 완료가 아니라 NO_ACTION 넛지 대상.
+        thought = self.sanitize_thought(llm_text)
+        if thought and thought.strip():
+            return ParsedTurn(thought=thought, ops=[], raw=llm_text, parse_stage=1)
+        return ParsedTurn(raw=llm_text, parse_stage=0)
 
     def parse(self, llm_text: str) -> ParsedAction:
-        """Singular projection of :meth:`parse_turn` (first op).
-
-        The loop dispatches via ``parse_turn``; this exists for the
-        ``WireFormat`` ABC and any generic single-action consumer. History
-        serialization is overridden below (multi-op record), so this is not
-        on the history path.
-        """
+        """Singular projection of :meth:`parse_turn` (first op) — ABC 계약용."""
         t = self.parse_turn(llm_text)
         first = t.ops[0] if t.ops else None
         return ParsedAction(
@@ -657,11 +636,12 @@ class MdArrayFormat(WireFormat):
             action_input=first.action_input if first else None,
             raw=t.raw,
             parse_stage=t.parse_stage,
+            thinking=t.thinking,
         )
 
     def is_degenerate(self, text: str) -> bool:
-        # Same threshold philosophy as prefix_md (≥2 empty envelope blocks);
-        # see the prefix_md rationale for why ≥2 is kept.
+        # legacy 헤더-반복 runaway 검출 유지 (구 프라이어 누출은 계속
+        # 가능); 캐노니컬 shape 의 러너웨이 패턴은 실측 후 추가.
         return len(_DEGEN_RUNAWAY.findall(text)) >= 2
 
     def sanitize_thought(self, thought: str | None) -> str | None:
@@ -689,9 +669,6 @@ class MdArrayFormat(WireFormat):
         }
 
     def serialize_terminal_for_history(self, thought: str, result: str) -> dict:
-        # Terminal `complete` turn in this format's `ops` shape, so history
-        # stays homogeneous with the 73 other op turns (not the base singular
-        # shape). round-trips through render_assistant_from_history's ops path.
         return {
             "role": "assistant",
             "thought": thought or "",
@@ -709,31 +686,24 @@ class MdArrayFormat(WireFormat):
                 ],
                 ensure_ascii=False,
             )
-            return {
-                "role": "assistant",
-                "content": (
-                    f"## Thought\n{record.get('thought', '')}\n\n## Action\n{rendered}"
-                ),
-            }
-        # Legacy / singular-shaped records (e.g. written by a corrected-record
-        # rewrite or another format): fall back to the base round-trip.
+            thought = record.get("thought", "")
+            content = f"{thought}\n\n{rendered}" if thought else rendered
+            return {"role": "assistant", "content": content}
+        # Legacy / singular-shaped records — base round-trip 폴백.
         return super().render_assistant_from_history(record)
 
     # ─── Recovery wording ───────────────────────────────────────
 
     def constraint_reminder_call(self) -> str:
         return (
-            "Respond with `## Thought` and a `## Action` JSON array of "
-            '{"action": ..., params} ops. To finish, use a `complete` op: '
+            "Respond with plain-prose reasoning followed by ONE JSON array "
+            'of {"action": ..., params} ops. To finish, use a `complete` op: '
             '{"action": "complete", "result": "<final answer>"}.'
         )
 
     def constraint_reminder_action_required(self) -> str:
-        # The DONE clause matters: a finishing model that emits no runnable op
-        # must be pointed at `complete` (not left demanding generic "an
-        # action"), or it loops trying to stop.
         return (
-            'Each `## Action` element must include an "action" field naming '
+            'Each array element must include an "action" field naming '
             "one tool from Available Tools. If the task is DONE, emit a "
             '`complete` op: {"action": "complete", "result": "<final answer>"} '
             "— do not stop without it."
@@ -741,21 +711,18 @@ class MdArrayFormat(WireFormat):
 
     def failure_framing_parse_fail(self) -> str:
         return (
-            "Your response did not match the expected format — `## Action` "
-            "must contain a valid JSON array of tool calls."
+            "Your response did not match the expected format — it must end "
+            "with a valid JSON array of tool calls."
         )
 
     def failure_framing_no_action(self) -> str:
-        return (
-            "Your `## Action` section had no usable tool call (missing or "
-            'unknown "action").'
-        )
+        return 'Your JSON array had no usable tool call (missing or unknown "action").'
 
     def static_retry_hint_no_json(self) -> str:
         return (
             f"{self.failure_framing_parse_fail()} {self.constraint_reminder_call()} "
-            "Do NOT use HTML/XML tags (<tool_call>, <div>, …) — markdown "
-            "headings + JSON array only."
+            "Plain prose then ONE JSON array — no markdown headers "
+            "(## ...), no HTML/XML tags."
         )
 
     def static_retry_hint_no_action(self) -> str:
@@ -765,16 +732,17 @@ class MdArrayFormat(WireFormat):
         )
 
     def diagnose_syntax_error(self, prior_content: str) -> str | None:
-        # The JSON lives in the `## Action` body (the op array). Diagnose
-        # that — the same candidate parse_turn feeds to json.loads. Fall back
-        # to the whole emission when the header was dropped (header-less op
-        # JSON), so a missing bracket is still located.
-        _, body, _ = _split_sections(prior_content)
-        candidate = _INPUT_RESIDUE.sub("", body).strip() if body else prior_content
+        # 헤더(legacy)가 있으면 그 body, 아니면 첫 브레이스부터가 JSON 후보.
+        _, body, has = _split_sections(prior_content)
+        if has and body:
+            candidate = _INPUT_RESIDUE.sub("", body).strip()
+        else:
+            start = next((i for i, c in enumerate(prior_content) if c in "[{"), -1)
+            candidate = prior_content[start:] if start >= 0 else prior_content
         return describe_json_error(candidate)
 
     def system_user_prefixes(self) -> tuple[str, ...]:
         return (
             "Your response did not match the expected format",
-            "Your `## Action` section had no usable tool call",
+            "Your JSON array had no usable tool call",
         )

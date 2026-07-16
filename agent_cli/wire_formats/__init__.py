@@ -28,13 +28,13 @@ _registry: dict[str, WireFormat] = {}
 # --response-format default, the new-session default, and the get(None) /
 # unspecified-wire fallback all resolve here. Change the default in ONE place.
 #
-# md_array (2026-06-11): promoted from experimental after Phase-2 (95.2% =
-# react) + real-world validation (DOOM web, 150 turns, 0.7% format-failure).
-# It is a functional superset of the retired prefix_md (single-op plus
-# multi-op). prefix_md was removed (2026-06-13, wire-format consolidation
-# roadmap Step 1) — md_array subsumes its markdown shape. The two remaining
-# formats are md_array (markdown, multi-op) and react (JSON).
-DEFAULT_WIRE_FORMAT = "md_array"
+# json_fc (2026-07-17, v6.0.0 — PHASE4): md_array 의 리네임+리셰이프 후계.
+# 마크다운 헤더 envelope 제거(산문 thought + bare op 배열 — xml_fc D4 동형),
+# JSON 수리 기계는 무변경 승계. bakeoff A/B(27B/35B, 140run)에서 md_array 와
+# 동등(completed 100%·pf 0) 확인 후 교체. alias 없음(D8) — 구 이름
+# "md_array" 는 KeyError fail-fast (MAJOR 마이그레이션 노트 참조).
+# (md_array 자체는 2026-06-11 prefix_md 를 대체했던 검증 계보.)
+DEFAULT_WIRE_FORMAT = "json_fc"
 
 
 def register(wire_format: WireFormat) -> None:
@@ -233,12 +233,12 @@ __all__ = [
 # import + explicit register call) would fail because ``react`` would
 # not yet see ``register`` in this module's namespace.
 def _register_builtin_plugins() -> None:
-    from agent_cli.wire_formats.md_array import MdArrayFormat
+    from agent_cli.wire_formats.json_fc import JsonFcFormat
     from agent_cli.wire_formats.react import ReActFormat
     from agent_cli.wire_formats.xml_fc import XmlFcFormat
 
     register(ReActFormat())
-    register(MdArrayFormat())  # default — multi-op (DESIGN §7)
+    register(JsonFcFormat())  # default — md_array 후계 (PHASE4, bakeoff 게이트 통과)
     register(XmlFcFormat())  # 태그-파라미터 (multi-wire-format PHASE2)
 
 

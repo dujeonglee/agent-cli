@@ -37,12 +37,12 @@ class TestCreateSession:
         meta = create_session("/tmp/ws")
         assert not hasattr(meta, "workspace_hash") or meta.workspace_hash == ""
 
-    def test_default_response_format_is_md_array(self):
-        assert create_session().response_format == "md_array"
+    def test_default_response_format_is_json_fc(self):
+        assert create_session().response_format == "json_fc"
 
     def test_response_format_stored(self):
         # An explicit non-default choice (react) is preserved — proves the
-        # field stores what's asked, not just the md_array default.
+        # field stores what's asked, not just the json_fc default.
         meta = create_session("/tmp/ws", response_format="react")
         assert meta.response_format == "react"
 
@@ -65,9 +65,9 @@ class TestLoadSession:
         assert loaded is not None
         assert loaded.response_format == "react"
 
-    def test_legacy_session_defaults_to_md_array(self, tmp_path):
+    def test_legacy_session_defaults_to_json_fc(self, tmp_path):
         """A session.jsonl written before the response_format field existed
-        (no such key in _meta) loads with the current default (md_array);
+        (no such key in _meta) loads with the current default (json_fc);
         backward-compat to older defaults (react, then prefix_md) is
         intentionally not preserved — a legacy session resumes on the
         current default."""
@@ -89,7 +89,7 @@ class TestLoadSession:
         )
         loaded = load_session(sid)
         assert loaded is not None
-        assert loaded.response_format == "md_array"
+        assert loaded.response_format == "json_fc"
 
 
 class TestRecentExchanges:

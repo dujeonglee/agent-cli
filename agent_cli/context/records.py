@@ -33,7 +33,7 @@ def iter_record_ops(record: dict) -> list[tuple[str, object]]:
     """``(action, action_input)`` pairs from ONE assistant history record.
 
     The single reader for both on-disk assistant shapes — the multi-op
-    ``{"ops": [{"action", "action_input"}, ...]}`` record (md_array / react
+    ``{"ops": [{"action", "action_input"}, ...]}`` record (json_fc / react
     ``serialize_assistant_for_history`` / ``serialize_terminal_for_history``)
     and the base singular ``{"action", "action_input"}`` record (legacy
     sessions + non-multi-op formats). Bare-content records (prose drift, no

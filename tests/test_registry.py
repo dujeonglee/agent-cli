@@ -335,7 +335,7 @@ class TestSemanticValidationHook:
         from agent_cli.wire_formats.base import Op, ParsedTurn
 
         cfg = LoopConfig(
-            tools_list=["code_index", "complete"], wire_format=get_wf("md_array")
+            tools_list=["code_index", "complete"], wire_format=get_wf("json_fc")
         )
         st = LoopState(query="q")
         d = TurnDispatcher(

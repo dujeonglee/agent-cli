@@ -4,7 +4,7 @@ offending character).
 
 This is a pure JSON-layer utility, NOT wire-format behaviour: given any
 JSON candidate string it describes the first structural error, knowing
-nothing about ReAct vs md_array. The format-specific part — *which*
+nothing about ReAct vs json_fc. The format-specific part — *which*
 substring of the model's emission is the JSON candidate — stays in each
 format's ``diagnose_syntax_error`` (which calls this). Kept off the
 ``WireFormat`` base for exactly that reason; sharing a caret formatter is

@@ -321,11 +321,11 @@ class TestPromptWireFormatBinding:
         import agent_cli.config as config_mod
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
-        inputs = iter(["4096", "n", "xml_fx", "md_array"])  # 오타 → 재질문
+        inputs = iter(["4096", "n", "xml_fx", "json_fc"])  # 오타 → 재질문
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
         assert _prompt_model_capabilities("test-model") is not None
-        assert self._saved_entry(tmp_path)["wire_format"] == "md_array"
+        assert self._saved_entry(tmp_path)["wire_format"] == "json_fc"
 
     def test_case_normalized(self, monkeypatch, tmp_path):
         from agent_cli.main import _prompt_model_capabilities

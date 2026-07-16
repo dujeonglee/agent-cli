@@ -1,15 +1,15 @@
 """Conservative EOF bracket-close repair — recovers the dominant real
 NO_JSON shape (a multi-op array the model finished but forgot to close).
 
-Covers the pure util (``close_unbalanced``), md_array's recovery stage
+Covers the pure util (``close_unbalanced``), json_fc's recovery stage
 (incl. a real captured-failure fixture), the bail-to-retry boundary, and
-react/md_array parity via the shared util.
+react/json_fc parity via the shared util.
 """
 
 import json
 
 from agent_cli.wire_formats._json_repair import close_unbalanced
-from agent_cli.wire_formats.md_array import _extract_op_json
+from agent_cli.wire_formats.json_fc import _extract_op_json
 from agent_cli.wire_formats.react import _fix_missing_brackets
 
 # The captured shape: a 6-op read_file batch the model emitted in full but

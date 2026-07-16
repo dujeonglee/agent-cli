@@ -146,7 +146,7 @@ class TestSaveModelEntry:
                     "models": {
                         "qwen5:35b": {
                             "context_window": 4096,
-                            "wire_format": "md_array",  # 손으로 추가한 바인딩
+                            "wire_format": "json_fc",  # 손으로 추가한 바인딩
                             "_auto_detected": True,
                         }
                     },
@@ -164,7 +164,7 @@ class TestSaveModelEntry:
         assert result is True
         data = json.loads(target.read_text())
         assert data["models"]["qwen5:35b"]["context_window"] == 131072
-        assert data["models"]["qwen5:35b"]["wire_format"] == "md_array"  # 보존
+        assert data["models"]["qwen5:35b"]["wire_format"] == "json_fc"  # 보존
 
     def test_no_overwrite_manual_entry(self, tmp_path, monkeypatch):
         """Manually registered entries (no _auto_detected) must be protected."""

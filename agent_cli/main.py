@@ -827,7 +827,7 @@ def _prompt_model_capabilities(model: str):
 
         # Wire format 바인딩 (바인딩 UX ② — multi-wire-format): 엔트리가
         # 대화형으로 생성되는 바로 이 지점에서 선택. auto/빈 입력 = 필드
-        # 미기록(해석 체인 위임 — 기본 md_array), 등록된 이름만 수용
+        # 미기록(해석 체인 위임 — 기본 json_fc), 등록된 이름만 수용
         # (D2: 조용한 오타 폴백 금지 — 재질문).
         from agent_cli.wire_formats import list_names
 
@@ -1090,7 +1090,7 @@ def run(
     response_format: Optional[str] = typer.Option(
         None,
         "--response-format",
-        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > md_array (markdown ## Thought/## Action with a flat op array; supports multi-op turns). Other built-in: react (pure JSON), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
+        help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > json_fc (plain-prose reasoning + a flat JSON op array; multi-op). Other built-in: react (pure JSON object), xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
     ),
     resume: str = typer.Option(
         "",
@@ -1690,7 +1690,7 @@ def web(
         "--response-format",
         help="Wire format plugin name. Unset resolves: resumed session's "
         "recorded format > models.json per-model 'wire_format' binding > "
-        "md_array.",
+        "json_fc.",
     ),
     host: str = typer.Option(
         "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"

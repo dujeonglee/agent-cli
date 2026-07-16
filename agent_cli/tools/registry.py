@@ -196,7 +196,7 @@ def _multi_op_flat_params(name: str, props: dict, required: set) -> dict:
     lives in ``items.properties``, so no per-tool declaration is needed.
 
     Not doing this is what let the 27B copy the advertised ``reads`` array and
-    emit the old ``read_file_reads`` wrapper under md_array (DESIGN Exp 8).
+    emit the old ``read_file_reads`` wrapper under json_fc (DESIGN Exp 8).
     """
     out: dict[str, str] = {}
     for k, v in props.items():

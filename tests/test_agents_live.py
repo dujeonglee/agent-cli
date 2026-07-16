@@ -2799,10 +2799,10 @@ class TestRunMode:
         from agent_cli.providers.base import LLMResponse
         from agent_cli.wire_formats import get as get_wf
 
-        wf = get_wf("md_array")
+        wf = get_wf("json_fc")
 
         def turn(ops):
-            # md_array 실제 envelope: ## Thought / ## Action + flat op 배열
+            # json_fc 실제 envelope: ## Thought / ## Action + flat op 배열
             return "## Thought\nt\n\n## Action\n" + json.dumps(ops)
 
         ctx = ContextManager(tmp_path / "sess", max_context_tokens=30_000)

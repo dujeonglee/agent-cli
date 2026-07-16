@@ -313,16 +313,16 @@ class TestSummaryTextRendering:
         assert "write_file(r.c)" in line
 
     def test_summary_renders_all_ops_of_multi_op_record(self):
-        """Regression: a multi-op format (md_array) stores ``{ops:[...]}``, not
+        """Regression: a multi-op format (json_fc) stores ``{ops:[...]}``, not
         a top-level ``{action, action_input}``. ``_to_summary_text`` must
         iterate ``ops`` and label EACH — reading only the top-level ``action``
-        produced thought-only summaries for md_array (the default since
+        produced thought-only summaries for json_fc (the default since
         2026-06-11), losing every record of which tools ran. Each flat op also
         needs flat→canonical normalization so read_file's ``{path}`` shows."""
         from agent_cli import wire_formats
         from agent_cli.context.render import _to_summary_text
 
-        plugin = wire_formats.get("md_array")
+        plugin = wire_formats.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
             "## Thought\nread then write\n\n## Action\n"
             '[{"action": "read_file", "path": "a.c"}, '
@@ -540,15 +540,15 @@ class TestFileExtractHelper:
         assert extract_file_paths([rec]) == ["r.c"]
 
     def test_extracts_all_paths_from_multi_op_record(self):
-        """Regression: a multi-op format (md_array) stores ``{ops:[...]}``;
+        """Regression: a multi-op format (json_fc) stores ``{ops:[...]}``;
         extract must iterate ``ops`` AND normalize each flat op to canonical
         before reading paths. For flat-native read_file (Step 3) ``{path}`` is
         already canonical (identity wrap); still-prefixed batch tools are
-        normalized via their wrap_single_op. md_array's compaction file list
+        normalized via their wrap_single_op. json_fc's compaction file list
         was empty before — both gaps fixed."""
         from agent_cli import wire_formats
 
-        plugin = wire_formats.get("md_array")
+        plugin = wire_formats.get("json_fc")
         rec = plugin.serialize_assistant_for_history(
             "## Thought\nt\n\n## Action\n"
             '[{"action": "read_file", "path": "a.c"}, '
@@ -1193,7 +1193,7 @@ class TestCompactNow:
 
 class TestEstimateMessageTokensOps:
     """``_estimate_message_tokens`` must traverse multi-op (``ops``) assistant
-    records — the md_array default stores action(s) + action_input + complete
+    records — the json_fc default stores action(s) + action_input + complete
     result inside ``ops``. Counting only ``thought`` (the pre-fix behaviour)
     undercounted every assistant turn (e.g. a large write_file content arg or
     a long complete result was invisible to the budget estimator)."""

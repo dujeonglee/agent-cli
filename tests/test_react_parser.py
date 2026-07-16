@@ -62,7 +62,7 @@ class TestStage2LiteralControlChars:
     REAL newlines/tabs instead of `\\n` escapes — invalid strict JSON. Without
     the lenient (strict=False) stage-2 retry this fell to the stage-3 regex,
     which returns action_input as an unusable raw STRING. Now it recovers as a
-    proper dict at stage 2 (reproduced: same class as md_array 1781213377)."""
+    proper dict at stage 2 (reproduced: same class as json_fc 1781213377)."""
 
     def test_literal_newlines_in_action_input_recovers_as_dict(self):
         # The `\n` in this Python literal are REAL newline bytes.

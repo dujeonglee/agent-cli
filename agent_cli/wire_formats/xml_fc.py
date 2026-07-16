@@ -1,6 +1,6 @@
 """xml_fc wire format — 태그-파라미터 function call (multi-op).
 
-Self-contained module (md_array 와 코드 공유 0 — wire-format self-contained
+Self-contained module (json_fc 와 코드 공유 0 — wire-format self-contained
 불변식): 포맷 규칙 텍스트·파서·recovery 문구·히스토리 round-trip 전부 이
 파일이 소유. 설계는 docs/multi-wire-format/PHASE2.md (D4=산문 thought,
 D6=관찰 되먹임 현행 유지).
@@ -69,7 +69,7 @@ _SENTINEL_LINE = re.compile(
     re.MULTILINE | re.I,
 )
 
-# format runaway: 빈 <tool_call> 골격 반복 (md_array 헤더-반복 검사 동형,
+# format runaway: 빈 <tool_call> 골격 반복 (json_fc 헤더-반복 검사 동형,
 # ≥2 임계 철학 동일).
 _DEGEN_EMPTY_BLOCK = re.compile(r"<tool_call>\s*</tool_call>", re.I)
 _DEGEN_OPEN_RUN = re.compile(r"<tool_call>(?=\s*<tool_call>)", re.I)
@@ -207,7 +207,7 @@ class XmlFcFormat(WireFormat):
 
     def provider_call_kwargs(self, capabilities=None) -> dict:
         # JSON-object 모드는 선두 `{` 를 강제해 태그 envelope 이 불가능
-        # (md_array 의 markdown 과 같은 이유) — capability 무관 항상 끔.
+        # (json_fc 의 markdown 과 같은 이유) — capability 무관 항상 끔.
         return {"json_mode": False}
 
     # ─── Prompt ─────────────────────────────────────────────────
@@ -230,7 +230,7 @@ class XmlFcFormat(WireFormat):
 
     def render_action_input(self, action_input) -> str:
         # 가이드는 wire-key prefixed dict 를 넘긴다 — flat 태그 콜로
-        # (md_array 의 un-prefix 스캔과 동형 계약, 구현은 self-contained).
+        # (json_fc 의 un-prefix 스캔과 동형 계약, 구현은 self-contained).
         if isinstance(action_input, dict) and action_input:
             from agent_cli.tools.registry import TOOLS
 
@@ -246,7 +246,7 @@ class XmlFcFormat(WireFormat):
     def render_full_example(self, *, thought, action: str, action_input: str) -> str:
         th = thought if thought is not None else "your reasoning"
         # action_input 이 이미 완성된 <function=…> 콜이면 그대로, 파라미터
-        # 라인들만이면 action 으로 감싼다 (md_array 의 action 스플라이스 동형).
+        # 라인들만이면 action 으로 감싼다 (json_fc 의 action 스플라이스 동형).
         if "<function=" in action_input:
             call = action_input
         else:
@@ -384,7 +384,7 @@ class XmlFcFormat(WireFormat):
         """Singular projection of :meth:`parse_turn` (first op) — ABC 계약용.
 
         history 직렬화는 아래 override 가 멀티-op 레코드로 처리하므로 이
-        경로는 generic 단수 소비자 전용 (md_array 동형).
+        경로는 generic 단수 소비자 전용 (json_fc 동형).
         """
         t = self.parse_turn(llm_text)
         first = t.ops[0] if t.ops else None
@@ -399,7 +399,7 @@ class XmlFcFormat(WireFormat):
         )
 
     def is_degenerate(self, text: str) -> bool:
-        # 빈 <tool_call> 골격 반복 = format runaway (≥2 임계 — md_array 동형).
+        # 빈 <tool_call> 골격 반복 = format runaway (≥2 임계 — json_fc 동형).
         hits = len(_DEGEN_EMPTY_BLOCK.findall(text)) + len(
             _DEGEN_OPEN_RUN.findall(text)
         )
@@ -412,7 +412,7 @@ class XmlFcFormat(WireFormat):
         return _SENTINEL_LINE.sub("", thought).strip()
 
     # ─── History round-trip (multi-op record) ───────────────────
-    # 레코드 shape 은 md_array 와 동일한 ops 계약 (cross-format parity
+    # 레코드 shape 은 json_fc 와 동일한 ops 계약 (cross-format parity
     # 테스트로 고정) — iter_record_ops 등 shape-공용 reader 호환.
 
     def serialize_assistant_for_history(self, raw_text: str) -> dict:

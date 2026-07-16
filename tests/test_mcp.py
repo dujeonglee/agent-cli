@@ -219,7 +219,7 @@ class TestMcpAdapter:
         default (add_prefix) would namespace its bare keys
         (``{query}`` → ``{github.search_query}``) and the prefixed input would
         then fail validate (SCHEMA_MISMATCH) — MCP tools unusable under the
-        default md_array/react formats. McpTool overrides to identity."""
+        default json_fc/react formats. McpTool overrides to identity."""
         from unittest.mock import MagicMock
 
         from agent_cli.mcp.adapter import McpTool

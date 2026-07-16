@@ -132,7 +132,7 @@ class TestDispatcherIntegration:
         from agent_cli.loop import LoopConfig, LoopState, ToolBridge, TurnDispatcher
         from agent_cli.wire_formats import get as get_wf
 
-        wf = get_wf("md_array")
+        wf = get_wf("json_fc")
         ctx = ContextManager(tmp_path / "s", max_context_tokens=100_000)
         cfg = LoopConfig(tools_list=["shell", "complete"], wire_format=wf)
         st = LoopState(query="q")

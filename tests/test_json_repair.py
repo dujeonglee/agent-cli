@@ -157,7 +157,7 @@ class TestSanitizeTruncatedEdit:
 class TestFixInvalidEscapes:
     """Under-escaped regex/paths (`\\s` `\\d` `\\x` `\\.`) → doubled so they
     parse as the literal backslash the model meant (the measured backslash-heavy
-    md_array failure). Valid JSON is returned unchanged."""
+    json_fc failure). Valid JSON is returned unchanged."""
 
     def test_regex_backslash_s_recovers(self):
         import json

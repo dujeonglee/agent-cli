@@ -122,7 +122,7 @@ class LLMCaller:
 
         # Plugin-defined provider hints. The wire plugin decides them from
         # the model's capabilities — e.g. ``json_mode``: ReAct requests it
-        # iff the model supports structured output, md_array never does
+        # iff the model supports structured output, json_fc never does
         # (markdown shape). This is the single wire ⨯ capability decision
         # point, so the provider never combines the two itself.
         extra_call_kwargs = self.cfg.wire_format.provider_call_kwargs(

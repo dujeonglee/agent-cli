@@ -97,7 +97,7 @@ class TurnDispatcher:
         # Phase 3 — foreign-format 구제 (multi-wire-format DESIGN §9): 바인딩
         # 포맷이 0-op 로 읽은 emission 을 타 등록 포맷 파서가 action-보유
         # ops 로 읽어내면 그 turn 으로 진행한다 (실측: 35B xml_fc 스트림의
-        # md_array 회귀 — 0-op 마찰의 17%, PHASE2.md §8). 라벨은 아래
+        # json_fc 회귀 — 0-op 마찰의 17%, PHASE2.md §8). 라벨은 아래
         # 분류에서 FOREIGN_FORMAT, 직렬화는 corrected_record 로 바인딩
         # 포맷의 캐노니컬 shape 재렌더 (누출 raw 재공급 없음 — 자기 교정).
         foreign_source: str | None = None
@@ -261,7 +261,7 @@ class TurnDispatcher:
             render_step("thought", turn.thought, self.state.turn)
 
         # No usable ops at all (parse failure / no action recovered, including
-        # a thought-only turn) — straight to recovery. md_array completes via
+        # a thought-only turn) — straight to recovery. json_fc completes via
         # an explicit `complete` op, so a thought-only emission is a NO_ACTION
         # nudge, not a silent completion.
         if not turn.ops:

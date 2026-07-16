@@ -62,7 +62,7 @@ class OpenAIProvider:
         # capabilities — the single wire ⨯ capability decision point). The
         # provider does NOT inspect ``capabilities`` for this; it just
         # honors the wire's decision. Forcing JSON on a non-JSON wire
-        # (md_array's markdown) makes the model degenerate (the ``[2025]``
+        # (json_fc's markdown) makes the model degenerate (the ``[2025]``
         # / ``[1000, 1000]`` bug).
         if kwargs.get("json_mode"):
             body["response_format"] = {"type": "json_object"}

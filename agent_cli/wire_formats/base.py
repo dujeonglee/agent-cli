@@ -342,7 +342,7 @@ class WireFormat(ABC):
     def is_degenerate(self, text: str) -> bool:
         """Whether *text* is a format runaway: the model repeated the wire
         shape instead of emitting one turn (e.g. several empty ``## Thought``
-        / ``## Action`` blocks in a single md_array response). Two uses: the
+        / ``## Action`` blocks in a single json_fc response). Two uses: the
         loop passes it to ``provider.call(degeneration_check=...)`` to break
         the stream early, and labels the final emission ``FAILURE_DEGENERATE``.
 
@@ -364,7 +364,7 @@ class WireFormat(ABC):
         save covers every consumer.
 
         Default identity: a wire whose thought cannot carry its own sentinels
-        (react: thought is a JSON string, escaped) opts out. md_array
+        (react: thought is a JSON string, escaped) opts out. json_fc
         overrides to drop stray ``##`` header lines. (``action`` / ``action_
         input`` need no cleaning — an invalid action token is already rejected,
         and action_input is JSON-escaped so its content can't form a line-start
@@ -507,7 +507,7 @@ class WireFormat(ABC):
         Default — JSON-shaped formats (ReAct, envelope) request the
         provider's JSON-object mode iff the model supports structured
         output: ``{"json_mode": capabilities.supports_structured_output}``.
-        md_array's markdown overrides to ``{"json_mode": False}``
+        json_fc's markdown overrides to ``{"json_mode": False}``
         regardless of capability — forcing JSON mode on a markdown-shaped
         prompt makes the model degenerate (the ``[2025]`` / ``[1000,1000]``
         bug).

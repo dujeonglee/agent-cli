@@ -1,7 +1,7 @@
 """thinking_tags 단일 소스 — vocab·strip·정규식 계약 (Phase 2 선행 리팩토링).
 
 층별 소비자(providers/openai ①②, WireFormat.strip_thinking stage 0,
-capabilities vocab, md_array ③ 정규식)가 전부 여기서 import 하므로,
+capabilities vocab, json_fc ③ 정규식)가 전부 여기서 import 하므로,
 이 모듈의 계약이 곧 4곳의 계약이다.
 """
 
@@ -57,7 +57,7 @@ class TestStripThinkBlocks:
 
     def test_orphan_closer_not_touched(self):
         # ③ 고아 closer 는 ①② 의 대상이 아니다 — 앵커드 처리(포맷 소유)로.
-        # 문자열 값 안의 </think> 보존 계약(md_array)이 이 성질에 기댄다.
+        # 문자열 값 안의 </think> 보존 계약(json_fc)이 이 성질에 기댄다.
         cleaned, thinking = strip_think_blocks('text with "</think>" inside')
         assert cleaned == 'text with "</think>" inside'
         assert thinking == ""
@@ -88,12 +88,12 @@ class TestWireFormatStage0:
         assert cleaned == "x"
         assert thinking == "t"
 
-    def test_md_array_stage0_strips_leading_block(self):
-        # 종전 갭: md_array 는 ①② 자체 처리가 없어 provider 미경유 경로에서
+    def test_json_fc_stage0_strips_leading_block(self):
+        # 종전 갭: json_fc 는 ①② 자체 처리가 없어 provider 미경유 경로에서
         # 선두 think 블록이 thought 로 오염됐다 — stage 0 helper 로 봉합.
         from agent_cli.wire_formats import get as get_wf
 
-        wf = get_wf("md_array")
+        wf = get_wf("json_fc")
         turn = wf.parse_turn(
             "<think>internal scratch</think>\n"
             "## Thought\nreal thought\n\n"
@@ -104,10 +104,10 @@ class TestWireFormatStage0:
         assert len(turn.ops) == 1
         assert turn.ops[0].action == "read_file"
 
-    def test_md_array_unclosed_opener_recovered(self):
+    def test_json_fc_unclosed_opener_recovered(self):
         from agent_cli.wire_formats import get as get_wf
 
-        wf = get_wf("md_array")
+        wf = get_wf("json_fc")
         turn = wf.parse_turn(
             "## Thought\nt\n\n"
             '## Action\n[{"action": "complete", "result": "done"}]\n'

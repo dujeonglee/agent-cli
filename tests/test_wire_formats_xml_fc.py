@@ -32,8 +32,8 @@ class TestRegistration:
         assert get_wf("xml_fc") is not None
         assert get_wf("xml_fc").name == "xml_fc"
 
-    def test_flags_mirror_md_array(self, wf):
-        # multi-op flat 계열 공통 플래그 (md_array 동형)
+    def test_flags_mirror_json_fc(self, wf):
+        # multi-op flat 계열 공통 플래그 (json_fc 동형)
         assert wf.multi_op is True
         assert wf.thought_required is False
         assert wf.action_required is False
@@ -290,13 +290,13 @@ class TestRenderAndHistory:
         assert "<function=read_file>" in out
 
     def test_render_action_input_unprefixes_to_tag_call(self, wf):
-        # 가이드는 wire-key prefixed dict 를 넘긴다 (md_array 동형 계약)
+        # 가이드는 wire-key prefixed dict 를 넘긴다 (json_fc 동형 계약)
         out = wf.render_action_input({"read_file_path": "src/a.py"})
         assert "<function=read_file>" in out
         assert "<parameter=path>src/a.py</parameter>" in out
         assert "read_file_path" not in out
 
-    def test_serialize_ops_record_shape_matches_md_array(self, wf):
+    def test_serialize_ops_record_shape_matches_json_fc(self, wf):
         rec = wf.serialize_assistant_for_history(
             "t.\n\n" + _call("read_file", {"path": "a.py"})
         )
@@ -403,9 +403,9 @@ class TestGuards:
 
 
 class TestCrossFormatParity:
-    def test_same_logical_turn_same_ops_as_md_array(self):
+    def test_same_logical_turn_same_ops_as_json_fc(self):
         xml = get_wf("xml_fc")
-        md = get_wf("md_array")
+        md = get_wf("json_fc")
         x = xml.parse_turn(
             "t\n\n"
             + _call("read_file", {"path": "a.py"})
@@ -423,7 +423,7 @@ class TestCrossFormatParity:
 
     def test_history_record_shape_parity(self):
         xml = get_wf("xml_fc")
-        md = get_wf("md_array")
+        md = get_wf("json_fc")
         xr = xml.serialize_terminal_for_history("t", "r")
         mr = md.serialize_terminal_for_history("t", "r")
         assert xr == mr  # ops 레코드 shape 는 cross-format 계약
@@ -505,7 +505,7 @@ class TestLenientToolNameTag:
         turn = wf.parse_turn(_call("read_file", {"path": "a.py"}))
         assert turn.parse_stage == 1
 
-    def test_md_array_regression_not_rescued_here(self, wf):
+    def test_json_fc_regression_not_rescued_here(self, wf):
         # 타 포맷 누출(17%)은 이 구제 범위 밖 (Phase 3 소관) — thought-only
         turn = wf.parse_turn(
             '## Thought\nt\n\n## Action\n[{"action": "shell", "command": "ls"}]'

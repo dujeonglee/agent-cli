@@ -93,7 +93,7 @@ class _MultiOpFormat(WireFormat):
     thought_required = False
     action_required = False
     multi_op = True
-    # Completion is an explicit `complete` op (md_array's model), not a
+    # Completion is an explicit `complete` op (json_fc's model), not a
     # terminal flag — exposes_complete True, parse_turn never sets terminal.
     exposes_complete = True
 
@@ -170,7 +170,7 @@ def _turn(thought="t", ops=None) -> str:
 
 
 def _finish(thought="done"):
-    """Completion = a single `complete` op carrying the result (md_array's
+    """Completion = a single `complete` op carrying the result (json_fc's
     model since DESIGN Exp 8 — no thought-only terminal, no review gate)."""
     return [_turn(thought=thought, ops=[{"action": "complete", "result": thought}])]
 

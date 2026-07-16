@@ -86,15 +86,15 @@ class TestC4Bootstrap:
 
     def test_bootstrap_bundles_and_budget_fallback(self, monkeypatch):
         m = self._fake_setup(monkeypatch)
-        boot = m._bootstrap_provider(None, None, "", "", "md_array", 0)
+        boot = m._bootstrap_provider(None, None, "", "", "json_fc", 0)
         assert boot.resolved_model == "m1" and boot.provider_name == "openai"
-        assert boot.wire_format.name == "md_array"
+        assert boot.wire_format.name == "json_fc"
         # 예산 폴백 = 70% 통일 공식 (run/web 동일)
         assert boot.max_context_tokens == (100_000 * 7) // 10
 
     def test_bootstrap_explicit_budget_respected(self, monkeypatch):
         m = self._fake_setup(monkeypatch)
-        boot = m._bootstrap_provider(None, None, "", "", "md_array", 12_345)
+        boot = m._bootstrap_provider(None, None, "", "", "json_fc", 12_345)
         assert boot.max_context_tokens == 12_345
 
     def test_bootstrap_unknown_format_fails_fast(self, monkeypatch):

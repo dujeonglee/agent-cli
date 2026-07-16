@@ -388,7 +388,7 @@ class TestPromptInspectorDynamic:
         capture_startup_system_prompt(
             renderer,
             capabilities=caps,
-            wire_format=get("md_array"),
+            wire_format=get("json_fc"),
             session_dir="",
             max_depth=2,
         )

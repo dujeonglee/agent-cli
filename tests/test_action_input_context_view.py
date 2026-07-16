@@ -72,7 +72,7 @@ class TestSeamDefaultIdentity:
 
     def test_render_unchanged_with_default_seam(self):
         msg = _assistant_read()
-        wf = get_wire("md_array")
+        wf = get_wire("json_fc")
         # rendering through the seam must equal rendering the raw msg directly
         assert _to_natural_language(msg, wf) == wf.render_assistant_from_history(msg)
 
@@ -126,7 +126,7 @@ class TestContextViewElision:
     def test_render_uses_elided_view(self, monkeypatch):
         self._patch(monkeypatch)
         msg = _assistant_write("SECRET_BODY_LINE\nmore")
-        rendered = _to_natural_language(msg, get_wire("md_array"))
+        rendered = _to_natural_language(msg, get_wire("json_fc"))
         assert "SECRET_BODY_LINE" not in json.dumps(rendered, ensure_ascii=False)
         assert "elided" in json.dumps(rendered, ensure_ascii=False)
 
@@ -155,7 +155,7 @@ class TestContextViewElision:
 class TestThroughContextManager:
     def test_history_keeps_full_body_even_when_view_elides(self, tmp_path, monkeypatch):
         monkeypatch.setitem(TOOLS, "write_file", _ElidingTool())
-        ctx = ContextManager(session_dir=tmp_path, wire_format=get_wire("md_array"))
+        ctx = ContextManager(session_dir=tmp_path, wire_format=get_wire("json_fc"))
         ctx.add(_assistant_write("FULL\nBODY\nHERE"))
         # on-disk history is faithful (full body), regardless of context view
         last = [
