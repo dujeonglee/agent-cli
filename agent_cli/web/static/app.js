@@ -540,7 +540,7 @@
       line = el("div", ["card", "card-sys"]);
       line.appendChild(el("span", ["sys-icon"], "⊙"));
       line.appendChild(
-        el("span", ["sys-text"], "컨텍스트 압축 중… (" + fmtTok(d.old_tokens) + " tok)")
+        el("span", ["sys-text"], "Compacting context… (" + fmtTok(d.old_tokens) + " tok)")
       );
       compactionLines[scope] = line;
       appendToTimeline(line, d.task_id);
@@ -558,23 +558,30 @@
     const textEl = line.querySelector(".sys-text");
     if (d.phase === "done") {
       textEl.textContent =
-        "컨텍스트 압축됨 " + fmtTok(d.old_tokens) + " → " + fmtTok(d.new_tokens) + " tok";
+        "Context compacted " + fmtTok(d.old_tokens) + " → " + fmtTok(d.new_tokens) + " tok";
     } else if (d.phase === "warning") {
       line.classList.add("warn");
-      textEl.textContent = "컨텍스트 압축 실패 (" + (d.reason || "") + ") — FIFO 사용";
+      textEl.textContent = "Context compaction failed (" + (d.reason || "") + ") — using FIFO";
     }
     delete compactionLines[scope];
     scrollToBottom();
   }
 
-  // Agent mail-arrival hint: a live "📨 회신 도착" system line (❓ for a
+  // Agent mail-arrival hint: a live "📨 reply arrived" system line (❓ for a
   // question). Transient — not replayed on reconnect (mirrors the compaction
   // marker: it only means something at the instant it arrives). The reply
   // itself is delivered as main's next observation; this is just the cue.
+  // The web UI phrases its own English label from key/kind (the backend's
+  // `text` is the CLI's Korean status line — not shown here).
   function renderAgentMail(d) {
     const line = el("div", ["card", "card-sys"]);
     line.appendChild(el("span", ["sys-icon"], d.kind === "question" ? "❓" : "📨"));
-    line.appendChild(el("span", ["sys-text"], d.text || "에이전트 회신 도착"));
+    const who = d.key ? "Agent " + d.key : "Agent";
+    const label =
+      d.kind === "question"
+        ? who + " asked a question (awaiting reply)"
+        : who + " replied";
+    line.appendChild(el("span", ["sys-text"], label));
     appendToTimeline(line, d.task_id);
     scrollToBottom();
   }
@@ -1115,7 +1122,7 @@
       btn.id = "ws-copy";
       btn.className = "btn-icon";
       btn.type = "button";
-      btn.title = "워크스페이스 경로 복사";
+      btn.title = "Copy workspace path";
       btn.textContent = "📋";
       btn.addEventListener("click", function () {
         copyToClipboard(d.workspace).then(function () {
@@ -1272,7 +1279,7 @@
       el(
         "span",
         ["sys-text"],
-        "이전 이벤트 " + d.omitted + "개 생략 (재접속 리플레이 한도 — 전체 기록은 세션 히스토리에 보존)"
+        d.omitted + " earlier events omitted (reconnect replay limit — full record kept in session history)"
       )
     );
     appendToTimeline(line);
@@ -1590,7 +1597,7 @@
         let divider = "";
         if (kind === "dynamic" && (!prev || (prev.kind || "system") !== "dynamic")) {
           divider =
-            '<div class="insp-divider">── 동적 컨텍스트 (대화 · 관찰) ──</div>';
+            '<div class="insp-divider">── Dynamic context (conversation · observations) ──</div>';
         }
         return (
           divider +
@@ -1775,7 +1782,7 @@
   function saveDirectives() {
     dirSyncActive();
     $dirSave.disabled = true;
-    $dirStatus.textContent = "저장 중…";
+    $dirStatus.textContent = "Saving…";
     fetch("api/directives?" + qtoken(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1787,9 +1794,9 @@
         // Update-when-applied: don't optimistically refresh the prompt view —
         // it shows the CURRENTLY-applied directive and refreshes via broadcast
         // when the loop actually rebuilds (next LLM call).
-        $dirStatus.textContent = "✓ 저장됨 — 다음 LLM 호출에 적용";
+        $dirStatus.textContent = "✓ Saved — applies on the next LLM call";
       })
-      .catch(function () { $dirStatus.textContent = "✗ 저장 실패"; })
+      .catch(function () { $dirStatus.textContent = "✗ Save failed"; })
       .finally(function () { $dirSave.disabled = false; });
   }
   // Cancel: discard unsaved edits by re-loading the file's current content back
@@ -1798,7 +1805,7 @@
   function cancelDirectives() {
     dirDirty = false;
     loadDirectives().then(function () {
-      $dirStatus.textContent = "↩ 취소됨 — 원본 복원";
+      $dirStatus.textContent = "↩ Canceled — original restored";
     });
   }
   if ($dirSave) $dirSave.addEventListener("click", saveDirectives);
@@ -1814,13 +1821,13 @@
     if (!$dirGen) return;
     const busy = Object.keys(dirGenPending).filter(function (k) { return dirGenPending[k]; });
     $dirGen.disabled = dirGenPending[dirAudience];
-    $dirGen.textContent = busy.length ? "✨ 생성 (" + busy.length + " 진행 중…)" : "✨ 생성";
+    $dirGen.textContent = busy.length ? "✨ Generate (" + busy.length + " running…)" : "✨ Generate";
   }
 
   function generateDirective() {
     const brief = ($dirBrief.value || "").trim();
     if (!brief) {
-      $dirStatus.textContent = "· 넣고 싶은 내용을 먼저 적어주세요";
+      $dirStatus.textContent = "· Describe what you want to include first";
       return;
     }
     dirSyncActive();
@@ -1829,7 +1836,7 @@
     dirGenPending[aud] = true;
     $dirBrief.value = "";
     dirGenLabel();
-    $dirStatus.textContent = "✨ [" + aud + "] 초안 생성 중 — 수십 초 걸릴 수 있습니다";
+    $dirStatus.textContent = "✨ [" + aud + "] drafting — this can take tens of seconds";
     fetch("api/directives/generate?" + qtoken(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1848,11 +1855,11 @@
           dirBuffers[aud] = d.content;
           if (dirAudience === aud) $dirText.value = d.content; // 보고 있는 탭이면 즉시
           dirDirty = true; // unsaved — review, then 저장 or 취소
-          $dirStatus.textContent = "✨ [" + aud + "] 초안 반영 — 검토 후 저장";
+          $dirStatus.textContent = "✨ [" + aud + "] draft applied — review then save";
           dirUpdateTabs();
         }
       })
-      .catch(function (e) { $dirStatus.textContent = "✗ [" + aud + "] 생성 실패: " + e.message; })
+      .catch(function (e) { $dirStatus.textContent = "✗ [" + aud + "] generation failed: " + e.message; })
       .finally(function () {
         dirGenPending[aud] = false;
         dirGenLabel();
@@ -1867,7 +1874,7 @@
   if ($dirText)
     $dirText.addEventListener("input", function () {
       dirDirty = true;
-      $dirStatus.textContent = "● 미저장";
+      $dirStatus.textContent = "● Unsaved";
       dirUpdateTabs();
     });
   // Directives changed on disk (a save) OR were just applied by the loop:
@@ -2343,7 +2350,7 @@
     $targetRow = rowEl || null;
     if ($targetRow) $targetRow.classList.add("target");
     $target.innerHTML =
-      "⬆ 업로드 대상: <b>" + (uploadDir ? esc(uploadDir) : "/ (루트)") + "</b>";
+      "⬆ Upload to: <b>" + (uploadDir ? esc(uploadDir) : "/ (root)") + "</b>";
   }
   const esc = (s) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2406,7 +2413,7 @@
             const entries = await fetchTree(entry.rel);
             entries.forEach((e) => kids.appendChild(makeRow(e, depth + 1)));
           } catch (e) {
-            $msg.textContent = "로드 실패: " + e.message;
+            $msg.textContent = "Load failed: " + e.message;
           }
         }
       };
@@ -2441,7 +2448,7 @@
     spacer.className = "dl-toggle";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.title = "워크스페이스 전체 다운로드";
+    cb.title = "Download the whole workspace";
     cb.addEventListener("change", () => {
       // checking root subsumes individual selection — dim the rest of the tree
       $tree.classList.toggle("all-selected", cb.checked);
@@ -2457,7 +2464,7 @@
         ? ` <span class="dl-size">${fmtSize(totalSize)}</span>`
         : "";
     label.innerHTML =
-      "📁 / <span class='dl-size'>(워크스페이스 루트)</span>" + total;
+      "📁 / <span class='dl-size'>(workspace root)</span>" + total;
     label.addEventListener("click", () => setUploadDir("", row));
     row.appendChild(spacer);
     row.appendChild(cb);
@@ -2485,7 +2492,7 @@
       entries.forEach((e) => $tree.appendChild(makeRow(e, 1)));
       setUploadDir("", rootRow); // root selected by default (highlighted)
     } catch (e) {
-      $tree.innerHTML = "<div class='dl-loading'>로드 실패: " + esc(e.message) + "</div>";
+      $tree.innerHTML = "<div class='dl-loading'>Load failed: " + esc(e.message) + "</div>";
     }
   }
 
@@ -2502,11 +2509,11 @@
       ? { all: true }
       : { paths: Array.from(selected) };
     if (!allChecked() && selected.size === 0) {
-      $msg.textContent = "선택된 항목이 없습니다";
+      $msg.textContent = "No items selected";
       return;
     }
     $go.disabled = true;
-    $msg.textContent = "압축 중…";
+    $msg.textContent = "Zipping…";
     try {
       const r = await fetch("api/workspace/download?" + qt(), {
         method: "POST",
@@ -2530,9 +2537,9 @@
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      $msg.textContent = "다운로드 시작: " + fname;
+      $msg.textContent = "Download started: " + fname;
     } catch (e) {
-      $msg.textContent = "실패: " + e.message;
+      $msg.textContent = "Failed: " + e.message;
     } finally {
       $go.disabled = false;
     }
@@ -2541,15 +2548,15 @@
   async function deleteSelected() {
     const paths = Array.from(selected);
     if (!paths.length) {
-      $msg.textContent = "선택된 항목이 없습니다";
+      $msg.textContent = "No items selected";
       return;
     }
     // destructive + permanent → always confirm
     const preview =
-      paths.length <= 3 ? paths.join(", ") : paths.length + "개 항목";
-    if (!confirm(`삭제할까요? (영구 삭제, 복구 불가)\n${preview}`)) return;
+      paths.length <= 3 ? paths.join(", ") : paths.length + " items";
+    if (!confirm(`Delete these? (permanent, cannot be undone)\n${preview}`)) return;
     $del.disabled = true;
-    $msg.textContent = "삭제 중…";
+    $msg.textContent = "Deleting…";
     try {
       const r = await fetch("api/workspace/delete?" + qt(), {
         method: "POST",
@@ -2565,10 +2572,10 @@
       selected.clear();
       const errs = (res.errors || []).length;
       $msg.textContent =
-        "✓ " + res.deleted.length + "개 삭제" + (errs ? ` (실패 ${errs})` : "");
+        "✓ " + res.deleted.length + " deleted" + (errs ? ` (${errs} failed)` : "");
       refreshTree();
     } catch (e) {
-      $msg.textContent = "실패: " + e.message;
+      $msg.textContent = "Failed: " + e.message;
     } finally {
       $del.disabled = false;
     }
@@ -2631,8 +2638,8 @@
 
   function uploadItems(items) {
     if (!items || !items.length) return;
-    const where = uploadDir ? uploadDir + "/" : "(루트)";
-    $msg.textContent = "업로드 중 → " + where + " (" + items.length + ")";
+    const where = uploadDir ? uploadDir + "/" : "(root)";
+    $msg.textContent = "Uploading → " + where + " (" + items.length + ")";
     const out = [];
     let done = 0;
     items.forEach((it) => {
@@ -2640,11 +2647,11 @@
         .then((res) => {
           out.push(
             res.ok
-              ? "✓ " + res.d.rel + (res.d.overwritten ? " (덮어씀)" : "")
+              ? "✓ " + res.d.rel + (res.d.overwritten ? " (overwritten)" : "")
               : "✗ " + esc(it.name) + " — " + (res.d.detail || res.status)
           );
         })
-        .catch(() => out.push("✗ " + esc(it.name) + " — 네트워크 오류"))
+        .catch(() => out.push("✗ " + esc(it.name) + " — network error"))
         .then(() => {
           done += 1;
           if (done === items.length) {
@@ -2656,7 +2663,7 @@
             } else {
               // All good: a brief confirmation that auto-clears, so the drawer
               // doesn't keep a stale file list around.
-              $msg.textContent = "✓ " + okCount + "개 업로드 완료";
+              $msg.textContent = "✓ " + okCount + " uploaded";
               setTimeout(() => {
                 $msg.textContent = "";
               }, 2500);
@@ -2853,7 +2860,7 @@
     $badge.textContent = String(alive);
     if (!roster.length) {
       $roster.innerHTML =
-        '<div class="tm-empty">아직 상주 에이전트가 없습니다 — spawn 하면 여기 나타납니다.</div>';
+        '<div class="tm-empty">No resident agents yet — spawn one and it appears here.</div>';
       return;
     }
     $roster.innerHTML = "";
@@ -2871,7 +2878,7 @@
       if (tm.state !== "dead") {
         const kill = document.createElement("button");
         kill.className = "tm-kill";
-        kill.title = "종료";
+        kill.title = "Kill";
         kill.textContent = "✕";
         kill.addEventListener("click", function (ev) {
           ev.stopPropagation();
@@ -2884,7 +2891,7 @@
         // 죽은 에이전트는 이전 컨텍스트 그대로 부활 가능 (mode:"resume")
         const rev = document.createElement("button");
         rev.className = "tm-kill";
-        rev.title = "이전 컨텍스트로 부활";
+        rev.title = "Revive with previous context";
         rev.textContent = "↻";
         rev.addEventListener("click", function (ev) {
           ev.stopPropagation();
@@ -2903,11 +2910,11 @@
     const list = (selected && msgs[selected]) || [];
     $conv.innerHTML = "";
     if (!selected) {
-      $conv.innerHTML = '<div class="tm-empty">에이전트를 선택하세요.</div>';
+      $conv.innerHTML = '<div class="tm-empty">Select an agent.</div>';
       return;
     }
     if (!list.length) {
-      $conv.innerHTML = '<div class="tm-empty">아직 대화가 없습니다.</div>';
+      $conv.innerHTML = '<div class="tm-empty">No conversation yet.</div>';
       return;
     }
     list.forEach(function (m) {
@@ -2933,8 +2940,8 @@
     $input.disabled = !alive;
     $send.disabled = !alive;
     $input.placeholder = alive
-      ? key + " 에게 메시지… (답변 대기 중이면 답으로 소비)"
-      : "종료된 에이전트입니다.";
+      ? key + " — type a message… (consumed as the answer if it's awaiting one)"
+      : "This agent has been terminated.";
     renderRoster();
     renderConv();
   }
@@ -3031,7 +3038,7 @@
 
   const pctOf = (ratio) => Math.round(ratio * 100);
   function setLabel(pct) {
-    $label.textContent = "압축 " + pct + "%";
+    $label.textContent = "Compact " + pct + "%";
   }
   function applyRatio(ratio) {
     const pct = pctOf(ratio);

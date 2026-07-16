@@ -508,6 +508,10 @@ class TestStaticUI:
         js = client.get("/static/app.js").text
         assert 'addEventListener("agent_mail"' in js
         assert "renderAgentMail" in js
+        # 웹은 key/kind 로 자체 영문 라벨을 조립한다 (백엔드 `text` 는 CLI
+        # 한글 status 라인 — 웹 미표시, WebUI 영문화 5.18.3). 한글 누출 방지.
+        assert '" replied"' in js
+        assert '" asked a question (awaiting reply)"' in js
 
     def test_agent_conversation_clear_wired(self, server_and_client):
         # 5.13 대화창 kill=정리 계약: 서버가 보내는 ``agent_cleared`` 를
