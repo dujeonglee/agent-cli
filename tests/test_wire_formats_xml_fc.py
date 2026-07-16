@@ -342,6 +342,14 @@ class TestGuards:
         # 이 포맷의 본질이 태그 — HTML 금지 조항이 있으면 자기모순
         assert "NEVER use HTML" not in rules
 
+    def test_format_rules_no_bracketed_prose_placeholders(self, wf):
+        # 35B 실측(bakeoff 예4): `<your reasoning>` placeholder 를 모델이
+        # 태그로 복창 — 산문 placeholder 는 꺾쇠 없이 (구조 태그만 꺾쇠).
+        rules = wf.format_rules()
+        assert "<your" not in rules
+        assert "<tool name>" not in rules
+        assert "<name>" not in rules
+
 
 # ── cross-format parity (논리 동형) ──────────────────────────
 

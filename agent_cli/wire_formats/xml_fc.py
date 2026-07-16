@@ -508,11 +508,11 @@ _FORMAT_RULES = """\
 
 Write brief reasoning as plain prose, then emit your tool calls:
 
-<your reasoning — plain prose, no tags>
+Your reasoning goes here, as plain prose. No tags around it.
 
 <tool_call>
-<function=<tool name>>
-<parameter=<name>>value</parameter>
+<function=TOOL_NAME>
+<parameter=PARAM_NAME>value</parameter>
 </function>
 </tool_call>
 
@@ -546,7 +546,7 @@ Rules:
 <tool_call>
 <function=complete>
 <parameter=result>
-<your final answer>
+your final answer
 </parameter>
 </function>
 </tool_call>
