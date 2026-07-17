@@ -837,6 +837,113 @@ class TestInputEndpoint:
         assert resp.status_code == 400
 
 
+class TestInputGate:
+    """confirm/prompt 답변은 "대기 중 + kind 일치"일 때만 수용 (v7.2.0 ⓓ).
+
+    배경: 연결 정체(HTTP/1.1 origin 당 6연결 고갈)로 브라우저에 적체됐던
+    confirm 클릭들이 한꺼번에 flush 되면, 첫 발만 대기 중인 worker 에
+    소비되고 나머지는 ``_input_queue`` 에 잔류 → **다음** confirm/ask 가
+    뜨는 순간 stale 답변을 즉시 소비해 자동 승인/오답이 된다. 다중 뷰어
+    동시 클릭(둘 다 유효 커넥션)에서도 두 번째 답변이 같은 경로로 남는다.
+    게이트는 받아줄 wait 가 없는 답변을 409 로 거절해 적체 자체를 막는다.
+    """
+
+    def test_confirm_without_pending_wait_is_409_and_not_queued(
+        self, server_and_client
+    ):
+        _, renderer, client = server_and_client
+        cid = _register(renderer)
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "confirm", "key": "y", "comment": "", "conn_id": cid},
+        )
+        assert resp.status_code == 409
+        assert renderer._input_queue.qsize() == 0
+
+    def test_prompt_without_pending_wait_is_409_and_not_echoed(self, server_and_client):
+        _, renderer, client = server_and_client
+        conn = WebConnection(id="c1")
+        renderer.register_connection(conn)
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "prompt", "content": "stale answer", "conn_id": "c1"},
+        )
+        assert resp.status_code == 409
+        assert renderer._input_queue.qsize() == 0
+        # 거절된 답변은 user_message 로 echo 되어서도 안 된다.
+        while True:
+            try:
+                event, data = conn.queue.get(timeout=0.2)
+            except Exception:
+                break
+            assert event != "user_message"
+
+    def test_kind_mismatch_is_409(self, server_and_client):
+        """confirm 대기 중에 prompt 답변(또는 역)은 거절 — str 자리에 tuple
+        이 흘러드는 malformed 경로 차단."""
+        from agent_cli.render.base import ConfirmOption
+
+        _, renderer, client = server_and_client
+        cid = _register(renderer)
+        result: list[tuple[str, str]] = []
+
+        def worker():
+            result.append(
+                renderer.confirm(
+                    "?",
+                    [ConfirmOption("y", "yes"), ConfirmOption("n", "no")],
+                    default_key="n",
+                )
+            )
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.05)
+
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "prompt", "content": "wrong kind", "conn_id": cid},
+        )
+        assert resp.status_code == 409
+
+        # 일치하는 kind 는 정상 수용 — worker 가 그 답으로 해제된다.
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "confirm", "key": "y", "comment": "", "conn_id": cid},
+        )
+        assert resp.status_code == 200
+        t.join(timeout=2.0)
+        assert result == [("y", "")]
+
+    def test_chat_is_not_gated(self, server_and_client):
+        _, renderer, client = server_and_client
+        cid = _register(renderer)
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": "hi", "conn_id": cid},
+        )
+        assert resp.status_code == 200
+
+
+class TestConfirmStallWarning:
+    """confirm 클릭 후 일정 시간 내 미해결이면 경고 표시 (v7.2.0 ⓔ) —
+    연결 정체 시 "버튼이 고장난" 조용한 실패를 보이는 실패로."""
+
+    def test_stall_warning_wired_in_js_and_css(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        assert "confirm-stall" in js
+        assert "CONFIRM_STALL_MS" in js
+        assert ".confirm-stall" in css
+
+    def test_frontend_handles_409_as_stale_prompt(self, server_and_client):
+        """409(이미 해결된 프롬프트) 응답이면 stale confirm UI 를 접는다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert "409" in js
+
+
 class TestWebResumeCli:
     """Integration smoke for the ``agent-cli web --resume <id>`` CLI
     surface. Drives :func:`agent_cli.main.web` directly with all heavy

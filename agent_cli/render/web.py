@@ -1095,6 +1095,19 @@ class WebRenderer(Renderer):
         with self._lock:
             return "input_required" in self._sticky
 
+    def awaiting_input_kind(self) -> str | None:
+        """Kind (``"prompt"`` | ``"confirm"``) of the pending input wait, or
+        ``None`` when nothing is waiting. Read by POST /api/input's gate: an
+        answer with no matching wait is refused (409) instead of landing in
+        ``_input_queue`` and auto-answering the NEXT prompt — the stale-click
+        poisoning seen when a connection-starved browser flushes queued
+        confirm clicks, or when two viewers race to answer the same prompt.
+        The kind match also stops a confirm tuple from feeding a prompt wait
+        that expects a plain string (and vice versa)."""
+        with self._lock:
+            slot = self._sticky.get("input_required")
+            return slot["payload"].get("kind") if slot else None
+
     def has_live_connections(self) -> bool:
         """Whether at least one browser is still subscribed (not closed).
         The idle-reaper's primary 'someone is here' signal."""
@@ -1355,6 +1368,9 @@ class WebRenderer(Renderer):
         meta = self.prompt_meta()
 
         def _do() -> str:
+            # Anything already in the queue predates this prompt's announce —
+            # stale by definition; must not auto-answer it.
+            self._drain_stale_input()
             # Sticky (not bare emit): a pending prompt must replay into a
             # late/reconnecting client's snapshot, else the worker waits for an
             # answer the UI never offered (the prompt is invisible). Cleared on
@@ -1412,6 +1428,8 @@ class WebRenderer(Renderer):
         meta = self.prompt_meta()
 
         def _do():
+            # Stale answers must not auto-confirm — see ``_drain_stale_input``.
+            self._drain_stale_input()
             # Sticky like ``prompt_user`` so a reconnecting client replays the
             # pending confirm dialog instead of leaving the worker blocked.
             self.set_sticky(
@@ -1488,6 +1506,24 @@ class WebRenderer(Renderer):
         self._input_queue.put(_ABORT_SENTINEL)
 
     # ─── Helpers ────────────────────────────────────
+
+    def _drain_stale_input(self) -> None:
+        """Empty ``_input_queue`` before a new prompt is announced.
+
+        Anything queued at this point predates the announce, so it can only
+        be aimed at an EARLIER (already-resolved) prompt: e.g. a burst of
+        confirm clicks flushed by a connection-starved browser, or the loser
+        of a two-viewers-answer race. The /api/input gate (409) blocks these
+        at the endpoint; this drain is the belt-and-suspenders for answers
+        that slipped in during the resolve window. Stale ``_ABORT_SENTINEL``
+        is dropped too — the abort affordance targets the prompt that was on
+        screen, never one that hasn't been announced yet. Callers run under
+        ``_guarded_read``'s lock, so no prompt is concurrently waiting."""
+        while True:
+            try:
+                self._input_queue.get_nowait()
+            except Empty:
+                return
 
     def _wait_for_input(self) -> Any:
         """Block worker thread until POST /api/input arrives.

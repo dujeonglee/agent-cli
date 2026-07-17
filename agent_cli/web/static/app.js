@@ -924,6 +924,9 @@
   }
 
   function setInputMode(kind, data) {
+    // Any mode transition ends a pending stall watch: resolved → the
+    // warning is moot; a NEW confirm → the old timer must not fire into it.
+    clearConfirmStall();
     currentMode = kind;
     if (kind === "confirm") {
       $modeBadge.textContent = "CONFIRM";
@@ -983,13 +986,64 @@
     const text = $input.value.trim();
     if (!text) return;
     const kind = currentMode === "prompt" ? "prompt" : "chat";
-    postInput({ kind: kind, content: text });
+    postInput({ kind: kind, content: text }).then(function (res) {
+      if (kind === "prompt" && res && res.status === 409) {
+        // The ask was already answered (another viewer) or aborted —
+        // fold the stale ANSWERING affordance.
+        setInputMode("chat", null);
+        setAbortVisible(false);
+      }
+    });
     $input.value = "";
+  }
+
+  // ── Confirm stall visibility ───────────────
+  // A confirm click normally resolves in well under a second (POST →
+  // worker unblocks → input_resolved). When nothing comes back — e.g.
+  // the browser's 6-connections-per-origin pool is starved by SSE tabs
+  // and the POST is silently queued — the button just looks broken.
+  // Surface that state instead of staying silent.
+  const CONFIRM_STALL_MS = 3000;
+  let confirmStallTimer = null;
+
+  function clearConfirmStall() {
+    if (confirmStallTimer) {
+      clearTimeout(confirmStallTimer);
+      confirmStallTimer = null;
+    }
+    const w = document.getElementById("confirm-stall");
+    if (w) w.remove();
   }
 
   function submitConfirm(key) {
     const comment = $input.value.trim();
-    postInput({ kind: "confirm", key: key, comment: comment });
+    clearConfirmStall();
+    confirmStallTimer = setTimeout(function () {
+      const box = document.getElementById("confirm-buttons");
+      if (currentMode !== "confirm" || !box) return;
+      const warn = el("div", ["confirm-stall"]);
+      warn.id = "confirm-stall";
+      warn.textContent =
+        "⚠ No response from the server yet — the connection may be " +
+        "stalled (e.g. too many open tabs holding connections to this " +
+        "host). The click applies as soon as it gets through; closing " +
+        "unused tabs can help.";
+      box.appendChild(warn);
+    }, CONFIRM_STALL_MS);
+    postInput({ kind: "confirm", key: key, comment: comment })
+      .then(function (res) {
+        if (res && res.status === 409) {
+          // Already answered (another viewer / earlier click) or aborted —
+          // this dialog is stale. input_resolved normally folds it; this
+          // covers a client that missed that event.
+          clearConfirmStall();
+          setInputMode("chat", null);
+          setAbortVisible(false);
+        }
+      })
+      .catch(function () {
+        /* network error — the stall warning covers the visible feedback */
+      });
     $input.value = "";
   }
 

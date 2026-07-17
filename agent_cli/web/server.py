@@ -1094,6 +1094,18 @@ def create_app(server: WebServer) -> FastAPI:
             # is rendered as a conversation card.
             server.enqueue(body.get("conn_id"), content)
             return JSONResponse({"accepted": True})
+        if kind in ("prompt", "confirm"):
+            # Gate: accept an answer only while a wait of the SAME kind is
+            # outstanding. A keyless answer (flushed stale clicks from a
+            # connection-starved browser, the loser of a two-viewers race)
+            # must not sit in the input queue and auto-answer the NEXT
+            # prompt; a kind mismatch would feed a confirm tuple to a
+            # prompt wait expecting a string (or vice versa).
+            if server.renderer.awaiting_input_kind() != kind:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"no pending {kind} — already answered or aborted",
+                )
         if kind == "prompt":
             # Echo prompt answers so the UI shows the user's reply
             # immediately. Semantic note: the LLM gets the answer via

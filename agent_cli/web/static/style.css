@@ -671,6 +671,17 @@ footer {
   background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600;
 }
 .confirm-btn.default:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+/* 클릭 후 일정 시간 무응답(연결 정체 등) 시 버튼 줄 아래에 나타나는 경고 —
+   조용한 실패를 보이는 실패로 (v7.2.0 ⓔ) */
+.confirm-stall {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--warn-soft-fg);
+  background: var(--warn-soft-bg);
+  border: 1px solid var(--warn-soft-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
 
 /* ── Prompt provenance (who/why/what behind a confirm or ask) ── */
 .prompt-meta {

@@ -670,6 +670,52 @@ class TestConfirmInput:
         ConfirmOption(key="n", label="no", aliases=("no",)),
     ]
 
+    def test_confirm_drains_stale_queue_before_announcing(self):
+        """announce(sticky emit) 전에 큐에 있던 답변은 정의상 stale —
+        (이전 프롬프트가 해결된 뒤 도착한 잔여 클릭 등) 새 confirm 이
+        그걸 즉시 소비해 자동 응답되면 안 된다 (v7.2.0 ⓓ drain)."""
+        r = WebRenderer()
+        r._input_queue.put(("y", "stale click"))
+        result: list[tuple[str, str]] = []
+
+        def worker():
+            result.append(r.confirm("?", self.options, default_key="n"))
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        # stale 답변으로 즉시 리턴했으면 안 된다 — 아직 대기 중이어야.
+        assert t.is_alive(), f"confirm consumed a stale answer: {result}"
+        r.push_user_input("confirm", {"key": "n", "comment": "fresh"})
+        t.join(timeout=2.0)
+        assert result == [("n", "fresh")]
+
+    def test_prompt_user_drains_stale_queue_before_announcing(self):
+        r = WebRenderer()
+        r._input_queue.put("stale text")
+        result: list[str] = []
+
+        def worker():
+            result.append(r.prompt_user("Q: "))
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        assert t.is_alive(), f"prompt_user consumed a stale answer: {result}"
+        r.push_user_input("prompt", {"content": "fresh"})
+        t.join(timeout=2.0)
+        assert result == ["fresh"]
+
+    def test_awaiting_input_kind_reflects_pending_prompt(self):
+        """서버 /api/input 게이트가 읽는 표면: 대기 중인 프롬프트의 kind
+        (없으면 None)."""
+        r = WebRenderer()
+        assert r.awaiting_input_kind() is None
+        r.set_sticky("input_required", "input_required", {"kind": "confirm"})
+        assert r.awaiting_input_kind() == "confirm"
+        r.clear_sticky("input_required")
+        assert r.awaiting_input_kind() is None
+
     def test_confirm_returns_pushed_value(self):
         r = WebRenderer()
         result: list[tuple[str, str]] = []
