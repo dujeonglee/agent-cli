@@ -425,9 +425,9 @@ class TestStaticUI:
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/html")
         body = resp.text
-        # Sanity: the page must reference the boot gate (which loads
-        # app.js → SSE + input flow) — v7.5.0 admission gate.
-        assert "static/boot.js" in body
+        # Sanity: the page must reference the app script (SSE + input
+        # flow). v7.7.0: 입장 게이트(boot.js) 제거 — 직접 로드로 복귀.
+        assert "static/app.js" in body
         assert "static/style.css" in body
 
     def test_app_js_is_served(self, server_and_client):
@@ -927,74 +927,16 @@ class TestInputGate:
 
 class TestTabPresenceBeacon:
     """같은 origin 대시보드(agent-board)가 "연결 잡고 있는 탭 수"를 셀 수
-    있도록 모든 web UI 탭이 BroadcastChannel ping 에 pong 으로 응답.
-    v7.5.0 부터 responder 는 boot.js(입장 게이트) 소유 — 파킹 탭은
-    held:false 로 응답해 한도 카운트에서 빠진다."""
+    있도록 모든 web UI 탭이 BroadcastChannel ping 에 pong 으로 응답
+    (v7.7.0: 입장 게이트 제거 후 비콘만 app.js 에 존속 — board 열기
+    게이트의 유일한 데이터 소스)."""
 
-    def test_beacon_wired_in_boot_js(self, server_and_client):
-        _, _, client = server_and_client
-        boot = client.get("/static/boot.js").text
-        assert "agentcli_tab_presence" in boot
-        assert "BroadcastChannel" in boot
-        assert '"pong"' in boot
-        assert "held" in boot
-
-    def test_app_js_does_not_own_a_second_responder(self, server_and_client):
-        """responder 가 boot/app 양쪽에 있으면 한 탭이 두 번 pong —
-        카운트 이중집계. 채널 프로토콜은 boot.js 단일 소유."""
+    def test_beacon_wired_in_app_js(self, server_and_client):
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        assert "agentcli_tab_presence" not in js
-        assert "AgentCliPresence" in js  # boot 가 노출한 표면을 소비
-
-
-class TestSseAdmissionGate:
-    """SSE 입장 제어 (v7.5.0) — 6번째 연결이 생기는 것 자체를 차단.
-
-    페이지가 SSE 를 열기 전에(=app.js 로드 전에) boot.js 가 보유 연결
-    탭을 세고, 이미 5개면 파킹 화면 + 자동 재시도. "보유 ≤5" 불변식이
-    자가 강제되어 항상 1슬롯이 비므로 새 탭 로드가 굶지 않는다 —
-    직접 URL·세션 복원·탭 복제 등 board 게이트 밖 진입 전부 커버."""
-
-    def test_index_loads_boot_not_app_directly(self, server_and_client):
-        _, _, client = server_and_client
-        html = client.get("/").text
-        assert 'src="static/boot.js"' in html
-        assert 'src="static/app.js"' not in html
-
-    def test_boot_gate_wired(self, server_and_client):
-        """v7.6.0: ping/pong 샘플링(150ms 창 — 부하 시 과소, 잔존 pong
-        과다 집계로 레이시) → Web Locks 슬롯으로 재구현. 슬롯 락은
-        원자적 획득 + 탭 종료 시 브라우저가 즉시 해제 + 대기 요청은
-        슬롯이 나는 순간 push 로 승격(폴링/타이머 없음)."""
-        _, _, client = server_and_client
-        boot = client.get("/static/boot.js").text
-        assert "navigator.locks" in boot
-        assert "agentcli-conn-slot-" in boot  # 크로스-레포 프로토콜 상수
-        assert "SLOTS" in boot
-        assert "conn-parked" in boot
-        assert "static/app.js" in boot  # 슬롯 획득 시에만 동적 로드
-        assert "AgentCliPresence" in boot
-
-    def test_parked_screen_styled(self, server_and_client):
-        _, _, client = server_and_client
-        css = client.get("/static/style.css").text
-        assert "#conn-parked" in css
-
-
-class TestConnCrowdWarning:
-    """자기 origin 의 연결 보유 탭 수를 스스로 세어 한도 근접 시 배너
-    (v7.4.0). board 탭 가드(열기 버튼 게이트)를 우회하는 진입 — URL 직접
-    입력·세션 복원·탭 복제 — 도 페이지 스스로 상황을 알린다."""
-
-    def test_crowd_warning_wired(self, server_and_client):
-        _, _, client = server_and_client
-        js = client.get("/static/app.js").text
-        css = client.get("/static/style.css").text
-        assert "conn-crowd" in js
-        assert "CROWD_WARN_TABS" in js
-        assert "AgentCliPresence" in js  # 카운트는 boot 의 공유 표면으로
-        assert "#conn-crowd" in css
+        assert "agentcli_tab_presence" in js
+        assert "BroadcastChannel" in js
+        assert '"pong"' in js
 
 
 class TestConfirmStallWarning:

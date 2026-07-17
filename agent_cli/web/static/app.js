@@ -3244,56 +3244,33 @@
   });
 })();
 
-// ── Crowd banner ────────────────────────────
-// boot.js owns the tab-presence channel (responder + counting) and has
-// already admitted this tab when we run. Here we only keep watching:
-// when the origin's held-connection count reaches the cap, banner the
-// ALREADY-OPEN tabs too — the parked newcomer knows why it waits, but
-// without this the older tabs give no hint that they are the ones
-// crowding the pool. (v7.4.0, counting moved to boot.js in v7.5.0)
+// ── Tab-presence beacon ─────────────────────
+// Every live web-UI tab holds one SSE connection out of the browser's
+// 6-connections-per-origin (HTTP/1.1) pool. Under agent-board's
+// board-proxy gateway ALL rooms share one origin, so the board's
+// dashboard gates "open a new room" on how many tabs are already
+// holding connections — it asks over a same-origin BroadcastChannel
+// and each tab answers here (the v7.2.0 confirm-starvation incident).
+// `path` lets the board spot "a tab for this room already exists"
+// (named-window reuse → no new connection → its gate is waived).
+// Operating premise (v7.7.0): rooms are ALWAYS opened through the
+// board, so the board-side gate is the only admission control — the
+// per-tab parking gate (v7.5/7.6) was dropped (Web Locks needs a
+// secure context the plain-http LAN deployment doesn't have, and
+// direct-URL entry is out of scope by policy). Direct per-port use:
+// each instance is its own origin, so the channel has no other
+// members and this stays inert.
 (function () {
-  const presence = window.AgentCliPresence;
-  if (!presence) return; // BroadcastChannel unsupported → boot skipped the gate
-  presence.setHeld(true); // we are past the gate — this tab holds the SSE
-  const CROWD_WARN_TABS = 5;
-  const CROWD_CHECK_MS = 30000;
-  let dismissedAt = 0; // count at dismissal — re-warn only if it grows
-
-  function crowdBanner(count) {
-    let bar = document.getElementById("conn-crowd");
-    if (count < CROWD_WARN_TABS || count <= dismissedAt) {
-      if (bar) bar.remove();
-      if (count < CROWD_WARN_TABS) dismissedAt = 0; // recovered → re-arm
-      return;
-    }
-    if (!bar) {
-      bar = document.createElement("div");
-      bar.id = "conn-crowd";
-      const msg = document.createElement("span");
-      msg.id = "conn-crowd-msg";
-      bar.appendChild(msg);
-      const x = document.createElement("button");
-      x.type = "button";
-      x.textContent = "✕";
-      x.title = "Dismiss";
-      x.addEventListener("click", function () {
-        dismissedAt = parseInt(bar.dataset.count || "0", 10);
-        bar.remove();
+  if (typeof BroadcastChannel === "undefined") return;
+  const ch = new BroadcastChannel("agentcli_tab_presence");
+  ch.addEventListener("message", function (e) {
+    const d = e.data || {};
+    if (d.type === "ping") {
+      ch.postMessage({
+        type: "pong",
+        nonce: d.nonce,
+        path: location.pathname,
       });
-      bar.appendChild(x);
-      document.body.insertBefore(bar, document.body.firstChild);
     }
-    bar.dataset.count = String(count);
-    bar.firstChild.textContent =
-      "⚠ " + count + " tabs are holding connections to this host — " +
-      "browsers allow only 6 per host (HTTP/1.1). New tabs will wait " +
-      "parked until one of these closes.";
-  }
-
-  function crowdCheck() {
-    presence.countHeld().then(crowdBanner);
-  }
-
-  setTimeout(crowdCheck, 2000); // after load settles
-  setInterval(crowdCheck, CROWD_CHECK_MS);
+  });
 })();
