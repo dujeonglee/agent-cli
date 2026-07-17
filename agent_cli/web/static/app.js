@@ -3268,4 +3268,66 @@
       });
     }
   });
+
+  // ── Crowd self-check (v7.4.0) ──
+  // The board's open-button gate can't see tabs that arrive directly —
+  // typed URL, browser session restore, tab duplication. So every tab
+  // also counts the origin's connection-holding tabs itself (same
+  // ping/pong, 150ms collect) and shows a banner when the browser's
+  // 6-per-origin pool is nearly saturated: the "5th tab spins forever"
+  // failure otherwise gives no clue why.
+  const CROWD_WARN_TABS = 5; // ≥5 held → the next tab/fetch saturates
+  const CROWD_CHECK_MS = 30000;
+  let dismissedAt = 0; // count at dismissal — re-warn only if it grows
+
+  function crowdBanner(count) {
+    let bar = document.getElementById("conn-crowd");
+    if (count < CROWD_WARN_TABS || count <= dismissedAt) {
+      if (bar) bar.remove();
+      if (count < CROWD_WARN_TABS) dismissedAt = 0; // recovered → re-arm
+      return;
+    }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "conn-crowd";
+      const msg = document.createElement("span");
+      msg.id = "conn-crowd-msg";
+      bar.appendChild(msg);
+      const x = document.createElement("button");
+      x.type = "button";
+      x.textContent = "✕";
+      x.title = "Dismiss";
+      x.addEventListener("click", function () {
+        dismissedAt = parseInt(bar.dataset.count || "0", 10);
+        bar.remove();
+      });
+      bar.appendChild(x);
+      document.body.insertBefore(bar, document.body.firstChild);
+    }
+    bar.dataset.count = String(count);
+    bar.firstChild.textContent =
+      "⚠ " + count + " tabs are holding connections to this host — " +
+      "browsers allow only 6 per host (HTTP/1.1), so one more tab (or " +
+      "click) may freeze them all. Close unused tabs.";
+  }
+
+  function crowdCheck() {
+    const counter = new BroadcastChannel("agentcli_tab_presence");
+    const nonce = String(Date.now()) + Math.random();
+    // Self included via our own responder: a different BroadcastChannel
+    // object in the same document DOES receive our ping and pongs back.
+    let n = 0;
+    counter.addEventListener("message", function (e) {
+      const d = e.data || {};
+      if (d.type === "pong" && d.nonce === nonce) n++;
+    });
+    counter.postMessage({ type: "ping", nonce: nonce });
+    setTimeout(function () {
+      counter.close();
+      crowdBanner(n);
+    }, 150);
+  }
+
+  setTimeout(crowdCheck, 2000); // after load settles
+  setInterval(crowdCheck, CROWD_CHECK_MS);
 })();

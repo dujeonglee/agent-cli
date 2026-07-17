@@ -671,6 +671,20 @@ footer {
   background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600;
 }
 .confirm-btn.default:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+/* 연결 보유 탭 과밀 배너 (v7.4.0) — 직접 URL/세션 복원 진입까지 커버하는
+   페이지 자체 경고. body 최상단 슬림 바. */
+#conn-crowd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--warn-soft-fg);
+  background: var(--warn-soft-bg);
+  border-bottom: 1px solid var(--warn-soft-border);
+}
+#conn-crowd span { flex: 1; }
+
 /* 클릭 후 일정 시간 무응답(연결 정체 등) 시 버튼 줄 아래에 나타나는 경고 —
    조용한 실패를 보이는 실패로 (v7.2.0 ⓔ) */
 .confirm-stall {

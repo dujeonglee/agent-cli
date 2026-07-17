@@ -938,6 +938,21 @@ class TestTabPresenceBeacon:
         assert '"pong"' in js
 
 
+class TestConnCrowdWarning:
+    """자기 origin 의 연결 보유 탭 수를 스스로 세어 한도 근접 시 배너
+    (v7.4.0). board 탭 가드(열기 버튼 게이트)를 우회하는 진입 — URL 직접
+    입력·세션 복원·탭 복제 — 도 페이지 스스로 상황을 알린다."""
+
+    def test_crowd_warning_wired(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        assert "conn-crowd" in js
+        assert "CROWD_WARN_TABS" in js
+        assert '"ping"' in js  # 비콘 응답만이 아니라 스스로 카운트도 쏜다
+        assert "#conn-crowd" in css
+
+
 class TestConfirmStallWarning:
     """confirm 클릭 후 일정 시간 내 미해결이면 경고 표시 (v7.2.0 ⓔ) —
     연결 정체 시 "버튼이 고장난" 조용한 실패를 보이는 실패로."""
