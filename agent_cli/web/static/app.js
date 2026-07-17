@@ -1110,29 +1110,30 @@
     // checkout you're talking to when several LAN sessions are open
     // side-by-side. Field is omitted (rather than empty-string) when
     // unavailable so we never render a dangling " · " separator.
-    $info.textContent = d.provider + " · " + d.model;
-    // Full path in the tooltip — the header truncates with ellipsis
-    // for long paths but the user can still hover to see the whole.
-    $info.title = d.workspace || "";
+    // 칩 헤더 (v7.1.0): 모델 칩 = 모델명만 (provider 는 hover), 워크스
+    // 페이스는 별도 칩에 꼬리(마지막 세그먼트)만 — hover 로 전체 경로.
+    $info.textContent = d.model;
+    $info.title = d.provider + " · " + d.model;
     if (d.workspace) {
-      $info.appendChild(document.createTextNode(" · " + d.workspace));
-      // 📋 workspace-path copy button — click copies the full path
-      // (board 사용자가 터미널로 옮겨갈 때의 편의).
-      const btn = document.createElement("button");
-      btn.id = "ws-copy";
-      btn.className = "btn-icon";
-      btn.type = "button";
-      btn.title = "Copy workspace path";
-      btn.textContent = "📋";
-      btn.addEventListener("click", function () {
+      // ws 칩 = 클릭-복사 버튼 (별도 내부 버튼은 칩 높이보다 커서 세로
+      // 클리핑됐던 실사용 피드백의 수리). 표시는 마지막 2세그먼트,
+      // hover = 전체 경로, 클릭 = 복사 + ✓ 플래시.
+      const ws = document.getElementById("chip-ws");
+      const ic = document.getElementById("ws-copy-ic");
+      const segs = d.workspace.replace(/\/+$/, "").split("/").filter(Boolean);
+      const tail =
+        segs.length > 2 ? "…/" + segs.slice(-2).join("/") : d.workspace;
+      document.getElementById("ws-tail").textContent = tail;
+      ws.title = "Copy workspace path — " + d.workspace;
+      ws.hidden = false;
+      ws.addEventListener("click", function () {
         copyToClipboard(d.workspace).then(function () {
-          btn.textContent = "✓";
+          ic.textContent = "✓";
           setTimeout(function () {
-            btn.textContent = "📋";
+            ic.textContent = "📋";
           }, 1000);
         });
       });
-      $info.appendChild(btn);
     }
   });
 
@@ -1227,6 +1228,14 @@
       fmtTok(d.out) +
       " · session out " +
       fmtTok(d.total_out);
+    // ctx 칩 요약 (v7.1.0) — 게이지 + %, 상세는 팝오버(#token-usage)로.
+    if (inTok && win) {
+      const pct = Math.min(100, Math.round((inTok / win) * 100));
+      const chip = document.getElementById("chip-ctx");
+      document.getElementById("ctx-pct").textContent = "ctx " + pct + "%";
+      document.getElementById("ctx-gauge-fill").style.width = pct + "%";
+      chip.hidden = false;
+    }
   });
 
   es.addEventListener("user_message", function (e) {
@@ -3151,5 +3160,32 @@
   document.addEventListener("agentcli:maxagents", (e) => {
     const d = e.detail || {};
     if (typeof d.value === "number") applyValue(d.value);
+  });
+})();
+
+// ── ctx 칩 팝오버 (v7.1.0) ──────────────────────────────────────
+// 저빈도 컨트롤(토큰 상세·컴팩션 슬라이더·Agents 상한)을 헤더에서 팝오버로
+// 승격 — 헤더가 어떤 창 폭에서도 한 줄. 열림/닫힘은 테마 메뉴와 동형
+// (클릭 토글, 바깥 클릭·Escape 닫기). 별도 IIFE — 메인 렌더 루프 무수정.
+(function () {
+  var chip = document.getElementById("chip-ctx");
+  var pop = document.getElementById("ctx-popover");
+  if (!chip || !pop) return;
+  function setOpen(open) {
+    pop.hidden = !open;
+    chip.setAttribute("aria-expanded", String(open));
+  }
+  chip.addEventListener("click", function (e) {
+    e.stopPropagation();
+    setOpen(pop.hidden);
+  });
+  pop.addEventListener("click", function (e) {
+    e.stopPropagation(); // 팝오버 내부 조작(슬라이더 등)이 닫힘을 유발하지 않게
+  });
+  document.addEventListener("click", function () {
+    if (!pop.hidden) setOpen(false);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !pop.hidden) setOpen(false);
   });
 })();

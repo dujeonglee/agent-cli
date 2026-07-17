@@ -497,6 +497,24 @@ class TestStaticUI:
         css = client.get("/static/style.css").text
         assert "#maxagents-input" in css
 
+    def test_header_chips_and_ctx_popover_wired(self, server_and_client):
+        # 칩+팝오버 헤더 (v7.1.0) 배선 계약: 모델 칩(#info)·ctx 게이지 칩·
+        # ws 칩이 존재하고, 저빈도 컨트롤(token-usage/compaction/maxagents)
+        # 은 ctx 팝오버 안으로 이동 (id 는 IIFE 계약이라 보존).
+        _, _, client = server_and_client
+        html = client.get("/static/index.html").text
+        assert 'id="chip-ctx"' in html
+        assert 'id="ctx-popover"' in html
+        assert 'id="chip-ws"' in html
+        pop = html.split('id="ctx-popover"', 1)[1].split("</div>", 1)[0]
+        for moved in ("token-usage", "compaction-wrap", "maxagents-wrap"):
+            assert moved in pop, moved
+        js = client.get("/static/app.js").text
+        assert "ctx-gauge-fill" in js  # 게이지 갱신
+        assert 'getElementById("chip-ctx")' in js  # 팝오버 토글
+        css = client.get("/static/style.css").text
+        assert ".hd-chip" in css and "#ctx-popover" in css
+
     def test_agent_mail_hint_wired(self, server_and_client):
         # 회신-도착 힌트 배선 계약 (v5.18.2): 백엔드가 전용 ``agent_mail``
         # 이벤트를 내고(WebRenderer.agent_mail_hint) app.js 가 그걸 듣는다.
@@ -2285,9 +2303,12 @@ class TestWorkspaceCopyButton:
     """
 
     def test_app_js_wires_copy_button(self, server_and_client):
+        # v7.1.0: 별도 내부 버튼 → ws 칩 자체가 클릭-복사 (칩 높이보다 큰
+        # btn-icon 이 세로 클리핑되던 실사용 피드백의 수리)
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        assert 'btn.id = "ws-copy"' in js
+        assert 'getElementById("chip-ws")' in js
+        assert "Copy workspace path" in js
         assert "copyToClipboard(d.workspace)" in js
         # insecure-context 폴백 필수 (LAN http)
         assert 'document.execCommand("copy")' in js
@@ -2296,7 +2317,7 @@ class TestWorkspaceCopyButton:
     def test_style_has_copy_button(self, server_and_client):
         _, _, client = server_and_client
         css = client.get("/static/style.css").text
-        assert "#ws-copy" in css
+        assert ".hd-chip-text" in css  # 칩 내부 텍스트 ellipsis 담당
 
 
 class TestC3ModuleSeparation:

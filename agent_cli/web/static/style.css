@@ -163,14 +163,96 @@ button:disabled { opacity: .45; cursor: default; }
 
 /* ── Header ─────────────────────────────────── */
 header {
-  padding: 10px 16px;
+  padding: 8px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
-#ws-copy { font-size: 0.85em; padding: 0 4px; vertical-align: baseline; }
+/* 우측 액션 그룹의 시작 — 칩(좌)과 아이콘(우)을 가른다 */
+#theme-wrap { margin-left: auto; }
+
+/* ── 헤더 칩 (v7.1.0) — 의미 단위 요약, 상세는 hover/팝오버 ── */
+.hd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-family: "Jetendard", ui-monospace, SFMono-Regular, monospace;
+  white-space: nowrap;
+}
+/* 모델 칩 — 텍스트 단일이라 inline-block 이면 자체 ellipsis 가능.
+   max 28ch: 로컬 모델 id(예: Qwen3.6-35B-A3B-MLX-8bit=24ch)는 온전히,
+   HF org/model 풀네임류만 말줄임 (hover = provider·전체 이름). */
+#info {
+  display: inline-block;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* ellipsis 는 flex 컨테이너에 안 먹는다 — 내부 text span 이 담당 */
+.hd-chip-text {
+  display: block;
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hd-chip-btn { cursor: pointer; }
+.hd-chip-btn:hover, .hd-chip-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+#ctx-wrap { position: relative; display: inline-flex; }
+#ctx-gauge {
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  flex: none;
+}
+#ctx-gauge-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+#ctx-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 240px;
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px var(--shadow);
+  padding: 10px 12px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+#ctx-popover[hidden] { display: none; }
+#ctx-popover #compaction-wrap,
+#ctx-popover #maxagents-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#ctx-popover #compaction-wrap[hidden],
+#ctx-popover #maxagents-wrap[hidden] { display: none; }
 #info {
   color: var(--text-2);
   font-size: 12px;

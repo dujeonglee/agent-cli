@@ -25,19 +25,38 @@
 </head>
 <body>
   <header>
-    <span id="info">connecting…</span>
-    <span id="token-usage" title="token usage"></span>
-    <span id="compaction-wrap" title="Context compaction threshold — compact when used context reaches this % (lower = earlier/more often). Session-only. Sub-agents inherit the value at spawn time." hidden>
-      <label id="compaction-label" for="compaction-range">Compact 80%</label>
-      <input id="compaction-range" type="range" min="50" max="95" step="5" value="80"
-             aria-label="Context compaction threshold %">
+    <!-- 칩 + 팝오버 헤더 (v7.1.0): 좌측 = 의미 칩 3개(모델 / ctx 게이지 /
+         워크스페이스 꼬리), 우측 = 액션 아이콘. 저빈도 컨트롤(컴팩션
+         슬라이더·Agents 상한·토큰 상세)은 ctx 칩 클릭 팝오버로 — 헤더가
+         어떤 창 폭에서도 한 줄로 수렴. 기존 id 들은 계약(IIFE·테스트)이라
+         전부 보존, 위치만 이동. -->
+    <span id="info" class="hd-chip" title="">connecting…</span>
+    <span id="ctx-wrap">
+      <button id="chip-ctx" class="hd-chip hd-chip-btn" type="button" hidden
+              title="Context usage — click for compaction & agent limits"
+              aria-haspopup="true" aria-expanded="false">
+        <span id="ctx-gauge"><span id="ctx-gauge-fill"></span></span>
+        <span id="ctx-pct">ctx</span>
+      </button>
+      <div id="ctx-popover" hidden>
+        <span id="token-usage" title="token usage"></span>
+        <span id="compaction-wrap" title="Context compaction threshold — compact when used context reaches this % (lower = earlier/more often). Session-only. Sub-agents inherit the value at spawn time." hidden>
+          <label id="compaction-label" for="compaction-range">Compact 80%</label>
+          <input id="compaction-range" type="range" min="50" max="95" step="5" value="80"
+                 aria-label="Context compaction threshold %">
+        </span>
+        <span id="maxagents-wrap" title="Max number of live resident agents. Session-only. Checking Unlimited disables the input. Lowering the cap doesn't kill existing agents (only blocks new spawns)." hidden>
+          <label id="maxagents-label" for="maxagents-input">Agents</label>
+          <input id="maxagents-input" type="number" min="1" step="1" value="10"
+                 aria-label="Max concurrent agents">
+          <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">Unlimited</label>
+        </span>
+      </div>
     </span>
-    <span id="maxagents-wrap" title="Max number of live resident agents. Session-only. Checking Unlimited disables the input. Lowering the cap doesn't kill existing agents (only blocks new spawns)." hidden>
-      <label id="maxagents-label" for="maxagents-input">Agents</label>
-      <input id="maxagents-input" type="number" min="1" step="1" value="10"
-             aria-label="Max concurrent agents">
-      <label id="maxagents-unlim-label"><input id="maxagents-unlimited" type="checkbox">Unlimited</label>
-    </span>
+    <button id="chip-ws" class="hd-chip hd-chip-btn" type="button" hidden
+            title="">
+      <span id="ws-copy-ic">📋</span><span id="ws-tail" class="hd-chip-text"></span>
+    </button>
     <span id="theme-wrap">
       <button id="theme-btn" class="btn-icon" type="button" title="Choose theme" aria-haspopup="true" aria-expanded="false">🎨</button>
       <div id="theme-menu" role="menu" hidden></div>
