@@ -925,6 +925,19 @@ class TestInputGate:
         assert resp.status_code == 200
 
 
+class TestTabPresenceBeacon:
+    """같은 origin 대시보드(agent-board)가 "연결 잡고 있는 탭 수"를 셀 수
+    있도록 모든 web UI 탭이 BroadcastChannel ping 에 pong 으로 응답 (v7.3.0).
+    board-proxy 게이트웨이의 origin 당 6연결 고갈 가드의 데이터 소스."""
+
+    def test_beacon_wired_in_js(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert "agentcli_tab_presence" in js
+        assert "BroadcastChannel" in js
+        assert '"pong"' in js
+
+
 class TestConfirmStallWarning:
     """confirm 클릭 후 일정 시간 내 미해결이면 경고 표시 (v7.2.0 ⓔ) —
     연결 정체 시 "버튼이 고장난" 조용한 실패를 보이는 실패로."""
