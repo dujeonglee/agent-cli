@@ -963,11 +963,17 @@ class TestSseAdmissionGate:
         assert 'src="static/app.js"' not in html
 
     def test_boot_gate_wired(self, server_and_client):
+        """v7.6.0: ping/pong 샘플링(150ms 창 — 부하 시 과소, 잔존 pong
+        과다 집계로 레이시) → Web Locks 슬롯으로 재구현. 슬롯 락은
+        원자적 획득 + 탭 종료 시 브라우저가 즉시 해제 + 대기 요청은
+        슬롯이 나는 순간 push 로 승격(폴링/타이머 없음)."""
         _, _, client = server_and_client
         boot = client.get("/static/boot.js").text
-        assert "MAX_HELD_TABS" in boot
+        assert "navigator.locks" in boot
+        assert "agentcli-conn-slot-" in boot  # 크로스-레포 프로토콜 상수
+        assert "SLOTS" in boot
         assert "conn-parked" in boot
-        assert "static/app.js" in boot  # 통과 시에만 동적 로드
+        assert "static/app.js" in boot  # 슬롯 획득 시에만 동적 로드
         assert "AgentCliPresence" in boot
 
     def test_parked_screen_styled(self, server_and_client):

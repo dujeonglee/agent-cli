@@ -7,21 +7,32 @@
 // forever, confirm clicks queue invisibly (the v7.2.0 confirm-starvation
 // incident). agent-board's open-button gate can't see tabs that arrive
 // directly (typed URL, session restore, tab duplication), so the page
-// polices itself:
+// polices itself at the CONNECTION, not the URL.
 //
-//   1. Count the origin's connection-holding tabs over the same
-//      BroadcastChannel the board uses (parked tabs answer held:false
-//      and are excluded — they hold nothing).
-//   2. Under the cap → load app.js (which opens the SSE) and claim the
-//      slot. At the cap → PARK: render a notice instead of connecting,
-//      and retry automatically until a slot frees up.
+// v7.6.0: admission is arbitrated with the Web Locks API instead of
+// BroadcastChannel ping/pong sampling. Sampling was inherently racy —
+// a 150ms collection window undercounts under load (a "6th" tab slips
+// in and saturates the pool) and a just-closed tab's dying context can
+// still pong (overcount → retry seems stuck). Named slot locks fix all
+// of it structurally:
+//   - acquisition is ATOMIC (two tabs can never share a slot),
+//   - the browser releases a tab's lock the INSTANT it closes/navigates,
+//   - a parked tab queues lock requests and is woken by the browser the
+//     moment a slot frees — no polling, no timers, no retry button.
 //
-// The invariant "held connections ≤ 5" becomes self-enforcing, so one
-// slot always stays free and a parked tab's own page load never starves.
+// SLOTS = 5 of the 6: one connection is deliberately kept free so page
+// loads and API calls (confirm clicks!) always have a slot to run on.
+// "agentcli-conn-slot-<i>" is a cross-repo protocol constant — the
+// agent-board dashboard holds one for its own SSE and counts the same
+// names for its open-button gate.
+//
+// BroadcastChannel stays only as a presence beacon (pong {path, held}):
+// the board uses `path` to spot "a tab for this room already exists"
+// (named-window reuse), and pre-Web-Locks peers still count pongs.
 (function () {
   "use strict";
-  var MAX_HELD_TABS = 5; // 6th held connection = saturated pool
-  var RETRY_MS = 5000;
+  var SLOTS = 5; // of the browser's 6 per-origin connections, keep 1 free
+  var LOCK_PREFIX = "agentcli-conn-slot-";
   var held = false;
 
   function loadApp() {
@@ -30,50 +41,45 @@
     document.body.appendChild(s);
   }
 
-  if (typeof BroadcastChannel === "undefined") {
-    loadApp(); // can't count — behave like before the gate existed
-    return;
-  }
+  var hasLocks =
+    typeof navigator !== "undefined" &&
+    navigator.locks &&
+    typeof navigator.locks.request === "function";
 
-  // Presence responder — single owner of the channel protocol. Other
-  // tabs' counters (and the board dashboard) ping; we answer with
-  // whether THIS tab is actually holding a connection. `path` lets the
-  // board recognise "a tab for this room already exists" (named-window
-  // reuse → no new connection → its gate is waived).
-  var ch = new BroadcastChannel("agentcli_tab_presence");
-  ch.addEventListener("message", function (e) {
-    var d = e.data || {};
-    if (d.type === "ping") {
-      ch.postMessage({
-        type: "pong",
-        nonce: d.nonce,
-        path: location.pathname,
-        held: held,
-      });
-    }
-  });
-
-  function countHeld() {
-    return new Promise(function (resolve) {
-      var counter = new BroadcastChannel("agentcli_tab_presence");
-      var nonce = String(Date.now()) + Math.random();
-      var n = 0;
-      counter.addEventListener("message", function (e) {
-        var d = e.data || {};
-        // No `held` field → an older tab or the board dashboard; both
-        // always hold a connection, so count them.
-        if (d.type === "pong" && d.nonce === nonce && d.held !== false) n++;
-      });
-      counter.postMessage({ type: "ping", nonce: nonce });
-      setTimeout(function () {
-        counter.close();
-        resolve(n);
-      }, 150);
+  // ── Presence beacon (kept from v7.3.0) ──
+  if (typeof BroadcastChannel !== "undefined") {
+    var ch = new BroadcastChannel("agentcli_tab_presence");
+    ch.addEventListener("message", function (e) {
+      var d = e.data || {};
+      if (d.type === "ping") {
+        ch.postMessage({
+          type: "pong",
+          nonce: d.nonce,
+          path: location.pathname,
+          held: held,
+        });
+      }
     });
   }
 
-  // Shared surface for app.js (crowd banner) — the channel protocol
-  // lives here, consumers count through this.
+  // Exact held-slot count via lock introspection (no sampling window).
+  function countHeld() {
+    if (!hasLocks) return Promise.resolve(0);
+    return navigator.locks.query().then(
+      function (state) {
+        var n = 0;
+        (state.held || []).forEach(function (l) {
+          if (l.name && l.name.indexOf(LOCK_PREFIX) === 0) n++;
+        });
+        return n;
+      },
+      function () {
+        return 0;
+      }
+    );
+  }
+
+  // Shared surface for app.js (crowd banner) and anyone else.
   window.AgentCliPresence = {
     countHeld: countHeld,
     setHeld: function (v) {
@@ -81,7 +87,21 @@
     },
   };
 
+  if (!hasLocks) {
+    loadApp(); // can't arbitrate — behave like before the gate existed
+    return;
+  }
+
   var parked = null;
+
+  function admit() {
+    held = true; // beacon now answers "holding"
+    if (parked) {
+      parked.remove();
+      parked = null;
+    }
+    loadApp();
+  }
 
   function park(count) {
     if (!parked) {
@@ -92,39 +112,83 @@
       var msg = document.createElement("p");
       msg.id = "conn-parked-msg";
       box.appendChild(msg);
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-primary";
-      btn.textContent = "Retry now";
-      btn.addEventListener("click", attempt);
-      box.appendChild(btn);
       parked.appendChild(box);
       document.body.appendChild(parked);
     }
     parked.querySelector("#conn-parked-msg").textContent =
-      "⚠ Connection limit — " + count + " tabs on this host already " +
-      "hold live connections (browser cap: 6 per host). This tab is " +
-      "parked so the others keep working; it connects automatically " +
-      "when a slot frees up. Closing an unused tab admits it instantly.";
+      "⚠ Connection slots full — " + count + " tabs on this host " +
+      "(rooms and the board dashboard) already hold live connections. " +
+      "Browsers cap HTTP/1.1 at 6 per host and one slot is kept free " +
+      "so pages and clicks keep working, leaving " + SLOTS + " for " +
+      "tabs. This tab connects AUTOMATICALLY the instant any other " +
+      "tab closes — no reload needed.";
   }
 
-  function attempt() {
-    countHeld().then(function (n) {
-      if (n < MAX_HELD_TABS) {
-        held = true; // claim the slot before the SSE actually opens
-        if (parked) {
-          parked.remove();
-          parked = null;
+  // Try each slot without waiting. The callback holds the lock forever
+  // (never-settling promise) — the browser releases it when the tab
+  // closes or navigates away.
+  function acquireAny() {
+    return new Promise(function (resolve) {
+      var i = 0;
+      function tryNext() {
+        if (i >= SLOTS) {
+          resolve(false);
+          return;
         }
-        loadApp();
-      } else {
-        park(n);
-        // jitter so two parked tabs don't re-check in lockstep and
-        // admit into the same freed slot together
-        setTimeout(attempt, RETRY_MS + Math.random() * 2000);
+        var name = LOCK_PREFIX + i;
+        i += 1;
+        navigator.locks
+          .request(name, { ifAvailable: true }, function (lock) {
+            if (lock) {
+              resolve(true);
+              return new Promise(function () {}); // hold forever
+            }
+            tryNext();
+          })
+          .catch(function () {
+            tryNext();
+          });
       }
+      tryNext();
     });
   }
 
-  attempt();
+  // Parked: queue a request on EVERY slot; the browser grants the first
+  // one that frees. One controller per slot so cancelling the losers can
+  // never touch the winner's granted lock.
+  function waitForSlot() {
+    var ctrls = [];
+    var won = -1;
+    var request = function (i) {
+      var ac = new AbortController();
+      ctrls[i] = ac;
+      navigator.locks
+        .request(LOCK_PREFIX + i, { signal: ac.signal }, function () {
+          if (won !== -1) {
+            // Another slot already admitted us — release this one by
+            // returning immediately (undefined → lock dropped).
+            return;
+          }
+          won = i;
+          ctrls.forEach(function (c, j) {
+            if (j !== i) c.abort();
+          });
+          admit();
+          return new Promise(function () {}); // hold forever
+        })
+        .catch(function () {
+          /* aborted — we won on another slot */
+        });
+    };
+    for (var i = 0; i < SLOTS; i++) request(i);
+  }
+
+  acquireAny().then(function (got) {
+    if (got) {
+      admit();
+    } else {
+      countHeld().then(park);
+      waitForSlot();
+    }
+  });
 })();
