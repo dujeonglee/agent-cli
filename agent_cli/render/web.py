@@ -1400,12 +1400,21 @@ class WebRenderer(Renderer):
         return value if value else default
 
     def can_prompt(self) -> bool:
-        """We can prompt whenever a browser is connected to answer the
-        ``input_required`` event — no TTY needed; the SSE + ``/api/input``
-        channel carries it. Returns ``False`` when nothing is connected, so
-        an interactive prompt is refused / defaulted with a clear path
-        rather than blocking on an answer no one can give."""
-        return self.has_live_connections()
+        """Always ``True``: the web channel can ALWAYS deliver an answer —
+        if nobody is watching right now, the pending ``input_required``
+        sticky replays into the next client's snapshot, the status file
+        flags ``awaiting_input`` (agent-board shows "답변 필요"), and the
+        worker waits until someone shows up and answers (v7.8.0).
+
+        This is deliberately "can an answer EVER arrive", not "is someone
+        here NOW" (that's ``has_live_connections``). The old now-based
+        gate made every ask/confirm fired while the user was viewing a
+        DIFFERENT board room collapse to "(no response)" in the same
+        millisecond — with resident multi-room use, "wait and surface on
+        the board" is the correct semantics. CLI renderers keep the
+        TTY-based gate: without a terminal an answer can truly never
+        arrive there."""
+        return True
 
     def confirm(
         self,

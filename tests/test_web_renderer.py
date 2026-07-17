@@ -84,25 +84,83 @@ class TestStatusPublishing:
 
 
 class TestCanPrompt:
-    """``can_prompt`` reports whether the dangerous-shell guard can
-    actually prompt — for web that means a client is connected to answer
-    the ``input_required`` event (no TTY needed)."""
+    """v7.8.0: ``can_prompt`` = "답이 도착할 수 **있는** 채널인가"(항상
+    True) — "지금 보는 사람이 있나"가 아님. 다중 방 운용에서 사용자가
+    다른 방을 보는 사이 ask/confirm 이 즉시 "(no response)"로 포기하던
+    것을, 대기 + board "답변 필요" 표시 + 재접속 시 pending 질문
+    replay(기존 sticky 기계) 흐름으로 교체. 뷰어 존재 여부는
+    ``has_live_connections()`` 가 따로 답한다."""
 
-    def test_false_without_connection(self):
+    def test_true_even_without_connection(self):
+        """뷰어 0명이어도 True — ask/confirm 은 대기하고, 늦게 접속한
+        클라이언트가 input_required sticky replay 로 질문을 받는다."""
         r = WebRenderer()
-        assert r.can_prompt() is False
+        assert r.can_prompt() is True
 
     def test_true_with_open_connection(self):
         r = WebRenderer()
         r.register_connection(WebConnection(id="c1"))
         assert r.can_prompt() is True
 
-    def test_false_when_connection_closed(self):
+    def test_late_viewer_gets_pending_prompt_and_can_answer(self):
+        """핵심 시나리오: 뷰어 0명 상태에서 ask 대기 시작 → 나중에 접속한
+        클라이언트의 snapshot 에 pending input_required 가 replay → 답을
+        밀어넣으면 worker 가 그 답으로 해제."""
         r = WebRenderer()
-        conn = WebConnection(id="c1")
-        r.register_connection(conn)
-        conn.closed.set()
-        assert r.can_prompt() is False
+        result: list[str] = []
+
+        def worker():
+            result.append(r.prompt_user("Q: ", context="Agent asks:\n  질문"))
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        assert t.is_alive(), "뷰어가 없어도 대기해야 한다 (즉시 포기 금지)"
+
+        conn = WebConnection(id="late")
+        snapshot = r.register_connection(conn)
+        pending = [ev for ev, data in snapshot if ev == "input_required"]
+        assert pending, "늦게 온 뷰어의 snapshot 에 pending 질문이 있어야 한다"
+
+        r.push_user_input("prompt", {"content": "늦은 답"})
+        t.join(timeout=2.0)
+        assert result == ["늦은 답"]
+
+
+class TestDangerousShellWaitsForViewer:
+    """v7.8.0: 위험 shell confirm 도 ask 와 동일 — 뷰어가 없으면 즉시
+    거부하는 대신 대기하고, 늦게 접속한 사용자의 답으로 해제된다.
+    (거부 응답은 모델이 승인 없이 우회하게 만들었음 — 대기=미실행이라
+    보수적으로도 안전.)"""
+
+    def test_shell_confirm_waits_and_accepts_late_answer(self, monkeypatch):
+        import agent_cli.render as render_mod
+        from agent_cli.tools.shell import tool_shell
+
+        r = WebRenderer()
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+        results = []
+
+        def worker():
+            results.append(tool_shell({"command": "rm -f ./agentcli-test-x"}))
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.3)
+        assert t.is_alive(), "뷰어 0명이어도 confirm 은 대기해야 한다"
+
+        # 늦게 접속 → snapshot 에 pending confirm replay
+        conn = WebConnection(id="late")
+        snapshot = r.register_connection(conn)
+        kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
+        assert "confirm" in kinds
+
+        r.push_user_input("confirm", {"key": "n", "comment": "위험해서 거부"})
+        t.join(timeout=3.0)
+        assert results and results[0].success is False
+        assert "denied" in (results[0].error or "").lower() or "거부" in (
+            results[0].error or ""
+        )
 
 
 class TestEventDistribution:
