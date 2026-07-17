@@ -195,6 +195,9 @@
       <button id="abort" type="button" class="btn-danger" hidden>Stop</button>
     </div>
   </footer>
-  <script src="static/app.js"></script>
+  <!-- boot.js = SSE 입장 게이트: origin 의 보유 연결(탭)을 센 뒤 한도
+       미만일 때만 app.js(=SSE 연결)를 동적 로드, 이상이면 파킹+자동
+       재시도 — "보유 ≤5" 불변식 자가 강제 (v7.5.0). -->
+  <script src="static/boot.js"></script>
 </body>
 </html>

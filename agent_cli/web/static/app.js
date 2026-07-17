@@ -3244,39 +3244,18 @@
   });
 })();
 
-// ── Tab-presence beacon ─────────────────────
-// Every web-UI tab holds one SSE connection out of the browser's
-// 6-connections-per-origin (HTTP/1.1) pool. Under agent-board's
-// board-proxy gateway ALL rooms share one origin, so the board's
-// dashboard gates "open a new room" on how many tabs are already holding
-// connections — it asks over a same-origin BroadcastChannel and each tab
-// answers here (see the v7.2.0 confirm-starvation incident). Direct
-// per-port use: each instance is its own origin, so the channel simply
-// has no other members and this stays inert.
+// ── Crowd banner ────────────────────────────
+// boot.js owns the tab-presence channel (responder + counting) and has
+// already admitted this tab when we run. Here we only keep watching:
+// when the origin's held-connection count reaches the cap, banner the
+// ALREADY-OPEN tabs too — the parked newcomer knows why it waits, but
+// without this the older tabs give no hint that they are the ones
+// crowding the pool. (v7.4.0, counting moved to boot.js in v7.5.0)
 (function () {
-  if (typeof BroadcastChannel === "undefined") return;
-  const ch = new BroadcastChannel("agentcli_tab_presence");
-  ch.addEventListener("message", function (e) {
-    const d = e.data || {};
-    if (d.type === "ping") {
-      // path lets the counter recognise "a tab for this room already
-      // exists" (named-window reuse → no new connection → no gate).
-      ch.postMessage({
-        type: "pong",
-        nonce: d.nonce,
-        path: location.pathname,
-      });
-    }
-  });
-
-  // ── Crowd self-check (v7.4.0) ──
-  // The board's open-button gate can't see tabs that arrive directly —
-  // typed URL, browser session restore, tab duplication. So every tab
-  // also counts the origin's connection-holding tabs itself (same
-  // ping/pong, 150ms collect) and shows a banner when the browser's
-  // 6-per-origin pool is nearly saturated: the "5th tab spins forever"
-  // failure otherwise gives no clue why.
-  const CROWD_WARN_TABS = 5; // ≥5 held → the next tab/fetch saturates
+  const presence = window.AgentCliPresence;
+  if (!presence) return; // BroadcastChannel unsupported → boot skipped the gate
+  presence.setHeld(true); // we are past the gate — this tab holds the SSE
+  const CROWD_WARN_TABS = 5;
   const CROWD_CHECK_MS = 30000;
   let dismissedAt = 0; // count at dismissal — re-warn only if it grows
 
@@ -3307,25 +3286,12 @@
     bar.dataset.count = String(count);
     bar.firstChild.textContent =
       "⚠ " + count + " tabs are holding connections to this host — " +
-      "browsers allow only 6 per host (HTTP/1.1), so one more tab (or " +
-      "click) may freeze them all. Close unused tabs.";
+      "browsers allow only 6 per host (HTTP/1.1). New tabs will wait " +
+      "parked until one of these closes.";
   }
 
   function crowdCheck() {
-    const counter = new BroadcastChannel("agentcli_tab_presence");
-    const nonce = String(Date.now()) + Math.random();
-    // Self included via our own responder: a different BroadcastChannel
-    // object in the same document DOES receive our ping and pongs back.
-    let n = 0;
-    counter.addEventListener("message", function (e) {
-      const d = e.data || {};
-      if (d.type === "pong" && d.nonce === nonce) n++;
-    });
-    counter.postMessage({ type: "ping", nonce: nonce });
-    setTimeout(function () {
-      counter.close();
-      crowdBanner(n);
-    }, 150);
+    presence.countHeld().then(crowdBanner);
   }
 
   setTimeout(crowdCheck, 2000); // after load settles
