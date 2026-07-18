@@ -673,6 +673,19 @@ class AgentRegistry:
         with self._cv:
             if self._pending:
                 lines.append(f"(undelivered replies: {len(self._pending)})")
+        # 폴링 차단 넛지: working 이거나 미처리 inbox 가 있으면 모델이
+        # status 를 돌려 기다리는 상황일 가능성이 높다 — 회신은 mail 로
+        # 자동 배달되고 도착 시 harness 가 깨우므로(폴링 금지 설계),
+        # complete 로 턴을 마치는 게 올바른 대기다. 전부 idle 인 로스터
+        # 확인용 status 에는 붙이지 않는다(노이즈).
+        waiting = any(tm.state == "working" or tm.inbox.qsize() > 0 for tm in items)
+        if waiting:
+            lines.append(
+                "⏳ Waiting on an agent? Its reply is delivered to you "
+                "automatically as agent mail and you will be woken when it "
+                "arrives — do not poll status. Finish this turn with "
+                "`complete` and wait."
+            )
         return "\n".join(lines)
 
     def kill(self, key: str) -> str:

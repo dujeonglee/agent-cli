@@ -452,6 +452,30 @@ class TestWaitAndScope:
         assert "unknown" in reg.format_status("agt-nope")
         reg.shutdown_all()
 
+    def test_status_nudges_complete_while_waiting(self, tmp_path, renderer):
+        """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 —
+        working/미처리 inbox 가 있으면 "complete 로 턴을 마쳐라, 회신은
+        자동 배달·도착 시 깨워진다" 힌트를 관찰 말미에 붙인다. 전부
+        idle 인 로스터 확인용 status 엔 안 붙임(노이즈)."""
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        # 대기 상황 아님 → 힌트 없음
+        assert "Finish this turn" not in reg.format_status()
+        # working 상태 → 힌트
+        reg.get(key).state = "working"
+        s = reg.format_status()
+        assert "Finish this turn" in s and "complete" in s
+        assert "delivered to you automatically" in s
+        reg.get(key).state = "idle"
+        # inbox 에 미처리 요청 → 힌트 (worker 픽업 전 창)
+        reg.get(key).inbox.put(("req", "x", None))
+        try:
+            assert "Finish this turn" in reg.format_status()
+        finally:
+            reg.get(key).inbox.get_nowait()
+        reg.shutdown_all()
+
 
 # ── 도구 진입점 ─────────────────────────────────
 
