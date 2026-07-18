@@ -79,7 +79,7 @@ _MAIN_SCOPE = ""
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
 # → busy, ``input_required`` → awaiting_input. A set_sticky/clear_sticky on
 # either republishes the status sidecar (viewers republish on register/unregister).
-_STATUS_STICKY_KEYS = frozenset({"worker_state", "input_required"})
+_STATUS_STICKY_KEYS = frozenset({"worker_state", "input_required", "agent_roster"})
 
 # Fun default nicknames assigned to viewers on connect (browsers can't read
 # the client's OS username, so a friendly auto-label is the practical
@@ -1193,6 +1193,35 @@ class WebRenderer(Renderer):
         with self._lock:
             return sum(1 for c in self._connections if not c.closed.is_set())
 
+    @staticmethod
+    def _agents_summary_from(roster: list | None) -> dict | None:
+        """roster sticky payload → status.json/health 용 요약. dead 는
+        제외(표시 대상 아님 — resume 부활 전까지 리소스도 안 씀)."""
+        if not roster:
+            return None
+        alive = [a for a in roster if a.get("state") != "dead"]
+        return {
+            "alive": len(alive),
+            "working": sum(1 for a in alive if a.get("state") == "working"),
+            "list": [
+                {
+                    "key": a.get("key", ""),
+                    "profile": a.get("profile", ""),
+                    "name": a.get("name", ""),
+                    "state": a.get("state", ""),
+                }
+                for a in alive
+            ],
+        }
+
+    def agents_summary(self) -> dict | None:
+        """현재 roster sticky 의 에이전트 요약 (없으면 None) — /api/health
+        와 status.json 이 같은 소스를 공유한다."""
+        with self._lock:
+            slot = self._sticky.get("agent_roster")
+            roster = slot["payload"].get("roster") if slot else None
+        return self._agents_summary_from(roster)
+
     def _publish_status(self) -> None:
         """Write the live ``{busy, awaiting_input, viewers}`` to ``status.json``
         so the board reads a file instead of polling ``GET /api/health``. No-op
@@ -1205,6 +1234,8 @@ class WebRenderer(Renderer):
             busy = self._worker_busy
             awaiting = "input_required" in self._sticky
             viewers = sum(1 for c in self._connections if not c.closed.is_set())
+            slot = self._sticky.get("agent_roster")
+            roster = slot["payload"].get("roster") if slot else None
         try:
             from agent_cli.web.instance_file import write_status_file
 
@@ -1213,6 +1244,7 @@ class WebRenderer(Renderer):
                 busy=busy,
                 awaiting_input=awaiting,
                 viewers=viewers,
+                agents=self._agents_summary_from(roster),
             )
         except OSError:
             pass  # best-effort: a status write must never break the session

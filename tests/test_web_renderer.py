@@ -62,6 +62,27 @@ class TestStatusPublishing:
         r.clear_sticky("input_required")
         assert read_status_file(tmp_path)["awaiting_input"] is False
 
+    def test_agent_roster_published_as_agents_summary(self, tmp_path):
+        """v7.10.0: 상주 에이전트 상태가 status.json 의 additive `agents`
+        필드로 — board 가 행에 🤖 칩·"에이전트 작업 중" 상태를 그리는
+        데이터 소스. roster sticky 변화가 곧 status 재발행 트리거."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.worker_idle()
+        assert "agents" not in (read_status_file(tmp_path) or {})
+        r.agent_roster(
+            [
+                {"key": "agt-1", "profile": "coder", "name": "ui", "state": "working"},
+                {"key": "agt-2", "profile": "reviewer", "name": "", "state": "idle"},
+                {"key": "agt-3", "profile": "old", "name": "", "state": "dead"},
+            ]
+        )
+        st = read_status_file(tmp_path)
+        assert st["agents"]["alive"] == 2
+        assert st["agents"]["working"] == 1
+        keys = [a["key"] for a in st["agents"]["list"]]
+        assert keys == ["agt-1", "agt-2"]  # dead 제외
+        assert st["agents"]["list"][0]["state"] == "working"
+
     def test_viewers_tracked_on_register_and_unregister(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
         c1, c2 = WebConnection(id="c1"), WebConnection(id="c2")

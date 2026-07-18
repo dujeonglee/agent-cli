@@ -365,6 +365,16 @@ class AgentRegistry:
     def alive_count(self) -> int:
         return sum(1 for t in self._agents.values() if t.state != "dead")
 
+    def any_activity(self) -> bool:
+        """idle-reap 가드 (v7.10.0): 에이전트가 working 이거나 inbox 에
+        미처리 요청이 있으면 True — main 유휴·무접속이어도 인스턴스를
+        자가 종료하면 진행 중 작업이 소실되므로 IdleMonitor 의 is_active
+        에 합류한다. 미배달 회신(_pending)은 게이트하지 않는다 — resume
+        시 agents.json pending 미러로 복원·배달되므로 reap 안전."""
+        return any(
+            t.state == "working" or t.inbox.qsize() > 0 for t in self._agents.values()
+        )
+
     def set_max_agents(self, value) -> int:
         """Set the live-agent cap (session-only, web UI). ``value <= 0`` →
         unlimited (0). Returns the stored value. Does not retroactively kill

@@ -452,6 +452,25 @@ class TestWaitAndScope:
         assert "unknown" in reg.format_status("agt-nope")
         reg.shutdown_all()
 
+    def test_any_activity_reflects_working_and_pending(self, tmp_path, renderer):
+        """v7.10.0: idle-reap 가드 — main 유휴·무접속이어도 에이전트가
+        working 이거나 inbox 에 미처리 요청이 있으면 인스턴스를 자가
+        종료하면 안 된다 (진행 중 작업 소실)."""
+        reg = make_registry(tmp_path)
+        assert reg.any_activity() is False
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        assert reg.any_activity() is False
+        reg.get(key).state = "working"
+        assert reg.any_activity() is True
+        reg.get(key).state = "idle"
+        reg.get(key).inbox.put(("req", "x", None))
+        try:
+            assert reg.any_activity() is True
+        finally:
+            reg.get(key).inbox.get_nowait()
+        reg.shutdown_all()
+
     def test_status_nudges_complete_while_waiting(self, tmp_path, renderer):
         """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 —
         working/미처리 inbox 가 있으면 "complete 로 턴을 마쳐라, 회신은

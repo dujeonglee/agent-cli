@@ -646,6 +646,17 @@ class TestAuth:
         renderer.worker_idle()
         assert client.get("/api/health").json()["busy"] is False
 
+    def test_health_reports_agents_summary(self, server_and_client):
+        """/api/health 도 agents 요약 동봉 — status.json 미작성 구버전
+        폴백 경로의 파리티 (board sessions.live_state)."""
+        _, renderer, client = server_and_client
+        assert client.get("/api/health").json().get("agents") is None
+        renderer.agent_roster(
+            [{"key": "agt-1", "profile": "coder", "name": "", "state": "working"}]
+        )
+        agents = client.get("/api/health").json()["agents"]
+        assert agents["alive"] == 1 and agents["working"] == 1
+
     def test_health_reports_awaiting_input(self, server_and_client):
         _, renderer, client = server_and_client
         assert client.get("/api/health").json()["awaiting_input"] is False

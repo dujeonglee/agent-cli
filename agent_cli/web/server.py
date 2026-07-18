@@ -485,6 +485,9 @@ def create_app(server: WebServer) -> FastAPI:
             "busy": server.renderer.worker_is_busy(),
             "awaiting_input": server.renderer.is_awaiting_input(),
             "viewers": server.renderer.viewer_count(),
+            # v7.10.0: 상주 에이전트 요약 (없으면 None) — status.json 과
+            # 같은 소스(renderer.agents_summary), board 폴백 경로 파리티.
+            "agents": getattr(server.renderer, "agents_summary", lambda: None)(),
         }
 
     @app.get("/api/debug/prompt")

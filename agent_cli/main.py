@@ -2180,6 +2180,10 @@ def web(
             is_active=lambda: (
                 renderer.has_live_connections()
                 or renderer.worker_is_busy()
+                # 상주 에이전트 작업 중/미처리 요청 → 자가 종료 금지
+                # (main 유휴여도 백그라운드 작업 소실 방지, v7.10.0).
+                # nonlocal — worker 부트스트랩이 늦게 채우므로 None 가드.
+                or (agent_registry is not None and agent_registry.any_activity())
                 or server.pending_count() > 0
             ),
             timeout_s=idle_timeout,

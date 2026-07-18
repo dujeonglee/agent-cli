@@ -90,13 +90,21 @@ def write_status_file(
     busy: bool,
     awaiting_input: bool,
     viewers: int,
+    agents: dict | None = None,
 ) -> Path:
-    """Atomically (over)write the live status sidecar. Returns the path."""
+    """Atomically (over)write the live status sidecar. Returns the path.
+
+    ``agents`` (v7.10.0, additive): 상주 에이전트 요약
+    ``{"alive", "working", "list": [{key, profile, name, state}, ...]}`` —
+    board 가 행에 🤖 칩과 "에이전트 작업 중" 상태를 그리는 소스. ``None``
+    이면 필드 생략(에이전트 미사용/구버전 소비자와 동일 shape 유지)."""
     info = {
         "busy": bool(busy),
         "awaiting_input": bool(awaiting_input),
         "viewers": int(viewers),
     }
+    if agents is not None:
+        info["agents"] = agents
     path = status_file_path(session_dir)
     # fsio.atomic_write_json 이 같은 의미론(유니크 tmp + replace + 부모
     # 소실 가드)을 소유 — 자체 mkstemp 구현을 수렴 (v4.27.1 레이스 교훈은
