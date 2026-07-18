@@ -707,7 +707,7 @@ LLM이 사용할 수 있는 도구 목록:
 | `edit_file` | hashline 기반 정밀 편집 (퍼지 매칭 지원) |
 | `shell` | 셸 명령 실행 |
 | `fetch` | 웹 페이지를 가져와 마크다운으로 변환 (재귀 fetch 지원) |
-| `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "complete 로 턴을 마치고 기다려라" 힌트가 붙음) |
+| `agent` | 서브에이전트 (일회성 `run` + 상주 `spawn`/`request`/`status`/`resume`/`kill`). run: 한 op=한 task, 연속 run op = 병렬. spawn: 컨텍스트 유지 상주 — 회신은 관찰로 **자동 배달**(도착 시 main 이 깨어남 — status 폴링 불필요; working/미처리 요청이 보이는 status 응답에는 "complete 로 턴을 마치고 기다려라" 힌트가 붙음). 배달된 회신 말미에는 그 에이전트의 **배달-시점 잔여 상태** 한 줄(`working · N queued` 또는 `idle — ready`)이 동봉되어 밀린 작업량을 바로 알 수 있음 |
 | `read_context` | 세션 이력 SQL 질의 (history 테이블 SELECT: kind/tools/files/author/turn/text) |
 | `memory` | 세션 메모리 — 중대한 실패·발견·결정·메모를 기록/조회 (compaction 무관, resume 복원, 상시 인덱스). 모드: `add`/`get`/`update`/`delete`/`list` |
 | `code_index` | tree-sitter 기반 SQLite 코드 인덱스 (읽기 전용, flat-native — 한 op=한 query). 여러 query 는 멀티-op 으로 (모드 섞기 가능). lazy build + sha1 incremental + edit/write post-hook 자동 갱신. 10 mode: `list`/`fetch`/`lookup`/`kind`/`file`/`refs`/`callers`/`callees`/`slice`/`build`. Python/JS/TS/C/C++/Go/Rust/Java/Markdown |

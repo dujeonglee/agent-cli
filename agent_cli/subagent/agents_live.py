@@ -138,7 +138,7 @@ def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
     return f"{key} ({' · '.join(parts)})" if parts else key
 
 
-def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
+def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     """mailbox 아이템 1건(회신 또는 질문) → main ctx 에 넣을 관찰 레코드.
 
     ``kind:"question"`` (P2, ask→main 라우팅): teammate 가 ask 로 물은
@@ -149,6 +149,12 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
     디스크 포인터 + head 발췌로 치환 — 전문은 worker 가 이미
     ``teammates/<key>/replies/reply-<seq>.md`` 에 영속했다(배달과 무관하게
     항상 저장 — P3 resume 미배달 보존의 토대).
+
+    ``registry`` (v7.11.0, 배달 시점에만 전달): 회신 레코드 말미에 그
+    에이전트의 **배달-시점** 잔여 상태 한 줄을 동봉 — main 이 "얼마나
+    밀렸는지" 보고 다음 요청/대기를 판단한다. 잔여가 있으면 남은 회신도
+    자동 배달됨을 같이 안내(status 폴링 넛지와 정합 — 이 줄이 폴링을
+    유발하면 안 됨). question/died/peer 레코드에는 붙이지 않는다.
     """
     from agent_cli.context.token_estimator import estimate_tokens
 
@@ -231,6 +237,17 @@ def build_reply_record(reply: dict, *, cap: int = 0) -> dict:
 
     status = "success" if reply.get("success") else "error"
     content = f"── agent {label} reply ({status}) ──\n{body}"
+    tm = registry.get(key) if registry is not None else None
+    if tm is not None and getattr(tm, "state", "dead") != "dead":
+        queued = tm.inbox.qsize()
+        if queued > 0 or tm.state == "working":
+            tail = (
+                f"(agent status: {tm.state} · {queued} queued — remaining "
+                "replies arrive automatically; no need to poll.)"
+            )
+        else:
+            tail = "(agent status: idle — ready for new requests.)"
+        content = f"{content}\n{tail}"
     return {
         "role": "user",
         "tool": "agent",

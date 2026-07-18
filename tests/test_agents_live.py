@@ -215,6 +215,59 @@ class TestBuildReplyRecord:
         assert len(rec["content"]) < len(big)
         assert "head excerpt" in rec["content"]
 
+    class _FakeInbox:
+        def __init__(self, n):
+            self._n = n
+
+        def qsize(self):
+            return self._n
+
+    class _FakeTm:
+        def __init__(self, state, queued):
+            self.state = state
+            self.inbox = TestBuildReplyRecord._FakeInbox(queued)
+
+    class _FakeReg:
+        def __init__(self, tm):
+            self._tm = tm
+
+        def get(self, key):
+            return self._tm
+
+    def test_reply_carries_backlog_status(self):
+        """v7.11.0: 회신 배달에 배달-시점 잔여 상태 동봉 — main 이 "얼마나
+        밀렸는지" 보고 다음 요청/대기를 판단. 잔여가 있으면 자동 배달
+        안내(v7.9.0 넛지 정합 — 이 줄 때문에 status 폴링을 돌면 안 됨)."""
+        reg = self._FakeReg(self._FakeTm("working", 2))
+        rec = build_reply_record(self._reply(), registry=reg)
+        assert "working" in rec["content"]
+        assert "2 queued" in rec["content"]
+        assert "arrive automatically" in rec["content"]
+
+    def test_reply_status_idle_ready(self):
+        reg = self._FakeReg(self._FakeTm("idle", 0))
+        rec = build_reply_record(self._reply(), registry=reg)
+        assert "idle" in rec["content"]
+        assert "ready for new requests" in rec["content"]
+
+    def test_reply_status_absent_without_registry(self):
+        # 레거시/직접 호출 경로 무변경 (restore pending 미러 재생 등)
+        rec = build_reply_record(self._reply())
+        assert "agent status:" not in rec["content"]
+
+    def test_question_and_died_records_unchanged(self):
+        reg = self._FakeReg(self._FakeTm("working", 3))
+        q = build_reply_record(
+            {"key": "agt-abc", "kind": "question", "output": "뭐 할까요?"},
+            registry=reg,
+        )
+        assert "agent status:" not in q["content"]
+        d = build_reply_record(
+            {"key": "agt-abc", "kind": "died", "output": "crash"},
+            registry=reg,
+        )
+        assert "agent status:" not in d["content"]
+
 
 # ── 에이전트 상한 (세션 한정, web UI 조절) ────────
 

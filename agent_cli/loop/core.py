@@ -652,7 +652,9 @@ class AgentLoop:
         from agent_cli.subagent.agents_live import build_reply_record
 
         for reply in replies:
-            record = build_reply_record(reply, cap=self._oversized_cap)
+            record = build_reply_record(
+                reply, cap=self._oversized_cap, registry=registry
+            )
             self.messages.append({"role": "user", "content": record["content"]})
             if self.ctx:
                 self.ctx.add(dict(record))
