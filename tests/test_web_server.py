@@ -950,23 +950,53 @@ class TestTabPresenceBeacon:
         assert '"pong"' in js
 
 
+def _js_fn_body(js: str, name: str) -> str:
+    """app.js 에서 ``function NAME(`` 본문 슬라이스 — substring 테스트를
+    함수-스코프 동시출현으로 강화하는 헬퍼 (v7.11.4 감사: "3000줄 어디든
+    문자열만 있으면 통과"의 수리. JS 테스트 인프라 도입 전의 최소안)."""
+    start = js.index(f"function {name}(")
+    nxt = js.find("\n  function ", start + 1)
+    end = nxt if nxt != -1 else start + 4000
+    return js[start:end]
+
+
 class TestConfirmStallWarning:
     """confirm 클릭 후 일정 시간 내 미해결이면 경고 표시 (v7.2.0 ⓔ) —
-    연결 정체 시 "버튼이 고장난" 조용한 실패를 보이는 실패로."""
+    연결 정체 시 "버튼이 고장난" 조용한 실패를 보이는 실패로.
+    v7.11.4 감사: substring-전역 → 함수-스코프 동시출현으로 강화."""
 
     def test_stall_warning_wired_in_js_and_css(self, server_and_client):
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
         css = client.get("/static/style.css").text
-        assert "confirm-stall" in js
         assert "CONFIRM_STALL_MS" in js
         assert ".confirm-stall" in css
+        # 타이머 arm 은 submitConfirm 안에서
+        body = _js_fn_body(js, "submitConfirm")
+        assert "confirmStallTimer = setTimeout" in body
 
-    def test_frontend_handles_409_as_stale_prompt(self, server_and_client):
-        """409(이미 해결된 프롬프트) 응답이면 stale confirm UI 를 접는다."""
+    def test_stall_timer_cleared_on_mode_transition(self, server_and_client):
+        """해결(input_resolved→setInputMode)·새 프롬프트 진입 시 타이머
+        정리 — 아니면 정상 해결 뒤 가짜 '연결 정체' 경고/타이머 누수."""
         _, _, client = server_and_client
         js = client.get("/static/app.js").text
-        assert "409" in js
+        assert "clearConfirmStall()" in _js_fn_body(js, "setInputMode")
+
+    def test_frontend_handles_409_as_stale_prompt(self, server_and_client):
+        """409(이미 해결된 프롬프트) 응답이면 stale UI 를 chat 으로 접는다
+        — confirm/prompt 두 submit 핸들러 각각의 분기 안에서."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        confirm_body = _js_fn_body(js, "submitConfirm")
+        assert "res.status === 409" in confirm_body
+        assert 'setInputMode("chat"' in confirm_body
+        prompt_body = _js_fn_body(js, "submitChatOrPrompt")
+        assert "res.status === 409" in prompt_body
+        assert 'setInputMode("chat"' in prompt_body
+        # 두 핸들러 모두 postInput 이 raw fetch Response 를 반환한다는
+        # 전제 — postInput 이 res.json() 등으로 바뀌면 .status 가
+        # undefined 가 되어 fold 가 조용히 죽는다.
+        assert "return fetch(" in _js_fn_body(js, "postInput")
 
 
 class TestWebResumeCli:
