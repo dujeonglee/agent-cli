@@ -1062,6 +1062,12 @@ class TestHumanInterventionRouting:
         reg.request(key, "hello from human", author="user:bob")
         assert wait_until(lambda: reg.get(key).handled == 1)
         # 창에는 out 메시지가 갔지만 main pending 은 비어 있다
+        # (agent_message 발행도 handled 증가 뒤 — 실제 발행을 기다린다)
+        assert wait_until(
+            lambda: any(
+                c[1]["direction"] == "out" for c in renderer.named("agent_message")
+            )
+        )
         outs = [
             c for c in renderer.named("agent_message") if c[1]["direction"] == "out"
         ]
@@ -2043,6 +2049,10 @@ class TestResumeMode:
         reg.get(key).ctx.add({"role": "user", "content": "landmark-before-death"})
         reg.request(key, "first job")
         assert wait_until(lambda: reg.get(key).handled == 1)
+        # handled 증가는 _push_reply 보다 앞선다(worker 루프 순서) —
+        # drain 은 반드시 회신이 실제로 도착한 뒤에 (CI 타이밍 플레이크
+        # 원인: 빈 drain → reply-1 잔류 → 부활 후 seq 1 오집기).
+        assert wait_until(reg.has_pending_replies)
         reg.drain_replies()
         reg.kill(key)
         assert reg.get(key).state == "dead"
@@ -2183,6 +2193,12 @@ class TestConversationReplay:
         assert wait_until(lambda: reg.get(key).state == "idle")
         reg.request(key, "first job")
         assert wait_until(lambda: reg.get(key).handled == 1)
+        # out 레코드 append 는 handled 증가 뒤 — 실제 기록을 기다린다.
+        assert wait_until(
+            lambda: any(
+                r["direction"] == "out" for r in self._conv_records(tmp_path, key)
+            )
+        )
         recs = self._conv_records(tmp_path, key)
         dirs = [(r["direction"], r["text"]) for r in recs]
         assert ("in", "first job") in dirs
@@ -2199,6 +2215,11 @@ class TestConversationReplay:
         assert wait_until(lambda: reg.get(key).state == "idle")
         reg.request(key, "job")
         assert wait_until(lambda: reg.get(key).handled == 1)
+        assert wait_until(
+            lambda: any(
+                r["direction"] == "out" for r in self._conv_records(tmp_path, key)
+            )
+        )
         with renderer.lock:
             renderer.calls.clear()
         reg._replay_conversation(reg.get(key))
