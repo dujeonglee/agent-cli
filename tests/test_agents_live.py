@@ -666,7 +666,11 @@ class TestToolTeammate:
         r = tool_agent({"mode": "request", "key": key, "message": "go"}, registry=reg)
         assert r.success and "queued" in r.output
         assert "DELIVERED" not in r.output  # 안내는 도구 설명이 담당
-        assert "wait" not in r.output  # U-A: wait 유도 문구 소멸
+        # ★U-A("wait 유도 문구 소멸") 의도적 뒤집기 (2026-07-18 사용자
+        # 지시): U-A 시절엔 MailWaker 가 없어 wait 유도가 위험했지만,
+        # 지금은 회신 도착=자동 기상이라 "complete 로 대기"가 정답이고
+        # 오히려 폴링/재전송이 실사고(에이전트 방해)를 냈다.
+        assert "complete" in r.output and "wait" in r.output
         assert wait_until(reg.has_pending_replies)
         reply = reg.drain_replies()[0]
         assert "done:go" in reply["output"]
@@ -1971,6 +1975,37 @@ class TestPeerMessaging:
         assert outs and outs[0]["to"] == b
         conv = (tmp_path / "agents" / a / "conversation.jsonl").read_text()
         assert "b야 이것 좀 확인해줘" in conv
+        reg.shutdown_all()
+
+    def test_spawn_ack_instructs_complete_and_wait(self, tmp_path, renderer):
+        """★실사고 (2026-07-18, 사용자 보고): spawn 직후 main 이 complete
+        없이 status 폴링·동일 요청 재전송으로 에이전트를 방해. ACK 자체가
+        "폴링/재요청 금지 + complete 로 대기"를 지시해야 한다."""
+        reg = make_registry(tmp_path)
+        res = tool_agent({"mode": "spawn", "task": "build the game"}, registry=reg)
+        out = res.output
+        assert "Do NOT" in out and "status" in out
+        assert "complete" in out
+        assert "woken" in out
+        reg.shutdown_all()
+
+    def test_request_ack_warns_on_stacked_duplicates(self, tmp_path, renderer):
+        """이미 밀린 에이전트에 또 request → 적체 경고 + 대기 지시
+        (재촉 재전송이 중복 작업으로 쌓여 실제로 느려짐을 명시)."""
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "first")  # worker 가 집어 busy 로 블록
+        wait_until(lambda: reg.get(key).state == "busy")
+        reg.request(key, "second")  # inbox 1 적체
+        res = tool_agent(
+            {"mode": "request", "key": key, "message": "third"}, registry=reg
+        )
+        gate.set()
+        out = res.output
+        assert "queued requests" in out  # 적체 수 명시
+        assert "complete" in out and "woken" in out
         reg.shutdown_all()
 
     def test_build_reply_record_peer_message(self):

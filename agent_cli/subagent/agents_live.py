@@ -1432,8 +1432,11 @@ def tool_agent(
                 lines.append(f"initial task NOT queued: {err}")
             else:
                 lines.append(
-                    "initial task queued — the reply will be delivered "
-                    "automatically as an observation when ready."
+                    "initial task queued — the reply arrives automatically as "
+                    "an observation and you will be woken. Do NOT poll status "
+                    "or re-send the request while it works (every request "
+                    "queues MORE work and slows it down). If nothing else "
+                    "needs doing, finish this turn with `complete` and wait."
                 )
         else:
             lines.append(
@@ -1458,13 +1461,25 @@ def tool_agent(
                     f"it resumes the original request now."
                 ),
             )
+        backlog = tm.inbox.qsize() if tm is not None else 0
+        stacked = (
+            (
+                f"\n⚠ it now has {backlog} queued requests — if these are "
+                f"progress checks or re-sends of the same ask, that is "
+                f"interference: each one queues MORE work and delays the "
+                f"answer. Replies arrive automatically; stop re-sending."
+            )
+            if backlog >= 2
+            else ""
+        )
         return ToolResult(
             True,
             output=(
                 f"queued to {key} — the reply will be delivered to you "
-                f"automatically at a later turn (even while you are idle). "
-                f"Keep working on other things, or complete if nothing else "
-                f"remains — you will be woken when it arrives."
+                f"automatically at a later turn (even while you are idle) and "
+                f"you will be woken when it arrives. Do NOT poll status or "
+                f"re-send this request. Work on something else, or finish "
+                f"this turn with `complete` and wait.{stacked}"
             ),
         )
 
@@ -1483,7 +1498,10 @@ def tool_agent(
             if qerr:
                 lines.append(f"task NOT queued: {qerr}")
             else:
-                lines.append("task queued — reply will be delivered automatically.")
+                lines.append(
+                    "task queued — reply arrives automatically; do not poll, "
+                    "finish with `complete` and wait."
+                )
         return ToolResult(True, output="\n".join(lines))
 
     if mode == "status":
