@@ -55,6 +55,8 @@ See ``agent_cli/wire_formats/json_fc.py`` for the reference implementation.
 
 from __future__ import annotations
 
+import re
+
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -319,8 +321,12 @@ class WireFormat(ABC):
             thinking=pa.thinking,
         )
 
-    @staticmethod
-    def strip_thinking(text: str) -> tuple[str, str | None]:
+    # 미닫힘 thinking opener 의 truncation 정지점 — 포맷의 첫-구조 마커.
+    # None 이면 EOF 까지 (종전 동작). 각 플러그인이 자기 마커로 지정.
+    thinking_stop: "re.Pattern | None" = None
+
+    @classmethod
+    def strip_thinking(cls, text: str) -> tuple[str, str | None]:
         """파서 stage 0 — content 에 새어든 thinking 블록(완전 블록·미닫힘
         opener) 격리. ``(cleaned, thinking|None)`` 반환; 격리분은
         ``ParsedTurn.thinking``(verbose 전용, **비재공급**)으로 실린다.
@@ -336,7 +342,7 @@ class WireFormat(ABC):
         """
         from agent_cli.thinking_tags import strip_think_blocks
 
-        cleaned, thinking = strip_think_blocks(text)
+        cleaned, thinking = strip_think_blocks(text, stop=cls.thinking_stop)
         return cleaned, (thinking or None)
 
     def is_degenerate(self, text: str) -> bool:

@@ -299,3 +299,73 @@ class TestBootstrapWiring:
             param = inspect.signature(cmd).parameters["response_format"]
             # typer.Option 객체의 default 속성이 None 이어야 한다
             assert param.default.default is None, cmd.__name__
+
+
+class TestResumeWireFormatHelper:
+    """★감사 #3 (v7.11.4): 대화형-resume 재해석이 typer 본문 인라인이라
+    무검증이었음 — 헬퍼 추출 후 고정. G1(silent format switch 금지):
+    기록 포맷이 미등록 이름이면 조용한 default 폴백이 아니라 Exit(2)."""
+
+    def _session(self, fmt):
+        from agent_cli.context.session import create_session
+
+        s = create_session()
+        s.response_format = fmt
+        return s
+
+    def _current(self):
+        from agent_cli.wire_formats import get as get_wf
+
+        return get_wf("xml_fc")
+
+    def test_explicit_flag_wins_no_reinterpret(self):
+        from agent_cli.main import resume_wire_format
+
+        cur = self._current()
+        out = resume_wire_format(self._session("json_fc"), cur, "xml_fc")
+        assert out is cur  # 명시 플래그 = 체인 1순위
+
+    def test_recorded_format_reinterpreted(self):
+        from agent_cli.main import resume_wire_format
+
+        out = resume_wire_format(self._session("json_fc"), self._current(), None)
+        assert out.name == "json_fc"
+
+    def test_same_format_passthrough(self):
+        from agent_cli.main import resume_wire_format
+
+        cur = self._current()
+        assert resume_wire_format(self._session("xml_fc"), cur, None) is cur
+
+    def test_unknown_recorded_format_exits_2(self):
+        import click
+        import pytest
+        import typer
+
+        from agent_cli.main import resume_wire_format
+
+        with pytest.raises((typer.Exit, click.exceptions.Exit, SystemExit)) as ei:
+            resume_wire_format(
+                self._session("md_array"), self._current(), None
+            )  # v6.0.0 에서 rename 된 이름 — 조용한 폴백 금지
+        code = getattr(ei.value, "exit_code", getattr(ei.value, "code", None))
+        assert code == 2
+
+    def test_writeback_persists_to_meta(self, tmp_path, monkeypatch):
+        """run/web 의 write-back(session.response_format=해석값; save_meta)
+        이 실제 meta 파일에 남는지 — 연속 resume 포맷 drift 방지."""
+        import json
+
+        import agent_cli.context.session as sess_mod
+        from agent_cli.context.session import create_session, save_meta
+
+        monkeypatch.setattr(sess_mod, "_SESSIONS_BASE", tmp_path)
+        s = create_session()
+        s.response_format = "xml_fc"
+        save_meta(s)
+        line = (
+            (tmp_path / "sessions" / s.session_id / "session.jsonl")
+            .read_text()
+            .splitlines()[0]
+        )
+        assert json.loads(line)["_meta"]["response_format"] == "xml_fc"

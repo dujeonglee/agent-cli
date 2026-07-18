@@ -1329,6 +1329,21 @@ def run(
     _finalize_run(session, ctx, mcp_manager)
 
 
+def resume_wire_format(session, current, explicit: str | None):
+    """후결정(대화형) resume 의 포맷 재해석 — 해석 체인 순위 2 와 동형.
+
+    명시 플래그가 없고 세션 기록 포맷이 현재와 다르면 기록 이름으로
+    재해석한다. 미등록 이름(rename/제거된 포맷)은 Exit(2) — G1: silent
+    format switch 금지 (v7.11.4 에서 typer 본문 인라인을 추출해 고정)."""
+    if explicit is not None or session.response_format == current.name:
+        return current
+    try:
+        return _get_wire_format(session.response_format)
+    except KeyError as exc:
+        console.print(f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]")
+        raise typer.Exit(2) from exc
+
+
 def web_instance_is_active(renderer, server, agent_registry) -> bool:
     """idle self-reap 의 활동 술어 (--idle-timeout, v7.10.0 에이전트 가드).
 
@@ -1834,16 +1849,11 @@ def web(
             console.print(f"[{C['accent']}]Resuming session {session.session_id}[/]")
             # 대화형 resume 는 부트 **후에** 결정된다 — 명시 플래그가 없으면
             # 기록된 포맷으로 재해석 (--resume 경로의 체인 순위 2 와 동형).
-            if response_format is None and session.response_format != (
-                wire_format_plugin.name
-            ):
-                try:
-                    wire_format_plugin = _get_wire_format(session.response_format)
-                except KeyError as exc:
-                    console.print(
-                        f"[{C['error']}]{exc.args[0] if exc.args else exc}[/]"
-                    )
-                    raise typer.Exit(2) from exc
+            reinterpreted = resume_wire_format(
+                session, wire_format_plugin, response_format
+            )
+            if reinterpreted is not wire_format_plugin:
+                wire_format_plugin = reinterpreted
                 boot = dataclasses.replace(boot, wire_format=wire_format_plugin)
     # 활성 포맷을 메타에 기록 — 명시 플래그로 전환한 resume 도 다음
     # resume 가 이어받는다 (meta = 마지막 실행의 truth).

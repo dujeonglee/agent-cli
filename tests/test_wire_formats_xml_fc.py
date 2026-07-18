@@ -653,3 +653,112 @@ class TestBindingIntegration:
         monkeypatch.setattr(_config, "_cached_registry", None)
         wf = resolve_wire_format(explicit=None, session_format=None, model="qwen-x")
         assert wf.name == "xml_fc"
+
+
+class TestLenientValueIntegrity:
+    """★감사 발견 data-loss (v7.11.4): lenient 값 추출이 값 속의 임의
+    `<tag>` 토큰에서 끊겨 — content 빈 파일 기록·shell 명령 파손·phantom
+    param 생성. 값 종료는 키-이름/parameter closer 를 우선해야 한다."""
+
+    def _wf(self):
+        from agent_cli.wire_formats import get as get_wf
+
+        return get_wf("xml_fc")
+
+    def test_hybrid_content_with_html_not_shattered(self):
+        turn = self._wf().parse_turn(
+            "<tool_call>\n<function=write_file>\n<path>x.html</path>\n"
+            "<content><div>hi</div></content>\n</function>\n</tool_call>"
+        )
+        ai = turn.ops[0].action_input
+        assert ai["content"] == "<div>hi</div>"
+        assert ai["path"] == "x.html"
+        assert "div" not in ai  # phantom param 금지
+
+    def test_shell_command_with_angle_tokens_intact(self):
+        turn = self._wf().parse_turn(
+            "<tool_call>\n<function=shell>\n"
+            '<command>grep "<pattern>" file.txt</command>\n'
+            "</function>\n</tool_call>"
+        )
+        ai = turn.ops[0].action_input
+        assert ai["command"] == 'grep "<pattern>" file.txt'
+        assert "pattern" not in ai
+
+    def test_sed_style_multiple_angle_tokens(self):
+        turn = self._wf().parse_turn(
+            "<tool_call>\n<function=shell>\n"
+            '<command>sed "s/<old>/<new>/" f.txt</command>\n'
+            "</function>\n</tool_call>"
+        )
+        assert turn.ops[0].action_input["command"] == 'sed "s/<old>/<new>/" f.txt'
+
+    def test_keyname_closer_still_accepted(self):
+        # 기존 실측 변종 보존: <parameter=k>v</k>
+        turn = self._wf().parse_turn(
+            "<tool_call>\n<function=read_file>\n"
+            "<parameter=line_start>1</line_start>\n"
+            "<parameter=path>a.py</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        ai = turn.ops[0].action_input
+        assert ai["line_start"] == 1 and ai["path"] == "a.py"  # int 코어션은 기존 동작
+
+    def test_same_line_params_do_not_swallow_each_other(self):
+        """자기-closer 우선 경로가 구별되는 케이스: 같은 줄의 두 param —
+        폴백(라인-끝 closer)만으로는 앞 param 이 뒤 param 을 삼킨다."""
+        turn = self._wf().parse_turn(
+            "<tool_call>\n<function=write_file>\n"
+            "<path>x.txt</path> <content>hello</content>\n"
+            "</function>\n</tool_call>"
+        )
+        ai = turn.ops[0].action_input
+        assert ai["path"] == "x.txt"
+        assert ai["content"] == "hello"
+
+    def test_unclosed_param_falls_back_to_line_anchored_next(self):
+        # closer 생략 드리프트 — 다음 라인-선두 오픈 직전까지가 값
+        turn = self._wf().parse_turn(
+            "<tool_call>\n<function=write_file>\n"
+            "<path>a.py\n<content>hello</content>\n</function>\n</tool_call>"
+        )
+        ai = turn.ops[0].action_input
+        assert ai["path"] == "a.py" and ai["content"] == "hello"
+
+
+class TestThinkingOpenerDoesNotEatOps:
+    """★감사 발견 op-삼킴 (v7.11.4): 미닫힘 <thinking> 이 action 앞에
+    있으면 stage 0 가 EOF 까지 잘라 턴의 ops 전체가 무실패 소실."""
+
+    def _wf(self):
+        from agent_cli.wire_formats import get as get_wf
+
+        return get_wf("xml_fc")
+
+    def test_midline_mention_not_treated_as_opener(self):
+        turn = self._wf().parse_turn(
+            "Discussing the <thinking> channel design.\n"
+            "<tool_call>\n<function=read_file>\n"
+            "<parameter=path>a.py</parameter>\n</function>\n</tool_call>"
+        )
+        assert turn.ops and turn.ops[0].action == "read_file"
+
+    def test_genuine_unclosed_opener_stops_at_structure(self):
+        # 라인-선두 진짜 opener 라도 구조 마커부터는 살아야 한다
+        turn = self._wf().parse_turn(
+            "<think>\nweighing options without a closer\n"
+            "<tool_call>\n<function=read_file>\n"
+            "<parameter=path>a.py</parameter>\n</function>\n</tool_call>"
+        )
+        assert turn.ops and turn.ops[0].action == "read_file"
+        assert "weighing options" in (turn.thinking or "")
+
+    def test_trailing_unclosed_opener_still_stripped(self):
+        # 기존 동작 보존: 끝자락 미닫힘 opener 는 EOF 까지 thinking
+        turn = self._wf().parse_turn(
+            "<tool_call>\n<function=complete>\n"
+            "<parameter=result>done</parameter>\n</function>\n</tool_call>\n"
+            "<think>\nleftover musing"
+        )
+        assert turn.ops and turn.ops[0].action == "complete"
+        assert "leftover musing" in (turn.thinking or "")

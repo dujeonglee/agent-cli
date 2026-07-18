@@ -89,7 +89,16 @@ _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
 # 아무 이름이나 수용 (실측: `<parameter=line_start>1</line_start>` 처럼
 # 키-이름으로 닫는 혼합 스타일 존재).
 _LENIENT_PARAM_OPEN = re.compile(r"<(?:parameter=)?([\w.\-]+)>")
-_LENIENT_VALUE_STOP = re.compile(r"</[^>]*>|<(?:parameter=)?[\w.\-]+>")
+# 값 종료 폴백 (키-closer 부재 시): 라인-선두 다음 오픈 / 구조 닫기 /
+# 라인-끝의 임의 닫는 태그. ★값 **속** 임의 `<tag>` 토큰(HTML content,
+# `grep "<pat>"`, sed 식)에서 끊지 않는다 — 종전 any-token stop 이
+# content 를 빈 값으로 만들고 phantom param 을 만들던 data-loss 의 수리
+# (v7.11.4).
+_LENIENT_VALUE_FALLBACK_STOP = re.compile(
+    r"(?m)^[ \t]*<(?:parameter=)?[\w.\-]+>"  # 다음 param 오픈 (라인 선두)
+    r"|</(?:function|tool_call)>"  # 구조 닫기
+    r"|</[\w.\-]+>[ \t]*\r?$"  # 라인 끝의 임의 closer (오기명 드리프트)
+)
 
 
 def _lenient_tool_open_re() -> re.Pattern:
@@ -105,23 +114,36 @@ def _lenient_tool_open_re() -> re.Pattern:
 def _extract_params_lenient(segment: str) -> dict:
     """혼합 스타일 파라미터 추출 — plain ``<k>v</k>``, canonical
     ``<parameter=k>v</parameter>``, 키-이름 closer ``<parameter=k>v</k>``
-    전부 수용. 값의 끝 = 다음 닫는 태그(이름 무관) / 다음 오픈(closer
-    생략 변종) / 세그먼트 끝."""
+    전부 수용.
+
+    값의 끝 판정 (v7.11.4 — 값 무결성 우선):
+    1. **자기 closer 우선**: ``</KEY>`` 또는 ``</parameter>`` 의 최근접
+       매치 — 값 속의 임의 ``<tag>`` 토큰(HTML, ``grep "<pat>"``, sed
+       식)은 값의 일부로 보존된다. 같은 줄 다중 param 도 자기 closer
+       로만 끊겨 서로를 삼키지 않는다.
+    2. 자기 closer 가 없으면(closer 생략/오기명 드리프트) 폴백: 라인-선두
+       다음 오픈 / 구조 닫기 / 라인-끝 임의 closer / 세그먼트 끝."""
     params: dict = {}
     pos = 0
     while True:
         m = _LENIENT_PARAM_OPEN.search(segment, pos)
         if m is None:
             break
-        stop = _LENIENT_VALUE_STOP.search(segment, m.end())
-        if stop is None:
-            value, pos = segment[m.end() :], len(segment)
-        elif stop.group(0).startswith("</"):
-            value, pos = segment[m.end() : stop.start()], stop.end()
+        key = m.group(1)
+        own_closer = re.compile(rf"</(?:parameter|{re.escape(key)})\s*>", re.IGNORECASE)
+        cm = own_closer.search(segment, m.end())
+        if cm is not None:
+            value, pos = segment[m.end() : cm.start()], cm.end()
         else:
-            # closer 생략 — 다음 오픈 직전까지가 값
-            value, pos = segment[m.end() : stop.start()], stop.start()
-        params[m.group(1)] = _trim_block(value.rstrip())
+            stop = _LENIENT_VALUE_FALLBACK_STOP.search(segment, m.end())
+            if stop is None:
+                value, pos = segment[m.end() :], len(segment)
+            elif stop.group(0).startswith("</"):
+                value, pos = segment[m.end() : stop.start()], stop.end()
+            else:
+                # closer 생략 — 다음 라인-선두 오픈 직전까지가 값
+                value, pos = segment[m.end() : stop.start()], stop.start()
+        params[key] = _trim_block(value.rstrip())
     return params
 
 
@@ -201,6 +223,8 @@ class XmlFcFormat(WireFormat):
     thought_required = False
     action_required = False
     multi_op = True
+    # 미닫힘 <think> 가 tool call 을 EOF-삼킴하지 않게 구조 마커에서 정지.
+    thinking_stop = _FIRST_STRUCT
     # exposes_complete 기본 True 상속 — 종료는 명시적 complete op.
 
     # ─── Prompt ─────────────────────────────────────────────────

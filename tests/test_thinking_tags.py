@@ -123,3 +123,35 @@ class TestWireFormatStage0:
         pa = wf.parse('<think>scratch</think>[{"action": "complete", "result": "r"}]')
         assert pa.thinking is not None and "scratch" in pa.thinking
         assert pa.action == "complete"
+
+
+class TestUnclosedOpenerLineAnchor:
+    """미닫힘-truncation 은 라인 선두 opener 만 (v7.11.4). 산문 속 인라인
+    언급은 opener 가 아니다 — stop 패턴이 못 구하는 경우(뒤에 구조가
+    없는 순수 산문)에도 문장이 절단되면 안 된다."""
+
+    def test_midline_mention_without_structure_preserved(self):
+        from agent_cli.thinking_tags import strip_think_blocks
+
+        text = "I prefer the <thinking> tag over <reasoning> for this."
+        cleaned, thinking = strip_think_blocks(text)
+        assert cleaned == text  # 절단 없음
+        assert thinking == ""
+
+    def test_line_start_unclosed_opener_still_stripped(self):
+        from agent_cli.thinking_tags import strip_think_blocks
+
+        cleaned, thinking = strip_think_blocks("answer.\n<think>\ntail musing")
+        assert cleaned == "answer."
+        assert "tail musing" in thinking
+
+    def test_stop_pattern_bounds_the_strip(self):
+        import re
+
+        from agent_cli.thinking_tags import strip_think_blocks
+
+        cleaned, thinking = strip_think_blocks(
+            "<think>\nmusing\nSTRUCT rest", stop=re.compile(r"STRUCT")
+        )
+        assert "STRUCT rest" in cleaned
+        assert "musing" in thinking

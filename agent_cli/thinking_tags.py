@@ -44,13 +44,27 @@ TRAILING_THINK_TAG_RE = re.compile(
 )
 
 
-def strip_think_blocks(text: str) -> tuple[str, str]:
+# ② 의 미닫힘-truncation 은 **라인 선두 opener 만** — 산문 속 인라인 언급
+# ("Discussing the <thinking> channel")이 뒤따르는 action 블록 전체를
+# EOF 까지 삼키던 data-loss 의 수리 (v7.11.4). 실측 미닫힘 opener 는
+# 항상 라인 선두였다.
+THINK_OPEN_LINE_RE = re.compile(r"(?m)^[ \t]*<(" + _NAMES + r")\b[^>]*>", re.IGNORECASE)
+
+
+def strip_think_blocks(
+    text: str, *, stop: "re.Pattern | None" = None
+) -> tuple[str, str]:
     """content 에 인라인으로 섞인 thinking 블록(①②) 격리.
 
-    닫힌 블록은 전부, 안 닫힌 열림 태그는 EOF 까지 제거하고, 제거분은
-    버리지 않고 두 번째 반환값으로 돌려준다 — provider 는
+    닫힌 블록은 전부, 안 닫힌 열림 태그(라인 선두만 — 산문 속 언급은
+    opener 가 아니다)는 ``stop`` 매치 직전(없으면 EOF)까지 제거하고,
+    제거분은 버리지 않고 두 번째 반환값으로 돌려준다 — provider 는
     ``LLMResponse.thinking`` 에, 파서는 ``ParsedTurn.thinking`` 에 실어
     verbose 에서 보이게 한다 (양쪽 다 **비재공급** 채널).
+
+    ``stop`` (v7.11.4): 포맷의 첫-구조 마커 — 미닫힘 opener 뒤에 tool
+    call 이 따라오면 EOF-삼킴 대신 구조 직전에서 멈춰 턴의 ops 를
+    보존한다 (opener 를 진짜로 안 닫는 모델 + 이어지는 액션 실측).
     """
     if "<" not in text:
         return text, ""
@@ -61,9 +75,14 @@ def strip_think_blocks(text: str) -> tuple[str, str]:
         return ""
 
     cleaned = THINK_BLOCK_RE.sub(_grab, text)
-    # 안 닫힌 열림 태그 — 그 지점부터 전부 추론으로 간주.
-    m = THINK_OPEN_RE.search(cleaned)
+    # 안 닫힌 열림 태그(라인 선두) — stop/EOF 까지 추론으로 간주.
+    m = THINK_OPEN_LINE_RE.search(cleaned)
     if m:
-        thinks.append(cleaned[m.end() :].strip())
-        cleaned = cleaned[: m.start()]
+        end = len(cleaned)
+        if stop is not None:
+            sm = stop.search(cleaned, m.end())
+            if sm is not None:
+                end = sm.start()
+        thinks.append(cleaned[m.end() : end].strip())
+        cleaned = cleaned[: m.start()] + cleaned[end:]
     return cleaned.strip(), "\n\n".join(x for x in thinks if x)

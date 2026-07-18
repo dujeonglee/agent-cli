@@ -474,6 +474,8 @@ class JsonFcFormat(WireFormat):
     thought_required = False
     action_required = False
     multi_op = True
+    # 미닫힘 <think> 뒤의 bare 배열(라인 선두 `[`)을 EOF-삼킴에서 보호.
+    thinking_stop = re.compile(r"(?m)^\s*\[")
     # exposes_complete 기본 True 상속 — 종료는 명시적 `complete` op.
 
     # ─── Prompt ─────────────────────────────────────────────────
