@@ -586,6 +586,34 @@ class TestWaitAndScope:
             reg.get(key).inbox.get_nowait()
         reg.shutdown_all()
 
+    def test_real_roster_flows_to_status_file(self, tmp_path):
+        """★실체인 (v7.11.1 감사 후속): 실제 spawn 된 registry 의
+        roster_snapshot() → WebRenderer.agent_roster → status.json 요약.
+        요약 유닛은 손 dict 를 쓰므로 snapshot() 필드가 드리프트해도
+        통과한다 — 이 테스트가 생산자·소비자 필드 계약을 실물로 고정."""
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.web.instance_file import read_status_file
+
+        status_dir = tmp_path / "status"
+        status_dir.mkdir()
+        web_r = WebRenderer(session_dir=str(status_dir))
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn(name="ui")
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "job")
+        assert wait_until(lambda: reg.get(key).state == "busy")
+
+        web_r.agent_roster(reg.roster_snapshot())  # 실 스냅샷 그대로
+        st = read_status_file(status_dir)["agents"]
+        gate.set()
+        assert st["alive"] == 1
+        assert st["working"] == 1  # busy 가 "작업 중"으로 집계 (실어휘)
+        entry = st["list"][0]
+        assert entry["key"] == key and entry["state"] == "busy"
+        assert entry["name"] == "ui"  # snapshot 필드명 계약
+        reg.shutdown_all()
+
     def test_status_nudges_complete_while_waiting(self, tmp_path, renderer):
         """v7.9.0: 모델이 회신을 status 폴링으로 기다리는 패턴 차단 —
         working/미처리 inbox 가 있으면 "complete 로 턴을 마쳐라, 회신은
