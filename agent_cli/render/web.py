@@ -1202,7 +1202,10 @@ class WebRenderer(Renderer):
         alive = [a for a in roster if a.get("state") != "dead"]
         return {
             "alive": len(alive),
-            "working": sum(1 for a in alive if a.get("state") == "working"),
+            # "작업 중" = idle/dead 외 전부 (busy/waiting_ask/starting —
+            # 어휘는 AgentRegistry.state_is_active 와 동일 규칙. ★실제 worker
+            # 는 "working" 상태를 쓰지 않는다 — v7.11.1 버그 수리)
+            "working": sum(1 for a in alive if a.get("state") not in ("idle", "dead")),
             "list": [
                 {
                     "key": a.get("key", ""),

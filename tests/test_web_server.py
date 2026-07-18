@@ -652,7 +652,7 @@ class TestAuth:
         _, renderer, client = server_and_client
         assert client.get("/api/health").json().get("agents") is None
         renderer.agent_roster(
-            [{"key": "agt-1", "profile": "coder", "name": "", "state": "working"}]
+            [{"key": "agt-1", "profile": "coder", "name": "", "state": "busy"}]
         )
         agents = client.get("/api/health").json()["agents"]
         assert agents["alive"] == 1 and agents["working"] == 1

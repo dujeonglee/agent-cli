@@ -240,7 +240,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
     tm = registry.get(key) if registry is not None else None
     if tm is not None and getattr(tm, "state", "dead") != "dead":
         queued = tm.inbox.qsize()
-        if queued > 0 or tm.state == "working":
+        if queued > 0 or AgentRegistry.state_is_active(tm.state):
             tail = (
                 f"(agent status: {tm.state} · {queued} queued — remaining "
                 "replies arrive automatically; no need to poll.)"
@@ -382,6 +382,15 @@ class AgentRegistry:
     def alive_count(self) -> int:
         return sum(1 for t in self._agents.values() if t.state != "dead")
 
+    @staticmethod
+    def state_is_active(state: str) -> bool:
+        """ "작업 중" 판정의 단일 소유 — worker 상태 어휘는
+        starting|idle|busy|waiting_ask|dead (AgentInstance.state). idle/dead
+        가 아니면 mid-task 다(waiting_ask=질문 답변 대기도 작업 중,
+        starting=곧 첫 요청 처리). ★v7.11.1: 표시/넛지/reap 코드가 존재하지
+        않는 "working" 문자열을 비교하던 버그의 수리 — 어휘는 여기서만."""
+        return state not in ("idle", "dead")
+
     def any_activity(self) -> bool:
         """idle-reap 가드 (v7.10.0): 에이전트가 working 이거나 inbox 에
         미처리 요청이 있으면 True — main 유휴·무접속이어도 인스턴스를
@@ -389,7 +398,8 @@ class AgentRegistry:
         에 합류한다. 미배달 회신(_pending)은 게이트하지 않는다 — resume
         시 agents.json pending 미러로 복원·배달되므로 reap 안전."""
         return any(
-            t.state == "working" or t.inbox.qsize() > 0 for t in self._agents.values()
+            self.state_is_active(t.state) or t.inbox.qsize() > 0
+            for t in self._agents.values()
         )
 
     def set_max_agents(self, value) -> int:
@@ -626,6 +636,35 @@ class AgentRegistry:
                 "output": text,
             }
         )
+        # ★v7.11.1 (실사고): mailbox 만 채우면 main 챗 관찰로는 보이는데
+        # 발신 에이전트의 🤝 대화창·conversation.jsonl 에는 흔적이 없다
+        # (재접속/resume 소실). 발신자 창에 out 방향으로 남긴다.
+        self._log_outbound(from_key, text, to="main")
+
+    def _log_outbound(self, from_key: str, text: str, *, to: str) -> None:
+        """발신 에이전트 창에 out 메시지 기록 — 라이브 표면(agent_message)
+        + 대화 로그(conversation.jsonl, resume 재생 소스) 동시. 각 창은 그
+        에이전트 관점의 완결 대화: 수신측 in 은 request() 가 담당."""
+        tm = self._agents.get(from_key)
+        if tm is None:
+            return
+        from agent_cli.render import get_renderer
+
+        payload = {
+            "key": from_key,
+            "direction": "out",
+            "author": from_key,
+            "text": text,
+            "seq": tm.handled,
+            "success": True,
+            "to": to,
+            "ts": time.time(),
+        }
+        try:
+            get_renderer().agent_message(**payload)
+        except Exception:
+            pass  # 표시용 — 전송 경로를 막지 않는다
+        self._log_conversation(tm, payload)
 
     def _make_message_handler(self, tm: AgentInstance):
         """상주 에이전트 서브루프의 ``message`` 도구 라우팅 훅 (v5.11).
@@ -651,6 +690,7 @@ class AgentRegistry:
             err = self.request(to, text, author=f"agent:{tm.key}", expects_reply=True)
             if err:
                 return err
+            self._log_outbound(tm.key, text, to=to)  # 발신자 창 out (v7.11.1)
             return (
                 f"delivered to {to} — its reply arrives to you as a new message. "
                 f"Keep working or complete; you'll be woken when it comes."
@@ -705,7 +745,9 @@ class AgentRegistry:
         # 자동 배달되고 도착 시 harness 가 깨우므로(폴링 금지 설계),
         # complete 로 턴을 마치는 게 올바른 대기다. 전부 idle 인 로스터
         # 확인용 status 에는 붙이지 않는다(노이즈).
-        waiting = any(tm.state == "working" or tm.inbox.qsize() > 0 for tm in items)
+        waiting = any(
+            self.state_is_active(tm.state) or tm.inbox.qsize() > 0 for tm in items
+        )
         if waiting:
             lines.append(
                 "⏳ Waiting on an agent? Its reply is delivered to you "

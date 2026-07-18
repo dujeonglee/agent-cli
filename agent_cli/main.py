@@ -1329,6 +1329,21 @@ def run(
     _finalize_run(session, ctx, mcp_manager)
 
 
+def web_instance_is_active(renderer, server, agent_registry) -> bool:
+    """idle self-reap 의 활동 술어 (--idle-timeout, v7.10.0 에이전트 가드).
+
+    True 조건: 라이브 뷰어 존재 ∨ main worker busy ∨ 상주 에이전트 활동
+    (working / 미처리 inbox — main 유휴여도 백그라운드 작업 소실 방지)
+    ∨ 대기 메시지 큐 비어있지 않음. ``agent_registry`` 는 web() 의
+    worker 부트스트랩이 늦게 채우는 nonlocal 이라 None 허용."""
+    return bool(
+        renderer.has_live_connections()
+        or renderer.worker_is_busy()
+        or (agent_registry is not None and agent_registry.any_activity())
+        or server.pending_count() > 0
+    )
+
+
 def _run_message_pump(input_queue, waker, registry, run_one, *, poll_secs=0.5):
     """CLI ``run`` 의 큐 펌프 (teammate P5) — web ``_worker_loop`` 와 같은
     "큐에 뭔가 있으면 재기동" 모델을 공용 InputQueue 위에서 돈다.
@@ -2177,15 +2192,7 @@ def web(
         from agent_cli.web.idle import IdleMonitor
 
         monitor = IdleMonitor(
-            is_active=lambda: (
-                renderer.has_live_connections()
-                or renderer.worker_is_busy()
-                # 상주 에이전트 작업 중/미처리 요청 → 자가 종료 금지
-                # (main 유휴여도 백그라운드 작업 소실 방지, v7.10.0).
-                # nonlocal — worker 부트스트랩이 늦게 채우므로 None 가드.
-                or (agent_registry is not None and agent_registry.any_activity())
-                or server.pending_count() > 0
-            ),
+            is_active=lambda: web_instance_is_active(renderer, server, agent_registry),
             timeout_s=idle_timeout,
             on_idle=lambda: setattr(server_obj, "should_exit", True),
         )

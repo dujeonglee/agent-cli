@@ -253,3 +253,40 @@ class TestToolIntegration:
         r = tool_shell({"command": f"cat {ws / 'note.txt'}"})
         assert r.success
         assert "hello-inside" in (r.output or "")
+
+
+class TestConfineWaitsForLateViewer:
+    """v7.8.0 can_prompt=True(web) 의 confine 측 계약 — shell 과 같은
+    게이트인데 v7.8.0 당시 shell 만 검증했다(v7.11.1 보강). 뷰어가 없어도
+    워크스페이스 밖 접근 승인은 대기하고, 늦게 접속한 사용자의 답으로
+    해제된다."""
+
+    def test_confine_confirm_waits_and_accepts_late_answer(self, confined, monkeypatch):
+        import threading
+        import time
+
+        import agent_cli.render as render_mod
+        from agent_cli.render.web import WebConnection, WebRenderer
+
+        ws, outside = confined
+        r = WebRenderer()
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+        results = []
+
+        def worker():
+            results.append(_confine.guard([str(outside / "x.txt")], "read_file"))
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.3)
+        assert t.is_alive(), "뷰어 0명이어도 confine 승인은 대기해야 한다"
+
+        conn = WebConnection(id="late")
+        snapshot = r.register_connection(conn)
+        kinds = [d.get("kind") for ev, d in snapshot if ev == "input_required"]
+        assert "confirm" in kinds
+
+        r.push_user_input("confirm", {"key": "n", "comment": ""})
+        t.join(timeout=3.0)
+        assert results and results[0] is not None
+        assert "denied" in results[0]

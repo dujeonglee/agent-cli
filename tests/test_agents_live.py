@@ -238,9 +238,9 @@ class TestBuildReplyRecord:
         """v7.11.0: 회신 배달에 배달-시점 잔여 상태 동봉 — main 이 "얼마나
         밀렸는지" 보고 다음 요청/대기를 판단. 잔여가 있으면 자동 배달
         안내(v7.9.0 넛지 정합 — 이 줄 때문에 status 폴링을 돌면 안 됨)."""
-        reg = self._FakeReg(self._FakeTm("working", 2))
+        reg = self._FakeReg(self._FakeTm("busy", 2))
         rec = build_reply_record(self._reply(), registry=reg)
-        assert "working" in rec["content"]
+        assert "busy" in rec["content"]
         assert "2 queued" in rec["content"]
         assert "arrive automatically" in rec["content"]
 
@@ -255,8 +255,38 @@ class TestBuildReplyRecord:
         rec = build_reply_record(self._reply())
         assert "agent status:" not in rec["content"]
 
+    def test_status_tail_survives_overcap_pointer(self):
+        """over-cap 치환(본문→디스크 포인터) 뒤에도 상태 tail 은 붙는다."""
+        reg = self._FakeReg(self._FakeTm("busy", 1))
+        big = "x" * 40_000
+        rec = build_reply_record(self._reply(output=big), cap=100, registry=reg)
+        assert "reply-1.md" in rec["content"]  # 포인터 치환 유지
+        assert "agent status: busy" in rec["content"]
+        assert "1 queued" in rec["content"]
+
+    def test_delivery_path_carries_real_backlog(self, tmp_path, renderer):
+        """통합: 실제 레지스트리로 request→회신 대기→(배달부와 동일하게)
+        drain+registry 로 레코드 생성 — 배달-시점의 실제 상태가 실린다."""
+        gate = threading.Event()
+        gate.set()  # 첫 요청은 즉시 완료
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.request(key, "first job")
+        assert wait_until(reg.has_pending_replies)
+        # 두 번째 요청은 gate 에 블록 — 배달 시점 state=working 고정
+        gate.clear()
+        reg.request(key, "second job")
+        assert wait_until(lambda: reg.get(key).state == "busy")
+        reply = reg.drain_replies()[0]
+        rec = build_reply_record(reply, registry=reg)
+        gate.set()  # 릴리스
+        assert "agent status: busy" in rec["content"]
+        assert "arrive automatically" in rec["content"]
+        reg.shutdown_all()
+
     def test_question_and_died_records_unchanged(self):
-        reg = self._FakeReg(self._FakeTm("working", 3))
+        reg = self._FakeReg(self._FakeTm("busy", 3))
         q = build_reply_record(
             {"key": "agt-abc", "kind": "question", "output": "뭐 할까요?"},
             registry=reg,
@@ -505,6 +535,38 @@ class TestWaitAndScope:
         assert "unknown" in reg.format_status("agt-nope")
         reg.shutdown_all()
 
+    def test_state_vocabulary_contract(self):
+        """★재발 방지 (v7.11.1): worker 의 실제 상태 어휘와 "작업 중"
+        판정의 정합. 표시/넛지/reap 코드가 존재하지 않는 "working" 을
+        비교해 프로덕션에서 전부 무동작이던 버그 — 어휘가 바뀌면 이
+        테스트부터 깨져야 한다 (AgentInstance.state 주석의 어휘와 1:1)."""
+        active = {"starting", "busy", "waiting_ask"}
+        inactive = {"idle", "dead"}
+        for st in active:
+            assert AgentRegistry.state_is_active(st), st
+        for st in inactive:
+            assert not AgentRegistry.state_is_active(st), st
+        # 존재하지 않는 어휘 회귀 가드 — 실코드가 다시 문자열 비교로
+        # 돌아가면 이 계약이 문서 역할을 한다.
+        assert AgentRegistry.state_is_active("working")  # not-idle/dead 규칙
+
+    def test_any_activity_true_while_real_worker_busy(self, tmp_path, renderer):
+        """손으로 state 를 꽂지 않는 실구동 검증 — blocking runner 로
+        진짜 busy 상태를 만들어 reap 가드가 실제로 발동함을 확인."""
+        gate = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=gate))
+        key, _ = reg.spawn()
+        wait_until(lambda: reg.get(key).state == "idle")
+        assert reg.any_activity() is False
+        reg.request(key, "job")
+        assert wait_until(lambda: reg.get(key).state == "busy")
+        assert reg.any_activity() is True  # ★프로덕션 버그였던 지점
+        gate.set()
+        wait_until(lambda: reg.get(key).state == "idle")
+        reg.drain_replies()
+        assert reg.any_activity() is False
+        reg.shutdown_all()
+
     def test_any_activity_reflects_working_and_pending(self, tmp_path, renderer):
         """v7.10.0: idle-reap 가드 — main 유휴·무접속이어도 에이전트가
         working 이거나 inbox 에 미처리 요청이 있으면 인스턴스를 자가
@@ -514,7 +576,7 @@ class TestWaitAndScope:
         key, _ = reg.spawn()
         wait_until(lambda: reg.get(key).state == "idle")
         assert reg.any_activity() is False
-        reg.get(key).state = "working"
+        reg.get(key).state = "busy"
         assert reg.any_activity() is True
         reg.get(key).state = "idle"
         reg.get(key).inbox.put(("req", "x", None))
@@ -535,7 +597,7 @@ class TestWaitAndScope:
         # 대기 상황 아님 → 힌트 없음
         assert "Finish this turn" not in reg.format_status()
         # working 상태 → 힌트
-        reg.get(key).state = "working"
+        reg.get(key).state = "busy"
         s = reg.format_status()
         assert "Finish this turn" in s and "complete" in s
         assert "delivered to you automatically" in s
@@ -1838,6 +1900,49 @@ class TestPeerMessaging:
         assert "main" in handler("main", "hello main").lower()
         recs = reg.drain_replies()
         assert any("hello main" in (r.get("output") or "") for r in recs)
+        reg.shutdown_all()
+
+    def test_message_to_main_logged_in_sender_window(self, tmp_path, renderer):
+        """★실사고 (2026-07-18): 에이전트→main 메시지가 main 챗 관찰로는
+        보이는데 🤝 그 에이전트 대화창엔 기록이 없음(재접속/resume 소실).
+        message_to_main 이 mailbox 만 채우고 agent_message 표면과
+        conversation.jsonl 을 건너뛰던 갭 — out 방향으로 둘 다 남겨야 한다."""
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        handler = reg._make_message_handler(reg.get(a))
+        with renderer.lock:
+            renderer.calls.clear()
+        handler("main", "직접 보고: 리뷰 시작합니다")
+        outs = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1]["direction"] == "out" and c[1]["key"] == a
+        ]
+        assert outs and outs[0]["text"] == "직접 보고: 리뷰 시작합니다"
+        assert outs[0]["to"] == "main"
+        assert "ts" in outs[0]
+        # conversation.jsonl 에도 — resume 재생 소스
+        conv = (tmp_path / "agents" / a / "conversation.jsonl").read_text()
+        assert "직접 보고: 리뷰 시작합니다" in conv
+        reg.shutdown_all()
+
+    def test_peer_message_logged_in_sender_window(self, tmp_path, renderer):
+        """에이전트→에이전트도 발신자 창에 out 기록 (수신자 창 in 은 기존
+        request() 경로가 담당 — 각 창은 그 에이전트 관점의 완결 대화)."""
+        runner = _RecordingRunner()
+        reg, a, b = self._reg_two(tmp_path, runner)
+        handler = reg._make_message_handler(reg.get(a))
+        with renderer.lock:
+            renderer.calls.clear()
+        handler(b, "b야 이것 좀 확인해줘")
+        outs = [
+            c[1]
+            for c in renderer.named("agent_message")
+            if c[1]["direction"] == "out" and c[1]["key"] == a
+        ]
+        assert outs and outs[0]["to"] == b
+        conv = (tmp_path / "agents" / a / "conversation.jsonl").read_text()
+        assert "b야 이것 좀 확인해줘" in conv
         reg.shutdown_all()
 
     def test_build_reply_record_peer_message(self):

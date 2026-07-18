@@ -71,7 +71,7 @@ class TestStatusPublishing:
         assert "agents" not in (read_status_file(tmp_path) or {})
         r.agent_roster(
             [
-                {"key": "agt-1", "profile": "coder", "name": "ui", "state": "working"},
+                {"key": "agt-1", "profile": "coder", "name": "ui", "state": "busy"},
                 {"key": "agt-2", "profile": "reviewer", "name": "", "state": "idle"},
                 {"key": "agt-3", "profile": "old", "name": "", "state": "dead"},
             ]
@@ -81,7 +81,27 @@ class TestStatusPublishing:
         assert st["agents"]["working"] == 1
         keys = [a["key"] for a in st["agents"]["list"]]
         assert keys == ["agt-1", "agt-2"]  # dead 제외
-        assert st["agents"]["list"][0]["state"] == "working"
+        assert st["agents"]["list"][0]["state"] == "busy"
+
+    def test_agents_summary_edges(self):
+        """빈/None roster → None(필드 생략), 전원 dead → alive 0."""
+        assert WebRenderer._agents_summary_from(None) is None
+        assert WebRenderer._agents_summary_from([]) is None
+        s = WebRenderer._agents_summary_from(
+            [{"key": "a", "profile": "p", "name": "", "state": "dead"}]
+        )
+        assert s == {"alive": 0, "working": 0, "list": []}
+
+    def test_roster_updates_refresh_status_file(self, tmp_path):
+        """상태 전이(working→idle)마다 파일이 최신값으로 재발행 —
+        board 가 mtime 감시로 즉시 반영하는 계약의 전제."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        roster = [{"key": "a", "profile": "coder", "name": "", "state": "busy"}]
+        r.agent_roster(roster)
+        assert read_status_file(tmp_path)["agents"]["working"] == 1
+        r.agent_roster([{**roster[0], "state": "idle"}])
+        st = read_status_file(tmp_path)["agents"]
+        assert st["working"] == 0 and st["alive"] == 1
 
     def test_viewers_tracked_on_register_and_unregister(self, tmp_path):
         r = WebRenderer(session_dir=str(tmp_path))
@@ -146,6 +166,57 @@ class TestCanPrompt:
         r.push_user_input("prompt", {"content": "늦은 답"})
         t.join(timeout=2.0)
         assert result == ["늦은 답"]
+
+
+class TestWebInstanceIsActive:
+    """--idle-timeout 자가 종료 술어 (v7.10.0 에이전트 가드 포함).
+    v7.11.1: 람다였던 조성을 web_instance_is_active 로 추출해 직접 검증."""
+
+    class _R:
+        def __init__(self, live=False, busy=False):
+            self._live, self._busy = live, busy
+
+        def has_live_connections(self):
+            return self._live
+
+        def worker_is_busy(self):
+            return self._busy
+
+    class _S:
+        def __init__(self, pending=0):
+            self._p = pending
+
+        def pending_count(self):
+            return self._p
+
+    class _Reg:
+        def __init__(self, active):
+            self._a = active
+
+        def any_activity(self):
+            return self._a
+
+    def test_all_quiet_is_inactive(self):
+        from agent_cli.main import web_instance_is_active
+
+        assert web_instance_is_active(self._R(), self._S(), None) is False
+
+    def test_each_signal_alone_is_active(self):
+        from agent_cli.main import web_instance_is_active
+
+        assert web_instance_is_active(self._R(live=True), self._S(), None)
+        assert web_instance_is_active(self._R(busy=True), self._S(), None)
+        assert web_instance_is_active(self._R(), self._S(pending=1), None)
+        # 핵심(v7.10.0): main 유휴·무접속이어도 에이전트 활동이면 활성
+        assert web_instance_is_active(self._R(), self._S(), self._Reg(True))
+
+    def test_none_registry_is_safe(self):
+        """web() 의 registry 는 worker 부트스트랩이 늦게 채우는 nonlocal —
+        None 인 초기 창에서 술어가 터지면 reaper 스레드가 죽는다."""
+        from agent_cli.main import web_instance_is_active
+
+        assert web_instance_is_active(self._R(), self._S(), None) is False
+        assert web_instance_is_active(self._R(), self._S(), self._Reg(False)) is False
 
 
 class TestDangerousShellWaitsForViewer:
