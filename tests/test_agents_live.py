@@ -1987,6 +1987,11 @@ class TestPeerMessaging:
         assert "Do NOT" in out and "status" in out
         assert "complete" in out
         assert "woken" in out
+        # v7.11.3: "complete 먼저" 과보정 방지 — 남은 계획(다른 에이전트
+        # 스폰 등) 먼저, complete 는 마지막·배칭 가능임을 명시 (실사고:
+        # thought 는 "reviewer 도 스폰" 인데 op 는 complete 만 내고 종료)
+        assert "FIRST" in out and "rest of your plan" in out
+        assert "SAME" in out  # complete 를 같은 턴에 배칭해도 됨
         reg.shutdown_all()
 
     def test_request_ack_warns_on_stacked_duplicates(self, tmp_path, renderer):

@@ -1434,9 +1434,11 @@ def tool_agent(
                 lines.append(
                     "initial task queued — the reply arrives automatically as "
                     "an observation and you will be woken. Do NOT poll status "
-                    "or re-send the request while it works (every request "
-                    "queues MORE work and slows it down). If nothing else "
-                    "needs doing, finish this turn with `complete` and wait."
+                    "or re-send it (re-sends queue duplicate work and slow it "
+                    "down). FIRST finish the rest of your plan — spawn the "
+                    "other agents / send the other requests you intended, "
+                    "ideally batched with a final `complete` in this SAME "
+                    "turn. Only complete-and-wait once nothing else remains."
                 )
         else:
             lines.append(
@@ -1478,7 +1480,8 @@ def tool_agent(
                 f"queued to {key} — the reply will be delivered to you "
                 f"automatically at a later turn (even while you are idle) and "
                 f"you will be woken when it arrives. Do NOT poll status or "
-                f"re-send this request. Work on something else, or finish "
+                f"re-send this request. If your plan still has other work "
+                f"(other agents, other requests), do it now; then finish "
                 f"this turn with `complete` and wait.{stacked}"
             ),
         )
