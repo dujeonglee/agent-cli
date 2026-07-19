@@ -32,6 +32,30 @@ jobs:
       - name: Run unit tests
         run: pytest tests/ -m "not ollama_integration" -v
 
+  browser:
+    # 실브라우저(playwright) 테스트 — 별도 잡. 기본 유닛 스위트는
+    # tests/browser 를 수집조차 안 하므로(collect_ignore), 여기서만
+    # AGENT_CLI_BROWSER_TESTS=1 로 옵트인해 chromium 을 띄운다.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,web]"
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run browser tests
+        env:
+          AGENT_CLI_BROWSER_TESTS: "1"
+        run: pytest tests/browser/ -v
+
   lint:
     runs-on: ubuntu-latest
     steps:

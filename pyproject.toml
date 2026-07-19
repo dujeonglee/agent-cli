@@ -41,7 +41,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "httpx>=0.27", "hypothesis>=6.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "hypothesis>=6.0",
+    # 실브라우저 테스트 (tests/browser — AGENT_CLI_BROWSER_TESTS=1 옵트인)
+    "playwright>=1.40",
+]
 # macOS: install gnureadline for proper CJK width in chat input
 macos = ["gnureadline>=8.0; sys_platform == 'darwin'"]
 # Optional `agent-cli web` LAN UI — install with `pip install agent-cli[web]`
@@ -81,6 +88,7 @@ asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "omlx_integration: requires a live OpenAI-compatible omlx server (see tests/conftest.py)",
+    "browser: real-browser (playwright) tests — opt-in via AGENT_CLI_BROWSER_TESTS=1",
 ]
 
 [tool.ruff]

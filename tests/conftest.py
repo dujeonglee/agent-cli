@@ -15,6 +15,13 @@ from __future__ import annotations
 
 import os
 
+# 실브라우저 스위트(tests/browser)는 옵트인 아니면 **수집조차** 안 한다.
+# per-item skip 만으로는 pytest-asyncio 가 수집 단계에서 이벤트 루프를
+# 남겨 이후 async e2e(trust_local/stream)를 깨뜨린다 — collect_ignore 로
+# 원천 차단. 브라우저 CI 는 AGENT_CLI_BROWSER_TESTS=1 로 별도 잡 실행.
+if os.environ.get("AGENT_CLI_BROWSER_TESTS") != "1":
+    collect_ignore = ["browser"]
+
 import pytest
 import requests
 

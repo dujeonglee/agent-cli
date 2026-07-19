@@ -159,6 +159,7 @@ agent-cli run "task" -m gpt-4o-mini
 ```markdown
 # 코드 규칙
 - 코드 수정 시 관련 유닛 테스트를 반드시 추가한다
+- 웹 UI 행동 계약(SSE·confirm 흐름·칩 렌더링·연결 고갈)은 실브라우저 테스트로: `AGENT_CLI_BROWSER_TESTS=1 pytest tests/browser/` (playwright+chromium, 기본 스위트는 미수집)
 - ruff check와 ruff format을 통과해야 한다
 - Python 3.10+ 호환을 유지한다
 ```
