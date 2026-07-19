@@ -754,6 +754,13 @@ footer {
   cursor: pointer;
   font-size: 13px;
   user-select: none;
+  /* Sticky so the collapse control stays reachable while scrolling a
+     long expanded body — "collapse from any position". Opaque bg so
+     body content scrolls cleanly underneath. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
 }
 .card-task-group .task-header:hover { background: var(--surface-3); }
 .card-task-group .task-chevron {

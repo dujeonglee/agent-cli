@@ -447,17 +447,30 @@
     const body = el("div", ["task-body"]);
     body.hidden = true; // default collapsed
 
-    header.addEventListener("click", function () {
+    // Collapse from ANY position (not just the top arrow):
+    //   1. the whole header row toggles (chevron is decorative),
+    //   2. the header is CSS-sticky, so on a long expanded card it
+    //      stays pinned at the top of the viewport — one click to
+    //      collapse no matter how far you've scrolled into the body,
+    //   3. clicking the body's own padding/gutter also collapses
+    //      (``e.target === body`` only — nested cards, links, and text
+    //      selection inside the body are untouched).
+    function toggleTaskGroup() {
       const wasCollapsed = body.hidden;
       body.hidden = !body.hidden;
       chevron.textContent = body.hidden ? "▶" : "▼";
       if (wasCollapsed) {
-        // After expand, scroll the header back into the top of the
-        // viewport so the long body that just appeared doesn't
-        // push the header off-screen — otherwise users lose their
-        // anchor and scroll feels stuck.
+        // After expand, scroll the header back to the top so the long
+        // body that just appeared doesn't push it off-screen.
         header.scrollIntoView({ behavior: "smooth", block: "start" });
       }
+    }
+
+    header.addEventListener("click", toggleTaskGroup);
+    body.addEventListener("click", function (e) {
+      // Only the body's own surface (padding/gutter) collapses — never a
+      // click that lands on nested content the user is reading/selecting.
+      if (e.target === body) toggleTaskGroup();
     });
 
     card.appendChild(header);

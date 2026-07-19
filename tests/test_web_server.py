@@ -430,6 +430,20 @@ class TestStaticUI:
         assert "static/app.js" in body
         assert "static/style.css" in body
 
+    def test_task_group_collapse_from_any_position_wired(self, server_and_client):
+        """기능② 배선 (동작 계약은 tests/browser 가 검증): 헤더+본문
+        양쪽 토글 + sticky 헤더."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        fn = _js_fn_body(js, "ensureTaskGroup")
+        assert "toggleTaskGroup" in fn
+        assert 'header.addEventListener("click", toggleTaskGroup)' in fn
+        assert "e.target === body" in fn  # 본문 여백 클릭만 접기
+        # sticky 헤더 (긴 카드 스크롤 시 접기 컨트롤 상시 도달)
+        head_css = css.split(".card-task-group .task-header {", 1)[1].split("}", 1)[0]
+        assert "position: sticky" in head_css
+
     def test_app_js_is_served(self, server_and_client):
         _, _, client = server_and_client
         resp = client.get("/static/app.js")
