@@ -86,6 +86,26 @@ class TestCanonicalParse:
         assert turn.thought == "plan."
         assert turn.ops[0].action == "read_file"
 
+    def test_unclosed_think_before_bare_array_does_not_eat_ops(self, wf):
+        """★data-loss 회귀 가드 (v7.11.4 thinking_stop): 미닫힘 라인-선두
+        <think> 뒤의 bare op-배열이 EOF 까지 삼켜지면 안 된다. json_fc 는
+        `thinking_stop=^\\s*[` 로 배열 직전에서 정지. 이 가드가 빠지면
+        기본 wire 포맷에서 op 전체가 무실패 소실(xml_fc 는 별도 고정)."""
+        turn = wf.parse_turn(
+            '<think>\nweighing options\n[{"action": "read_file", "path": "a.py"}]'
+        )
+        assert turn.ops and turn.ops[0].action == "read_file"
+        assert turn.ops[0].action_input.get("path") == "a.py"
+        assert "weighing options" in (turn.thinking or "")
+
+    def test_midline_think_mention_not_treated_as_opener(self, wf):
+        """산문 속 <think> 언급(라인 선두 아님)은 opener 가 아니라 뒤
+        배열을 삼키지 않는다."""
+        turn = wf.parse_turn(
+            'discussing the <think> channel\n[{"action": "shell", "command": "ls"}]'
+        )
+        assert turn.ops and turn.ops[0].action == "shell"
+
 
 class TestLegacyHeaderAcceptance:
     def test_json_fc_shape_accepted_as_drift(self, wf):

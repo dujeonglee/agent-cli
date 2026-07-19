@@ -539,7 +539,7 @@ class TestWaitAndScope:
         """★재발 방지 (v7.11.1): worker 의 실제 상태 어휘와 "작업 중"
         판정의 정합. 표시/넛지/reap 코드가 존재하지 않는 "working" 을
         비교해 프로덕션에서 전부 무동작이던 버그 — 어휘가 바뀌면 이
-        테스트부터 깨져야 한다 (AgentInstance.state 주석의 어휘와 1:1)."""
+        테스트부터 깨져야 한다."""
         active = {"starting", "busy", "waiting_ask"}
         inactive = {"idle", "dead"}
         for st in active:
@@ -549,6 +549,27 @@ class TestWaitAndScope:
         # 존재하지 않는 어휘 회귀 가드 — 실코드가 다시 문자열 비교로
         # 돌아가면 이 계약이 문서 역할을 한다.
         assert AgentRegistry.state_is_active("working")  # not-idle/dead 규칙
+
+    def test_state_vocabulary_derived_from_producer(self):
+        """★어휘 집합을 손-복사 대신 **생산자 소스에서 도출**해 고정
+        (v7.13.1 감사 #2): agents_live.py 의 `.state = "x"` 할당 리터럴이
+        전부 위 계약에 분류돼 있는지. 새 inactive 상태(예: "paused")가
+        도입되면 denylist(not in idle/dead)가 조용히 active 로 오분류하는데,
+        이 테스트가 '분류 안 된 새 상태'를 잡는다."""
+        import re
+        from pathlib import Path
+
+        src = Path(
+            __import__("agent_cli.subagent.agents_live", fromlist=["x"]).__file__
+        )
+        literals = set(re.findall(r'\.state = "([a-z_]+)"', src.read_text()))
+        # starting 은 __init__ 초기값 — 할당처에 포함
+        classified = {"starting", "busy", "waiting_ask", "idle", "dead"}
+        unclassified = literals - classified
+        assert not unclassified, (
+            f"분류되지 않은 새 상태 어휘: {unclassified} — "
+            "test_state_vocabulary_contract 에 active/inactive 분류를 추가하라"
+        )
 
     def test_any_activity_true_while_real_worker_busy(self, tmp_path, renderer):
         """손으로 state 를 꽂지 않는 실구동 검증 — blocking runner 로
