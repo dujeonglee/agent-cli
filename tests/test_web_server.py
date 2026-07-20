@@ -443,6 +443,14 @@ class TestStaticUI:
         # sticky 헤더 (긴 카드 스크롤 시 접기 컨트롤 상시 도달)
         head_css = css.split(".card-task-group .task-header {", 1)[1].split("}", 1)[0]
         assert "position: sticky" in head_css
+        # ★먹통 회귀 가드 (v7.13.2): sticky 헤더에 smooth scrollIntoView 를
+        # 부르면 스트리밍 scrollToBottom 과 스크롤 위치가 진동해 UI 먹통
+        # (사용자 보고, run delegate 카드). sticky 가 이미 헤더를 상단에
+        # 붙이므로 scrollIntoView 는 불필요·유해 — toggle 에서 제거된 상태여야.
+        toggle = fn.split("function toggleTaskGroup(", 1)[1].split(
+            "header.addEventListener", 1
+        )[0]
+        assert "header.scrollIntoView" not in toggle  # 실제 호출(코멘트 제외)
 
     def test_app_js_is_served(self, server_and_client):
         _, _, client = server_and_client

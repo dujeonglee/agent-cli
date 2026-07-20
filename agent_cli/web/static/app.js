@@ -456,14 +456,14 @@
     //      (``e.target === body`` only — nested cards, links, and text
     //      selection inside the body are untouched).
     function toggleTaskGroup() {
-      const wasCollapsed = body.hidden;
       body.hidden = !body.hidden;
       chevron.textContent = body.hidden ? "▶" : "▼";
-      if (wasCollapsed) {
-        // After expand, scroll the header back to the top so the long
-        // body that just appeared doesn't push it off-screen.
-        header.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      // NOTE: no scrollIntoView here. The header is CSS-sticky (top:0), so
+      // it already stays reachable when a long body expands — the earlier
+      // `scrollIntoView({behavior:"smooth"})` became both REDUNDANT and
+      // HARMFUL once sticky was added (v7.13.0): smooth-scrolling toward a
+      // sticky element re-computes a moving target and thrashes against the
+      // streaming `scrollToBottom`, freezing the UI on a live delegate card.
     }
 
     header.addEventListener("click", toggleTaskGroup);
