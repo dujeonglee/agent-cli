@@ -252,7 +252,11 @@ class TestDispatchRescue:
         assert result.success
         assert result.output == "final answer via leak"
 
-    def test_unrescuable_prose_still_no_action_nudge(self, caps, tmp_path):
+    def test_unrescuable_broken_action_still_no_action_nudge(self, caps, tmp_path):
+        # 구제 불가한 깨진 액션 잔해(파싱 실패 op-array 가 thought 로 파싱됨)는
+        # NO_ACTION 넛지로 폴백. (v7.14: 순수 산문 최종답변은 prose_completion
+        # 으로 완료되지만, 액션-잔해는 삼키면 조기종료라 여전히 넛지 — 구제
+        # 폴백 경로가 이 경계에서 유지됨을 고정.)
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import run_loop
 
@@ -261,7 +265,10 @@ class TestDispatchRescue:
             max_context_tokens=100_000,
             wire_format=get_wf("xml_fc"),
         )
-        provider = _provider("생각만 서술하고 아무 호출도 없다.", _xml_complete("ok"))
+        provider = _provider(
+            '[{"action": "read_file", "path>/x</parameter>',  # 깨진 액션 잔해
+            _xml_complete("ok"),
+        )
         result = run_loop(
             query="q",
             provider=provider,

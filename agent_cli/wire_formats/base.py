@@ -357,6 +357,27 @@ class WireFormat(ABC):
         override with a cheap structural check (header count, etc.)."""
         return False
 
+    def prose_completion(self, turn: "ParsedTurn") -> str | None:
+        """An action-less turn that is a **prose final answer** — the model
+        finished the task in natural language but forgot the explicit
+        ``complete`` op — returns that prose (to become the ``complete``
+        result); a **broken action** (a tool call whose syntax failed to
+        parse, leaving JSON/tag residue in the thought) or empty output
+        returns ``None`` so the loop keeps its NO_ACTION nudge.
+
+        Measured (bakeoff 35B, ~460 runs, 2026-07-23): action-less turns
+        split into prose-final-answer (complete-op simply omitted — accepting
+        it saves the nudge round-trip) and broken-action residue (accepting it
+        would swallow an intended read_file/shell → premature completion). The
+        conservative filter below returns prose ONLY when no action/structure
+        residue is present, so broken actions still route to the nudge.
+
+        Default ``None`` (feature off) — a wire opts in by overriding with its
+        own residue check (self-contained per format; cross-format behaviour is
+        pinned by a parity test). Callers gate on ``parse_stage >= 1`` so a
+        hard parse failure (NO_JSON) never reaches here."""
+        return None
+
     def sanitize_thought(self, thought: str | None) -> str | None:
         """Strip wire-shape sentinels the model leaked into its thought text,
         so they are not re-injected into the next-turn prior. A thought ending

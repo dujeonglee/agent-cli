@@ -339,6 +339,7 @@ def call_once(
     plugin_name: str,
     task: Task,
     *,
+    run_idx: int = 0,
     base_url: str = BASE_URL,
     api_key: str = API_KEY,
 ) -> RunResult:
@@ -386,6 +387,18 @@ def call_once(
         history_path = ctx_dir / "history.jsonl"
         signals = _count_signals_from_turns_jsonl(turns_path)
         assistant_turns, with_thought = _count_thought_signals(history_path)
+
+        # ★ no_action 원문 보존 (임시 세션 dir 이 사라지기 전) — action-less
+        #   턴의 산문이 "최종답변인데 complete 누락"인지 "중간서술"인지 눈으로
+        #   분류하기 위해 history.jsonl 을 영구 경로로 복사. no_action 이 난
+        #   런만(드물다) 저장.
+        if signals["no_action_events"] > 0 and history_path.is_file():
+            dump_dir = Path(__file__).parent / "results" / "no_action_dumps"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            na_dump = dump_dir / f"{model}__{plugin_name}__{task.id}__r{run_idx}.jsonl"
+            na_dump.write_text(
+                history_path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
 
         # Iteration count: line count of turns.jsonl is the most
         # accurate; fallback to a constant when the file is missing.
@@ -477,7 +490,7 @@ def run_all() -> dict[tuple[str, str, str], CellResult]:
                 key = (model, plugin_name, task.id)
                 cell = cells.setdefault(key, CellResult())
                 for run_idx in range(N_RUNS):
-                    res = call_once(model, plugin_name, task)
+                    res = call_once(model, plugin_name, task, run_idx=run_idx)
                     cell.runs.append(res)
                     done += 1
                     elapsed = time.monotonic() - started

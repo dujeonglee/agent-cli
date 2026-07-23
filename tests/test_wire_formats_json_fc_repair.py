@@ -647,14 +647,16 @@ class TestEndToEnd:
         op_records = [m for m in raw if m.get("role") == "assistant" and m.get("ops")]
         assert op_records and op_records[0]["ops"][0]["action"] == "read_file"
 
-    def test_thought_only_nudges_then_completes(self, tmp_path):
-        # A thought-only emission is NOT a completion — it gets a NO_ACTION
-        # nudge; the model then calls `complete` to actually finish.
+    def test_broken_action_residue_nudges_then_completes(self, tmp_path):
+        # 깨진 op-array 잔해(파싱 불가)는 완료가 아니라 NO_ACTION 넛지 — 모델이
+        # 다음 턴에 명시적 complete 로 끝낸다. (v7.14: 순수 산문 최종답변은
+        # prose_completion 으로 즉시 완료되지만, 액션-잔해는 삼키면 조기종료라
+        # 여전히 넛지 — 이 경계를 고정.)
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import AgentLoop
 
         responses = [
-            "## Thought\nI think I'm done.",  # thought-only → NO_ACTION nudge
+            '[{"action": "read',  # 깨진 op-array → NO_ACTION nudge
             _wire("done", '[{"action": "complete", "result": "finished"}]'),
         ]
         provider = MagicMock()

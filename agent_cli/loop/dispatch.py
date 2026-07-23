@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.wf_recovery import (
@@ -32,7 +33,7 @@ from agent_cli.recovery.observability import (
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
 )
-from agent_cli.wire_formats import try_foreign_parse
+from agent_cli.wire_formats import Op, try_foreign_parse
 from agent_cli.render import (
     render_recovery,
     render_status,
@@ -255,6 +256,29 @@ class TurnDispatcher:
             outcome["primitives"] = list(intervention.primitives)
             self.state.turn -= 1
             return _CONTINUE
+
+        # Prose-only completion (all wire-formats, single point): an action-
+        # less turn whose thought is a natural-language FINAL ANSWER (the model
+        # finished but omitted the explicit `complete` op) is accepted as
+        # `complete` instead of nudged — saving the nudge round-trip. Gated on
+        # ``parse_stage >= 1`` (a hard parse failure / NO_JSON is stage 0 and
+        # must not terminate) and the format's conservative residue filter
+        # (broken-action leftovers → None → nudge, so an intended read_file/
+        # shell is never swallowed). Checked BEFORE the thought render so the
+        # prose surfaces once as the final answer, not doubly as thought+final.
+        # History is written thought-less (``replace(turn, thought=None)``):
+        # the prose lives in the complete result only, so re-feeding it on
+        # resume/overflow shows the correct terminal shape rather than
+        # reinforcing the prose-only-no-op pattern we are compensating for.
+        if not turn.ops and turn.parse_stage >= 1:
+            prose = self.cfg.wire_format.prose_completion(turn)
+            if prose is not None:
+                outcome["failure_signal"] = None  # a completion, not NO_ACTION
+                outcome["primitives"] = ["prose_complete"]
+                synthetic = Op(action="complete", action_input={"result": prose})
+                return self._op_complete(
+                    replace(turn, thought=None), synthetic, outcome
+                )
 
         # 6. Thought
         if turn.thought:

@@ -146,8 +146,10 @@ class TestDispatcherIntegration:
             recorder=TurnRecorder(session_dir=None, enabled=False),
         )
 
-        # 턴 N: 깨진 emission → NO_JSON 개입 기록
-        d._handle_text_path("완전 산문 — 파싱 불가")
+        # 턴 N: 깨진 emission → NO_ACTION 개입 기록. (순수 산문은 v7.14 부터
+        # 산문-완료로 수용되므로, 개입을 트리거하려면 액션-잔해가 명확한
+        # 깨진 op-array 를 쓴다.)
+        d._handle_text_path('[{"완전 깨진 op — 파싱 불가')
         assert any(is_format_intervention(r) for r in ctx.get_raw_messages())
         # 턴 N+1: 파싱 성공 emission → 개입 쌍이 캐시 뷰에서 소멸
         good = '## Thought\nok\n## Action\n[{"action":"complete","result":"done"}]'

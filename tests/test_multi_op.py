@@ -173,7 +173,7 @@ def _finish(thought="done"):
     return [_turn(thought=thought, ops=[{"action": "complete", "result": thought}])]
 
 
-def _run(responses, tmp_path, max_turns=5):
+def _run(responses, tmp_path, max_turns=5, wire_format=None):
     from agent_cli.context.manager import ContextManager
     from agent_cli.loop import AgentLoop
 
@@ -187,7 +187,7 @@ def _run(responses, tmp_path, max_turns=5):
         model="m",
         ctx=ctx,
         max_turns=max_turns,
-        wire_format=_MultiOpFormat(),
+        wire_format=wire_format or _MultiOpFormat(),
     )
     return loop.run(), ctx, provider
 
@@ -610,3 +610,79 @@ class TestEditBatchGrouping:
         # both applied (separate files, separate per-op edits)
         assert f1.read_text().splitlines() == ["A", "b"]
         assert f2.read_text().splitlines() == ["X", "y"]
+
+
+class TestProseOnlyCompletion:
+    """산문-only 최종답변 종결 (bakeoff 실측 2026-07-23, 모든 wire-format
+    공통 단일 지점). action-less 턴이 '자연어 최종답변'(complete op 누락)이면
+    넛지 왕복 없이 complete 수용, '깨진 액션 잔해'는 넛지 유지(조기종료 방지).
+    실제 json_fc/xml_fc 로 구동 — _MultiOpFormat 은 prose_completion 미구현
+    (기본 off)이라 기존 thought-only 테스트는 그대로 넛지."""
+
+    def _get(self, name):
+        from agent_cli.wire_formats import get
+
+        return get(name)
+
+    def test_json_fc_prose_final_answer_completes_immediately(self, tmp_path):
+        # 순수 산문 최종답변 → 넛지 없이 즉시 complete (1 콜)
+        result, ctx, provider = _run(
+            ["The src/ directory contains 2 files: auth.py and app.py."],
+            tmp_path,
+            wire_format=self._get("json_fc"),
+        )
+        assert result.success
+        assert "auth.py" in result.output
+        assert provider.call.call_count == 1  # 넛지 없이 종결
+
+    def test_xml_fc_prose_final_answer_completes_immediately(self, tmp_path):
+        # parity: xml_fc 도 동일 의미론
+        result, ctx, provider = _run(
+            ["Here is the listing: auth.py and app.py."],
+            tmp_path,
+            wire_format=self._get("xml_fc"),
+        )
+        assert result.success
+        assert "auth.py" in result.output
+        assert provider.call.call_count == 1
+
+    def test_broken_action_residue_still_nudges_not_completes(self, tmp_path):
+        # xml_fc half-broken 액션(stage=1, thought=잔해) → 종결 안 함, 넛지 후
+        # 다음 산문에서 종결. 잔해를 complete 로 삼키면 조기종료(이 가드가 방어).
+        result, ctx, provider = _run(
+            [
+                '[{"action": "read_file", "path>/foo</parameter>',  # 깨진 액션 잔해
+                "Done — the file has 2 lines.",  # 다음 턴 순수 산문
+            ],
+            tmp_path,
+            wire_format=self._get("xml_fc"),
+        )
+        assert result.success
+        assert provider.call.call_count == 2  # 잔해=넛지, 그 다음 종결
+
+    def test_prose_completion_history_has_no_thought(self, tmp_path):
+        # 재공급 mimicry 방지: 산문 종결은 thought 없이 complete(result)만
+        # 기록돼야(산문-only-no-op 패턴을 재강화하지 않도록).
+        import json as _json
+
+        result, ctx, provider = _run(
+            ["The task is complete: both files were scanned."],
+            tmp_path,
+            wire_format=self._get("json_fc"),
+        )
+        assert result.success
+        recs = [
+            _json.loads(ln)
+            for ln in (tmp_path / "history.jsonl").read_text().splitlines()
+            if ln.strip()
+        ]
+        finals = [
+            r
+            for r in recs
+            if r.get("role") == "assistant"
+            and any(o.get("action") == "complete" for o in r.get("ops", []))
+        ]
+        assert len(finals) == 1
+        assert finals[0]["thought"] == ""  # thought 비어야 (재공급 안전)
+        result_val = finals[0]["ops"][0]["action_input"]["result"]
+        assert "both files were scanned" in result_val

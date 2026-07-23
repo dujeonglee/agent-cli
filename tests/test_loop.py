@@ -441,7 +441,9 @@ class TestActionInferenceCorrection:
 class TestRunLoopParseFailure:
     def test_retry_on_bad_json(self, caps):
         provider = _make_provider(
-            "This is not JSON at all",  # Will fail parsing
+            '[{"bad',  # 깨진 op-array → 파싱 불가 → NO_ACTION 넛지(재시도).
+            # (순수 자연어 stub 은 v7.14 부터 산문-완료로 수용되므로 파싱실패
+            #  검증엔 액션-잔해가 명확한 깨진 JSON 을 쓴다.)
             _complete("recovered"),
         )
         result = run_loop(
@@ -491,7 +493,7 @@ class TestRunLoopParseFailure:
         thinking_text = "I keep failing to provide valid JSON."
         provider.call.side_effect = [
             LLMResponse(
-                content="Plain prose, no JSON envelope here.",
+                content='[{"bad — no valid op here.',  # 깨진 op-array → 넛지
                 thinking=thinking_text,
             ),
             LLMResponse(content=_complete("recovered")),
@@ -507,7 +509,7 @@ class TestRunLoopParseFailure:
 
         second_call_messages = provider.call.call_args_list[1].kwargs["messages"]
         retry_msg = second_call_messages[-1]["content"]
-        assert "Plain prose, no JSON envelope here." in retry_msg
+        assert '[{"bad — no valid op here.' in retry_msg
         # Recovery layer must not echo thinking
         assert thinking_text not in retry_msg
         assert "Your prior reasoning:" not in retry_msg
@@ -966,8 +968,8 @@ class TestRunLoopObservability:
         ctx = ContextManager(session_dir=tmp_path)
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(content="garbage 1"),
-            LLMResponse(content="garbage 2"),
+            LLMResponse(content='[{"garbage 1'),  # 깨진 op-array → 넛지(재시도)
+            LLMResponse(content='[{"garbage 2'),
             LLMResponse(content=_complete("ok")),
         ]
         run_loop(

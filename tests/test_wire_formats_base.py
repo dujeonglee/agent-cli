@@ -391,3 +391,47 @@ class TestAllSystemUserPrefixes:
         after = all_system_user_prefixes()
         assert "UNIQUE_MOCK_FRAMING_42" not in before
         assert "UNIQUE_MOCK_FRAMING_42" in after
+
+
+class TestProseCompletionParity:
+    """prose_completion cross-format invariant (bakeoff 실측 2026-07-23):
+    action-less 턴이 '산문 최종답변'(complete op 누락)이면 그 산문을 수용,
+    '깨진 액션 잔해'/빈 출력은 None(NO_ACTION 넛지 유지). 두 내장 포맷이
+    같은 의미론이어야 한다 — 순수 산문 수용·액션 잔해 거부."""
+
+    FORMATS = ("json_fc", "xml_fc")
+
+    def _turn(self, thought):
+        return ParsedTurn(thought=thought, ops=[], parse_stage=1)
+
+    @pytest.mark.parametrize("fmt", FORMATS)
+    def test_pure_prose_accepted(self, fmt):
+        prose = "The src/ directory contains 2 files: auth.py and app.py."
+        assert get(fmt).prose_completion(self._turn(prose)) == prose
+
+    @pytest.mark.parametrize("fmt", FORMATS)
+    def test_json_action_residue_rejected(self, fmt):
+        # 깨진 op array / JSON 객체 흔적 — 삼키면 의도한 액션 조기종료
+        assert get(fmt).prose_completion(self._turn('[{"action": "read_file"')) is None
+        assert get(fmt).prose_completion(self._turn('{"action": "shell"')) is None
+
+    @pytest.mark.parametrize("fmt", FORMATS)
+    def test_empty_prose_rejected(self, fmt):
+        assert get(fmt).prose_completion(self._turn("")) is None
+        assert get(fmt).prose_completion(self._turn("   ")) is None
+
+    def test_xml_tag_residue_rejected_xml_fc(self):
+        # xml_fc half-broken 태그 잔해 (bakeoff A범주 20건 전부 xml_fc)
+        wf = get("xml_fc")
+        for residue in (
+            "<function=read_file",
+            "<parameter=path>src/auth.py</parameter>",
+            "<tool_call>",
+            '[{"action": "read_file", "path>/foo</parameter>',
+        ):
+            assert wf.prose_completion(self._turn(residue)) is None, residue
+
+    def test_base_default_is_off(self):
+        # 기본(미override)은 None — 새 플러그인은 명시 opt-in 전까지 종결 안 함.
+        # _MockFormat 은 prose_completion 을 override 하지 않으므로 base 기본.
+        assert _MockFormat().prose_completion(self._turn("hi")) is None

@@ -74,6 +74,14 @@ _SENTINEL_LINE = re.compile(
 _DEGEN_EMPTY_BLOCK = re.compile(r"<tool_call>\s*</tool_call>", re.I)
 _DEGEN_OPEN_RUN = re.compile(r"<tool_call>(?=\s*<tool_call>)", re.I)
 
+# prose_completion 필터 — thought 에 이 흔적이 있으면 '자연어 최종답변'이
+# 아니라 파싱 실패한 액션 잔해. xml_fc 는 태그 syntax(<function=/<parameter=/
+# <tool_call>/</)를 흘리는 half-broken 이 잦아(bakeoff 실측 A범주 20건 전부
+# xml_fc) JSON 흔적에 더해 태그 흔적까지 본다. 보수적: 조금이라도 있으면 제외.
+_XML_ACTION_RESIDUE = re.compile(
+    r'\[\s*\{|\{\s*"|"action"|action\s*=|<function|<parameter|<tool_call|</\w', re.I
+)
+
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
 _COERCE_TYPES = frozenset({"integer", "number", "boolean", "array", "object"})
 
@@ -427,6 +435,15 @@ class XmlFcFormat(WireFormat):
             return thought
         thought = ORPHAN_THINK_TAG_RE.sub("", thought)
         return _SENTINEL_LINE.sub("", thought).strip()
+
+    def prose_completion(self, turn) -> str | None:
+        """산문-only 최종답변 종결 (base 참조). xml_fc 순수 산문·half-broken
+        액션 모두 thought 로 온다(stage=1·ops=[]) — JSON/태그 흔적 없는 순수
+        자연어일 때만 그 산문을 반환(broken 은 넛지 유지)."""
+        prose = (turn.thought or "").strip()
+        if not prose or _XML_ACTION_RESIDUE.search(prose):
+            return None
+        return prose
 
     # ─── History round-trip (multi-op record) ───────────────────
     # 레코드 shape 은 json_fc 와 동일한 ops 계약 (cross-format parity

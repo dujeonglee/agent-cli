@@ -15,9 +15,13 @@ md_array 의 후계 (multi-wire-format PHASE4 — v6.0.0 리네임+리셰이프)
   md_array body 와 동일 (D7 결정: ``{"tool_call": […]}`` 래퍼 기각 —
   중첩 민감성 실측 + 검증된 body 승계). bare 객체 = 1-op 관용.
   op 하나 = 대상 하나 (배치 중첩 금지 — 27B 90% 파괴 실측).
-- **종료 = 명시적 ``complete`` op** — 산문-only 는 NO_ACTION 넛지
-  (md_array 시절 thought-only 종결의 false-terminate 버그 클래스 교훈,
-  DESIGN Exp 8).
+- **종료 = 명시적 ``complete`` op** 가 canonical. 단 **순수 산문 최종답변**
+  (액션 흔적 없는 자연어를 내고 complete op 만 누락)은 ``prose_completion``
+  으로 그 산문을 complete result 로 수용(v7.14, 넛지 왕복 절약). 깨진 액션
+  잔해(op-array/JSON 흔적)·빈 출력은 여전히 NO_ACTION 넛지 — 삼키면 의도한
+  액션 조기종료(bakeoff 35B ~460런 실측: no_action 자연어는 전부 최종답변
+  C, 중간서술 B=0). md_array 시절 thought-only **무조건** 종결의 false-
+  terminate 교훈(DESIGN Exp 8)은 '깨진 액션은 넛지' 필터로 방어.
 - **legacy 관용**: 구 md_array 헤더 emission 은 stage 2(drift) 로 계속
   수용 — 전환기 모델 습관 + foreign 누출 실측 shape. prior 는 캐노니컬
   (헤더 없는) shape 로 재렌더 (B→C 자기 교정).
@@ -82,6 +86,11 @@ _DEGEN_RUNAWAY = re.compile(
 # prior resurfaces (Phase-2). Stripped so a body that was ONLY that residue
 # parses cleanly (→ NO_ACTION nudge, not a spurious NO_JSON).
 _INPUT_RESIDUE = re.compile(r"^\s*##\s*Input\s*$", re.MULTILINE)
+
+# prose_completion 필터 — thought 에 이 흔적이 있으면 '자연어 최종답변'이
+# 아니라 파싱 실패한 액션 잔해(op array/JSON 객체)라 종결 대상에서 제외.
+# 보수적: 조금이라도 있으면 산문 아님 → NO_ACTION 넛지 유지.
+_JSON_ACTION_RESIDUE = re.compile(r'\[\s*\{|\{\s*"|"action"|action\s*=')
 
 _FORMAT_RULES = """\
 ## Response Format
@@ -644,6 +653,15 @@ class JsonFcFormat(WireFormat):
             return thought
         thought = _ORPHAN_THINK_TAG.sub("", thought)
         return _SENTINEL_LINE.sub("", thought).strip()
+
+    def prose_completion(self, turn) -> str | None:
+        """산문-only 최종답변 종결 (base 참조). json_fc 산문은 thought 로
+        파싱된다(bare 배열 없으면 stage=1·ops=[]·thought=산문). 액션 잔해
+        (op array/JSON 객체 흔적)가 없는 순수 자연어면 그 산문을 반환."""
+        prose = (turn.thought or "").strip()
+        if not prose or _JSON_ACTION_RESIDUE.search(prose):
+            return None
+        return prose
 
     # ─── History round-trip (multi-op record) ───────────────────
 
