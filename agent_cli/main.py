@@ -277,7 +277,7 @@ def _parse_at_profile(name: str) -> tuple[str, str]:
 
     규칙 (설계 §3.5): **전체 토큰이 실존 프로파일이면 그것 우선**, 아니면
     ``-run``/``-spawn`` 접미사 분리 — 하이픈 포함 프로파일명
-    (kernel-coder)과 극단 케이스(foo-run 이라는 프로파일)까지 결정적.
+    (code-writer)과 극단 케이스(foo-run 이라는 프로파일)까지 결정적.
     """
     from agent_cli.subagent.profiles import load_profile
 
@@ -368,7 +368,7 @@ class _ConsoleDispatchOutput(DispatchOutput):
     """CLI-flavoured output — colour, Rich markup, plain ``console.print``."""
 
     def agent_dispatch_result(self, text: str, success: bool) -> None:
-        # markup=False — 상태 텍스트의 [researcher] 같은 브래킷이 rich
+        # markup=False — 상태 텍스트의 [code-analyst] 같은 브래킷이 rich
         # 스타일 태그로 삼켜지지 않게 (v4.62.1 교훈과 동일 클래스).
         color = C["final"] if success else C["error"]
         console.print(text, style=color, markup=False)

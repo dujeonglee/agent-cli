@@ -247,7 +247,7 @@ class TestBuildAgentDescriptions:
         )
 
         desc = build_agent_descriptions()
-        assert "explorer" in desc  # 5.0.0: 프로파일 카탈로그에 합류
+        assert "code-analyst" in desc  # 5.0.0: 프로파일 카탈로그에 합류
 
     def test_excludes_disable_model_invocation_agents(self):
         # reviewer is auto-spawned (disable-model-invocation: true) — it must NOT
@@ -257,8 +257,8 @@ class TestBuildAgentDescriptions:
         )
 
         desc = build_agent_descriptions()
-        assert "`coder`" in desc  # 카탈로그에 내장 프로파일 광고
-        assert "explorer" in desc  # normal agents still shown
+        assert "`code-writer`" in desc  # 카탈로그에 내장 프로파일 광고
+        assert "code-analyst" in desc  # normal agents still shown
 
     def test_includes_delegate_usage(self):
         from agent_cli.prompts.system_prompt import (

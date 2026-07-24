@@ -1578,13 +1578,13 @@ class TestRoleDiscovery:
     def test_builtin_roles_loadable_and_advertised(self):
         from agent_cli.subagent.profiles import available_profiles, load_profile
 
-        for name in ("researcher", "coder"):
+        for name in ("code-analyst", "code-writer"):
             body, config, err = load_profile(name)
             assert err is None and body
             assert config.get("allowed-tools")
         advertised = dict(available_profiles())
-        assert "researcher" in advertised and "coder" in advertised
-        assert advertised["researcher"]  # description 필수 (발견 표면)
+        assert "code-analyst" in advertised and "code-writer" in advertised
+        assert advertised["code-analyst"]  # description 필수 (발견 표면)
 
     def test_disable_model_invocation_hidden(self, tmp_path, monkeypatch):
         import agent_cli.subagent.profiles as profiles_mod
@@ -1608,7 +1608,7 @@ class TestRoleDiscovery:
 
         desc = build_agent_profiles_section()
         assert "## Agent Profiles" in desc
-        assert "`researcher`" in desc and "`coder`" in desc
+        assert "`code-analyst`" in desc and "`code-writer`" in desc
         assert '"mode"' in desc and "spawn" in desc  # 스폰 예시 포함
 
     def test_prompt_section_gated_on_teammate_tool(self, tmp_path):

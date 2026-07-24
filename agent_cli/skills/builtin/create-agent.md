@@ -153,10 +153,14 @@ file later changes).
 - Start with a clear identity: "You are a [specific role]."
 - Principles should be actionable, not vague: "Be specific: file path, line number, issue" not "Be thorough"
 - Tool restrictions should match the role:
-  - Read-only agent: `[read_file, shell]` (shell for grep/find, no writes)
-  - Writer agent: `[read_file, write_file, edit_file, shell]`
-  - Analysis agent: `[read_file, shell]`
-- Keep it under 30 lines — the body becomes part of the subagent's system prompt
+  - Read-only agent: `[read_file, shell, code_index]` (shell for grep/find, no writes)
+  - Writer agent: `[read_file, write_file, edit_file, shell, code_index]`
+  - Analysis agent: `[read_file, shell, code_index]`
+  - Add `memory` for a **persistent expert** so it accumulates knowledge across
+    requests and survives context compaction / resume — its memory is isolated
+    and private to that agent (add it to the tool list AND tell the body to use
+    it). Add `ask` when the agent may need to ask the user a mid-task question.
+- Keep it under ~40 lines — the body becomes part of the subagent's system prompt
 - **description is the discovery surface** — every agent (main and peers)
   sees each live agent's name + first-sentence role when deciding whether
   to message it. Say what the profile is FOR in the first sentence (and,

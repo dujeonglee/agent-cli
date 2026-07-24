@@ -184,7 +184,7 @@ class WebRenderer(Renderer):
         self._prompt_snapshots: dict[str, dict[str, Any]] = {}
         # Scope-label metadata (task_id → {"agent", "index"}) captured at
         # ``begin_delegate_task`` so the inspector chip row can name each
-        # sub-agent ("explorer·1") without re-deriving it from the timeline.
+        # sub-agent ("code-analyst·1") without re-deriving it from the timeline.
         self._prompt_scope_labels: dict[str, dict[str, Any]] = {}
         # v4.52.0 스코프 스택: 스레드당 [스코프id…] — 중첩 루프(delegate 안
         # skill 등)의 top 이 현재 스코프. _thread_to_task(SSE delegate 그룹

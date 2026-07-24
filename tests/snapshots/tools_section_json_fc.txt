@@ -215,5 +215,5 @@ Languages: Python, JS/TS, C/C++, Go, Rust, Java, Markdown headings. Index at <pr
   Examples:
   - One-shot: {"action": "agent", "mode": "run", "task": "Read /tmp/data.csv and count rows"}
   - With context: {"action": "agent", "mode": "run", "task": "Fix the bug we found", "context": "fork"}
-  - With profile: {"action": "agent", "mode": "run", "task": "Analyze the auth module and cite risks", "profile": "explorer"}
-  - Persistent: {"action": "agent", "mode": "spawn", "profile": "coder", "name": "ui", "task": "own the UI module"}"
+  - With profile: {"action": "agent", "mode": "run", "task": "Analyze the auth module and cite risks", "profile": "code-analyst"}
+  - Persistent: {"action": "agent", "mode": "spawn", "profile": "code-writer", "name": "ui", "task": "own the UI module"}"

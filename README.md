@@ -426,7 +426,7 @@ salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니�
 | `/create-skill <name>` | 새 스킬 파일을 대화형으로 생성 (SKILL.md + scripts/) |
 | `/create-agent <name>` | 새 에이전트 정의 파일을 대화형으로 생성 |
 | `/plan <feature>` | 기능 요청을 작업 분해 + 의존성 + 범위 추정으로 구조화하여 `plan/` 에 저장 |
-| `/create-team <goal>` | 에이전트 팀 구성 — 도메인 분석, 아키텍처 설계, 에이전트/스킬/오케스트레이터 생성 |
+| `/orchestrate <task>` | 멀티스텝 작업을 계획하고 내장 워커 5종(code-writer/reviewer/analyst·unittest-writer·log-analyst)을 조율 — spawn 으로 컨텍스트 유지, writer↔reviewer 루프, 검증 (main 이 오케스트레이터) |
 
 사용자가 같은 이름의 스킬을 `.agent-cli/skills/`에 만들면 built-in을 오버라이드합니다.
 
@@ -1021,9 +1021,12 @@ Allow? (y=once, n=deny, a=always allow `rm` this session)
 run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(`description`/`allowed-tools`/`model`/`hooks`/`auto-spawn`) + 본문(역할 — 서브에이전트 시스템 프롬프트의 Role 섹션을 통째로 교체). 검색 경로: 프로젝트(`.agent-cli/agents/`) → 유저 전역(`~/.agent-cli/agents/`) → 패키지 내장(`agent_cli/agents/builtin/`).
 
 - **프로파일 발견**: 사용 가능한 프로파일 목록(이름+description)이 시스템 프롬프트 `## Agent Profiles` 섹션에 광고되어 **모델이 스스로 적합한 전문가를 골라** run/spawn 합니다 (`disable-model-invocation: true` 로 숨김 가능). description 이 발견 표면이니 "무엇의 전문가인지"를 명확히.
-- **내장 프로파일**:
-  - 범용 — `explorer`(읽기 전용 코드베이스 탐색) / `researcher`(조사·근거 인용, 누적 컨텍스트 활용) / `coder`(구현 전문가 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고).
-  - Linux 커널 (5.1.0) — `kernel-coder`(드라이버 구현: 커널 스타일·goto-cleanup 에러 경로·락 컨텍스트 규율·checkpatch/빌드 자가 검증) / `kernel-kunit`(KUnit 테스트: `kunit_test_suite` 설계·ops-table 페이크·`.kunitconfig`+`kunit.py run` 실행 검증) / `kernel-analyzer`(읽기 전용 분석: 콜패스·실행 컨텍스트(process/softirq/hardirq)·락·수명 추적, file:line 인용).
+- **내장 프로파일** — 범용 워커 5종(오케스트레이션은 main 이 담당). 모두 **격리된 private `memory`**(세션·compaction·resume 를 넘어 자기 지식 축적, 서로 못 봄)를 가집니다:
+  - `code-writer`(구현 — **파일 스코프 규율**: 담당 파일만 수정, `Files touched:` 보고, 에러/정리 경로·검증 전 정직 보고).
+  - `code-reviewer`(읽기 전용 리뷰 — 정확성·보안 우선, **구체적 실패 시나리오로 검증된 결함만** severity·`file:line`·CONFIRMED/PLAUSIBLE 으로 보고; 스타일 nitpick 배제).
+  - `code-analyst`(읽기 전용 분석 — "어떻게 동작하나": 콜패스·등록 간접·실행/동시성 컨텍스트·수명 추적, `file:line` 인용. 결함 판정은 안 함=reviewer 몫).
+  - `unittest-writer`(테스트 — **뮤테이션으로 무는지** 증명: 코드 뒤집으면 실패해야, observable effect 검증, 의존성 페이크로 격리, 실행 검증).
+  - `log-analyst`(읽기 전용 — 로그·스택트레이스·크래시에서 **근본 원인**: bottom-up 프레임·cascade 첫 도미노·트리거 조건, 증거 인용).
 - **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}` (run 도 동일 지원). `profile` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시). 상주 에이전트의 인라인 지시는 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속).
 - **`/create-agent` 스킬**: 새 프로파일 md 를 대화형으로 생성 (run/spawn 겸용).
 

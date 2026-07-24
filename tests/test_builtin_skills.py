@@ -10,7 +10,8 @@ class TestBuiltinDirectory:
     def test_builtin_dir_has_skills(self):
         flat = list(_BUILTIN_DIR.glob("*.md"))
         dir_entries = [d for d in _BUILTIN_DIR.iterdir() if (d / "SKILL.md").is_file()]
-        # create-agent.md, plan.md (flat) + create-skill/, create-team/ (dirs)
+        # create-agent.md, plan.md, orchestrate.md (flat) + create-skill/ (dir —
+        # references 분리 필수: ${SKILL_DIR} placeholder 가 render 치환을 피해야 함)
         assert len(flat) + len(dir_entries) >= 4
 
 
@@ -229,28 +230,34 @@ class TestBuiltinSkillContent:
         skill = _parse_skill_file(_BUILTIN_DIR / "plan.md")
         assert skill.user_invocable is True
 
-    def test_create_team_parses(self):
-        path = _BUILTIN_DIR / "create-team" / "SKILL.md"
+    def test_orchestrate_parses(self):
+        path = _BUILTIN_DIR / "orchestrate.md"
         skill = _parse_skill_file(path)
         assert skill is not None
-        assert skill.name == "create-team"
+        assert skill.name == "orchestrate"
         assert skill.description
-        assert skill.disable_model_invocation is True
+        assert "agent" in skill.allowed_tools  # main spawns/runs workers
+        assert skill.disable_model_invocation is False  # LLM can auto-invoke
 
-    def test_create_team_has_references(self):
-        ref_dir = _BUILTIN_DIR / "create-team" / "references"
-        assert ref_dir.is_dir()
-        assert (ref_dir / "design-patterns.md").is_file()
-        assert (ref_dir / "agent-writing.md").is_file()
-        assert (ref_dir / "skill-writing.md").is_file()
+    def test_orchestrate_delegates_to_the_five_workers(self):
+        """오케스트레이션 절차 = main 이 내장 워커 5종을 조율 (delegate 도구
+        폐기 후 agent run/spawn 기반). 워커 이름을 명시해야 main 이 배정."""
+        body = (_BUILTIN_DIR / "orchestrate.md").read_text()
+        for worker in (
+            "code-writer",
+            "code-reviewer",
+            "code-analyst",
+            "unittest-writer",
+            "log-analyst",
+        ):
+            assert worker in body, worker
+        # 컨텍스트 유지 = spawn/request (run 은 one-shot 망각)
+        assert "spawn" in body and "request" in body
+        # 폐기된 delegate **도구** 참조 금지 — agent run/spawn 이 대체.
+        # ("delegate" 동사(위임하다)는 자연어라 허용; 도구 호출 형태만 차단)
+        assert "delegate(" not in body
+        assert "allowed-tools" not in body or "delegate]" not in body
 
-    def test_create_team_references_content(self):
-        ref_dir = _BUILTIN_DIR / "create-team" / "references"
-        for name in ("design-patterns.md", "agent-writing.md", "skill-writing.md"):
-            content = (ref_dir / name).read_text()
-            assert len(content) > 100  # Not empty stubs
-
-    def test_create_team_skill_references_skill_dir(self):
-        path = _BUILTIN_DIR / "create-team" / "SKILL.md"
-        content = path.read_text()
-        assert "${SKILL_DIR}" in content  # References are loaded via SKILL_DIR
+    def test_orchestrate_user_invocable(self):
+        skill = _parse_skill_file(_BUILTIN_DIR / "orchestrate.md")
+        assert skill.user_invocable is True

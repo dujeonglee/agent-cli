@@ -517,7 +517,7 @@ class TestBuildSystemPrompt:
     def test_profiles_advertised_with_agent_tool(self):
         """5.0.0: agent 도구 포함 시 프로파일 카탈로그가 광고된다."""
         prompt = build_system_prompt(_make_caps(), ["shell", "agent"])
-        assert "explorer" in prompt  # built-in profile
+        assert "code-analyst" in prompt  # built-in profile
 
     def test_no_agents_without_delegate(self):
         prompt = build_system_prompt(_make_caps(), ["shell"])
@@ -1012,7 +1012,7 @@ class TestDelegateInlineAgent:
 
     def test_delegate_inline_agent_example(self):
         guide = self._delegate_guide()
-        assert '"profile": "explorer"' in guide  # 5.0.0: profile 파라미터
+        assert '"profile": "code-analyst"' in guide  # 5.0.0: profile 파라미터
 
 
 # ── Role + Recovery axis (formerly test_system_prompt_v2.py) ────────
@@ -1038,15 +1038,19 @@ class TestRoleInheritance:
         assert "AI assistant that solves tasks" not in prompt
 
     def test_agent_role_takes_precedence_over_parent_role(self, caps):
-        """If both agent_role and parent_role given, agent_role wins."""
+        """If both agent_role and parent_role given, agent_role wins.
+
+        Uses unique markers (not real words like "reviewer" that can leak in
+        from the skill catalog's descriptions) so the assertion isolates the
+        role-precedence behavior, not incidental prompt content."""
         prompt = build_system_prompt(
             caps,
             ["read_file"],
-            agent_role="You are an explorer.",
-            parent_role="You are a reviewer.",
+            agent_role="You are ZORPAGENT.",
+            parent_role="You are ZORPPARENT.",
         )
-        assert "explorer" in prompt
-        assert "reviewer" not in prompt
+        assert "ZORPAGENT" in prompt
+        assert "ZORPPARENT" not in prompt
 
 
 class TestGitContextRemoved:

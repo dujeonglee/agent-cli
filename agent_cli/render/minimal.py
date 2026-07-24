@@ -685,7 +685,7 @@ class MinimalRenderer(Renderer):
     def _emit_prompt_meta_header(self, *, include_action: bool) -> None:
         """Print the who/why header for a delegate-originated prompt (no-op
         for the main agent or when there's nothing to show). ``markup=False``
-        so a bracketed agent label like ``[explorer]`` isn't parsed as Rich
+        so a bracketed agent label like ``[code-analyst]`` isn't parsed as Rich
         markup."""
         header = self._format_prompt_meta(include_action=include_action)
         if header:

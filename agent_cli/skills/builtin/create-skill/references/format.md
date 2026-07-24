@@ -36,7 +36,7 @@ Use !`command` for inline shell execution at template-render time.
 |-------|----------|---------|-------------|
 | name | yes | | Skill identifier (used as /command) |
 | description | yes | | What the skill does — be specific for auto-invocation |
-| allowed-tools | no | all | Tools the skill can use: read_file, write_file, edit_file, shell, ask, delegate |
+| allowed-tools | no | all | Tools the skill can use: read_file, write_file, edit_file, shell, code_index, agent, ask |
 | max-turns | no | 0 (global) | Max iterations for this skill |
 | argument-hint | no | "" | Usage hint shown in /skills list |
 | model | no | caller's | Override model for this skill |

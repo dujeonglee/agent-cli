@@ -19,13 +19,13 @@ from tests.conftest import OMLX_BASE_URL
 pytestmark = pytest.mark.omlx_integration
 
 
-class TestExplorerAgent:
-    """@explorer built-in agent via the delegate tool."""
+class TestCodeAnalystAgent:
+    """@code-analyst built-in agent via the delegate tool."""
 
-    def test_explorer_explains_file(
+    def test_code_analyst_explains_file(
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
-        """@explorer reads a file and explains it."""
+        """@code-analyst reads a file and explains it."""
         from agent_cli.subagent.oneshot import tool_delegate
 
         test_file = tmp_path / "calculator.py"
@@ -40,7 +40,7 @@ class TestExplorerAgent:
                     {
                         "task": f"Read {test_file} and explain what it does. "
                         "Be brief (2-3 sentences).",
-                        "agent": "explorer",
+                        "agent": "code-analyst",
                         "context": "none",
                     }
                 ]
@@ -56,10 +56,10 @@ class TestExplorerAgent:
         assert result.success
         assert "add" in result.output.lower() or "calculator" in result.output.lower()
 
-    def test_explorer_uses_read_only_tools(
+    def test_code_analyst_uses_read_only_tools(
         self, integration_model, omlx_provider, model_capabilities, tmp_path
     ):
-        """Explorer agent should only use read_file and shell (no writes)."""
+        """code-analyst agent should only use read_file and shell (no writes)."""
         from agent_cli.subagent.oneshot import tool_delegate
 
         test_file = tmp_path / "data.txt"
@@ -70,7 +70,7 @@ class TestExplorerAgent:
                 "tasks": [
                     {
                         "task": f"Read {test_file} and tell me its content.",
-                        "agent": "explorer",
+                        "agent": "code-analyst",
                         "context": "none",
                     }
                 ]
@@ -184,7 +184,7 @@ class TestAgentDispatchIntegration:
         )
 
         result = _dispatch_agent(
-            "@explorer What does agent_cli/constants.py define? Answer in one sentence.",
+            "@code-analyst What does agent_cli/constants.py define? Answer in one sentence.",
             omlx_provider,
             model_capabilities,
             integration_model,

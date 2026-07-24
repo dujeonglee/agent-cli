@@ -1,6 +1,20 @@
-"""Tests for built-in agent loading and discovery."""
+"""Tests for built-in agent (worker profile) loading and discovery.
+
+The built-in set is five general-purpose workers (main drives orchestration):
+code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst.
+"""
 
 from agent_cli.subagent.profiles import load_profile, _BUILTIN_PROFILES_DIR
+
+WORKERS = (
+    "code-writer",
+    "code-reviewer",
+    "code-analyst",
+    "unittest-writer",
+    "log-analyst",
+)
+READ_ONLY = ("code-reviewer", "code-analyst", "log-analyst")
+WRITING = ("code-writer", "unittest-writer")
 
 
 def _set_agent_paths(paths):
@@ -17,104 +31,89 @@ class TestBuiltinAgentsDirectory:
     def test_builtin_dir_exists(self):
         assert _BUILTIN_PROFILES_DIR.is_dir()
 
-    def test_builtin_dir_has_agents(self):
-        md_files = list(_BUILTIN_PROFILES_DIR.glob("*.md"))
-        assert len(md_files) >= 1  # explorer
+    def test_builtin_dir_has_the_five_workers(self):
+        names = {p.stem for p in _BUILTIN_PROFILES_DIR.glob("*.md")}
+        assert set(WORKERS) <= names, f"missing: {set(WORKERS) - names}"
 
 
-class TestExplorerAgent:
-    def test_loads_successfully(self):
-        role, config, error = load_profile("explorer")
-        assert error is None
-        assert role is not None
-        assert "explorer" in role.lower() or "read-only" in role.lower()
+class TestWorkerProfilesCommon:
+    def test_all_load_with_description(self):
+        for name in WORKERS:
+            role, config, error = load_profile(name)
+            assert error is None, f"{name}: {error}"
+            assert role and len(role) > 200, name
+            assert config.get("description"), name
 
-    def test_has_tool_restrictions(self):
-        role, config, error = load_profile("explorer")
-        assert "allowed-tools" in config
-        tools = config["allowed-tools"]
-        assert "read_file" in tools
-        assert "shell" in tools
-        assert "write_file" not in tools
-        assert "edit_file" not in tools
+    def test_read_only_workers_cannot_write(self):
+        for name in READ_ONLY:
+            _, config, _ = load_profile(name)
+            tools = config["allowed-tools"]
+            assert "write_file" not in tools, name
+            assert "edit_file" not in tools, name
+            assert "read_file" in tools, name
 
-    def test_has_description(self):
-        role, config, error = load_profile("explorer")
-        assert config.get("description")
+    def test_writing_workers_have_edit_tools(self):
+        for name in WRITING:
+            _, config, _ = load_profile(name)
+            tools = config["allowed-tools"]
+            assert "write_file" in tools and "edit_file" in tools, name
+            assert "shell" in tools, name
 
-    def test_role_mentions_read_only(self):
-        role, config, error = load_profile("explorer")
-        assert "read" in role.lower()
+    def test_all_workers_have_memory(self):
+        """모든 워커는 격리된 private memory 로 세션을 넘어 지식 축적."""
+        for name in WORKERS:
+            _, config, _ = load_profile(name)
+            assert "memory" in config["allowed-tools"], name
+
+    def test_all_workers_mention_private_memory(self):
+        """격리 인지 — 각 워커 본문이 memory 가 자기 것임을 명시."""
+        for name in WORKERS:
+            role, _, _ = load_profile(name)
+            assert "private to you" in role.lower(), name
 
 
-class TestExplorerPromptIntent:
-    """Tripwires for the guidance the explorer prompt must carry.
-
-    We check intent-level phrases, not literal sentences — these tests
-    should fail only when a reword actually drops a concept, not on
-    cosmetic edits. Keep the substrings short and unambiguous.
-    """
+class TestCodeAnalystPromptIntent:
+    """code-analyst carries the read-strategy tripwires (formerly explorer):
+    intent-level phrases, not literal sentences — fail only when a reword
+    actually drops a concept."""
 
     def _body(self) -> str:
-        role, _config, _error = load_profile("explorer")
+        role, _c, _e = load_profile("code-analyst")
         return (role or "").lower()
 
     def _description(self) -> str:
-        _role, config, _error = load_profile("explorer")
+        _r, config, _e = load_profile("code-analyst")
         return (config.get("description") or "").lower()
 
     def test_description_signals_analysis_not_edits(self):
-        """Description drives parent-agent dispatch selection, so it must
-        steer callers away from using explorer for edits."""
         desc = self._description()
-        # Analysis signal
-        assert "analysis" in desc or "analyze" in desc or "question" in desc
-        # Edit warn-off
-        assert "not" in desc and ("edit" in desc or "modify" in desc)
+        assert "analy" in desc or "explains" in desc or "how" in desc
+        assert "not" in desc and (
+            "edit" in desc or "modify" in desc or "defect" in desc
+        )
 
     def test_body_warns_about_stat_trap(self):
-        """The concrete failure mode: agent reads stat and treats it as
-        a full read. Prompt must explicitly reject this."""
         body = self._body()
         assert "stat" in body
-        # Mentions that stat alone is insufficient, in some phrasing.
-        assert "size" in body or "not an answer" in body or "still need to read" in body
+        assert "size" in body or "not an answer" in body or "still have to read" in body
 
     def test_body_names_line_range_as_conscious_full_read(self):
-        """For large files the agent must know the line_start=1,line_end=<total>
-        form — this is the contract the read_file guard expects."""
         body = self._body()
-        assert "line_start" in body
-        assert "line_end" in body
+        assert "line_start" in body and "line_end" in body
 
     def test_body_requires_citations(self):
-        """Every non-trivial claim should cite file:line or a named symbol."""
         body = self._body()
         assert "cite" in body or "citation" in body or "file:line" in body
 
     def test_body_flags_docs_vs_code_discrepancy(self):
-        """Agent should trust code over docs when they diverge — the
-        symptom it addresses is over-reliance on ARCHITECTURE.md."""
         body = self._body()
         assert "doc" in body and "code" in body
 
     def test_body_warns_about_partial_read_trap(self):
-        """Symptom observed after the first rewrite: agent stopped using
-        stat but started sampling the first 100 lines of a 1200-line
-        file instead. Prompt must reject arbitrary-range partial reads
-        explicitly."""
         body = self._body()
-        assert (
-            "arbitrary" in body
-            or "sample" in body
-            or "sampling" in body
-            or "false sense" in body
-        )
+        assert "arbitrary" in body or "false sense" in body or "sampl" in body
 
     def test_body_forbids_fabricated_citations(self):
-        """Symptom observed after the first rewrite: agent added
-        `file:1` citations for files it never opened. Prompt must rule
-        this out directly."""
         body = self._body()
         assert (
             "actually read" in body
@@ -123,27 +122,13 @@ class TestExplorerPromptIntent:
             or "never opened" in body
         )
 
-    def test_body_expands_source_scope_beyond_python(self):
-        """A1 — Source must include skill/agent markdown and config, not
-        just .py. Symptom: earlier runs treated 'source' as python-only
-        and ignored .md-backed subsystems (skills, agents)."""
+    def test_body_expands_source_scope_beyond_one_language(self):
         body = self._body()
-        # One of the non-.py source types must appear in the scope guidance.
-        assert (
-            ".md" in body
-            or "markdown" in body
-            or "yaml frontmatter" in body
-            or "configuration" in body
-        )
+        assert "config" in body or "schema" in body or "frontmatter" in body
 
     def test_body_has_broad_survey_stop_criterion(self):
-        """A3 — Broad questions ("analyze the workspace") must constrain
-        the answer to subsystems with an actual implementation read.
-        Symptom: describing mcp/skills/providers internals from only
-        reading their __init__.py."""
         body = self._body()
-        assert "broad-survey" in body or "broad survey" in body or "broad" in body
-        # Concrete instruction about only describing read subsystems.
+        assert "broad" in body
         assert (
             "subsystems where you actually read" in body
             or "read fewer" in body
@@ -151,99 +136,81 @@ class TestExplorerPromptIntent:
         )
 
     def test_body_cross_reference_rule(self):
-        """Cross-reference rule — doc claims that are testable against
-        authoritative sources (e.g., pyproject.toml for deps) must be
-        verified before repeating. Symptom: explorer claimed
-        `python-json-repair` was a dependency by repeating the README
-        without checking pyproject.toml."""
         body = self._body()
         assert (
-            "pyproject" in body
-            or "cross-reference" in body
-            or "authoritative source" in body
+            "cross-reference" in body or "authoritative" in body or "manifest" in body
         )
+
+    def test_body_traces_indirection(self):
+        """kernel-analyzer 계승 — 등록 간접(callback/registry) 추적 규율."""
+        body = self._body()
+        assert "indirection" in body or "callback" in body or "registr" in body
+
+    def test_boundary_with_reviewer(self):
+        """analyst=이해, reviewer=결함판정 — 경계 명시."""
+        body = self._body()
+        assert "reviewer" in body and ("not" in body or "does not" in body)
+
+
+class TestWorkerContracts:
+    def test_code_writer_contract(self):
+        role, _, _ = load_profile("code-writer")
+        flat = role.lower()
+        assert "files touched:" in flat  # 병렬 협업 보고 계약
+        assert "scope" in flat  # 파일 스코프 규율
+        assert "cleanup" in flat or "release" in flat  # 에러/정리 경로
+        assert "narrowest" in flat or "verify" in flat  # 검증 전 보고
+
+    def test_code_reviewer_contract(self):
+        role, _, _ = load_profile("code-reviewer")
+        flat = role.lower()
+        assert "severity" in flat
+        assert "failure scenario" in flat or "failure" in flat
+        assert "false positive" in flat  # 억지 지적 경계
+        assert "confirmed" in flat and "plausible" in flat  # confidence
+
+    def test_unittest_writer_contract(self):
+        role, _, _ = load_profile("unittest-writer")
+        flat = role.lower()
+        assert "mutation" in flat or "must bite" in flat or "must fail when" in flat
+        assert "observable" in flat  # 로직 재구현 금지
+        assert "fake" in flat or "stub" in flat  # 의존성 격리
+        assert "files touched:" in flat
+
+    def test_log_analyst_contract(self):
+        role, _, _ = load_profile("log-analyst")
+        flat = role.lower()
+        assert "root cause" in flat
+        assert "stack trace" in flat or "traceback" in flat
+        assert "symptom" in flat  # 증상 vs 원인
+        assert "confirmed" in flat and "plausible" in flat
 
 
 class TestBuiltinAgentPriority:
     def test_project_overrides_builtin(self, tmp_path, monkeypatch):
         """Project agent with same name overrides built-in."""
-
         project_dir = tmp_path / "agents"
         project_dir.mkdir()
-        (project_dir / "explorer.md").write_text(
-            "---\nname: explorer\ndescription: Custom explorer\n"
+        (project_dir / "code-analyst.md").write_text(
+            "---\nname: code-analyst\ndescription: Custom analyst\n"
             "allowed-tools: [read_file, write_file, shell]\n---\n\n"
-            "# Custom Explorer\nYou are a custom explorer that can also write."
+            "# Custom Analyst\nYou are a custom analyst that can also write."
         )
 
         _set_agent_paths([project_dir, _BUILTIN_PROFILES_DIR])
 
-        role, config, error = load_profile("explorer")
+        role, config, error = load_profile("code-analyst")
         assert error is None
         assert "custom" in role.lower()
         assert "write_file" in config["allowed-tools"]
 
     def test_builtin_used_when_no_override(self, tmp_path, monkeypatch):
         """Built-in is used when no project/user override exists."""
-
         empty_dir = tmp_path / "agents"
         empty_dir.mkdir()
 
         _set_agent_paths([empty_dir, _BUILTIN_PROFILES_DIR])
 
-        role, config, error = load_profile("explorer")
+        role, config, error = load_profile("code-analyst")
         assert error is None
         assert "write_file" not in config.get("allowed-tools", [])
-
-
-class TestKernelProfiles:
-    """내장 커널 4종 (5.1.0 협업 패치) — 로딩·도구 경계·정체성 핵심 계약."""
-
-    ALL = ("kernel-coder", "kernel-kunit", "kernel-analyzer")
-    READ_ONLY = ("kernel-analyzer",)
-    WRITING = ("kernel-coder", "kernel-kunit")
-
-    def test_all_load_with_description(self):
-        for name in self.ALL:
-            role, config, error = load_profile(name)
-            assert error is None, f"{name}: {error}"
-            assert role and len(role) > 200, name
-            assert config.get("description"), name
-
-    def test_read_only_profiles_cannot_write(self):
-        for name in self.READ_ONLY:
-            _, config, _ = load_profile(name)
-            tools = config["allowed-tools"]
-            assert "write_file" not in tools, name
-            assert "edit_file" not in tools, name
-            assert "read_file" in tools and "code_index" in tools, name
-
-    def test_writing_profiles_have_edit_tools(self):
-        for name in self.WRITING:
-            _, config, _ = load_profile(name)
-            tools = config["allowed-tools"]
-            assert "write_file" in tools and "edit_file" in tools, name
-            assert "shell" in tools, name  # build/checkpatch/kunit.py 실행
-
-    def test_coder_contract(self):
-        role, _, _ = load_profile("kernel-coder")
-        flat = role.lower()
-        assert "checkpatch" in flat  # 자가 검증
-        assert "goto" in flat  # 에러 경로 규율
-        assert "files touched:" in flat  # 병렬 협업 보고 계약
-        assert "bug_on" in flat  # 드라이버 금지 규칙
-
-    def test_kunit_contract(self):
-        role, _, _ = load_profile("kernel-kunit")
-        flat = role.lower()
-        assert "kunit_test_suite" in flat
-        assert "kunit.py" in flat  # 실행 검증 경로
-        assert "kunit_expect" in flat or "kunit_assert" in flat
-        assert ".kunitconfig" in flat
-
-    def test_analyzer_contract(self):
-        role, _, _ = load_profile("kernel-analyzer")
-        flat = role.lower()
-        assert "file:line" in flat  # 인용 규율
-        assert "softirq" in flat or "hardirq" in flat  # 컨텍스트 주석
-        assert "cannot modify" in flat  # 읽기 전용 정체성

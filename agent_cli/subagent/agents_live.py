@@ -133,7 +133,7 @@ def first_sentence(text: str, *, cap: int = 200) -> str:
 
 
 def format_agent_label(key: str, profile: str = "", name: str = "") -> str:
-    """표시 라벨 — 다중 인스턴스 구분: "agt-x (coder · ui)"."""
+    """표시 라벨 — 다중 인스턴스 구분: "agt-x (code-writer · ui)"."""
     parts = [p for p in (profile, name) if p]
     return f"{key} ({' · '.join(parts)})" if parts else key
 
@@ -279,7 +279,7 @@ class AgentInstance:
         self.key = key
         self.profile_name = profile_name
         self.role_prompt = role_prompt
-        # 다중 인스턴스 구분 라벨 (예: 같은 coder 역할의 "ui"/"api") — 주소는
+        # 다중 인스턴스 구분 라벨 (예: 같은 code-writer 역할의 "ui"/"api") — 주소는
         # 항상 key, name 은 표시·광고용.
         self.instance_name = instance_name
         # 역할 md 의 description — Live Teammates 광고의 전문영역 요약.

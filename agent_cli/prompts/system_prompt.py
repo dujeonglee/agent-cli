@@ -236,14 +236,14 @@ def _build_agent_inline(wire_format) -> str:
             {
                 "mode": "run",
                 "task": "Analyze the auth module and cite risks",
-                "profile": "explorer",
+                "profile": "code-analyst",
             },
         ),
         (
             "Persistent",
             {
                 "mode": "spawn",
-                "profile": "coder",
+                "profile": "code-writer",
                 "name": "ui",
                 "task": "own the UI module",
             },
@@ -1082,8 +1082,8 @@ def build_live_agents_section(
             '`{"mode":"request","key":"<key>","message":"..."}` instead of '
             "spawning a new one for the same thread of work. Spawn ADDITIONAL "
             "instances of a profile (each with a distinct `name`) only for "
-            "parallel INDEPENDENT workstreams — e.g. several coders on disjoint "
-            "files."
+            "parallel INDEPENDENT workstreams — e.g. several code-writers on "
+            "disjoint files."
         )
     lines = ["## Live Agents", intro]
     for s in alive:

@@ -31,7 +31,7 @@ absolute paths instead of the portable placeholder.
    everything at once:
    - What should the skill do? (unless already clear from $ARGUMENTS)
    - Which tools does it need? (read_file, write_file, edit_file,
-     shell, ask, delegate)
+     shell, code_index, agent, ask)
    - Does it need shell scripts? (if yes, we'll create scripts/)
    - Should it be model-invocable or user-only?
    - Does it need independent context (fork) or share the caller's?
