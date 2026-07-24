@@ -20,47 +20,56 @@ workers cannot spawn further agents, so keep the coordination here.
 | Write tests that catch bugs | `unittest-writer` | mutation-checked |
 | Diagnose a failure / crash / log | `log-analyst` | read-only; root cause |
 
+## Default to spawn, not run
+
+**Your workers must be `spawn`ed, not `run`.** A `spawn`ed agent is PERSISTENT — it
+keeps its context across your requests, so the code-writer still remembers what it
+built when the reviewer's feedback comes back, and the analyst's subsystem map stays
+warm for follow-ups. A `run` is a one-shot that FORGETS everything the moment it
+returns — useless for the implement→review→fix loop this task needs. So:
+
+- **`spawn`** every worker you will talk to more than once (that is almost all of
+  them: the code-writer, the code-reviewer, the unittest-writer). Then drive them
+  with `request`; their replies are delivered to you automatically (never poll).
+- **`run`** ONLY for a single, self-contained, one-off lookup whose answer you need
+  exactly once and never revisit — e.g. "read this one file and tell me X". If you
+  will follow up, it must be a spawn. When unsure, spawn.
+
 ## How to run it
 
 1. **Understand and plan.** If the task is non-trivial, run the `plan` skill (or
    sketch the steps inline) to get an ordered task list with dependencies and file
-   scopes. Decide which steps are independent (can run in parallel) and which must
-   be sequential.
+   scopes. Decide which steps are independent (can run in parallel) and sequential.
 
-2. **Analyze first when the ground is unfamiliar.** If the change touches code you
-   do not understand yet, `agent run` a `code-analyst` task to map it before writing
-   — cheaper than a writer rediscovering it.
+2. **Spawn your workers up front.** Right after planning, `spawn` the specialists the
+   plan calls for — each with a distinct `name` and, for code-writers, a disjoint
+   file scope. A typical build spawns a `code-writer`, a `code-reviewer`, and a
+   `unittest-writer`; add a `code-analyst` (spawned) first if the code is unfamiliar,
+   so its map persists for everyone. Do NOT `run` these — they are all iterative.
 
-3. **Spawn persistent workers for iterative work.** For work that evolves over
-   several rounds (implement → review → fix), `spawn` the workers so they KEEP their
-   context between requests — a `run` is one-shot and forgets. Give each a distinct
-   `name`. Assign each code-writer a disjoint file scope so parallel writers do not
-   collide. Use one-shot `agent run` only for a self-contained task whose result you
-   need once (a quick analysis, a single independent file).
-
-4. **Coordinate the loop.** Drive implement → review → fix:
+3. **Coordinate the implement→review→fix loop.**
    - `request` the code-writer to implement its scope.
    - `request` the code-reviewer to review the change; it reports defects with
      severity and `file:line`.
-   - Feed confirmed defects back to the same code-writer (it still has its context)
-     and re-review until the reviewer is clean. Replies are delivered to you
-     automatically — do not poll.
+   - Feed confirmed defects back to the SAME code-writer (it still has its context —
+     this is why it had to be spawned) and re-review until the reviewer is clean.
+     Replies arrive automatically; keep working while you wait.
 
-5. **Verify.** `request` the `unittest-writer` to add/extend tests for the new
+4. **Verify.** `request` the `unittest-writer` to add/extend tests for the new
    behavior and run them; if a run fails, hand the failure output to a `log-analyst`
    (or the reviewer) to find the root cause before looping back to the writer. Run
    the project's own checks (build / lint / full test suite) yourself and report the
    result honestly, including failures.
 
-6. **Integrate and report.** Collect the `Files touched:` lists, confirm the pieces
-   fit, and report what was done, what was verified, and anything left open. Kill
+5. **Integrate and report.** Collect the `Files touched:` lists, confirm the pieces
+   fit, and report what was done, what was verified, and anything left open. `kill`
    persistent workers you no longer need.
 
 ## Principles
 
-- **Keep worker context alive.** Prefer `spawn` + `request` over repeated `run` for
-  anything iterative — re-deriving context every turn is the main failure mode of
-  naive fan-out.
+- **Spawn, not run — this is the whole point.** `run` re-deriving context every turn
+  is the failure mode that makes naive fan-out useless. If you catch yourself about
+  to `run` a worker you will talk to again, spawn it instead.
 - **One scope per writer.** Parallel code-writers must own disjoint files; a shared
   file is a sequential dependency, not a parallel one.
 - **You own integration and verification.** Workers report honestly within their

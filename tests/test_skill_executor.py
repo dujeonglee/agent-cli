@@ -285,3 +285,51 @@ class TestSkillRegistryInheritance:
         # registry absent → SUBLOOP description ("run ... only here")
         assert "only here" in without.lower()
         assert "spawn" not in without or "only here" in without.lower()
+
+
+class TestSkillSpawnExecution:
+    """v7.16.0 통합: skill 서브루프에서 spawn 이 실제로 tool_agent 까지 닿아
+    성공하는지 (registry 배선의 end-to-end 증명). 유닛(passthrough)과 달리
+    실제 spawn op 를 실행해 워커가 main registry 에 등록되고 'main-session
+    only' 거부가 나지 않음을 확인. orchestrate skill 이 워커를 spawn·조율하는
+    능력의 회귀 가드."""
+
+    def test_spawn_in_skill_subloop_registers_worker_no_reject(self, caps, ctx):
+        import tempfile
+        from pathlib import Path
+
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.subagent.agents_live import AgentRegistry
+
+        skill = _make_skill(
+            name="orch", allowed_tools=["read_file", "agent"], prompt="do $ARGUMENTS"
+        )
+        prov = MagicMock()
+        prov.call.side_effect = [
+            LLMResponse(
+                content='Spawn a worker.\n[{"action":"agent","mode":"spawn",'
+                '"profile":"code-writer","name":"w1","task":"build"}]'
+            ),
+            LLMResponse(content='Done.\n[{"action":"complete","result":"ok"}]'),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            from agent_cli.context.manager import ContextManager
+
+            sctx = ContextManager(session_dir=Path(d))
+            reg = AgentRegistry(session_dir=Path(d))
+            execute_skill(
+                skill,
+                "make it",
+                prov,
+                caps,
+                "m",
+                ctx=sctx,
+                agent_registry=reg,
+                max_turns=4,
+            )
+            hist = Path(d) / "history.jsonl"
+            rejected = hist.is_file() and "main-session only" in hist.read_text()
+            worker_count = len(reg.roster_snapshot())
+        # spawn 이 거부되지 않고 워커가 registry 에 등록돼야 (배선 완전)
+        assert not rejected, "skill 서브루프 spawn 이 'main-session only' 로 거부됨"
+        assert worker_count >= 1, "spawn 된 워커가 registry 에 등록 안 됨"
