@@ -231,3 +231,57 @@ class TestSkillSubdir:
             # Should be a different ContextManager than parent
             assert skill_ctx is not ctx
             assert "skill_summarize" in str(skill_ctx.session_dir)
+
+
+class TestSkillRegistryInheritance:
+    """A skill is the MAIN agent's own workflow, so it inherits the running
+    loop's agent_registry and can spawn/manage persistent workers (an
+    orchestrate skill's whole point). depth bounds skill→skill recursion;
+    spawn permission rides on the registry, NOT depth — so a skill (registry
+    present) gets the full agent tool while an ordinary sub-agent (no registry)
+    stays run-only. Before this wiring the registry was dropped at the skill
+    boundary, so /orchestrate's `spawn` ops silently did nothing."""
+
+    def test_skill_inherits_registry_for_spawn(self, caps, ctx):
+        skill = _make_skill(allowed_tools=["read_file", "agent"])
+        reg = MagicMock(name="registry")
+        with patch("agent_cli.skills.executor.run_loop") as mock_loop:
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
+            execute_skill(
+                skill=skill,
+                arguments="orchestrate this",
+                provider=MagicMock(),
+                capabilities=caps,
+                model="test",
+                ctx=ctx,
+                agent_registry=reg,
+            )
+            # The skill's run_loop must receive the SAME registry (else spawn
+            # ops in the skill body hit no registry and no-op).
+            assert mock_loop.call_args.kwargs["agent_registry"] is reg
+
+    def test_skill_subloop_exposes_spawn_but_subagent_does_not(self, caps):
+        """Parity: the agent tool advertises spawn when a registry is present
+        (skill / main) and stays run-only when it is absent (sub-agent)."""
+        from agent_cli.prompts.system_prompt import build_system_prompt_sections
+
+        def _txt(secs):
+            return "\n".join(b for _n, b in secs)
+
+        with_reg = _txt(
+            build_system_prompt_sections(
+                caps, active_tools=["read_file", "agent"], agent_registry=MagicMock()
+            )
+        )
+        without = _txt(
+            build_system_prompt_sections(
+                caps, active_tools=["read_file", "agent"], agent_registry=None
+            )
+        )
+        # registry present → full agent tool (spawn enum value visible)
+        assert "spawn" in with_reg
+        # registry absent → SUBLOOP description ("run ... only here")
+        assert "only here" in without.lower()
+        assert "spawn" not in without or "only here" in without.lower()

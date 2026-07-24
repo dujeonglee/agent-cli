@@ -750,6 +750,10 @@ class TurnDispatcher:
             parent_depth=self.cfg.depth,
             max_depth=self.cfg.max_depth,
             compaction_enabled=self.cfg.compaction_enabled,
+            # A skill inherits the running loop's registry so it can spawn/manage
+            # workers (an orchestrate skill's whole point); a sub-agent loop has
+            # no registry, so its skills stay run-only. See executor.execute_skill.
+            agent_registry=self.cfg.agent_registry,
         )
         obs = skill_tool_result.output or skill_tool_result.error
         obs_msg = f"Observation: {obs}"

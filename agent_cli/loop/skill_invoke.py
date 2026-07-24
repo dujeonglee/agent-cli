@@ -42,6 +42,7 @@ def _handle_run_skill(
     parent_depth: int = 0,
     max_depth: int = 2,
     compaction_enabled: bool = True,
+    agent_registry=None,
 ):
     """Handle run_skill at loop level with full ctx access."""
     # Inline import: circular dependency — executor.py imports run_loop from this module
@@ -129,6 +130,7 @@ def _handle_run_skill(
             parent_hooks_config=parent_hooks_config,
             parent_depth=parent_depth,
             compaction_enabled=compaction_enabled,
+            agent_registry=agent_registry,
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")

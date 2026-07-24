@@ -109,6 +109,7 @@ def execute_skill(
     parent_hooks_config: dict | None = None,
     parent_depth: int = 0,
     compaction_enabled: bool = True,
+    agent_registry=None,
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -197,6 +198,14 @@ def execute_skill(
             verbose=verbose,
             depth=parent_depth + 1,
             max_depth=max_depth,
+            # A skill is the MAIN agent's own workflow (unlike a sub-agent, which
+            # is an independent one-shot), so it inherits the main registry and
+            # can spawn/manage persistent workers. depth still bounds skill→skill
+            # recursion; spawn permission rides on the registry, not depth — so a
+            # skill (registry present) gets the full agent tool while an ordinary
+            # sub-agent (no registry) stays run-only. Workers it spawns register
+            # on the main registry and outlive the skill (main takes them over).
+            agent_registry=agent_registry,
             agent_timeout=agent_timeout,
             active_tools=effective_tools,
             ctx=skill_ctx or ctx,
