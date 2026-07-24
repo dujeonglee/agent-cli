@@ -8,9 +8,8 @@ and standard readline editing shortcuts (Ctrl+A/E/W/K).
 from __future__ import annotations
 
 import atexit
-from pathlib import Path
-
 import os
+from pathlib import Path
 
 # Prefer gnureadline over stdlib readline (macOS ships libedit which has
 # known bugs with CJK character width, causing typed Korean/Chinese/Japanese

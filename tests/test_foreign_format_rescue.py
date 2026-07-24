@@ -14,7 +14,8 @@ import pytest
 
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.wire_formats import get as get_wf, try_foreign_parse
+from agent_cli.wire_formats import get as get_wf
+from agent_cli.wire_formats import try_foreign_parse
 
 # 실측 캡처 (35B, 2026-07-17) — json_fc 회귀 예1
 MD_ARRAY_LEAK = (

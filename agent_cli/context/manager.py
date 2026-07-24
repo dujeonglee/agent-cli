@@ -31,13 +31,14 @@ off the manager reverts to the historical plain-FIFO behaviour.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
 
 # C5: 관심사 분리 — record 계약은 records, LLM 표현은 render, 디스크
 # I/O primitive 는 store 소유. manager 는 캐시 + 압축 정책만.
 from agent_cli.context import store
+from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.records import _classify_record
 from agent_cli.context.render import (
     _estimate_message_tokens,
@@ -45,10 +46,8 @@ from agent_cli.context.render import (
     _to_natural_language,
     _to_summary_text,
 )
-from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.render import render_compaction_progress
 from agent_cli.wire_formats import get as _get_wire_format
-
 
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
@@ -209,7 +208,7 @@ class ContextManager:
         # = function ``(messages) -> summary text``; ``_recorder`` =
         # TurnRecorder (or None for headless paths). Both stay optional
         # so unit tests can drive ContextManager without a full loop.
-        self._compactor_callback: Optional[Callable[[list[dict]], str]] = None
+        self._compactor_callback: Callable[[list[dict]], str] | None = None
         self._recorder = None
 
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -462,7 +461,7 @@ class ContextManager:
         )
 
         t0 = time.monotonic()
-        failure_signal: Optional[str] = None
+        failure_signal: str | None = None
         fallback_used = False
         try:
             # Recursive single-call summarisation: when a prior summary
@@ -595,7 +594,7 @@ class ContextManager:
             raise CompactionError("no compactor callback registered")
         try:
             summary = self._compactor_callback(messages)
-        except Exception as e:  # noqa: BLE001 — provider boundary
+        except Exception as e:
             raise CompactionError(f"summariser raised: {e}") from e
         if not isinstance(summary, str) or not summary.strip():
             raise CompactionError("summariser returned empty/non-string")

@@ -25,7 +25,6 @@ import sys
 
 import pytest
 
-
 COLD_START_ENTRY_POINTS = [
     # CLI startup path. Was the actual broken case.
     "agent_cli.main",
@@ -51,6 +50,7 @@ def test_cold_start_import(module):
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
     assert result.returncode == 0, (
         f"Cold-start `import {module}` failed.\n"

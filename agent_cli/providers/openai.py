@@ -15,16 +15,15 @@ from agent_cli.constants import (
     LLM_STREAM_TIMEOUT,
     STREAM_MAX_RECONNECTS,
 )
-
 from agent_cli.providers.base import LLMResponse, TokenUsage, strip_think_blocks
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (
     StreamEvent,
-    run_sse_stream,
     StreamIdleTimeout,
-    raise_for_status_with_body,
     make_stream_patient,
     post_with_retry,
+    raise_for_status_with_body,
+    run_sse_stream,
 )
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import requests
 
 from agent_cli.constants import (
@@ -11,7 +10,6 @@ from agent_cli.constants import (
     LLM_STREAM_TIMEOUT,
     STREAM_MAX_RECONNECTS,
 )
-
 from agent_cli.providers.base import LLMResponse, TokenUsage
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.providers.http import (

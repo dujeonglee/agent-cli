@@ -11,43 +11,42 @@ from agent_cli.constants import (
     INTERRUPT_NOTICE,
     OUTPUT_TRUNCATED_NOTICE,
 )
-from agent_cli.tools.result import ToolResult
-
 from agent_cli.context.manager import ContextManager
-from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.capabilities import ModelCapabilities
-from agent_cli.recovery.observability import (
-    TurnRecorder,
-)
-from agent_cli.memory import consume_memory_reload
-from agent_cli.subagent.agents_live import consume_agents_reload
-from agent_cli.render import (
-    consume_directives_reload,
-    notify_directives_applied,
-    notify_memory_applied,
-    render_system_prompt_snapshot,
-    render_header,
-    render_turn_sep,
-    render_raw,
-    render_thinking,
-    render_status,
-    render_step,
-    render_token_usage,
-)
-from agent_cli.tools import TOOLS, RunContext
-
-from agent_cli.verbose import debug_log as _debug_log, set_verbose as _set_debug_verbose
-from agent_cli.wire_formats import get as _get_wire_format
+from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
+from agent_cli.loop.llm import LLMCaller, _build_token_stats
+from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
-from agent_cli.loop.state import LoopConfig, LoopState, _CONTINUE, _RETRY
-from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
+from agent_cli.loop.state import _CONTINUE, _RETRY, LoopConfig, LoopState
 from agent_cli.loop.tool_bridge import ToolBridge
-from agent_cli.loop.llm import LLMCaller, _build_token_stats
-from agent_cli.loop.dispatch import TurnDispatcher, _append_observation
+from agent_cli.memory import consume_memory_reload
+from agent_cli.providers.base import LLMProvider
+from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.recovery.observability import (
+    TurnRecorder,
+)
+from agent_cli.render import (
+    consume_directives_reload,
+    notify_directives_applied,
+    notify_memory_applied,
+    render_header,
+    render_raw,
+    render_status,
+    render_step,
+    render_system_prompt_snapshot,
+    render_thinking,
+    render_token_usage,
+    render_turn_sep,
+)
+from agent_cli.subagent.agents_live import consume_agents_reload
+from agent_cli.tools import TOOLS, RunContext
+from agent_cli.tools.result import ToolResult
+from agent_cli.verbose import debug_log as _debug_log
+from agent_cli.verbose import set_verbose as _set_debug_verbose
+from agent_cli.wire_formats import get as _get_wire_format
 
 
 class AgentLoop:

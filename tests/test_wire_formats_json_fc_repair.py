@@ -14,7 +14,6 @@ the model (NO_ACTION) to call `complete` or emit work.
 from __future__ import annotations
 
 import json
-
 from unittest.mock import MagicMock
 
 from agent_cli.providers.base import LLMResponse

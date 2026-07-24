@@ -8,6 +8,8 @@ Memory``); this tool is how the model writes it and pulls full detail on demand.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from agent_cli import memory
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
@@ -97,7 +99,7 @@ class MemoryTool(Tool):
         "get (id), update (id + fields to change), delete (id), list "
         "(optional type/tag filter). type ∈ failure|discovery|decision|note."
     )
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "mode": {

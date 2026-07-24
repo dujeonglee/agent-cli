@@ -61,7 +61,7 @@ _WRITER_SYSTEM = (
     "intent — your output replaces it."
 )
 
-_THINK_BLOCK = re.compile(r"<think[^>]*>.*?</think>", re.S | re.I)
+_THINK_BLOCK = re.compile(r"<think[^>]*>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
 def build_generation_task(audience: str, brief: str, current: str) -> str:

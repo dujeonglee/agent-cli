@@ -22,13 +22,14 @@ fixture for the Role/Recovery axis) — both work and unifying them
 would be churn for no behavior change.
 """
 
+from pathlib import Path
+from typing import ClassVar
+
 import pytest
 
-from pathlib import Path
-
 from agent_cli.prompts.system_prompt import (
-    _build_context_recovery,
     _build_agent_inline,
+    _build_context_recovery,
     _build_environment_section,
     _build_tools_section,
     _load_directives,
@@ -217,14 +218,14 @@ class TestBuildSystemPromptSections:
     and the (name, text) structure is what the inspector keys on."""
 
     def test_join_is_byte_identical_to_build(self):
-        kwargs = dict(
-            capabilities=_make_caps(),
-            active_tools=["read_file", "shell", "edit_file", "delegate"],
-            session_dir="/tmp/sess",
-            skill_stack=["s1"],
-            depth=1,
-            max_depth=3,
-        )
+        kwargs = {
+            "capabilities": _make_caps(),
+            "active_tools": ["read_file", "shell", "edit_file", "delegate"],
+            "session_dir": "/tmp/sess",
+            "skill_stack": ["s1"],
+            "depth": 1,
+            "max_depth": 3,
+        }
         sections = build_system_prompt_sections(**kwargs)
         assert "\n\n".join(t for _, t in sections) == build_system_prompt(**kwargs)
 
@@ -1168,13 +1169,13 @@ class TestSystemSectionsSingleSource:
     def test_system_equals_joined_sections_after_setup(self):
         loop = self._loop()
         assert loop.system == "\n\n".join(t for _, t in loop._system_sections)
-        assert [n for n, _ in loop._system_sections][0] == "Role"
+        assert next(n for n, _ in loop._system_sections) == "Role"
 
     def test_hook_sections_keep_invariant_and_marker(self):
         loop = self._loop()
 
         class Ctx:
-            system_sections = {"Sprint Goals": "Ship the inspector."}
+            system_sections: ClassVar[dict] = {"Sprint Goals": "Ship the inspector."}
 
         loop._apply_system_sections(Ctx())
         assert loop.system == "\n\n".join(t for _, t in loop._system_sections)
@@ -1187,10 +1188,10 @@ class TestSystemSectionsSingleSource:
         loop = self._loop()
 
         class A:
-            system_sections = {"One": "1"}
+            system_sections: ClassVar[dict] = {"One": "1"}
 
         class B:
-            system_sections = {"Two": "2"}
+            system_sections: ClassVar[dict] = {"Two": "2"}
 
         loop._apply_system_sections(A())
         loop._apply_system_sections(B())

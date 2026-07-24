@@ -863,11 +863,11 @@ def create_app(server: WebServer) -> FastAPI:
             raise HTTPException(status_code=400, detail="no paths selected")
 
         targets = [server._safe_workspace_path(r) for r in rels]
-        tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-        tmp.close()
+        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+        os.close(tmp_fd)
 
         def _build_zip() -> None:
-            with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
+            with zipfile.ZipFile(tmp_name, "w", zipfile.ZIP_DEFLATED) as zf:
                 seen: set[Path] = set()
                 for p in targets:
                     if not p.exists():
@@ -886,14 +886,14 @@ def create_app(server: WebServer) -> FastAPI:
             # (a large workspace download must not freeze SSE for all viewers).
             await asyncio.get_event_loop().run_in_executor(None, _build_zip)
         except Exception:
-            os.unlink(tmp.name)
+            os.unlink(tmp_name)
             raise
         name = "workspace" if body.get("all") else server.workspace.name
         return FileResponse(
-            tmp.name,
+            tmp_name,
             media_type="application/zip",
             filename=f"{name}.zip",
-            background=BackgroundTask(os.unlink, tmp.name),
+            background=BackgroundTask(os.unlink, tmp_name),
         )
 
     @app.post("/api/workspace/delete")
@@ -1097,18 +1097,20 @@ def create_app(server: WebServer) -> FastAPI:
             # is rendered as a conversation card.
             server.enqueue(body.get("conn_id"), content)
             return JSONResponse({"accepted": True})
-        if kind in ("prompt", "confirm"):
+        if (
+            kind in ("prompt", "confirm")
+            and server.renderer.awaiting_input_kind() != kind
+        ):
             # Gate: accept an answer only while a wait of the SAME kind is
             # outstanding. A keyless answer (flushed stale clicks from a
             # connection-starved browser, the loser of a two-viewers race)
             # must not sit in the input queue and auto-answer the NEXT
             # prompt; a kind mismatch would feed a confirm tuple to a
             # prompt wait expecting a string (or vice versa).
-            if server.renderer.awaiting_input_kind() != kind:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"no pending {kind} — already answered or aborted",
-                )
+            raise HTTPException(
+                status_code=409,
+                detail=f"no pending {kind} — already answered or aborted",
+            )
         if kind == "prompt":
             # Echo prompt answers so the UI shows the user's reply
             # immediately. Semantic note: the LLM gets the answer via

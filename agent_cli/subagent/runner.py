@@ -85,7 +85,8 @@ def create_subagent_ctx(
     CLI(minimal 렌더러)에선 no-op.
     """
     from agent_cli.context.manager import DEFAULT_COMPACTION_RATIO, ContextManager
-    from agent_cli.wire_formats import get as _get_wf, wire_format_for_model
+    from agent_cli.wire_formats import get as _get_wf
+    from agent_cli.wire_formats import wire_format_for_model
 
     binding = wire_format_for_model(model)
     if binding is not None:

@@ -216,7 +216,7 @@ class TestDetectSchemaMismatch:
 
     def test_string_input_auto_promoted_to_dict(self):
         # validate_tool_input promotes strings to {required[0]: value}
-        mismatched, err, normalized = detect_schema_mismatch("shell", "echo hi")
+        mismatched, _err, normalized = detect_schema_mismatch("shell", "echo hi")
         assert mismatched is False
         assert normalized == {"command": "echo hi"}
 

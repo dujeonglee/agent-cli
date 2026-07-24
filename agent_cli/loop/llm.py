@@ -2,30 +2,27 @@
 
 from __future__ import annotations
 
-
-from agent_cli.tools.result import ToolResult
-
 from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
 from agent_cli.context.token_estimator import estimate_tokens
+from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
+
+# Max shrink-and-retry attempts per turn when the server rejects the
+# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
+# history via ``ContextManager.force_fit``; the bound stops a runaway
+# loop when the cache cannot shrink enough or the server keeps rejecting.
+from agent_cli.loop.state import _RETRY, LoopConfig, LoopState
 from agent_cli.render import (
     render_context_dump,
-    render_system_prompt_snapshot,
     render_spinner_start,
     render_spinner_stop,
     render_status,
     render_step,
     render_stream_chunk,
     render_stream_end,
+    render_system_prompt_snapshot,
 )
-
+from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
-from agent_cli.loop.state import LoopConfig, LoopState, _RETRY
-from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
 
 _MAX_OVERFLOW_RETRIES = 5
 # Compaction TARGET ratio: compact down to this fraction of available headroom

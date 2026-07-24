@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-
 from agent_cli.setup import (
     SetupWizard,
     _list_models,
@@ -67,7 +66,7 @@ class TestListOpenAIModels:
 
     def test_empty_on_non_200(self):
         with patch("agent_cli.setup.requests.get") as mock_get:
-            mock_get.return_value = MagicMock(status_code=404, json=lambda: {})
+            mock_get.return_value = MagicMock(status_code=404, json=dict)
             assert _list_models("http://x/v1") == []
 
     def test_skips_entries_without_id(self):
@@ -250,8 +249,9 @@ class TestShowExistingConfigs:
         )
         wizard = SetupWizard()
         # Real console captured via Rich's string capture.
-        from rich.console import Console
         from io import StringIO
+
+        from rich.console import Console
 
         buf = StringIO()
         wizard.console = Console(file=buf, force_terminal=False, width=120)

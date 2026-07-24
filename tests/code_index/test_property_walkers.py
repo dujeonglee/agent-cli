@@ -24,7 +24,6 @@ from agent_cli.code_index import build, load_index
 from agent_cli.code_index.languages import LANGUAGES
 from agent_cli.code_index.schema import NAME_KINDS, REF_KINDS
 
-
 # ----- shared strategies ----------------------------------------------------
 
 

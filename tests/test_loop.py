@@ -1,6 +1,7 @@
 """Tests for agent loop (integration with mocked provider)."""
 
 import json
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,7 +24,10 @@ class TestInspectorSections:
     touched files) as clearly-labelled sections, without mutating the
     system-prompt section list that ``self.system`` derives from."""
 
-    _SYS = [("System Prompt", "you are an agent"), ("Tools", "read_file, ...")]
+    _SYS: ClassVar[list] = [
+        ("System Prompt", "you are an agent"),
+        ("Tools", "read_file, ..."),
+    ]
 
     def test_no_ctx_returns_system_sections_copy(self):
         out = build_inspector_sections(self._SYS, None)
@@ -59,7 +63,7 @@ class TestInspectorSections:
 
 def _complete(result: str) -> str:
     """Build a complete tool JSON response."""
-    return json.dumps({"action": "complete", **{"result": result}})
+    return json.dumps({"action": "complete", "result": result})
 
 
 @pytest.fixture
@@ -109,7 +113,7 @@ class TestRunLoopComplete:
         test_file.write_text("hello world")
 
         provider = _make_provider(
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
             _complete("File contains: hello world"),
         )
         result = run_loop(
@@ -137,8 +141,8 @@ class TestRunLoopComplete:
         test_file.write_text("data")
 
         provider = _make_provider(
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
-            json.dumps({"action": "complete", **{"result": ""}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
+            json.dumps({"action": "complete", "result": ""}),
         )
         result = run_loop(
             query="Read file",
@@ -157,8 +161,12 @@ class TestRunLoopComplete:
         test_file.write_text("data")
 
         provider = _make_provider(
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
-            json.dumps({"action": "complete", **{}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
+            json.dumps(
+                {
+                    "action": "complete",
+                }
+            ),
         )
         result = run_loop(
             query="Read file",
@@ -175,7 +183,7 @@ class TestRunLoopComplete:
 class TestRunLoopToolExecution:
     def test_shell_tool(self, caps):
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "pwd"}}),
+            json.dumps({"action": "shell", "command": "pwd"}),
             _complete("Executed command"),
         )
         result = run_loop(
@@ -188,7 +196,11 @@ class TestRunLoopToolExecution:
 
     def test_unknown_tool(self, caps):
         provider = _make_provider(
-            json.dumps({"action": "nonexistent_tool", **{}}),
+            json.dumps(
+                {
+                    "action": "nonexistent_tool",
+                }
+            ),
             _complete("ok"),
         )
         result = run_loop(
@@ -240,7 +252,7 @@ class TestToolExceptionSafetyNet:
 
         self._patch_tool(monkeypatch, "shell", boom)
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "pwd"}}),
+            json.dumps({"action": "shell", "command": "pwd"}),
             _complete("recovered after tool crashed"),
         )
         result = run_loop(
@@ -272,7 +284,7 @@ class TestToolExceptionSafetyNet:
 
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(content=json.dumps({"action": "shell", **{"command": "pwd"}})),
+            LLMResponse(content=json.dumps({"action": "shell", "command": "pwd"})),
             LLMResponse(content=_complete("done")),
         ]
         run_loop(
@@ -302,7 +314,7 @@ class TestToolExceptionSafetyNet:
 
         self._patch_tool(monkeypatch, "shell", boom)
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "x"}}),
+            json.dumps({"action": "shell", "command": "x"}),
             _complete("ok"),
         )
         run_loop(
@@ -330,7 +342,7 @@ class TestToolExceptionSafetyNet:
 
         self._patch_tool(monkeypatch, "shell", interrupted)
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "x"}}),
+            json.dumps({"action": "shell", "command": "x"}),
         )
         with pytest.raises(KeyboardInterrupt):
             run_loop(
@@ -349,7 +361,7 @@ class TestToolExceptionSafetyNet:
 
         self._patch_tool(monkeypatch, "shell", quit)
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "x"}}),
+            json.dumps({"action": "shell", "command": "x"}),
         )
         with pytest.raises(SystemExit):
             run_loop(
@@ -373,7 +385,7 @@ class TestToolExceptionSafetyNet:
 
         self._patch_tool(monkeypatch, "shell", polite_fail)
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "x"}}),
+            json.dumps({"action": "shell", "command": "x"}),
             _complete("ok"),
         )
         run_loop(
@@ -1067,7 +1079,7 @@ class TestRunLoopObservability:
 
 def _shell_call(cmd: str) -> str:
     """Build a shell tool call as a JSON envelope."""
-    return json.dumps({"action": "shell", **{"command": cmd}})
+    return json.dumps({"action": "shell", "command": cmd})
 
 
 class TestRunLoopActionLoop:
@@ -1257,7 +1269,7 @@ class TestRunLoopUnknownTool:
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
-        bogus_call = json.dumps({"action": "bogus_tool", **{"x": 1}})
+        bogus_call = json.dumps({"action": "bogus_tool", "x": 1})
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=bogus_call),
@@ -1281,7 +1293,11 @@ class TestRunLoopUnknownTool:
         from agent_cli.context.manager import ContextManager
 
         ctx = ContextManager(session_dir=tmp_path)
-        bogus_call = json.dumps({"action": "bogus", **{}})
+        bogus_call = json.dumps(
+            {
+                "action": "bogus",
+            }
+        )
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=bogus_call),
@@ -1327,7 +1343,7 @@ class TestRunLoopSchemaMismatch:
         # field is the inner `reads[].path`, which multi-op wrapping nests
         # below the validated top level — so a bad read item wouldn't surface
         # here. write_file's `path` is top-level after wrap.)
-        bad_call = json.dumps({"action": "write_file", **{"content": "x"}})
+        bad_call = json.dumps({"action": "write_file", "content": "x"})
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=bad_call),
@@ -1352,7 +1368,11 @@ class TestRunLoopSchemaMismatch:
 
         ctx = ContextManager(session_dir=tmp_path)
         # write_file with empty input → missing top-level required `path`.
-        bad_call = json.dumps({"action": "write_file", **{}})
+        bad_call = json.dumps(
+            {
+                "action": "write_file",
+            }
+        )
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(content=bad_call),
@@ -1376,9 +1396,9 @@ class TestRunLoopSchemaMismatch:
 class TestRunLoopMaxIter:
     def test_returns_none_on_max_turns(self, caps):
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "date +%s"}}),
-            json.dumps({"action": "shell", **{"command": "uname -s"}}),
-            json.dumps({"action": "shell", **{"command": "whoami"}}),
+            json.dumps({"action": "shell", "command": "date +%s"}),
+            json.dumps({"action": "shell", "command": "uname -s"}),
+            json.dumps({"action": "shell", "command": "whoami"}),
         )
         result = run_loop(
             query="Keep going",
@@ -1397,8 +1417,8 @@ class TestToolHistoryTracking:
         test_file.write_text("hello")
 
         provider = _make_provider(
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
-            json.dumps({"action": "shell", **{"command": "whoami"}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
+            json.dumps({"action": "shell", "command": "whoami"}),
             _complete("ok"),
         )
         result = run_loop(
@@ -1417,10 +1437,8 @@ class TestEchoAsFinalAnswer:
             json.dumps(
                 {
                     "action": "shell",
-                    **{
-                        "command": 'echo "Task completed successfully."',
-                        "timeout": 5,
-                    },
+                    "command": 'echo "Task completed successfully."',
+                    "timeout": 5,
                 }
             ),
         )
@@ -1435,7 +1453,7 @@ class TestEchoAsFinalAnswer:
     def test_echo_with_pipe_not_intercepted(self, caps):
         """echo ... | grep should NOT be treated as final answer."""
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "echo hello | grep h"}}),
+            json.dumps({"action": "shell", "command": "echo hello | grep h"}),
             _complete("found"),
         )
         result = run_loop(
@@ -1449,7 +1467,7 @@ class TestEchoAsFinalAnswer:
     def test_echo_with_redirect_not_intercepted(self, caps):
         """echo ... > file should NOT be treated as final answer."""
         provider = _make_provider(
-            json.dumps({"action": "shell", **{"command": "echo hello > out.txt"}}),
+            json.dumps({"action": "shell", "command": "echo hello > out.txt"}),
             _complete("written"),
         )
         result = run_loop(
@@ -1467,7 +1485,7 @@ class TestRepeatedCallDetection:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello")
 
-        same_call = json.dumps({"action": "read_file", **{"path": str(test_file)}})
+        same_call = json.dumps({"action": "read_file", "path": str(test_file)})
         provider = _make_provider(same_call, same_call, same_call)
         result = run_loop(
             query="Read file",
@@ -1487,9 +1505,9 @@ class TestRepeatedCallDetection:
         f3.write_text("c")
 
         provider = _make_provider(
-            json.dumps({"action": "read_file", **{"path": str(f1)}}),
-            json.dumps({"action": "read_file", **{"path": str(f2)}}),
-            json.dumps({"action": "read_file", **{"path": str(f3)}}),
+            json.dumps({"action": "read_file", "path": str(f1)}),
+            json.dumps({"action": "read_file", "path": str(f2)}),
+            json.dumps({"action": "read_file", "path": str(f3)}),
             _complete("ok"),
         )
         result = run_loop(
@@ -1575,7 +1593,7 @@ class TestGracefulInterrupt:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello")
         responses = [
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
             _complete("final"),
         ]
         provider = MagicMock()
@@ -1608,8 +1626,8 @@ class TestGracefulInterrupt:
         """Interrupt is recorded as a tool-style observation, not a bare
         user message — so the transcript doesn't show two consecutive
         user turns and recent_exchanges skips it via the ``tool`` field."""
-        from agent_cli.loop import AgentLoop
         from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
 
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
@@ -1654,8 +1672,8 @@ class TestGracefulInterrupt:
     def test_interrupt_check_passed_to_provider(self, caps, tmp_path):
         """The loop hands the provider a zero-arg ``interrupt_check`` so the
         streaming path can break mid-generation; it reflects ``stop_event``."""
-        from agent_cli.loop import AgentLoop
         from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
 
         provider = MagicMock()
         provider.call.side_effect = [LLMResponse(content=_complete("done"))]
@@ -1705,8 +1723,8 @@ class TestGracefulInterrupt:
         loop routes to the interrupt handler instead of completing, and no
         assistant turn is recorded — only the interrupt notice. (Without the
         discard branch this would parse+dispatch as a successful complete.)"""
-        from agent_cli.loop import AgentLoop
         from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
 
         partial = _complete("SHOULD_NOT_COMPLETE")
         provider = MagicMock()
@@ -1735,6 +1753,7 @@ class TestGracefulInterrupt:
         not a direct console.print — the latter leaked to the web
         server's terminal ('⚡ Interrupted after turn N')."""
         from unittest.mock import patch
+
         from agent_cli.context.manager import ContextManager
         from agent_cli.loop import AgentLoop
 
@@ -1768,15 +1787,16 @@ class TestGracefulInterrupt:
         After the fix, the post-loop branch checks `_interrupted` and
         returns the interrupt result with the correct error message."""
         import threading
-        from agent_cli.loop import AgentLoop
+
         from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import AgentLoop
 
         # First turn: tool call. After this returns `_CONTINUE`, the test
         # sets stop_event to simulate Ctrl+C arriving between turns.
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello")
         responses = [
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
             # Second response is never consumed — `_should_continue` should
             # gate the loop before the LLM is called again.
             _complete("never reached"),
@@ -1944,7 +1964,7 @@ class TestGracefulInterrupt:
         test_file = tmp_path / "f.txt"
         test_file.write_text("data")
         test_responses = [
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
             _complete("done"),
         ]
         provider = MagicMock()
@@ -1986,7 +2006,7 @@ class TestGracefulInterrupt:
         test_file.write_text("important data")
 
         responses = [
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
             _complete("final"),
         ]
         provider = MagicMock()
@@ -2067,9 +2087,7 @@ class TestAskTool:
             LLMResponse(
                 content='need input.\n\n[{"action": "ask", "questions": ["What now?"]}]'
             ),
-            LLMResponse(
-                content=json.dumps({"action": "complete", **{"result": "Done"}})
-            ),
+            LLMResponse(content=json.dumps({"action": "complete", "result": "Done"})),
         ]
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
@@ -2166,12 +2184,12 @@ class TestAskTool:
         provider.call.side_effect = [
             LLMResponse(
                 content=json.dumps(
-                    {"action": "ask", **{"questions": ["Should I continue?"]}}
+                    {"action": "ask", "questions": ["Should I continue?"]}
                 )
             ),
             LLMResponse(
                 content=json.dumps(
-                    {"action": "complete", **{"result": "Done after confirmation"}}
+                    {"action": "complete", "result": "Done after confirmation"}
                 )
             ),
         ]
@@ -2199,13 +2217,13 @@ class TestAskTool:
                 content=json.dumps(
                     {
                         "action": "ask",
-                        **{"questions": ["Which file?", "What language?"]},
+                        "questions": ["Which file?", "What language?"],
                     }
                 )
             ),
             LLMResponse(
                 content=json.dumps(
-                    {"action": "complete", **{"result": "Processing file.py in python"}}
+                    {"action": "complete", "result": "Processing file.py in python"}
                 )
             ),
         ]
@@ -2229,13 +2247,11 @@ class TestAskTool:
         provider.call.side_effect = [
             LLMResponse(
                 content=json.dumps(
-                    {"action": "ask", **{"questions": "What is the answer?"}}
+                    {"action": "ask", "questions": "What is the answer?"}
                 )
             ),
             LLMResponse(
-                content=json.dumps(
-                    {"action": "complete", **{"result": "The answer is 42"}}
-                )
+                content=json.dumps({"action": "complete", "result": "The answer is 42"})
             ),
         ]
         ctx = ContextManager(session_dir=tmp_path)
@@ -2256,10 +2272,8 @@ class TestAskTool:
 
         provider = MagicMock()
         provider.call.side_effect = [
-            LLMResponse(
-                content=json.dumps({"action": "ask", **{"question": "Continue?"}})
-            ),
-            LLMResponse(content=json.dumps({"action": "complete", **{"result": "ok"}})),
+            LLMResponse(content=json.dumps({"action": "ask", "question": "Continue?"})),
+            LLMResponse(content=json.dumps({"action": "complete", "result": "ok"})),
         ]
         ctx = ContextManager(session_dir=tmp_path)
         result = run_loop(
@@ -2277,7 +2291,7 @@ class TestAskTool:
 
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps({"action": "complete", **{"result": "ok"}})
+            content=json.dumps({"action": "complete", "result": "ok"})
         )
         ctx = ContextManager(session_dir=tmp_path)
         run_loop(
@@ -2496,7 +2510,7 @@ class TestContextContinuity:
         test_file.write_text("hello")
 
         provider = _make_provider(
-            json.dumps({"action": "read_file", **{"path": str(test_file)}}),
+            json.dumps({"action": "read_file", "path": str(test_file)}),
             _complete("done"),
         )
         ctx = ContextManager(session_dir=tmp_path)
@@ -2540,7 +2554,7 @@ class TestContextContinuity:
         from agent_cli.context.manager import ContextManager
 
         provider = _make_provider(
-            json.dumps({"action": "ask", **{"questions": ["What file?"]}}),
+            json.dumps({"action": "ask", "questions": ["What file?"]}),
             _complete("done"),
         )
         ctx = ContextManager(session_dir=tmp_path)
@@ -2997,11 +3011,9 @@ class TestNoOutputTruncation:
             json.dumps(
                 {
                     "action": "read_file",
-                    **{
-                        "path": str(test_file),
-                        "line_start": 1,
-                        "line_end": 100,
-                    },
+                    "path": str(test_file),
+                    "line_start": 1,
+                    "line_end": 100,
                 }
             ),
             _complete("Read 100 lines"),
@@ -3127,6 +3139,7 @@ class TestFlow1PreventiveCompaction:
         """After a successful call, ctx is re-anchored with the server's
         total input count (input + cache_creation + cache_read)."""
         from unittest.mock import patch
+
         from agent_cli.providers.base import TokenUsage
 
         ctx = self._ctx(tmp_path)
@@ -3243,10 +3256,8 @@ class TestOutputTruncationGuard:
                 content=json.dumps(
                     {
                         "action": "write_file",
-                        **{
-                            "path": str(target),
-                            "content": "partial",
-                        },
+                        "path": str(target),
+                        "content": "partial",
                     }
                 ),
                 stop_reason="length",
@@ -3300,10 +3311,8 @@ class TestOutputTruncationGuard:
                 content=json.dumps(
                     {
                         "action": "write_file",
-                        **{
-                            "path": str(target),
-                            "content": "hello",
-                        },
+                        "path": str(target),
+                        "content": "hello",
                     }
                 ),
                 stop_reason="stop",
@@ -3662,7 +3671,7 @@ class TestPR3Collaborators:
         from agent_cli.tools.result import ToolResult
         from agent_cli.wire_formats.base import Op, ParsedTurn
 
-        d, st = self._dispatcher()
+        d, _st = self._dispatcher()
         turn = ParsedTurn(
             thought="t",
             ops=[Op("complete", {"result": "final answer"})],
@@ -3677,7 +3686,7 @@ class TestPR3Collaborators:
         from agent_cli.loop import _CONTINUE
         from agent_cli.wire_formats.base import Op, ParsedTurn
 
-        d, st = self._dispatcher()
+        d, _st = self._dispatcher()
         turn = ParsedTurn(
             thought="t",
             ops=[Op("shell", {"command": "echo pr3"})],

@@ -6,6 +6,7 @@ import hashlib
 import re
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -255,7 +256,7 @@ class FetchTool(Tool):
     # ``wrap_single_op`` is identity; ``key_prefix`` stays at its default so
     # ``strip_prefix`` still tolerates a legacy ``fetch_url`` emission (old
     # sessions' re-fed priors) and ``claims`` is False for a flat ``{url}``.
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "url": {
@@ -303,8 +304,10 @@ class FetchTool(Tool):
                     nlines=body.count("\n") + 1,
                     part_extra=f"search it (read_file path='{path}', search='…')",
                     tail_bullets=(
-                        "Or re-fetch a more specific URL / shallower depth "
-                        "so the result is smaller.",
+                        (
+                            "Or re-fetch a more specific URL / shallower depth "
+                            "so the result is smaller."
+                        ),
                     ),
                 )
         return default_oversized_nudge("fetch", tokens, ctx.oversized_cap)

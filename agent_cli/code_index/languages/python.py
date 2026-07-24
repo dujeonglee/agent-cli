@@ -20,7 +20,6 @@ assignment) to avoid duplicating Pass-1 records.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
 from agent_cli.code_index.languages._shared import qualify, text
@@ -38,7 +37,7 @@ def py_extract_function(
     node,
     src: bytes,
     rel: str,
-    parent: Optional[str],
+    parent: str | None,
     out: list,
     extra_modifiers: list[str],
 ):
@@ -121,7 +120,7 @@ def py_extract_class(
     node,
     src: bytes,
     rel: str,
-    parent: Optional[str],
+    parent: str | None,
     out: list,
     extra_modifiers: list[str],
 ):
@@ -164,7 +163,7 @@ def py_extract_class(
                     )
 
 
-def py_extract_decorated(node, src: bytes, rel: str, parent: Optional[str], out: list):
+def py_extract_decorated(node, src: bytes, rel: str, parent: str | None, out: list):
     decorators: list[str] = []
     target = None
     for ch in node.children:
@@ -189,7 +188,7 @@ def py_extract_assignment(
     node,
     src: bytes,
     rel: str,
-    parent: Optional[str],
+    parent: str | None,
     out: list,
     is_class_attr: bool = False,
 ):
@@ -297,9 +296,8 @@ def walk_refs(
                         or parent.children[0] == node
                     ):
                         skip = True
-                elif pt == "assignment":
-                    if parent.child_by_field_name("left") == node:
-                        skip = True
+                elif pt == "assignment" and parent.child_by_field_name("left") == node:
+                    skip = True
             name = text(node, src)
             identifiers_out.add(name)
             if not skip and name in defined_names:

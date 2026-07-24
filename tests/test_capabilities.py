@@ -9,10 +9,10 @@ from agent_cli.providers.capabilities import (
     DEFAULT_CAPABILITIES,
     MIN_CONTEXT_WINDOW,
     UnsupportedModelError,
-    get_capabilities,
-    set_progress_callback,
     _detect_openai_capabilities,
     _emit_progress,
+    get_capabilities,
+    set_progress_callback,
 )
 
 
@@ -223,8 +223,8 @@ class TestOpenAIRuntimeDetection:
 class TestPromptModelCapabilities:
     def test_saves_user_input(self, monkeypatch, tmp_path):
         """Interactive prompt saves capabilities to models.json."""
-        from agent_cli.main import _prompt_model_capabilities
         import agent_cli.config as config_mod
+        from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
 
@@ -246,8 +246,8 @@ class TestPromptModelCapabilities:
 
     def test_defaults_on_empty_input(self, monkeypatch, tmp_path):
         """Empty input uses defaults."""
-        from agent_cli.main import _prompt_model_capabilities
         import agent_cli.config as config_mod
+        from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
         monkeypatch.setattr("builtins.input", lambda _: "")
@@ -281,8 +281,8 @@ class TestPromptWireFormatBinding:
         return saved["models"]["test-model"]
 
     def test_named_format_saved_as_binding(self, monkeypatch, tmp_path):
-        from agent_cli.main import _prompt_model_capabilities
         import agent_cli.config as config_mod
+        from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
         inputs = iter(["131072", "n", "xml_fc"])
@@ -293,8 +293,8 @@ class TestPromptWireFormatBinding:
         assert self._saved_entry(tmp_path)["wire_format"] == "xml_fc"
 
     def test_auto_omits_field(self, monkeypatch, tmp_path):
-        from agent_cli.main import _prompt_model_capabilities
         import agent_cli.config as config_mod
+        from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
         inputs = iter(["4096", "n", "auto"])
@@ -304,8 +304,8 @@ class TestPromptWireFormatBinding:
         assert "wire_format" not in self._saved_entry(tmp_path)
 
     def test_empty_omits_field(self, monkeypatch, tmp_path):
-        from agent_cli.main import _prompt_model_capabilities
         import agent_cli.config as config_mod
+        from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
         monkeypatch.setattr("builtins.input", lambda _: "")
@@ -314,8 +314,8 @@ class TestPromptWireFormatBinding:
         assert "wire_format" not in self._saved_entry(tmp_path)
 
     def test_unknown_name_reprompts_until_valid(self, monkeypatch, tmp_path):
-        from agent_cli.main import _prompt_model_capabilities
         import agent_cli.config as config_mod
+        from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
         inputs = iter(["4096", "n", "xml_fx", "json_fc"])  # 오타 → 재질문
@@ -325,8 +325,8 @@ class TestPromptWireFormatBinding:
         assert self._saved_entry(tmp_path)["wire_format"] == "json_fc"
 
     def test_case_normalized(self, monkeypatch, tmp_path):
-        from agent_cli.main import _prompt_model_capabilities
         import agent_cli.config as config_mod
+        from agent_cli.main import _prompt_model_capabilities
 
         monkeypatch.setattr(config_mod, "_GLOBAL_MODELS_PATH", tmp_path / "models.json")
         inputs = iter(["4096", "n", "XML_FC"])

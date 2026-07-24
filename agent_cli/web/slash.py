@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import subprocess
 
-
 from agent_cli.constants import SHELL_COMMAND_TIMEOUT
 from agent_cli.render.web import WebRenderer
 
@@ -198,6 +197,7 @@ def _handle_sh(message: str, renderer: WebRenderer) -> bool:
             shell=True,
             capture_output=True,
             timeout=SHELL_COMMAND_TIMEOUT,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         renderer.observation(

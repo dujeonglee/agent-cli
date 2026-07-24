@@ -64,7 +64,6 @@ def test_shim_falls_back_to_pysqlite3_when_stdlib_missing(monkeypatch):
         def find_spec(self, name, path=None, target=None):
             if name == "sqlite3":
                 raise ImportError("simulated: stdlib sqlite3 unavailable")
-            return None
 
     blocker = _BlockStdlibSqlite()
     monkeypatch.setattr(sys, "meta_path", [blocker, *sys.meta_path])

@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 import zlib
 from pathlib import Path
+from typing import ClassVar
 
 from agent_cli.tools.base import Tool, on_disk_oversized_nudge
 from agent_cli.tools.result import ToolResult
@@ -49,7 +50,9 @@ def _parse_ref(ref: str) -> tuple[int, str]:
     would crash the worker thread inside ``re.py`` instead.
     """
     if not isinstance(ref, str):
-        raise RuntimeError(
+        # Contract (see docstring): bad input always surfaces as RuntimeError,
+        # which callers catch and translate — not TypeError.
+        raise RuntimeError(  # noqa: TRY004
             f"Invalid hashline ref: {ref!r} (expected string, got "
             f"{type(ref).__name__}). Expected format: LINE#HASH "
             f"(e.g. 5#VR). Re-read the file with read_file to get "
@@ -302,7 +305,7 @@ class ReadFileTool(Tool):
     # `wrap_single_op` is identity (no canonical re-wrap); `key_prefix` is left
     # at its default so strip_prefix is a no-op on these flat keys and `claims`
     # correctly returns False for a flat `{path}` (no `read_file_` key).
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "File path to read"},

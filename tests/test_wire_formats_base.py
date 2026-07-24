@@ -26,7 +26,6 @@ from agent_cli.wire_formats import (
 )
 from agent_cli.wire_formats.base import WireFormat as WireFormatProtocol
 
-
 # ─── ParsedAction ──────────────────────────────────
 
 
@@ -336,7 +335,8 @@ class TestRegistry:
         """The package re-exports ``ParsedAction`` and ``WireFormat`` so
         callers don't have to drill into ``base``. Caught by import-time
         symbol resolution — failing here means external callers break."""
-        from agent_cli.wire_formats import ParsedAction as PA, WireFormat as WF
+        from agent_cli.wire_formats import ParsedAction as PA
+        from agent_cli.wire_formats import WireFormat as WF
 
         assert PA is ParsedAction
         assert WF is WireFormat

@@ -27,9 +27,9 @@ loading the Rust grammar, etc.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,7 @@ def _ensure_loaded() -> None:
     _loaded = True
 
 
-def language_of(path: Path) -> Optional[str]:
+def language_of(path: Path) -> str | None:
     """Return the LANGUAGES key for `path`'s extension, or None.
 
     Lowercases the extension, so '.PY' and '.py' both resolve. Returns

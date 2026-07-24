@@ -28,8 +28,6 @@ self-contained.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from agent_cli.code_index.languages import LANGUAGES, LangSpec
 from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.preproc import preprocess_source
@@ -201,7 +199,7 @@ def collect_declarators(node):
             yield c
 
 
-def c_modifiers(storage: Optional[str], is_inline: bool) -> Optional[list[str]]:
+def c_modifiers(storage: str | None, is_inline: bool) -> list[str] | None:
     mods = []
     if storage:
         mods.append(storage)
@@ -390,9 +388,7 @@ def add_macro(node, src, rel, out, fn_form: bool):
 # (kind=type with methods/fields parented), and templates (unwrap to inner).
 
 
-def cpp_extract_function_def(
-    node, src: bytes, rel: str, parent: Optional[str], out: list
-):
+def cpp_extract_function_def(node, src: bytes, rel: str, parent: str | None, out: list):
     decl = node.child_by_field_name("declarator")
     if decl is None:
         return
@@ -446,7 +442,7 @@ def cpp_extract_function_def(
     )
 
 
-def cpp_extract_class(node, src: bytes, rel: str, parent: Optional[str], out: list):
+def cpp_extract_class(node, src: bytes, rel: str, parent: str | None, out: list):
     """class_specifier / struct_specifier / union_specifier with a body."""
     name_node = node.child_by_field_name("name")
     if name_node is None:
@@ -560,7 +556,7 @@ def cpp_extract_class(node, src: bytes, rel: str, parent: Optional[str], out: li
         # Skip access_specifier (public:/private:) etc.
 
 
-def cpp_walk_one(node, src: bytes, rel: str, parent: Optional[str], out: list):
+def cpp_walk_one(node, src: bytes, rel: str, parent: str | None, out: list):
     """Recursive dispatcher for a single top-level / namespace-scope node."""
     nt = node.type
     if nt == "namespace_definition":

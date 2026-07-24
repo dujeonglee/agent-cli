@@ -17,14 +17,13 @@ here a mock multi-op format drives the new path directly.
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 from unittest.mock import MagicMock
-
 
 from agent_cli.providers.base import LLMResponse
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import TOOLS
 from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
-
 
 # ─── Tool.wrap_single_op ────────────────────────────
 
@@ -70,7 +69,10 @@ class TestWrapSingleOp:
         class _Prefixed(Tool):
             name = "synthtool"
             description = "x"
-            parameters = {"type": "object", "properties": {"command": {}}}
+            parameters: ClassVar[dict] = {
+                "type": "object",
+                "properties": {"command": {}},
+            }
 
             def _run(self, args, *, ctx=None):
                 return ToolResult(True, output="")
@@ -279,7 +281,7 @@ class TestMultiOpDispatch:
     def test_complete_op_ends_with_result(self, tmp_path):
         # Completion is an explicit `complete` op (DESIGN Exp 8): one turn,
         # result is the output, no review gate, no second turn.
-        result, ctx, provider = _run(
+        result, _ctx, provider = _run(
             _finish(thought="모든 작업 완료했습니다"), tmp_path
         )
         assert result.success
@@ -289,7 +291,7 @@ class TestMultiOpDispatch:
     def test_thought_only_turn_does_not_finish(self, tmp_path):
         # A thought-only (0-op) turn is NOT a completion — it gets a NO_ACTION
         # nudge; only a `complete` op actually ends the run.
-        result, ctx, provider = _run(
+        result, _ctx, provider = _run(
             [_turn(thought="I think I'm done", ops=[]), *_finish(thought="real done")],
             tmp_path,
         )
@@ -302,7 +304,7 @@ class TestMultiOpDispatch:
         # observation BEFORE the terminal `complete` ends the turn.
         f1 = tmp_path / "a.txt"
         f1.write_text("alpha")
-        result, ctx, _ = _run(
+        _result, ctx, _ = _run(
             [
                 _turn(
                     ops=[
@@ -474,7 +476,7 @@ class TestMultiOpDelegateParallel:
     def test_no_ops_goes_to_recovery(self, tmp_path):
         # A turn with zero usable ops (unparseable) = the model said nothing
         # usable → recovery hint, then a `complete` op finishes the run.
-        result, ctx, provider = _run(
+        result, _ctx, provider = _run(
             ["{not json at all", *_finish()],
             tmp_path,
         )
@@ -543,7 +545,7 @@ class TestEditBatchGrouping:
         f = tmp_path / "f.txt"
         f.write_text("a\nb\nc\nd\ne\n")
         before = f.read_text()
-        result, ctx, _ = _run(
+        _result, ctx, _ = _run(
             [
                 _turn(
                     ops=[
@@ -582,7 +584,7 @@ class TestEditBatchGrouping:
         f1.write_text("a\nb\n")
         f2 = tmp_path / "f2.txt"
         f2.write_text("x\ny\n")
-        result, ctx, _ = _run(
+        result, _ctx, _ = _run(
             [
                 _turn(
                     ops=[
@@ -626,7 +628,7 @@ class TestProseOnlyCompletion:
 
     def test_json_fc_prose_final_answer_completes_immediately(self, tmp_path):
         # 순수 산문 최종답변 → 넛지 없이 즉시 complete (1 콜)
-        result, ctx, provider = _run(
+        result, _ctx, provider = _run(
             ["The src/ directory contains 2 files: auth.py and app.py."],
             tmp_path,
             wire_format=self._get("json_fc"),
@@ -637,7 +639,7 @@ class TestProseOnlyCompletion:
 
     def test_xml_fc_prose_final_answer_completes_immediately(self, tmp_path):
         # parity: xml_fc 도 동일 의미론
-        result, ctx, provider = _run(
+        result, _ctx, provider = _run(
             ["Here is the listing: auth.py and app.py."],
             tmp_path,
             wire_format=self._get("xml_fc"),
@@ -649,7 +651,7 @@ class TestProseOnlyCompletion:
     def test_broken_action_residue_still_nudges_not_completes(self, tmp_path):
         # xml_fc half-broken 액션(stage=1, thought=잔해) → 종결 안 함, 넛지 후
         # 다음 산문에서 종결. 잔해를 complete 로 삼키면 조기종료(이 가드가 방어).
-        result, ctx, provider = _run(
+        result, _ctx, provider = _run(
             [
                 '[{"action": "read_file", "path>/foo</parameter>',  # 깨진 액션 잔해
                 "Done — the file has 2 lines.",  # 다음 턴 순수 산문
@@ -665,7 +667,7 @@ class TestProseOnlyCompletion:
         # 기록돼야(산문-only-no-op 패턴을 재강화하지 않도록).
         import json as _json
 
-        result, ctx, provider = _run(
+        result, _ctx, _provider = _run(
             ["The task is complete: both files were scanned."],
             tmp_path,
             wire_format=self._get("json_fc"),

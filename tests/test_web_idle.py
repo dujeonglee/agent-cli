@@ -99,7 +99,7 @@ class TestIdleMonitor:
             m = IdleMonitor(
                 is_active=lambda: False,
                 timeout_s=disabled,
-                on_idle=lambda: fired.append(1),
+                on_idle=lambda: fired.append(1),  # noqa: B023 — invoked only within this iteration's tick()
                 now=clk,
             )
             clk.advance(10_000)

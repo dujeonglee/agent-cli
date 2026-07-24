@@ -2,12 +2,11 @@
 
 from unittest.mock import MagicMock, patch
 
-
 from agent_cli.tools.fetch import (
-    tool_fetch,
     _fetch_single,
-    _resolve_links,
     _HTMLToMarkdown,
+    _resolve_links,
+    tool_fetch,
 )
 
 
@@ -101,7 +100,7 @@ class TestFetchSingle:
         mock_resp.text = "<h1>Hello</h1><p>World</p>"
 
         with patch("agent_cli.tools.fetch.requests.get", return_value=mock_resp):
-            content, links, error = _fetch_single("https://example.com")
+            content, _links, error = _fetch_single("https://example.com")
             assert error is None
             assert "Hello" in content
 

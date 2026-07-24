@@ -27,7 +27,6 @@ import time
 from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
 
 from agent_cli.code_index._sqlite import sqlite3
 from agent_cli.code_index.languages import (
@@ -110,7 +109,7 @@ def iter_source_files(root: Path):
 def build(
     root: Path,
     out_path: Path,
-    defs_path: Optional[Path] = None,
+    defs_path: Path | None = None,
     undef_unknown_configs: bool = True,
     force_full: bool = False,
     verbose: bool = True,
@@ -124,7 +123,7 @@ def build(
     )
 
     # Try to load existing index for reuse
-    old_store: Optional[IndexStore] = None
+    old_store: IndexStore | None = None
     invalidation_reason = None
     if not force_full and out_path.is_file():
         try:

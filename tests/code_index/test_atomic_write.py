@@ -38,7 +38,6 @@ import pytest
 from agent_cli.code_index import build, load_index
 from agent_cli.code_index.builder import _new_tmp_path, write_sqlite_index
 
-
 # ─── Fixtures ──────────────────────────────────────────────
 
 
@@ -147,7 +146,7 @@ class TestFailureRollback:
         #   3. clean up its tmp file.
         bad_top = _minimal_top()
         bad_top["symbols"] = [{"name": "broken"}]  # missing keys → KeyError
-        with pytest.raises(Exception):
+        with pytest.raises(KeyError):
             write_sqlite_index(db_path, bad_top)
 
         # Active DB untouched.
@@ -218,7 +217,7 @@ class TestConcurrentBuilds:
         def worker():
             try:
                 self._run_full_build(project, db_path)
-            except BaseException as e:  # noqa: BLE001 — capture all
+            except BaseException as e:
                 errors.append(e)
 
         threads = [threading.Thread(target=worker) for _ in range(8)]
@@ -277,7 +276,7 @@ class TestReaderConsistency:
                         conn.execute("SELECT COUNT(*) FROM files").fetchone()
                     finally:
                         conn.close()
-                except BaseException as e:  # noqa: BLE001
+                except BaseException as e:
                     reader_errors.append(e)
                     return
 
@@ -320,7 +319,7 @@ class TestToolLayerSerialization:
             try:
                 r = _dispatch_one({"mode": "lookup", "name": "helper"})
                 results.append(r)
-            except BaseException as e:  # noqa: BLE001
+            except BaseException as e:
                 errors.append(e)
 
         threads = [threading.Thread(target=worker) for _ in range(6)]

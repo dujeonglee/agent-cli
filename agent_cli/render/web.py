@@ -478,7 +478,7 @@ class WebRenderer(Renderer):
             from agent_cli.web.inspector import _dynamic_context_sections
 
             final = _dynamic_context_sections(ctx)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return
         with self._lock:
             self._scope_dynamic_final[scope] = final
@@ -494,7 +494,7 @@ class WebRenderer(Renderer):
                 from agent_cli.web.inspector import _dynamic_context_sections
 
                 return _dynamic_context_sections(ctx)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return []
         with self._lock:
             return list(self._scope_dynamic_final.get(scope, []))
@@ -761,8 +761,7 @@ class WebRenderer(Renderer):
                     # the entry, so strip the prefix to match what a
                     # live ``observation()`` call would emit.
                     prefix = "Observation: "
-                    if content.startswith(prefix):
-                        content = content[len(prefix) :]
+                    content = content.removeprefix(prefix)
                     self.observation(
                         content,
                         turn=0,

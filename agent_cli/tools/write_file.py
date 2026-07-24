@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 from pathlib import Path
+from typing import ClassVar
 
 from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
@@ -143,7 +144,7 @@ class WriteFileTool(Tool):
     # through. `key_prefix` is left at its default; strip_prefix is then a
     # no-op on these unprefixed keys, and `claims` correctly returns False for
     # a flat `{path}` (no `write_file_` key) so it stays out of infer_action.
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "File path to save"},

@@ -581,9 +581,8 @@ class Renderer(ABC):
         share one display-quieting policy. ``read`` is a zero-arg callable
         performing the actual blocking read; its return value is passed
         through, its exceptions (EOF/abort) propagate to the caller."""
-        with interactive_lock:
-            with self._prompt_display_guard():
-                return read()
+        with interactive_lock, self._prompt_display_guard():
+            return read()
 
     @abstractmethod
     def confirm(

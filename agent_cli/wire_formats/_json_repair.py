@@ -99,9 +99,8 @@ def close_unbalanced(text: str) -> tuple[str, bool]:
             stack.append("}")
         elif ch == "[":
             stack.append("]")
-        elif ch in ("}", "]"):
-            if stack and stack[-1] == ch:
-                stack.pop()
+        elif ch in ("}", "]") and stack and stack[-1] == ch:
+            stack.pop()
 
     if stack:
         return text + "".join(reversed(stack)), True
@@ -223,8 +222,8 @@ def _repair_quote_at(s: str, e: json.JSONDecodeError) -> str | None:
         token = s[pos:end].strip()
         if '"' not in token:
             return None  # genuine bare token (true/42/…) — not ours; bail
-        core = token[1:] if token.startswith('"') else token
-        core = core[:-1] if core.endswith('"') else core
+        core = token.removeprefix('"')
+        core = core.removesuffix('"')
         if not core:
             return None
         return s[:pos] + json.dumps(core) + s[end:]

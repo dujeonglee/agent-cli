@@ -28,7 +28,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 from agent_cli.code_index import _unifdef
 from agent_cli.code_index.schema import SCHEMA_VERSION
@@ -406,6 +405,7 @@ def _apply_unifdef(text: str, unifdef_flags: list[str]) -> str:
             input=text,
             capture_output=True,
             text=True,
+            check=False,
         )
         # unifdef returns 0 (unchanged) or 1 (changed) on success,
         # 2 on parse error. On success the stdout is authoritative.
@@ -419,7 +419,7 @@ def _apply_unifdef(text: str, unifdef_flags: list[str]) -> str:
 
 def compute_preproc(
     root: Path,
-    defs_path: Optional[Path],
+    defs_path: Path | None,
     undef_unknown_configs: bool,
     verbose: bool,
 ):

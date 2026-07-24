@@ -40,7 +40,7 @@ class TestDescribeJsonError:
         # single-line input: the caret line's '^' index must equal colno-1
         bad = '{"a": 1 "b": 2}'
         out = describe_json_error(bad)
-        snippet_line, caret_line = out.splitlines()[-2:]
+        _snippet_line, caret_line = out.splitlines()[-2:]
         try:
             json.loads(bad)
             raise AssertionError("expected JSONDecodeError")

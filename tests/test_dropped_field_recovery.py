@@ -37,7 +37,6 @@ from agent_cli.tools.registry import infer_action
 from agent_cli.wire_formats import get
 from agent_cli.wire_formats.json_fc import JsonFcFormat
 
-
 # ── Fixtures / helpers ───────────────────────────────
 
 

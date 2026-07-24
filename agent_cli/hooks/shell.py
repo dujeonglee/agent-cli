@@ -214,6 +214,7 @@ def _execute_hook_command(hook: HookEntry, stdin_data: str) -> HookResult:
             capture_output=True,
             text=True,
             timeout=hook.timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return HookResult(allowed=True, stderr="Hook timed out")

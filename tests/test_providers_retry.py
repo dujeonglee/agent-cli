@@ -275,9 +275,11 @@ class TestUserVisibility:
                 requests.Timeout("t3"),
             ]
         )
-        with patch("agent_cli.render.render_status") as mock_status:
-            with pytest.raises(requests.Timeout):
-                post_with_retry(post_fn, "http://x/llm")
+        with (
+            patch("agent_cli.render.render_status") as mock_status,
+            pytest.raises(requests.Timeout),
+        ):
+            post_with_retry(post_fn, "http://x/llm")
         states = [call.args[0] for call in mock_status.call_args_list]
         assert "error" in states
 
@@ -314,8 +316,8 @@ class TestProviderWiring:
             assert mock_post.call_count == 2
 
     def test_openai_retries_on_connection_error(self, monkeypatch):
-        from agent_cli.providers.openai import OpenAIProvider
         from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.providers.openai import OpenAIProvider
 
         caps = ModelCapabilities(
             context_window=4096,
@@ -340,8 +342,8 @@ class TestProviderWiring:
             assert mock_post.call_count == 2
 
     def test_openai_retries_on_timeout(self, monkeypatch):
-        from agent_cli.providers.openai import OpenAIProvider
         from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.providers.openai import OpenAIProvider
 
         caps = ModelCapabilities(
             context_window=4096,

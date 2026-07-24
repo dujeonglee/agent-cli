@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-
-from agent_cli.prompts.system_prompt import build_system_prompt_sections
-
-
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig
+from agent_cli.prompts.system_prompt import build_system_prompt_sections
 
 
 class SystemPromptSvc:

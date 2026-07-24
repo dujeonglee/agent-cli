@@ -25,9 +25,11 @@ def _force_can_prompt(monkeypatch):
 class TestReadUserInput:
     def test_single_line(self):
         """Normal single line input works as before."""
-        with patch("builtins.input", return_value="hello"):
-            with patch("select.select", return_value=([], [], [])):
-                result = get_renderer().prompt_user("You: ", multiline=True)
+        with (
+            patch("builtins.input", return_value="hello"),
+            patch("select.select", return_value=([], [], [])),
+        ):
+            result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == "hello"
 
     def test_empty_input(self):
@@ -59,18 +61,22 @@ class TestReadUserInput:
         # select returns stdin as readable for 2 calls, then empty
         select_results = [([fake_stdin], [], []), ([fake_stdin], [], []), ([], [], [])]
 
-        with patch("builtins.input", return_value="first line"):
-            with patch("select.select", side_effect=select_results):
-                with patch("sys.stdin", fake_stdin):
-                    result = get_renderer().prompt_user("You: ", multiline=True)
+        with (
+            patch("builtins.input", return_value="first line"),
+            patch("select.select", side_effect=select_results),
+            patch("sys.stdin", fake_stdin),
+        ):
+            result = get_renderer().prompt_user("You: ", multiline=True)
 
         assert result == "first line\nsecond line\nthird line"
 
     def test_paste_detection_not_supported(self):
         """Falls back to single line if select raises."""
-        with patch("builtins.input", return_value="single"):
-            with patch("select.select", side_effect=OSError("not supported")):
-                result = get_renderer().prompt_user("You: ", multiline=True)
+        with (
+            patch("builtins.input", return_value="single"),
+            patch("select.select", side_effect=OSError("not supported")),
+        ):
+            result = get_renderer().prompt_user("You: ", multiline=True)
         assert result == "single"
 
 
@@ -211,8 +217,10 @@ class TestAskHandlerMultiline:
     def test_ask_single_line_still_works(self):
         from agent_cli.loop import _handle_ask
 
-        with patch("builtins.input", return_value="simple answer"):
-            with patch("select.select", return_value=([], [], [])):
-                result = _handle_ask(["Anything?"])
+        with (
+            patch("builtins.input", return_value="simple answer"),
+            patch("select.select", return_value=([], [], [])),
+        ):
+            result = _handle_ask(["Anything?"])
 
         assert "A: simple answer" in result

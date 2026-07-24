@@ -14,6 +14,8 @@ import agent_cli.config as _config
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.wire_formats import (
     get as get_wf,
+)
+from agent_cli.wire_formats import (
     resolve_wire_format,
     wire_format_for_model,
 )

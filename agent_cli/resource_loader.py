@@ -15,7 +15,7 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-_FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.S)
+_FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
 
 
 @dataclass

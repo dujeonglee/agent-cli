@@ -23,7 +23,6 @@ from agent_cli.context.manager import (
     ContextManager,
 )
 
-
 # ── Fixtures ─────────────────────────────────────────
 
 
@@ -110,7 +109,7 @@ class TestSplitForCompaction:
             {"role": "user", "content": "q1"},
             {"role": "assistant", "content": "a1"},
         ]
-        anchor, evict, retained = ctx._split_for_compaction()
+        anchor, evict, _retained = ctx._split_for_compaction()
         assert anchor == []
         assert len(evict) >= 1
 
@@ -120,7 +119,9 @@ class TestSplitForCompaction:
 
 class TestSummary:
     def test_first_compaction_stores_summary(self, tmp_path):
-        ctx, calls = _make_ctx(tmp_path, max_context_tokens=80, summary="first-summary")
+        ctx, _calls = _make_ctx(
+            tmp_path, max_context_tokens=80, summary="first-summary"
+        )
         _add(ctx, {"role": "system", "content": "sys"})
         for _ in range(15):
             _add(ctx, {"role": "user", "content": "x" * 30})
@@ -1192,8 +1193,8 @@ class TestEstimateMessageTokensOps:
     a long complete result was invisible to the budget estimator)."""
 
     def test_counts_ops_action_input_and_result(self):
-        from agent_cli.context.token_estimator import estimate_tokens
         from agent_cli.context.render import _estimate_message_tokens
+        from agent_cli.context.token_estimator import estimate_tokens
 
         big = "X" * 4000  # ≈ 1000 tokens each
         rec = {
@@ -1209,8 +1210,8 @@ class TestEstimateMessageTokensOps:
         assert est >= 2 * estimate_tokens(big)
 
     def test_single_op_legacy_shape_still_counted(self):
-        from agent_cli.context.token_estimator import estimate_tokens
         from agent_cli.context.render import _estimate_message_tokens
+        from agent_cli.context.token_estimator import estimate_tokens
 
         big = "Y" * 4000
         rec = {

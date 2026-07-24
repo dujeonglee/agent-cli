@@ -7,16 +7,14 @@ import time
 from agent_cli.constants import (
     OBS_SUCCESS,
 )
-from agent_cli.tools.result import ToolResult
-
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render import (
-    render_push_depth,
-    render_pop_depth,
-    render_group_start,
     render_group_end,
+    render_group_start,
+    render_pop_depth,
+    render_push_depth,
 )
-
+from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
 # Max shrink-and-retry attempts per turn when the server rejects the

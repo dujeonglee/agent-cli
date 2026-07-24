@@ -1,6 +1,6 @@
 """Tests for built-in skills loading and discovery."""
 
-from agent_cli.skills.loader import load_skills, _BUILTIN_DIR, _parse_skill_file
+from agent_cli.skills.loader import _BUILTIN_DIR, _parse_skill_file, load_skills
 
 
 class TestBuiltinDirectory:
@@ -50,7 +50,7 @@ class TestBuiltinSkillsParsing:
 class TestBuiltinSkillsLoading:
     def setup_method(self):
         """Reset loader to default paths before each test."""
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         loader._reset_loader()
 
@@ -62,7 +62,7 @@ class TestBuiltinSkillsLoading:
 
     def test_builtin_has_lower_priority(self, tmp_path, monkeypatch):
         """Project-local skill with same name overrides built-in."""
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         local_dir = tmp_path / "skills"
         local_dir.mkdir()
@@ -76,7 +76,7 @@ class TestBuiltinSkillsLoading:
 
     def test_builtin_coexists_with_project(self, tmp_path, monkeypatch):
         """Built-in and project skills coexist when names differ."""
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         local_dir = tmp_path / "skills"
         local_dir.mkdir()

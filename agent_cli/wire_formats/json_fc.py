@@ -36,6 +36,8 @@ import re
 
 from agent_cli.thinking_tags import (
     ORPHAN_THINK_TAG_RE as _ORPHAN_THINK_TAG,
+)
+from agent_cli.thinking_tags import (
     TRAILING_THINK_TAG_RE as _TRAILING_THINK_TAG,
 )
 from agent_cli.wire_formats._json_diag import describe_json_error

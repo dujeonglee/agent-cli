@@ -37,9 +37,10 @@ import re
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from queue import SimpleQueue
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from agent_cli.tools.result import ToolResult
 
@@ -735,7 +736,9 @@ class AgentRegistry:
             if s["error"]:
                 line += f" | error: {s['error']}"
             if s["state"] == "dead":
-                line += ' | resumable via {"mode":"resume","key":"%s"}' % s["key"]
+                line += ' | resumable via {{"mode":"resume","key":"{}"}}'.format(
+                    s["key"]
+                )
             lines.append(line)
         with self._cv:
             if self._pending:
@@ -861,7 +864,7 @@ class AgentRegistry:
                 continue
             if name in live_roles:
                 continue
-            key, error = self.spawn(profile=name, parent_ctx=parent_ctx)
+            _key, error = self.spawn(profile=name, parent_ctx=parent_ctx)
             if not error:
                 spawned += 1
         return spawned
@@ -1182,7 +1185,7 @@ class AgentRegistry:
                     self._save_state()  # user:* — 창만, push 건너뛰어도 상태 미러
                 tm.current_author = "main"
                 self._notify_roster()
-        except BaseException as e:  # noqa: BLE001 — 루프 기계 자체의 사망 포착
+        except BaseException as e:
             tm.error = f"{type(e).__name__}: {e}"
             crash = tm.error
         finally:
@@ -1492,8 +1495,10 @@ def tool_agent(
         if err:
             return ToolResult(False, error=f"resume rejected: {err}")
         lines = [
-            f"agent '{key}' resumed — it remembers ALL previous exchanges "
-            f"(its context was preserved across death)."
+            (
+                f"agent '{key}' resumed — it remembers ALL previous exchanges "
+                f"(its context was preserved across death)."
+            )
         ]
         task = args.get("task", "")
         if task:

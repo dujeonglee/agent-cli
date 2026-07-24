@@ -7,6 +7,7 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 
 from agent_cli.tools.base import (
     Tool,
@@ -14,7 +15,6 @@ from agent_cli.tools.base import (
     on_disk_oversized_nudge,
 )
 from agent_cli.tools.result import ToolResult
-
 
 # Commands that destroy or move files irreversibly. Detection works on
 # shell-tokenized form so we catch real invocations (`rm -rf x`,
@@ -175,6 +175,7 @@ def tool_shell(args: dict) -> ToolResult:
             shell=True,
             capture_output=True,
             timeout=timeout,
+            check=False,
         )
         out = result.stdout.decode("utf-8", errors="replace").strip()
         err = result.stderr.decode("utf-8", errors="replace").strip()
@@ -208,7 +209,7 @@ class ShellTool(Tool):
     # future prefixed tools.) `wrap_single_op` is identity; `key_prefix` is
     # left at its default (strip a no-op on flat keys, `claims` False for a
     # flat `{command}`).
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "command": {"type": "string", "description": "Shell command to run"},

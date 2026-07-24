@@ -70,7 +70,7 @@ jobs:
         # Pin to match the dev/local version — ruff's default ruleset expands
         # between releases, so an unpinned `pip install ruff` fails CI on new
         # rules that pass locally. Bump this deliberately alongside a lint sweep.
-        run: pip install ruff==0.15.1
+        run: pip install ruff==0.16.0
 
       - name: Run ruff check
         run: ruff check agent_cli/ tests/

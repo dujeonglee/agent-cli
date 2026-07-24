@@ -55,9 +55,8 @@ See ``agent_cli/wire_formats/json_fc.py`` for the reference implementation.
 
 from __future__ import annotations
 
-import re
-
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -323,7 +322,7 @@ class WireFormat(ABC):
 
     # 미닫힘 thinking opener 의 truncation 정지점 — 포맷의 첫-구조 마커.
     # None 이면 EOF 까지 (종전 동작). 각 플러그인이 자기 마커로 지정.
-    thinking_stop: "re.Pattern | None" = None
+    thinking_stop: re.Pattern | None = None
 
     @classmethod
     def strip_thinking(cls, text: str) -> tuple[str, str | None]:
@@ -357,7 +356,7 @@ class WireFormat(ABC):
         override with a cheap structural check (header count, etc.)."""
         return False
 
-    def prose_completion(self, turn: "ParsedTurn") -> str | None:
+    def prose_completion(self, turn: ParsedTurn) -> str | None:
         """An action-less turn that is a **prose final answer** — the model
         finished the task in natural language but forgot the explicit
         ``complete`` op — returns that prose (to become the ``complete``

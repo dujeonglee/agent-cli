@@ -184,9 +184,7 @@ class TestNoSelfDeadlockOnPanelStart:
         in_docstring = False
         for line in src.splitlines():
             stripped = line.strip()
-            if not in_docstring and (
-                stripped.startswith('"""') or stripped.startswith("'''")
-            ):
+            if not in_docstring and (stripped.startswith(('"""', "'''"))):
                 # Open of docstring; check for same-line close.
                 quote = stripped[:3]
                 rest = stripped[3:]
@@ -195,7 +193,7 @@ class TestNoSelfDeadlockOnPanelStart:
                 in_docstring = True
                 continue
             if in_docstring:
-                if stripped.endswith('"""') or stripped.endswith("'''"):
+                if stripped.endswith(('"""', "'''")):
                     in_docstring = False
                 continue
             # Strip trailing comment on executable line.
@@ -238,7 +236,7 @@ class TestNoSelfDeadlockOnPanelStart:
             try:
                 r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="task")
                 r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
-            except BaseException as e:  # noqa: BLE001
+            except BaseException as e:
                 failure.append(e)
             finally:
                 done.set()
@@ -290,7 +288,7 @@ class TestNoSelfDeadlockOnPanelStart:
                 )
                 r.end_delegate_task(task_id=tid, success=True, duration_s=0.05)
                 finished[i] = True
-            except BaseException as e:  # noqa: BLE001
+            except BaseException as e:
                 errors.append(e)
 
         def all_workers() -> None:
@@ -628,7 +626,7 @@ class TestConcurrentWorkers:
                 # something to print.
                 r._capture_line(f"work for {idx}")
                 r.end_delegate_task(task_id=tid, success=True, duration_s=0.01)
-            except BaseException as e:  # noqa: BLE001 — collect for assert
+            except BaseException as e:
                 errors.append(e)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]

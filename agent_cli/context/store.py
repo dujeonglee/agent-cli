@@ -34,7 +34,7 @@ def append_record(path: Path, record: dict) -> None:
 def load_records(path: Path) -> list[dict]:
     """history.jsonl 전체를 관용 파싱 (깨진 줄은 건너뜀)."""
     with open(path, "r", encoding="utf-8") as f:
-        raw_lines = [line.strip() for line in f.readlines() if line.strip()]
+        raw_lines = [line.strip() for line in f if line.strip()]
     records: list[dict] = []
     for line in raw_lines:
         try:

@@ -33,9 +33,11 @@ THINK_TAG_NAMES: tuple[str, ...] = ("think", "thinking", "reasoning", "reflectio
 _NAMES = "|".join(THINK_TAG_NAMES)
 
 # ① 완전 블록 (속성 허용: ``<think budget=…>``).
-THINK_BLOCK_RE = re.compile(r"<(" + _NAMES + r")\b[^>]*>(.*?)</\1\s*>", re.S | re.I)
+THINK_BLOCK_RE = re.compile(
+    r"<(" + _NAMES + r")\b[^>]*>(.*?)</\1\s*>", re.DOTALL | re.IGNORECASE
+)
 # ② 미닫힘 opener.
-THINK_OPEN_RE = re.compile(r"<(" + _NAMES + r")\b[^>]*>", re.I)
+THINK_OPEN_RE = re.compile(r"<(" + _NAMES + r")\b[^>]*>", re.IGNORECASE)
 # ③ 고아 태그 낱개 (여닫이 무관) — thought 산문 청소용 (json_fc sanitize).
 ORPHAN_THINK_TAG_RE = re.compile(r"</?\s*(?:" + _NAMES + r")\s*>", re.IGNORECASE)
 # ③ 트레일링 고아 태그 무리 — 본문 끝에만 앵커 (문자열 값 안은 보존).
@@ -51,9 +53,7 @@ TRAILING_THINK_TAG_RE = re.compile(
 THINK_OPEN_LINE_RE = re.compile(r"(?m)^[ \t]*<(" + _NAMES + r")\b[^>]*>", re.IGNORECASE)
 
 
-def strip_think_blocks(
-    text: str, *, stop: "re.Pattern | None" = None
-) -> tuple[str, str]:
+def strip_think_blocks(text: str, *, stop: re.Pattern | None = None) -> tuple[str, str]:
     """content 에 인라인으로 섞인 thinking 블록(①②) 격리.
 
     닫힌 블록은 전부, 안 닫힌 열림 태그(라인 선두만 — 산문 속 언급은

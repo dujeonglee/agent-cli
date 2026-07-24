@@ -12,7 +12,6 @@ Models.json search paths (project local takes priority):
 """
 
 from __future__ import annotations
-from agent_cli.fsio import atomic_write_json
 
 import json
 import os
@@ -20,6 +19,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from agent_cli.fsio import atomic_write_json
 
 
 @dataclass

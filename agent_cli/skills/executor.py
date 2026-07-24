@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-from agent_cli.constants import SHELL_COMMAND_TIMEOUT, AGENT_DEFAULT_TIMEOUT
+from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers.base import LLMProvider
@@ -27,6 +27,7 @@ def _execute_shell_inject(m: re.Match) -> str:
             capture_output=True,
             text=True,
             timeout=SHELL_COMMAND_TIMEOUT,
+            check=False,
         )
         output = result.stdout.strip()
         if result.returncode != 0:

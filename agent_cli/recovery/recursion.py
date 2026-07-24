@@ -67,4 +67,4 @@ def format_depth_limit_error(
     )
 
 
-__all__ = ["format_recursion_error", "format_depth_limit_error"]
+__all__ = ["format_depth_limit_error", "format_recursion_error"]

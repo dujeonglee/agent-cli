@@ -23,8 +23,6 @@ kernel-style regex rewrite chain plus an optional `unifdef -b` pass.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from agent_cli.code_index.languages import LANGUAGES, LangSpec
 from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.preproc import preprocess_source
@@ -203,7 +201,7 @@ def collect_declarators(node):
             yield c
 
 
-def c_modifiers(storage: Optional[str], is_inline: bool) -> Optional[list[str]]:
+def c_modifiers(storage: str | None, is_inline: bool) -> list[str] | None:
     mods = []
     if storage:
         mods.append(storage)

@@ -32,7 +32,6 @@ upstream unifdef implementation we deliberately left behind.
 from __future__ import annotations
 
 import re
-from typing import Optional, Union
 
 # Sentinel for "value is indeterminate". A real integer 0 means false,
 # any non-zero int means true, so we need a distinct object for unknown
@@ -40,7 +39,7 @@ from typing import Optional, Union
 _UNKNOWN: object = object()
 
 # A parsed expression result is either an int or the UNKNOWN sentinel.
-_Val = Union[int, object]
+_Val = int | object
 
 
 # ─── Flag parsing ──────────────────────────────────────────────
@@ -64,7 +63,7 @@ def _parse_int_literal(s: str) -> int:
     return int(s)
 
 
-def parse_flags(flags: list[str]) -> dict[str, Optional[int]]:
+def parse_flags(flags: list[str]) -> dict[str, int | None]:
     """Convert ``-D``/``-U`` flags into a ``{name: value | None}`` map.
 
     * ``-DNAME``       → ``name`` defined to ``1`` (unifdef convention)
@@ -79,7 +78,7 @@ def parse_flags(flags: list[str]) -> dict[str, Optional[int]]:
     is an ``int`` → defined with that integer value; we also store
     sentinel ``0`` for explicitly undefined to keep the table flat.
     """
-    defs: dict[str, Optional[int]] = {}
+    defs: dict[str, int | None] = {}
     for f in flags:
         if f.startswith("-D"):
             rest = f[2:]
@@ -101,7 +100,7 @@ def parse_flags(flags: list[str]) -> dict[str, Optional[int]]:
     return defs
 
 
-def _is_defined(defs: dict[str, Optional[int]], name: str) -> Optional[bool]:
+def _is_defined(defs: dict[str, int | None], name: str) -> bool | None:
     """Tri-state defined check: True / False / None (unknown)."""
     if f"\x00U\x00{name}" in defs:
         return False
@@ -110,7 +109,7 @@ def _is_defined(defs: dict[str, Optional[int]], name: str) -> Optional[bool]:
     return None
 
 
-def _value_of(defs: dict[str, Optional[int]], name: str) -> _Val:
+def _value_of(defs: dict[str, int | None], name: str) -> _Val:
     """Look up a macro's value for bare-identifier expression usage.
 
     ``-U`` → 0 (matches cpp behaviour for undefined macros in #if).
@@ -271,12 +270,12 @@ class _Parser:
         primary  := NUMBER | IDENT | 'defined' '(' IDENT ')' | 'defined' IDENT | '(' or ')'
     """
 
-    def __init__(self, tokens: list[tuple[str, str]], defs: dict[str, Optional[int]]):
+    def __init__(self, tokens: list[tuple[str, str]], defs: dict[str, int | None]):
         self.tokens = tokens
         self.pos = 0
         self.defs = defs
 
-    def _peek(self) -> Optional[tuple[str, str]]:
+    def _peek(self) -> tuple[str, str] | None:
         return self.tokens[self.pos] if self.pos < len(self.tokens) else None
 
     def _advance(self) -> tuple[str, str]:
@@ -417,7 +416,7 @@ class _Parser:
         raise ValueError(f"unexpected token {t}")
 
 
-def _eval_expr(expr: str, defs: dict[str, Optional[int]]) -> _Val:
+def _eval_expr(expr: str, defs: dict[str, int | None]) -> _Val:
     """Evaluate a single ``#if`` / ``#elif`` expression.
 
     A malformed or unsupported expression is treated as UNKNOWN —
@@ -630,4 +629,4 @@ def run_unifdef(text: str, flags: list[str]) -> str:
     return "".join(out)
 
 
-__all__ = ["run_unifdef", "parse_flags"]
+__all__ = ["parse_flags", "run_unifdef"]

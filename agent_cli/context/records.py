@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 
-
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
 
@@ -81,11 +80,7 @@ def _classify_record(message: dict) -> tuple[str, list[str], str]:
 
     if role == "user":
         if "tool" in message:  # tool observation
-            text = (
-                content[len(_OBSERVATION_PREFIX) :]
-                if content.startswith(_OBSERVATION_PREFIX)
-                else content
-            )
+            text = content.removeprefix(_OBSERVATION_PREFIX)
             return "observation", [str(message.get("tool") or "")], text
         # human query — strip the "[author]: " label for the search surface
         author = message.get("author")

@@ -31,7 +31,7 @@ def echo_prior_output(content: str) -> str:
     cleaned = content.strip() if content else ""
     if not cleaned:
         return ""
-    return "\n".join(["Your prior output:", "---", cleaned, "---", ""])
+    return f"Your prior output:\n---\n{cleaned}\n---\n"
 
 
 # ``constrain_format_json`` / ``constrain_action_required`` lived here
@@ -86,16 +86,24 @@ def restate_task(*, task: str, action: str, args_repr: str, repeat_count: int) -
             task.strip(),
             "---",
             "",
-            f"{_loop_observed(action, args_repr, repeat_count)} without "
-            "progress. The previous nudge did not work — step back to "
-            "the task itself:",
+            (
+                f"{_loop_observed(action, args_repr, repeat_count)} without "
+                "progress. The previous nudge did not work — step back to "
+                "the task itself:"
+            ),
             "",
-            "- Why does completing the task require this call? What "
-            "information from it does the task actually need?",
-            "- What information are you NOT getting from the responses? "
-            "Is what you need actually here, or somewhere else?",
+            (
+                "- Why does completing the task require this call? What "
+                "information from it does the task actually need?"
+            ),
+            (
+                "- What information are you NOT getting from the responses? "
+                "Is what you need actually here, or somewhere else?"
+            ),
             "",
-            "Choose your next step from that reflection, not from another "
-            "retry of the same call.",
+            (
+                "Choose your next step from that reflection, not from another "
+                "retry of the same call."
+            ),
         ]
     )

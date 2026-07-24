@@ -34,8 +34,7 @@ class _StallResponse:
         self.closed = False
 
     def iter_lines(self):
-        for ln in self._pre:
-            yield ln
+        yield from self._pre
         self._unblock.wait(timeout=5)  # stall until close() (cap for safety)
 
     def close(self):
@@ -58,7 +57,9 @@ class TestInterruptibleLinesIdle:
         got = []
         with pytest.raises(StreamIdleTimeout):
             for line in gen:
-                got.append(line)
+                # Manual loop (not list(gen)): must capture partial results
+                # into `got` before the expected mid-stream raise.
+                got.append(line)  # noqa: PERF402
         assert got == [b"data: hi"]  # the pre-stall line was yielded
         assert ticks == [1, 2, 3]  # one notice per idle interval
         assert r.closed  # the response was closed before raising
@@ -121,13 +122,13 @@ class TestStreamingReconnect:
             supports_thinking=False,
             thinking_budget=0,
         )
-        return dict(
-            messages=[{"role": "user", "content": "hi"}],
-            system="s",
-            model="m",
-            capabilities=caps,
-            on_chunk=lambda *a, **k: None,
-        )
+        return {
+            "messages": [{"role": "user", "content": "hi"}],
+            "system": "s",
+            "model": "m",
+            "capabilities": caps,
+            "on_chunk": lambda *a, **k: None,
+        }
 
     def test_reconnects_then_succeeds(self):
         from agent_cli.providers.base import LLMResponse
@@ -161,8 +162,8 @@ class TestStreamingReconnect:
             patch("agent_cli.providers.openai.make_stream_patient"),
             patch.object(type(prov), "_handle_stream", stream),
             patch("agent_cli.render.render_status"),
+            pytest.raises(StreamIdleTimeout),
         ):
-            with pytest.raises(StreamIdleTimeout):
-                prov.call(**self._args())
+            prov.call(**self._args())
         # initial + STREAM_MAX_RECONNECTS attempts, all stalled
         assert post.call_count == STREAM_MAX_RECONNECTS + 1

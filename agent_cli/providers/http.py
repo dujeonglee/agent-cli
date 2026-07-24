@@ -58,13 +58,12 @@ import json
 import queue
 import threading
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
 
 import requests
 
 from agent_cli.verbose import debug_log
-
 
 _DEFAULT_ATTEMPTS = 10
 _DEFAULT_STATUS_ATTEMPTS = 3

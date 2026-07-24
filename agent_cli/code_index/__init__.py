@@ -43,11 +43,11 @@ from agent_cli.code_index.store import IndexStore, load_index
 
 __all__ = [
     "CODE_NAME_KINDS",
-    "IndexStore",
     "NAME_KINDS",
     "REF_KINDS",
-    "Ref",
     "SCHEMA_VERSION",
+    "IndexStore",
+    "Ref",
     "Symbol",
     "build",
     "build_callgraph",

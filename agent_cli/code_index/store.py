@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Optional
 
 from agent_cli.code_index._sqlite import sqlite3
 
@@ -32,10 +31,10 @@ class IndexStore:
     def __init__(self, path: Path):
         self._conn = sqlite3.connect(str(path))
         self._conn.row_factory = sqlite3.Row
-        self._meta_cache: Optional[dict] = None
-        self._files_cache: Optional[list] = None
-        self._all_syms: Optional[list] = None
-        self._all_refs: Optional[list] = None
+        self._meta_cache: dict | None = None
+        self._files_cache: list | None = None
+        self._all_syms: list | None = None
+        self._all_refs: list | None = None
 
     # ----- row converters -----
 
@@ -117,7 +116,7 @@ class IndexStore:
             self._file_set_cache = {f["path"] for f in self.files}
         return self._file_set_cache
 
-    def normalize_file_path(self, path: str) -> Optional[str]:
+    def normalize_file_path(self, path: str) -> str | None:
         """Resolve a file-path-ish string to the canonical root-relative path
         stored in the index. Returns None if no match.
 

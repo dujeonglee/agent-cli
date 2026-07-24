@@ -6,9 +6,9 @@ from rich.console import Console
 
 import agent_cli.render.minimal as minimal_mod
 from agent_cli.render import (
+    get_renderer,
     load_renderer_by_name,
     set_renderer,
-    get_renderer,
 )
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.minimal import MinimalRenderer
@@ -17,7 +17,6 @@ from agent_cli.render.minimal import MinimalRenderer
 def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체."""
     import agent_cli.subagent.profiles as _profiles_mod
-
     from agent_cli.resource_loader import ResourceLoader
 
     _profiles_mod._profile_loader = ResourceLoader(list(paths))
@@ -152,9 +151,8 @@ class TestInteractivePromptSerialization:
         # which re-acquires it on the same thread — must not deadlock.
         from agent_cli.render import interactive_lock
 
-        with interactive_lock:
-            with interactive_lock:
-                assert True
+        with interactive_lock, interactive_lock:
+            assert True
 
 
 class TestPromptProvenance:
@@ -303,6 +301,7 @@ class TestApplyStyle:
         and exit cleanly via typer rather than crashing."""
         import pytest
         import typer
+
         from agent_cli.main import _apply_style
 
         with pytest.raises(typer.Exit):
@@ -312,7 +311,8 @@ class TestApplyStyle:
 class TestDispatchAgent:
     def test_dispatch_agent_not_found(self):
         from unittest.mock import MagicMock
-        from agent_cli.main import _dispatch_agent, _AGENT_NOT_FOUND
+
+        from agent_cli.main import _AGENT_NOT_FOUND, _dispatch_agent
         from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
@@ -336,7 +336,8 @@ class TestDispatchAgent:
 
     def test_dispatch_agent_no_task(self):
         from unittest.mock import MagicMock
-        from agent_cli.main import _dispatch_agent, _AGENT_NOT_FOUND
+
+        from agent_cli.main import _AGENT_NOT_FOUND, _dispatch_agent
 
         result, _ok = _dispatch_agent(
             "@",

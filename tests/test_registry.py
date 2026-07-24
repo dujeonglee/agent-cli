@@ -3,8 +3,8 @@
 from agent_cli.tools.registry import (
     TOOL_SCHEMAS,
     TOOLS,
-    validate_tool_input,
     get_tool_descriptions,
+    validate_tool_input,
 )
 
 
@@ -16,7 +16,7 @@ class TestValidateToolInput:
         assert err is None
 
     def test_valid_shell(self):
-        ok, err, _ = validate_tool_input("shell", {"command": "ls -la"})
+        ok, _err, _ = validate_tool_input("shell", {"command": "ls -la"})
         assert ok is True
 
     def test_missing_required(self):
@@ -35,7 +35,7 @@ class TestValidateToolInput:
         assert "Unknown tool" in err
 
     def test_string_json_auto_convert(self):
-        ok, err, converted = validate_tool_input(
+        ok, _err, converted = validate_tool_input(
             "read_file", '{"path": "/tmp/test.py"}'
         )
         assert ok is True
@@ -43,13 +43,13 @@ class TestValidateToolInput:
 
     def test_string_auto_convert_shell(self):
         """String input for shell → {"command": "..."}."""
-        ok, err, converted = validate_tool_input("shell", "ls -la")
+        ok, _err, converted = validate_tool_input("shell", "ls -la")
         assert ok is True
         assert converted["command"] == "ls -la"
 
     def test_string_auto_convert_write_file(self):
         """String input for write_file → {"path": "..."}."""
-        ok, err, converted = validate_tool_input("write_file", "/tmp/out.txt")
+        ok, err, _converted = validate_tool_input("write_file", "/tmp/out.txt")
         assert ok is False  # missing required "content" field
         assert "content" in err
 
@@ -57,34 +57,34 @@ class TestValidateToolInput:
         """String input for edit_file → {"path": "..."}."""
         # Flat-native (Step 3): edit_file requires path/op/pos, so a bare
         # path string is missing op.
-        ok, err, converted = validate_tool_input("edit_file", "src/main.py")
+        ok, err, _converted = validate_tool_input("edit_file", "src/main.py")
         assert ok is False
         assert "op" in err
 
     def test_none_input(self):
-        ok, err, _ = validate_tool_input("read_file", None)
+        ok, _err, _ = validate_tool_input("read_file", None)
         assert ok is False
 
     def test_int_input(self):
         """Integer input should fail."""
-        ok, err, _ = validate_tool_input("read_file", 42)
+        ok, _err, _ = validate_tool_input("read_file", 42)
         assert ok is False
 
     def test_list_input(self):
         """List input should fail."""
-        ok, err, _ = validate_tool_input("read_file", ["/tmp/test.py"])
+        ok, _err, _ = validate_tool_input("read_file", ["/tmp/test.py"])
         assert ok is False
 
 
 class TestTypeValidation:
     def test_correct_types_pass(self):
-        ok, err, _ = validate_tool_input("shell", {"command": "ls", "timeout": 30})
+        ok, _err, _ = validate_tool_input("shell", {"command": "ls", "timeout": 30})
         assert ok is True
 
     def test_string_timeout_auto_coerced(self):
         """Small model sends "30" instead of 30 — auto-coerce."""
         inp = {"command": "ls", "timeout": "30"}
-        ok, err, _ = validate_tool_input("shell", inp)
+        ok, _err, _ = validate_tool_input("shell", inp)
         assert ok is True
         assert inp["timeout"] == 30  # coerced in-place
 
@@ -129,20 +129,20 @@ class TestEmptyStringStripping:
             "command": "ls",
             "timeout": "",
         }
-        ok, err, _ = validate_tool_input("shell", action_input)
+        ok, _err, _ = validate_tool_input("shell", action_input)
         assert ok is True
         assert "timeout" not in action_input
 
     def test_required_empty_string_not_removed(self):
         """Empty string on required field should NOT be stripped — validation fails."""
-        ok, err, _ = validate_tool_input("shell", {"command": ""})
+        ok, _err, _ = validate_tool_input("shell", {"command": ""})
         # command="" is required and present, but it's an empty string
         assert ok is True  # type check passes (string), tool itself handles empty
 
     def test_non_empty_optional_kept(self):
         """Non-empty optional fields should remain untouched."""
         action_input = {"command": "ls", "timeout": 30}
-        ok, err, _ = validate_tool_input("shell", action_input)
+        ok, _err, _ = validate_tool_input("shell", action_input)
         assert ok is True
         assert action_input["timeout"] == 30
 

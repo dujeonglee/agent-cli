@@ -31,7 +31,7 @@ OVERFLOW_PATTERNS = [
     r"context window",
 ]
 
-_COMPILED_PATTERNS = [re.compile(p, re.I) for p in OVERFLOW_PATTERNS]
+_COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in OVERFLOW_PATTERNS]
 
 
 def is_context_overflow(error_message: str) -> bool:
@@ -45,12 +45,14 @@ def is_context_overflow(error_message: str) -> bool:
 _COMBINED_AMOUNT_PATTERNS = [
     # mlx-lm / omlx: "<actual> tokens exceeds max context window of <limit> tokens"
     (
-        re.compile(r"(\d+)\s+tokens?\s+exceeds\s+max context window of\s+(\d+)", re.I),
+        re.compile(
+            r"(\d+)\s+tokens?\s+exceeds\s+max context window of\s+(\d+)", re.IGNORECASE
+        ),
         1,
         2,
     ),
     # Anthropic: "prompt is too long: <actual> tokens > <limit> maximum"
-    (re.compile(r"(\d+)\s+tokens?\s*>\s*(\d+)\s+maximum", re.I), 1, 2),
+    (re.compile(r"(\d+)\s+tokens?\s*>\s*(\d+)\s+maximum", re.IGNORECASE), 1, 2),
 ]
 
 # OpenAI / vLLM phrase the limit and the actual count SEPARATELY, and the
@@ -64,9 +66,9 @@ _COMBINED_AMOUNT_PATTERNS = [
 # recovery uses it as the shrink target. The limit is always exact;
 # ``contains at least`` is a lower bound but recovery treats actual as
 # best-effort (None → fall back to the local estimate).
-_LIMIT_PATTERN = re.compile(r"maximum context length is\s+(\d+)", re.I)
+_LIMIT_PATTERN = re.compile(r"maximum context length is\s+(\d+)", re.IGNORECASE)
 _ACTUAL_PATTERN = re.compile(
-    r"(?:resulted in|contains at least|requested)\s+(\d+)", re.I
+    r"(?:resulted in|contains at least|requested)\s+(\d+)", re.IGNORECASE
 )
 
 

@@ -60,7 +60,7 @@ class TestJavaWalker:
         sym = by_name["Service"]
         kinds = {s["kind"] for s in sym}
         assert "type" in kinds
-        ctor = [s for s in sym if s["kind"] == "function"][0]
+        ctor = next(s for s in sym if s["kind"] == "function")
         assert ctor["kind_raw"] == "constructor_declaration"
         assert ctor["parent"] == "Service"
 

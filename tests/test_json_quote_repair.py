@@ -9,9 +9,9 @@ force a bogus op — notably bare keywords like ``true`` are left alone).
 
 import json
 
+import agent_cli.wire_formats as wf_mod
 from agent_cli.wire_formats._json_repair import repair_value_quotes
 from agent_cli.wire_formats.json_fc import _extract_op_json
-import agent_cli.wire_formats as wf_mod
 
 
 def _action(body: str) -> str:

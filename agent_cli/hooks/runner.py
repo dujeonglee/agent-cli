@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from agent_cli.hooks.context import HookContext
-from agent_cli.hooks.events import ALL_EVENTS, PRE_TOOL_USE, POST_TOOL_USE
+from agent_cli.hooks.events import ALL_EVENTS, POST_TOOL_USE, PRE_TOOL_USE
 from agent_cli.hooks.loader import load_python_hooks
 
 

@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-
 from agent_cli.constants import (
     AGENT_DEFAULT_TIMEOUT,
 )
-
 from agent_cli.context.manager import ContextManager
-from agent_cli.providers.base import LLMProvider
-from agent_cli.providers.capabilities import ModelCapabilities
-
-from agent_cli.wire_formats import get as _get_wire_format
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.core import AgentLoop
+from agent_cli.providers.base import LLMProvider
+from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.wire_formats import get as _get_wire_format
 
 
 def run_loop(

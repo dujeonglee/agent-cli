@@ -362,33 +362,33 @@ def tool_delegate(
     # Normalize: LLM may send ["task text"] instead of [{"task": "task text"}]
     tasks = [{"task": t} if isinstance(t, str) else t for t in tasks]
 
-    common_kwargs = dict(
-        parent_ctx=parent_ctx,
-        provider=provider,
-        model=model,
-        capabilities=capabilities,
-        provider_name=provider_name,
-        base_url=base_url,
-        api_key=api_key,
-        depth=depth,
-        max_depth=max_depth,
-        max_turns=max_turns,
-        timeout=timeout,
-        session=session,
-        skill_stack=skill_stack,
-        agent_stack=agent_stack,
-        hooks_config=hooks_config,
-        compaction_enabled=compaction_enabled,
-    )
+    common_kwargs = {
+        "parent_ctx": parent_ctx,
+        "provider": provider,
+        "model": model,
+        "capabilities": capabilities,
+        "provider_name": provider_name,
+        "base_url": base_url,
+        "api_key": api_key,
+        "depth": depth,
+        "max_depth": max_depth,
+        "max_turns": max_turns,
+        "timeout": timeout,
+        "session": session,
+        "skill_stack": skill_stack,
+        "agent_stack": agent_stack,
+        "hooks_config": hooks_config,
+        "compaction_enabled": compaction_enabled,
+    }
 
     if len(tasks) == 1:
         # Single run: grouped nested rendering
         from agent_cli.render import (
             get_renderer,
-            render_group_start,
             render_group_end,
-            render_push_depth,
+            render_group_start,
             render_pop_depth,
+            render_push_depth,
         )
 
         spec = tasks[0]

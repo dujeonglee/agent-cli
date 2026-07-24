@@ -112,8 +112,10 @@ def on_disk_oversized_nudge(
     on-disk clause; ``part_extra`` appends a tool-specific narrowing to bullet
     (a); ``tail_bullets`` adds extra options (e.g. re-delegate-narrower)."""
     lines = [
-        f"[{tool_name}: {subject} is ~{tokens:,} tokens — too large for one "
-        f"context (cap {cap:,}). NOT added to context; {location}.",
+        (
+            f"[{tool_name}: {subject} is ~{tokens:,} tokens — too large for one "
+            f"context (cap {cap:,}). NOT added to context; {location}."
+        ),
         f"· Need a SPECIFIC part? read_file '{read_path}' with a line range"
         + (f", or {part_extra}" if part_extra else "")
         + ".",
@@ -161,8 +163,10 @@ def narrow_oversized_nudge(
     narrowing options, so the advice fits the tool instead of the generic
     line-range / head / grep default."""
     lines = [
-        f"[{tool_name}: {subject} is ~{tokens:,} tokens — too large for one "
-        f"context (cap {cap:,}). NOT added to context; the call succeeded.",
+        (
+            f"[{tool_name}: {subject} is ~{tokens:,} tokens — too large for one "
+            f"context (cap {cap:,}). NOT added to context; the call succeeded."
+        ),
     ]
     lines.extend(f"· {b}" for b in bullets)
     return "\n".join(lines) + "]"
@@ -222,7 +226,7 @@ class Tool(ABC):
         if not isinstance(args, dict):
             return args
         p = self.key_prefix
-        return {(k[len(p) :] if k.startswith(p) else k): v for k, v in args.items()}
+        return {(k.removeprefix(p)): v for k, v in args.items()}
 
     def add_prefix(self, args: dict) -> dict:
         """Inverse of :meth:`strip_prefix`: namespace top-level ``args``

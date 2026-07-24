@@ -36,7 +36,6 @@ from agent_cli.recovery.recursion import (
     format_recursion_error,
 )
 
-
 # ─── Error-message vocabulary (A) ─────────────────────────────
 
 

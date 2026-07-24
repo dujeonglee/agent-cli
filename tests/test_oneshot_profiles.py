@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from agent_cli.subagent.profiles import _PROFILE_NAME_PATTERN, load_profile
 from agent_cli.subagent.oneshot import _run_single
+from agent_cli.subagent.profiles import _PROFILE_NAME_PATTERN, load_profile
 from agent_cli.tools.result import ToolResult
 
 
@@ -20,7 +20,6 @@ def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체 —
     agents 모듈의 로더 전역을 직접 교체한다."""
     import agent_cli.subagent.profiles as _profiles_mod
-
     from agent_cli.resource_loader import ResourceLoader
 
     _profiles_mod._profile_loader = ResourceLoader(list(paths))
@@ -135,7 +134,7 @@ class TestLoadAgent:
 
         _set_agent_paths([agents_dir])
 
-        role, config, error = load_profile("empty")
+        role, _config, error = load_profile("empty")
 
         assert role is None
         assert error is not None  # empty body → not found
@@ -152,7 +151,7 @@ class TestLoadAgent:
 
         _set_agent_paths([project_dir, global_dir])
 
-        role, config, error = load_profile("reviewer")
+        role, _config, error = load_profile("reviewer")
 
         assert error is None
         assert role == "Project reviewer"
@@ -168,7 +167,7 @@ class TestLoadAgent:
 
         _set_agent_paths([project_dir, global_dir])
 
-        role, config, error = load_profile("reviewer")
+        role, _config, error = load_profile("reviewer")
 
         assert error is None
         assert role == "Global reviewer"
@@ -580,8 +579,8 @@ class TestToolDelegatePassesAgent:
         would short-circuit on the stale entry and never draw the new
         cards. uuid4 ids are unique regardless of thread lifecycle.
         """
-        from agent_cli.subagent.oneshot import _run_parallel
         from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.subagent.oneshot import _run_parallel
 
         captured_ids = []
 

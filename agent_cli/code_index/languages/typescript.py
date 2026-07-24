@@ -187,21 +187,21 @@ def walk_refs(
             if parent is not None:
                 pt = parent.type
                 if (
-                    pt
-                    in (
-                        "function_declaration",
-                        "class_declaration",
-                        "method_definition",
+                    (
+                        pt
+                        in (
+                            "function_declaration",
+                            "class_declaration",
+                            "method_definition",
+                        )
+                        and parent.child_by_field_name("name") == node
                     )
-                    and parent.child_by_field_name("name") == node
+                    or (
+                        pt == "variable_declarator"
+                        and parent.child_by_field_name("name") == node
+                    )
+                    or pt == "formal_parameters"
                 ):
-                    skip = True
-                elif (
-                    pt == "variable_declarator"
-                    and parent.child_by_field_name("name") == node
-                ):
-                    skip = True
-                elif pt == "formal_parameters":
                     skip = True
             if not skip and name in defined_names:
                 refs.append(
@@ -241,10 +241,13 @@ def walk_refs(
                             if c == node:
                                 skip = True
                             break
-                elif pt == "type_parameter":
+                elif (
+                    pt == "type_parameter"
+                    and parent.children
+                    and parent.children[0] == node
+                ):
                     # `<T>` itself — T is being declared here.
-                    if parent.children and parent.children[0] == node:
-                        skip = True
+                    skip = True
             if not skip:
                 refs.append(
                     Ref(

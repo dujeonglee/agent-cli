@@ -293,7 +293,9 @@ class TestSkillExecution:
             model=integration_model,
         )
         assert result.success
-        assert str(datetime.datetime.now().year) in result.output
+        assert (
+            str(datetime.datetime.now(tz=datetime.timezone.utc).year) in result.output
+        )
 
     def test_skill_allowed_tools_restriction(
         self, integration_model, omlx_provider, model_capabilities

@@ -17,14 +17,13 @@ See ``docs/robust-harness/DESIGN.md`` §3.3.
 """
 
 from __future__ import annotations
-from agent_cli.fsio import append_line
 
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
+from agent_cli.fsio import append_line
 
 # Failure signal labels — kept as bare strings for forward compatibility.
 # New signal types are mapping-table additions, not new code branches
@@ -65,7 +64,7 @@ class TurnRecord:
     model: str
     timestamp: str  # ISO 8601 UTC
     parse_stage: int  # 0=fail, 1=json.loads, 2=json_repair, 3=regex
-    failure_signal: Optional[str] = None
+    failure_signal: str | None = None
     primitives_applied: list[str] = field(default_factory=list)
 
 
@@ -85,10 +84,10 @@ class TurnRecorder:
 
     def __init__(
         self,
-        session_dir: Optional[Path],
+        session_dir: Path | None,
         enabled: bool = True,
     ):
-        self._path: Optional[Path]
+        self._path: Path | None
         if session_dir is None or not enabled:
             self._path = None
         else:
@@ -103,8 +102,8 @@ class TurnRecorder:
         *,
         model: str,
         parse_stage: int,
-        failure_signal: Optional[str] = None,
-        primitives_applied: Optional[list[str]] = None,
+        failure_signal: str | None = None,
+        primitives_applied: list[str] | None = None,
     ) -> None:
         """Append one record to ``turns.jsonl``. No-op when disabled."""
         if self._path is None:
@@ -135,7 +134,7 @@ class TurnRecorder:
         tokens_after: int,
         evicted_count: int,
         fallback_used: bool,
-        failure_signal: Optional[str] = None,
+        failure_signal: str | None = None,
         duration_ms: float = 0.0,
     ) -> None:
         """Append a compaction event to ``turns.jsonl`` (NFR-CC-6).

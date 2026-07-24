@@ -39,12 +39,12 @@ from agent_cli.wire_formats.base import Op, ParsedAction, ParsedTurn, WireFormat
 
 # ── 구조 토큰 ────────────────────────────────────────────────
 
-_FUNC_OPEN = re.compile(r"<function=([\w.\-]*)>", re.I)
-_FIRST_STRUCT = re.compile(r"<tool_call>|<function=", re.I)
-_TOOL_CALL_OPEN = re.compile(r"<tool_call>", re.I)
-_TOOL_CALL_CLOSE = re.compile(r"</tool_call>", re.I)
-_FUNC_CLOSE = re.compile(r"</function>", re.I)
-_PARAM_OPEN = re.compile(r"<parameter=([\w.\-]+)>", re.I)
+_FUNC_OPEN = re.compile(r"<function=([\w.\-]*)>", re.IGNORECASE)
+_FIRST_STRUCT = re.compile(r"<tool_call>|<function=", re.IGNORECASE)
+_TOOL_CALL_OPEN = re.compile(r"<tool_call>", re.IGNORECASE)
+_TOOL_CALL_CLOSE = re.compile(r"</tool_call>", re.IGNORECASE)
+_FUNC_CLOSE = re.compile(r"</function>", re.IGNORECASE)
+_PARAM_OPEN = re.compile(r"<parameter=([\w.\-]+)>", re.IGNORECASE)
 
 # 닫힌 파라미터 — lookahead 앵커 (§5.3): closer 뒤에 (공백 지나) 다음
 # 구조 토큰이 따라올 때만 경계. 값 안의 고아 closer 는 앵커 불일치로
@@ -60,26 +60,27 @@ _PARAM_OPEN = re.compile(r"<parameter=([\w.\-]+)>", re.I)
 _PARAM_CLOSED = re.compile(
     r"<parameter=([\w.\-]+)>(.*?)</(?:parameter|\1)>\s*"
     r"(?=<parameter=|</function>|</tool_call>|<function=|<tool_call>|\Z)",
-    re.S | re.I,
+    re.DOTALL | re.IGNORECASE,
 )
 
 # thought 산문에 흘린 구조 센티널 라인 (sanitize — prior 재주입 방지).
 _SENTINEL_LINE = re.compile(
     r"^\s*</?(?:tool_call|function(?:=[\w.\-]*)?|parameter(?:=[\w.\-]*)?)>\s*$",
-    re.MULTILINE | re.I,
+    re.MULTILINE | re.IGNORECASE,
 )
 
 # format runaway: 빈 <tool_call> 골격 반복 (json_fc 헤더-반복 검사 동형,
 # ≥2 임계 철학 동일).
-_DEGEN_EMPTY_BLOCK = re.compile(r"<tool_call>\s*</tool_call>", re.I)
-_DEGEN_OPEN_RUN = re.compile(r"<tool_call>(?=\s*<tool_call>)", re.I)
+_DEGEN_EMPTY_BLOCK = re.compile(r"<tool_call>\s*</tool_call>", re.IGNORECASE)
+_DEGEN_OPEN_RUN = re.compile(r"<tool_call>(?=\s*<tool_call>)", re.IGNORECASE)
 
 # prose_completion 필터 — thought 에 이 흔적이 있으면 '자연어 최종답변'이
 # 아니라 파싱 실패한 액션 잔해. xml_fc 는 태그 syntax(<function=/<parameter=/
 # <tool_call>/</)를 흘리는 half-broken 이 잦아(bakeoff 실측 A범주 20건 전부
 # xml_fc) JSON 흔적에 더해 태그 흔적까지 본다. 보수적: 조금이라도 있으면 제외.
 _XML_ACTION_RESIDUE = re.compile(
-    r'\[\s*\{|\{\s*"|"action"|action\s*=|<function|<parameter|<tool_call|</\w', re.I
+    r'\[\s*\{|\{\s*"|"action"|action\s*=|<function|<parameter|<tool_call|</\w',
+    re.IGNORECASE,
 )
 
 # JSON parse 를 시도할 스키마 타입 — string/미선언은 raw 유지.
@@ -161,10 +162,8 @@ def _trim_block(value: str) -> str:
     내부 공백/개행은 보존 — raw 값 계약. (render 측이 멀티라인 값을
     블록 스타일로 쓰므로 이 트림과 대칭 = round-trip 보존.)
     """
-    if value.startswith("\n"):
-        value = value[1:]
-    if value.endswith("\n"):
-        value = value[:-1]
+    value = value.removeprefix("\n")
+    value = value.removesuffix("\n")
     return value
 
 
@@ -215,7 +214,7 @@ def _extract_params(segment: str) -> tuple[dict, bool]:
         stop = re.search(
             r"<parameter=|</function>|</tool_call>|<function=|<tool_call>",
             rest,
-            re.I,
+            re.IGNORECASE,
         )
         raw = rest[: stop.start()] if stop else rest
         params[om.group(1)] = _trim_block(raw.rstrip())
@@ -345,7 +344,7 @@ class XmlFcFormat(WireFormat):
             seg_end = opens[i + 1].start() if i + 1 < len(opens) else len(text)
             segment = text[m.end() : seg_end]
             name = m.group(1)
-            close_m = re.search(rf"</{re.escape(name)}>", segment, re.I)
+            close_m = re.search(rf"</{re.escape(name)}>", segment, re.IGNORECASE)
             if close_m is not None:
                 segment = segment[: close_m.start()]
             params = _coerce_params(name, _extract_params_lenient(segment))

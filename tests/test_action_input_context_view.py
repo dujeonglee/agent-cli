@@ -14,6 +14,7 @@ stay faithful.
 """
 
 import json
+from typing import ClassVar
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.render import (
@@ -90,7 +91,7 @@ class TestSeamDefaultIdentity:
 class _ElidingTool(Tool):
     name = "write_file"  # shadow registry entry for the test
     description = ""
-    parameters: dict = {}
+    parameters: ClassVar[dict] = {}
 
     def _run(self, args, *, ctx=None):  # pragma: no cover - unused
         raise NotImplementedError

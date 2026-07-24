@@ -36,7 +36,6 @@ mentioned anywhere" (no filter) or "where is this used as a callback"
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 # Bumped when the on-disk symbol/ref shape produced by walkers changes
 # in a way that older indexes cannot be queried by current code. Loading
@@ -97,13 +96,13 @@ class Symbol:
     language: str
 
     # Optional / language-specific enrichment. None when not applicable.
-    kind_raw: Optional[str] = None
-    modifiers: Optional[list[str]] = None
-    parent: Optional[str] = None
-    signature: Optional[str] = None
-    return_type: Optional[str] = None
-    enum_values: Optional[list[str]] = None
-    params: Optional[list[str]] = field(default=None)
+    kind_raw: str | None = None
+    modifiers: list[str] | None = None
+    parent: str | None = None
+    signature: str | None = None
+    return_type: str | None = None
+    enum_values: list[str] | None = None
+    params: list[str] | None = field(default=None)
 
     # Full display form — what `list` output shows and what the model
     # most naturally passes back. For symbols WITHOUT a parent this

@@ -160,7 +160,7 @@ class TestRolesLoader:
 
     def test_missing_role_reports_search_paths(self, monkeypatch, tmp_path):
         roles = self._swap_loader(monkeypatch, tmp_path)
-        body, config, error = roles.load_profile("nope")
+        body, _config, error = roles.load_profile("nope")
         assert body is None
         assert "not found" in error
         assert "agents" in error  # 5.0.0: 단일 프로파일 카탈로그 경로 안내
@@ -342,8 +342,8 @@ class TestMaxAgents:
 
     def test_lowering_cap_does_not_kill_existing(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
-        k1, _ = reg.spawn()
-        k2, _ = reg.spawn()
+        _k1, _ = reg.spawn()
+        _k2, _ = reg.spawn()
         wait_until(lambda: reg.alive_count() == 2)
         reg.set_max_agents(1)  # below current alive
         assert reg.alive_count() == 2  # existing survive
@@ -376,7 +376,7 @@ class TestRegistryLifecycle:
     def test_spawn_limit(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         reg.set_max_agents(1)
-        key, err = reg.spawn()
+        _key, err = reg.spawn()
         assert err == ""
         key2, err2 = reg.spawn()
         assert key2 == "" and "limit" in err2
@@ -1051,8 +1051,9 @@ class TestAskRouting:
         fake.can_prompt.return_value = False
         fake._prefix = ""
         assert dispatch_mod is not None  # import 경로 확인용
-        import agent_cli.render as render_mod
         import pytest as _pytest
+
+        import agent_cli.render as render_mod
 
         mp = _pytest.MonkeyPatch()
         try:
@@ -1961,7 +1962,7 @@ class TestPeerMessaging:
         message_to_main 이 mailbox 만 채우고 agent_message 표면과
         conversation.jsonl 을 건너뛰던 갭 — out 방향으로 둘 다 남겨야 한다."""
         runner = _RecordingRunner()
-        reg, a, b = self._reg_two(tmp_path, runner)
+        reg, a, _b = self._reg_two(tmp_path, runner)
         handler = reg._make_message_handler(reg.get(a))
         with renderer.lock:
             renderer.calls.clear()
@@ -2326,7 +2327,7 @@ class TestResumeMode:
         assert "still alive" in reg.resume_teammate(key)  # 산 사람 부활 금지
         reg.kill(key)
         reg.set_max_agents(1)
-        k2, _ = reg.spawn()
+        _k2, _ = reg.spawn()
         assert "limit" in reg.resume_teammate(key)  # 상한 존중
         reg.shutdown_all()
 
@@ -2594,9 +2595,8 @@ class TestInspectorImmediateReflection:
 
     def test_no_snapshot_is_safe_noop(self, tmp_path, monkeypatch):
         # CLI(minimal)·스냅샷 미존재 환경에서도 멤버십 변화가 안전.
-        from agent_cli.render.web import WebRenderer
-
         import agent_cli.render as render_mod
+        from agent_cli.render.web import WebRenderer
 
         r = WebRenderer()  # note_system_prompt 안 함 — 스냅샷 없음
         monkeypatch.setattr(render_mod, "get_renderer", lambda: r)

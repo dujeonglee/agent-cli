@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from typing import ClassVar
 
 from agent_cli.render.base import ConfirmOption
 from agent_cli.render.web import WebConnection, WebRenderer
@@ -483,7 +484,12 @@ class TestConnectionLifecycle:
 class TestTokenUsage:
     """Per-turn token usage: live emit + latest-cached snapshot replay."""
 
-    _STATS = {"in": 5000, "out": 320, "context_window": 262144, "total_out": 320}
+    _STATS: ClassVar[dict] = {
+        "in": 5000,
+        "out": 320,
+        "context_window": 262144,
+        "total_out": 320,
+    }
 
     def test_emits_token_usage_event(self):
         r = WebRenderer()
@@ -689,9 +695,7 @@ class TestPromptUserInput:
         # Give the worker a moment to enter the wait — then push input.
         # Polling loop avoids a race on slow CI without arbitrary sleeps.
         deadline = time.time() + 2.0
-        while (
-            t.is_alive() and not r._input_queue.qsize() == 0 and time.time() < deadline
-        ):
+        while t.is_alive() and r._input_queue.qsize() != 0 and time.time() < deadline:
             time.sleep(0.05)
 
         r.push_user_input("prompt", {"content": "hello"})
@@ -815,7 +819,7 @@ class TestPromptUserInput:
 
 
 class TestConfirmInput:
-    options = [
+    options: ClassVar[list] = [
         ConfirmOption(key="y", label="yes", aliases=("yes",)),
         ConfirmOption(key="n", label="no", aliases=("no",)),
     ]
@@ -1157,9 +1161,11 @@ class TestRendererBaseDelegateTaskNoOp:
     call them unconditionally without branching on renderer type."""
 
     def test_minimal_renderer_begin_end_are_no_ops(self):
-        from agent_cli.render.minimal import MinimalRenderer
         from io import StringIO
+
         from rich.console import Console
+
+        from agent_cli.render.minimal import MinimalRenderer
 
         r = MinimalRenderer(Console(file=StringIO(), force_terminal=False))
         # Should not raise — no-op implementations on base.
@@ -2131,7 +2137,7 @@ class TestEmitSerializesOnce:
         r = WebRenderer()
         conn = WebConnection(id="c1")
         snapshot = r.register_connection(conn)
-        ident = [d for e, d in snapshot if e == "identity"][0]
+        ident = next(d for e, d in snapshot if e == "identity")
         assert getattr(ident, "json_str", None) is None
 
 

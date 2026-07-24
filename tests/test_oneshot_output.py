@@ -6,8 +6,11 @@ output format, persistence, iterations, and integration.
 
 from __future__ import annotations
 
-
-from agent_cli.subagent.oneshot import _run_parallel, _run_single, tool_delegate  # noqa: F401
+from agent_cli.subagent.oneshot import (  # noqa: F401
+    _run_parallel,
+    _run_single,
+    tool_delegate,
+)
 from agent_cli.subagent.report import (
     DelegateResult,
     _extract_activity_log,
@@ -15,7 +18,6 @@ from agent_cli.subagent.report import (
     _format_delegate_output,
     _summarize_action,
 )
-
 
 # ── Test helpers ─────────────────────────────────────────────
 # Fixtures produce the REAL on-disk assistant record shapes the extractors

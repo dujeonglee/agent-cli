@@ -56,7 +56,9 @@ def _allow_prompt(monkeypatch):
 class TestResolveWithin:
     def test_absolute_inside(self, tmp_path):
         root = tmp_path.resolve()
-        resolved, inside = _confine.resolve_within(str(tmp_path / "a/b.txt"), root=root)
+        _resolved, inside = _confine.resolve_within(
+            str(tmp_path / "a/b.txt"), root=root
+        )
         assert inside is True
 
     def test_absolute_outside(self, tmp_path):
@@ -268,7 +270,7 @@ class TestConfineWaitsForLateViewer:
         import agent_cli.render as render_mod
         from agent_cli.render.web import WebConnection, WebRenderer
 
-        ws, outside = confined
+        _ws, outside = confined
         r = WebRenderer()
         monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
         results = []

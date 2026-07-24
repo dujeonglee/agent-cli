@@ -88,7 +88,7 @@ def _path_candidate(tok: str) -> str | None:
             return None
     if not t:
         return None
-    if t.startswith("/") or t.startswith("~/") or t == "~":
+    if t.startswith(("/", "~/")) or t == "~":
         return t
     if t == ".." or t.startswith("../") or "/../" in t:
         return t

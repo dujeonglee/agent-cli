@@ -15,11 +15,11 @@ returned Intervention has the static message and no primitives).
 """
 
 from agent_cli.recovery.common_recovery import format_action_loop_intervention
+from agent_cli.recovery.intervention import Intervention
 from agent_cli.recovery.wf_recovery import (
     format_no_action_retry,
     format_no_json_retry,
 )
-from agent_cli.recovery.intervention import Intervention
 from agent_cli.wire_formats import all_system_user_prefixes
 from agent_cli.wire_formats.json_fc import JsonFcFormat
 
@@ -154,13 +154,13 @@ class TestFormatActionLoopIntervention:
     """
 
     def _kwargs(self, **overrides):
-        base = dict(
-            level=1,
-            action="read_file",
-            args_repr='{"path": "x.py"}',
-            repeat_count=2,
-            task="Refactor the parser",
-        )
+        base = {
+            "level": 1,
+            "action": "read_file",
+            "args_repr": '{"path": "x.py"}',
+            "repeat_count": 2,
+            "task": "Refactor the parser",
+        }
         base.update(overrides)
         return base
 

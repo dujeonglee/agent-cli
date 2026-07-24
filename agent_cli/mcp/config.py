@@ -16,7 +16,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 _MCP_CONFIG_PATHS = [
     Path.home() / ".agent-cli" / "mcp.json",  # user global (lower priority)
     Path.cwd() / ".agent-cli" / "mcp.json",  # project local (higher priority)

@@ -13,20 +13,19 @@ expose the same ``.name`` / ``.description`` / ``.parameters`` attributes.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-import json
-
+from agent_cli.tools.agent_tool import AgentTool
 from agent_cli.tools.base import RunContext, Tool
 from agent_cli.tools.code_index import CodeIndexTool
 from agent_cli.tools.context import ReadContextTool
-from agent_cli.tools.memory_tool import MemoryTool
 from agent_cli.tools.edit_file import EditFileTool
 from agent_cli.tools.fetch import FetchTool
+from agent_cli.tools.memory_tool import MemoryTool
 from agent_cli.tools.read_file import ReadFileTool
 from agent_cli.tools.result import ToolResult
 from agent_cli.tools.shell import ShellTool
-from agent_cli.tools.agent_tool import AgentTool
 from agent_cli.tools.virtual import (
     AskTool,
     CompleteTool,

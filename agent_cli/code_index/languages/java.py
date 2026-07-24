@@ -17,8 +17,6 @@ name.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
 from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
@@ -71,7 +69,7 @@ def java_extract_method(
     node,
     src: bytes,
     rel: str,
-    parent: Optional[str],
+    parent: str | None,
     out: list,
     is_constructor: bool = False,
 ):
@@ -112,7 +110,7 @@ def java_extract_method(
     )
 
 
-def java_extract_field(node, src: bytes, rel: str, parent: Optional[str], out: list):
+def java_extract_field(node, src: bytes, rel: str, parent: str | None, out: list):
     mods = java_modifiers(node, src)
     is_const = "static" in mods and "final" in mods
     type_node = node.child_by_field_name("type")
@@ -147,7 +145,7 @@ def java_extract_class(
     node,
     src: bytes,
     rel: str,
-    parent: Optional[str],
+    parent: str | None,
     out: list,
     kind_raw: str = "class_declaration",
 ):
@@ -191,7 +189,7 @@ def java_extract_class(
             java_extract_enum(stmt, src, rel, inner, out)
 
 
-def java_extract_enum(node, src: bytes, rel: str, parent: Optional[str], out: list):
+def java_extract_enum(node, src: bytes, rel: str, parent: str | None, out: list):
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return
@@ -309,15 +307,12 @@ def walk_refs(
             skip = False
             if parent is not None:
                 pt = parent.type
-                if pt in ("method_declaration", "constructor_declaration"):
-                    if parent.child_by_field_name("name") == node:
-                        skip = True
-                elif pt == "variable_declarator":
-                    if parent.child_by_field_name("name") == node:
-                        skip = True
-                elif pt == "formal_parameter":
-                    if parent.child_by_field_name("name") == node:
-                        skip = True
+                if (
+                    pt in ("method_declaration", "constructor_declaration")
+                    or pt == "variable_declarator"
+                    or pt == "formal_parameter"
+                ) and parent.child_by_field_name("name") == node:
+                    skip = True
             if not skip and name in defined_names:
                 refs.append(
                     Ref(

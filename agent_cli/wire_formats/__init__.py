@@ -210,17 +210,17 @@ def all_system_user_prefixes() -> tuple[str, ...]:
 
 
 __all__ = [
+    "Op",
     "ParsedAction",
     "ParsedTurn",
-    "Op",
     "WireFormat",
-    "register",
+    "all_system_user_prefixes",
     "get",
     "list_names",
-    "wire_format_for_model",
+    "register",
     "resolve_wire_format",
     "try_foreign_parse",
-    "all_system_user_prefixes",
+    "wire_format_for_model",
 ]
 
 

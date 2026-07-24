@@ -2,30 +2,31 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
+import re
 import subprocess
 import threading
 import time
-import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import typer
-from dataclasses import dataclass
-import dataclasses
 
 from agent_cli.config import get_provider_defaults
-from agent_cli.constants import SHELL_COMMAND_TIMEOUT, AGENT_DEFAULT_TIMEOUT
+from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
 from agent_cli.providers import (
+    UnsupportedModelError,
     create_provider,
     get_capabilities,
-    UnsupportedModelError,
 )
 from agent_cli.render import C, console, get_renderer
 from agent_cli.wire_formats import (
     get as _get_wire_format,
+)
+from agent_cli.wire_formats import (
     resolve_wire_format as _resolve_wire_format,
 )
 
@@ -86,6 +87,7 @@ def _run_shell_inline(cmd: str) -> None:
             shell=True,
             capture_output=True,
             timeout=SHELL_COMMAND_TIMEOUT,
+            check=False,
         )
         if result.stdout:
             console.print(
@@ -170,9 +172,9 @@ def _maybe_setup() -> None:
 
 def _setup_mcp():
     """Initialize MCP servers from mcp.json. Returns (manager, mcp_tools) or (None, {})."""
-    from agent_cli.mcp.config import load_mcp_config
-    from agent_cli.mcp.client import McpClientManager
     from agent_cli.mcp.adapter import register_mcp_tools
+    from agent_cli.mcp.client import McpClientManager
+    from agent_cli.mcp.config import load_mcp_config
 
     configs = load_mcp_config()
     if not configs:
@@ -281,7 +283,7 @@ def _parse_at_profile(name: str) -> tuple[str, str]:
     """
     from agent_cli.subagent.profiles import load_profile
 
-    body, _, err = load_profile(name) if name else (None, {}, "empty")
+    _body, _, err = load_profile(name) if name else (None, {}, "empty")
     if err is None:
         return name, "run"
     for suffix, mode in (("-run", "run"), ("-spawn", "spawn")):
@@ -696,7 +698,7 @@ def _dispatch_skill(
     stop_event=None,
 ):
     """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
-    from agent_cli.skills import load_skills, execute_skill
+    from agent_cli.skills import execute_skill, load_skills
 
     skills = load_skills()
     parts = query.split(maxsplit=1)
@@ -717,13 +719,14 @@ def _dispatch_skill(
             }
         )
 
-    from agent_cli.render import (
-        render_group_start,
-        render_group_end,
-        render_push_depth,
-        render_pop_depth,
-    )
     import time as _time
+
+    from agent_cli.render import (
+        render_group_end,
+        render_group_start,
+        render_pop_depth,
+        render_push_depth,
+    )
 
     render_group_start(f"skill:{cmd_name}", icon="🪄")
     render_push_depth()
@@ -1026,24 +1029,24 @@ def _build_context(session, boot: SessionBootstrap, *, resume: bool = False):
 @app.command()
 def run(
     query: str = typer.Argument(..., help="Task to execute"),
-    provider: Optional[str] = typer.Option(
+    provider: str | None = typer.Option(
         None,
         "--provider",
         "-p",
         help="LLM provider: openai | anthropic (default: openai)",
     ),
-    model: Optional[str] = typer.Option(
+    model: str | None = typer.Option(
         None,
         "--model",
         "-m",
         help="Model ID (uses provider default if not specified)",
     ),
-    base_url: Optional[str] = typer.Option(
+    base_url: str | None = typer.Option(
         None,
         "--base-url",
         help="API base URL (uses provider default if not specified)",
     ),
-    api_key: Optional[str] = typer.Option(
+    api_key: str | None = typer.Option(
         None,
         "--api-key",
         help="API key (auto-detects from environment if not specified)",
@@ -1075,7 +1078,7 @@ def run(
         "-v",
         help="Show raw LLM response",
     ),
-    style: Optional[str] = typer.Option(
+    style: str | None = typer.Option(
         None,
         "--style",
         help="Renderer style: minimal (default) or custom renderer name",
@@ -1085,7 +1088,7 @@ def run(
         "--record-turns/--no-record-turns",
         help="Append per-turn observability data to {session_dir}/turns.jsonl (recovery analysis; structural metadata only, no prompts/responses)",
     ),
-    response_format: Optional[str] = typer.Option(
+    response_format: str | None = typer.Option(
         None,
         "--response-format",
         help="Wire format plugin name. Unset resolves: resumed session's recorded format > models.json per-model 'wire_format' binding > json_fc (plain-prose reasoning + a flat JSON op array; multi-op). Other built-in: xml_fc (tag-parameter <tool_call>/<function=>/<parameter=> — raw values, no JSON escaping). Plugins live in agent_cli/wire_formats/; the registered names list is the set of valid values.",
@@ -1463,7 +1466,7 @@ def setup():
 
 @app.command()
 def sessions(
-    workspace: Optional[str] = typer.Option(
+    workspace: str | None = typer.Option(
         None, "--workspace", "-w", help="Filter by workspace path"
     ),
 ):
@@ -1618,6 +1621,7 @@ def update(
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     if r.returncode != 0:
         console.print(
@@ -1663,13 +1667,15 @@ def update(
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         wheels = list(Path(d).glob("*.whl"))
         if dl.returncode != 0 or not wheels:
             console.print(f"[red]Download failed:[/red] {dl.stderr.strip()[:200]}")
             raise typer.Exit(1)
         pip = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", str(wheels[0])]
+            [sys.executable, "-m", "pip", "install", "--upgrade", str(wheels[0])],
+            check=False,
         )
         if pip.returncode != 0:
             console.print("[red]pip install failed.[/red]")
@@ -1679,24 +1685,24 @@ def update(
 
 @app.command()
 def web(
-    provider: Optional[str] = typer.Option(
+    provider: str | None = typer.Option(
         None,
         "--provider",
         "-p",
         help="LLM provider: openai | anthropic (default: openai)",
     ),
-    model: Optional[str] = typer.Option(
+    model: str | None = typer.Option(
         None,
         "--model",
         "-m",
         help="Model ID (uses provider default if not specified)",
     ),
-    base_url: Optional[str] = typer.Option(
+    base_url: str | None = typer.Option(
         None,
         "--base-url",
         help="API base URL (uses provider default if not specified)",
     ),
-    api_key: Optional[str] = typer.Option(
+    api_key: str | None = typer.Option(
         None,
         "--api-key",
         help="API key (auto-detects from environment if not specified)",
@@ -1713,7 +1719,7 @@ def web(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     record_turns: bool = typer.Option(True, "--record-turns/--no-record-turns"),
-    response_format: Optional[str] = typer.Option(
+    response_format: str | None = typer.Option(
         None,
         "--response-format",
         help="Wire format plugin name. Unset resolves: resumed session's "
@@ -1723,7 +1729,7 @@ def web(
     host: str = typer.Option(
         "0.0.0.0", "--host", help="Bind address (default: 0.0.0.0 — LAN)"
     ),
-    port: Optional[int] = typer.Option(
+    port: int | None = typer.Option(
         None,
         "--port",
         help=(
@@ -1732,7 +1738,7 @@ def web(
             "exactly (uvicorn raises if it's in use)."
         ),
     ),
-    token: Optional[str] = typer.Option(
+    token: str | None = typer.Option(
         None,
         "--token",
         help="Auth token. Random 32-byte URL-safe string when omitted.",
@@ -1740,7 +1746,7 @@ def web(
     no_browser: bool = typer.Option(
         False, "--no-browser", help="Do not open the browser automatically"
     ),
-    resume: Optional[str] = typer.Option(
+    resume: str | None = typer.Option(
         None,
         "--resume",
         help="Resume a previous session by ID (use 'agent-cli sessions' to list).",
@@ -1828,13 +1834,13 @@ def web(
         TOOLS.update(mcp_tools)
 
     # 2. Session + ContextManager.
+    import sys
+
     from agent_cli.context.session import (
         finalize_session,
         get_session_dir,
         save_meta,
     )
-
-    import sys
 
     if session_resumed is not None:
         session = session_resumed
@@ -2047,7 +2053,7 @@ def web(
                         ctx=ctx,
                         session=session,
                         graceful_interrupt=True,
-                        stop_event=stop_event,
+                        stop_event=stop_event,  # noqa: B023 — route_one runs only within this turn iteration
                     )
 
                 if route_one(message):
@@ -2073,7 +2079,7 @@ def web(
                             agent_timeout=agent_timeout,
                             session=session,
                             graceful_interrupt=True,
-                            stop_event=stop_event,
+                            stop_event=stop_event,  # noqa: B023 — _run_main is called immediately, same iteration
                             record_turns=record_turns,
                             wire_format=wire_format_plugin,
                             mcp_manager=mcp_manager,
@@ -2082,7 +2088,7 @@ def web(
 
                     _run_main(message, nickname)
 
-                except Exception as exc:  # noqa: BLE001 — worker boundary
+                except Exception as exc:
                     # Push the error into the renderer so the frontend
                     # sees it rather than dying silently. Worker keeps
                     # spinning to handle the next message.
@@ -2099,7 +2105,7 @@ def web(
         '큐가 안 빠져요'로만 보였던 사고의 재발 방지)."""
         try:
             _worker_loop()
-        except BaseException as exc:  # noqa: BLE001 — 최후 방벽
+        except BaseException as exc:
             import traceback
 
             traceback.print_exc()
@@ -2166,7 +2172,7 @@ def web(
             import webbrowser
 
             webbrowser.open(ui_url)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     else:
         # Remote bind (specific non-loopback IP): opening a browser on the
@@ -2197,7 +2203,7 @@ def web(
     # it never has to track/kill processes (next click re-spawns with --resume).
     # A daemon poll thread checks the idle predicate and trips uvicorn's
     # should_exit → the finally block below does the normal teardown + save.
-    idle_thread: Optional[threading.Thread] = None
+    idle_thread: threading.Thread | None = None
     if idle_timeout and idle_timeout > 0:
         from agent_cli.web.idle import IdleMonitor
 
@@ -2237,5 +2243,5 @@ def web(
         try:
             finalize_session(session, ctx)
             console.print(f"[{C['muted']}]Session {session.session_id} saved.[/]")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             console.print(f"[red]Failed to save session: {exc}[/]")

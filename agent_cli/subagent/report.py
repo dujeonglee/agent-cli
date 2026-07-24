@@ -10,15 +10,8 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from agent_cli.tools.result import ToolResult
-
-if TYPE_CHECKING:
-    # Runtime-imported inside the dispatch path to avoid a
-    # registry → delegate → context.manager → tools.registry →
-    # tools import cycle (registry now imports DelegateTool at module load).
-    pass
 
 # ── Agent file loading ──────────────────────────
 

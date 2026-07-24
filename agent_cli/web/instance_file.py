@@ -16,11 +16,12 @@ Pure read/write/remove — no server dependency, no global state.
 """
 
 from __future__ import annotations
-from agent_cli.fsio import atomic_write_json
 
 import json
 import os
 from pathlib import Path
+
+from agent_cli.fsio import atomic_write_json
 
 _NAME = "web.json"
 _STATUS_NAME = "status.json"

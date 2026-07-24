@@ -19,8 +19,8 @@ class TestVocab:
 
     def test_consumers_share_vocab(self):
         # 드리프트 방지의 실체: 각 소비자가 같은 객체/값을 본다.
-        from agent_cli.providers.capabilities import _THINKING_TAGS
         from agent_cli.providers.base import strip_think_blocks as provider_strip
+        from agent_cli.providers.capabilities import _THINKING_TAGS
 
         assert tuple(_THINKING_TAGS) == THINK_TAG_NAMES
         assert provider_strip is strip_think_blocks  # re-export 동일 객체

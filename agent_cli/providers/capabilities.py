@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import requests
 
-from agent_cli.constants import DETECTION_PROBE_TIMEOUT
-
 from agent_cli.config import get_model_entry, save_model_entry
+from agent_cli.constants import DETECTION_PROBE_TIMEOUT
 from agent_cli.thinking_tags import THINK_TAG_NAMES as _THINKING_TAGS
-
 
 # Optional progress callback — set by the caller (main.py) before
 # runtime capability detection so the user sees what each probe step
@@ -172,7 +170,7 @@ def _build_from_entry(entry: dict) -> ModelCapabilities:
 # (모듈 상단 import — strip 경로와 탐지 경로가 같은 4종을 봐야 한다).
 _THINKING_TAG_PATTERN = re.compile(
     r"<(" + "|".join(_THINKING_TAGS) + r")>",
-    re.I,
+    re.IGNORECASE,
 )
 
 

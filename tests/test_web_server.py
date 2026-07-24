@@ -25,6 +25,7 @@ import json
 import logging
 import threading
 import time
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -33,10 +34,10 @@ from fastapi.testclient import TestClient
 from agent_cli.render.web import WebRenderer
 from agent_cli.web.server import (
     WebServer,
+    _IncompleteResponseLogFilter,
     create_app,
     pick_port,
     suppress_incomplete_response_log,
-    _IncompleteResponseLogFilter,
 )
 
 
@@ -206,6 +207,7 @@ class TestHandleSlashCommand:
 
     def test_slash_compact_reports_before_after(self):
         from unittest.mock import MagicMock
+
         from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
@@ -226,6 +228,7 @@ class TestHandleSlashCommand:
 
     def test_slash_compact_no_change(self):
         from unittest.mock import MagicMock
+
         from agent_cli.web.slash import handle_slash_command
 
         renderer = WebRenderer()
@@ -906,7 +909,7 @@ class TestInputGate:
         # 거절된 답변은 user_message 로 echo 되어서도 안 된다.
         while True:
             try:
-                event, data = conn.queue.get(timeout=0.2)
+                event, _data = conn.queue.get(timeout=0.2)
             except Exception:
                 break
             assert event != "user_message"
@@ -1393,10 +1396,9 @@ class TestStreamGenerator:
 
 # Imports needed by the async tests — defined here so other test
 # classes don't pay the import cost when running selectively.
-import asyncio  # noqa: E402
+import asyncio
 
-from agent_cli.render.web import WebConnection  # noqa: E402
-
+from agent_cli.render.web import WebConnection
 
 # ── Prompt Inspector (GET /api/debug/prompt) ───────
 
@@ -1563,7 +1565,7 @@ class TestExportEndpoints:
 
     # Credentials are no longer stored server-side; deployment is pinned so the
     # targets endpoint doesn't probe the network during tests.
-    _CFG = {
+    _CFG: ClassVar[dict] = {
         "jira": {
             "instances": {
                 "work": {
@@ -2511,7 +2513,8 @@ class TestC3ModuleSeparation:
         import sys
 
         mod = importlib.import_module("agent_cli.web.directives")
-        src = open(mod.__file__).read()
+        with open(mod.__file__) as fh:
+            src = fh.read()
         # import 문 기준 검사 (docstring 의 "FastAPI 무의존" 언급은 무관)
         imports = [ln for ln in src.splitlines() if ln.startswith(("import ", "from "))]
         assert not any("fastapi" in ln or "starlette" in ln for ln in imports)
@@ -2524,7 +2527,8 @@ class TestC3ModuleSeparation:
             import importlib
 
             mod = importlib.import_module(name)
-            assert "web.server" not in open(mod.__file__).read(), name
+            with open(mod.__file__) as fh:
+                assert "web.server" not in fh.read(), name
 
     def test_directives_generation_task_standalone(self):
         # 생성 태스크 빌더가 server 없이 동작 (5.4.0 스코프 에디터)

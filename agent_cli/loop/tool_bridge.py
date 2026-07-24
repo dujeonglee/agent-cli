@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import json
 
-from agent_cli.tools.result import ToolResult
-
 from agent_cli.context.token_estimator import estimate_tokens
-from agent_cli.tools import TOOLS, RunContext, _execute_tool
-from agent_cli.tools.base import default_oversized_nudge
-
-from agent_cli.verbose import debug_log as _debug_log
 
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig, LoopState
+from agent_cli.tools import TOOLS, RunContext, _execute_tool
+from agent_cli.tools.base import default_oversized_nudge
+from agent_cli.tools.result import ToolResult
+from agent_cli.verbose import debug_log as _debug_log
 
 
 def _normalize_input(tool_input) -> str:
@@ -115,7 +113,7 @@ class ToolBridge:
                 result = self._invoke_agent(tool_input, input_dict)
             else:
                 result = self._invoke_regular(tool_name, tool_input)
-        except Exception as e:  # noqa: BLE001 — safety net by design
+        except Exception as e:
             import traceback as _tb
 
             # Full traceback to debug log so diagnosis isn't lost.

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from agent_cli.context.session import get_session_dir, list_sessions
 from agent_cli.tools.base import Tool, narrow_oversized_nudge
@@ -257,7 +257,7 @@ def _apply_read_only(conn, sqlite3) -> None:
 
 def _run_sql(conn, query: str) -> ToolResult:
     head = query.lstrip("( \t\n").lstrip().upper()
-    if not (head.startswith("SELECT") or head.startswith("WITH")):
+    if not (head.startswith(("SELECT", "WITH"))):
         return ToolResult(
             False,
             error="Only SELECT queries are allowed (start with SELECT or WITH).",
@@ -324,8 +324,10 @@ def _session_title(meta) -> str:
 
 _HELP_EXAMPLES = (
     # scan first (project a substr preview so many rows stay small)…
-    "SELECT loc, turn, substr(text,1,200) FROM history WHERE kind='observation' "
-    "AND files LIKE '%auth.py%' LIMIT 30",
+    (
+        "SELECT loc, turn, substr(text,1,200) FROM history WHERE kind='observation' "
+        "AND files LIKE '%auth.py%' LIMIT 30"
+    ),
     # …then fetch the full content of the one row you want
     "SELECT text FROM history WHERE loc='<session>/<file>:<line>'",
     "SELECT text FROM history WHERE author='Alice' AND kind='query'",
@@ -345,10 +347,14 @@ def _help(session_dir: Path | None) -> ToolResult:
         "Table `history` (one row per turn record):",
         schema,
         "",
-        "  kind: query=user ask · action=tool-call turn · observation=tool result"
-        " · final=complete answer · raw=unparsed",
-        "  Default scope = current session; pass read_context_sessions='all' or"
-        " id(s) for others.",
+        (
+            "  kind: query=user ask · action=tool-call turn · observation=tool result"
+            " · final=complete answer · raw=unparsed"
+        ),
+        (
+            "  Default scope = current session; pass read_context_sessions='all' or"
+            " id(s) for others."
+        ),
         "",
         "Examples:",
         examples,
@@ -377,7 +383,7 @@ class ReadContextTool(Tool):
         "see the schema + examples + session list. Default scope = current "
         "session; read_context_sessions='all'/id(s) for others."
     )
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "read_context_query": {
@@ -412,11 +418,15 @@ class ReadContextTool(Tool):
             tokens,
             ctx.oversized_cap,
             bullets=(
-                "Re-run a NARROWER SQL query: add or lower LIMIT, project fewer "
-                "columns, or preview long text with substr(text,1,200).",
-                "Scan first with a small projection (SELECT loc, turn, "
-                "substr(text,1,200) … LIMIT 30), then SELECT the one row's full "
-                "text you actually need.",
+                (
+                    "Re-run a NARROWER SQL query: add or lower LIMIT, project fewer "
+                    "columns, or preview long text with substr(text,1,200)."
+                ),
+                (
+                    "Scan first with a small projection (SELECT loc, turn, "
+                    "substr(text,1,200) … LIMIT 30), then SELECT the one row's full "
+                    "text you actually need."
+                ),
             ),
         )
 

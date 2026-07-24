@@ -20,12 +20,13 @@ consumes to rebuild the system-prompt index (mirrors DIRECTIVE.md reload).
 """
 
 from __future__ import annotations
-from agent_cli.fsio import atomic_write_text
 
 import json
 import threading
 import time
 from pathlib import Path
+
+from agent_cli.fsio import atomic_write_text
 
 _MEMORY_FILE = "memory.jsonl"
 
@@ -193,8 +194,10 @@ def render_index(session_dir) -> str:
         return ""
     shown = entries[-_INDEX_CAP:]
     lines = [
-        f"## Session Memory ({len(entries)}) — pull full detail with "
-        f"memory(mode=get, id=N)"
+        (
+            f"## Session Memory ({len(entries)}) — pull full detail with "
+            f"memory(mode=get, id=N)"
+        )
     ]
     hidden = len(entries) - len(shown)
     if hidden > 0:

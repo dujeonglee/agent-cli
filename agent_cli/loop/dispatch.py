@@ -6,13 +6,15 @@ import json
 import re
 from dataclasses import replace
 
-from agent_cli.recovery.common_recovery import format_action_loop_intervention
-from agent_cli.recovery.wf_recovery import (
-    format_no_action_retry,
-    format_no_json_retry,
-)
-from agent_cli.tools.result import ToolResult
+from agent_cli.loop.skill_invoke import _handle_run_skill
 
+# Max shrink-and-retry attempts per turn when the server rejects the
+# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
+# history via ``ContextManager.force_fit``; the bound stops a runaway
+# loop when the cache cannot shrink enough or the server keeps rejecting.
+from agent_cli.loop.state import _CONTINUE, _NOT_HANDLED, LoopConfig, LoopState
+from agent_cli.loop.tool_bridge import ToolBridge
+from agent_cli.recovery.common_recovery import format_action_loop_intervention
 from agent_cli.recovery.detectors import (
     ActionLoopDetector,
     detect_nested_envelope,
@@ -33,23 +35,19 @@ from agent_cli.recovery.observability import (
     FAILURE_SCHEMA_MISMATCH,
     FAILURE_UNKNOWN_TOOL,
 )
-from agent_cli.wire_formats import Op, try_foreign_parse
+from agent_cli.recovery.wf_recovery import (
+    format_no_action_retry,
+    format_no_json_retry,
+)
 from agent_cli.render import (
     render_recovery,
     render_status,
     render_step,
 )
 from agent_cli.tools import TOOLS, infer_action
-
+from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
-
-# Max shrink-and-retry attempts per turn when the server rejects the
-# prompt as too long (flow 2 reactive recovery). Each attempt sheds more
-# history via ``ContextManager.force_fit``; the bound stops a runaway
-# loop when the cache cannot shrink enough or the server keeps rejecting.
-from agent_cli.loop.state import LoopConfig, LoopState, _CONTINUE, _NOT_HANDLED
-from agent_cli.loop.tool_bridge import ToolBridge
-from agent_cli.loop.skill_invoke import _handle_run_skill
+from agent_cli.wire_formats import Op, try_foreign_parse
 
 
 class TurnDispatcher:
@@ -699,7 +697,7 @@ class TurnDispatcher:
         )
         try:
             result = handler(to, text)
-        except Exception as e:  # noqa: BLE001 — 핸들러 예외를 관찰로 보고
+        except Exception as e:
             result = f"message failed: {type(e).__name__}: {e}"
         obs = f"[message → {to or '?'}] {result}"
         if accumulate is not None:
@@ -1085,9 +1083,7 @@ def _extract_questions(action_input) -> list[str]:
     """
     if isinstance(action_input, dict):
         raw_questions = action_input.get("questions") or action_input.get("question")
-    elif isinstance(action_input, str):
-        raw_questions = action_input
-    elif isinstance(action_input, list):
+    elif isinstance(action_input, (str, list)):
         raw_questions = action_input
     else:
         return []

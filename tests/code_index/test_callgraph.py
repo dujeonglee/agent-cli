@@ -130,14 +130,14 @@ class TestBuildFnRanges:
     def test_records_sorted_by_start_line(self, python_index):
         store, _ = python_index
         ranges = build_fn_ranges(store.all_symbols())
-        for _file, (starts, _recs) in ranges.items():
+        for starts, _recs in ranges.values():
             assert starts == sorted(starts)
 
     def test_only_functions_with_definitions(self, python_index):
         store, _ = python_index
         ranges = build_fn_ranges(store.all_symbols())
         # No non-function symbols (types/variables/constants) appear
-        for _file, (_starts, recs) in ranges.items():
+        for _starts, recs in ranges.values():
             for _s, _e, name, _params in recs:
                 hits = store.find_symbols(name=name)
                 assert any(

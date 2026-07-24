@@ -115,7 +115,7 @@ class TestFindRefsInRange:
     def test_in_range_inclusive(self, python_index):
         store, by_name, _ = python_index
         # process body lives at lines 26-27 in app.py and contains helper() call
-        process = [s for s in by_name["process"] if s.get("modifiers") == ["async"]][0]
+        process = next(s for s in by_name["process"] if s.get("modifiers") == ["async"])
         refs = store.find_refs_in_range(
             process["file"], process["line"], process["end_line"]
         )

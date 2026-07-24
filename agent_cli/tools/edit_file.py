@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import ClassVar
 
 from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
@@ -37,11 +38,11 @@ def fuzzy_verify_ref(lines: list[str], ref: str) -> tuple[int, bool]:
     try:
         idx = _verify_ref(lines, ref)
         return idx, False
-    except RuntimeError as exact_err:
+    except RuntimeError:
         # Try fuzzy: re-parse ref, compare normalized content
         line_num, expected_hash = _parse_ref(ref)
         if line_num < 1 or line_num > len(lines):
-            raise exact_err
+            raise
 
         # The hash mismatch might be due to whitespace/quote differences.
         # Check if the line at this position is "close enough" by comparing
@@ -343,7 +344,7 @@ class EditFileTool(Tool):
     # survive line shifts from earlier ops). `wrap_single_op` is identity;
     # `key_prefix` is left at its default so strip_prefix is a no-op on these
     # flat keys and `claims` returns False for a flat `{path}`.
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "File path"},

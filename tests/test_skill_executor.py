@@ -1,12 +1,13 @@
 """Tests for skills/executor.py."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from agent_cli.skills.executor import execute_skill
-from agent_cli.skills.models import Skill
+import pytest
+
 from agent_cli.context.manager import ContextManager
 from agent_cli.providers.capabilities import ModelCapabilities
+from agent_cli.skills.executor import execute_skill
+from agent_cli.skills.models import Skill
 
 
 @pytest.fixture

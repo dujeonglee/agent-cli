@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-
 from agent_cli.hooks import (
     HookEntry,
     HookMatcher,
@@ -19,7 +18,6 @@ from agent_cli.hooks import (
 def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체."""
     import agent_cli.subagent.profiles as _profiles_mod
-
     from agent_cli.resource_loader import ResourceLoader
 
     _profiles_mod._profile_loader = ResourceLoader(list(paths))
@@ -506,8 +504,8 @@ class TestSkillHooksEndToEnd:
         )
 
         provider = self._mock_provider(
-            json.dumps({"action": "shell", **{"command": "printf marker"}}),
-            json.dumps({"action": "complete", **{"result": "ok"}}),
+            json.dumps({"action": "shell", "command": "printf marker"}),
+            json.dumps({"action": "complete", "result": "ok"}),
         )
 
         execute_skill(
@@ -556,8 +554,8 @@ class TestSkillHooksEndToEnd:
 
         skill = _parse_skill_file(skill_md)
         provider = self._mock_provider(
-            json.dumps({"action": "shell", **{"command": "printf marker"}}),
-            json.dumps({"action": "complete", **{"result": "ok"}}),
+            json.dumps({"action": "shell", "command": "printf marker"}),
+            json.dumps({"action": "complete", "result": "ok"}),
         )
 
         execute_skill(
@@ -725,18 +723,20 @@ class TestAgentFrontmatterHooks:
             captured.update(kwargs)
             return ToolResult(True, output="done")
 
-        with patch(
-            "agent_cli.subagent.oneshot.load_profile",
-            return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
+        with (
+            patch(
+                "agent_cli.subagent.oneshot.load_profile",
+                return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
+            ),
+            patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
         ):
-            with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
-                tool_delegate(
-                    args={"tasks": [{"task": "t", "agent": "probe"}]},
-                    provider=object(),
-                    capabilities=self._caps(),
-                    model="m",
-                    hooks_config=parent_hooks,
-                )
+            tool_delegate(
+                args={"tasks": [{"task": "t", "agent": "probe"}]},
+                provider=object(),
+                capabilities=self._caps(),
+                model="m",
+                hooks_config=parent_hooks,
+            )
 
         forwarded = captured.get("hooks_config")
         assert forwarded is not None, "agent hooks must reach run_loop"
@@ -768,17 +768,19 @@ class TestAgentFrontmatterHooks:
             captured.update(kwargs)
             return ToolResult(True, output="done")
 
-        with patch(
-            "agent_cli.subagent.oneshot.load_profile",
-            return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
+        with (
+            patch(
+                "agent_cli.subagent.oneshot.load_profile",
+                return_value=self._stubload_profile(hooks_raw=agent_hooks_raw),
+            ),
+            patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
         ):
-            with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
-                tool_delegate(
-                    args={"tasks": [{"task": "t", "agent": "probe"}]},
-                    provider=object(),
-                    capabilities=self._caps(),
-                    model="m",
-                )
+            tool_delegate(
+                args={"tasks": [{"task": "t", "agent": "probe"}]},
+                provider=object(),
+                capabilities=self._caps(),
+                model="m",
+            )
 
         forwarded = captured.get("hooks_config")
         assert forwarded is not None
@@ -800,18 +802,20 @@ class TestAgentFrontmatterHooks:
             captured.update(kwargs)
             return ToolResult(True, output="done")
 
-        with patch(
-            "agent_cli.subagent.oneshot.load_profile",
-            return_value=self._stubload_profile(hooks_raw=None),
+        with (
+            patch(
+                "agent_cli.subagent.oneshot.load_profile",
+                return_value=self._stubload_profile(hooks_raw=None),
+            ),
+            patch("agent_cli.loop.run_loop", side_effect=fake_run_loop),
         ):
-            with patch("agent_cli.loop.run_loop", side_effect=fake_run_loop):
-                tool_delegate(
-                    args={"tasks": [{"task": "t", "agent": "probe"}]},
-                    provider=object(),
-                    capabilities=self._caps(),
-                    model="m",
-                    hooks_config=parent_hooks,
-                )
+            tool_delegate(
+                args={"tasks": [{"task": "t", "agent": "probe"}]},
+                provider=object(),
+                capabilities=self._caps(),
+                model="m",
+                hooks_config=parent_hooks,
+            )
 
         assert captured.get("hooks_config") is parent_hooks
 
@@ -856,9 +860,9 @@ class TestAgentFrontmatterHooks:
         provider = MagicMock()
         provider.call.side_effect = [
             LLMResponse(
-                content=json.dumps({"action": "shell", **{"command": "printf marker"}})
+                content=json.dumps({"action": "shell", "command": "printf marker"})
             ),
-            LLMResponse(content=json.dumps({"action": "complete", **{"result": "ok"}})),
+            LLMResponse(content=json.dumps({"action": "complete", "result": "ok"})),
         ]
 
         parent_ctx = ContextManager(

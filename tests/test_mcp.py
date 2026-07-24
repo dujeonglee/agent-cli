@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 
-
 from agent_cli.mcp.config import (
     McpServerConfig,
     _resolve_env_vars,
     load_mcp_config,
 )
-
 
 # ── Config Tests ──────────────────────────────────────
 
@@ -314,7 +312,7 @@ class TestMcpAdapter:
         TOOLS.update(registered)  # exactly what main.py does
         try:
             # validation path (recovery A5 detector wraps this)
-            ok, err, conv = validate_tool_input("gh.search", {"query": "x"})
+            ok, err, _conv = validate_tool_input("gh.search", {"query": "x"})
             assert ok, err
             # missing required field is reported, not crashed
             bad_ok, bad_err, _ = validate_tool_input("gh.search", {})

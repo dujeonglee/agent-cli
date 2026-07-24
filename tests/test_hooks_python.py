@@ -9,16 +9,15 @@ from agent_cli.hooks.context import HookContext
 from agent_cli.hooks.events import (
     ALL_EVENTS,
     EVENT_TO_FUNC,
-    ON_SESSION_START,
     ON_SESSION_END,
-    PRE_LLM_CALL,
+    ON_SESSION_START,
     ON_TURN_END,
+    PRE_LLM_CALL,
     PRE_TOOL_USE,
 )
-from agent_cli.tools.result import ToolResult
 from agent_cli.hooks.loader import _scan_hook_files, load_python_hooks
 from agent_cli.hooks.runner import HookRunner
-
+from agent_cli.tools.result import ToolResult
 
 # ── Events ──────────────────────────────────────────────
 

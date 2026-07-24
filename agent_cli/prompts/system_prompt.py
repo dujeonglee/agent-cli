@@ -16,12 +16,12 @@ a stable prefix for KV cache reuse across turns.
 """
 
 from __future__ import annotations
-from agent_cli.fsio import atomic_write_text
 
 import platform
 import re
 from pathlib import Path
 
+from agent_cli.fsio import atomic_write_text
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.tools.registry import TOOLS, get_tool_descriptions
 from agent_cli.wire_formats import get as _get_wire_format
@@ -1023,12 +1023,14 @@ def build_agent_profiles_section(wire_format=None) -> str:
             {"mode": "spawn", "profile": "profile-name", "task": "..."}
         ),
     )
-    indent = lambda s: "\n".join(f"  {line}" for line in s.splitlines())  # noqa: E731
+    indent = lambda s: "\n".join(f"  {line}" for line in s.splitlines())
     lines = [
         "## Agent Profiles",
-        "Profiles give a sub-agent a specialist role. Use them one-shot "
-        '(mode:"run") or as a persistent collaborator (mode:"spawn" — '
-        "keeps its context across your requests):",
+        (
+            "Profiles give a sub-agent a specialist role. Use them one-shot "
+            '(mode:"run") or as a persistent collaborator (mode:"spawn" — '
+            "keeps its context across your requests):"
+        ),
         indent(run_example),
         indent(spawn_example),
     ]

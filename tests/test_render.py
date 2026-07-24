@@ -6,7 +6,7 @@ from io import StringIO
 
 from rich.console import Console
 
-from agent_cli.render import render_step, set_renderer, get_renderer
+from agent_cli.render import get_renderer, render_step, set_renderer
 from agent_cli.render.minimal import MinimalRenderer
 
 
@@ -421,6 +421,7 @@ class TestStreamMarqueeResize:
 
     def _renderer_with_width(self, width):
         from rich.console import Console
+
         from agent_cli.render.minimal import MinimalRenderer
 
         buf = StringIO()
@@ -435,7 +436,7 @@ class TestStreamMarqueeResize:
     def test_no_resize_no_extra_escapes(self):
         """When width is stable across chunks, the second paint must
         not emit cursor-up sequences — just the regular `\\r` overwrite."""
-        renderer, buf, console = self._renderer_with_width(80)
+        renderer, buf, _console = self._renderer_with_width(80)
         renderer.stream_chunk("first")
         before = buf.getvalue()
         renderer.stream_chunk(" second")
@@ -494,7 +495,7 @@ class TestStreamMarqueeResize:
         """After stream_end, the resize-recovery state is cleared so
         the next stream's first chunk doesn't try to erase lines from
         the previous (now-finished) marquee."""
-        renderer, _, console = self._renderer_with_width(80)
+        renderer, _, _console = self._renderer_with_width(80)
         renderer.stream_chunk("hello")
         assert renderer._last_term_w == 80
         renderer.stream_end()
@@ -515,7 +516,7 @@ class TestStreamMarqueeResize:
         """In capture mode (parallel delegates), stream_chunk returns
         early. The resize state must not be touched, so a later
         non-capture chunk doesn't compare against ghost state."""
-        renderer, buf, console = self._renderer_with_width(80)
+        renderer, _buf, _console = self._renderer_with_width(80)
         renderer.start_capture()
         try:
             renderer.stream_chunk("captured")
@@ -536,6 +537,7 @@ class TestStreamTalkingFace:
 
     def _renderer_with_width(self, width):
         from rich.console import Console
+
         from agent_cli.render.minimal import MinimalRenderer
 
         buf = StringIO()
@@ -559,7 +561,7 @@ class TestStreamTalkingFace:
         ticks the frame counter; all distinct frames must appear."""
         import time as _time
 
-        from agent_cli.render.minimal import _TALK_FRAMES, _FRAME_INTERVAL
+        from agent_cli.render.minimal import _FRAME_INTERVAL, _TALK_FRAMES
 
         clock = [0.0]
         monkeypatch.setattr(_time, "monotonic", lambda: clock[0])
@@ -676,6 +678,7 @@ class TestThinkingSpinner:
 
     def _renderer_with_width(self, width):
         from rich.console import Console
+
         from agent_cli.render.minimal import MinimalRenderer
 
         buf = StringIO()
@@ -685,8 +688,9 @@ class TestThinkingSpinner:
     def test_default_message_is_empty(self):
         """Calling `spinner_start()` with no arguments must work — the
         new default is `""`, not `"thinking..."`."""
-        from agent_cli.render.base import Renderer
         import inspect
+
+        from agent_cli.render.base import Renderer
 
         sig = inspect.signature(Renderer.spinner_start)
         assert sig.parameters["message"].default == ""
@@ -694,8 +698,9 @@ class TestThinkingSpinner:
     def test_renderer_signature_matches_dispatcher(self):
         """The dispatcher `render_spinner_start` must keep the same
         empty-string default so callers don't need to pass anything."""
-        from agent_cli.render import render_spinner_start
         import inspect
+
+        from agent_cli.render import render_spinner_start
 
         sig = inspect.signature(render_spinner_start)
         assert sig.parameters["message"].default == ""
@@ -703,7 +708,7 @@ class TestThinkingSpinner:
     def test_think_frames_charset(self):
         """`_THINK_FRAMES` must use only ASCII + `•` (matching the
         same charset constraint as `_TALK_FRAMES`)."""
-        from agent_cli.render.minimal import _THINK_FRAMES, _TALK_FRAMES
+        from agent_cli.render.minimal import _TALK_FRAMES, _THINK_FRAMES
 
         talk_non_ascii = {ch for f in _TALK_FRAMES for ch in f if ord(ch) >= 128}
         for frame in _THINK_FRAMES:
@@ -825,7 +830,7 @@ class TestFrameClock:
     def test_frozen_clock_holds_frame(self, monkeypatch):
         import time as _time
 
-        from agent_cli.render.minimal import FrameClock, _THINK_FRAMES
+        from agent_cli.render.minimal import _THINK_FRAMES, FrameClock
 
         monkeypatch.setattr(_time, "monotonic", lambda: 0.0)
         clock = FrameClock(_THINK_FRAMES)
@@ -837,9 +842,9 @@ class TestFrameClock:
         import time as _time
 
         from agent_cli.render.minimal import (
-            FrameClock,
             _FRAME_INTERVAL,
             _THINK_FRAMES,
+            FrameClock,
         )
 
         now = [0.0]
@@ -978,7 +983,7 @@ class TestGroupDelegatingFunctions:
     """Test render_group_start / render_group_end wrappers."""
 
     def test_delegating_functions(self):
-        from agent_cli.render import render_group_start, render_group_end
+        from agent_cli.render import render_group_end, render_group_start
 
         buf = StringIO()
         console = Console(file=buf, force_terminal=True, width=120)

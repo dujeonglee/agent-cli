@@ -10,7 +10,9 @@ from agent_cli.providers.capabilities import ModelCapabilities
 # content 인라인 thinking 블록 격리 (5.10.0) — 구현은 thinking_tags 단일
 # 소스로 이주 (multi-wire-format Phase 2 선행 리팩토링). openai.py 와
 # 기존 테스트가 이 경로에서 import 하므로 re-export 로 유지.
-from agent_cli.thinking_tags import strip_think_blocks as strip_think_blocks
+from agent_cli.thinking_tags import (
+    strip_think_blocks as strip_think_blocks,  # noqa: PLC0414
+)
 
 
 @dataclass

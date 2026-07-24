@@ -12,6 +12,8 @@ validation treat them uniformly with executable tools.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from agent_cli.tools.base import Tool
 from agent_cli.tools.result import ToolResult
 
@@ -19,7 +21,7 @@ from agent_cli.tools.result import ToolResult
 class CompleteTool(Tool):
     name = "complete"
     description = "Call this tool when the task is done. Provide the final result."
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "result": {"type": "string", "description": "The final result or answer"},
@@ -50,7 +52,7 @@ class AskTool(Tool):
         "answered in turn), the same way you batch read_file. Use only when you "
         "cannot proceed without specific input; otherwise end with `complete`."
     )
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "question": {
@@ -85,7 +87,7 @@ class MessageTool(Tool):
         "a sub-question, or report a result. When you have nothing to add to a "
         "peer's reply, just `complete` (or reply `LGTM`) so the exchange ends."
     )
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "to": {
@@ -114,7 +116,7 @@ class RunSkillTool(Tool):
         "Run a registered skill by name. Use this to invoke specialized "
         "prompt-based workflows like code review, optimization, or test generation."
     )
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "name": {

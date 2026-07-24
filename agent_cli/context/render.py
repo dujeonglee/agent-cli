@@ -12,7 +12,6 @@ import json
 
 from agent_cli.context.token_estimator import estimate_tokens
 
-
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
 

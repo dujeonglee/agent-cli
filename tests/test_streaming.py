@@ -176,16 +176,22 @@ class TestAnthropicStreaming:
 
         lines = [
             b"event: message_start",
-            b'data: {"type":"message_start","message":{"usage":'
-            b'{"input_tokens":3,"cache_creation_input_tokens":120,'
-            b'"cache_read_input_tokens":80}}}',
+            (
+                b'data: {"type":"message_start","message":{"usage":'
+                b'{"input_tokens":3,"cache_creation_input_tokens":120,'
+                b'"cache_read_input_tokens":80}}}'
+            ),
             b"event: content_block_delta",
-            b'data: {"type":"content_block_delta",'
-            b'"delta":{"type":"text_delta","text":"ok"}}',
+            (
+                b'data: {"type":"content_block_delta",'
+                b'"delta":{"type":"text_delta","text":"ok"}}'
+            ),
             b"event: message_delta",
-            b'data: {"type":"message_delta",'
-            b'"delta":{"stop_reason":"end_turn"},'
-            b'"usage":{"output_tokens":1}}',
+            (
+                b'data: {"type":"message_delta",'
+                b'"delta":{"stop_reason":"end_turn"},'
+                b'"usage":{"output_tokens":1}}'
+            ),
         ]
         resp = _make_response(lines)
         with patch("agent_cli.providers.anthropic.requests.post", return_value=resp):
@@ -327,13 +333,13 @@ class TestTTFTMeasurement:
     def _usage(self, **kw):
         from agent_cli.providers.base import TokenUsage
 
-        defaults = dict(
-            input_tokens=100,
-            output_tokens=50,
-            prompt_eval_ns=200_000_000,
-            eval_ns=100_000_000,
-            ttft_ns=200_000_000,
-        )
+        defaults = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "prompt_eval_ns": 200_000_000,
+            "eval_ns": 100_000_000,
+            "ttft_ns": 200_000_000,
+        }
         defaults.update(kw)
         return TokenUsage(**defaults)
 
@@ -368,7 +374,9 @@ class TestTTFTMeasurement:
 
     def _minimal_render_to_string(self, verbose):
         from io import StringIO
+
         from rich.console import Console
+
         from agent_cli.loop import _build_token_stats
         from agent_cli.render.minimal import MinimalRenderer
 
@@ -423,8 +431,10 @@ class TestRunSseStreamSkeleton:
             [
                 'data: {"choices":[{"delta":{"content":"헬"}}]}',
                 'data: {"choices":[{"delta":{"content":"로"}}]}',
-                'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
-                '"usage":{"prompt_tokens":10,"completion_tokens":2}}',
+                (
+                    'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+                    '"usage":{"prompt_tokens":10,"completion_tokens":2}}'
+                ),
                 "data: [DONE]",
             ]
         )
@@ -435,7 +445,7 @@ class TestRunSseStreamSkeleton:
 
     def test_broken_json_line_tolerated(self):
         # C6 대칭화: JSONDecodeError 관용은 이제 양 provider 골격 공통
-        acc, chunks = self._run(
+        acc, _chunks = self._run(
             [
                 "data: {NOT JSON",
                 'data: {"choices":[{"delta":{"content":"ok"}}]}',
@@ -523,13 +533,15 @@ class TestC6Symmetry:
         # 스트림 골격(idle/관용/게이트)이 단일 지점임을 소스로 고정 —
         # provider 파일에 interruptible_lines 직접 순회가 남으면 회귀.
         for mod in ("openai", "anthropic"):
-            src = open(f"agent_cli/providers/{mod}.py").read()
+            with open(f"agent_cli/providers/{mod}.py") as fh:
+                src = fh.read()
             assert "run_sse_stream(" in src, mod
             assert "for line in interruptible_lines" not in src, mod
 
     def test_both_calls_have_idle_reconnect(self):
         # C6 대칭화: StreamIdleTimeout 재연결 래퍼가 양 call() 에 존재
         for mod in ("openai", "anthropic"):
-            src = open(f"agent_cli/providers/{mod}.py").read()
+            with open(f"agent_cli/providers/{mod}.py") as fh:
+                src = fh.read()
             assert "except StreamIdleTimeout" in src, mod
             assert "STREAM_MAX_RECONNECTS" in src, mod

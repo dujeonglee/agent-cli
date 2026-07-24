@@ -36,7 +36,7 @@ class TestAtomicWrite:
             try:
                 for _ in range(50):
                     atomic_write_json(p, {"writer": i})
-            except BaseException as e:  # noqa: BLE001
+            except BaseException as e:
                 errors.append(e)
 
         ts = [threading.Thread(target=w, args=(i,)) for i in range(4)]
@@ -75,14 +75,14 @@ class TestAppendLine:
 class TestC5Separation:
     def test_records_render_store_standalone(self):
         # 세 모듈이 manager 없이 단독 임포트 + manager 역참조 0 (단방향)
-        import agent_cli.context.records as records
-        import agent_cli.context.render as render
-        import agent_cli.context.store as store
+        from agent_cli.context import records, render, store
 
         for mod in (records, render, store):
+            with open(mod.__file__) as fh:
+                src = fh.read()
             imports = [
                 ln
-                for ln in open(mod.__file__).read().splitlines()
+                for ln in src.splitlines()
                 if ln.strip().startswith(("import ", "from "))
             ]
             assert not any("context.manager" in ln for ln in imports), mod.__name__

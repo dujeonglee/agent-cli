@@ -3,7 +3,7 @@
 Re-exports the shell hook API for backward compatibility.
 """
 
-from agent_cli.hooks.shell import (  # noqa: F401
+from agent_cli.hooks.shell import (
     HookEntry,
     HookMatcher,
     HookResult,

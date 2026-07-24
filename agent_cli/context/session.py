@@ -11,7 +11,6 @@ File layout:
 """
 
 from __future__ import annotations
-from agent_cli.fsio import atomic_write_text
 
 import json
 import os
@@ -19,6 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_cli.fsio import atomic_write_text
 from agent_cli.wire_formats import DEFAULT_WIRE_FORMAT, all_system_user_prefixes
 
 _SESSIONS_BASE = Path(".agent-cli")

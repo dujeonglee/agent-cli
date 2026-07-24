@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_cli.tools.write_file import tool_write_file
-from agent_cli.tools.shell import tool_shell
+from agent_cli.subagent.oneshot import (
+    DelegateResult,
+    _format_delegate_output,
+    _format_parallel_results,
+    tool_delegate,
+)
+from agent_cli.tools import TOOLS, RunContext
+from agent_cli.tools import _execute_tool as execute_tool
 from agent_cli.tools.edit_file import (
     tool_edit_file,
 )
@@ -13,13 +19,8 @@ from agent_cli.tools.read_file import (
     _read_one,
     compute_line_hash,
 )
-from agent_cli.subagent.oneshot import (
-    tool_delegate,
-    _format_delegate_output,
-    _format_parallel_results,
-    DelegateResult,
-)
-from agent_cli.tools import RunContext, TOOLS, _execute_tool as execute_tool
+from agent_cli.tools.shell import tool_shell
+from agent_cli.tools.write_file import tool_write_file
 
 
 class TestToolResult:
@@ -360,6 +361,7 @@ class TestShellDangerousCommandConfirmation:
         self._force_tty(monkeypatch)
 
         from unittest.mock import patch
+
         from agent_cli.tools import shell as shell_mod
 
         with patch("builtins.input", return_value="allow"):
@@ -372,6 +374,7 @@ class TestShellDangerousCommandConfirmation:
         self._force_tty(monkeypatch)
 
         from unittest.mock import patch
+
         from agent_cli.tools import shell as shell_mod
 
         with patch("builtins.input", return_value="ok"):
@@ -399,6 +402,7 @@ class TestShellDangerousCommandConfirmation:
         self._force_tty(monkeypatch)
 
         from unittest.mock import patch
+
         from agent_cli.tools import shell as shell_mod
 
         with patch("builtins.input", return_value="a"):
@@ -516,8 +520,9 @@ class TestShellConfirmationComments:
         monkeypatch.setattr(type(get_renderer()), "can_prompt", lambda self: True)
 
     def test_ask_returns_decision_and_empty_comment(self):
-        from agent_cli.tools.shell import _ask_confirmation
         from unittest.mock import patch
+
+        from agent_cli.tools.shell import _ask_confirmation
 
         with patch("builtins.input", return_value="y"):
             assert _ask_confirmation("rm x", "rm") == ("y", "")
@@ -527,8 +532,9 @@ class TestShellConfirmationComments:
             assert _ask_confirmation("rm x", "rm") == ("a", "")
 
     def test_ask_parses_decision_and_comment(self):
-        from agent_cli.tools.shell import _ask_confirmation
         from unittest.mock import patch
+
+        from agent_cli.tools.shell import _ask_confirmation
 
         with patch("builtins.input", return_value="y and also try foo"):
             assert _ask_confirmation("rm x", "rm") == ("y", "and also try foo")
@@ -541,8 +547,9 @@ class TestShellConfirmationComments:
         """If user types something other than y/n/a (e.g. they wrote a
         sentence directly), treat as deny but preserve the entire input
         as the comment so their reasoning still reaches the LLM."""
-        from agent_cli.tools.shell import _ask_confirmation
         from unittest.mock import patch
+
+        from agent_cli.tools.shell import _ask_confirmation
 
         with patch("builtins.input", return_value="actually let me check first"):
             assert _ask_confirmation("rm x", "rm") == (
@@ -551,8 +558,9 @@ class TestShellConfirmationComments:
             )
 
     def test_ask_empty_input_is_deny_no_comment(self):
-        from agent_cli.tools.shell import _ask_confirmation
         from unittest.mock import patch
+
+        from agent_cli.tools.shell import _ask_confirmation
 
         with patch("builtins.input", return_value=""):
             assert _ask_confirmation("rm x", "rm") == ("n", "")
@@ -778,6 +786,7 @@ class TestParallelTimeout:
         """Tasks exceeding timeout are reported as timed out."""
         import time
         from unittest.mock import MagicMock, patch
+
         from agent_cli.providers.base import LLMResponse
         from agent_cli.providers.capabilities import ModelCapabilities
 
@@ -819,6 +828,7 @@ class TestSignalHandlerThreadSafety:
         import signal
         import threading
         from unittest.mock import MagicMock
+
         from agent_cli.providers.capabilities import ModelCapabilities
 
         caps = ModelCapabilities(
@@ -1155,6 +1165,7 @@ class TestReadContextTool:
 
     def test_help_lists_sessions(self, tmp_path, monkeypatch):
         import json as _json
+
         import agent_cli.context.session as session_mod
 
         monkeypatch.setattr(session_mod, "_SESSIONS_BASE", tmp_path)

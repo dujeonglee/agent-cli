@@ -103,7 +103,9 @@ class McpClientManager:
         )
 
         # Suppress MCP server stderr to prevent terminal state corruption
-        devnull = open(os.devnull, "w")  # noqa: SIM115
+        # Handle outlives this function (passed to stdio_client, closed on
+        # teardown), so no context manager; opening /dev/null never blocks.
+        devnull = open(os.devnull, "w")  # noqa: SIM115, ASYNC230
         transport_cm = stdio_client(params, errlog=devnull)
         read, write = await transport_cm.__aenter__()
 

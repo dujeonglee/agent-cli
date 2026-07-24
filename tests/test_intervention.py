@@ -29,7 +29,9 @@ class TestIntervention:
 
     def test_frozen_immutable(self):
         intv = Intervention(message="x")
-        with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
+        # frozen dataclass __setattr__ raises FrozenInstanceError (an
+        # AttributeError subclass).
+        with pytest.raises(AttributeError):
             intv.message = "y"  # type: ignore[misc]
 
     def test_each_instance_has_own_primitives_list(self):

@@ -1,13 +1,13 @@
 """Tests for ContextManager (FIFO + history.jsonl)."""
 
 import json
+from typing import ClassVar
 
 import pytest
 
 from agent_cli.context.manager import ContextManager
 from agent_cli.context.records import _classify_record, iter_record_ops
 from agent_cli.context.render import _to_natural_language
-
 
 # ── Fixtures ──────────────────────────────────────────
 
@@ -838,7 +838,7 @@ class TestObsCompleteNudge:
     completion) and never persisted, so there is no flag to gate it."""
 
     NUDGE = "call `complete`"  # distinctive fragment of _OBS_COMPLETE_NUDGE
-    OBS = {
+    OBS: ClassVar[dict] = {
         "role": "user",
         "tool": "read_file",
         "args": {"path": "a.py"},

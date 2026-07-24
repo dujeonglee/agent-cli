@@ -125,6 +125,7 @@ def _run_node_harness(call_expr: str, input_value: str) -> str:
         capture_output=True,
         text=True,
         timeout=10,
+        check=False,
     )
     if result.returncode != 0:
         raise AssertionError(

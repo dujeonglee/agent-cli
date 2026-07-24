@@ -4,7 +4,7 @@ The built-in set is five general-purpose workers (main drives orchestration):
 code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst.
 """
 
-from agent_cli.subagent.profiles import load_profile, _BUILTIN_PROFILES_DIR
+from agent_cli.subagent.profiles import _BUILTIN_PROFILES_DIR, load_profile
 
 WORKERS = (
     "code-writer",
@@ -21,7 +21,6 @@ def _set_agent_paths(paths):
     """C2: prod 의 테스트 전용 mutator(_reset_agent_loader) 삭제 대체 —
     agents 모듈의 로더 전역을 직접 교체한다."""
     import agent_cli.subagent.profiles as _profiles_mod
-
     from agent_cli.resource_loader import ResourceLoader
 
     _profiles_mod._profile_loader = ResourceLoader(list(paths))
@@ -211,6 +210,6 @@ class TestBuiltinAgentPriority:
 
         _set_agent_paths([empty_dir, _BUILTIN_PROFILES_DIR])
 
-        role, config, error = load_profile("code-analyst")
+        _role, config, error = load_profile("code-analyst")
         assert error is None
         assert "write_file" not in config.get("allowed-tools", [])

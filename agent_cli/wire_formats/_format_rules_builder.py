@@ -32,7 +32,6 @@ rendering differs. That is what makes the resulting prompts comparable.
 
 from __future__ import annotations
 
-
 # ── Shared text (same bytes for every plugin) ────────────────
 
 COMPLETION_INTRO = "When the task is done, call `complete`:"

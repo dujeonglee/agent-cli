@@ -55,7 +55,7 @@ class TestCloseUnbalanced:
 
     def test_extra_closer_is_not_removed(self):
         # only appends; never deletes — an extra ] stays (caller bails)
-        fixed, changed = close_unbalanced('[{"a": 1}]]')
+        _fixed, changed = close_unbalanced('[{"a": 1}]]')
         assert not changed
 
 
@@ -76,7 +76,7 @@ class TestMdArrayRecovery:
         # a genuinely truncated op (unterminated string) cannot be fixed by
         # bracket-closing alone → stays None so the loop falls back to retry
         truncated = '[{"action": "read_file", "path": "/some/very/long/pa'
-        parsed, repaired = _extract_op_json(truncated)
+        parsed, _repaired = _extract_op_json(truncated)
         assert parsed is None
 
     def test_garbage_with_no_brackets_still_none(self):

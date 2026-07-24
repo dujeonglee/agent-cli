@@ -9,7 +9,6 @@ from agent_cli.constants import (
     AGENT_DEFAULT_TIMEOUT,
 )
 
-
 # Max shrink-and-retry attempts per turn when the server rejects the
 # prompt as too long (flow 2 reactive recovery). Each attempt sheds more
 # history via ``ContextManager.force_fit``; the bound stops a runaway

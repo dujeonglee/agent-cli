@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 from agent_cli.tools.base import (
     Tool,
@@ -40,7 +41,7 @@ class AgentTool(Tool):
         "observations (no polling). Use run for independent one-shot tasks; "
         "use spawn/request for iterative collaboration on evolving work."
     )
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "mode": {
@@ -127,7 +128,7 @@ class AgentTool(Tool):
     # run fan-out 용 — 배치 합류 여부는 parallel_batchable(mode-aware)이 결정.
     parallel_safe = True
 
-    _MODE_REQUIRED = {
+    _MODE_REQUIRED: ClassVar[dict] = {
         "run": ("task",),
         "request": ("key", "message"),
         "resume": ("key",),
@@ -184,9 +185,11 @@ class AgentTool(Tool):
                 ctx.tools_available,
                 nlines=body.count("\n") + 1,
                 tail_bullets=(
-                    "Or re-run a NARROWER task so the sub-agent returns a "
-                    "focused result (attack the root cause: the task was too "
-                    "broad).",
+                    (
+                        "Or re-run a NARROWER task so the sub-agent returns a "
+                        "focused result (attack the root cause: the task was too "
+                        "broad)."
+                    ),
                 ),
             )
         return default_oversized_nudge("agent", tokens, ctx.oversized_cap)

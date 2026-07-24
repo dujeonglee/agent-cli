@@ -33,7 +33,6 @@ from agent_cli.main import (
     try_dispatch_agent_or_skill,
 )
 
-
 # ── Recording adapter ───────────────────────────────────
 
 

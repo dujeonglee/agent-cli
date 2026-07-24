@@ -11,7 +11,7 @@ from rich.console import Console
 from agent_cli.render.base import Renderer, interactive_lock
 from agent_cli.render.minimal import MinimalRenderer
 
-__all__ = ["Renderer", "MinimalRenderer", "interactive_lock", "get_renderer"]
+__all__ = ["MinimalRenderer", "Renderer", "get_renderer", "interactive_lock"]
 
 # ── Global state ──────────────────────────────────
 console = Console()

@@ -37,7 +37,6 @@ from agent_cli.code_index.preproc import (
     strip_pp_trailing_ws,
 )
 
-
 # ----- per-rewriter unit tests ----------------------------------------------
 
 
@@ -139,7 +138,7 @@ class TestStripPpTrailingWs:
         # The rewriter operates on preprocessor lines (`#…`); a stray
         # trailing space confuses unifdef.
         out = strip_pp_trailing_ws("#define X   \n")
-        assert out.endswith("X\n") or out.endswith("X")
+        assert out.endswith(("X\n", "X"))
 
     def test_non_pp_line_unchanged(self):
         src = "int x = 1;   "  # trailing spaces but not a pp line

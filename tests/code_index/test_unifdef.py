@@ -43,6 +43,7 @@ def _system_unifdef(text: str, flags: list[str]) -> str:
         input=text,
         capture_output=True,
         text=True,
+        check=False,
     )
     # Real unifdef exits 0 on "no change" and 1 on "changed"; either
     # means the stdout is authoritative. 2 means parse error — in
@@ -100,7 +101,7 @@ class TestParseFlags:
         d = parse_flags(["-UFOO"])
         # Internal marker key — caller doesn't need to know the
         # encoding, only that the helpers see it correctly.
-        assert any(k.endswith("FOO") for k in d.keys() if "\x00U\x00" in k)
+        assert any(k.endswith("FOO") for k in d if "\x00U\x00" in k)
 
 
 # ─── Behavioural / contract tests ─────────────────────────
@@ -447,7 +448,7 @@ class TestPreprocBackendSelection:
     def test_pure_backend_used_when_binary_absent(self, monkeypatch):
         # No system binary → the pure-Python path must produce output
         # (and subprocess.run must not be invoked).
-        import agent_cli.code_index.preproc as preproc
+        from agent_cli.code_index import preproc
 
         monkeypatch.setattr(preproc, "UNIFDEF_BIN", None)
         monkeypatch.setattr(
@@ -467,7 +468,7 @@ class TestPreprocBackendSelection:
         # producing output. Patch the pure-Python module to fail if
         # called, so a regression that silently skipped to pure would
         # scream.
-        import agent_cli.code_index.preproc as preproc
+        from agent_cli.code_index import preproc
 
         if preproc.UNIFDEF_BIN is None:
             pytest.skip("system unifdef not on PATH")

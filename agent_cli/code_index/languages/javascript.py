@@ -22,8 +22,6 @@ shape and the only delta is the `language` string in emitted records.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
 from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
@@ -67,7 +65,7 @@ def js_extract_function_decl(
     node,
     src: bytes,
     rel: str,
-    parent: Optional[str],
+    parent: str | None,
     out: list,
     lang: str,
     extra_mods: list[str] = (),
@@ -108,7 +106,7 @@ def js_extract_function_decl(
 
 
 def js_extract_method(
-    node, src: bytes, rel: str, parent: Optional[str], out: list, lang: str
+    node, src: bytes, rel: str, parent: str | None, out: list, lang: str
 ):
     name_node = node.child_by_field_name("name")
     if name_node is None:
@@ -147,7 +145,7 @@ def js_extract_method(
 
 
 def js_extract_class(
-    node, src: bytes, rel: str, parent: Optional[str], out: list, lang: str
+    node, src: bytes, rel: str, parent: str | None, out: list, lang: str
 ):
     name_node = node.child_by_field_name("name")
     if name_node is None:
@@ -453,21 +451,21 @@ def walk_refs(
             if parent is not None:
                 pt = parent.type
                 if (
-                    pt
-                    in (
-                        "function_declaration",
-                        "class_declaration",
-                        "method_definition",
+                    (
+                        pt
+                        in (
+                            "function_declaration",
+                            "class_declaration",
+                            "method_definition",
+                        )
+                        and parent.child_by_field_name("name") == node
                     )
-                    and parent.child_by_field_name("name") == node
+                    or (
+                        pt == "variable_declarator"
+                        and parent.child_by_field_name("name") == node
+                    )
+                    or pt == "formal_parameters"
                 ):
-                    skip = True
-                elif (
-                    pt == "variable_declarator"
-                    and parent.child_by_field_name("name") == node
-                ):
-                    skip = True
-                elif pt == "formal_parameters":
                     skip = True
             if not skip and name in defined_names:
                 refs.append(

@@ -96,3 +96,20 @@ markers = [
 # (broken syntax in error.*, unused imports in canonical samples) — exclude
 # them from both lint and format passes.
 extend-exclude = ["tests/code_index/fixtures"]
+
+[tool.ruff.lint]
+# ruff's default ruleset expands between releases, so pin the version in CI
+# (see .github/workflows/ci.yml) and adjust here on a deliberate lint sweep.
+# The default select (E/F + ruff's current stable set) applies; the ignores
+# below are DELIBERATE policy, not un-fixed debt:
+ignore = [
+    # broad `except Exception:` is an intentional defensive pattern in this
+    # codebase — config load, index build, renderer, and worker boundaries
+    # must not die on an unexpected error. Narrowing these risks a missed
+    # exception type crashing a path that is meant to degrade gracefully.
+    "BLE001",
+    # try/except/pass and try/except/continue are used deliberately to skip a
+    # malformed entry (a corrupt sidecar, a stale record) and keep going.
+    "S110",
+    "S112",
+]

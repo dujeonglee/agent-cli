@@ -147,9 +147,7 @@ def detect_thought_missing(thought: Any, action: Any) -> bool:
         return False
     if thought is None:
         return True
-    if isinstance(thought, str) and not thought.strip():
-        return True
-    return False
+    return bool(isinstance(thought, str) and not thought.strip())
 
 
 def detect_unknown_tool(action: str, tools_list: list[str]) -> bool:

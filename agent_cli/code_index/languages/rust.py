@@ -17,8 +17,6 @@ defined name.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from agent_cli.code_index.languages import LANGUAGES, LangSpec, noop_preprocess
 from agent_cli.code_index.languages._shared import qualify, text
 from agent_cli.code_index.schema import Ref, Symbol
@@ -31,7 +29,7 @@ def _lang_rust():
     return Language(tree_sitter_rust.language())
 
 
-def rs_visibility(node, src: bytes) -> Optional[str]:
+def rs_visibility(node, src: bytes) -> str | None:
     for c in node.children:
         if c.type == "visibility_modifier":
             return text(c, src)
@@ -64,7 +62,7 @@ def rs_params(plist, src: bytes) -> list[str]:
     return names
 
 
-def rs_extract_function(node, src: bytes, rel: str, parent: Optional[str], out: list):
+def rs_extract_function(node, src: bytes, rel: str, parent: str | None, out: list):
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return
@@ -386,13 +384,15 @@ def walk_refs(
                 if (
                     pt in ("function_item", "function_signature_item")
                     and parent.child_by_field_name("name") == node
+                ) or (
+                    pt in ("const_item", "static_item", "macro_definition")
+                    and parent.children
+                    and node
+                    == next(
+                        (c for c in parent.children if c.type == "identifier"), None
+                    )
                 ):
                     skip = True
-                elif pt in ("const_item", "static_item", "macro_definition"):
-                    if parent.children and node == next(
-                        (c for c in parent.children if c.type == "identifier"), None
-                    ):
-                        skip = True
             if not skip and name in defined_names:
                 refs.append(
                     Ref(

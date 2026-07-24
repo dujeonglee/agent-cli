@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+import agent_cli.config as _config
 from agent_cli.config import (
     get_model_entry,
     get_provider_defaults,
@@ -13,7 +14,6 @@ from agent_cli.config import (
     save_config,
     save_model_entry,
 )
-import agent_cli.config as _config
 
 
 @pytest.fixture(autouse=True)

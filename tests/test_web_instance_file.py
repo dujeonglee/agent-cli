@@ -118,7 +118,7 @@ class TestStatusFile:
                     write_status_file(
                         tmp_path, busy=bool(n % 2), awaiting_input=False, viewers=n
                     )
-            except BaseException as e:  # noqa: BLE001 — surface any thread failure
+            except BaseException as e:
                 errors.append(e)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]

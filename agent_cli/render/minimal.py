@@ -64,7 +64,7 @@ def _colorize_diff_line(line: str) -> str:
     through to plain (escaped) text.
     """
     esc = line.replace("[", "\\[")
-    if line.startswith("--- ") or line.startswith("+++ "):
+    if line.startswith(("--- ", "+++ ")):
         return f"[bold]{esc}[/bold]"
     if line.startswith("@@"):
         return f"[cyan]{esc}[/cyan]"
@@ -186,8 +186,7 @@ def _truncate_to_width(text: str, max_width: int) -> str:
     # terminals). Reserving only 1 used to put the truncated string 1
     # col over budget once we started counting Ambiguous as wide.
     target = max_width - _display_width("…")
-    if target < 0:
-        target = 0
+    target = max(target, 0)
     w = 0
     for i in range(len(text) - 1, -1, -1):
         eaw = unicodedata.east_asian_width(text[i])

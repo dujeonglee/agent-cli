@@ -31,7 +31,7 @@ import re
 import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar
 
 from agent_cli.code_index import (
     IndexStore,
@@ -83,7 +83,7 @@ def _resolve_db_path() -> Path:
     return db
 
 
-def _resolve_defs_path(root: Path) -> Optional[Path]:
+def _resolve_defs_path(root: Path) -> Path | None:
     """Conventional defconfig location: ``<root>/.agent-cli/defconfig``.
 
     Returned only when the file exists so callers can pass the result
@@ -182,7 +182,7 @@ def _format_symbol_line(s: dict) -> str:
     return f"{label} ({s['kind']}){decl} {s['file']}{range_str}"
 
 
-def _resolve_symbol(store, name: str, *, file: Optional[str] = None) -> list[dict]:
+def _resolve_symbol(store, name: str, *, file: str | None = None) -> list[dict]:
     """Dual-lookup resolver for model-supplied symbol names.
 
     The model usually passes the qualified form it saw in ``list``
@@ -246,7 +246,7 @@ def _normalize_markdown_name(name: str) -> str:
 # ----- on-demand parse (path outside indexed root) --------------------------
 
 
-def _on_demand_symbols(file_abs: Path) -> Optional[list[dict]]:
+def _on_demand_symbols(file_abs: Path) -> list[dict] | None:
     """Parse ONE file with its registered walker and return symbols as
     dicts. Returns None if no walker handles the extension."""
     lang = language_of(file_abs)
@@ -299,9 +299,12 @@ def _validate_semantics(args: dict) -> str | None:
         if not args.get(key):
             return f"'{key}' is required for mode='{mode}'"
     symbol_kind = args.get("symbol_kind")
-    if mode in ("lookup", "kind") and symbol_kind is not None:
-        if symbol_kind not in NAME_KINDS:
-            return f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
+    if (
+        mode in ("lookup", "kind")
+        and symbol_kind is not None
+        and symbol_kind not in NAME_KINDS
+    ):
+        return f"invalid symbol_kind: {symbol_kind!r}. Valid: {sorted(NAME_KINDS)}"
     if mode == "refs":
         ref_kind = args.get("ref_kind")
         if ref_kind is not None and ref_kind not in REF_KINDS:
@@ -624,7 +627,7 @@ class CodeIndexTool(Tool):
     # `wrap_single_op` is identity; `key_prefix` is left at its default so
     # strip_prefix is a no-op on these flat keys and `claims` returns False for
     # a flat `{mode}` (no `code_index_` key).
-    parameters = {
+    parameters: ClassVar[dict] = {
         "type": "object",
         "properties": {
             "mode": {
@@ -742,10 +745,14 @@ class CodeIndexTool(Tool):
             tokens,
             ctx.oversized_cap,
             bullets=(
-                "Narrow the query: fetch ONE symbol (mode=fetch, path, name), "
-                "or filter list/kind with search='regex'.",
-                "Scope to a specific path/name instead of a broad dump (kind / "
-                "a big file's list); for slice mode, lower max_bytes.",
+                (
+                    "Narrow the query: fetch ONE symbol (mode=fetch, path, name), "
+                    "or filter list/kind with search='regex'."
+                ),
+                (
+                    "Scope to a specific path/name instead of a broad dump (kind / "
+                    "a big file's list); for slice mode, lower max_bytes."
+                ),
             ),
         )
 

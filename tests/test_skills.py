@@ -364,7 +364,7 @@ class TestSkillLoader:
             "---\nname: skill2\ndescription: Second\n---\n\nDo 2\n"
         )
 
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         loader._reset_loader([skills_dir])
 
@@ -385,7 +385,7 @@ class TestSkillLoader:
             "---\nname: review\ndescription: Local\n---\n\nLocal version\n"
         )
 
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         loader._reset_loader([local_dir, global_dir])
 
@@ -408,7 +408,7 @@ class TestSkillLoader:
             "---\nname: dir-skill\ndescription: Dir\n---\n\nDir $ARGUMENTS\n"
         )
 
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         loader._reset_loader([skills_dir])
 
@@ -432,7 +432,7 @@ class TestSkillLoader:
             "---\nname: review\ndescription: Dir\n---\n\nDir $ARGUMENTS\n"
         )
 
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         loader._reset_loader([skills_dir])
 
@@ -452,7 +452,7 @@ class TestSkillLoader:
             "---\nname: alpha\ndescription: Alpha\n---\n\nDo $ARGUMENTS\n"
         )
 
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         loader._reset_loader([skills_dir])
 
@@ -475,7 +475,7 @@ class TestSkillExecution:
     def test_execute_with_allowed_tools(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps({"action": "complete", **{"result": "looks good"}})
+            content=json.dumps({"action": "complete", "result": "looks good"})
         )
 
         skill = Skill(
@@ -497,7 +497,7 @@ class TestSkillExecution:
     def test_execute_uses_skill_max_turns(self, caps):
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps({"action": "complete", **{"result": "done"}})
+            content=json.dumps({"action": "complete", "result": "done"})
         )
 
         skill = Skill(
@@ -581,7 +581,7 @@ class TestSkillExecution:
         """skill.model=None → run_loop called with the original model."""
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps({"action": "complete", **{"result": "ok"}})
+            content=json.dumps({"action": "complete", "result": "ok"})
         )
 
         skill = Skill(
@@ -605,7 +605,7 @@ class TestSkillExecution:
         """skill.model set → run_loop called with the overridden model."""
         provider = MagicMock()
         provider.call.return_value = LLMResponse(
-            content=json.dumps({"action": "complete", **{"result": "ok"}})
+            content=json.dumps({"action": "complete", "result": "ok"})
         )
 
         skill = Skill(
@@ -645,7 +645,7 @@ class TestYamlOptional:
 
     def test_skills_require_frontmatter(self, tmp_path):
         """Skill loader skips files without frontmatter."""
-        import agent_cli.skills.loader as loader
+        from agent_cli.skills import loader
 
         d = tmp_path / "skills"
         d.mkdir()
