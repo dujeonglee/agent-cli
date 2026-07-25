@@ -1179,10 +1179,9 @@
 
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
-    // Reconnect replays the persistent buffer (roster/agent_msg/scope_*), so
-    // clear the swimlane's event buffer first and let the replay repopulate —
-    // otherwise events would double on every reconnect.
-    if (window.TeamView) TeamView.reset();
+    // NOTE: no TeamView.reset() here — reconnect replays the buffer and
+    // TeamView.ingest dedups replayed events (idempotent). Clearing on every
+    // reconnect used to flash "no team activity yet" mid-run.
     // ``workspace`` is the agent's working directory at session
     // creation time. Showing it in the top bar disambiguates which
     // checkout you're talking to when several LAN sessions are open

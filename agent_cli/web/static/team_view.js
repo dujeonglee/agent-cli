@@ -62,9 +62,29 @@
     _svg: null,
     _active: false,
     _raf: 0,
+    _seen: null,
 
     /** Feed one SSE event into the model buffer. */
     ingest: function (type, data) {
+      if (!this._seen) this._seen = {};
+      // Reconnect replays the persistent buffer (roster sticky + scope_* +
+      // agent_msg). Dedup by a stable key so a replayed event is NOT added
+      // twice — this is why the view no longer needs to clear its buffer on
+      // ``ready`` (that clear used to flash "no team activity yet" on every
+      // reconnect). Roster is a full state snapshot → re-applying is already
+      // idempotent, so it needs no key.
+      var key = null;
+      if (type === "scope_start" || type === "scope_end") {
+        key = type + ":" + data.task_id;
+      } else if (type === "agent_msg") {
+        key =
+          "msg:" + (data.author || "") + ":" + (data.to || "") +
+          ":" + (data.seq || 0) + ":" + (data.direction || "");
+      }
+      if (key) {
+        if (this._seen[key]) return;
+        this._seen[key] = 1;
+      }
       var e = { type: type };
       for (var k in data) e[k] = data[k];
       if (e.ts == null) e.ts = Date.now() / 1000;
@@ -74,6 +94,7 @@
 
     reset: function () {
       this._events = [];
+      this._seen = {};
       if (this._active) this._schedule();
     },
 

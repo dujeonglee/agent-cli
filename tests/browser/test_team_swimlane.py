@@ -83,3 +83,27 @@ class TestTeamSwimlane:
         # Back to Timeline.
         page.click('.vt-tab[data-view="timeline"]')
         assert _wait(lambda: messages.is_visible() and not team.is_visible())
+
+    def test_reconnect_replay_no_flash_empty_or_duplicate(self, stack, page):
+        """Reconnect replays the persistent buffer (roster sticky + scope_* +
+        agent_msg). ingest dedups replayed events, so the view neither flashes
+        the empty state nor draws duplicate spans — the fix for 'resets to No
+        team activity on every event' (the old reset()-on-ready flush)."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        _drive_team(stack)
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        page.wait_for_selector(".tv-scope-skill", timeout=8000)
+        n_skill = page.locator(".tv-scope-skill").count()
+
+        # Simulate the reconnect replay re-delivering the same persistent events.
+        page.evaluate(
+            "() => { window.TeamView.ingest('scope_start',"
+            "{task_id:'orch-sk', kind:'skill', label:'orchestrate'});"
+            "window.TeamView.ingest('agent_msg',"
+            "{key:'w1', direction:'out', author:'w1', to:'orch', text:'done', seq:2}); }"
+        )
+        # Never empty, and no duplicate skill span.
+        assert not page.locator(".tv-empty").is_visible()
+        assert page.locator(".tv-scope-skill").count() == n_skill
