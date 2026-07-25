@@ -59,8 +59,8 @@ class TestTeamSwimlane:
         assert page.locator(".tv-lane-nm", has_text="orch").count() >= 1
         assert page.locator(".tv-lane-nm", has_text="w1").count() >= 1
 
-        # The enclosing skill renders as a band.
-        assert _wait(lambda: page.locator(".tv-band").count() >= 1)
+        # The enclosing skill blocks main → a colored span in main's lane.
+        assert _wait(lambda: page.locator(".tv-scope-skill").count() >= 1)
         # w1's request→reply becomes a work span.
         assert _wait(lambda: page.locator(".tv-span").count() >= 1)
         # The reply is a message connector between lanes.

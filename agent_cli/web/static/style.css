@@ -1345,16 +1345,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 /* Team view container */
 #team-view { flex: 1; overflow: auto; padding: 6px 16px 20px; min-height: 0; }
 #team-view[hidden] { display: none; }
-.tv-ctrl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 2px 4px; }
-.tv-cl { font-family: var(--mono, ui-monospace, monospace); font-size: 10px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
-.tv-seg {
-  appearance: none; cursor: pointer; font-family: var(--mono, ui-monospace, monospace); font-size: 11px; font-weight: 600;
-  color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 5px 10px;
-  transition: color .14s, border-color .14s, background .14s;
-}
-.tv-seg:hover { color: var(--text); }
-.tv-seg.on { color: var(--accent-soft-text); border-color: var(--accent-soft-border); background: var(--accent-soft-bg); }
-.tv-note { font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px; color: var(--muted); margin-left: 4px; }
 .tv-svg { display: block; width: 100%; height: auto; margin-top: 6px; }
 .tv-empty { color: var(--muted); font-size: 13px; padding: 40px 6px; text-align: center; }
 .tv-empty[hidden] { display: none; }
@@ -1366,9 +1356,10 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .tv-lane-nm { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; font-weight: 600; fill: var(--text); }
 .tv-lane-role { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; fill: var(--muted); }
 .tv-state { font-family: var(--mono, ui-monospace, monospace); font-size: 10px; font-weight: 700; }
-.tv-band { fill: var(--surface-3); stroke: var(--border-2); }
-.tv-band-lbl { font-family: var(--mono, ui-monospace, monospace); font-size: 9.5px; fill: var(--text-2); }
-.tv-span { }
+/* work span = agent's own work (hue set inline). scope spans block the caller: */
+.tv-scope-skill { fill: var(--accent); opacity: .55; }
+.tv-scope-run { fill: var(--h-reviewer); opacity: .8; }
+.tv-scope-lbl { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; fill: var(--text-2); }
 .tv-msg { stroke-width: 1.5; opacity: .6; transition: opacity .12s; }
 .tv-msg-hit { stroke: transparent; stroke-width: 11; cursor: default; }
 .tv-msg-hit:hover + .tv-msg, .tv-msg:hover { opacity: 1; }

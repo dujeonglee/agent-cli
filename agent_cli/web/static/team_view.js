@@ -1,7 +1,8 @@
 /* team_view.js — the live "Team" swimlane surface. Renders TeamModel (from
  * team_model.js) as an SVG timeline: one lane per agent, work spans as bars,
- * peer messages as connectors, the enclosing skill as a top band, one-shot
- * runs as transient sub-tracks under main.
+ * peer messages as connectors; a skill or one-shot run BLOCKS its caller
+ * for its whole duration, so it renders as a distinctly-colored span INSIDE
+ * the caller's lane (not a separate band/track).
  *
  * Theme-reactive: every color is a CSS custom property (var(--…)) — the app's
  * data-theme tokens plus role hues (--h-orch/writer/…) — so a theme switch
@@ -53,17 +54,13 @@
 
   var PAD = { l: 132, r: 22, t: 46, b: 22 },
     LH = 46,
-    BARH = 8,
-    BANDY = 22;
+    BARH = 8;
 
   var TeamView = {
     _events: [],
     _host: null,
     _svg: null,
-    _note: null,
     _active: false,
-    _scale: "fit", // "fit" | "win"
-    _win: 30, // window seconds
     _raf: 0,
 
     /** Feed one SSE event into the model buffer. */
@@ -80,36 +77,11 @@
       if (this._active) this._schedule();
     },
 
-    /** Build the skeleton (controls + svg) inside host and take ownership. */
+    /** Build the swimlane SVG inside host and take ownership. */
     mount: function (host) {
       this._host = host;
       host.innerHTML = "";
-      var ctrl = elh("div", "tv-ctrl");
-      var lbl = elh("span", "tv-cl", "Scale");
-      var fit = elh("button", "tv-seg on", "Fit run");
-      fit.dataset.scale = "fit";
-      var win = elh("button", "tv-seg", "Live window");
-      win.dataset.scale = "win";
-      this._note = elh("span", "tv-note", "whole run scaled to width");
       var self = this;
-      [fit, win].forEach(function (b) {
-        b.addEventListener("click", function () {
-          ctrl.querySelectorAll(".tv-seg").forEach(function (s) {
-            s.classList.toggle("on", s === b);
-          });
-          self._scale = b.dataset.scale;
-          self._note.textContent =
-            self._scale === "win"
-              ? "last " + self._win + "s — older scrolls off (follows the live edge)"
-              : "whole run scaled to width";
-          self.render();
-        });
-      });
-      ctrl.appendChild(lbl);
-      ctrl.appendChild(fit);
-      ctrl.appendChild(win);
-      ctrl.appendChild(this._note);
-      host.appendChild(ctrl);
       this._svg = svg("svg", { class: "tv-svg", role: "img", "aria-label": "Agent team swimlane" });
       host.appendChild(this._svg);
       this._empty = elh("div", "tv-empty", "No team activity yet — spawn agents or run /orchestrate.");
@@ -121,6 +93,8 @@
     },
 
     setActive: function (on) {
+      // Event-driven only: each agent_msg (request in / reply out) + roster
+      // update calls ingest → rAF repaint. No polling.
       this._active = on;
       if (this._host) this._host.hidden = !on;
       if (on) this.render();
@@ -154,7 +128,6 @@
       var plotW = W - PAD.l - PAD.r;
       var T0 = m.t0,
         T1 = Math.max(m.t1, m.t0 + 1);
-      if (this._scale === "win" && T1 - T0 > this._win) T0 = T1 - this._win;
       var span = T1 - T0;
       var lanes = m.lanes;
       var H = PAD.t + lanes.length * LH + PAD.b;
@@ -182,28 +155,23 @@
       });
 
       // axis ticks (relative seconds from run start)
-      var step = span <= 20 ? 5 : span <= 120 ? 15 : 60;
+      // adaptive step: ~7 ticks, snapped to a "nice" value so the axis stays
+      // legible whether the run is 10s or 10min (the base unit grows with span).
+      var raw = span / 7;
+      var mags = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+      var step = mags[mags.length - 1];
+      for (var mi = 0; mi < mags.length; mi++) {
+        if (mags[mi] >= raw) {
+          step = mags[mi];
+          break;
+        }
+      }
       for (var tk = Math.ceil(T0 / step) * step; tk <= T1 + 0.01; tk += step) {
         var x = X(tk);
         svg("line", { class: "tv-axis", x1: x, y1: PAD.t - 6, x2: x, y2: H - PAD.b + 3 }, s);
         var tx = svg("text", { class: "tv-tick", x: x + 3, y: PAD.t - 10 }, s);
         tx.textContent = fmtClock(tk - m.t0);
       }
-
-      // skill band(s) at top
-      m.skillBands.forEach(function (b) {
-        if (!inDom(b.t0, b.t1)) return;
-        var x0 = clampX(b.t0),
-          x1 = clampX(b.t1);
-        var g = svg("g", {}, s);
-        var r = svg("rect", { class: "tv-band", x: x0, y: BANDY - 8, width: Math.max(x1 - x0, 4), height: 16, rx: 8 }, g);
-        var t = svg("text", { class: "tv-band-lbl", x: x0 + 8, y: BANDY + 3 }, g);
-        t.textContent = "🪄 " + b.label;
-        var tt = svg("title", {}, r);
-        tt.textContent = "skill: " + b.label;
-      });
-      var sl = svg("text", { class: "tv-tick", x: 14, y: BANDY + 3 }, s);
-      sl.textContent = "skill";
 
       // lanes: label chip + baseline + state glyph
       lanes.forEach(function (k, i) {
@@ -233,29 +201,35 @@
         sx.style.fill = st === "busy" ? "var(--cyan)" : "var(--muted)";
       });
 
-      // one-shot runs — transient sub-track under caller (main) + return arrow
-      m.oneshots.forEach(function (o) {
-        if (!inDom(o.t0, o.t1)) return;
-        var ci = laneIndex[o.caller];
+      // A skill or one-shot run BLOCKS its caller for its whole duration, so it
+      // renders as a distinctly-colored span INSIDE the caller's lane (not a
+      // separate band/track). main's own turns get the neutral main hue.
+      function scopeSpan(item, cls, prefix) {
+        if (!inDom(item.t0, item.t1)) return;
+        var ci = laneIndex[item.caller];
         if (ci == null) ci = 0;
-        var my = laneY(ci),
-          sy = my + 17;
-        var hv = "var(--h-reviewer)";
-        var x0 = clampX(o.t0),
-          x1 = clampX(o.t1);
-        var base = svg("line", { x1: x0, y1: sy, x2: x1, y2: sy, "stroke-dasharray": "2 3" }, s);
-        base.style.stroke = hv;
-        base.style.opacity = "0.5";
-        var bar = svg("rect", { x: x0, y: sy - 3, width: Math.max(x1 - x0, 3), height: 6, rx: 3 }, s);
-        bar.style.fill = hv;
-        var lg = svg("text", { class: "tv-tick", x: x1 + 5, y: sy + 3 }, s);
-        lg.style.fill = hv;
-        lg.textContent = "⟲ " + o.label + " ↩";
-        var arr = svg("path", { d: "M " + x1 + " " + (sy - 3) + " L " + x1 + " " + (my + 4), fill: "none" }, s);
-        arr.style.stroke = hv;
-        arr.style.opacity = "0.7";
-        var tt = svg("title", {}, bar);
-        tt.textContent = "one-shot run: " + o.label;
+        var y = laneY(ci);
+        var x0 = clampX(item.t0),
+          x1 = clampX(item.t1),
+          w = Math.max(x1 - x0, 3);
+        var r = svg("rect", { class: cls, x: x0, y: y - BARH / 2, width: w, height: BARH, rx: BARH / 2 }, s);
+        var lg = svg("text", { class: "tv-scope-lbl", x: x0 + 3, y: y - BARH / 2 - 3 }, s);
+        lg.textContent = prefix + " " + item.label;
+        svg("title", {}, r).textContent = prefix + " " + item.label;
+      }
+      m.mainSpans.forEach(function (sp) {
+        if (!inDom(sp.t0, sp.t1)) return;
+        var y = laneY(0);
+        var x0 = clampX(sp.t0),
+          x1 = clampX(sp.t1);
+        var r = svg("rect", { class: "tv-span", x: x0, y: y - BARH / 2, width: Math.max(x1 - x0, 3), height: BARH, rx: BARH / 2 }, s);
+        r.style.fill = "var(--h-main)";
+      });
+      m.skillBands.forEach(function (b) {
+        scopeSpan(b, "tv-scope-skill", "🪄");
+      });
+      m.oneshots.forEach(function (o) {
+        scopeSpan(o, "tv-scope-run", "⟲");
       });
 
       // work spans (persistent lanes)
