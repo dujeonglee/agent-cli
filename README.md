@@ -426,7 +426,7 @@ salience** 로, **컨텍스트 압축(compaction)에도 유실되지 않습니�
 | `/create-skill <name>` | 새 스킬 파일을 대화형으로 생성 (SKILL.md + scripts/) |
 | `/create-agent <name>` | 새 에이전트 정의 파일을 대화형으로 생성 |
 | `/plan <feature>` | 기능 요청을 작업 분해 + 의존성 + 범위 추정으로 구조화하여 `plan/` 에 저장 |
-| `/orchestrate <task>` | 멀티스텝 작업을 계획하고 내장 워커 5종(code-writer/reviewer/analyst·unittest-writer·log-analyst)을 조율 — spawn 으로 컨텍스트 유지, writer↔reviewer 루프, 검증 (main 이 오케스트레이터) |
+| `/orchestrate <task>` | 자율 에이전트 팀 부트스트랩 — 계획 수립 후 워커들을 **idle 로 소환만** 하고(일을 시키면 회신이 main 을 깨움), 로스터(키)를 `orchestrator` 에이전트에게 인계 후 즉시 반환. 조율(배정→리뷰→수리)은 orchestrator 가 peer message 로 자율 진행, main 은 최종 보고만 자동 수신 |
 
 사용자가 같은 이름의 스킬을 `.agent-cli/skills/`에 만들면 built-in을 오버라이드합니다.
 
@@ -1027,6 +1027,7 @@ run 과 spawn 이 **같은 프로파일 파일**을 씁니다. YAML frontmatter(
   - `code-analyst`(읽기 전용 분석 — "어떻게 동작하나": 콜패스·등록 간접·실행/동시성 컨텍스트·수명 추적, `file:line` 인용. 결함 판정은 안 함=reviewer 몫).
   - `unittest-writer`(테스트 — **뮤테이션으로 무는지** 증명: 코드 뒤집으면 실패해야, observable effect 검증, 의존성 페이크로 격리, 실행 검증).
   - `log-analyst`(읽기 전용 — 로그·스택트레이스·크래시에서 **근본 원인**: bottom-up 프레임·cascade 첫 도미노·트리거 조건, 증거 인용).
+  - `orchestrator`(spawn 전용 조율자 — /orchestrate 가 소환한 워커 로스터(키)를 받아 **peer `message` 로 배정→수집→리뷰→수리 루프를 자율 주행**. 워커 회신은 orchestrator 에게만 라우팅되어 main 을 깨우지 않고, main 은 최종 보고/에스컬레이션만 받음. 스스로 spawn 불가 — 워커가 더 필요하면 main 에 message 로 요청).
 - **instant-agent (`instructions`)**: 프로파일 파일 없이 **인라인 텍스트로 즉석 전문가**를 만듭니다 — `{"mode":"spawn","instructions":"너는 이 레포의 wire-format 전문가다..."}` (run 도 동일 지원). `profile` 과 병용하면 파일 본문 뒤에 덧붙는 오버레이가 됩니다 (파일=일반 원칙, 인라인=세션 특정 지시). 상주 에이전트의 인라인 지시는 **세션 내내, resume/부활 후에도** 유지됩니다 (manifest 영속).
 - **`/create-agent` 스킬**: 새 프로파일 md 를 대화형으로 생성 (run/spawn 겸용).
 

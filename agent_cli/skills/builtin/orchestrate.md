@@ -1,84 +1,59 @@
 ---
 name: orchestrate
-description: Drive a multi-step task by planning it and delegating to the built-in worker agents (code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst). You stay the orchestrator — you plan, spawn persistent workers, fan out independent work, loop writer↔reviewer until clean, and verify. Use when a task needs more than one specialist or more than a few steps.
+description: Bootstrap an autonomous agent team for a multi-step task — plan it, spawn an orchestrator agent plus the workers it needs (code-writer, code-reviewer, code-analyst, unittest-writer, log-analyst), hand the roster to the orchestrator, and return. The orchestrator then drives the whole job over peer messages without waking main; main gets the final report (or escalations) automatically. Use when a task needs more than one specialist or more than a few steps.
 argument-hint: "<task or feature description>"
 allowed-tools: [read_file, write_file, shell, agent]
 ---
 
-You are the orchestrator for the task in $ARGUMENTS. You do NOT do the specialist
-work yourself — you decompose it, delegate to the right worker agent, and integrate
-the results. Only YOU (the main agent) can spawn and manage persistent agents;
-workers cannot spawn further agents, so keep the coordination here.
+You are bootstrapping an autonomous team for the task in $ARGUMENTS. Your job is
+ONLY setup: plan → spawn → hand off → report back. You do NOT assign work to any
+worker, and you do NOT coordinate — the orchestrator agent does that, over peer
+messages, after you finish.
 
-## The workers you delegate to
+## Why this shape
 
-| Need | Worker | Notes |
-|------|--------|-------|
-| Understand how existing code works (call paths, lifetimes) | `code-analyst` | read-only |
-| Write / edit implementation | `code-writer` | one file-scope each; spawn several for disjoint files |
-| Review a change for defects | `code-reviewer` | read-only; feeds fixes back to code-writer |
-| Write tests that catch bugs | `unittest-writer` | mutation-checked |
-| Diagnose a failure / crash / log | `log-analyst` | read-only; root cause |
+Worker replies are routed to whoever requested the work. If YOU (main's skill)
+assigned tasks, every completion would wake main. By spawning the workers idle and
+letting the ORCHESTRATOR assign everything, all coordination traffic (assign →
+reply → review → fix) stays between the agents; main is woken only by the
+orchestrator's final report or a genuine escalation.
 
-## Default to spawn, not run
+## Steps
 
-**Your workers must be `spawn`ed, not `run`.** A `spawn`ed agent is PERSISTENT — it
-keeps its context across your requests, so the code-writer still remembers what it
-built when the reviewer's feedback comes back, and the analyst's subsystem map stays
-warm for follow-ups. A `run` is a one-shot that FORGETS everything the moment it
-returns — useless for the implement→review→fix loop this task needs. So:
+1. **Plan.** For a non-trivial task, run the `plan` skill (or sketch the steps
+   inline) so there is an ordered task list with dependencies and file scopes —
+   ideally written to `plan/<name>.md` so the orchestrator can read it.
 
-- **`spawn`** every worker you will talk to more than once (that is almost all of
-  them: the code-writer, the code-reviewer, the unittest-writer). Then drive them
-  with `request`; their replies are delivered to you automatically (never poll).
-- **`run`** ONLY for a single, self-contained, one-off lookup whose answer you need
-  exactly once and never revisit — e.g. "read this one file and tell me X". If you
-  will follow up, it must be a spawn. When unsure, spawn.
+2. **Spawn the workers, idle.** Spawn each specialist the plan calls for — with a
+   distinct `name`, and NO `task` field. Do not send them any request; they must
+   sit idle until the orchestrator assigns work. Typical team: one or more
+   `code-writer`s (disjoint file scopes), a `code-reviewer`, a `unittest-writer`;
+   add a `code-analyst` when unfamiliar code must be mapped first, a `log-analyst`
+   when failures will need diagnosing. Note each returned agent KEY.
 
-## How to run it
+3. **Spawn the orchestrator LAST, with the full briefing as its initial task.**
+   `spawn` the `orchestrator` profile; its `task` must contain everything it needs
+   to run autonomously:
+   - the goal ($ARGUMENTS, restated concretely),
+   - the plan file path (or the inline step list),
+   - the worker roster: each worker's KEY, profile, name, and assigned scope,
+   - the standing instruction: "Coordinate these workers over `message` to
+     complete the goal. Work autonomously; do not contact main except for your
+     final report or a blocking problem. If you need another worker spawned,
+     `message` main to ask."
 
-1. **Understand and plan.** If the task is non-trivial, run the `plan` skill (or
-   sketch the steps inline) to get an ordered task list with dependencies and file
-   scopes. Decide which steps are independent (can run in parallel) and sequential.
+4. **Report and finish.** `complete` immediately with a handoff brief: the plan
+   location, the spawned roster (keys + scopes), and a note that the orchestrator
+   is now driving the job asynchronously — its reports will be delivered to main
+   automatically, and the user can watch or intervene any time via the agents
+   panel (`@agents`, or messaging a key directly).
 
-2. **Spawn your workers up front.** Right after planning, `spawn` the specialists the
-   plan calls for — each with a distinct `name` and, for code-writers, a disjoint
-   file scope. A typical build spawns a `code-writer`, a `code-reviewer`, and a
-   `unittest-writer`; add a `code-analyst` (spawned) first if the code is unfamiliar,
-   so its map persists for everyone. Do NOT `run` these — they are all iterative.
+## Rules
 
-3. **Coordinate the implement→review→fix loop.**
-   - `request` the code-writer to implement its scope.
-   - `request` the code-reviewer to review the change; it reports defects with
-     severity and `file:line`.
-   - Feed confirmed defects back to the SAME code-writer (it still has its context —
-     this is why it had to be spawned) and re-review until the reviewer is clean.
-     Replies arrive automatically; keep working while you wait.
-
-4. **Verify.** `request` the `unittest-writer` to add/extend tests for the new
-   behavior and run them; if a run fails, hand the failure output to a `log-analyst`
-   (or the reviewer) to find the root cause before looping back to the writer. Run
-   the project's own checks (build / lint / full test suite) yourself and report the
-   result honestly, including failures.
-
-5. **Integrate and report.** Collect the `Files touched:` lists, confirm the pieces
-   fit, and report what was done, what was verified, and anything left open. `kill`
-   persistent workers you no longer need.
-
-## Principles
-
-- **Spawn, not run — this is the whole point.** `run` re-deriving context every turn
-  is the failure mode that makes naive fan-out useless. If you catch yourself about
-  to `run` a worker you will talk to again, spawn it instead.
-- **One scope per writer.** Parallel code-writers must own disjoint files; a shared
-  file is a sequential dependency, not a parallel one.
-- **You own integration and verification.** Workers report honestly within their
-  scope; making the pieces fit and running the real checks is your job.
-- **Right-size it.** A two-step task does not need the full loop — delegate the one
-  specialist step and move on. Reserve the full orchestration for genuinely
-  multi-part work.
-
-## Complete result format
-
-When done, `complete` with: what was built, which workers did what, what you
-verified (tests/build/lint results — real, not assumed), and any open items.
+- **Never send a worker a task or request — not one.** Spawn them idle. Any work
+  you hand out directly will route its reply to main and defeat the design.
+- **Do not wait, poll, or ask for status.** After spawning the orchestrator,
+  finish. Replies are delivered to main automatically when they come.
+- One writer per file scope; state each scope in the roster you hand over.
+- Right-size the team: a 2-step task may need just one writer and a reviewer — do
+  not spawn agents the plan gives no work to.

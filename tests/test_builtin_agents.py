@@ -213,3 +213,41 @@ class TestBuiltinAgentPriority:
         _role, config, error = load_profile("code-analyst")
         assert error is None
         assert "write_file" not in config.get("allowed-tools", [])
+
+
+class TestOrchestratorProfile:
+    """orchestrator (v7.18.0 peer 설계) — 워커 로스터를 받아 peer message 로
+    조율하는 spawn 전용 프로필. main 을 불필요하게 깨우지 않는 계약."""
+
+    def _load(self):
+        role, cfg, err = load_profile("orchestrator")
+        assert err is None, err
+        return role, cfg
+
+    def test_loads_with_message_no_agent_tool(self):
+        _role, cfg = self._load()
+        tools = cfg["allowed-tools"]
+        assert "message" in tools  # peer 조율의 유일 채널
+        assert "agent" not in tools  # spawn 불가 (경계 유지 — 필요시 main 에 요청)
+        assert "write_file" not in tools  # 조율만, 구현 안 함
+        assert "memory" in tools  # 조율 상태가 compaction 을 넘게
+
+    def test_description_signals_spawn_only_and_no_main_wake(self):
+        _, cfg = self._load()
+        desc = cfg["description"].lower()
+        assert "spawn-only" in desc or "spawn only" in desc
+        assert "without waking main" in desc
+
+    def test_body_contract(self):
+        role, _ = self._load()
+        flat = role.lower()
+        # 조율 채널 = message, 회신은 자동 도착(폴링 금지)
+        assert "message" in flat and "never poll" in flat
+        # main 접촉 최소화: 최종 보고/블로킹만
+        assert "final report" in flat and "blocking" in flat
+        # 스스로 spawn 불가 → main 에 요청
+        assert "cannot spawn" in flat
+        # 조율 상태는 memory 에 (compaction 생존)
+        assert "memory" in flat
+        # 직접 구현 금지
+        assert "never write code" in flat

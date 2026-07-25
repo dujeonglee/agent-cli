@@ -239,9 +239,11 @@ class TestBuiltinSkillContent:
         assert "agent" in skill.allowed_tools  # main spawns/runs workers
         assert skill.disable_model_invocation is False  # LLM can auto-invoke
 
-    def test_orchestrate_delegates_to_the_five_workers(self):
-        """오케스트레이션 절차 = main 이 내장 워커 5종을 조율 (delegate 도구
-        폐기 후 agent run/spawn 기반). 워커 이름을 명시해야 main 이 배정."""
+    def test_orchestrate_is_bootstrap_only_peer_design(self):
+        """orchestrate = 부트스트랩 전용 (v7.18.0 peer 설계): 워커는 idle 로
+        소환만(일 시키면 회신이 main 을 깨움 — 라우팅은 author 기반), 로스터
+        (키)를 orchestrator 에게 인계, 조율은 orchestrator 가 peer message 로.
+        main 은 최종 보고/에스컬레이션만 받는다."""
         body = (_BUILTIN_DIR / "orchestrate.md").read_text()
         for worker in (
             "code-writer",
@@ -249,14 +251,21 @@ class TestBuiltinSkillContent:
             "code-analyst",
             "unittest-writer",
             "log-analyst",
+            "orchestrator",
         ):
             assert worker in body, worker
-        # 컨텍스트 유지 = spawn/request (run 은 one-shot 망각)
-        assert "spawn" in body and "request" in body
-        # 폐기된 delegate **도구** 참조 금지 — agent run/spawn 이 대체.
-        # ("delegate" 동사(위임하다)는 자연어라 허용; 도구 호출 형태만 차단)
+        # 핵심 계약 1: 워커는 idle 소환 — task 없이, 일 시키지 말 것
+        assert "NO `task`" in body
+        assert "Never send a worker a task" in body
+        # 핵심 계약 2: 로스터(KEY) 인계 + orchestrator 를 마지막에 스폰
+        assert "KEY" in body
+        assert "orchestrator LAST" in body
+        # 핵심 계약 3: 대기/폴링 금지 — 즉시 complete, 보고는 자동 배달
+        assert "Do not wait, poll" in body
+        # 왜 이 모양인지(회신 라우팅 근거)를 스킬 자신이 설명
+        assert "wake main" in body or "waking main" in body
+        # 폐기된 delegate 도구 참조 금지
         assert "delegate(" not in body
-        assert "allowed-tools" not in body or "delegate]" not in body
 
     def test_orchestrate_user_invocable(self):
         skill = _parse_skill_file(_BUILTIN_DIR / "orchestrate.md")
