@@ -55,7 +55,7 @@ def _make_renderer(*, force_terminal: bool = False) -> MinimalRenderer:
 class TestBeginEndState:
     def test_first_begin_registers_task(self):
         r = _make_renderer()
-        r.begin_delegate_task(task_id="t1", index=0, agent="a", task_text="task body")
+        r.begin_scope(task_id="t1", index=0, agent="a", label="task body")
         assert "t1" in r._parallel_tasks
         state = r._parallel_tasks["t1"]
         assert state["index"] == 0
@@ -63,20 +63,20 @@ class TestBeginEndState:
         assert state["task"] == "task body"
         assert state["done"] is False
         # cleanup
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
 
     def test_multiple_begins_register_each_task(self):
         r = _make_renderer()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="A")
-        r.begin_delegate_task(task_id="t2", index=1, agent="", task_text="B")
+        r.begin_scope(task_id="t1", index=0, agent="", label="A")
+        r.begin_scope(task_id="t2", index=1, agent="", label="B")
         assert r._parallel_order == ["t1", "t2"]
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
-        r.end_delegate_task(task_id="t2", success=True, duration_s=0.1)
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
+        r.end_scope(task_id="t2", success=True, duration_s=0.1)
 
     def test_end_marks_task_done_and_carries_metadata(self):
         r = _make_renderer()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="A")
-        r.end_delegate_task(task_id="t1", success=False, duration_s=4.2, error="boom")
+        r.begin_scope(task_id="t1", index=0, agent="", label="A")
+        r.end_scope(task_id="t1", success=False, duration_s=4.2, error="boom")
         # After last-task end, MinimalRenderer clears _parallel_order
         # and pops the per-task dict — so the contract is "no
         # leftover state once all tasks have ended". Pin that.
@@ -85,14 +85,14 @@ class TestBeginEndState:
 
     def test_last_end_clears_panel_state(self):
         r = _make_renderer()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="A")
-        r.begin_delegate_task(task_id="t2", index=1, agent="", task_text="B")
+        r.begin_scope(task_id="t1", index=0, agent="", label="A")
+        r.begin_scope(task_id="t2", index=1, agent="", label="B")
         # Ending only one task does NOT tear down — still one running.
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
         assert r._parallel_order == ["t1", "t2"]
         assert r._parallel_tasks["t2"]["done"] is False
         # Ending the second triggers cleanup.
-        r.end_delegate_task(task_id="t2", success=True, duration_s=0.1)
+        r.end_scope(task_id="t2", success=True, duration_s=0.1)
         assert r._parallel_order == []
         assert r._parallel_tasks == {}
 
@@ -103,11 +103,11 @@ class TestBeginEndState:
         # call must be a graceful no-op rather than crashing the
         # worker. Pin defensively.
         r = _make_renderer()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="A")
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        r.begin_scope(task_id="t1", index=0, agent="", label="A")
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
         # Second end on the same id — state has already been popped.
         # Must not raise.
-        r.end_delegate_task(task_id="t1", success=False, duration_s=0.2, error="x")
+        r.end_scope(task_id="t1", success=False, duration_s=0.2, error="x")
 
 
 # ─── Live region wiring ───────────────────────────────────────
@@ -124,22 +124,22 @@ class TestLiveRegionLifecycle:
     def test_no_live_started_on_non_terminal_console(self):
         # Default test renderer uses StringIO + force_terminal=False.
         r = _make_renderer()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="A")
+        r.begin_scope(task_id="t1", index=0, agent="", label="A")
         # State is tracked …
         assert "t1" in r._parallel_tasks
         # … but the Live region remains None (no refresh thread spun
         # up). This is the property that prevents test hangs.
         assert r._parallel_live is None
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
 
     def test_clock_initialized_only_when_live_starts(self):
         # The clock pairs with the Live region — both come up together
         # on a real terminal, both stay absent off-tty. Pinning this
         # documents the invariant for the test renderer.
         r = _make_renderer()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="A")
+        r.begin_scope(task_id="t1", index=0, agent="", label="A")
         assert r._parallel_clock is None
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
 
 
 class TestNoSelfDeadlockOnPanelStart:
@@ -177,7 +177,7 @@ class TestNoSelfDeadlockOnPanelStart:
         # match so the explanatory text in begin_delegate_task (which
         # describes the bad pattern as a warning) doesn't false-trip
         # the assertion.
-        src = inspect.getsource(MinimalRenderer.begin_delegate_task)
+        src = inspect.getsource(MinimalRenderer._begin_delegate_panel)
         # Drop comments (anything after a # on a line).
         # Drop docstring (triple-quoted block right after def).
         executable_lines = []
@@ -234,8 +234,8 @@ class TestNoSelfDeadlockOnPanelStart:
 
         def run() -> None:
             try:
-                r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="task")
-                r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+                r.begin_scope(task_id="t1", index=0, agent="", label="task")
+                r.end_scope(task_id="t1", success=True, duration_s=0.1)
             except BaseException as e:
                 failure.append(e)
             finally:
@@ -283,10 +283,8 @@ class TestNoSelfDeadlockOnPanelStart:
         def worker(i: int) -> None:
             try:
                 tid = f"t{i}"
-                r.begin_delegate_task(
-                    task_id=tid, index=i, agent="", task_text=f"task {i}"
-                )
-                r.end_delegate_task(task_id=tid, success=True, duration_s=0.05)
+                r.begin_scope(task_id=tid, index=i, agent="", label=f"task {i}")
+                r.end_scope(task_id=tid, success=True, duration_s=0.05)
                 finished[i] = True
             except BaseException as e:
                 errors.append(e)
@@ -360,7 +358,7 @@ class TestCapturedOutputDump:
         task_id: str,
         index: int,
         agent: str,
-        task_text: str,
+        label: str,
         captured_lines: list[str],
         success: bool,
         duration_s: float,
@@ -376,12 +374,12 @@ class TestCapturedOutputDump:
         """
 
         def body() -> None:
-            r.begin_delegate_task(
-                task_id=task_id, index=index, agent=agent, task_text=task_text
+            r.begin_scope(
+                task_id=task_id, kind="run", index=index, agent=agent, label=label
             )
             for line in captured_lines:
                 r._capture_line(line)
-            r.end_delegate_task(
+            r.end_scope(
                 task_id=task_id, success=success, duration_s=duration_s, error=error
             )
 
@@ -400,12 +398,12 @@ class TestCapturedOutputDump:
         release = threading.Event()
 
         def worker(tid: str, index: int, label: str, lines: list[str]) -> None:
-            r.begin_delegate_task(task_id=tid, index=index, agent="", task_text=label)
+            r.begin_scope(task_id=tid, index=index, agent="", label=label)
             registered[tid].set()
             release.wait(timeout=5)
             for line in lines:
                 r._capture_line(line)
-            r.end_delegate_task(task_id=tid, success=True, duration_s=0.1)
+            r.end_scope(task_id=tid, success=True, duration_s=0.1)
 
         t1 = threading.Thread(target=worker, args=("t1", 0, "first", ["output for t1"]))
         t2 = threading.Thread(
@@ -432,7 +430,7 @@ class TestCapturedOutputDump:
             task_id="t1",
             index=0,
             agent="reviewer",
-            task_text="check security",
+            label="check security",
             captured_lines=["line A", "line B"],
             success=True,
             duration_s=2.5,
@@ -456,7 +454,7 @@ class TestCapturedOutputDump:
             task_id="t1",
             index=0,
             agent="",
-            task_text="boom",
+            label="boom",
             captured_lines=["error trace"],
             success=False,
             duration_s=1.0,
@@ -513,8 +511,8 @@ class TestArchitecturalInvariants:
         # The Live region's start/stop and the captured output dump
         # must live in ``MinimalRenderer``. Grep both methods so a
         # future refactor that moves Live elsewhere fails this test.
-        begin = inspect.getsource(MinimalRenderer.begin_delegate_task)
-        end = inspect.getsource(MinimalRenderer.end_delegate_task)
+        begin = inspect.getsource(MinimalRenderer._begin_delegate_panel)
+        end = inspect.getsource(MinimalRenderer._end_delegate_panel)
         assert "Live(" in begin
         assert ".stop()" in end
 
@@ -562,30 +560,28 @@ class TestWebRendererUnchanged:
 
     def test_begin_emits_delegate_task_start_event(self):
         r, c = self._make_web()
-        r.begin_delegate_task(task_id="t1", index=0, agent="x", task_text="y")
+        r.begin_scope(task_id="t1", index=0, agent="x", label="y")
         events = self._drain(c)
         names = [e for e, _ in events]
-        assert "delegate_task_start" in names
+        assert "scope_start" in names
 
     def test_end_emits_delegate_task_end_event(self):
         r, c = self._make_web()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="")
+        r.begin_scope(task_id="t1", index=0, agent="", label="")
         # Drain start event first so end events are easy to find.
         self._drain(c)
-        r.end_delegate_task(task_id="t1", success=True, duration_s=1.2)
+        r.end_scope(task_id="t1", success=True, duration_s=1.2)
         events = self._drain(c)
         names = [e for e, _ in events]
-        assert "delegate_task_end" in names
+        assert "scope_end" in names
 
     def test_failed_task_end_carries_error(self):
         r, c = self._make_web()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="")
+        r.begin_scope(task_id="t1", index=0, agent="", label="")
         self._drain(c)
-        r.end_delegate_task(
-            task_id="t1", success=False, duration_s=0.5, error="bad input"
-        )
+        r.end_scope(task_id="t1", success=False, duration_s=0.5, error="bad input")
         events = self._drain(c)
-        end = next(d for e, d in events if e == "delegate_task_end")
+        end = next(d for e, d in events if e == "scope_end")
         assert end["success"] is False
         assert end["error"] == "bad input"
 
@@ -596,9 +592,9 @@ class TestWebRendererUnchanged:
         # registration / deregistration still works after the
         # refactor.
         r, _ = self._make_web()
-        r.begin_delegate_task(task_id="t1", index=0, agent="", task_text="")
+        r.begin_scope(task_id="t1", index=0, agent="", label="")
         assert r._thread_to_task[threading.get_ident()] == "t1"
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.0)
+        r.end_scope(task_id="t1", success=True, duration_s=0.0)
         assert threading.get_ident() not in r._thread_to_task
 
 
@@ -619,13 +615,11 @@ class TestConcurrentWorkers:
         def worker(idx: int) -> None:
             try:
                 tid = f"t{idx}"
-                r.begin_delegate_task(
-                    task_id=tid, index=idx, agent="", task_text=f"task {idx}"
-                )
+                r.begin_scope(task_id=tid, index=idx, agent="", label=f"task {idx}")
                 # Inject a fake captured line so dump replay has
                 # something to print.
                 r._capture_line(f"work for {idx}")
-                r.end_delegate_task(task_id=tid, success=True, duration_s=0.01)
+                r.end_scope(task_id=tid, success=True, duration_s=0.01)
             except BaseException as e:
                 errors.append(e)
 

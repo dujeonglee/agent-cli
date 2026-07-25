@@ -490,18 +490,49 @@ class MinimalRenderer(Renderer):
                 pass
             self._live = None
 
-    def group_start(self, label: str, icon: str = "") -> None:
-        """Print ┌─ at current depth. Call BEFORE push_depth."""
-        icon_part = f"{icon} " if icon else ""
-        self._p(f"┌─ {icon_part}{label}", highlight=False)
-
-    def group_end(
-        self, label: str, success: bool = True, duration_s: float = 0
+    def begin_scope(
+        self,
+        *,
+        task_id: str,
+        kind: str = "run",
+        label: str = "",
+        agent: str = "",
+        index: int = 0,
     ) -> None:
-        """Print └─ at current depth. Call AFTER pop_depth."""
-        status = "✓" if success else "✗"
-        dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
-        self._p(f"└─ {status} {label}{dur}", highlight=False)
+        """Enter a nested scope. Same abstraction surface as web; CLI display
+        adapts to ``kind`` — a skill draws a ``┌─ 🪄`` bracket at the current
+        depth (caller then push_depth); a delegate/one-shot ``run`` drives the
+        rich.Live worker panel."""
+        if not hasattr(self, "_scope_labels"):
+            self._scope_labels: dict[str, str] = {}
+        self._scope_labels[task_id] = label
+        if kind == "skill":
+            self._p(f"┌─ 🪄 {label}", highlight=False)
+        else:
+            self._begin_delegate_panel(
+                task_id=task_id, index=index, agent=agent, task_text=label
+            )
+
+    def end_scope(
+        self,
+        *,
+        task_id: str,
+        kind: str = "run",
+        success: bool = True,
+        duration_s: float = 0.0,
+        error: str = "",
+    ) -> None:
+        """Leave a scope. Skill prints ``└─ ✓`` (call AFTER pop_depth); a run
+        finalises the Live panel."""
+        label = getattr(self, "_scope_labels", {}).pop(task_id, "")
+        if kind == "skill":
+            status = "✓" if success else "✗"
+            dur = f" ({duration_s:.1f}s)" if duration_s > 0 else ""
+            self._p(f"└─ {status} {label}{dur}", highlight=False)
+        else:
+            self._end_delegate_panel(
+                task_id=task_id, success=success, duration_s=duration_s, error=error
+            )
 
     def _erase_reflowed_marquee(self) -> None:
         """If the terminal shrank since the last paint, the previous
@@ -813,7 +844,7 @@ class MinimalRenderer(Renderer):
                 lines.append(Text(f"       {status}", style="grey46"))
         return Text("\n").join(lines)
 
-    def begin_delegate_task(
+    def _begin_delegate_panel(
         self,
         *,
         task_id: str,
@@ -897,7 +928,7 @@ class MinimalRenderer(Renderer):
         # Tag this worker thread so a confirm/ask it triggers can name it.
         self.set_thread_agent(agent or f"task #{index + 1}")
 
-    def end_delegate_task(
+    def _end_delegate_panel(
         self,
         *,
         task_id: str,
@@ -957,15 +988,19 @@ class MinimalRenderer(Renderer):
                 if agent
                 else f"[{t['index'] + 1}] {task_text}"
             )
-            self.group_start(label, icon="🦀")
+            # Frame each captured task dump with ┌─/└─ brackets (was
+            # group_start/group_end before the scope unification — inlined here
+            # since this per-task dump framing is internal to the panel, not a
+            # scope boundary).
+            self._p(f"┌─ 🦀 {label}", highlight=False)
             self.push_depth()
             prefix = self._prefix
             for line in t["captured"]:
                 self.con.print(f"{prefix}{line}", highlight=False)
             self.pop_depth()
-            self.group_end(
-                label, success=bool(t["success"]), duration_s=t["duration_s"]
-            )
+            _status = "✓" if t["success"] else "✗"
+            _dur = f" ({t['duration_s']:.1f}s)" if t["duration_s"] > 0 else ""
+            self._p(f"└─ {_status} {label}{_dur}", highlight=False)
         # Reset registration state for the next parallel set.
         with self._parallel_lock:
             for tid in order_snapshot:

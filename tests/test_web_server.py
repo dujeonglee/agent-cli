@@ -1455,9 +1455,7 @@ def _note_agent_scope(renderer, *, task_id, index, agent, sections, turn):
     (a delegate worker captures its prompt on its own thread)."""
 
     def worker():
-        renderer.begin_delegate_task(
-            task_id=task_id, index=index, agent=agent, task_text="t"
-        )
+        renderer.begin_scope(task_id=task_id, index=index, agent=agent, label="t")
         renderer.note_system_prompt(sections, turn=turn)
 
     th = threading.Thread(target=worker)

@@ -253,11 +253,12 @@ def _run_parallel(
         task_id = f"delegate-{index}-{uuid.uuid4().hex}"
         agent = spec.get("agent", "")
         task_text = spec.get("task", "")
-        renderer.begin_delegate_task(
+        renderer.begin_scope(
             task_id=task_id,
-            index=index,
+            kind="run",
+            label=task_text or agent or f"task #{index + 1}",
             agent=agent,
-            task_text=task_text,
+            index=index,
         )
         t0 = time.monotonic()
         result_for_marker = None
@@ -293,8 +294,9 @@ def _run_parallel(
             success = bool(result_for_marker and result_for_marker.success)
             if result_for_marker and not result_for_marker.success:
                 error_msg = result_for_marker.error or ""
-            renderer.end_delegate_task(
+            renderer.end_scope(
                 task_id=task_id,
+                kind="run",
                 success=success,
                 duration_s=durations[index],
                 error=error_msg,
@@ -385,8 +387,6 @@ def tool_delegate(
         # Single run: grouped nested rendering
         from agent_cli.render import (
             get_renderer,
-            render_group_end,
-            render_group_start,
             render_pop_depth,
             render_push_depth,
         )
@@ -408,13 +408,13 @@ def tool_delegate(
         # recycled thread idents would collide across delegate calls and
         # suppress the frontend card. See ``worker`` above.
         task_id = f"delegate-single-{uuid.uuid4().hex}"
-        renderer.begin_delegate_task(
+        renderer.begin_scope(
             task_id=task_id,
-            index=0,
+            kind="run",
+            label=label,
             agent=agent_name,
-            task_text=spec.get("task", ""),
+            index=0,
         )
-        render_group_start(label, icon="🦀")
         render_push_depth()
         t0 = time.monotonic()
         result = None
@@ -432,17 +432,13 @@ def tool_delegate(
         finally:
             duration = time.monotonic() - t0
             render_pop_depth()
-            render_group_end(
-                label,
-                success=result.success if result else False,
-                duration_s=duration,
-            )
             success = bool(result and result.success)
             error_msg = ""
             if result and not result.success:
                 error_msg = result.error or ""
-            renderer.end_delegate_task(
+            renderer.end_scope(
                 task_id=task_id,
+                kind="run",
                 success=success,
                 duration_s=duration,
                 error=error_msg,

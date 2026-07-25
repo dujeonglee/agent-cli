@@ -1010,31 +1010,30 @@ class TestDelegateTaskVisibility:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        r.begin_delegate_task(
-            task_id="t-1", index=0, agent="explorer", task_text="find X"
-        )
+        r.begin_scope(task_id="t-1", index=0, agent="explorer", label="find X")
         event, data = conn.queue.get(timeout=1.0)
-        assert event == "delegate_task_start"
+        assert event == "scope_start"
         data.pop("ts", None)  # server-stamped emit time — not under test here
         assert data == {
             "task_id": "t-1",
+            "kind": "run",
             "index": 0,
             "agent": "explorer",
-            "task_text": "find X",
+            "label": "find X",
         }
         # Persistent so a late-joining client replays the open card.
-        assert any(ev == "delegate_task_start" for (ev, _) in r._event_buffer)
+        assert any(ev == "scope_start" for (ev, _) in r._event_buffer)
 
     def test_end_delegate_task_emits_persistent_end_event(self):
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        r.begin_delegate_task(task_id="t-1", index=0, agent="", task_text="t")
+        r.begin_scope(task_id="t-1", index=0, agent="", label="t")
         # Drain start.
         conn.queue.get(timeout=1.0)
-        r.end_delegate_task(task_id="t-1", success=True, duration_s=4.2)
+        r.end_scope(task_id="t-1", success=True, duration_s=4.2)
         event, data = conn.queue.get(timeout=1.0)
-        assert event == "delegate_task_end"
+        assert event == "scope_end"
         assert data["task_id"] == "t-1"
         assert data["success"] is True
         assert data["duration_s"] == 4.2
@@ -1046,11 +1045,9 @@ class TestDelegateTaskVisibility:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        r.begin_delegate_task(task_id="t-1", index=0, agent="", task_text="t")
+        r.begin_scope(task_id="t-1", index=0, agent="", label="t")
         conn.queue.get(timeout=1.0)
-        r.end_delegate_task(
-            task_id="t-1", success=False, duration_s=1.0, error="timed out"
-        )
+        r.end_scope(task_id="t-1", success=False, duration_s=1.0, error="timed out")
         _, data = conn.queue.get(timeout=1.0)
         assert data["success"] is False
         assert data["error"] == "timed out"
@@ -1069,7 +1066,7 @@ class TestDelegateTaskVisibility:
         _, baseline = conn.queue.get(timeout=1.0)
         assert "task_id" not in baseline
 
-        r.begin_delegate_task(task_id="t-7", index=0, agent="", task_text="")
+        r.begin_scope(task_id="t-7", index=0, agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
 
         # Within the window: every emit picks up task_id.
@@ -1077,7 +1074,7 @@ class TestDelegateTaskVisibility:
         _, mid = conn.queue.get(timeout=1.0)
         assert mid["task_id"] == "t-7"
 
-        r.end_delegate_task(task_id="t-7", success=True, duration_s=0.1)
+        r.end_scope(task_id="t-7", success=True, duration_s=0.1)
         conn.queue.get(timeout=1.0)  # drain end
 
         # After end: back to no task_id.
@@ -1096,13 +1093,13 @@ class TestDelegateTaskVisibility:
         conn = WebConnection(id="c")
         r.register_connection(conn)
 
-        r.begin_delegate_task(task_id="outer", index=0, agent="", task_text="")
+        r.begin_scope(task_id="outer", index=0, agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
         # Now inside outer's thread, emit with an explicit (different)
         # task_id — must survive intact.
         r._emit(
-            "delegate_task_start",
-            {"task_id": "inner", "index": 1, "agent": "", "task_text": ""},
+            "scope_start",
+            {"task_id": "inner", "index": 1, "agent": "", "label": ""},
             persistent=True,
         )
         _, data = conn.queue.get(timeout=1.0)
@@ -1112,7 +1109,7 @@ class TestDelegateTaskVisibility:
         r = WebRenderer()
         conn = WebConnection(id="c")
         r.register_connection(conn)
-        r.begin_delegate_task(task_id="t-1", index=0, agent="", task_text="")
+        r.begin_scope(task_id="t-1", index=0, agent="", label="")
         conn.queue.get(timeout=1.0)  # drain start
 
         r.set_thread_status("reading file...")
@@ -1169,9 +1166,9 @@ class TestRendererBaseDelegateTaskNoOp:
 
         r = MinimalRenderer(Console(file=StringIO(), force_terminal=False))
         # Should not raise — no-op implementations on base.
-        r.begin_delegate_task(task_id="t", index=0, agent="a", task_text="t")
-        r.end_delegate_task(task_id="t", success=True, duration_s=1.0)
-        r.end_delegate_task(task_id="t", success=False, duration_s=2.0, error="x")
+        r.begin_scope(task_id="t", index=0, agent="a", label="t")
+        r.end_scope(task_id="t", success=True, duration_s=1.0)
+        r.end_scope(task_id="t", success=False, duration_s=2.0, error="x")
 
 
 class TestShutdownAllConnections:
@@ -1781,7 +1778,7 @@ def _note_in_delegate_scope(r, *, task_id, index, agent, sections, turn):
     the path a parallel-delegate worker takes)."""
 
     def worker():
-        r.begin_delegate_task(task_id=task_id, index=index, agent=agent, task_text="t")
+        r.begin_scope(task_id=task_id, index=index, agent=agent, label="t")
         r.note_system_prompt(sections, turn=turn)
 
     th = threading.Thread(target=worker)
@@ -1879,9 +1876,7 @@ class TestPromptInspectorScopes:
         r = WebRenderer()
 
         def worker():
-            r.begin_delegate_task(
-                task_id="task-A", index=0, agent="explorer", task_text="t"
-            )
+            r.begin_scope(task_id="task-A", index=0, agent="explorer", label="t")
 
         th = threading.Thread(target=worker)
         th.start()
@@ -1914,11 +1909,9 @@ class TestPromptInspectorScopes:
         r = WebRenderer()
 
         def worker():
-            r.begin_delegate_task(
-                task_id="task-A", index=0, agent="explorer", task_text="t"
-            )
+            r.begin_scope(task_id="task-A", index=0, agent="explorer", label="t")
             r.note_system_prompt([("Role", "A")], turn=1)
-            r.end_delegate_task(task_id="task-A", success=True, duration_s=0.1)
+            r.end_scope(task_id="task-A", success=True, duration_s=0.1)
 
         th = threading.Thread(target=worker)
         th.start()
@@ -2170,14 +2163,12 @@ class TestPromptScopeStack:
 
     def test_nested_delegate_then_skill_resolves_top(self):
         r = WebRenderer()
-        r.begin_delegate_task(
-            task_id="delegate-1-x", index=0, agent="explorer", task_text="t"
-        )
+        r.begin_scope(task_id="delegate-1-x", index=0, agent="explorer", label="t")
         r.begin_prompt_scope("skill-opt-1", label="skill:opt")
         r.note_system_prompt([("Base", "NESTED")], turn=1)
         r.end_prompt_scope("skill-opt-1")
         r.note_system_prompt([("Base", "AGENT")], turn=1)
-        r.end_delegate_task(task_id="delegate-1-x", success=True, duration_s=0.1)
+        r.end_scope(task_id="delegate-1-x", success=True, duration_s=0.1)
         assert "NESTED" in r.prompt_snapshot("skill-opt-1")["sections"][0]["text"]
         assert "AGENT" in r.prompt_snapshot("delegate-1-x")["sections"][0]["text"]
 
@@ -2226,11 +2217,11 @@ class TestTeammateWork:
         r.begin_agent_work(key="agt-1", seq=2, profile="researcher", message="dig")
         r.end_agent_work(key="agt-1", seq=2, success=True, duration_s=0.3)
         names = [e for e, _ in r._event_buffer]
-        assert "delegate_task_start" in names and "delegate_task_end" in names
-        start = next(d for e, d in r._event_buffer if e == "delegate_task_start")
+        assert "scope_start" in names and "scope_end" in names
+        start = next(d for e, d in r._event_buffer if e == "scope_start")
         assert start["task_id"] == "agt-1#2"
         assert "researcher" in start["agent"]
-        end = next(d for e, d in r._event_buffer if e == "delegate_task_end")
+        end = next(d for e, d in r._event_buffer if e == "scope_end")
         assert end["task_id"] == "agt-1#2" and end["success"] is True
 
     def test_work_routes_thread_without_touching_prompt_scope(self, tmp_path):

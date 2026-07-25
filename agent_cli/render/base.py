@@ -222,26 +222,32 @@ class Renderer(ABC):
     # — so the base implementations are concrete no-ops. WebRenderer
     # overrides to map ``thread_id → task_id`` and emit SSE markers.
 
-    def begin_delegate_task(
+    def begin_scope(
         self,
         *,
         task_id: str,
-        index: int,
-        agent: str,
-        task_text: str,
+        kind: str = "run",
+        label: str = "",
+        agent: str = "",
+        index: int = 0,
     ) -> None:
-        """Mark the current thread as a delegate worker. No-op for CLI."""
+        """Enter a nested execution scope — the single path for BOTH a skill
+        subloop (``kind="skill"``) and a delegate / one-shot worker
+        (``kind="run"``). On web this opens ONE ``scope_start`` card + routes
+        the scope's inner events to it (fixes: ``/orchestrate`` used to emit a
+        different, un-handled event and drew no card). CLI branches on ``kind``
+        (skill bracket vs delegate Live panel). No-op default."""
 
-    def end_delegate_task(
+    def end_scope(
         self,
         *,
         task_id: str,
-        success: bool,
-        duration_s: float,
+        kind: str = "run",
+        success: bool = True,
+        duration_s: float = 0.0,
         error: str = "",
     ) -> None:
-        """Mark the current thread as leaving its delegate context.
-        No-op for CLI."""
+        """Leave a scope opened by :meth:`begin_scope`. No-op default."""
 
     def begin_agent_work(
         self, *, key: str, seq: int, profile: str, message: str
@@ -495,14 +501,6 @@ class Renderer(ABC):
 
     def stream_end(self) -> None:
         """Signal end of streaming. Default: no-op."""
-
-    def group_start(self, label: str, icon: str = "") -> None:
-        """Start a nested block (skill/delegate). Default: no-op."""
-
-    def group_end(
-        self, label: str, success: bool = True, duration_s: float = 0
-    ) -> None:
-        """End a nested block. Default: no-op."""
 
     # ── User input ──────────────────────────────────
 

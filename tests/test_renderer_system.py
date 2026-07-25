@@ -205,16 +205,16 @@ class TestPromptProvenance:
 
     def test_delegate_begin_sets_agent_end_clears(self):
         r = MinimalRenderer(Console())
-        r.begin_delegate_task(task_id="t1", index=0, agent="explorer", task_text="x")
+        r.begin_scope(task_id="t1", index=0, agent="explorer", label="x")
         assert r.prompt_meta()["agent"] == "explorer"
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
         assert r.prompt_meta()["agent"] == ""
 
     def test_delegate_unnamed_falls_back_to_task_index(self):
         r = MinimalRenderer(Console())
-        r.begin_delegate_task(task_id="t1", index=2, agent="", task_text="x")
+        r.begin_scope(task_id="t1", index=2, agent="", label="x")
         assert r.prompt_meta()["agent"] == "task #3"
-        r.end_delegate_task(task_id="t1", success=True, duration_s=0.1)
+        r.end_scope(task_id="t1", success=True, duration_s=0.1)
 
 
 class TestLoadRendererByName:

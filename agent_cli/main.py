@@ -720,15 +720,22 @@ def _dispatch_skill(
         )
 
     import time as _time
+    import uuid as _uuid
 
     from agent_cli.render import (
-        render_group_end,
-        render_group_start,
+        render_begin_scope,
+        render_end_scope,
         render_pop_depth,
         render_push_depth,
     )
 
-    render_group_start(f"skill:{cmd_name}", icon="🪄")
+    # One scope for the whole skill: begin_scope registers this thread so the
+    # skill's inner turns route into ONE card (web), fixing the old bug where a
+    # user's ``/orchestrate`` ran but drew no card (it emitted an un-handled
+    # group_start instead of a routed scope). execute_skill runs synchronously
+    # in this thread, so the routing covers its subloop.
+    _scope_id = f"skill-{cmd_name}-{_uuid.uuid4().hex[:8]}"
+    render_begin_scope(_scope_id, "skill", f"skill:{cmd_name}")
     render_push_depth()
     _t0 = _time.monotonic()
     skill_result = None
@@ -760,8 +767,9 @@ def _dispatch_skill(
         )
     finally:
         render_pop_depth()
-        render_group_end(
-            f"skill:{cmd_name}",
+        render_end_scope(
+            _scope_id,
+            "skill",
             success=bool(skill_result and skill_result.success),
             duration_s=_time.monotonic() - _t0,
         )

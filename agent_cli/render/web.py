@@ -499,73 +499,83 @@ class WebRenderer(Renderer):
         with self._lock:
             return list(self._scope_dynamic_final.get(scope, []))
 
-    def begin_delegate_task(
+    def begin_scope(
         self,
         *,
         task_id: str,
-        index: int,
-        agent: str,
-        task_text: str,
+        kind: str = "run",
+        label: str = "",
+        agent: str = "",
+        index: int = 0,
     ) -> None:
-        """Register the current thread as a delegate worker and emit a
-        persistent ``delegate_task_start`` event so the frontend opens
-        a collapsible group card for this task.
+        """Enter a nested scope (``kind`` = "skill" | "run") — the SINGLE path
+        for skill subloops AND delegate/one-shot workers. Registers the current
+        thread so the scope's inner events route to ONE card, and emits a
+        persistent ``scope_start`` (frontend opens the card; kind styles it).
 
-        Persistent (not transient): the start marker pairs with
-        ``delegate_task_end`` to bound a card lifetime in the event
-        buffer. If a client connects mid-delegate, the replay snapshot
-        still draws the card so the user isn't staring at a blank
-        view while the worker chugs through.
-        """
+        Persistent (not transient): pairs with ``scope_end`` to bound the card
+        in the replay buffer, so a mid-scope reconnect still draws it. This
+        unifies what used to be two divergent paths — delegates emitted
+        ``delegate_task_start`` (a card) while skills emitted ``group_start``
+        (un-handled → ``/orchestrate`` drew no card)."""
         tid = threading.get_ident()
         with self._lock:
             self._thread_to_task[tid] = task_id
             self._thread_prompt_scopes.setdefault(tid, []).append(task_id)
             # Remember the chip-row label for this scope; the snapshot itself
             # arrives later (first LLM call) keyed by the same task_id.
-            self._prompt_scope_labels[task_id] = {"agent": agent, "index": index}
-        # Tag this worker thread so a confirm/ask it triggers can name it.
-        self.set_thread_agent(agent or f"task #{index + 1}")
+            self._prompt_scope_labels[task_id] = {
+                "agent": agent or label,
+                "index": index,
+            }
+        # Tag this thread so a confirm/ask it triggers can name it.
+        self.set_thread_agent(agent or label or f"scope #{index + 1}")
         self._emit(
-            "delegate_task_start",
+            "scope_start",
             {
                 "task_id": task_id,
-                "index": index,
+                "kind": kind,
+                "label": label,
                 "agent": agent,
-                "task_text": task_text,
+                "index": index,
             },
             persistent=True,
         )
 
-    def end_delegate_task(
+    def end_scope(
         self,
         *,
         task_id: str,
-        success: bool,
-        duration_s: float,
+        kind: str = "run",
+        success: bool = True,
+        duration_s: float = 0.0,
         error: str = "",
     ) -> None:
-        """Unregister the current thread and emit a persistent
-        ``delegate_task_end`` event with the final ✓/✗ + duration so
-        the frontend caps the card header."""
+        """Leave a scope opened by :meth:`begin_scope`; emit persistent
+        ``scope_end`` (✓/✗ + duration caps the card). Routing is restored to
+        the ENCLOSING scope (nested same-thread scopes are safe — a skill that
+        runs another skill in the same thread resumes the outer card on exit)."""
         tid = threading.get_ident()
         with self._lock:
-            self._thread_to_task.pop(tid, None)
             stack = self._thread_prompt_scopes.get(tid, [])
             if task_id in stack:
                 stack.remove(task_id)
-            if not stack:
+            if stack:
+                self._thread_to_task[tid] = stack[-1]  # resume enclosing scope
+            else:
+                self._thread_to_task.pop(tid, None)
                 self._thread_prompt_scopes.pop(tid, None)
         self._finalize_prompt_scope(task_id)  # 동적 컨텍스트 live→고정
         self.set_thread_agent("")  # worker's prompt label no longer applies
         payload = {
             "task_id": task_id,
+            "kind": kind,
             "success": success,
             "duration_s": duration_s,
         }
         if error:
             payload["error"] = error
-        self._emit("delegate_task_end", payload, persistent=True)
+        self._emit("scope_end", payload, persistent=True)
 
     # ── teammate 요청별 표시 (P1) ────────────────────
     # 스코프(상시, worker 의 begin_prompt_scope(key) 소유)와 분리된 요청별
@@ -583,12 +593,13 @@ class WebRenderer(Renderer):
         label = profile or key
         self.set_thread_agent(label)
         self._emit(
-            "delegate_task_start",
+            "scope_start",
             {
                 "task_id": task_id,
+                "kind": "run",
+                "label": message,
                 "index": seq,
                 "agent": f"🤝 {label}",
-                "task_text": message,
             },
             persistent=True,
         )
@@ -608,12 +619,13 @@ class WebRenderer(Renderer):
         self.set_thread_agent("")
         payload = {
             "task_id": f"{key}#{seq}",
+            "kind": "run",
             "success": success,
             "duration_s": duration_s,
         }
         if error:
             payload["error"] = error
-        self._emit("delegate_task_end", payload, persistent=True)
+        self._emit("scope_end", payload, persistent=True)
 
     def agent_roster(self, roster: list) -> None:
         """P4: teammate 목록 sticky — 라이브 브로드캐스트 + 재접속 snapshot
@@ -1358,18 +1370,6 @@ class WebRenderer(Renderer):
 
     def stream_end(self) -> None:
         self._emit("stream_end", {}, persistent=False)
-
-    def group_start(self, label: str, icon: str = "") -> None:
-        self._emit("group_start", {"label": label, "icon": icon}, persistent=False)
-
-    def group_end(
-        self, label: str, success: bool = True, duration_s: float = 0
-    ) -> None:
-        self._emit(
-            "group_end",
-            {"label": label, "success": success, "duration_s": duration_s},
-            persistent=False,
-        )
 
     # ─── Input methods (Renderer ABC) ───────────────
 

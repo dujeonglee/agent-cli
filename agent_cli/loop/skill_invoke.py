@@ -9,8 +9,8 @@ from agent_cli.constants import (
 )
 from agent_cli.providers.capabilities import ModelCapabilities
 from agent_cli.render import (
-    render_group_end,
-    render_group_start,
+    render_begin_scope,
+    render_end_scope,
     render_pop_depth,
     render_push_depth,
 )
@@ -104,7 +104,10 @@ def _handle_run_skill(
             mcp_manager=mcp_manager,
         )
 
-    render_group_start(f"skill:{name}", icon="🪄")
+    import uuid as _uuid
+
+    _scope_id = f"skill-{name}-{_uuid.uuid4().hex[:8]}"
+    render_begin_scope(_scope_id, "skill", f"skill:{name}")
     render_push_depth()
     t0 = time.monotonic()
 
@@ -137,8 +140,9 @@ def _handle_run_skill(
         skill_result = ToolResult(False, error=f"run_skill({name}) failed: {e}")
     finally:
         render_pop_depth()
-        render_group_end(
-            f"skill:{name}",
+        render_end_scope(
+            _scope_id,
+            "skill",
             success=skill_result.success if skill_result else False,
             duration_s=time.monotonic() - t0,
         )

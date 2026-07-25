@@ -585,10 +585,10 @@ class TestToolDelegatePassesAgent:
         captured_ids = []
 
         class CapturingRenderer:
-            def begin_delegate_task(self, *, task_id, index, agent, task_text):
+            def begin_scope(self, *, task_id, kind="run", label="", agent="", index=0):
                 captured_ids.append(task_id)
 
-            def end_delegate_task(self, **kwargs):
+            def end_scope(self, **kwargs):
                 pass
 
         monkeypatch.setattr(

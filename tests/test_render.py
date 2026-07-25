@@ -219,96 +219,97 @@ def _capture_direct(setup_fn) -> str:
 
 
 class TestGroupRendering:
-    def test_group_start_shows_top_border(self):
-        """group_start prints ┌─ with icon and label."""
-        out = _capture_direct(lambda r: r.group_start("skill:plan", icon="🪄"))
+    """Skill scopes render as ┌─ 🪄 / └─ brackets (kind="skill"); the scope
+    abstraction (begin_scope/end_scope) replaced group_start/group_end. The
+    CLI stores the label at begin so end can close it — so end tests open the
+    scope first."""
+
+    def test_scope_start_shows_bracket(self):
+        out = _capture_direct(
+            lambda r: r.begin_scope(task_id="s", kind="skill", label="skill:plan")
+        )
         assert "┌─" in out
         assert "🪄" in out
         assert "skill:plan" in out
 
-    def test_group_start_without_icon(self):
-        """group_start works without icon."""
-        out = _capture_direct(lambda r: r.group_start("delegate"))
-        assert "┌─" in out
-        assert "delegate" in out
+    def test_scope_end_success(self):
+        def run(r):
+            r.begin_scope(task_id="s", kind="skill", label="skill:plan")
+            r.end_scope(task_id="s", kind="skill", success=True, duration_s=12.3)
 
-    def test_group_end_success(self):
-        """group_end shows ✓ for success with duration."""
-        out = _capture_direct(
-            lambda r: r.group_end("skill:plan", success=True, duration_s=12.3)
-        )
+        out = _capture_direct(run)
         assert "└─" in out
         assert "✓" in out
         assert "skill:plan" in out
         assert "12.3s" in out
 
-    def test_group_end_failure(self):
-        """group_end shows ✗ for failure."""
-        out = _capture_direct(lambda r: r.group_end("skill:bad", success=False))
+    def test_scope_end_failure(self):
+        def run(r):
+            r.begin_scope(task_id="s", kind="skill", label="skill:bad")
+            r.end_scope(task_id="s", kind="skill", success=False)
+
+        out = _capture_direct(run)
         assert "└─" in out
         assert "✗" in out
         assert "skill:bad" in out
 
-    def test_group_end_no_duration(self):
-        """duration_s=0 omits the time display."""
-        out = _capture_direct(lambda r: r.group_end("skill:x", success=True))
+    def test_scope_end_no_duration(self):
+        def run(r):
+            r.begin_scope(task_id="s", kind="skill", label="skill:x")
+            r.end_scope(task_id="s", kind="skill", success=True)
+
+        out = _capture_direct(run)
         assert "└─" in out
         assert "(0" not in out  # No "(0.0s)" shown
 
-    def test_group_contains_nested_output(self):
-        """Full cycle: start → push → inner output → pop → end."""
+    def test_scope_contains_nested_output(self):
+        """Full cycle: begin → push → inner output → pop → end."""
 
         def run(r):
-            r.group_start("skill:plan", icon="🪄")
+            r.begin_scope(task_id="s", kind="skill", label="skill:plan")
             r.push_depth()
             r.turn_sep(1)
             r.thought("analyzing", 1)
             r.pop_depth()
-            r.group_end("skill:plan", success=True, duration_s=5.0)
+            r.end_scope(task_id="s", kind="skill", success=True, duration_s=5.0)
 
         out = _capture_direct(run)
         assert "┌─" in out
         assert "└─" in out
-        # Inner content should have │ prefix (depth=1)
-        assert "│" in out
+        assert "│" in out  # inner content prefixed at depth 1
         assert "analyzing" in out
 
-    def test_group_respects_current_depth(self):
-        """Nested groups (skill → delegate) stack prefixes correctly."""
+    def test_nested_skill_scopes_stack_prefixes(self):
+        """Nested skill scopes stack │ prefixes correctly."""
 
         def run(r):
-            r.group_start("skill:a", icon="🪄")
+            r.begin_scope(task_id="a", kind="skill", label="skill:a")
             r.push_depth()
-            r.group_start("delegate:b", icon="🦀")
+            r.begin_scope(task_id="b", kind="skill", label="skill:b")
             r.push_depth()
             r.thought("inner", 1)
             r.pop_depth()
-            r.group_end("delegate:b", success=True, duration_s=1.0)
+            r.end_scope(task_id="b", kind="skill", success=True, duration_s=1.0)
             r.pop_depth()
-            r.group_end("skill:a", success=True, duration_s=5.0)
+            r.end_scope(task_id="a", kind="skill", success=True, duration_s=5.0)
 
         out = _capture_direct(run)
-        # Outer skill at depth 0
         assert "┌─ 🪄 skill:a" in out
-        # Inner delegate at depth 1 → prefixed with │
-        assert "│" in out
-        assert "delegate:b" in out
-        # Both groups closed
+        assert "│" in out  # inner scope at depth 1
+        assert "skill:b" in out
         assert out.count("└─") == 2
 
-    def test_group_captured_during_parallel(self):
-        """group_start/end inside capture mode goes to buffer."""
+    def test_scope_captured_during_parallel(self):
+        """A skill scope inside capture mode goes to the buffer."""
 
         def run(r):
             r.start_capture()
-            r.group_start("delegate:x", icon="🦀")
+            r.begin_scope(task_id="x", kind="skill", label="skill:x")
             r.thought("captured", 1)
-            r.group_end("delegate:x", success=True, duration_s=2.0)
+            r.end_scope(task_id="x", kind="skill", success=True, duration_s=2.0)
             captured = r.stop_capture()
-            # Nothing was printed to console
-            # (captured buffer has the events stripped of markup)
             assert captured  # non-empty
-            assert any("delegate:x" in line for line in captured)
+            assert any("skill:x" in line for line in captured)
 
         _capture_direct(run)
 
@@ -784,7 +785,7 @@ class TestFrameWidthAlignment:
         # ``begin_delegate_task`` constructs the FrameClock with the
         # think-frames tuple.
         panel_src = inspect.getsource(_minimal.MinimalRenderer._render_parallel_panel)
-        begin_src = inspect.getsource(_minimal.MinimalRenderer.begin_delegate_task)
+        begin_src = inspect.getsource(_minimal.MinimalRenderer._begin_delegate_panel)
         combined = panel_src + begin_src
         assert "_THINK_FRAMES" in combined
         # The old Braille frame literal must be gone.
@@ -809,7 +810,7 @@ class TestFrameWidthAlignment:
 
         from agent_cli.render import minimal as _minimal
 
-        begin_src = inspect.getsource(_minimal.MinimalRenderer.begin_delegate_task)
+        begin_src = inspect.getsource(_minimal.MinimalRenderer._begin_delegate_panel)
         panel_src = inspect.getsource(_minimal.MinimalRenderer._render_parallel_panel)
         assert "FrameClock" in begin_src
         assert "FrameClock" in panel_src or ".current()" in panel_src
@@ -979,19 +980,19 @@ class TestConfirm:
         assert comment == "wait, I don't trust this command"
 
 
-class TestGroupDelegatingFunctions:
-    """Test render_group_start / render_group_end wrappers."""
+class TestScopeDelegatingFunctions:
+    """render_begin_scope / render_end_scope module wrappers."""
 
     def test_delegating_functions(self):
-        from agent_cli.render import render_group_end, render_group_start
+        from agent_cli.render import render_begin_scope, render_end_scope
 
         buf = StringIO()
         console = Console(file=buf, force_terminal=True, width=120)
         old = get_renderer()
         set_renderer(MinimalRenderer(console))
         try:
-            render_group_start("skill:test", icon="🪄")
-            render_group_end("skill:test", success=True, duration_s=1.5)
+            render_begin_scope("s", "skill", "skill:test")
+            render_end_scope("s", "skill", success=True, duration_s=1.5)
         finally:
             set_renderer(old)
 

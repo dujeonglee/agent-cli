@@ -223,12 +223,30 @@ def render_pop_depth() -> None:
     _renderer.pop_depth()
 
 
-def render_group_start(label: str, icon: str = "") -> None:
-    _renderer.group_start(label, icon)
+def render_begin_scope(
+    task_id: str, kind: str = "run", label: str = "", agent: str = "", index: int = 0
+) -> None:
+    """Enter a nested scope (skill/run) — single path for skill subloops and
+    delegate/one-shot workers. See ``Renderer.begin_scope``."""
+    _renderer.begin_scope(
+        task_id=task_id, kind=kind, label=label, agent=agent, index=index
+    )
 
 
-def render_group_end(label: str, success: bool = True, duration_s: float = 0) -> None:
-    _renderer.group_end(label, success, duration_s)
+def render_end_scope(
+    task_id: str,
+    kind: str = "run",
+    success: bool = True,
+    duration_s: float = 0.0,
+    error: str = "",
+) -> None:
+    _renderer.end_scope(
+        task_id=task_id,
+        kind=kind,
+        success=success,
+        duration_s=duration_s,
+        error=error,
+    )
 
 
 def render_stream_chunk(text: str) -> None:
