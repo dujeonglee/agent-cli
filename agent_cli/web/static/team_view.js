@@ -234,8 +234,8 @@
           x1 = clampX(item.t1),
           w = Math.max(x1 - x0, 3);
         var r = svg("rect", { class: cls, x: x0, y: y - BARH / 2, width: w, height: BARH, rx: BARH / 2 }, s);
-        var lg = svg("text", { class: "tv-scope-lbl", x: x0 + 3, y: y - BARH / 2 - 3 }, s);
-        lg.textContent = prefix + " " + item.label;
+        // Label shows on HOVER (native <title>) — no always-drawn text, which
+        // overlapped badly when many scopes stacked on one lane.
         svg("title", {}, r).textContent = prefix + " " + item.label;
       }
       m.mainSpans.forEach(function (sp) {
@@ -245,6 +245,7 @@
           x1 = clampX(sp.t1);
         var r = svg("rect", { class: "tv-span", x: x0, y: y - BARH / 2, width: Math.max(x1 - x0, 3), height: BARH, rx: BARH / 2 }, s);
         r.style.fill = "var(--h-main)";
+        svg("title", {}, r).textContent = "main: turn";
       });
       m.skillBands.forEach(function (b) {
         scopeSpan(b, "tv-scope-skill", "🪄");

@@ -107,47 +107,37 @@ class TestLanes:
 
 
 class TestSpans:
-    def test_span_spans_request_in_to_reply_out(self):
+    def test_agent_work_scope_becomes_span_in_that_lane(self):
+        # begin_agent_work uses a "{key}#{seq}" task_id → a work span in that
+        # agent's OWN lane (NOT a one-shot under main — that flooded main's lane).
         events = [
             ROSTER,
             {
-                "type": "agent_msg",
+                "type": "scope_start",
                 "ts": 3.0,
-                "direction": "in",
-                "key": "w1",
-                "author": "orch",
-                "to": "w1",
-                "text": "impl",
-                "seq": 1,
+                "task_id": "w1#0",
+                "kind": "run",
+                "agent": "🤝 code-writer",
+                "label": "impl",
             },
-            {
-                "type": "agent_msg",
-                "ts": 9.0,
-                "direction": "out",
-                "key": "w1",
-                "author": "w1",
-                "to": "orch",
-                "text": "done",
-                "seq": 2,
-            },
+            {"type": "scope_end", "ts": 9.0, "task_id": "w1#0"},
         ]
         m = run_model(events)
         spans = m["agents"]["w1"]["spans"]
         assert len(spans) == 1
         assert spans[0]["t0"] == 3.0 and spans[0]["t1"] == 9.0
+        assert m["oneshots"] == []  # NOT a main one-shot
 
-    def test_open_span_closed_at_trace_end(self):
-        # request arrives but no reply before the trace ends → span runs to tMax
+    def test_open_agent_work_closed_at_trace_end(self):
         events = [
             ROSTER,
             {
-                "type": "agent_msg",
+                "type": "scope_start",
                 "ts": 3.0,
-                "direction": "in",
-                "key": "w1",
-                "author": "orch",
-                "to": "w1",
-                "seq": 1,
+                "task_id": "w1#0",
+                "kind": "run",
+                "agent": "🤝 code-writer",
+                "label": "impl",
             },
             {
                 "type": "agent_msg",
@@ -163,6 +153,23 @@ class TestSpans:
         spans = m["agents"]["w1"]["spans"]
         assert len(spans) == 1
         assert spans[0]["t0"] == 3.0 and spans[0]["t1"] == 12.0  # tMax
+
+    def test_true_oneshot_stays_under_main(self):
+        # a delegate/agent-run (task_id WITHOUT "#") is a real one-shot → main.
+        events = [
+            {
+                "type": "scope_start",
+                "ts": 0.5,
+                "task_id": "delegate-single-abc",
+                "kind": "run",
+                "agent": "code-analyst",
+                "label": "map",
+            },
+            {"type": "scope_end", "ts": 1.4, "task_id": "delegate-single-abc"},
+        ]
+        m = run_model(events)
+        assert len(m["oneshots"]) == 1
+        assert m["oneshots"][0]["label"] == "code-analyst"
 
 
 class TestMessages:

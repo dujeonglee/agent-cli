@@ -33,14 +33,13 @@ def _drive_team(stack):
             {"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"},
         ]
     )
-    # request (in) opens w1's span; reply (out) closes it AND is the message.
-    r.agent_message(
-        key="w1", direction="in", author="orch", text="implement", seq=1, to="w1"
-    )
+    # w1 processes a request → begin_agent_work scope = a work span in w1's
+    # OWN lane (not a one-shot under main).
+    r.begin_agent_work(key="w1", seq=0, profile="code-writer", message="implement")
     time.sleep(0.05)
-    r.agent_message(
-        key="w1", direction="out", author="w1", text="done", seq=2, to="orch"
-    )
+    r.end_agent_work(key="w1", seq=0, success=True, duration_s=0.05)
+    # a peer message orch→w1 draws a connector.
+    r.agent_message(key="w1", direction="out", author="orch", text="go", seq=1, to="w1")
 
 
 class TestTeamSwimlane:
