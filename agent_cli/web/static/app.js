@@ -1436,6 +1436,11 @@
   es.addEventListener("scope_start", function (e) {
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("scope_start", d);
+    // Resume replay (``replay_scopes``): the swimlane wants the bar, but the
+    // timeline's collapsible card must NOT be rebuilt — the scope's inner turns
+    // replay flat (ungrouped) via replay_from_history, so a re-created card
+    // would be an empty shell.
+    if (d.replay) return;
     ensureTaskGroup(
       d.task_id,
       d.index || 0,
@@ -1456,6 +1461,7 @@
   es.addEventListener("scope_end", function (e) {
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("scope_end", d);
+    if (d.replay) return; // replayed scope: swimlane only (see scope_start)
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
 

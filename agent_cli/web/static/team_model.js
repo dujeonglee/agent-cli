@@ -25,8 +25,13 @@
  *
  * Reconnect note: agent_msg is persistent (replayed), so messages and the
  * request→reply spans they bound survive a reconnect. agent_roster is a sticky
- * (latest only), so lane identity/current state is restored but pre-reconnect
- * state-transition spans are not reconstructed — acceptable for a live view.
+ * (latest only), so lane identity/current state is restored.
+ *
+ * Resume note: scope_start/scope_end (the activity bars) have no counterpart in
+ * the LLM message history, so the server logs them to a scopes.jsonl sidecar and
+ * replay_scopes() re-emits them on resume (tagged replay:true) — the bars come
+ * back on a resumed session, not just a reconnect. Dedup in team_view.js keeps
+ * the replay idempotent.
  */
 (function (global) {
   "use strict";

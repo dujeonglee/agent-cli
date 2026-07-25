@@ -119,3 +119,44 @@ class TestTeamSwimlane:
         page.locator(".tv-scope-skill").first.hover()
         page.wait_for_selector(".tv-tip:not([hidden])", timeout=3000)
         assert "orchestrate" in page.locator(".tv-tip").inner_text()
+
+
+class TestResumeScopeReplay:
+    """On resume, ``replay_scopes`` re-emits scope events tagged ``replay:true``
+    so the swimlane bars come back. The frontend must draw the bar but NOT
+    rebuild the timeline's collapsible card (inner turns replay flat → an
+    empty shell)."""
+
+    def test_replay_scope_draws_bar_without_timeline_card(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        # As replay_scopes would emit on resume: replay-tagged skill scope.
+        r = stack.renderer
+        r._emit(
+            "scope_start",
+            {"task_id": "sk-r", "kind": "skill", "label": "plan", "replay": True},
+            persistent=True,
+        )
+        r._emit(
+            "scope_end",
+            {"task_id": "sk-r", "kind": "skill", "success": True, "replay": True},
+            persistent=True,
+        )
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        # Swimlane bar restored…
+        assert _wait(lambda: page.locator(".tv-scope-skill").count() >= 1)
+        # …but no collapsible timeline card for the replayed scope.
+        assert page.locator('.card-task-group[data-task-id="sk-r"]').count() == 0
+
+    def test_live_scope_still_builds_timeline_card(self, stack, page):
+        """Contrast: a normal (non-replay) scope DOES build the timeline card —
+        the guard is scoped to replays only, no regression for live runs."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        stack.renderer.begin_scope(task_id="sk-live", kind="skill", label="plan")
+        assert _wait(
+            lambda: (
+                page.locator('.card-task-group[data-task-id="sk-live"]').count() == 1
+            )
+        )

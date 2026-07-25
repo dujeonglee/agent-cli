@@ -139,6 +139,15 @@ class WebRenderer(Renderer):
         # Resolved once (cwd is the workspace at startup) so later cwd changes
         # can't misdirect the write. Empty (CLI / tests) → status writing is off.
         self._status_dir = Path(session_dir).resolve() if session_dir else None
+        # On-disk scope log for resume. ``scope_start``/``scope_end`` have no
+        # other on-disk source (unlike ``agent_msg``→``conversation.jsonl``), so
+        # the team-swimlane activity bars would vanish on resume without this.
+        # One JSON line per live scope event; ``replay_scopes`` re-emits them.
+        # None (CLI / tests with no session_dir) → scope logging off.
+        self._scope_log_path = (
+            (self._status_dir / "scopes.jsonl") if self._status_dir else None
+        )
+        self._scope_log_lock = threading.Lock()
         # event_buffer entries: (event_name, data_dict) — bounded deque; the
         # oldest events fall off past _EVENT_BUFFER_MAX (reconnect replay is
         # windowed, disk history is complete). _persistent_count keeps the
@@ -267,6 +276,17 @@ class WebRenderer(Renderer):
                 **data,
                 "ts": self._replay_ts if self._replay_ts is not None else time.time(),
             }
+        # Persist scope lifecycle to the resume sidecar — LIVE emissions only
+        # (``_replay_ts is None``); a replay reads this file, so it must not
+        # re-append what it emits. The event already carries ``ts`` here, so the
+        # logged line and the buffered SSE event share one timestamp.
+        if (
+            persistent
+            and self._replay_ts is None
+            and self._scope_log_path is not None
+            and event in ("scope_start", "scope_end")
+        ):
+            self._log_scope(event, data)
         # Serialize ONCE here (the single fan-out point) — every viewer's SSE
         # generator and every future reconnect replay reuses the cached string
         # instead of re-dumping the same dict (N viewers × M replays).
@@ -816,6 +836,85 @@ class WebRenderer(Renderer):
                     if content:
                         self.final(content, turn=0)
         # Back to live: subsequent events get a fresh wall-clock stamp.
+        self._replay_ts = None
+
+    def _log_scope(self, event: str, data: dict[str, Any]) -> None:
+        """Append one scope event as a JSON line to the resume sidecar. Best
+        effort — a write failure never breaks the live emit."""
+        try:
+            line = json.dumps({"event": event, **data}, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return
+        try:
+            with (
+                self._scope_log_lock,
+                open(self._scope_log_path, "a", encoding="utf-8") as f,
+            ):
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+    def replay_scopes(self) -> None:
+        """Re-emit ``scope_start``/``scope_end`` from the ``scopes.jsonl``
+        sidecar so a resumed session restores the team-swimlane activity bars
+        (skill bands, delegate one-shots, teammate work spans) — they have no
+        other on-disk source, so ``replay_from_history`` alone leaves the
+        swimlane empty.
+
+        Each replayed event is tagged ``replay:true``: the frontend feeds it to
+        the swimlane but SKIPS rebuilding the timeline's collapsible card, whose
+        inner turns replay flat (ungrouped) — a re-created card would be an empty
+        shell. A scope whose process died before ``end_scope`` (a start with no
+        matching end) gets a synthesized ``scope_end`` at the last logged time so
+        a bar from a dead run doesn't render as perpetually running. No-op when
+        the sidecar is absent (pre-feature or fresh session) → resume unchanged.
+        """
+        if self._scope_log_path is None or not self._scope_log_path.exists():
+            return
+        records: list[dict[str, Any]] = []
+        try:
+            with open(self._scope_log_path, encoding="utf-8") as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        records.append(json.loads(raw))
+                    except ValueError:
+                        continue  # skip a torn/partial line, keep the rest
+        except OSError:
+            return
+        if not records:
+            return
+        ended = {r.get("task_id") for r in records if r.get("event") == "scope_end"}
+        open_starts: dict[str, dict[str, Any]] = {}
+        for rec in records:
+            event = rec.get("event")
+            if event not in ("scope_start", "scope_end"):
+                continue
+            data = {k: v for k, v in rec.items() if k != "event"}
+            data["replay"] = True
+            self._replay_ts = data.get("ts")
+            self._emit(event, data, persistent=True)
+            if event == "scope_start":
+                open_starts[rec.get("task_id")] = rec
+        # Close any scope that never got an end (crash mid-scope).
+        last_ts = records[-1].get("ts")
+        for task_id, start in open_starts.items():
+            if task_id in ended:
+                continue
+            self._replay_ts = last_ts
+            self._emit(
+                "scope_end",
+                {
+                    "task_id": task_id,
+                    "kind": start.get("kind", "run"),
+                    "success": True,
+                    "duration_s": 0.0,
+                    "replay": True,
+                },
+                persistent=True,
+            )
         self._replay_ts = None
 
     def _replay_assistant_op(self, action: str, action_input) -> None:

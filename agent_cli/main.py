@@ -1925,6 +1925,11 @@ def web(
     # produced — see :meth:`WebRenderer.replay_from_history`.
     if is_resume:
         renderer.replay_from_history(ctx)
+        # Restore the team-swimlane activity bars (skill bands / delegate
+        # one-shots / teammate work spans) from the scopes.jsonl sidecar —
+        # scope events have no counterpart in ctx's message history, so
+        # ``replay_from_history`` alone leaves the swimlane empty.
+        renderer.replay_scopes()
 
     # Populate the Prompt Inspector's system prompt BEFORE the first message
     # (the loop only captures on an LLM call). With ctx already restored, the

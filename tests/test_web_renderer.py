@@ -2295,3 +2295,82 @@ class TestTeammateWindowEvents:
         assert "agent_msg" in names
         data = next(d for e, d in r._event_buffer if e == "agent_msg")
         assert data["direction"] == "out" and data["text"] == "hi"
+
+
+class TestScopePersistenceAndReplay:
+    """Team-swimlane resume: scope_start/scope_end have no other on-disk
+    source (unlike agent_msg→conversation.jsonl), so they are logged to a
+    ``scopes.jsonl`` sidecar and re-emitted on resume to restore the
+    activity bars. Live emissions log; replays must not re-append."""
+
+    def test_scope_events_logged_to_sidecar(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.begin_scope(task_id="sk1", kind="skill", label="plan")
+        r.end_scope(task_id="sk1", kind="skill", success=True, duration_s=1.0)
+        path = tmp_path / "scopes.jsonl"
+        assert path.exists()
+        recs = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+        assert [x["event"] for x in recs] == ["scope_start", "scope_end"]
+        assert recs[0]["task_id"] == "sk1" and recs[0]["kind"] == "skill"
+        assert "ts" in recs[0]  # timestamp captured for original-time replay
+
+    def test_agent_work_scopes_logged(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.begin_agent_work(key="w1", seq=0, profile="code-writer", message="do")
+        r.end_agent_work(key="w1", seq=0, success=True, duration_s=0.5)
+        recs = [
+            json.loads(x)
+            for x in (tmp_path / "scopes.jsonl").read_text().splitlines()
+            if x.strip()
+        ]
+        assert [x["event"] for x in recs] == ["scope_start", "scope_end"]
+        assert recs[0]["task_id"] == "w1#0"
+
+    def test_no_sidecar_without_session_dir(self):
+        r = WebRenderer()  # no session_dir → logging off, no crash
+        assert r._scope_log_path is None
+        r.begin_scope(task_id="sk1", kind="skill", label="plan")  # must not raise
+
+    def test_replay_reemits_with_original_ts_and_flag(self, tmp_path):
+        r1 = WebRenderer(session_dir=str(tmp_path))
+        r1.begin_agent_work(key="w1", seq=0, profile="code-writer", message="do")
+        r1.end_agent_work(key="w1", seq=0, success=True, duration_s=0.5)
+        original_ts = next(
+            json.loads(x)
+            for x in (tmp_path / "scopes.jsonl").read_text().splitlines()
+            if x.strip()
+        )["ts"]
+
+        # Fresh process (empty buffer) → replay restores the scope events.
+        r2 = WebRenderer(session_dir=str(tmp_path))
+        r2.replay_scopes()
+        starts = [d for e, d in r2._event_buffer if e == "scope_start"]
+        assert starts and starts[0]["task_id"] == "w1#0"
+        assert starts[0]["replay"] is True  # frontend skips timeline card
+        assert starts[0]["ts"] == original_ts  # original time, not resume moment
+
+    def test_replay_noop_without_sidecar(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))  # no scopes.jsonl yet
+        r.replay_scopes()
+        assert len(r._event_buffer) == 0  # pre-feature/fresh session → unchanged
+
+    def test_replay_synthesizes_end_for_open_scope(self, tmp_path):
+        # Process died mid-scope: scope_start logged, no scope_end.
+        r1 = WebRenderer(session_dir=str(tmp_path))
+        r1.begin_scope(task_id="sk1", kind="skill", label="plan")
+        r2 = WebRenderer(session_dir=str(tmp_path))
+        r2.replay_scopes()
+        evs = [e for e, _ in r2._event_buffer]
+        assert evs.count("scope_start") == 1
+        assert evs.count("scope_end") == 1  # synthesized so bar isn't perpetual
+
+    def test_replay_does_not_reappend_to_sidecar(self, tmp_path):
+        r1 = WebRenderer(session_dir=str(tmp_path))
+        r1.begin_scope(task_id="sk1", kind="skill", label="plan")
+        r1.end_scope(task_id="sk1", kind="skill")
+        path = tmp_path / "scopes.jsonl"
+        n_before = len([x for x in path.read_text().splitlines() if x.strip()])
+        r2 = WebRenderer(session_dir=str(tmp_path))
+        r2.replay_scopes()
+        n_after = len([x for x in path.read_text().splitlines() if x.strip()])
+        assert n_after == n_before  # replay reads, never re-logs
