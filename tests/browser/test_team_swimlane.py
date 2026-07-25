@@ -106,3 +106,16 @@ class TestTeamSwimlane:
         # Never empty, and no duplicate skill span.
         assert not page.locator(".tv-empty").is_visible()
         assert page.locator(".tv-scope-skill").count() == n_skill
+
+    def test_hover_shows_custom_tooltip(self, stack, page):
+        """Bars/connectors show their label via a custom fast tooltip (native
+        <title> was too slow). Hovering the skill span reveals its text."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        _drive_team(stack)
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        page.wait_for_selector(".tv-scope-skill", timeout=8000)
+        page.locator(".tv-scope-skill").first.hover()
+        page.wait_for_selector(".tv-tip:not([hidden])", timeout=3000)
+        assert "orchestrate" in page.locator(".tv-tip").inner_text()

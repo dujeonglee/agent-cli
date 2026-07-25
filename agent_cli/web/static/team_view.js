@@ -107,6 +107,42 @@
       host.appendChild(this._svg);
       this._empty = elh("div", "tv-empty", "No team activity yet — spawn agents or run /orchestrate.");
       host.appendChild(this._empty);
+      // Custom fast tooltip (native SVG <title> has a ~0.5s+ delay that can't
+      // be tuned). Delegated on the SVG once — survives re-renders. Any element
+      // with a data-tip attribute shows it ~100ms after hover, near the cursor.
+      this._tip = elh("div", "tv-tip");
+      this._tip.hidden = true;
+      document.body.appendChild(this._tip);
+      var timer = 0,
+        mx = 0,
+        my = 0;
+      function place() {
+        self._tip.style.left = mx + 12 + "px";
+        self._tip.style.top = my + 14 + "px";
+      }
+      this._svg.addEventListener("mousemove", function (e) {
+        mx = e.clientX;
+        my = e.clientY;
+        if (!self._tip.hidden) place();
+      });
+      this._svg.addEventListener("mouseover", function (e) {
+        var txt = e.target && e.target.getAttribute && e.target.getAttribute("data-tip");
+        if (!txt) return;
+        mx = e.clientX;
+        my = e.clientY;
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          self._tip.textContent = txt;
+          self._tip.hidden = false;
+          place();
+        }, 100);
+      });
+      this._svg.addEventListener("mouseout", function (e) {
+        if (e.target && e.target.getAttribute && e.target.getAttribute("data-tip")) {
+          clearTimeout(timer);
+          self._tip.hidden = true;
+        }
+      });
       this._ro = new ResizeObserver(function () {
         if (self._active) self._schedule();
       });
@@ -234,9 +270,9 @@
           x1 = clampX(item.t1),
           w = Math.max(x1 - x0, 3);
         var r = svg("rect", { class: cls, x: x0, y: y - BARH / 2, width: w, height: BARH, rx: BARH / 2 }, s);
-        // Label shows on HOVER (native <title>) — no always-drawn text, which
-        // overlapped badly when many scopes stacked on one lane.
-        svg("title", {}, r).textContent = prefix + " " + item.label;
+        // Label shows on HOVER (custom fast tooltip) — no always-drawn text,
+        // which overlapped badly when many scopes stacked on one lane.
+        r.setAttribute("data-tip", prefix + " " + item.label);
       }
       m.mainSpans.forEach(function (sp) {
         if (!inDom(sp.t0, sp.t1)) return;
@@ -245,7 +281,7 @@
           x1 = clampX(sp.t1);
         var r = svg("rect", { class: "tv-span", x: x0, y: y - BARH / 2, width: Math.max(x1 - x0, 3), height: BARH, rx: BARH / 2 }, s);
         r.style.fill = "var(--h-main)";
-        svg("title", {}, r).textContent = "main: turn";
+        r.setAttribute("data-tip", "main: turn");
       });
       m.skillBands.forEach(function (b) {
         scopeSpan(b, "tv-scope-skill", "🪄");
@@ -267,8 +303,7 @@
             w = Math.max(x1 - x0, 3);
           var r = svg("rect", { class: "tv-span", x: x0, y: y - BARH / 2, width: w, height: BARH, rx: BARH / 2 }, s);
           r.style.fill = hv;
-          var tt = svg("title", {}, r);
-          tt.textContent = ag.label + ": " + (sp.title || "working");
+          r.setAttribute("data-tip", ag.label + ": " + (sp.title || "working"));
         });
       });
 
@@ -289,14 +324,17 @@
           "M " + x + " " + (yf + dir * (BARH / 2 + 2)) +
           " C " + (x + bow) + " " + (yf + yt) / 2 + ", " + (x + bow) + " " + (yf + yt) / 2 + ", " +
           x + " " + (yt - dir * 6);
-        var p = svg("path", { class: "tv-msg", d: d, fill: "none" }, s);
+        // group the visible path + arrowhead + origin + wide hit so hovering
+        // ANY of them highlights THIS message (an adjacent-sibling selector was
+        // highlighting the NEXT arrow instead).
+        var g = svg("g", { class: "tv-msg-g" }, s);
+        var p = svg("path", { class: "tv-msg", d: d, fill: "none" }, g);
         p.style.stroke = hv;
-        var ah = svg("path", { d: "M " + (x - 3) + " " + (yt - dir * 6) + " L " + (x + 3) + " " + (yt - dir * 6) + " L " + x + " " + (yt - dir * 1) + " Z" }, s);
+        var ah = svg("path", { class: "tv-msg-ah", d: "M " + (x - 3) + " " + (yt - dir * 6) + " L " + (x + 3) + " " + (yt - dir * 6) + " L " + x + " " + (yt - dir * 1) + " Z" }, g);
         ah.style.fill = hv;
-        svg("circle", { cx: x, cy: yf + dir * (BARH / 2 + 2), r: 1.8 }, s).style.fill = hv;
-        var hit = svg("path", { class: "tv-msg-hit", d: d, fill: "none" }, s);
-        var tt = svg("title", {}, hit);
-        tt.textContent = msg.from + " → " + msg.to + " · " + msg.type + (msg.text ? ": " + msg.text : "");
+        svg("circle", { cx: x, cy: yf + dir * (BARH / 2 + 2), r: 1.8 }, g).style.fill = hv;
+        var hit = svg("path", { class: "tv-msg-hit", d: d, fill: "none" }, g);
+        hit.setAttribute("data-tip", msg.from + " → " + msg.to + " · " + msg.type + (msg.text ? ": " + msg.text : ""));
       });
 
       // "earlier" marker when a window hides the run's head
