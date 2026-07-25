@@ -706,7 +706,7 @@ class WebRenderer(Renderer):
         task_id = self._thread_to_task.get(tid)
         if task_id is not None:
             self._emit(
-                "delegate_task_status",
+                "scope_status",
                 {"task_id": task_id, "status": status},
                 persistent=False,
             )

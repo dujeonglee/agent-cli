@@ -1114,7 +1114,7 @@ class TestDelegateTaskVisibility:
 
         r.set_thread_status("reading file...")
         event, data = conn.queue.get(timeout=1.0)
-        assert event == "delegate_task_status"
+        assert event == "scope_status"
         data.pop("ts", None)  # server-stamped emit time — not under test here
         assert data == {"task_id": "t-1", "status": "reading file..."}
 

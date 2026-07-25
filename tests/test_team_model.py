@@ -38,7 +38,7 @@ let raw=""; process.stdin.on("data",d=>raw+=d); process.stdin.on("end",()=>{
   const agents = {};
   m.agents.forEach((v,k)=>{ const c=Object.assign({},v); delete c._busyFrom; agents[k]=c; });
   process.stdout.write(JSON.stringify({lanes:m.lanes, agents, messages:m.messages,
-    oneshots:m.oneshots, mainSpans:m.mainSpans, t0:m.t0, t1:m.t1}));
+    oneshots:m.oneshots, skillBands:m.skillBands, mainSpans:m.mainSpans, t0:m.t0, t1:m.t1}));
 });
 """
     )
@@ -275,14 +275,15 @@ class TestOneshots:
     def test_delegate_task_lifecycle(self):
         events = [
             {
-                "type": "delegate_task_start",
+                "type": "scope_start",
                 "ts": 0.5,
                 "task_id": "t1",
+                "kind": "run",
                 "index": 0,
                 "agent": "code-analyst",
-                "task_text": "map rbtree",
+                "label": "map rbtree",
             },
-            {"type": "delegate_task_end", "ts": 1.4, "task_id": "t1"},
+            {"type": "scope_end", "ts": 1.4, "task_id": "t1"},
         ]
         m = run_model(events)
         assert len(m["oneshots"]) == 1
@@ -292,7 +293,13 @@ class TestOneshots:
 
     def test_unfinished_run_closes_at_end(self):
         events = [
-            {"type": "delegate_task_start", "ts": 0.5, "task_id": "t1", "agent": "x"},
+            {
+                "type": "scope_start",
+                "ts": 0.5,
+                "task_id": "t1",
+                "kind": "run",
+                "agent": "x",
+            },
             {"type": "agent_roster", "ts": 5.0, "roster": [{"key": "w1"}]},
         ]
         m = run_model(events)
@@ -304,12 +311,13 @@ class TestDomainAndMisc:
         m = run_model(
             [
                 {
-                    "type": "delegate_task_start",
+                    "type": "scope_start",
                     "ts": 0.5,
                     "task_id": "t",
+                    "kind": "run",
                     "agent": "a",
                 },
-                {"type": "delegate_task_end", "ts": 1.0, "task_id": "t"},
+                {"type": "scope_end", "ts": 1.0, "task_id": "t"},
                 {
                     "type": "agent_msg",
                     "ts": 30.0,
@@ -348,3 +356,44 @@ class TestDomainAndMisc:
         )
         assert m["messages"][0]["from"] == "orch"
         assert m["t1"] > 0  # ISO parsed to epoch, not dropped
+
+
+class TestSkillBands:
+    def test_scope_skill_becomes_band_run_becomes_oneshot(self):
+        # A skill scope (e.g. /orchestrate) → skill band; a run scope → one-shot.
+        events = [
+            {
+                "type": "scope_start",
+                "ts": 0.0,
+                "task_id": "sk",
+                "kind": "skill",
+                "label": "orchestrate",
+            },
+            {
+                "type": "scope_start",
+                "ts": 0.5,
+                "task_id": "r1",
+                "kind": "run",
+                "label": "code-analyst",
+                "agent": "code-analyst",
+            },
+            {"type": "scope_end", "ts": 1.4, "task_id": "r1"},
+            {"type": "scope_end", "ts": 31.0, "task_id": "sk"},
+        ]
+        m = run_model(events)
+        assert len(m["skillBands"]) == 1
+        assert m["skillBands"][0]["label"] == "orchestrate"
+        assert m["skillBands"][0]["t0"] == 0.0 and m["skillBands"][0]["t1"] == 31.0
+        assert len(m["oneshots"]) == 1
+        assert m["oneshots"][0]["label"] == "code-analyst"
+
+    def test_scope_default_kind_is_run(self):
+        # kind omitted → treated as a run (one-shot), not a skill band.
+        m = run_model(
+            [
+                {"type": "scope_start", "ts": 0.0, "task_id": "x", "label": "t"},
+                {"type": "scope_end", "ts": 1.0, "task_id": "x"},
+            ]
+        )
+        assert m["skillBands"] == []
+        assert len(m["oneshots"]) == 1

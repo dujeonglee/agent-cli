@@ -1,7 +1,7 @@
 """delegate 그룹 카드 접기 UX (기능②) — sticky 헤더 + 본문 클릭.
 
 레이아웃/스크롤 부류라 실브라우저 층이 유일한 가드. 카드 DOM 은
-delegate 이벤트(begin_delegate_task→observation…)로 실렌더러가 만든다.
+delegate 이벤트(begin_scope→observation…)로 실렌더러가 만든다.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ def _wait(cond, timeout=8.0, step=0.05):
 
 def _build_tall_task_group(stack, page):
     """실 렌더러로 긴 본문의 delegate 그룹 카드 하나 생성 후 그 헤더를
-    반환. begin_delegate_task 로 그룹을 열고 observation 여러 개로 본문을
+    반환. begin_scope 로 그룹을 열고 observation 여러 개로 본문을
     뷰포트보다 길게 채운다."""
     r = stack.renderer
-    # begin_delegate_task 는 호출 스레드를 task 에 등록 — 이후 같은 스레드의
+    # begin_scope 는 호출 스레드를 task 에 등록 — 이후 같은 스레드의
     # observation 이 그 그룹 카드로 라우팅된다(_thread_to_task).
-    r.begin_delegate_task(task_id="t1", index=0, agent="explorer", task_text="dig in")
+    r.begin_scope(task_id="t1", kind="run", index=0, agent="explorer", label="dig in")
     for i in range(30):
         r.observation(
             f"관찰 {i}: " + ("긴 내용 " * 12),

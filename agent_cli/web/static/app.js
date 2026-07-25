@@ -426,17 +426,24 @@
   // streamingCard, streamingText, closed }.
   const taskGroups = {};
 
-  function ensureTaskGroup(taskId, index, agent, taskText) {
+  function ensureTaskGroup(taskId, index, agent, taskText, kind) {
     if (taskGroups[taskId]) return taskGroups[taskId];
 
     const card = el("div", ["card", "card-task-group"]);
     card.dataset.taskId = taskId;
+    card.dataset.kind = kind || "run";
 
     const header = el("div", ["task-header"]);
     const chevron = el("span", ["task-chevron"], "▶");
     const title = el("span", ["task-title"]);
-    const label = agent ? agent + ": " + taskText : taskText;
-    title.textContent = "🦀 [" + (index + 1) + "] " + label;
+    // Scope card title adapts to kind: a skill subloop (🪄 label) vs a
+    // delegate/one-shot worker (🦀 [n] agent: task).
+    if (kind === "skill") {
+      title.textContent = "🪄 " + taskText;
+    } else {
+      const label = agent ? agent + ": " + taskText : taskText;
+      title.textContent = "🦀 [" + (index + 1) + "] " + label;
+    }
     const statusEl = el("span", ["task-status"], "starting…");
     const meta = el("span", ["task-meta"]);
     header.appendChild(chevron);
@@ -1382,23 +1389,32 @@
   //
   // Three event types frame each parallel-delegate worker's
   // collapsible card:
-  //   delegate_task_start  → open card (default collapsed)
-  //   delegate_task_status → update live status line (transient)
-  //   delegate_task_end    → close card with ✓/✗ + duration
-  es.addEventListener("delegate_task_start", function (e) {
+  //   scope_start   → open card (default collapsed); kind = skill | run
+  //   scope_status  → update live status line (transient)
+  //   scope_end     → close card with ✓/✗ + duration
+  // Unified path: a skill subloop (e.g. /orchestrate) and a delegate/one-shot
+  // worker now BOTH arrive as scope_start — previously skills emitted an
+  // un-handled group_start and drew no card.
+  es.addEventListener("scope_start", function (e) {
     const d = JSON.parse(e.data);
-    ensureTaskGroup(d.task_id, d.index, d.agent || "", d.task_text || "");
+    ensureTaskGroup(
+      d.task_id,
+      d.index || 0,
+      d.agent || "",
+      d.label || "",
+      d.kind || "run",
+    );
     // Nudge the Prompt Inspector (separate IIFE) to refresh its scope chips
     // if it's open, so a new sub-agent's chip appears live.
     window.dispatchEvent(new CustomEvent("agent-cli:scopes-changed"));
   });
 
-  es.addEventListener("delegate_task_status", function (e) {
+  es.addEventListener("scope_status", function (e) {
     const d = JSON.parse(e.data);
     updateTaskStatus(d.task_id, d.status || "");
   });
 
-  es.addEventListener("delegate_task_end", function (e) {
+  es.addEventListener("scope_end", function (e) {
     const d = JSON.parse(e.data);
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
