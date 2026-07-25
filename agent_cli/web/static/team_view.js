@@ -117,8 +117,19 @@
         mx = 0,
         my = 0;
       function place() {
-        self._tip.style.left = mx + 12 + "px";
-        self._tip.style.top = my + 14 + "px";
+        // Default to the RIGHT of the cursor; flip to the LEFT when it would
+        // overflow the viewport's right edge (and clamp so it never goes
+        // off-screen either way, incl. the bottom edge).
+        var w = self._tip.offsetWidth || 0;
+        var h = self._tip.offsetHeight || 0;
+        var left = mx + 12;
+        if (left + w > window.innerWidth - 6) left = mx - 12 - w;
+        if (left < 4) left = 4;
+        var top = my + 14;
+        if (top + h > window.innerHeight - 6) top = my - 12 - h;
+        if (top < 4) top = 4;
+        self._tip.style.left = left + "px";
+        self._tip.style.top = top + "px";
       }
       this._svg.addEventListener("mousemove", function (e) {
         mx = e.clientX;
