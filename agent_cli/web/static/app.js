@@ -925,12 +925,47 @@
     return box;
   }
 
+  // Build the "$ <command>" HTML for a confirm dialog, wrapping each
+  // dangerous (start,end) char range in a <span class="danger">. Ranges are
+  // pre-computed server-side (single source of truth); we only paint them.
+  // Every segment is escaped, so a command with < > & stays inert.
+  function highlightDangerHtml(command, spans) {
+    const cmd = String(command);
+    if (!Array.isArray(spans) || !spans.length) {
+      return "$ " + escapeHtml(cmd);
+    }
+    let out = "$ ";
+    let pos = 0;
+    spans.forEach(function (sp) {
+      const s = sp[0];
+      const e = sp[1];
+      if (typeof s !== "number" || typeof e !== "number") return;
+      if (s < pos || s >= e || e > cmd.length) return; // skip bad/overlapping
+      out += escapeHtml(cmd.slice(pos, s));
+      out += '<span class="danger">' + escapeHtml(cmd.slice(s, e)) + "</span>";
+      pos = e;
+    });
+    out += escapeHtml(cmd.slice(pos));
+    return out;
+  }
+
   function renderConfirmButtons(options, defaultKey, data) {
     clearConfirmButtons();
     const container = el("div");
     container.id = "confirm-buttons";
     const meta = buildPromptMetaEl(data, true);
     if (meta) container.appendChild(meta);
+    // The command under review, with its dangerous tokens highlighted. The
+    // dialog otherwise never shows the command (it lives only in the action
+    // card above), so this anchors the decision to what will actually run.
+    if (data && typeof data.command === "string" && data.command) {
+      const cmdEl = el(
+        "pre",
+        ["action-shell", "confirm-cmd"],
+        highlightDangerHtml(data.command, data.danger_spans)
+      );
+      container.appendChild(cmdEl);
+    }
     options.forEach(function (opt) {
       const btn = el("button", ["confirm-btn"]);
       if (opt.key === defaultKey) btn.classList.add("default");

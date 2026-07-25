@@ -979,6 +979,57 @@ class TestConfirm:
         assert key == "n"
         assert comment == "wait, I don't trust this command"
 
+    def test_danger_command_text_styles_only_the_spans(self):
+        # The highlighted command line: plain text is "  $ <command>" and the
+        # dangerous ranges (offset by the "  $ " prefix) carry a bold-red style.
+        r = MinimalRenderer(Console(file=StringIO()))
+        text = r._danger_command_text("rm -rf foo", [(0, 2)])
+        assert text.plain == "  $ rm -rf foo"
+        styled = [
+            (sp.start, sp.end, str(sp.style))
+            for sp in text.spans
+            if "red" in str(sp.style).lower()
+        ]
+        # "rm" sits at command offset 0-2 → text offset 4-6 (after "  $ ").
+        assert (4, 6) in [(s, e) for s, e, _ in styled]
+
+    def test_danger_command_text_skips_out_of_range_span(self):
+        # A span past the end of the command must not raise or corrupt output.
+        r = MinimalRenderer(Console(file=StringIO()))
+        text = r._danger_command_text("rm x", [(0, 99)])
+        assert text.plain == "  $ rm x"
+
+    def test_confirm_prints_highlighted_command_line(self, monkeypatch):
+        # When a command is supplied, confirm prints it before reading — the
+        # user sees what will run. (Mutation guard: drop the print and the
+        # command no longer appears in the console output.)
+        # Non-terminal console → styling is stripped, so the command text is
+        # contiguous plain text (with force_terminal the ANSI style codes split
+        # the highlighted token from the rest).
+        buf = StringIO()
+        console = Console(file=buf, width=120)
+        r = MinimalRenderer(console)
+        from agent_cli.render.base import ConfirmOption
+
+        opts = [ConfirmOption(key="y", label="yes"), ConfirmOption(key="n", label="no")]
+        monkeypatch.setattr("builtins.input", lambda _p: "y")
+        r.confirm(
+            "?", opts, default_key="n", command="rm -rf foo", danger_spans=[(0, 2)]
+        )
+        assert "rm -rf foo" in buf.getvalue()
+
+    def test_confirm_without_command_prints_nothing_extra(self, monkeypatch):
+        # A prompt-only confirm (e.g. path-escape guard) shows no "$ " line.
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=120)
+        r = MinimalRenderer(console)
+        from agent_cli.render.base import ConfirmOption
+
+        opts = [ConfirmOption(key="y", label="yes"), ConfirmOption(key="n", label="no")]
+        monkeypatch.setattr("builtins.input", lambda _p: "y")
+        r.confirm("?", opts, default_key="n")
+        assert "$ " not in buf.getvalue()
+
 
 class TestScopeDelegatingFunctions:
     """render_begin_scope / render_end_scope module wrappers."""

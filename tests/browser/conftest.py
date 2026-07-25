@@ -94,9 +94,12 @@ class WebStack:
         self._thread.join(timeout=5)
 
     # ── worker 헬퍼 ──
-    def start_confirm_loop(self, results: list):
+    def start_confirm_loop(self, results: list, command=None, danger_spans=None):
         """접속자가 생기면 y/n/a confirm 을 반복해서 묻는 worker —
-        해결된 (key, comment) 를 results 에 적재 (confirm_repro 승격)."""
+        해결된 (key, comment) 를 results 에 적재 (confirm_repro 승격).
+
+        ``command``/``danger_spans`` 를 주면 위험 명령 강조 경로를 구동한다
+        (구조화 필드로 confirm 에 전달 → 다이얼로그가 명령을 강조 렌더)."""
         from agent_cli.render.base import ConfirmOption
 
         options = [
@@ -113,9 +116,11 @@ class WebStack:
             while not self._uv.should_exit:
                 try:
                     res = self.renderer.confirm(
-                        "\n⚠ Dangerous command detected:\n  $ rm -rf x\nAllow?",
+                        "\n⚠ Dangerous command detected. Allow?",
                         options,
                         default_key="n",
+                        command=command,
+                        danger_spans=danger_spans,
                     )
                 except EOFError:
                     return  # stop() 의 push_abort — 락 해제하고 종료

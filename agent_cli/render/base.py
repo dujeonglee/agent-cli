@@ -589,6 +589,8 @@ class Renderer(ABC):
         options: list[ConfirmOption],
         *,
         default_key: str,
+        command: str | None = None,
+        danger_spans: list[tuple[int, int]] | None = None,
     ) -> tuple[str, str]:
         """Ask the user to pick one of ``options`` and optionally add
         a free-text comment.
@@ -604,6 +606,16 @@ class Renderer(ABC):
             default_key: Returned when the user submits empty input or
                 EOF, and when the typed token matches no option key /
                 alias.
+            command: Optional command/action text to display prominently
+                alongside the prompt (the dangerous-shell guard passes the
+                command here instead of embedding it in ``prompt``). ``None``
+                → nothing extra shown, prompt-only (path-escape confirm).
+            danger_spans: Optional ``(start, end)`` character ranges within
+                ``command`` to highlight as dangerous (the triggered keyword
+                tokens). Renderers paint these ranges — bold-red in the CLI,
+                a ``.danger`` span on the web — and leave the rest plain. The
+                ranges are pre-computed at the origin so renderers never
+                re-derive token boundaries.
 
         Returns:
             ``(key, comment)``. ``key`` is one of ``options``' keys

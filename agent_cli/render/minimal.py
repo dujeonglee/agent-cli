@@ -756,12 +756,32 @@ class MinimalRenderer(Renderer):
                 except Exception:
                     pass
 
+    @staticmethod
+    def _danger_command_text(command: str, danger_spans) -> Text:
+        """Build the ``  $ <command>`` line with each dangerous ``(start, end)``
+        range styled bold-red. Offsets in ``danger_spans`` index into
+        ``command``; the leading ``  $ `` prefix shifts them by its length. Out-
+        of-range / overlapping ranges are skipped defensively so a bad span
+        never corrupts the display."""
+        prefix = "  $ "
+        text = Text(prefix + command, style=_MUTED)
+        base = len(prefix)
+        pos = 0
+        for start, end in danger_spans or ():
+            if start < pos or start >= end or end > len(command):
+                continue  # out of order / out of range — skip, don't corrupt
+            text.stylize("bold red", base + start, base + end)
+            pos = end
+        return text
+
     def confirm(
         self,
         prompt: str,
         options: list[ConfirmOption],
         *,
         default_key: str,
+        command: str | None = None,
+        danger_spans: list[tuple[int, int]] | None = None,
     ) -> tuple[str, str]:
         """CLI implementation — read one line and match the first token
         case-insensitively against each option's ``key`` and aliases.
@@ -776,11 +796,17 @@ class MinimalRenderer(Renderer):
         prompts and wrapped in ``_prompt_display_guard`` so an active Live
         panel (parallel-delegate worker context) doesn't paint over it. A
         provenance header (agent + reasoning + action) prints first for
-        delegate-originated confirms.
+        delegate-originated confirms, and when ``command`` is supplied it is
+        printed on its own line with the dangerous tokens highlighted.
         """
 
         def _read():
             self._emit_prompt_meta_header(include_action=True)
+            if command is not None:
+                self.con.print(
+                    self._danger_command_text(command, danger_spans),
+                    highlight=False,
+                )
             return input(prompt)
 
         try:

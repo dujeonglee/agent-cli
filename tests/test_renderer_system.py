@@ -392,7 +392,9 @@ class TestMinimalRendererContract:
             def prompt_user(self, prompt, context=None):
                 raise EOFError
 
-            def confirm(self, prompt, options, default_key="n"):
+            def confirm(
+                self, prompt, options, default_key="n", command=None, danger_spans=None
+            ):
                 return (default_key, "")
 
         return NineMethodRenderer()

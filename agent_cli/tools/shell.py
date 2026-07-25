@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -59,6 +60,36 @@ def _detect_dangerous(cmd: str) -> str | None:
     return None
 
 
+# A shell-token boundary is start/end-of-string or any whitespace / operator
+# char — everything else (letters, digits, `-`, `.`, `/`, quotes) is "inside a
+# token". A dangerous keyword highlights only when it stands as its OWN token,
+# mirroring ``_detect_dangerous``'s shlex semantics: ``rm`` matches in ``rm -rf``
+# and ``xargs rm`` but NOT in ``rm-helper.sh`` (followed by ``-``), ``chmod``
+# (preceded by ``ch``), or the quoted ``echo "rm x"`` (preceded by ``"``). Longer
+# keywords first so ``rmdir`` wins over ``rm`` at the same position.
+_DANGER_BOUND = r"[^\s|&;()<>`]"
+_DANGER_RE = re.compile(
+    r"(?<!"
+    + _DANGER_BOUND
+    + r")(?:"
+    + "|".join(re.escape(k) for k in sorted(_DANGEROUS_KEYWORDS, key=len, reverse=True))
+    + r")(?!"
+    + _DANGER_BOUND
+    + r")"
+)
+
+
+def _danger_spans(cmd: str) -> list[tuple[int, int]]:
+    """Character ranges in ``cmd`` where a dangerous keyword stands as its own
+    shell token — the spans to highlight in a confirm prompt. Computed at the
+    origin (single source of truth) so each renderer only paints the ranges and
+    never re-derives token boundaries. Left-to-right, non-overlapping. Empty when
+    the trigger sits inside quotes/another token (``_detect_dangerous`` may still
+    fire via shlex there — the command shows unhighlighted rather than marking
+    the wrong substring)."""
+    return [(m.start(), m.end()) for m in _DANGER_RE.finditer(cmd)]
+
+
 def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
     """Prompt user for y / n / a, optionally followed by a comment.
 
@@ -73,9 +104,13 @@ def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
     y/n/a we treat it as ``n`` and keep the full input as the comment
     so the user's reasoning still surfaces to the LLM.
     """
+    # The command itself is passed structured (``command`` + ``danger_spans``)
+    # so each renderer can DISPLAY it with the dangerous token highlighted —
+    # CLI in bold-red, web in a ``.danger`` span. The prompt string carries only
+    # the warning + question; keeping the command out of it avoids showing the
+    # command twice (once plain in the prompt, once highlighted).
     prompt = (
-        f"\n⚠ Dangerous command detected:\n"
-        f"  $ {cmd}\n"
+        f"\n⚠ Dangerous command detected (`{keyword}`). "
         f"Allow? (y=once, n=deny, a=always allow `{keyword}` this session)\n"
         f"  [y/n/a, optional comment after]: "
     )
@@ -101,7 +136,13 @@ def _ask_confirmation(cmd: str, keyword: str) -> tuple[str, str]:
     # Renderer guarantees ``key`` is one of the option keys (or default
     # on EOF / empty / unrecognized) and preserves any free-text comment
     # so the user's intent surfaces upstream to the LLM observation.
-    return get_renderer().confirm(prompt, options, default_key="n")
+    return get_renderer().confirm(
+        prompt,
+        options,
+        default_key="n",
+        command=cmd,
+        danger_spans=_danger_spans(cmd),
+    )
 
 
 def tool_shell(args: dict) -> ToolResult:

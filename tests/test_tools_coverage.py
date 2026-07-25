@@ -502,6 +502,45 @@ class TestShellDangerousCommandConfirmation:
         assert _detect_dangerous("format-firmware") is None
 
 
+class TestDangerSpans:
+    """``_danger_spans`` — the (start,end) char ranges to highlight in a
+    confirm prompt. Must mirror ``_detect_dangerous``'s "own shell token"
+    semantics so the highlight lands on exactly the token that triggered the
+    warning and nothing else."""
+
+    def test_spans_cover_the_triggered_token(self):
+        from agent_cli.tools.shell import _danger_spans
+
+        assert _danger_spans("rm -rf foo") == [(0, 2)]
+        assert _danger_spans("git rm tracked.txt") == [(4, 6)]
+        assert _danger_spans("rmdir empty/") == [(0, 5)]
+        assert _danger_spans("xargs rm") == [(6, 8)]
+        # slice back the ranges to prove they point at the real token text
+        cmd = "git rm tracked.txt"
+        assert cmd[4:6] == "rm"
+
+    def test_multiple_tokens_left_to_right(self):
+        from agent_cli.tools.shell import _danger_spans
+
+        assert _danger_spans("rm a && mv b c") == [(0, 2), (8, 10)]
+
+    def test_skips_substring_and_quoted_nonmatches(self):
+        from agent_cli.tools.shell import _danger_spans
+
+        # Not standalone tokens → no highlight (would be a lie).
+        assert _danger_spans("rm-helper.sh") == []
+        assert _danger_spans("format-firmware") == []
+        assert _danger_spans("chmod +x x") == []
+        # Inside quotes — collapses into one shlex token, not a real rm.
+        assert _danger_spans('echo "rm files"') == []
+
+    def test_rmdir_wins_over_rm_at_same_position(self):
+        from agent_cli.tools.shell import _danger_spans
+
+        # Longest-first alternation: the whole `rmdir` token, not just `rm`.
+        assert _danger_spans("rmdir dir") == [(0, 5)]
+
+
 class TestShellConfirmationComments:
     """y/n/a accepts an optional trailing comment that surfaces to the
     LLM. For `n`, the comment becomes the denial reason so the model
@@ -556,6 +595,31 @@ class TestShellConfirmationComments:
                 "n",
                 "actually let me check first",
             )
+
+    def test_ask_forwards_command_and_danger_spans_out_of_prompt(self, monkeypatch):
+        """The command travels as structured data (``command`` +
+        ``danger_spans``) for highlighting — and is NOT baked into the prompt
+        string (which would double-render it in the CLI)."""
+        from agent_cli.tools import shell as shell_mod
+
+        captured: dict = {}
+
+        class Spy:
+            def confirm(
+                self, prompt, options, *, default_key, command=None, danger_spans=None
+            ):
+                captured["prompt"] = prompt
+                captured["command"] = command
+                captured["danger_spans"] = danger_spans
+                return ("y", "")
+
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: Spy())
+        assert shell_mod._ask_confirmation("rm -rf foo", "rm") == ("y", "")
+        assert captured["command"] == "rm -rf foo"
+        assert captured["danger_spans"] == [(0, 2)]
+        # command no longer embedded in the prompt text
+        assert "rm -rf foo" not in captured["prompt"]
+        assert "$ " not in captured["prompt"]
 
     def test_ask_empty_input_is_deny_no_comment(self):
         from unittest.mock import patch

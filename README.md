@@ -968,16 +968,15 @@ LLM이 추가 정보가 필요할 때 사용자에게 질문합니다. 배열로
 
 shell 출력은 자르지 않고 그대로 LLM에 전달됩니다. `find /` / `grep -r` 같은 큰 명령을 호출하면 컨텍스트가 그만큼 차지되니, 필요한 부분만 받도록 좁히는 명령을 권장 (`tail -n 100`, `grep ERROR`, `head -c 4096` 등). 누적 컨텍스트가 budget의 90%를 넘으면 compaction이 발동해 오래된 절반을 LLM 요약으로 흡수하고, 그 단계에서도 안 들어가면 플레인 FIFO로 떨어뜨립니다.
 
-**위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 묻습니다:
+**위험 명령 확인.** `rm` / `rmdir` / `mv` 가 명령에 포함되면 실행 전 사용자에게 묻습니다. 실행될 명령이 별도 줄로 표시되고, **확인을 유발한 위험 키워드만 강조**됩니다 (CLI 는 볼드-레드, 웹 다이얼로그는 `.danger` 스팬):
 
 ```
-⚠ Dangerous command detected:
-  $ rm -rf /tmp/build
-Allow? (y=once, n=deny, a=always allow `rm` this session)
+  $ rm -rf /tmp/build        ← 'rm' 강조
+⚠ Dangerous command detected (`rm`). Allow? (y=once, n=deny, a=always allow `rm` this session)
   [y/n/a, optional comment after]:
 ```
 
-응답 첫 토큰이 결정 (`y` 이번만 / `n` 거부 / `a` 이 세션 동안 같은 키워드 자동 허용), 뒤에 **선택적 코멘트** 추가 가능:
+강조 범위는 서버에서 계산한 문자 span 이라 CLI·웹이 같은 소스를 칠하며, 유발 토큰만(정확히 그 명령을 위험하게 만든 `rm`) 표시됩니다 — `rm-helper.sh` 같은 유사 문자열은 강조하지 않습니다. 응답 첫 토큰이 결정 (`y` 이번만 / `n` 거부 / `a` 이 세션 동안 같은 키워드 자동 허용), 뒤에 **선택적 코멘트** 추가 가능:
 
 - `y and also cleanup /tmp/cache next` — 명령 실행 + 코멘트가 출력 끝에 `[User note when approving: ...]` 로 붙어서 LLM 이 다음 액션에 반영
 - `n the path is wrong, try /tmp/build instead` — 거부 + 이유가 에러 메시지에 들어가서 LLM 이 다른 경로 탐색

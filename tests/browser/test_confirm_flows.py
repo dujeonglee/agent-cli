@@ -61,6 +61,30 @@ class TestConfirmClick:
         ctx.close()
 
 
+class TestDangerHighlight:
+    def test_command_shown_with_danger_span(self, stack, page):
+        """위험 명령이 confirm 다이얼로그 안에 렌더되고, 트리거된 토큰만
+        .danger 로 강조된다 (서버가 span 을 계산 → 프론트는 칠하기만)."""
+        results: list = []
+        stack.start_confirm_loop(results, command="rm -rf build", danger_spans=[(0, 2)])
+        page.goto(stack.url)
+        page.wait_for_selector("#confirm-buttons .confirm-cmd", timeout=8000)
+        # 명령 원문이 다이얼로그에 보인다
+        assert "rm -rf build" in page.inner_text("#confirm-buttons .confirm-cmd")
+        # 트리거 토큰만 강조 — 정확히 "rm"
+        danger = page.locator("#confirm-buttons .confirm-cmd .danger")
+        assert danger.count() == 1
+        assert danger.first.inner_text() == "rm"
+
+    def test_no_command_no_cmd_block(self, stack, page):
+        """command 없이 뜬 confirm(경로-이탈 등)은 명령 블록을 만들지 않는다."""
+        results: list = []
+        stack.start_confirm_loop(results)  # command=None
+        page.goto(stack.url)
+        page.wait_for_selector("#confirm-buttons .confirm-btn", timeout=8000)
+        assert page.locator("#confirm-buttons .confirm-cmd").count() == 0
+
+
 class TestAnswering:
     def test_ask_badge_and_answer_roundtrip(self, stack, page):
         results: list = []

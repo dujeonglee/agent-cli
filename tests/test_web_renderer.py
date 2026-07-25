@@ -255,6 +255,36 @@ class TestDangerousShellWaitsForViewer:
             results[0].error or ""
         )
 
+    def test_confirm_payload_carries_command_and_danger_spans(self, monkeypatch):
+        """The confirm event payload includes the raw command and the
+        dangerous-token ranges so the web dialog can highlight them — the web
+        dialog otherwise never shows the command text."""
+        import agent_cli.render as render_mod
+        from agent_cli.tools.shell import tool_shell
+
+        r = WebRenderer()
+        monkeypatch.setattr(render_mod, "get_renderer", lambda: r)
+
+        def worker():
+            tool_shell({"command": "rm -rf ./agentcli-test-x"})
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        time.sleep(0.3)
+        try:
+            conn = WebConnection(id="late")
+            snapshot = r.register_connection(conn)
+            payload = next(
+                d
+                for ev, d in snapshot
+                if ev == "input_required" and d.get("kind") == "confirm"
+            )
+            assert payload["command"] == "rm -rf ./agentcli-test-x"
+            assert [tuple(s) for s in payload["danger_spans"]] == [(0, 2)]
+        finally:
+            r.push_user_input("confirm", {"key": "n", "comment": ""})
+            t.join(timeout=3.0)
+
 
 class TestEventDistribution:
     """Persistent vs transient routing."""

@@ -685,6 +685,21 @@ footer {
   border-radius: 4px;
   padding: 4px 8px;
 }
+/* The command under review, shown full-width above the y/n/a buttons so the
+   decision is anchored to what will actually run. */
+.confirm-cmd {
+  flex-basis: 100%;
+  margin: 0 0 4px 0;
+}
+/* Dangerous shell keyword (rm/rmdir/mv) inside the reviewed command — bold red
+   + underline so it stands out at a glance without recoloring the whole line. */
+.confirm-cmd .danger {
+  color: var(--fail);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
 
 /* ── Prompt provenance (who/why/what behind a confirm or ask) ── */
 .prompt-meta {

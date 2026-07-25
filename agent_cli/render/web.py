@@ -1456,13 +1456,17 @@ class WebRenderer(Renderer):
         options: list[ConfirmOption],
         *,
         default_key: str,
+        command: str | None = None,
+        danger_spans: list[tuple[int, int]] | None = None,
     ) -> tuple[str, str]:
         """Push an ``input_required`` event with the option list, block
         until POST /api/input arrives with a ``(key, comment)`` payload.
 
         On abort, returns ``(default_key, "")`` — matches MinimalRenderer
         so callers see the same "safe default" semantics regardless of
-        where the user disconnected.
+        where the user disconnected. ``command`` / ``danger_spans`` (when
+        given) ride along in the payload so the dialog can show the command
+        with its dangerous tokens highlighted.
         """
 
         # Emit + wait run together under ``_guarded_read``'s shared lock
@@ -1486,6 +1490,11 @@ class WebRenderer(Renderer):
                         for o in options
                     ],
                     "default_key": default_key,
+                    # The command to display + the dangerous-token ranges to
+                    # highlight (None/[] for a non-command confirm like the
+                    # workspace path-escape guard, which shows prompt-only).
+                    "command": command,
+                    "danger_spans": [[s, e] for s, e in (danger_spans or [])],
                     # Who/why/what: which delegate agent + its reasoning +
                     # the action it wants to run, surfaced in the dialog.
                     "agent": meta["agent"],
