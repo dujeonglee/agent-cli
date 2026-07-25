@@ -1159,40 +1159,13 @@ def run(
     save_meta(session)
     ctx = _build_context(session, boot, resume=session_resumed is not None)
 
-    # Skill dispatch: /skill-name args — 경로-선두 쿼리는 통과(looks_like)
-    if (
-        query.startswith("/")
-        and not query.startswith("/sh")
-        and looks_like_slash_command(query)
-    ):
-        answer = _dispatch_skill(
-            query,
-            llm_provider,
-            capabilities,
-            resolved_model,
-            provider,
-            resolved_url,
-            resolved_key,
-            max_turns=max_turns,
-            verbose=verbose,
-            max_depth=max_depth,
-            agent_timeout=agent_timeout,
-            ctx=ctx,
-            session=session,
-        )
-        if answer is not _SKILL_NOT_FOUND:
-            if answer is not None:
-                console.print(f"\n[{C['final']}]{answer}[/]")
-            _finalize_run(session, ctx)
-            return
-
     from agent_cli.hooks import load_hooks as _load_hooks
 
     _disk_hooks = _load_hooks() or None
     # teammate P1: main 루프에만 레지스트리 주입 (서브에이전트는 도구
     # 자동 strip). run 은 프로세스 단명이라 종료 시 전원 정리 — 미배달
     # 회신의 세션-넘김 보존은 P3(manifest/outbox).
-    from agent_cli.subagent.agents_live import AgentRegistry
+    from agent_cli.subagent.agents_live import AgentRegistry, set_main_registry
 
     # runtime 프리필: restore/auto-spawn 된 teammate 가 도구 호출(스폰)
     # 없이 첫 접촉(웹 창 인간 개입 등)을 받아도 provider 배선이 있도록.
@@ -1213,6 +1186,45 @@ def run(
             "hooks_config": _disk_hooks,
         },
     )
+    # main registry 슬롯 등록 (v7.17.0 배선 통일): 아래 skill dispatch 를
+    # 포함한 모든 skill 실행이 execute_skill 에서 이 registry 를 자동 상속
+    # (spawn 가능). 생성을 dispatch 앞으로 이동 — 부수효과(restore/
+    # auto_spawn/waker)는 종전 위치 그대로.
+    set_main_registry(agent_registry)
+
+    # Skill dispatch: /skill-name args — web 의 route_one 과 같은 공용 입구
+    # (try_dispatch_agent_or_skill → _dispatch_skill) 로 v7.17.0 통일. 종전
+    # run 전용 fast-path 는 _dispatch_skill 을 직접 불러 (a) registry 미배선
+    # (spawn "main-session only" 거부 사고의 ③경로) (b) not-found 폴스루
+    # (오타 /명령이 LLM 쿼리로 샘) 로 web 과 갈렸다. 이제 not-found 도 web
+    # 과 같이 소비+표시, /skills 리스팅도 동작. 외곽 가드는 run 특유 보존:
+    # /sh 는 run 에 핸들러가 없고, 경로-선두 쿼리는 통과(looks_like).
+    if (
+        query.startswith("/")
+        and not query.startswith("/sh")
+        and looks_like_slash_command(query)
+        # 단락 평가: 가드 통과 시에만 dispatch 실행(부수효과 포함)
+        and try_dispatch_agent_or_skill(
+            query,
+            _ConsoleDispatchOutput(),
+            llm_provider=llm_provider,
+            capabilities=capabilities,
+            resolved_model=resolved_model,
+            provider=provider,
+            resolved_url=resolved_url,
+            resolved_key=resolved_key,
+            max_turns=max_turns,
+            verbose=verbose,
+            max_depth=max_depth,
+            agent_timeout=agent_timeout,
+            ctx=ctx,
+            session=session,
+            graceful_interrupt=False,
+            agent_registry=agent_registry,
+        )
+    ):
+        _finalize_run(session, ctx)
+        return
 
     # P5 (D3 완성): run 도 web 과 같은 큐 펌프 — 초기 질의를 InputQueue 에
     # 넣고, teammate 회신의 wake 아이템(MailWaker)도 같은 큐로 들어온다.
@@ -1965,6 +1977,12 @@ def web(
             },
         )
         _registry = agent_registry  # 클로저 고정 (nonlocal 재대입과 분리)
+        # main registry 슬롯 등록 (v7.17.0 배선 통일) — 사용자 /skill
+        # dispatch 등 registry 를 명시받지 못하는 skill 실행 경로가
+        # execute_skill 에서 자동 상속(spawn 가능).
+        from agent_cli.subagent.agents_live import set_main_registry
+
+        set_main_registry(_registry)
         # P4: 대화 창의 인간 개입(input/kill) 엔드포인트에 레지스트리 연결.
         server.agent_registry = _registry
 

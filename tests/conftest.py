@@ -104,6 +104,14 @@ def _reset_loaders_after_test():
         _reset_loader()
     except Exception:
         pass
+    # main registry 프로세스 슬롯 격리 (v7.17.0) — 테스트가 등록한 슬롯이
+    # 다음 테스트의 execute_skill 자동 상속으로 새지 않게 항상 비운다.
+    try:
+        from agent_cli.subagent.agents_live import set_main_registry
+
+        set_main_registry(None)
+    except Exception:
+        pass
 
 
 # ── omlx integration fixtures ─────────────────────────────

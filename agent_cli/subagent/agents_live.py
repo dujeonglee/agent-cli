@@ -82,6 +82,30 @@ AGENTS_STATE_VERSION = 1
 # — KV 캐시 프리픽스를 의미 있는 사건에만 버스트).
 _membership_changed = threading.Event()
 
+# ── main registry 프로세스 슬롯 (v7.17.0 배선 통일) ──
+# agent-cli 프로세스 = 세션 1개(web 인스턴스는 post 당 1 프로세스, run 은
+# 단명) 전제의 "이 세션의 main AgentRegistry" 슬롯. run/web 이 생성 직후
+# 등록하고, skill 실행(execute_skill)이 registry 를 명시받지 못한 경로
+# (사용자 /skill dispatch 등 — main 의 워크플로우)에서 자동 상속한다.
+# 종전엔 registry 가 호출자 파라미터로 손에서 손으로 릴레이돼, 경로가
+# 늘 때마다 배선이 누락됐다(loop 내부 run_skill op 만 배선되고 사용자
+# 슬래시 경로 2곳이 빠져 spawn 이 "main-session only" 거부되던 사고).
+# 권한 경계는 "미지정 vs 명시 None" 구분이 지킨다 — 서브에이전트 루프의
+# dispatch 는 cfg.agent_registry(=None)를 **명시** 전달하므로 슬롯을
+# 조회하지 않고 run-only 가 유지된다.
+_MAIN_REGISTRY: AgentRegistry | None = None
+
+
+def set_main_registry(registry: AgentRegistry | None) -> None:
+    """run/web 이 main 세션의 registry 생성 직후 등록."""
+    global _MAIN_REGISTRY
+    _MAIN_REGISTRY = registry
+
+
+def main_registry() -> AgentRegistry | None:
+    """이 프로세스의 main registry (미등록이면 None)."""
+    return _MAIN_REGISTRY
+
 
 def notify_agents_changed(registry=None) -> None:
     """멤버십 변화 신호. 플래그(다음 턴 실제 재조립)에 더해, ``registry``

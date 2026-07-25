@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 import subprocess
 
+# execute_skill 의 agent_registry 기본값 sentinel — "미지정"(main 슬롯 자동
+# 상속)과 "명시 None"(registry 없음 = 서브에이전트 run-only 경계)을 구분한다.
+_INHERIT = object()
+
 from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
@@ -109,7 +113,7 @@ def execute_skill(
     parent_hooks_config: dict | None = None,
     parent_depth: int = 0,
     compaction_enabled: bool = True,
-    agent_registry=None,
+    agent_registry=_INHERIT,
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -124,6 +128,15 @@ def execute_skill(
     from pathlib import Path
 
     from agent_cli.hooks import merge_hooks_configs
+
+    # registry 해석 (배선 통일, v7.17.0): 미지정(_INHERIT)이면 main 슬롯을
+    # 자동 상속 — 사용자 /skill dispatch 등 main 의 모든 skill 실행 경로가
+    # 별도 배선 없이 spawn 가능해진다. 명시 전달(None 포함)은 그대로 존중
+    # — 서브에이전트 루프의 dispatch 가 명시 None 을 넘겨 run-only 경계 유지.
+    if agent_registry is _INHERIT:
+        from agent_cli.subagent.agents_live import main_registry
+
+        agent_registry = main_registry()
 
     # Tool intersection: skill tools ∩ parent tools
     effective_tools = skill.allowed_tools

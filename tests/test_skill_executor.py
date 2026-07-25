@@ -333,3 +333,55 @@ class TestSkillSpawnExecution:
         # spawn 이 거부되지 않고 워커가 registry 에 등록돼야 (배선 완전)
         assert not rejected, "skill 서브루프 spawn 이 'main-session only' 로 거부됨"
         assert worker_count >= 1, "spawn 된 워커가 registry 에 등록 안 됨"
+
+
+class TestMainRegistrySlotInheritance:
+    """배선 통일 (v7.17.0): execute_skill 의 agent_registry 해석 3케이스.
+    미지정(_INHERIT) → main 슬롯 자동 상속(사용자 /skill dispatch 등 main 의
+    모든 skill 실행 경로가 배선 없이 spawn 가능), 명시 registry → 그대로,
+    명시 None → 상속 안 함(서브에이전트 run-only 경계 보존 — dispatch 가
+    cfg.agent_registry=None 을 명시 전달하는 경로)."""
+
+    def _run_and_capture(self, caps, ctx, **kw):
+        skill = _make_skill(allowed_tools=["read_file", "agent"])
+        with patch("agent_cli.skills.executor.run_loop") as mock_loop:
+            from agent_cli.tools.result import ToolResult as _TR
+
+            mock_loop.return_value = _TR(True, output="done")
+            execute_skill(
+                skill=skill,
+                arguments="t",
+                provider=MagicMock(),
+                capabilities=caps,
+                model="m",
+                ctx=ctx,
+                **kw,
+            )
+            return mock_loop.call_args.kwargs["agent_registry"]
+
+    def test_unspecified_inherits_main_slot(self, caps, ctx):
+        from agent_cli.subagent.agents_live import set_main_registry
+
+        reg = MagicMock(name="main-reg")
+        set_main_registry(reg)
+        # 미지정 → 슬롯 자동 상속 (사용자 슬래시 경로의 계약)
+        assert self._run_and_capture(caps, ctx) is reg
+
+    def test_explicit_registry_passes_through(self, caps, ctx):
+        from agent_cli.subagent.agents_live import set_main_registry
+
+        set_main_registry(MagicMock(name="slot"))
+        explicit = MagicMock(name="explicit")
+        assert self._run_and_capture(caps, ctx, agent_registry=explicit) is explicit
+
+    def test_explicit_none_does_not_inherit(self, caps, ctx):
+        """경계 핵심: 서브에이전트 루프의 dispatch 는 None 을 **명시** 전달 —
+        슬롯이 차 있어도 상속하지 않아야 run-only 가 유지된다."""
+        from agent_cli.subagent.agents_live import set_main_registry
+
+        set_main_registry(MagicMock(name="slot"))
+        assert self._run_and_capture(caps, ctx, agent_registry=None) is None
+
+    def test_slot_empty_unspecified_is_none(self, caps, ctx):
+        # 슬롯 미등록(예: headless) — 미지정이어도 None (거부 경로 그대로)
+        assert self._run_and_capture(caps, ctx) is None
