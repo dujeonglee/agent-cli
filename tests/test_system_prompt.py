@@ -1423,3 +1423,45 @@ class TestAntiHtmlEmphasis:
         for name in ("json_fc",):
             hint = self._fmt(name).static_retry_hint_no_json()
             assert "HTML" in hint, name
+
+
+class TestReplyDisciplineSection:
+    """상주 에이전트 고정 각인 (v7.18.1) — 여러 요청자(main·창 사용자·peer)의
+    요청마다 반드시 그 요청자에게 회신이 돌아가야 한다는 핵심 계약. 상주
+    신호(peer_agents_section)가 있을 때만 주입 — one-shot run 은 complete 가
+    부모에게 자동 반환이라 불필요."""
+
+    def _names(self, caps, **kw):
+        return [
+            n
+            for n, _ in build_system_prompt_sections(
+                caps, active_tools=["read_file"], **kw
+            )
+        ]
+
+    def test_injected_for_resident_agents_only(self, caps):
+        resident = self._names(
+            caps, agent_role="You are w1.", peer_agents_section="## Live Agents\n- x"
+        )
+        oneshot = self._names(caps, agent_role="You are w1.")
+        main = self._names(caps)
+        assert "Reply Discipline" in resident
+        assert "Reply Discipline" not in oneshot
+        assert "Reply Discipline" not in main
+
+    def test_content_matches_plumbing_facts(self, caps):
+        """문구가 배관 사실과 정합해야 오도하지 않는다: complete=현재 요청자
+        자동 회신, 소비된 peer 회신은 terminal → message 명시 보고 필요."""
+        secs = dict(
+            build_system_prompt_sections(
+                caps,
+                active_tools=["read_file"],
+                agent_role="r",
+                peer_agents_section="## Live Agents\n- x",
+            )
+        )
+        body = secs["Reply Discipline"]
+        assert "EVERY requester" in body  # 강한 각인 (사용자 요구)
+        assert "complete" in body and "automatically returns" in body  # 사실 1
+        assert "message" in body and "not forwarded" in body  # 사실 2 (terminal)
+        assert "cannot do" in body or "failed" in body  # 실패도 회신

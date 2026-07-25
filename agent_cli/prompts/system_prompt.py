@@ -751,6 +751,26 @@ def _load_directives(audience: str = "main") -> str:
     return "## Directives\n\n" + "\n\n".join(loaded)
 
 
+# 상주 에이전트 고정 각인 (v7.18.1) — 회신 규율. 여러 요청자(main·창의
+# 사용자·peer)로부터 오는 요청마다 반드시 그 요청자에게 답이 돌아가게 한다.
+# 문구는 배관 사실과 정합: complete 결과는 현재 요청자에게 자동 라우팅되고
+# (author 기반), 배달된 peer 회신의 소비는 terminal 이라 그 시점에 결과를
+# 기다리는 다른 에이전트가 있으면 message 로 명시 보고가 필요하다.
+_REPLY_DISCIPLINE_SECTION = """## Reply Discipline (your core duty)
+Requests reach you from DIFFERENT requesters — main, the user in your chat
+window, or peer agents (a delivered message names its sender). EVERY requester
+must get its answer back; never let a request end silently:
+
+1. Finishing the current request with `complete` automatically returns your
+   result to WHOEVER sent that request — so make the `result` the actual
+   answer for them, not a generic status line.
+2. When you finish work that ANOTHER agent is waiting on (e.g. an orchestrator
+   that assigned it via message), report the outcome to that agent with
+   `message` before you finish — a consumed reply is not forwarded for you.
+3. If you cannot do what was asked, still reply: say what failed and why.
+   No requester should ever have to ask twice or poll you."""
+
+
 def build_system_prompt_sections(
     capabilities: ModelCapabilities,
     active_tools: list[str],
@@ -844,6 +864,14 @@ def build_system_prompt_sections(
     # 주입 없음.
     if peer_agents_section:
         sections.append(("Live Agents", peer_agents_section))
+        # v7.18.1: 상주 에이전트 전용 고정 각인 — 회신 규율. 요청은 여러
+        # 소스(main·대화창의 사용자·peer 에이전트)에서 오고, 배관상 회신은
+        # author 기반 라우팅으로 요청자에게 간다: complete 의 결과가 곧
+        # 현재 요청자에게의 회신, 배달된 peer 회신 소비는 terminal 이라
+        # 그때 다른 대기자가 있으면 message 로 명시 보고해야 한다. 이
+        # 규율이 peer 조율(orchestrator 설계)의 핵심 계약이라 프로필 md 가
+        # 아닌 고정 섹션으로 — 커스텀/instant-agent 포함 전 상주에 적용.
+        sections.append(("Reply Discipline", _REPLY_DISCIPLINE_SECTION))
 
     # ── Recency: passive reference → active rules → immediate constraint ──
     sections.append(("Environment", _build_environment_section()))
