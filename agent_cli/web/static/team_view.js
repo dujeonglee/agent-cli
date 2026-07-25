@@ -62,6 +62,7 @@
     _svg: null,
     _active: false,
     _raf: 0,
+    _poll: 0,
     _seen: null,
 
     /** Feed one SSE event into the model buffer. */
@@ -161,11 +162,33 @@
     },
 
     setActive: function (on) {
-      // Event-driven only: each agent_msg (request in / reply out) + roster
-      // update calls ingest → rAF repaint. No polling.
+      // Event-driven (ingest → rAF) PLUS a 5s tick while the Team view is open,
+      // so in-progress bars grow to "now" and the time axis advances between
+      // events. Load is negligible — a model rebuild + SVG redraw at 0.2 Hz,
+      // and only while the view is visible.
       this._active = on;
       if (this._host) this._host.hidden = !on;
-      if (on) this.render();
+      if (on) {
+        this.render();
+        this._startPoll();
+      } else {
+        this._stopPoll();
+      }
+    },
+
+    _startPoll: function () {
+      var self = this;
+      if (self._poll) return;
+      self._poll = setInterval(function () {
+        self.render();
+      }, 5000);
+    },
+
+    _stopPoll: function () {
+      if (this._poll) {
+        clearInterval(this._poll);
+        this._poll = 0;
+      }
     },
 
     _schedule: function () {
@@ -179,7 +202,7 @@
 
     render: function () {
       if (!this._svg || !this._host || !global.TeamModel) return;
-      var m = global.TeamModel.build(this._events);
+      var m = global.TeamModel.build(this._events, Date.now() / 1000);
       var agOf = function (k) {
         return m.agents.get ? m.agents.get(k) : m.agents[k];
       };

@@ -65,7 +65,7 @@
     return "message";
   }
 
-  function build(events) {
+  function build(events, now) {
     var agents = new Map(); // key → lane record
     var messages = [];
     var oneshots = [];
@@ -191,11 +191,17 @@
 
     // close anything still open at the end of the trace
     if (!isFinite(tMax)) tMax = isFinite(tMin) ? tMin : 1;
+    // If there is ONGOING work (open scopes / a live main turn) and a live
+    // ``now`` is supplied, extend the domain + those open items to now so
+    // in-progress bars grow and the axis advances between events. A finished
+    // run (nothing open) keeps its last-event end — no dead space on the right.
+    var hasOpen = openRun.size > 0 || mainBusyFrom != null;
+    var tEnd = now != null && hasOpen ? Math.max(tMax, now) : tMax;
     for (var oo of openRun.values()) {
-      oo.t1 = tMax;
+      oo.t1 = tEnd;
       closeScope(oo);
     }
-    if (mainBusyFrom != null) mainSpans.push({ t0: mainBusyFrom, t1: tMax, title: "turn" });
+    if (mainBusyFrom != null) mainSpans.push({ t0: mainBusyFrom, t1: tEnd, title: "turn" });
 
     var ordered = Array.from(agents.values()).sort(function (x, y) {
       return (x.firstTs || 0) - (y.firstTs || 0);
@@ -212,7 +218,7 @@
       skillBands: skillBands,
       mainSpans: mainSpans,
       t0: isFinite(tMin) ? tMin : 0,
-      t1: tMax,
+      t1: tEnd,
     };
   }
 

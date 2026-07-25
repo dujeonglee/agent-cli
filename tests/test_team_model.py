@@ -404,3 +404,66 @@ class TestSkillBands:
         )
         assert m["skillBands"] == []
         assert len(m["oneshots"]) == 1
+
+
+def run_model_now(events: list[dict], now: float) -> dict:
+    """Build with a live ``now`` (second arg) and return the model JSON."""
+    script = f"const TM = require({json.dumps(_MODULE)});" + (
+        "\nlet raw=''; process.stdin.on('data',d=>raw+=d); process.stdin.on('end',()=>{\n"
+        "  const p = JSON.parse(raw);\n"
+        "  const m = TM.build(p.events, p.now);\n"
+        "  const agents = {}; m.agents.forEach((v,k)=>{ agents[k]=Object.assign({},v); });\n"
+        "  process.stdout.write(JSON.stringify({agents, oneshots:m.oneshots,"
+        " skillBands:m.skillBands, mainSpans:m.mainSpans, t0:m.t0, t1:m.t1}));\n"
+        "});\n"
+    )
+    p = subprocess.run(
+        [_NODE, "-e", script],
+        input=json.dumps({"events": events, "now": now}),
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)
+
+
+_LIVE_ROSTER = {
+    "type": "agent_roster",
+    "ts": 1.0,
+    "roster": [{"key": "w1", "profile": "code-writer", "name": "w1"}],
+}
+_LIVE_OPEN = {
+    "type": "scope_start",
+    "ts": 2.0,
+    "task_id": "w1#0",
+    "kind": "run",
+    "label": "build",
+}
+
+
+class TestLiveNow:
+    def test_ongoing_scope_extends_to_now(self):
+        # open scope + live now → the bar (and domain) grow to now.
+        m = run_model_now([_LIVE_ROSTER, _LIVE_OPEN], 100.0)
+        assert m["agents"]["w1"]["spans"][0]["t1"] == 100.0
+        assert m["t1"] == 100.0
+
+    def test_finished_run_has_no_dead_space(self):
+        # everything closed → domain stays at the last event, NOT now.
+        m = run_model_now(
+            [
+                _LIVE_ROSTER,
+                _LIVE_OPEN,
+                {"type": "scope_end", "ts": 5.0, "task_id": "w1#0"},
+            ],
+            100.0,
+        )
+        assert m["agents"]["w1"]["spans"][0]["t1"] == 5.0
+        assert m["t1"] == 5.0
+
+    def test_no_now_is_deterministic(self):
+        # no now (tests / non-live) → tMax from events, never wall-clock.
+        m = run_model([_LIVE_ROSTER, _LIVE_OPEN])
+        assert m["t1"] == 2.0
