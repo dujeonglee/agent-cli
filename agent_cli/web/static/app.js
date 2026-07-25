@@ -1179,6 +1179,10 @@
 
   es.addEventListener("ready", function (e) {
     const d = JSON.parse(e.data);
+    // Reconnect replays the persistent buffer (roster/agent_msg/scope_*), so
+    // clear the swimlane's event buffer first and let the replay repopulate —
+    // otherwise events would double on every reconnect.
+    if (window.TeamView) TeamView.reset();
     // ``workspace`` is the agent's working directory at session
     // creation time. Showing it in the top bar disambiguates which
     // checkout you're talking to when several LAN sessions are open
@@ -1218,17 +1222,17 @@
 
 
   es.addEventListener("agent_roster", function (e) {
-    // 상주 에이전트 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계.
-    document.dispatchEvent(
-      new CustomEvent("agentcli:tm-roster", { detail: JSON.parse(e.data) }),
-    );
+    // 상주 에이전트 목록/상태 sticky (P4) — 대화 창 IIFE 로 중계 + Team 스윔레인.
+    const d = JSON.parse(e.data);
+    if (window.TeamView) TeamView.ingest("agent_roster", d);
+    document.dispatchEvent(new CustomEvent("agentcli:tm-roster", { detail: d }));
   });
 
   es.addEventListener("agent_msg", function (e) {
     // 상주 에이전트 대화 메시지 (persistent — 재접속 replay 포함).
-    document.dispatchEvent(
-      new CustomEvent("agentcli:tm-msg", { detail: JSON.parse(e.data) }),
-    );
+    const d = JSON.parse(e.data);
+    if (window.TeamView) TeamView.ingest("agent_msg", d);
+    document.dispatchEvent(new CustomEvent("agentcli:tm-msg", { detail: d }));
   });
 
   es.addEventListener("agent_cleared", function (e) {
@@ -1397,6 +1401,7 @@
   // un-handled group_start and drew no card.
   es.addEventListener("scope_start", function (e) {
     const d = JSON.parse(e.data);
+    if (window.TeamView) TeamView.ingest("scope_start", d);
     ensureTaskGroup(
       d.task_id,
       d.index || 0,
@@ -1416,8 +1421,44 @@
 
   es.addEventListener("scope_end", function (e) {
     const d = JSON.parse(e.data);
+    if (window.TeamView) TeamView.ingest("scope_end", d);
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
+
+  // ── Team swimlane: mount + Timeline/Team toggle ──
+  // The toggle bar is hidden until there's team activity (agents spawned or a
+  // scope opened), so a plain single-agent chat never sees it. Named function
+  // (not a nested IIFE) so the markdown test harness's "first })(); = main
+  // closer" extraction stays valid.
+  function _setupTeamView() {
+    const teamHost = document.getElementById("team-view");
+    const toggle = document.getElementById("view-toggle");
+    if (!teamHost || !toggle || !window.TeamView) return;
+    TeamView.mount(teamHost);
+    let revealed = false;
+    const origIngest = TeamView.ingest.bind(TeamView);
+    TeamView.ingest = function (type, data) {
+      origIngest(type, data);
+      const isTeam =
+        type === "scope_start" ||
+        (type === "agent_roster" && data.roster && data.roster.length);
+      if (isTeam && !revealed) {
+        revealed = true;
+        toggle.hidden = false;
+      }
+    };
+    const tabs = toggle.querySelectorAll(".vt-tab");
+    function select(view) {
+      tabs.forEach((t) =>
+        t.setAttribute("aria-selected", t.dataset.view === view ? "true" : "false"),
+      );
+      const team = view === "team";
+      $messages.hidden = team;
+      TeamView.setActive(team);
+    }
+    tabs.forEach((t) => t.addEventListener("click", () => select(t.dataset.view)));
+  }
+  _setupTeamView();
 
   // ── Abort button visibility ────────────────
   // Shown only during ``input_required`` waits (ask answer / confirm

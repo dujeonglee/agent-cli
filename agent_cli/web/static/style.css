@@ -45,6 +45,9 @@
   --on-accent: #ffffff;
   --user-bg: #3c4456; --user-hover: #464f63; --user-time: #aab4cc; --focus-ring: #7e8db0;
   --ok: #3fb950; --fail: #f85149; --warn: #d29922; --cyan: #3bc9db;
+  /* Team swimlane role hues — theme-independent categorical lane colors. */
+  --h-main: #9aa1ad; --h-worker: #7e8db0; --h-orch: #e0a458;
+  --h-writer: #3fb950; --h-reviewer: #a78bfa; --h-tester: #4d8eff; --h-rose: #f85149;
   --fail-soft-bg: rgba(248,81,73,.10); --fail-soft-fg: #f3b0ac; --fail-soft-border: rgba(248,81,73,.40);
   --warn-soft-bg: rgba(210,153,34,.14); --warn-soft-border: rgba(210,153,34,.32); --warn-soft-fg: #e3b341;
   --overlay: rgba(0,0,0,.55); --shadow: rgba(0,0,0,.50);
@@ -1319,3 +1322,53 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 }
 #tm-send { font-size: 13px; }
 #tm-input:disabled { opacity: .5; cursor: default; }
+
+/* ── Team swimlane (Phase 3) — role hue tokens live in the top :root block;
+   everything here is var()-based so it recolors with the theme. */
+/* main#messages sets display:flex, which out-specifies the UA [hidden] rule —
+   restore hide-on-hidden so the Team toggle can swap the two surfaces. */
+#messages[hidden] { display: none; }
+/* Timeline / Team toggle bar */
+.view-toggle {
+  display: flex; align-items: center; gap: 6px; padding: 8px 16px 0;
+}
+.vt-seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
+.vt-tab {
+  appearance: none; border: 0; background: transparent; color: var(--text-2); cursor: pointer;
+  font: inherit; font-size: 12.5px; font-weight: 550; padding: 5px 13px; border-radius: 7px;
+  transition: color .14s, background .14s;
+}
+.vt-tab:hover { color: var(--text); }
+.vt-tab[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
+.vt-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Team view container */
+#team-view { flex: 1; overflow: auto; padding: 6px 16px 20px; min-height: 0; }
+#team-view[hidden] { display: none; }
+.tv-ctrl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 2px 4px; }
+.tv-cl { font-family: var(--mono, ui-monospace, monospace); font-size: 10px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+.tv-seg {
+  appearance: none; cursor: pointer; font-family: var(--mono, ui-monospace, monospace); font-size: 11px; font-weight: 600;
+  color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 5px 10px;
+  transition: color .14s, border-color .14s, background .14s;
+}
+.tv-seg:hover { color: var(--text); }
+.tv-seg.on { color: var(--accent-soft-text); border-color: var(--accent-soft-border); background: var(--accent-soft-bg); }
+.tv-note { font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px; color: var(--muted); margin-left: 4px; }
+.tv-svg { display: block; width: 100%; height: auto; margin-top: 6px; }
+.tv-empty { color: var(--muted); font-size: 13px; padding: 40px 6px; text-align: center; }
+.tv-empty[hidden] { display: none; }
+
+.tv-axis { stroke: var(--border); stroke-dasharray: 1 5; }
+.tv-tick { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; fill: var(--muted); }
+.tv-base { stroke: var(--border); stroke-width: 1; }
+.tv-chip-bg { fill: var(--surface-2); stroke: var(--border); }
+.tv-lane-nm { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; font-weight: 600; fill: var(--text); }
+.tv-lane-role { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; fill: var(--muted); }
+.tv-state { font-family: var(--mono, ui-monospace, monospace); font-size: 10px; font-weight: 700; }
+.tv-band { fill: var(--surface-3); stroke: var(--border-2); }
+.tv-band-lbl { font-family: var(--mono, ui-monospace, monospace); font-size: 9.5px; fill: var(--text-2); }
+.tv-span { }
+.tv-msg { stroke-width: 1.5; opacity: .6; transition: opacity .12s; }
+.tv-msg-hit { stroke: transparent; stroke-width: 11; cursor: default; }
+.tv-msg-hit:hover + .tv-msg, .tv-msg:hover { opacity: 1; }

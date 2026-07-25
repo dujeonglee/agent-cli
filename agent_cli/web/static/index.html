@@ -77,7 +77,14 @@
     <button id="nb-set" type="button" class="btn-primary">Set</button>
     <button id="nb-skip" type="button" class="btn-icon" title="Keep default">✕</button>
   </div>
+  <div class="view-toggle" id="view-toggle" role="tablist" aria-label="View" hidden>
+    <div class="vt-seg">
+      <button class="vt-tab" role="tab" data-view="timeline" aria-selected="true">Timeline</button>
+      <button class="vt-tab" role="tab" data-view="team" aria-selected="false">Team</button>
+    </div>
+  </div>
   <main id="messages"></main>
+  <div id="team-view" hidden></div>
 
   <!-- Export selection action bar (shown only in export mode) -->
   <div id="export-bar" hidden>
@@ -195,6 +202,8 @@
       <button id="abort" type="button" class="btn-danger" hidden>Stop</button>
     </div>
   </footer>
+  <script src="static/team_model.js"></script>
+  <script src="static/team_view.js"></script>
   <script src="static/app.js"></script>
 </body>
 </html>
