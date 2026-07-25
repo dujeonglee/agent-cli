@@ -240,6 +240,113 @@ class TestMessages:
         assert len(m["messages"]) == 1
         assert m["messages"][0]["from"] == "orch" and m["messages"][0]["to"] == "w1"
 
+    def test_main_request_inbound_is_drawn(self):
+        # A request FROM main arrives at a teammate as direction="in",
+        # author="main". main emits no "out" of its own, so without drawing this
+        # inbound the request leg of the round-trip is invisible — it must render
+        # as the assign arrow. Mutation guard: dropping the main/user "in" branch
+        # makes this empty.
+        events = [
+            ROSTER,
+            {
+                "type": "agent_msg",
+                "ts": 3.0,
+                "direction": "in",
+                "key": "w1",
+                "author": "main",
+                "to": "w1",
+                "text": "go",
+                "seq": 1,
+            },
+        ]
+        m = run_model(events)
+        assert len(m["messages"]) == 1
+        assert m["messages"][0]["from"] == "main" and m["messages"][0]["to"] == "w1"
+        assert m["messages"][0]["type"] == "assign"
+
+    def test_user_intervention_inbound_is_drawn(self):
+        # A web human intervention arrives as author="user:*" — also external
+        # (no "out" counterpart), so its request arrow must show too.
+        events = [
+            ROSTER,
+            {
+                "type": "agent_msg",
+                "ts": 3.0,
+                "direction": "in",
+                "key": "w1",
+                "author": "user:alice",
+                "to": "w1",
+                "text": "hi",
+                "seq": 1,
+            },
+        ]
+        m = run_model(events)
+        assert len(m["messages"]) == 1
+        assert m["messages"][0]["from"] == "user:alice"
+        assert m["messages"][0]["to"] == "w1"
+
+    def test_peer_inbound_not_doubled_by_roundtrip(self):
+        # A peer request has BOTH an "in" (at receiver) and an "out" (at sender).
+        # Only the "out" is canonical — the peer "in" must STAY skipped so the
+        # round-trip fix (drawing main/user inbounds) doesn't double peer arrows.
+        events = [
+            ROSTER,
+            {
+                "type": "agent_msg",
+                "ts": 3.0,
+                "direction": "in",
+                "key": "w1",
+                "author": "orch",
+                "to": "w1",
+                "text": "impl",
+                "seq": 5,
+            },
+            {
+                "type": "agent_msg",
+                "ts": 3.1,
+                "direction": "out",
+                "key": "orch",
+                "author": "orch",
+                "to": "w1",
+                "text": "impl",
+                "seq": 1,
+            },
+        ]
+        m = run_model(events)
+        assert len(m["messages"]) == 1  # canonical out only, not doubled
+
+    def test_peer_reply_agent_prefix_normalized(self):
+        # A peer reply carries to="agent:orch" (the request author was stamped
+        # "agent:<key>" by the message handler), but the lane key is the BARE
+        # "orch". Without stripping the "agent:" prefix the reply's target lane
+        # isn't found and the VIEW drops the arrow — the reported "orchestrator
+        # request shows but the reply doesn't" bug. Mutation guard: remove the
+        # normalization and to stays "agent:orch" (no matching lane).
+        events = [
+            {
+                "type": "agent_roster",
+                "ts": 0.0,
+                "roster": [
+                    {"key": "orch", "profile": "orchestrator", "state": "busy"},
+                    {"key": "w1", "profile": "code-writer", "state": "busy"},
+                ],
+            },
+            {
+                "type": "agent_msg",
+                "ts": 5.0,
+                "direction": "out",
+                "key": "w1",
+                "author": "w1",
+                "to": "agent:orch",
+                "text": "done",
+                "seq": 1,
+            },
+        ]
+        m = run_model(events)
+        assert len(m["messages"]) == 1
+        assert m["messages"][0]["from"] == "w1"
+        assert m["messages"][0]["to"] == "orch"  # "agent:" stripped → lane match
+
     def test_message_type_assign_report_message(self):
         events = [
             ROSTER,

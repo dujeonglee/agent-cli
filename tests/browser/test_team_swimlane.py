@@ -160,3 +160,105 @@ class TestResumeScopeReplay:
                 page.locator('.card-task-group[data-task-id="sk-live"]').count() == 1
             )
         )
+
+
+class TestVerticalLayout:
+    """Vertical sequence-diagram layout: agent COLUMNS with a sticky header,
+    time flows DOWN, long runs scroll vertically. Round-trip message arrows
+    (request + reply) both draw."""
+
+    def test_sticky_header_has_agent_columns(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        _drive_team(stack)
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        # Column chips live in the sticky header (.tv-head), not the plot.
+        page.wait_for_selector("#team-view .tv-head .tv-chip", timeout=8000)
+        assert _wait(lambda: page.locator("#team-view .tv-head .tv-chip").count() >= 3)
+        # The header is position:sticky so it pins while the plot scrolls.
+        pos = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.tv-head')).position"
+        )
+        assert pos == "sticky"
+
+    def test_request_and_reply_arrows_both_draw(self, stack, page):
+        """Round-trip: a main->agent request (direction=in, author=main) AND the
+        agent->main reply (direction=out) each draw an arrow."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.agent_roster(
+            [
+                {"key": "w1", "profile": "code-writer", "name": "w1", "state": "busy"},
+            ]
+        )
+        # request main -> w1 (previously invisible: "in" was ignored)
+        r.agent_message(
+            key="w1", direction="in", author="main", to="w1", text="go", seq=1
+        )
+        # reply w1 -> main
+        r.agent_message(
+            key="w1", direction="out", author="w1", to="main", text="done", seq=1
+        )
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        assert _wait(lambda: page.locator("#team-view .tv-msg").count() == 2)
+
+    def test_long_run_scrolls_vertically(self, stack, page):
+        """A run longer than the 1h cap stops compressing and grows downward —
+        the container becomes vertically scrollable."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        # A 2-hour skill scope (explicit ts) — span 7200s > CAP 3600s.
+        r._emit(
+            "scope_start",
+            {"task_id": "long", "kind": "skill", "label": "big", "ts": 1000.0},
+            persistent=True,
+        )
+        r._emit(
+            "scope_end",
+            {"task_id": "long", "kind": "skill", "success": True, "ts": 1000.0 + 7200},
+            persistent=True,
+        )
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
+        assert _wait(
+            lambda: page.evaluate(
+                "() => { const h = document.getElementById('team-view');"
+                " return h.scrollHeight > h.clientHeight + 20; }"
+            )
+        )
+
+    def test_peer_reply_arrow_draws_despite_agent_prefix(self, stack, page):
+        """orchestrator<->worker round-trip: the worker's reply is addressed
+        to="agent:orch" but the lane is the bare "orch" — the prefix must be
+        normalized so the REPLY arrow draws, not just the request (the reported
+        'orchestrator request shows, reply doesn't' bug)."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.agent_roster(
+            [
+                {
+                    "key": "orch",
+                    "profile": "orchestrator",
+                    "name": "orch",
+                    "state": "busy",
+                },
+                {"key": "w1", "profile": "code-writer", "name": "w1", "state": "busy"},
+            ]
+        )
+        # request orch -> w1 (orchestrator's canonical "out" uses bare keys)
+        r.agent_message(
+            key="orch", direction="out", author="orch", to="w1", text="impl", seq=1
+        )
+        # reply w1 -> orch, addressed with the "agent:" prefix
+        r.agent_message(
+            key="w1", direction="out", author="w1", to="agent:orch", text="done", seq=1
+        )
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        assert _wait(lambda: page.locator("#team-view .tv-msg").count() == 2)

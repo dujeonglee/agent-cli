@@ -63,6 +63,14 @@
     return s.length > n ? s.slice(0, n - 1) + "…" : s;
   }
 
+  // Peer messages stamp the sender as ``agent:<key>`` (the message handler's
+  // author), but lane keys are the BARE agent key. Strip the prefix so a
+  // reply addressed to "agent:orch" maps to the "orch" lane instead of being
+  // dropped (the "request shows, reply doesn't" bug).
+  function laneKey(x) {
+    return typeof x === "string" && x.indexOf("agent:") === 0 ? x.slice(6) : x;
+  }
+
   // main→agent = assign, agent→main = report, agent→agent = message.
   function msgType(from, to) {
     if (to === "main") return "report";
@@ -144,12 +152,34 @@
         // scope events (begin_agent_work), NOT from messages — so a busy agent
         // shows as a bar in ITS own lane instead of flooding main's lane.
         if (e.direction === "out") {
-          var from = e.author || e.key || "main";
-          var to = e.to || "main";
+          var from = laneKey(e.author || e.key || "main");
+          var to = laneKey(e.to || "main");
           var sig = from + " " + to + " " + (e.seq || 0) + " " + (ts || 0);
           if (!seenMsg.has(sig)) {
             seenMsg.add(sig);
             messages.push({ from: from, to: to, t: ts, type: msgType(from, to), text: e.text || "" });
+          }
+        } else if (e.direction === "in") {
+          // A request ARRIVING at a teammate. Draw the request leg of the
+          // round-trip ONLY when it comes from main / a web user ("user:*"):
+          // those senders emit no "out" of their own, so this is the only
+          // record of that arrow. A PEER-originated inbound is skipped — the
+          // sender's own "out" already draws it, so drawing the "in" too would
+          // double the arrow.
+          var inAuthor = laneKey(e.author || "main");
+          if (inAuthor === "main" || inAuthor.indexOf("user") === 0) {
+            var inTo = laneKey(e.key || "main");
+            var inSig = inAuthor + " " + inTo + " " + (e.seq || 0) + " in";
+            if (!seenMsg.has(inSig)) {
+              seenMsg.add(inSig);
+              messages.push({
+                from: inAuthor,
+                to: inTo,
+                t: ts,
+                type: msgType(inAuthor, inTo),
+                text: e.text || "",
+              });
+            }
           }
         }
       } else if (e.type === "scope_start") {

@@ -1357,10 +1357,16 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .vt-tab[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
 .vt-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Team view container */
-#team-view { flex: 1; overflow: auto; padding: 6px 16px 20px; min-height: 0; }
+/* Team view container — the vertical scroll surface (time flows DOWN). The
+   agent-column header (.tv-head) pins at the top while the plot scrolls. */
+#team-view { flex: 1; overflow: auto; padding: 0 12px 20px; min-height: 0; }
 #team-view[hidden] { display: none; }
-.tv-svg { display: block; width: 100%; height: auto; margin-top: 6px; }
+.tv-head {
+  display: block; width: 100%; height: auto;
+  position: sticky; top: 0; z-index: 2;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.tv-svg { display: block; width: 100%; height: auto; }
 .tv-empty { color: var(--muted); font-size: 13px; padding: 40px 6px; text-align: center; }
 .tv-empty[hidden] { display: none; }
 
