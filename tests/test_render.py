@@ -922,6 +922,41 @@ class TestPromptUser:
         assert r.prompt_user("prompt: ", default="def", multiline=True) == "def"
 
 
+class TestConsoleColorIsolation:
+    """The suite must not depend on the ambient terminal for styling.
+
+    Two tests used to fail only under an editor/CI that exports FORCE_COLOR
+    (Claude Code sets ``FORCE_COLOR=3``): Rich then treats a StringIO console as
+    a terminal and interleaves ANSI, so plain-substring assertions break on a
+    highlighted token (``rm -rf foo`` → ``\x1b[1;31mrm\x1b[0m -rf foo``; a
+    version → ``v7.`` + ``27.0``). conftest scrubs the forcing vars at IMPORT
+    time — a fixture is too late, because ``Console.__init__`` freezes
+    ``_color_system`` and the module-level ``agent_cli.render.console`` is built
+    when the first test module is collected.
+    """
+
+    def test_ambient_color_forcing_is_scrubbed(self):
+        import os
+
+        assert "FORCE_COLOR" not in os.environ
+        assert "CLICOLOR_FORCE" not in os.environ
+
+    def test_shared_console_emits_no_ansi(self):
+        # The module-level console is what CLI commands print through, so its
+        # captured output must be plain text for substring assertions.
+        from agent_cli.render import console
+
+        assert console.color_system is None
+        assert not console.is_terminal
+
+    def test_explicit_force_terminal_still_styles(self):
+        # Tests that WANT styling opt in per-Console; the scrub must not break
+        # them (the ANSI/cursor-control assertions in this module rely on it).
+        buf = StringIO()
+        Console(file=buf, force_terminal=True, width=40).print("[red]x[/red]")
+        assert "\x1b[" in buf.getvalue()
+
+
 class TestConfirm:
     """``Renderer.confirm`` — single-line confirmation with options +
     optional comment. Powers the dangerous-command y/n/a prompt today;

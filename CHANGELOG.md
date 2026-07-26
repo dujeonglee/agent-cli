@@ -38,6 +38,21 @@
   parent + 같은 t0 = 한 배치이므로 와이어에 batch id 없이 포크(`.tv-fork` + `⋔N` 배지)를
   도출한다. 종료 시각은 워커별 유지(누가 오래 걸렸는지는 실제 정보).
 
+### Fixed
+
+- **스위트가 주변 터미널 환경에 의존해 테스트 2건이 실패하던 문제** (`FORCE_COLOR` 를
+  export 하는 에디터/CI 에서만 재현 — Claude Code 는 `FORCE_COLOR=3`). Rich 는 이 변수가
+  있으면 `StringIO` 콘솔조차 터미널로 보고 ANSI 를 섞어 써서, 평문 substring 단정이
+  하이라이트된 토큰에서 깨졌다 (`rm -rf foo` → `\x1b[1;31mrm\x1b[0m -rf foo`,
+  버전 → `v7.` + `27.0`).
+  - `tests/conftest.py` 가 `FORCE_COLOR`/`CLICOLOR_FORCE` 를 **import 시각에** 제거.
+    ★fixture 로는 늦다 — `Console.__init__` 이 `_color_system` 을 즉시 확정하고 스타일
+    렌더가 그 캐시값을 쓰므로, 모듈-전역 콘솔(`agent_cli.render.console`)이 테스트 모듈
+    수집 시점에 이미 굳는다.
+  - 스타일이 필요한 테스트는 `force_terminal=True` 를 명시하고(이 변수를 참조하지 않음)
+    `COLORTERM` 은 남기므로 ANSI/커서-제어 단정은 그대로 동작. 재획득 방지 가드 =
+    `TestConsoleColorIsolation`.
+
 ### Notes
 
 - CLI(minimal) 렌더러는 **무변경** — 이미 `push_depth` 들여쓰기로 계층이 읽히므로

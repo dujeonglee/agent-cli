@@ -22,6 +22,22 @@ import os
 if os.environ.get("AGENT_CLI_BROWSER_TESTS") != "1":
     collect_ignore = ["browser"]
 
+# ── Rich 색 강제 env 제거 — **fixture 가 아니라 import 시각에** ──
+# ``FORCE_COLOR``/``CLICOLOR_FORCE`` 가 있으면 Rich 는 StringIO 콘솔조차
+# 터미널로 보고 ANSI 를 섞어 쓴다 → 평문 substring 단정이 하이라이트된 토큰에서
+# 깨진다(`rm -rf foo` → `\x1b[1;31mrm\x1b[0m -rf foo`, 버전 `v7.` + `27.0`).
+# 에디터/CI 가 FORCE_COLOR 를 export 하면(Claude Code 는 `FORCE_COLOR=3`) 실패,
+# 맨 셸에서는 통과 — 스위트가 **주변 환경에 조용히 의존**하고 있었다.
+#
+# ★fixture 로는 늦다: `Console.__init__` 이 `_color_system` 을 **즉시** 확정하고
+# 스타일 렌더는 그 캐시값을 쓰므로, 모듈-전역 콘솔(`agent_cli.render.console`)이
+# 테스트 모듈 import(=수집) 시점에 이미 TRUECOLOR 로 굳는다. 그 뒤 env 를 지워도
+# 되돌릴 수 없다. conftest 는 테스트 모듈보다 먼저 import 되므로 여기가 유일하게
+# 이른 지점. 스타일을 원하는 테스트는 `force_terminal=True` 를 명시하고(이 env 를
+# 참조하지 않음) `COLORTERM` 은 남겨두므로 색 계열 판정도 그대로다.
+for _color_var in ("FORCE_COLOR", "CLICOLOR_FORCE"):
+    os.environ.pop(_color_var, None)
+
 import pytest
 import requests
 
