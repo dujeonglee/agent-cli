@@ -1356,20 +1356,32 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .vt-tab[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
 .vt-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Side-by-side: swimlane (overview, LEFT) + timeline (detail, RIGHT). */
+/* Side-by-side: swimlane (overview, LEFT) + drag handle + timeline (RIGHT). */
 #content-split { display: flex; flex: 1; min-height: 0; }
-#content-split > main#messages { flex: 1; }
-/* Team view container — the vertical scroll surface (time flows DOWN), now a
-   fixed-width left pane. The agent-column header (.tv-head) pins at the top. */
+#content-split > main#messages { flex: 1; min-width: 0; }
+/* Team view container — the vertical scroll surface (time flows DOWN), a
+   resizable left pane (drag #split-handle). The .tv-head pins at the top. */
 #team-view {
-  flex: 0 0 340px; overflow: auto; padding: 0 12px 20px; min-height: 0;
-  border-right: 1px solid var(--border);
+  flex: 0 0 400px; overflow: auto; padding: 0 12px 20px; min-height: 0;
 }
 #team-view[hidden] { display: none; }
-/* Narrow screens: stack the swimlane above the timeline instead of beside. */
+/* Draggable divider between the swimlane and the timeline. */
+#split-handle {
+  flex: 0 0 6px; cursor: col-resize; background: var(--border);
+  transition: background .12s; position: relative; touch-action: none;
+}
+#split-handle:hover, #split-handle.dragging { background: var(--accent); }
+#split-handle::after {  /* grip dots */
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 2px; height: 26px; transform: translate(-50%, -50%);
+  border-radius: 2px; background: var(--muted); opacity: .5;
+}
+#split-handle[hidden] { display: none; }
+/* Narrow screens: stack the swimlane above the timeline; no horizontal drag. */
 @media (max-width: 780px) {
   #content-split { flex-direction: column; }
-  #team-view { flex: 0 0 210px; border-right: 0; border-bottom: 1px solid var(--border); }
+  #team-view { flex: 0 0 210px !important; border-bottom: 1px solid var(--border); }
+  #split-handle { display: none; }
 }
 /* A timeline card the user navigated to from the swimlane. */
 #messages > .card.tv-nav-hl, #messages .card-task-group.tv-nav-hl {

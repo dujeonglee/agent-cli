@@ -75,12 +75,35 @@ class TestTeamSwimlane:
         team = page.locator("#team-view")
         # Both visible at once — the swimlane sits BESIDE the timeline.
         assert _wait(lambda: team.is_visible() and messages.is_visible())
-        # ◧ Team collapses the pane; the timeline stays visible.
+        # The drag handle is shown alongside the pane.
+        assert _wait(lambda: page.locator("#split-handle").is_visible())
+        # ◧ Team collapses the pane; the timeline stays visible, handle hidden.
         page.click("#vt-team-toggle")
         assert _wait(lambda: not team.is_visible() and messages.is_visible())
-        # Toggling again re-shows the pane.
+        assert not page.locator("#split-handle").is_visible()
+        # Toggling again re-shows the pane + handle.
         page.click("#vt-team-toggle")
         assert _wait(lambda: team.is_visible() and messages.is_visible())
+        assert _wait(lambda: page.locator("#split-handle").is_visible())
+
+    def test_split_handle_drag_resizes_pane(self, stack, page):
+        """Dragging the divider widens the swimlane pane (and the width sticks)."""
+        page.set_viewport_size({"width": 1100, "height": 640})
+        page.goto(stack.url)
+        stack.emit_ready()
+        _drive_team(stack)
+        page.wait_for_selector("#split-handle:not([hidden])", timeout=8000)
+        team = page.locator("#team-view")
+        w0 = team.bounding_box()["width"]
+        box = page.locator("#split-handle").bounding_box()
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 130, cy, steps=6)
+        page.mouse.up()
+        w1 = team.bounding_box()["width"]
+        assert w1 > w0 + 70  # pane got wider by ~the drag distance
 
     def test_reconnect_replay_no_flash_empty_or_duplicate(self, stack, page):
         """Reconnect replays the persistent buffer (roster sticky + scope_* +

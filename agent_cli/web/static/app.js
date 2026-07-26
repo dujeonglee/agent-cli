@@ -1478,17 +1478,59 @@
     const teamHost = document.getElementById("team-view");
     const toggle = document.getElementById("view-toggle");
     const btn = document.getElementById("vt-team-toggle");
+    const split = document.getElementById("content-split");
+    const handle = document.getElementById("split-handle");
     if (!teamHost || !toggle || !btn || !window.TeamView) return;
     TeamView.mount(teamHost);
 
-    // aria-pressed="true" = pane shown; setActive toggles teamHost.hidden.
+    // Restore a previously dragged pane width (session-persistent).
+    const WKEY = "agentcli_team_w";
+    const savedW = parseInt(localStorage.getItem(WKEY) || "", 10);
+    if (savedW > 0) teamHost.style.flexBasis = savedW + "px";
+
+    // aria-pressed="true" = pane shown; setActive toggles teamHost.hidden. The
+    // drag handle shows/hides with the pane.
     function setCollapsed(collapsed) {
       btn.setAttribute("aria-pressed", collapsed ? "false" : "true");
       TeamView.setActive(!collapsed);
+      if (handle) handle.hidden = collapsed;
     }
     btn.addEventListener("click", () =>
       setCollapsed(btn.getAttribute("aria-pressed") === "true"),
     );
+
+    // Draggable divider: resize the swimlane pane (min 260px; keep the timeline
+    // at least 360px). Pointer events → mouse + touch + pen; capture keeps the
+    // drag alive when the cursor leaves the thin handle.
+    if (handle && split) {
+      let dragging = false;
+      handle.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        handle.setPointerCapture(e.pointerId);
+        handle.classList.add("dragging");
+        e.preventDefault();
+      });
+      handle.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const rect = split.getBoundingClientRect();
+        let w = e.clientX - rect.left;
+        const max = Math.max(260, rect.width - 360);
+        w = Math.max(260, Math.min(max, w));
+        teamHost.style.flexBasis = w + "px";
+        // The host's ResizeObserver (mount) reschedules a render on width change.
+      });
+      function endDrag(e) {
+        if (!dragging) return;
+        dragging = false;
+        try {
+          handle.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+        handle.classList.remove("dragging");
+        localStorage.setItem(WKEY, String(parseInt(teamHost.style.flexBasis, 10) || 400));
+      }
+      handle.addEventListener("pointerup", endDrag);
+      handle.addEventListener("pointercancel", endDrag);
+    }
 
     let revealed = false;
     const origIngest = TeamView.ingest.bind(TeamView);
