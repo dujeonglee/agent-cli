@@ -240,6 +240,17 @@ def _run_parallel(
         stop_event = threading.Event()
 
     renderer = get_renderer()
+    # Captured HERE, on the spawning thread, for every worker below:
+    #   parent — a worker's own scope stack is empty, so it cannot see that it
+    #     was started from inside a skill; this thread can.
+    #   batch_ts — one start time for the whole fan-out. Letting each worker
+    #     stamp its own scattered a simultaneous batch across several rows of
+    #     the swimlane's event-ordinal axis (~ms apart, one row each), which
+    #     reads as "ran one after another". One shared value → one row → the
+    #     view draws a fork. End times stay per-worker: which one took longest
+    #     is real information.
+    parent_scope = renderer.current_scope()
+    batch_ts = time.time()
 
     def worker(index: int, spec: dict) -> None:
         # Per-task identity for renderer routing (CLI Live panel slot,
@@ -259,6 +270,8 @@ def _run_parallel(
             label=task_text or agent or f"task #{index + 1}",
             agent=agent,
             index=index,
+            parent=parent_scope,
+            ts=batch_ts,
         )
         t0 = time.monotonic()
         result_for_marker = None

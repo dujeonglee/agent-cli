@@ -455,6 +455,41 @@ class TestStaticUI:
         )[0]
         assert "header.scrollIntoView" not in toggle  # 실제 호출(코멘트 제외)
 
+    def test_nested_scope_card_wired_into_parent_body(self, server_and_client):
+        """중첩 스코프 카드 계층 배선 (동작 계약은 tests/browser). 자식 카드는
+        루트가 아니라 부모 body 로 — 이전엔 ensureTaskGroup 이 무조건
+        ``$messages.appendChild`` 라서 skill 안의 skill/run 카드가 형제로 붙어
+        계층이 사라졌다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        css = client.get("/static/style.css").text
+        fn = _js_fn_body(js, "ensureTaskGroup")
+        assert "appendToTimeline(card, parent)" in fn
+        assert "$messages.appendChild(card)" not in fn  # 루트 직결 회귀 가드
+        # scope_start 핸들러가 parent 를 실제로 넘겨야 배선이 산다.
+        handler = js.split('es.addEventListener("scope_start"', 1)[1].split(
+            'es.addEventListener("scope_status"', 1
+        )[0]
+        assert "d.parent" in handler
+        assert "noteScopeStart(" in handler
+        # 접힌 부모가 라이브 자식을 숨기지 않도록 전용 표시 요소 + 스타일.
+        assert "task-sub" in js and ".card-task-group .task-sub" in css
+
+    def test_swimlane_click_expands_ancestor_chain(self, server_and_client):
+        """스윔레인 바 클릭 내비: 중첩 카드는 부모 body(기본 접힘) 안에 있으므로
+        스크롤 전에 조상 체인을 펼쳐야 한다 — 펼치기가 스크롤 뒤면 타깃이
+        움직여 v7.26.x 에서 고친 '2~3번 클릭' 증상이 재발한다."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        nav = js.split('teamHost.addEventListener("click"', 1)[1].split(
+            "\n  }\n  _setupTeamView", 1
+        )[0]
+        assert "scopeAncestors(tid)" in nav
+        expand_at = nav.index("scopeAncestors(tid)")
+        scroll_at = nav.index("card.scrollIntoView")
+        assert expand_at < scroll_at, "펼치기가 스크롤보다 먼저여야 함"
+        assert ".reverse()" in nav  # 바깥→안 순서로 펼침
+
     def test_app_js_is_served(self, server_and_client):
         _, _, client = server_and_client
         resp = client.get("/static/app.js")

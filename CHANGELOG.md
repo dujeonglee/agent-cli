@@ -12,6 +12,54 @@
 
 ## [Unreleased]
 
+## [7.27.0] - 2026-07-26
+
+### Added
+
+- **Team 스윔레인·타임라인이 중첩 스코프를 표시** (skill 안의 skill/agent run). 이전엔
+  skill 밴드와 one-shot run 이 전부 호출자 컬럼의 **같은 x·같은 두께**로 그려져 바깥
+  skill 이 자식을 완전히 덮었고(중첩 skill 은 화면에서 소실, run 은 색 구간으로만 비쳐
+  어느 skill 소속인지 알 수 없었음), 타임라인 카드는 부모의 **형제로 루트에** 붙어 계층이
+  사라졌다.
+  - `scope_start` 에 `parent`(감싸는 scope task_id, `""`=main)+`depth` **additive 추가**.
+    parent 는 호출 스레드의 스코프 스택에서 도출하고, 스택이 빈 병렬 워커만 스폰 스레드가
+    `Renderer.current_scope()` 로 잡아 명시 전달. depth 는 항상 부모 depth+1 (호출자가
+    계산하지 않음).
+  - 스윔레인: 각 스코프에 **슬롯**(`k ≥ depth` 이면서 `k > 부모 slot` 인, 시간이 겹치지 않는
+    최소 칸) → 자식이 부모 오른쪽 칸에 그려지고 가는 선(`.tv-nest`)으로 연결. **순차 형제는
+    슬롯을 재사용**하므로 스킬을 연달아 돌려도 컬럼 폭 불변(skill/단건 run 은 호출자를
+    블록하므로 형제는 back-to-back).
+  - 타임라인: 자식 카드가 **부모 카드 body 안에** 들어가고, 접힌 부모 헤더에 `▸ … 실행 중`
+    라이브 자식 배지(`.task-sub` — `scope_status` 와 별도 요소라 부모·자식이 동시에 상태를
+    써도 서로 덮지 않음), 스윔레인 클릭-네비는 스크롤 **전에** 조상 체인을 자동 펼침.
+- **병렬 배치를 한 행의 포크로 표시.** `_run_parallel` 이 스레드 start 전에 배치 시각을
+  **한 번** 스탬프해 모든 워커의 `begin_scope(ts=)` 로 전달 — 워커마다 시각을 찍으면 동시
+  팬아웃이 이벤트 서수축에서 ms 차이로 여러 행에 흩어져 **순차 실행처럼** 보였다. 같은
+  parent + 같은 t0 = 한 배치이므로 와이어에 batch id 없이 포크(`.tv-fork` + `⋔N` 배지)를
+  도출한다. 종료 시각은 워커별 유지(누가 오래 걸렸는지는 실제 정보).
+
+### Fixed
+
+- **스위트가 주변 터미널 환경에 의존해 테스트 2건이 실패하던 문제** (`FORCE_COLOR` 를
+  export 하는 에디터/CI 에서만 재현 — Claude Code 는 `FORCE_COLOR=3`). Rich 는 이 변수가
+  있으면 `StringIO` 콘솔조차 터미널로 보고 ANSI 를 섞어 써서, 평문 substring 단정이
+  하이라이트된 토큰에서 깨졌다 (`rm -rf foo` → `\x1b[1;31mrm\x1b[0m -rf foo`,
+  버전 → `v7.` + `27.0`).
+  - `tests/conftest.py` 가 `FORCE_COLOR`/`CLICOLOR_FORCE` 를 **import 시각에** 제거.
+    ★fixture 로는 늦다 — `Console.__init__` 이 `_color_system` 을 즉시 확정하고 스타일
+    렌더가 그 캐시값을 쓰므로, 모듈-전역 콘솔(`agent_cli.render.console`)이 테스트 모듈
+    수집 시점에 이미 굳는다.
+  - 스타일이 필요한 테스트는 `force_terminal=True` 를 명시하고(이 변수를 참조하지 않음)
+    `COLORTERM` 은 남기므로 ANSI/커서-제어 단정은 그대로 동작. 재획득 방지 가드 =
+    `TestConsoleColorIsolation`.
+
+### Notes
+
+- CLI(minimal) 렌더러는 **무변경** — 이미 `push_depth` 들여쓰기로 계층이 읽히므로
+  `parent`/`ts` 인자를 수용 후 무시한다 (추상화 표면은 CLI·web 동일, 표시만 매체별).
+- resume 호환: `scopes.jsonl` 은 payload 를 그대로 기록하므로 새 필드가 자동 반영되고,
+  **구 사이드카**(필드 없음)는 프런트 기본값으로 전부 slot 0 = 이전 그림 그대로.
+
 ## [4.27.1] - 2026-07-05
 
 ### Fixed

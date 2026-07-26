@@ -195,6 +195,12 @@ class WebRenderer(Renderer):
         # ``begin_delegate_task`` so the inspector chip row can name each
         # sub-agent ("code-analyst·1") without re-deriving it from the timeline.
         self._prompt_scope_labels: dict[str, dict[str, Any]] = {}
+        # Nesting depth per OPEN scope (task_id → 0 for a scope directly under
+        # main). ``begin_scope`` reads its parent's entry to derive its own, so
+        # the depth on the wire is exact instead of inferred by the frontend
+        # from event order (which cannot tell a nested scope from a sibling).
+        # Entries are dropped in ``end_scope``.
+        self._scope_depths: dict[str, int] = {}
         # v4.52.0 스코프 스택: 스레드당 [스코프id…] — 중첩 루프(delegate 안
         # skill 등)의 top 이 현재 스코프. _thread_to_task(SSE delegate 그룹
         # 라우팅)와 분리 — 프런트 카드 그룹핑은 delegate 전용 시각 장치.
@@ -519,6 +525,14 @@ class WebRenderer(Renderer):
         with self._lock:
             return list(self._scope_dynamic_final.get(scope, []))
 
+    def current_scope(self) -> str:
+        """This thread's innermost open scope id ("" = main). Captured by code
+        that is about to spawn worker threads: the worker's own stack is empty,
+        so it cannot infer the parent itself (see ``begin_scope(parent=...)``)."""
+        with self._lock:
+            stack = self._thread_prompt_scopes.get(threading.get_ident())
+            return stack[-1] if stack else _MAIN_SCOPE
+
     def begin_scope(
         self,
         *,
@@ -527,6 +541,8 @@ class WebRenderer(Renderer):
         label: str = "",
         agent: str = "",
         index: int = 0,
+        parent: str | None = None,
+        ts: float | None = None,
     ) -> None:
         """Enter a nested scope (``kind`` = "skill" | "run") — the SINGLE path
         for skill subloops AND delegate/one-shot workers. Registers the current
@@ -537,11 +553,29 @@ class WebRenderer(Renderer):
         in the replay buffer, so a mid-scope reconnect still draws it. This
         unifies what used to be two divergent paths — delegates emitted
         ``delegate_task_start`` (a card) while skills emitted ``group_start``
-        (un-handled → ``/orchestrate`` drew no card)."""
+        (un-handled → ``/orchestrate`` drew no card).
+
+        The event carries ``parent`` + ``depth`` so both web surfaces can show
+        CONTAINMENT: the swimlane indents a nested scope into its own slot in
+        the caller's column (an outer skill used to paint over its children —
+        identical x, identical width) and the timeline nests the child's card
+        inside its parent's body. ``parent`` defaults to the enclosing scope on
+        this thread's stack; ``depth`` is derived from the parent's own depth,
+        so a caller never computes it. ``ts``, when given, becomes the event's
+        timestamp instead of emit-time (one shared value per parallel batch)."""
         tid = threading.get_ident()
         with self._lock:
+            stack = self._thread_prompt_scopes.setdefault(tid, [])
+            # Same-thread nesting (skill → skill, skill → single run) reads the
+            # parent off the stack; a cross-thread worker gets it passed in.
+            eff_parent = stack[-1] if parent is None and stack else (parent or "")
+            # depth = parent's depth + 1. An unknown parent (its scope already
+            # ended, or a caller inventing an id) still counts as one level of
+            # nesting rather than collapsing the child onto main's slot.
+            depth = 0 if not eff_parent else self._scope_depths.get(eff_parent, 0) + 1
+            self._scope_depths[task_id] = depth
             self._thread_to_task[tid] = task_id
-            self._thread_prompt_scopes.setdefault(tid, []).append(task_id)
+            stack.append(task_id)
             # Remember the chip-row label for this scope; the snapshot itself
             # arrives later (first LLM call) keyed by the same task_id.
             self._prompt_scope_labels[task_id] = {
@@ -550,17 +584,18 @@ class WebRenderer(Renderer):
             }
         # Tag this thread so a confirm/ask it triggers can name it.
         self.set_thread_agent(agent or label or f"scope #{index + 1}")
-        self._emit(
-            "scope_start",
-            {
-                "task_id": task_id,
-                "kind": kind,
-                "label": label,
-                "agent": agent,
-                "index": index,
-            },
-            persistent=True,
-        )
+        payload = {
+            "task_id": task_id,
+            "kind": kind,
+            "label": label,
+            "agent": agent,
+            "index": index,
+            "parent": eff_parent,
+            "depth": depth,
+        }
+        if ts is not None:
+            payload["ts"] = ts
+        self._emit("scope_start", payload, persistent=True)
 
     def end_scope(
         self,
@@ -585,6 +620,10 @@ class WebRenderer(Renderer):
             else:
                 self._thread_to_task.pop(tid, None)
                 self._thread_prompt_scopes.pop(tid, None)
+            # This scope can no longer be anyone's parent — drop its depth entry
+            # so a long session doesn't accumulate one per scope. Children were
+            # opened while it was live and already carry their own depth.
+            self._scope_depths.pop(task_id, None)
         self._finalize_prompt_scope(task_id)  # 동적 컨텍스트 live→고정
         self.set_thread_agent("")  # worker's prompt label no longer applies
         payload = {
@@ -620,6 +659,12 @@ class WebRenderer(Renderer):
                 "label": message,
                 "index": seq,
                 "agent": f"🤝 {label}",
+                # A resident teammate's request is NOT a nested scope of the
+                # caller: the swimlane routes it to that agent's OWN lane by the
+                # ``{key}#{seq}`` task_id. Emitted anyway so every scope_start
+                # has one shape, and so the timeline keeps its card at the root.
+                "parent": "",
+                "depth": 0,
             },
             persistent=True,
         )

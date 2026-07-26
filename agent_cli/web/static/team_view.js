@@ -72,6 +72,7 @@
   //   BARW    work-bar / scope-span thickness
   //   CAP     compression cap: fit up to CAP seconds into the visible height,
   //           then freeze px/sec and let content grow → vertical scroll.
+  //   SLOT_DX horizontal step per nesting slot inside the caller's column
   var HEAD_H = 54,
     GUT_L = 56,
     PAD_T = 16,
@@ -79,6 +80,7 @@
     PAD_R = 14,
     COL_MIN = 96,
     BARW = 10,
+    SLOT_DX = 14,
     ROW_H = 34; // fixed vertical gap between consecutive events (ordinal axis)
 
   var TeamView = {
@@ -240,11 +242,23 @@
 
       var lanes = m.lanes;
       var N = lanes.length;
-      // ── horizontal: one column per agent ──
-      var W = Math.max(GUT_L + N * COL_MIN + PAD_R, host.clientWidth - 4);
-      var colW = (W - GUT_L - PAD_R) / N;
+      // ── horizontal: one column per agent. main's column carries the nested
+      // scope slots, so it gets ``maxSlot`` extra steps of width and its
+      // baseline sits LEFT of centre — slots then grow rightward inside the
+      // column instead of spilling into the next lane. With no nesting
+      // (maxSlot 0) the geometry is exactly the old centred single column. ──
+      var slotSpan = (m.maxSlot || 0) * SLOT_DX;
+      var W = Math.max(GUT_L + N * COL_MIN + slotSpan + PAD_R, host.clientWidth - 4);
+      var colW = (W - GUT_L - PAD_R - slotSpan) / N;
+      var laneX = function (i) {
+        return GUT_L + i * colW + (i > 0 ? slotSpan : 0);
+      };
+      var laneW = function (i) {
+        return colW + (i === 0 ? slotSpan : 0);
+      };
       var colX = function (i) {
-        return GUT_L + i * colW + colW / 2;
+        if (i === 0 && slotSpan) return laneX(0) + Math.min(26, colW / 2);
+        return laneX(i) + laneW(i) / 2;
       };
       var laneIndex = {};
       lanes.forEach(function (k, i) {
@@ -324,7 +338,12 @@
         var role = k === "main" ? "session" : ag ? ag.role || "" : "";
         var hv = k === "main" ? "var(--h-main)" : hueVar(profile);
         var cw = Math.min(colW - 10, 150);
-        var x0 = cx - cw / 2;
+        // Centre the chip on its lane's baseline, but keep it inside the lane
+        // (main's baseline is off-centre once slots widen the column).
+        var x0 = Math.max(
+          laneX(i) + 4,
+          Math.min(cx - cw / 2, laneX(i) + laneW(i) - cw - 4)
+        );
         var g = svg("g", { class: "tv-chip" }, hd);
         svg("rect", { x: x0, y: 8, width: cw, height: HEAD_H - 16, rx: 7, class: "tv-chip-bg" }, g);
         var gb = svg("rect", { x: x0 + 6, y: 14, width: 18, height: 18, rx: 5 }, g);
@@ -365,19 +384,85 @@
 
       // A skill or one-shot run BLOCKS its caller for its whole duration, so it
       // renders as a distinctly-colored span INSIDE the caller's column (not a
-      // separate track). main's own turns get the neutral main hue. Hover shows
-      // the REAL elapsed time (the bar length is ordinal, not proportional).
-      function scopeSpan(item, cls, prefix) {
+      // separate track), offset by its SLOT so a nested scope sits beside its
+      // parent instead of underneath it. main's own turns get the neutral main
+      // hue. Hover shows the REAL elapsed time (the bar length is ordinal, not
+      // proportional) plus the nesting depth.
+      var scopeX = function (item) {
         var ci = laneIndex[item.caller];
         if (ci == null) ci = 0;
-        var cx = colX(ci);
+        return colX(ci) + (item.slot || 0) * SLOT_DX;
+      };
+      var batchMember = {};
+      (m.forks || []).forEach(function (f) {
+        f.members.forEach(function (id) {
+          batchMember[id] = f.members.length;
+        });
+      });
+      function scopeSpan(item, cls, prefix) {
+        var cx = scopeX(item);
         var y0 = rowY(item.t0),
           h = Math.max(rowY(item.t1) - y0, 3);
         var r = svg("rect", { class: cls, x: cx - BARW / 2, y: y0, width: BARW, height: h, rx: BARW / 2 }, s);
-        r.setAttribute("data-tip", prefix + " " + item.label + " · " + fmtDur(item.t1 - item.t0));
+        var n = batchMember[item.task_id];
+        r.setAttribute(
+          "data-tip",
+          prefix + " " + item.label +
+            (item.depth ? " · depth " + item.depth : "") +
+            (n ? " · ⋔ 배치 " + n + "개 동시 시작" : "") +
+            " · " + fmtDur(item.t1 - item.t0)
+        );
         // Link to the timeline card (app.js scrolls on click).
         if (item.task_id) r.setAttribute("data-task-id", item.task_id);
       }
+
+      // Parent → child connectors, drawn BEFORE the bars so a bar always sits
+      // on top of its own connector. A lone child gets a thin stub; a batch
+      // (same parent, same shared start) gets ONE fork with a tine per member,
+      // so "the parent fanned out N at once" reads at a glance.
+      var byTask = {};
+      m.skillBands.concat(m.oneshots).forEach(function (it) {
+        byTask[it.task_id] = it;
+      });
+      var forked = {};
+      (m.forks || []).forEach(function (f) {
+        // Anchor: the parent's own bar, or — for a batch fired straight from
+        // main — that column's slot-0 baseline (where main's turn bars sit).
+        var p = byTask[f.parent];
+        var y = rowY(f.t0);
+        var xp = p ? scopeX(p) : colX(0);
+        var xs = f.members
+          .map(function (id) {
+            return byTask[id] ? scopeX(byTask[id]) : null;
+          })
+          .filter(function (x) {
+            return x != null;
+          });
+        if (!xs.length) return;
+        var xMax = Math.max.apply(null, xs);
+        svg("path", { class: "tv-fork", d: "M " + (xp + BARW / 2) + " " + y + " H " + xMax }, s);
+        xs.forEach(function (x) {
+          svg("path", { class: "tv-fork", d: "M " + x + " " + (y - 4) + " V " + y }, s);
+        });
+        f.members.forEach(function (id) {
+          forked[id] = 1;
+        });
+        // Count badge, only when it fits inside the caller's own column.
+        var ci = p && laneIndex[p.caller] != null ? laneIndex[p.caller] : 0;
+        if (xMax + 26 < laneX(ci) + laneW(ci)) {
+          var badge = svg("text", { class: "tv-batch", x: xMax + 9, y: y + 3.5 }, s);
+          badge.textContent = "⋔" + f.members.length;
+          badge.setAttribute("data-tip", "한 턴에 run op " + f.members.length + "개 → 배치 팬아웃 (끝은 각자)");
+        }
+      });
+      m.skillBands.concat(m.oneshots).forEach(function (it) {
+        if (forked[it.task_id] || !it.parent) return;
+        var p2 = byTask[it.parent];
+        if (!p2 || p2.slot === it.slot) return;
+        var xp2 = scopeX(p2),
+          xc2 = scopeX(it);
+        svg("path", { class: "tv-nest", d: "M " + (xp2 + BARW / 2) + " " + rowY(it.t0) + " H " + (xc2 - BARW / 2 - 2) }, s);
+      });
       m.mainSpans.forEach(function (sp) {
         var cx = colX(0);
         var y0 = rowY(sp.t0),

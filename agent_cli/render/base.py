@@ -230,13 +230,30 @@ class Renderer(ABC):
         label: str = "",
         agent: str = "",
         index: int = 0,
+        parent: str | None = None,
+        ts: float | None = None,
     ) -> None:
         """Enter a nested execution scope — the single path for BOTH a skill
         subloop (``kind="skill"``) and a delegate / one-shot worker
         (``kind="run"``). On web this opens ONE ``scope_start`` card + routes
         the scope's inner events to it (fixes: ``/orchestrate`` used to emit a
         different, un-handled event and drew no card). CLI branches on ``kind``
-        (skill bracket vs delegate Live panel). No-op default."""
+        (skill bracket vs delegate Live panel). No-op default.
+
+        ``parent`` — the ENCLOSING scope's ``task_id``, or ``""`` for a
+        top-level scope under main. Leave it ``None`` (the default) when the
+        scope opens on the same thread as its caller: the renderer then reads
+        the parent off the thread's scope stack. Pass it explicitly only when
+        that inference is impossible — a parallel worker calls this from its
+        OWN thread, whose stack is empty, so the spawning code captures the
+        parent (``current_scope()``) and hands it over.
+
+        ``ts`` — the scope's canonical start time (epoch seconds). Leave it
+        ``None`` to have the emit point stamp "now". A parallel BATCH passes one
+        shared value for all its workers: they start within milliseconds of each
+        other, and stamping each thread separately scattered a simultaneous
+        fan-out across several rows of the swimlane's event-ordinal axis, which
+        reads as sequential. Shared ts → one row → one fork."""
 
     def end_scope(
         self,
@@ -248,6 +265,16 @@ class Renderer(ABC):
         error: str = "",
     ) -> None:
         """Leave a scope opened by :meth:`begin_scope`. No-op default."""
+
+    def current_scope(self) -> str:
+        """The calling thread's innermost open scope ``task_id`` (``""`` = main).
+
+        Read it BEFORE spawning worker threads to capture the parent a worker
+        can't infer from its own (empty) stack. Default ``""`` — only WebRenderer
+        tracks scope identity, and a CLI caller passing that "" through to
+        ``begin_scope(parent=...)`` is indistinguishable from top-level, which
+        is what the CLI renders anyway (depth comes from push_depth)."""
+        return ""
 
     def begin_agent_work(
         self, *, key: str, seq: int, profile: str, message: str

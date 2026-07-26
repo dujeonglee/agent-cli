@@ -806,6 +806,26 @@ footer {
   text-overflow: ellipsis;
   max-width: 50%;
 }
+/* "▸ child running" hint — a nested scope's own card lives inside THIS card's
+   body, which is collapsed by default, so the header has to say that something
+   is running in there. Separate from .task-status: a parallel child and its
+   parent can both be reporting status at the same moment. Empty = no live
+   child, and :empty keeps the flex gap from opening for nothing. */
+.card-task-group .task-sub {
+  color: var(--accent-soft-text);
+  background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft-border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+.card-task-group .task-sub:empty { display: none; }
 /* While running (no .task-ok / .task-fail yet) status pulses subtly
    so the user can see the card is live even when collapsed. */
 .card-task-group:not(.task-ok):not(.task-fail) .task-status {
@@ -837,6 +857,12 @@ footer {
    when an observation card sits inside the group. */
 .card-task-group .task-body .card {
   max-width: 100%;
+}
+/* A NESTED scope card (skill inside skill, agent run inside skill) keeps its
+   own left accent bar; the extra inset makes the containment visible without
+   relying on the border colour alone. */
+.card-task-group .task-body > .card-task-group {
+  margin-left: 6px;
 }
 /* Disable inner obs-body scroll INSIDE a task group: the body of a
    delegate task is already a scrollable region (via the outer
@@ -1411,6 +1437,11 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 /* work span = agent's own work (hue set inline). scope spans block the caller: */
 .tv-scope-skill { fill: var(--accent); opacity: .55; }
 .tv-scope-run { fill: var(--h-reviewer); opacity: .8; }
+/* Nesting: a thin stub links a lone child scope to its parent's slot; a fork
+   (spine + one tine per member) links a parallel batch that started together. */
+.tv-nest { stroke: var(--border-2); stroke-width: 1; fill: none; }
+.tv-fork { stroke: var(--h-reviewer); stroke-width: 1.2; fill: none; opacity: .75; }
+.tv-batch { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; font-weight: 500; fill: var(--h-reviewer); }
 /* tail status glyphs: spinner while an agent works, green check while idle. */
 .tv-busy { stroke: var(--cyan); }
 .tv-idle { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; font-weight: 700; fill: var(--ok); }
