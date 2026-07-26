@@ -146,6 +146,147 @@ The login() function is implemented and the tests pass.
 [{"action": "complete", "result": "Implemented login() in src/auth.py; all tests pass."}]"""
 
 
+# A JSON value can only begin with these characters, so a ``[``/``{`` followed
+# by anything else is prose, not an op — checked BEFORE the balanced scan both
+# to reject it and to keep the scan cheap (an unmatched opener otherwise costs a
+# walk to EOF, and prose is full of them: `arr[0]`, `- [ ]`, `{ passive: false }`).
+_JSON_VALUE_START = set('{["-0123456789tfn')
+
+
+def _json_spans(body: str) -> list[tuple[int, int]]:
+    """Every top-level balanced ``[...]`` / ``{...}`` span in ``body``.
+
+    The string-aware walk is the one :func:`_extract_first_json` has always
+    used; the difference is that it does not stop at the first span. Openers
+    that never balance are skipped (scan resumes at the next character), so a
+    stray brace cannot swallow the rest of the text.
+    """
+    opens = {"[": "]", "{": "}"}
+    out: list[tuple[int, int]] = []
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if c not in opens:
+            i += 1
+            continue
+        # Cheap prefilter: the next non-space character must be able to start a
+        # JSON value (for ``{`` a key string, or an empty object).
+        j = i + 1
+        while j < n and body[j].isspace():
+            j += 1
+        nxt = body[j] if j < n else ""
+        allowed = ('"', "}") if c == "{" else tuple(_JSON_VALUE_START) + ("]",)
+        if nxt not in allowed:
+            i += 1
+            continue
+        close = opens[c]
+        depth = 0
+        in_str = escape = False
+        end = -1
+        for k in range(i, n):
+            ch = body[k]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == c:
+                depth += 1
+            elif ch == close:
+                depth -= 1
+                if depth == 0:
+                    end = k + 1
+                    break
+        if end < 0:
+            # A prefiltered opener that never balances = DAMAGED op JSON (an
+            # unclosed array is the single most common repair case). Stop here
+            # instead of resuming inside it: the next balanced thing would be
+            # the array's own first element, which would then masquerade as a
+            # complete bare 1-op and silently drop every later op. Leaving the
+            # region unclaimed sends it to the repair machinery, where
+            # ``close_unbalanced`` restores the whole batch (stage 2).
+            break
+        out.append((i, end))
+        i = end
+    return out
+
+
+def _op_signature(value) -> int:
+    """How op-like a parsed payload is: 1 = certain, 2 = structural, 0 = not.
+
+    1 — carries an ``action`` key (an op, or a batch containing one).
+    2 — a bare dict WITHOUT ``action``: an op whose action field the model
+        dropped (the loop recovers it via ``infer_action`` on the preserved
+        input, ``action_required=False`` — tests/test_dropped_field_recovery).
+        Only the dict form needs this tier: an actionless ARRAY still starts
+        with ``[{``, so the fallback anchor finds it, whereas a bare
+        ``{"path": …}`` matches no opener pattern and would otherwise be lost.
+    0 — anything else: ``[1]``, ``[]``, ``["a"]``, a bare string/number, and an
+        array of dicts with no action anywhere. This is the ``any("action")``
+        guard PHASE4 §3.1 called for, applied at SPAN SELECTION time — the turn
+        parser already had it, but by then the wrong span had been handed over.
+    """
+    if isinstance(value, dict):
+        return 1 if "action" in value else 2
+    if isinstance(value, list) and value and all(isinstance(e, dict) for e in value):
+        return 1 if any("action" in e for e in value) else 0
+    return 0
+
+
+# Fallback anchor for text whose op JSON is BROKEN (nothing parses, so span
+# selection cannot help): the last plausible op opener. Prose braces sit before
+# it, so the repair machinery starts on the real payload instead of on
+# `board[i][j]`. Whitespace-tolerant (``[\n  {``).
+_OP_OPENER = re.compile(r'\[\s*\{|\{\s*"action"')
+
+
+def _op_anchor(text: str) -> int:
+    """Where the op payload starts, or -1 when there is no candidate at all.
+
+    The best op-signature tier wins, and within that tier the FIRST span. Note
+    what does the work here: it is the TIER, not the direction. Prose braces are
+    tier 0, so they are gone before position is even consulted — which means
+    every historical position-based semantic survives untouched:
+
+    * ``[{op1}]\\n[{op2}]`` (array reopened per op) — both tier 1, anchor on the
+      first, so ``_merge_reopened_op_arrays`` still sees the whole group.
+    * op array, prose, op array — both tier 1, anchor on the first: the
+      deliberately conservative "no merge across prose, first array wins"
+      contract (test_prose_between_arrays_defense).
+    * trailing ``</think>`` / closing prose after the ops — tier 0, ignored.
+
+    Scanning from the back instead would have satisfied the leading-prose cases
+    while breaking both bullet-1 and bullet-2, so direction is not the fix.
+
+    With nothing parseable (genuinely broken JSON), falls back to the first
+    plausible op opener — prose braces do not match ``[{`` / ``{"action"``, so
+    the repair machinery starts on the payload rather than on ``board[i][j]`` —
+    and finally to the first brace, the historical behaviour.
+    """
+    best_start, best_tier = -1, 3
+    for start, end in _json_spans(text):
+        try:
+            value = json.loads(text[start:end])
+        except json.JSONDecodeError:
+            continue
+        tier = _op_signature(value)
+        if tier and tier < best_tier:
+            best_tier, best_start = tier, start
+        if best_tier == 1:
+            break  # a certain op; nothing later can outrank it
+    if best_start >= 0:
+        return best_start
+    match = _OP_OPENER.search(text)
+    if match:
+        return match.start()
+    return next((i for i, c in enumerate(text) if c in "[{"), -1)
+
+
 def _extract_first_json(body: str, *, strict: bool = True):
     """Parse the first balanced ``[...]`` or ``{...}`` from body, or None.
 
@@ -584,8 +725,14 @@ class JsonFcFormat(WireFormat):
                 )
             return ParsedTurn(raw=llm_text, parse_stage=0)
 
-        # ── 캐노니컬: 산문 + 첫 JSON 배열/객체 (bare 객체 = 1-op 관용)
-        start = next((i for i, c in enumerate(llm_text) if c in "[{"), -1)
+        # ── 캐노니컬: 산문 + op JSON 배열/객체 (bare 객체 = 1-op 관용)
+        #
+        # 앵커는 `_op_anchor` 가 고른다 — 옛 코드는 **본문 첫 `[`/`{`** 를 op
+        # 시작으로 못박아, 산문이 코드 얘기를 하면(`board[i][j]`, `- [ ]`,
+        # `{ passive: false }`, `[문서](url)`) 그 괄호를 op 으로 집고 뒤의 진짜
+        # 배열을 못 봤다 — stage 0(턴 낭비) 또는 산문 조각을 op 으로 채택
+        # (action 없음 → 진짜 complete 유실). thought 도 그 괄호에서 잘렸다.
+        start = _op_anchor(llm_text)
         if start >= 0:
             thought = self.sanitize_thought(llm_text[:start]) or None
             body = llm_text[start:]
