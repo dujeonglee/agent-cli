@@ -1050,6 +1050,9 @@ class TestDelegateTaskVisibility:
             "index": 0,
             "agent": "explorer",
             "label": "find X",
+            # Nesting is on the wire: top-level scope → no parent, depth 0.
+            "parent": "",
+            "depth": 0,
         }
         # Persistent so a late-joining client replays the open card.
         assert any(ev == "scope_start" for (ev, _) in r._event_buffer)
@@ -2374,3 +2377,161 @@ class TestScopePersistenceAndReplay:
         r2.replay_scopes()
         n_after = len([x for x in path.read_text().splitlines() if x.strip()])
         assert n_after == n_before  # replay reads, never re-logs
+
+
+class TestScopeNesting:
+    """``scope_start`` carries the ENCLOSING scope + nesting depth, so both web
+    surfaces can show containment (swimlane slot, nested timeline card). Before
+    this, a nested skill was drawn at the same x/width as its parent — i.e.
+    invisible — and its card landed at the timeline root as a sibling.
+
+    Parent comes off the calling thread's scope stack; a cross-thread worker
+    passes it explicitly (its own stack is empty). Depth is always derived from
+    the parent's depth, never from the caller.
+    """
+
+    @staticmethod
+    def _starts(r):
+        return [d for e, d in r._event_buffer if e == "scope_start"]
+
+    def test_same_thread_nesting_derives_parent_and_depth(self):
+        r = WebRenderer()
+        r.begin_scope(task_id="outer", kind="skill", label="skill:plan")
+        r.begin_scope(task_id="inner", kind="skill", label="skill:create-team")
+        r.begin_scope(task_id="run", kind="run", label="agent:explorer")
+        outer, inner, run = self._starts(r)
+        assert (outer["parent"], outer["depth"]) == ("", 0)
+        assert (inner["parent"], inner["depth"]) == ("outer", 1)
+        assert (run["parent"], run["depth"]) == ("inner", 2)
+
+    def test_sequential_siblings_share_depth(self):
+        """Skill/run block their caller, so a second child opened AFTER the
+        first closed is a sibling at the same depth — not a grandchild."""
+        r = WebRenderer()
+        r.begin_scope(task_id="outer", kind="skill", label="skill:plan")
+        r.begin_scope(task_id="a", kind="run", label="first")
+        r.end_scope(task_id="a", kind="run")
+        r.begin_scope(task_id="b", kind="run", label="second")
+        a, b = self._starts(r)[1:]
+        assert (a["parent"], a["depth"]) == ("outer", 1)
+        assert (b["parent"], b["depth"]) == ("outer", 1)
+
+    def test_explicit_parent_overrides_thread_stack(self):
+        """A parallel worker runs on its own (empty-stack) thread, so the
+        spawning thread hands the parent over."""
+        r = WebRenderer()
+        r.begin_scope(task_id="sk", kind="skill", label="skill:plan")
+        depths = {}
+
+        def worker():
+            r.begin_scope(task_id="w", kind="run", label="task", parent="sk")
+            depths["w"] = self._starts(r)[-1]
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        assert (depths["w"]["parent"], depths["w"]["depth"]) == ("sk", 1)
+
+    def test_worker_thread_without_parent_is_top_level(self):
+        """No parent passed and nothing on the worker's own stack → the scope
+        is top-level. (Pre-nesting behaviour, unchanged.)"""
+        r = WebRenderer()
+        r.begin_scope(task_id="sk", kind="skill", label="skill:plan")
+        seen = {}
+
+        def worker():
+            r.begin_scope(task_id="w", kind="run", label="task")
+            seen["w"] = self._starts(r)[-1]
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        assert (seen["w"]["parent"], seen["w"]["depth"]) == ("", 0)
+
+    def test_current_scope_reports_innermost_then_unwinds(self):
+        r = WebRenderer()
+        assert r.current_scope() == ""
+        r.begin_scope(task_id="outer", kind="skill", label="o")
+        assert r.current_scope() == "outer"
+        r.begin_scope(task_id="inner", kind="skill", label="i")
+        assert r.current_scope() == "inner"
+        r.end_scope(task_id="inner", kind="skill")
+        assert r.current_scope() == "outer"
+        r.end_scope(task_id="outer", kind="skill")
+        assert r.current_scope() == ""
+
+    def test_current_scope_is_per_thread(self):
+        r = WebRenderer()
+        r.begin_scope(task_id="sk", kind="skill", label="o")
+        seen = {}
+
+        def worker():
+            seen["v"] = r.current_scope()
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        assert seen["v"] == ""  # another thread's scope must not leak in
+        assert r.current_scope() == "sk"
+
+    def test_unknown_explicit_parent_still_counts_as_nested(self):
+        """Defensive: an id whose scope already ended (or was never opened)
+        must not collapse the child onto main's slot — that would draw it over
+        an unrelated bar. One level of nesting is the safe reading."""
+        r = WebRenderer()
+        r.begin_scope(task_id="w", kind="run", label="t", parent="ghost")
+        start = self._starts(r)[-1]
+        assert (start["parent"], start["depth"]) == ("ghost", 1)
+
+    def test_depth_entry_released_on_end(self):
+        r = WebRenderer()
+        r.begin_scope(task_id="sk", kind="skill", label="o")
+        assert "sk" in r._scope_depths
+        r.end_scope(task_id="sk", kind="skill")
+        assert "sk" not in r._scope_depths  # no per-scope leak over a session
+
+    def test_reopened_sibling_id_gets_fresh_depth(self):
+        """Depth must come from the CURRENT parent chain, not a stale entry."""
+        r = WebRenderer()
+        r.begin_scope(task_id="outer", kind="skill", label="o")
+        r.begin_scope(task_id="x", kind="run", label="t")
+        r.end_scope(task_id="x", kind="run")
+        r.end_scope(task_id="outer", kind="skill")
+        r.begin_scope(task_id="x", kind="run", label="t again")
+        again = self._starts(r)[-1]
+        assert (again["parent"], again["depth"]) == ("", 0)
+
+    def test_teammate_work_is_not_nested(self):
+        """A resident teammate's request goes to that agent's OWN lane (routed
+        by the ``key#seq`` id), so it is never a child of the requesting
+        scope — but it still carries the fields for one event shape."""
+        r = WebRenderer()
+        r.begin_scope(task_id="sk", kind="skill", label="skill:plan")
+        r.begin_agent_work(key="w1", seq=0, profile="code-writer", message="do")
+        work = self._starts(r)[-1]
+        assert work["task_id"] == "w1#0"
+        assert (work["parent"], work["depth"]) == ("", 0)
+
+    def test_explicit_ts_survives_to_event_and_sidecar(self, tmp_path):
+        """A parallel batch shares ONE start time so the swimlane puts its
+        workers on a single row (a fork) instead of a staircase. The emit point
+        must not overwrite a caller-supplied ts — live event AND resume sidecar."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.begin_scope(task_id="w0", kind="run", label="a", parent="sk", ts=1234.5)
+        r.begin_scope(task_id="w1", kind="run", label="b", parent="sk", ts=1234.5)
+        starts = self._starts(r)
+        assert [s["ts"] for s in starts] == [1234.5, 1234.5]
+        recs = [
+            json.loads(x)
+            for x in (tmp_path / "scopes.jsonl").read_text().splitlines()
+            if x.strip()
+        ]
+        assert [x["ts"] for x in recs if x["event"] == "scope_start"] == [
+            1234.5,
+            1234.5,
+        ]
+
+    def test_omitted_ts_is_server_stamped(self):
+        r = WebRenderer()
+        r.begin_scope(task_id="sk", kind="skill", label="o")
+        assert self._starts(r)[-1]["ts"] > 0  # emit-time stamp, as before

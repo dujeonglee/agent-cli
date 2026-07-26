@@ -498,11 +498,18 @@ class MinimalRenderer(Renderer):
         label: str = "",
         agent: str = "",
         index: int = 0,
+        parent: str | None = None,
+        ts: float | None = None,
     ) -> None:
         """Enter a nested scope. Same abstraction surface as web; CLI display
         adapts to ``kind`` — a skill draws a ``┌─ 🪄`` bracket at the current
         depth (caller then push_depth); a delegate/one-shot ``run`` drives the
-        rich.Live worker panel."""
+        rich.Live worker panel.
+
+        ``parent``/``ts`` are accepted and ignored: the CLI already encodes
+        nesting as depth indentation (``_prefix``) and prints in arrival order,
+        so it needs neither the parent link nor a shared batch timestamp. They
+        exist for the web surface's slot layout (see ``Renderer.begin_scope``)."""
         if not hasattr(self, "_scope_labels"):
             self._scope_labels: dict[str, str] = {}
         self._scope_labels[task_id] = label

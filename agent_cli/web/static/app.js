@@ -425,8 +425,59 @@
   // Group state per task_id: { card, header, body, statusEl,
   // streamingCard, streamingText, closed }.
   const taskGroups = {};
+  // task_id → enclosing scope's task_id ("" = top level). Outlives the group
+  // entry (which ``closeTaskGroup`` drops) because the CARDS stay in the
+  // timeline: swimlane click-navigation still has to expand a finished
+  // ancestor chain to reveal a nested card.
+  const scopeParent = {};
+  // ancestor task_id → [{id, label}] of its currently-running descendants.
+  // A collapsed parent would otherwise hide live nested work completely.
+  const liveKids = {};
 
-  function ensureTaskGroup(taskId, index, agent, taskText, kind) {
+  function scopeAncestors(taskId) {
+    const chain = [];
+    let cur = scopeParent[taskId];
+    while (cur && chain.indexOf(cur) < 0) {
+      chain.push(cur);
+      cur = scopeParent[cur];
+    }
+    return chain;
+  }
+
+  /** Paint (or clear) the "▸ child running" hint on one ancestor header. This
+   * is a DEDICATED element, not the status line: ``scope_status`` targets the
+   * innermost scope of its own thread, so a parallel child and its parent can
+   * both be writing status at the same time. */
+  function refreshLiveKids(taskId) {
+    const g = taskGroups[taskId];
+    if (!g) return;
+    const kids = liveKids[taskId] || [];
+    const last = kids.length ? kids[kids.length - 1].label : "";
+    g.subEl.textContent = kids.length
+      ? "▸ " + last + (kids.length > 1 ? " +" + (kids.length - 1) : "") + " 실행 중"
+      : "";
+  }
+
+  function noteScopeStart(taskId, parent, label) {
+    scopeParent[taskId] = parent || "";
+    scopeAncestors(taskId).forEach(function (a) {
+      (liveKids[a] = liveKids[a] || []).push({ id: taskId, label: label });
+      refreshLiveKids(a);
+    });
+  }
+
+  function noteScopeEnd(taskId) {
+    scopeAncestors(taskId).forEach(function (a) {
+      const list = liveKids[a];
+      if (!list) return;
+      liveKids[a] = list.filter(function (x) {
+        return x.id !== taskId;
+      });
+      refreshLiveKids(a);
+    });
+  }
+
+  function ensureTaskGroup(taskId, index, agent, taskText, kind, parent) {
     if (taskGroups[taskId]) return taskGroups[taskId];
 
     const card = el("div", ["card", "card-task-group"]);
@@ -445,9 +496,11 @@
       title.textContent = "🦀 [" + (index + 1) + "] " + label;
     }
     const statusEl = el("span", ["task-status"], "starting…");
+    const subEl = el("span", ["task-sub"]);
     const meta = el("span", ["task-meta"]);
     header.appendChild(chevron);
     header.appendChild(title);
+    header.appendChild(subEl);
     header.appendChild(statusEl);
     header.appendChild(meta);
 
@@ -482,7 +535,10 @@
 
     card.appendChild(header);
     card.appendChild(body);
-    $messages.appendChild(card);
+    // NEST the card in its parent scope's body (a skill that runs another skill
+    // or an agent). Falls back to the timeline root when the parent is unknown
+    // (top-level scope, or its group already closed) — same as any other event.
+    appendToTimeline(card, parent);
 
     const group = {
       card: card,
@@ -490,10 +546,12 @@
       body: body,
       chevron: chevron,
       statusEl: statusEl,
+      subEl: subEl,
       meta: meta,
       streamingCard: null,
       streamingText: "",
       closed: false,
+      toggle: toggleTaskGroup,
     };
     taskGroups[taskId] = group;
     scrollToBottom();
@@ -511,6 +569,8 @@
     if (!g) return;
     g.closed = true;
     g.statusEl.textContent = ""; // live status no longer relevant
+    g.subEl.textContent = ""; // nor a nested-child hint
+    delete liveKids[taskId];
     g.card.classList.add(success ? "task-ok" : "task-fail");
     const icon = success ? "✓" : "✗";
     const dur = durationS != null ? " (" + durationS.toFixed(1) + "s)" : "";
@@ -1447,7 +1507,11 @@
       d.agent || "",
       d.label || "",
       d.kind || "run",
+      d.parent || "",
     );
+    // Register the parent link + light up the ancestors' "child running" hint.
+    // AFTER ensureTaskGroup so the new card is already nested inside its parent.
+    noteScopeStart(d.task_id, d.parent || "", d.agent || d.label || "scope");
     // Nudge the Prompt Inspector (separate IIFE) to refresh its scope chips
     // if it's open, so a new sub-agent's chip appears live.
     window.dispatchEvent(new CustomEvent("agent-cli:scopes-changed"));
@@ -1462,6 +1526,7 @@
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("scope_end", d);
     if (d.replay) return; // replayed scope: swimlane only (see scope_start)
+    noteScopeEnd(d.task_id);
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
 
@@ -1561,6 +1626,31 @@
         '.card-task-group[data-task-id="' + sel + '"]',
       );
       if (!card) return;
+      // A nested card lives inside its parent's (collapsed by default) body, so
+      // expand the whole ancestor chain OUTERMOST-first before measuring the
+      // scroll — expanding after the jump would move the target away from it.
+      scopeAncestors(tid)
+        .slice()
+        .reverse()
+        .forEach(function (a) {
+          const g = taskGroups[a];
+          if (g && g.body.hidden) g.toggle();
+          else if (!g) {
+            // Group entry already released (scope finished) — the card's own
+            // DOM is still there, so toggle it through the element.
+            const anc = $messages.querySelector(
+              '.card-task-group[data-task-id="' +
+                (window.CSS && CSS.escape ? CSS.escape(a) : a.replace(/"/g, '\\"')) +
+                '"]',
+            );
+            const b = anc && anc.querySelector(":scope > .task-body");
+            if (b && b.hidden) {
+              b.hidden = false;
+              const ch = anc.querySelector(":scope > .task-header > .task-chevron");
+              if (ch) ch.textContent = "▼";
+            }
+          }
+        });
       // Turn OFF auto-follow so a live event's scrollToBottom() can't pull us
       // back down after the jump. Then jump INSTANTLY (not smooth): during an
       // active run the timeline is constantly appending cards + calling

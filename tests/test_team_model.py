@@ -38,7 +38,8 @@ let raw=""; process.stdin.on("data",d=>raw+=d); process.stdin.on("end",()=>{
   const agents = {};
   m.agents.forEach((v,k)=>{ const c=Object.assign({},v); delete c._busyFrom; agents[k]=c; });
   process.stdout.write(JSON.stringify({lanes:m.lanes, agents, messages:m.messages,
-    oneshots:m.oneshots, skillBands:m.skillBands, mainSpans:m.mainSpans, t0:m.t0, t1:m.t1}));
+    oneshots:m.oneshots, skillBands:m.skillBands, mainSpans:m.mainSpans,
+    forks:m.forks, maxSlot:m.maxSlot, t0:m.t0, t1:m.t1}));
 });
 """
     )
@@ -613,3 +614,228 @@ class TestLiveNow:
         # no now (tests / non-live) → tMax from events, never wall-clock.
         m = run_model([_LIVE_ROSTER, _LIVE_OPEN])
         assert m["t1"] == 2.0
+
+
+def _scope(task_id, t0, t1, *, kind="run", parent="", depth=0, index=0, label=None):
+    """One scope's start/end event pair. ``t1=None`` leaves it open."""
+    start = {
+        "type": "scope_start",
+        "ts": t0,
+        "task_id": task_id,
+        "kind": kind,
+        "label": label or task_id,
+        "parent": parent,
+        "depth": depth,
+        "index": index,
+    }
+    if t1 is None:
+        return [start]
+    return [start, {"type": "scope_end", "ts": t1, "task_id": task_id}]
+
+
+def _slots(m):
+    """task_id → slot for every scope in the caller column."""
+    return {it["task_id"]: it["slot"] for it in m["skillBands"] + m["oneshots"]}
+
+
+class TestScopeSlots:
+    """Skill bands and one-shot runs all block their caller, so they share ONE
+    column. Without a slot each, a nested scope was painted at the same x and
+    width as its parent — the parent (drawn later) covered it completely. The
+    slot is derived from parent + depth, never from event order.
+    """
+
+    def test_nested_scopes_get_increasing_slots(self):
+        events = (
+            _scope("sk-outer", 0.0, None, kind="skill", depth=0)
+            + _scope("run-1", 1.0, 5.0, parent="sk-outer", depth=1)
+            + _scope("sk-inner", 6.0, None, kind="skill", parent="sk-outer", depth=1)
+            + _scope("run-2", 7.0, 9.0, parent="sk-inner", depth=2)
+        )
+        m = run_model(events)
+        slots = _slots(m)
+        assert slots["sk-outer"] == 0
+        assert slots["run-1"] == 1
+        assert slots["sk-inner"] == 1  # sequential sibling REUSES the slot
+        assert slots["run-2"] == 2
+        assert m["maxSlot"] == 2
+
+    def test_sequential_siblings_do_not_widen_the_column(self):
+        """skill/run block the caller, so back-to-back children never overlap:
+        a long chain of them must not push the column wider and wider."""
+        events = _scope("sk", 0.0, None, kind="skill")
+        for i in range(6):
+            events += _scope(
+                f"r{i}", 1.0 + i * 2, 2.0 + i * 2, parent="sk", depth=1, index=i
+            )
+        m = run_model(events)
+        assert m["maxSlot"] == 1
+        assert set(_slots(m).values()) == {0, 1}
+
+    def test_concurrent_siblings_fan_out_sideways(self):
+        """The rare parallel batch: three runs alive at once must each get
+        their own slot, or they collapse into one visible bar."""
+        events = (
+            _scope("sk", 0.0, None, kind="skill")
+            + _scope("w0", 2.0, 9.0, parent="sk", depth=1, index=0)
+            + _scope("w1", 2.0, 7.0, parent="sk", depth=1, index=1)
+            + _scope("w2", 2.0, None, parent="sk", depth=1, index=2)
+        )
+        m = run_model(events)
+        assert _slots(m) == {"sk": 0, "w0": 1, "w1": 2, "w2": 3}
+
+    def test_live_batch_with_no_later_event_still_fans_out(self):
+        """Degenerate but REAL: the batch has just started and nothing has
+        happened since, so every member is open and closes at tMax — which is
+        their own shared start. Zero-length spans "don't overlap" under a strict
+        interval test, and the whole live batch collapsed into one slot (one
+        visible bar) until the next event arrived. Same start ⇒ concurrent."""
+        events = (
+            _scope("sk", 0.0, None, kind="skill")
+            + _scope("w0", 2.0, None, parent="sk", depth=1, index=0)
+            + _scope("w1", 2.0, None, parent="sk", depth=1, index=1)
+            + _scope("w2", 2.0, None, parent="sk", depth=1, index=2)
+        )
+        m = run_model(events)
+        assert _slots(m) == {"sk": 0, "w0": 1, "w1": 2, "w2": 3}
+        assert m["maxSlot"] == 3
+
+    def test_back_to_back_touching_spans_reuse_the_slot(self):
+        """The same-start rule must NOT bleed into adjacency: a child that
+        starts exactly when the previous one ended is still sequential and
+        should reuse the slot (otherwise the column creeps wider)."""
+        events = (
+            _scope("sk", 0.0, None, kind="skill")
+            + _scope("a", 2.0, 5.0, parent="sk", depth=1, index=0)
+            + _scope("b", 5.0, 9.0, parent="sk", depth=1, index=1)
+        )
+        assert _slots(run_model(events)) == {"sk": 0, "a": 1, "b": 1}
+
+    def test_batch_slot_order_follows_worker_index(self):
+        """A batch shares one t0, so ordering by time alone is ambiguous —
+        index breaks the tie, keeping the picture stable across replays."""
+        events = _scope("sk", 0.0, None, kind="skill")
+        # events deliberately arrive out of index order
+        for idx in (2, 0, 1):
+            events += _scope(f"w{idx}", 2.0, 8.0 + idx, parent="sk", depth=1, index=idx)
+        assert _slots(run_model(events)) == {"sk": 0, "w0": 1, "w1": 2, "w2": 3}
+
+    def test_child_is_pushed_right_of_a_displaced_parent(self):
+        """A parent bumped sideways by a batch must still visually CONTAIN its
+        child. The overlap test alone does not guarantee that: a slot left of
+        the parent can be free by the time the child starts (its earlier
+        occupant already finished), and the child would then be drawn to the
+        LEFT of its own parent — nesting reading backwards. The parent-slot
+        floor is what prevents it, so the batch here has short-lived siblings.
+        """
+        events = (
+            _scope("sk", 0.0, None, kind="skill")
+            # batch of three: slots 1, 2, 3 by index
+            + _scope("w0", 2.0, 5.0, parent="sk", depth=1, index=0)
+            + _scope("w1", 2.0, 5.0, parent="sk", depth=1, index=1)
+            + _scope("w2", 2.0, 40.0, parent="sk", depth=1, index=2)
+            # w0/w1 are long gone by now, so slots 1 and 2 are free again
+            + _scope("grand", 10.0, 12.0, parent="w2", depth=2)
+        )
+        slots = _slots(run_model(events))
+        assert (slots["w0"], slots["w1"], slots["w2"]) == (1, 2, 3)
+        assert slots["grand"] > slots["w2"], "child drawn left of its own parent"
+
+    def test_missing_parent_and_depth_defaults_to_flat(self):
+        """Resume from a pre-nesting sidecar (no parent/depth on the wire) must
+        still render: everything lands in slot 0, i.e. the old picture."""
+        m = run_model(
+            [
+                {"type": "scope_start", "ts": 0.0, "task_id": "a", "kind": "skill"},
+                {"type": "scope_end", "ts": 4.0, "task_id": "a"},
+                {"type": "scope_start", "ts": 5.0, "task_id": "b", "kind": "run"},
+                {"type": "scope_end", "ts": 6.0, "task_id": "b"},
+            ]
+        )
+        assert set(_slots(m).values()) == {0}
+        assert m["maxSlot"] == 0
+
+    def test_teammate_work_span_has_no_slot_effect(self):
+        """A resident agent's work lives in its OWN lane, so it must not widen
+        main's column."""
+        m = run_model(
+            [
+                {
+                    "type": "scope_start",
+                    "ts": 1.0,
+                    "task_id": "w1#0",
+                    "kind": "run",
+                    "label": "do",
+                },
+                {"type": "scope_end", "ts": 3.0, "task_id": "w1#0"},
+            ]
+        )
+        assert m["maxSlot"] == 0
+        assert m["skillBands"] == [] and m["oneshots"] == []
+
+
+class TestScopeForks:
+    """A parallel batch shares ONE start timestamp (stamped by the spawning
+    thread), so "same parent + same t0 + ≥2 members" identifies a fan-out with
+    no extra field on the wire. The view draws one fork instead of N stubs.
+    """
+
+    def test_shared_start_becomes_one_fork(self):
+        events = (
+            _scope("sk", 0.0, None, kind="skill")
+            + _scope("w0", 2.0, 9.0, parent="sk", depth=1, index=0)
+            + _scope("w1", 2.0, 7.0, parent="sk", depth=1, index=1)
+            + _scope("w2", 2.0, 8.0, parent="sk", depth=1, index=2)
+        )
+        m = run_model(events)
+        assert len(m["forks"]) == 1
+        f = m["forks"][0]
+        assert f["parent"] == "sk" and f["t0"] == 2.0
+        assert sorted(f["members"]) == ["w0", "w1", "w2"]
+        assert sorted(f["slots"]) == [1, 2, 3]
+
+    def test_sequential_children_are_not_a_fork(self):
+        events = (
+            _scope("sk", 0.0, None, kind="skill")
+            + _scope("a", 2.0, 4.0, parent="sk", depth=1)
+            + _scope("b", 5.0, 7.0, parent="sk", depth=1)
+        )
+        assert run_model(events)["forks"] == []
+
+    def test_same_time_different_parents_are_separate(self):
+        """Coincidence must not be read as a batch: only a SHARED parent plus
+        the shared stamp means one fan-out."""
+        events = (
+            _scope("p1", 0.0, None, kind="skill")
+            + _scope("p2", 0.0, None, kind="skill", parent="p1", depth=1)
+            + _scope("a", 2.0, 4.0, parent="p1", depth=1)
+            + _scope("b", 2.0, 4.0, parent="p2", depth=2)
+        )
+        assert run_model(events)["forks"] == []
+
+    def test_top_level_batch_forks_from_main(self):
+        """A batch fired straight from main (parent "") is the COMMON batch
+        shape — it forks as well, anchored on main's own baseline by the view."""
+        events = _scope("w0", 1.0, 3.0, depth=0, index=0) + _scope(
+            "w1", 1.0, 4.0, depth=0, index=1
+        )
+        m = run_model(events)
+        assert len(m["forks"]) == 1
+        assert m["forks"][0]["parent"] == "" and m["forks"][0]["t0"] == 1.0
+        assert sorted(m["forks"][0]["members"]) == ["w0", "w1"]
+        assert sorted(_slots(m).values()) == [0, 1]  # both visible
+
+    def test_lone_top_level_scope_is_not_a_fork(self):
+        """One scope under main must not become a one-member fork."""
+        m = run_model(_scope("w0", 1.0, 3.0))
+        assert m["forks"] == []
+
+    def test_two_batches_are_two_forks(self):
+        events = _scope("sk", 0.0, None, kind="skill")
+        for i in range(2):
+            events += _scope(f"a{i}", 2.0, 5.0, parent="sk", depth=1, index=i)
+        for i in range(2):
+            events += _scope(f"b{i}", 8.0, 11.0, parent="sk", depth=1, index=i)
+        forks = run_model(events)["forks"]
+        assert [f["t0"] for f in forks] == [2.0, 8.0]
+        assert all(len(f["members"]) == 2 for f in forks)

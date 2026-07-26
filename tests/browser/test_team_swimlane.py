@@ -493,3 +493,132 @@ class TestVerticalLayout:
         )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
         assert _wait(lambda: page.locator("#team-view .tv-msg").count() == 2)
+
+
+class TestScopeNestingRender:
+    """Nested scopes — the visual fix, only checkable in a real browser: slots
+    are horizontal offsets in an SVG and card nesting is DOM containment.
+
+    Before this, every skill band / one-shot run was painted at the SAME x with
+    the same width in main's column, so an outer skill covered its children
+    completely, and each child's timeline card was appended to the ROOT as a
+    sibling of its parent.
+    """
+
+    @staticmethod
+    def _xs(page, selector):
+        return sorted(float(h.get_attribute("x")) for h in page.locator(selector).all())
+
+    def test_nested_scopes_get_distinct_x_positions(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        # skill → run → skill, each nested in the previous (same thread, so the
+        # parent link is derived from the scope stack).
+        r.begin_scope(task_id="sk-outer", kind="skill", label="orchestrate")
+        r.begin_scope(task_id="run-1", kind="run", label="explorer", agent="explorer")
+        r.end_scope(task_id="run-1", kind="run", success=True, duration_s=0.1)
+        r.begin_scope(task_id="sk-inner", kind="skill", label="create-team")
+        page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
+        assert _wait(lambda: page.locator("#team-view .tv-scope-skill").count() == 2)
+        assert _wait(lambda: page.locator("#team-view .tv-scope-run").count() == 1)
+        skills = self._xs(page, "#team-view .tv-scope-skill")
+        runs = self._xs(page, "#team-view .tv-scope-run")
+        # The nested skill and the run share slot 1 (sequential siblings), the
+        # outer skill owns slot 0 → exactly two distinct columns of bars.
+        assert len(set(skills)) == 2, f"nested skill hidden under its parent: {skills}"
+        assert skills[0] < skills[1]
+        assert runs[0] == skills[1]  # same slot reused by the later sibling
+
+    def test_sequential_siblings_do_not_widen_main_lane(self, stack, page):
+        """Slot reuse is what keeps the column narrow when a skill runs many
+        children one after another."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.begin_scope(task_id="sk", kind="skill", label="orchestrate")
+        for i in range(4):
+            r.begin_scope(task_id=f"r{i}", kind="run", label=f"w{i}", index=i)
+            r.end_scope(task_id=f"r{i}", kind="run", success=True, duration_s=0.01)
+        page.wait_for_selector("#team-view .tv-scope-run", timeout=8000)
+        assert _wait(lambda: page.locator("#team-view .tv-scope-run").count() == 4)
+        assert len(set(self._xs(page, "#team-view .tv-scope-run"))) == 1
+
+    def test_batch_shares_one_row_and_draws_a_fork(self, stack, page):
+        """A parallel batch shares one start timestamp → one row (equal y), one
+        fork, and a ⋔N badge; the members still get their own slots (distinct x)."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.begin_scope(task_id="sk", kind="skill", label="orchestrate")
+        batch_ts = time.time()
+        for i in range(3):
+            r.begin_scope(
+                task_id=f"w{i}",
+                kind="run",
+                label=f"worker {i}",
+                index=i,
+                parent="sk",
+                ts=batch_ts,
+            )
+        # attached, not visible: a fork spine is a zero-height SVG path.
+        page.wait_for_selector("#team-view .tv-fork", state="attached", timeout=8000)
+        assert _wait(lambda: page.locator("#team-view .tv-scope-run").count() == 3)
+        bars = page.locator("#team-view .tv-scope-run").all()
+        ys = {b.get_attribute("y") for b in bars}
+        xs = {b.get_attribute("x") for b in bars}
+        assert len(ys) == 1, f"batch spread over {len(ys)} rows — reads as sequential"
+        assert len(xs) == 3, "batch members overlap each other"
+        assert page.locator("#team-view .tv-batch", has_text="⋔3").count() == 1
+        tip = bars[0].get_attribute("data-tip")
+        assert "배치 3개 동시 시작" in tip and "depth 1" in tip
+
+    def test_nested_card_lives_inside_its_parents_body(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.begin_scope(task_id="sk-outer", kind="skill", label="orchestrate")
+        r.begin_scope(task_id="run-1", kind="run", label="explorer", agent="explorer")
+        # A nested card sits inside its parent's collapsed body, so wait for it
+        # to be ATTACHED — "visible" is exactly what it must not be yet.
+        page.wait_for_selector(
+            '.card-task-group[data-task-id="run-1"]', state="attached", timeout=8000
+        )
+        nested = page.locator(
+            '.card-task-group[data-task-id="sk-outer"] .task-body '
+            '.card-task-group[data-task-id="run-1"]'
+        )
+        assert nested.count() == 1, "child card is not nested in its parent"
+        # Root-level siblings: only the outer scope hangs off #messages directly.
+        assert page.locator("#messages > .card-task-group").count() == 1
+
+    def test_collapsed_parent_shows_live_child_hint(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.begin_scope(task_id="sk-outer", kind="skill", label="orchestrate")
+        r.begin_scope(task_id="run-1", kind="run", label="find X", agent="explorer")
+        page.wait_for_selector(
+            '.card-task-group[data-task-id="run-1"]', state="attached", timeout=8000
+        )
+        sub = page.locator(
+            '.card-task-group[data-task-id="sk-outer"] > .task-header > .task-sub'
+        )
+        assert _wait(lambda: "explorer" in (sub.inner_text() or ""))
+        # …and it clears when the child finishes.
+        r.end_scope(task_id="run-1", kind="run", success=True, duration_s=0.1)
+        assert _wait(lambda: (sub.inner_text() or "").strip() == "")
+
+    def test_clicking_nested_bar_expands_ancestors_and_reveals_card(self, stack, page):
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.begin_scope(task_id="sk-outer", kind="skill", label="orchestrate")
+        r.begin_scope(task_id="run-1", kind="run", label="find X", agent="explorer")
+        page.wait_for_selector("#team-view .tv-scope-run", timeout=8000)
+        nested_card = page.locator('.card-task-group[data-task-id="run-1"]')
+        # Parent collapsed by default → the nested card is not visible yet.
+        assert not nested_card.is_visible()
+        page.locator("#team-view .tv-scope-run").first.click()
+        assert _wait(lambda: nested_card.is_visible()), "ancestor chain not expanded"
+        assert _wait(lambda: "tv-nav-hl" in (nested_card.get_attribute("class") or ""))

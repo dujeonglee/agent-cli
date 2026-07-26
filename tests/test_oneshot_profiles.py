@@ -585,7 +585,20 @@ class TestToolDelegatePassesAgent:
         captured_ids = []
 
         class CapturingRenderer:
-            def begin_scope(self, *, task_id, kind="run", label="", agent="", index=0):
+            def current_scope(self):
+                return ""  # spawned from main, no enclosing scope
+
+            def begin_scope(
+                self,
+                *,
+                task_id,
+                kind="run",
+                label="",
+                agent="",
+                index=0,
+                parent=None,
+                ts=None,
+            ):
                 captured_ids.append(task_id)
 
             def end_scope(self, **kwargs):

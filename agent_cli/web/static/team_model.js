@@ -10,8 +10,9 @@
  *                          direction "out" = the canonical send (from=author→to);
  *                          direction "in"  = a request arriving at ``key`` (opens
  *                          that agent's busy span).
- *   scope_start        {task_id,kind:"skill"|"run",label,agent,index}
+ *   scope_start        {task_id,kind:"skill"|"run",label,agent,index,parent,depth}
  *                          kind="skill" → a skill band; kind="run" → one-shot
+ *                          parent/depth → containment (see SLOTS below)
  *   scope_end          {task_id}                                 → closes it
  *   assistant_turn     {turn,...} with NO task_id                → main activity
  *
@@ -19,9 +20,30 @@
  *   { lanes:[key...],                       // "main" first, agents by first-seen
  *     agents: Map(key → {key,label,role,profile,state,firstTs,lastTs,spans}),
  *     messages:[{from,to,t,type,text}],     // deduped canonical sends
- *     oneshots:[{caller,label,role,t0,t1,task_id}], skillBands:[…],
+ *     oneshots:[{caller,label,role,t0,t1,task_id,parent,depth,slot}], skillBands:[…],
  *     mainSpans:[{t0,t1,title}],            // main's own turns
+ *     forks:[{parent,t0,members:[task_id],slots:[…]}],  // batch fan-outs
+ *     maxSlot,                              // widest slot in the caller column
  *     t0, t1 }                              // time domain (epoch seconds)
+ *
+ * SLOTS — skill bands and one-shot runs all live in their CALLER's column (they
+ * block it), so a nested scope used to be painted at the same x and width as its
+ * parent, i.e. invisible. Each gets a slot instead, drawn as a horizontal offset:
+ *
+ *   slot = the smallest k with k >= depth AND k > parent's slot, such that no
+ *          already-placed scope in slot k overlaps this one in time.
+ *
+ * ``k >= depth`` indents by nesting level; ``k > parent's slot`` keeps a child
+ * strictly right of its parent even when the parent was itself pushed sideways;
+ * the overlap test only ever fires for CONCURRENT siblings, which is the rare
+ * parallel-batch case (skill / single agent run block their caller, so ordinary
+ * siblings are back-to-back and simply reuse the same slot). Placement order is
+ * (t0, index) so a batch's slots follow worker index — stable across replays.
+ *
+ * FORKS — a parallel batch shares ONE start timestamp (the spawning code stamps
+ * it once, see Renderer.begin_scope), so "same parent + same t0 + 2 or more
+ * members" identifies a fan-out without any extra field on the wire. The view
+ * draws one fork from the parent instead of N unrelated connector stubs.
  *
  * Reconnect note: agent_msg is persistent (replayed), so messages and the
  * request→reply spans they bound survive a reconnect. agent_roster is a sticky
@@ -199,7 +221,16 @@
         var tid = e.task_id || "";
         var hash = tid.indexOf("#");
         if (e.kind === "skill") {
-          openRun.set(tid, { kind: "skill", t0: ts, label: e.label || "skill", caller: "main", task_id: tid });
+          openRun.set(tid, {
+            kind: "skill",
+            t0: ts,
+            label: e.label || "skill",
+            caller: "main",
+            task_id: tid,
+            parent: e.parent || "",
+            depth: e.depth || 0,
+            index: e.index || 0,
+          });
         } else if (hash >= 0) {
           var akey = tid.slice(0, hash);
           ensure(akey);
@@ -212,6 +243,9 @@
             role: "one-shot run",
             t0: ts,
             task_id: tid,
+            parent: e.parent || "",
+            depth: e.depth || 0,
+            index: e.index || 0,
           });
         }
       } else if (e.type === "scope_end") {
@@ -245,6 +279,62 @@
     }
     if (mainBusyFrom != null) mainSpans.push({ t0: mainBusyFrom, t1: tEnd, title: "turn" });
 
+    // ── slots: lay the caller-column scopes out sideways (see SLOTS above) ──
+    var column = skillBands.concat(oneshots).sort(function (x, y) {
+      return (x.t0 - y.t0) || ((x.index || 0) - (y.index || 0));
+    });
+    var placed = {}; // slot → [{t0,t1}]
+    var slotOf = {}; // task_id → slot
+    var maxSlot = 0;
+    column.forEach(function (it) {
+      var floor = it.depth || 0;
+      // A parent already placed further right (it was itself in a batch) pushes
+      // its child past it, so containment always reads left-to-right.
+      var ps = it.parent ? slotOf[it.parent] : null;
+      if (ps != null && ps + 1 > floor) floor = ps + 1;
+      var k = floor;
+      for (;;) {
+        var taken = (placed[k] || []).some(function (p) {
+          // Same START instant ⇒ concurrent, full stop: one scope cannot have
+          // finished before the other began. This is not just a shortcut — a
+          // batch whose members are ALL still open closes at tMax, which IS
+          // their shared start when nothing has happened since, making every
+          // span zero-length. A strict interval test then finds no overlap and
+          // the whole live batch collapses into one slot (one visible bar).
+          return p.t0 === it.t0 || (p.t0 < it.t1 && it.t0 < p.t1);
+        });
+        if (!taken) break;
+        k++;
+      }
+      it.slot = k;
+      slotOf[it.task_id] = k;
+      (placed[k] = placed[k] || []).push({ t0: it.t0, t1: it.t1 });
+      if (k > maxSlot) maxSlot = k;
+    });
+
+    // ── forks: same parent + same shared start = one parallel batch ──
+    // A batch straight from main (parent "") counts too: the SHARED timestamp is
+    // what identifies a fan-out — the spawning thread stamps it once for all of
+    // its workers — and two independent scopes cannot collide on a microsecond
+    // clock. The view anchors a parentless fork on the caller's slot-0 baseline.
+    var forkBy = {};
+    column.forEach(function (it) {
+      var key = it.parent + " " + it.t0;
+      (forkBy[key] = forkBy[key] || []).push(it);
+    });
+    var forks = [];
+    Object.keys(forkBy).forEach(function (key) {
+      var g = forkBy[key];
+      if (g.length < 2) return;
+      forks.push({
+        parent: g[0].parent,
+        t0: g[0].t0,
+        members: g.map(function (x) { return x.task_id; }),
+        slots: g.map(function (x) { return x.slot; }),
+      });
+    });
+    forks.sort(function (a, b) { return a.t0 - b.t0; });
+
     var ordered = Array.from(agents.values()).sort(function (x, y) {
       return (x.firstTs || 0) - (y.firstTs || 0);
     });
@@ -259,6 +349,8 @@
       oneshots: oneshots,
       skillBands: skillBands,
       mainSpans: mainSpans,
+      forks: forks,
+      maxSlot: maxSlot,
       t0: isFinite(tMin) ? tMin : 0,
       t1: tEnd,
     };

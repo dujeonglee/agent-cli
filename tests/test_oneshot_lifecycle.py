@@ -638,3 +638,105 @@ class TestConcurrentWorkers:
         assert r._parallel_tasks == {}
         assert r._parallel_order == []
         assert r._parallel_live is None
+
+
+class TestParallelBatchScopeIdentity:
+    """A parallel batch (≥2 ``agent mode:"run"`` ops in one turn → real
+    threads) is the ONLY way sibling scopes overlap in time: skill and
+    single-run block their caller. Two facts about that batch have to be
+    decided by the SPAWNING thread, because a worker cannot know them:
+
+      parent  — the worker's own scope stack is empty, so without this a run
+                started inside a skill would look top-level.
+      batch ts — one start time for the whole fan-out. Per-worker stamps land
+                ms apart, and the swimlane's axis gives every distinct
+                timestamp its own row, so a simultaneous batch rendered as a
+                staircase — visually identical to sequential execution.
+
+    End times deliberately stay per-worker: which one took longest is real.
+    """
+
+    @staticmethod
+    def _run_batch(monkeypatch, n=3, wrap_scope=None):
+        """Drive the real ``_run_parallel`` with a WebRenderer and return its
+        ``scope_start`` payloads. ``wrap_scope`` opens an enclosing scope on the
+        CALLING thread first (mimicking a skill subloop)."""
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.subagent.oneshot import _run_parallel
+        from agent_cli.tools.result import ToolResult
+
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
+        monkeypatch.setattr(
+            "agent_cli.subagent.oneshot._run_single",
+            lambda **kw: ToolResult(True, output="done"),
+        )
+        if wrap_scope:
+            r.begin_scope(task_id=wrap_scope, kind="skill", label="skill:plan")
+        _run_parallel(
+            [{"task": f"t{i}", "agent": f"a{i}"} for i in range(n)],
+            capabilities=ModelCapabilities(
+                context_window=32768,
+                max_output_tokens=4096,
+                supports_thinking=False,
+                thinking_budget=0,
+            ),
+        )
+        return [
+            d
+            for e, d in r._event_buffer
+            if e == "scope_start" and d.get("kind") == "run"
+        ]
+
+    def test_batch_workers_share_one_start_timestamp(self, monkeypatch):
+        starts = self._run_batch(monkeypatch)
+        assert len(starts) == 3
+        assert len({s["ts"] for s in starts}) == 1, "batch must occupy ONE axis row"
+
+    def test_batch_workers_inherit_the_spawning_scope(self, monkeypatch):
+        starts = self._run_batch(monkeypatch, wrap_scope="sk-outer")
+        assert [s["parent"] for s in starts] == ["sk-outer"] * 3
+        assert [s["depth"] for s in starts] == [1] * 3
+
+    def test_batch_from_main_stays_top_level(self, monkeypatch):
+        starts = self._run_batch(monkeypatch, wrap_scope=None)
+        assert [s["parent"] for s in starts] == [""] * 3
+        assert [s["depth"] for s in starts] == [0] * 3
+
+    def test_worker_index_is_on_the_event(self, monkeypatch):
+        """Slot assignment tie-breaks by index when t0 is shared, so the index
+        has to survive to the frontend or the batch's slot order is arbitrary."""
+        starts = self._run_batch(monkeypatch)
+        assert sorted(s["index"] for s in starts) == [0, 1, 2]
+
+    def test_end_times_are_not_shared(self, monkeypatch):
+        """Only the START is batched — ``scope_end`` keeps its own emit time."""
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.render.web import WebRenderer
+        from agent_cli.subagent.oneshot import _run_parallel
+        from agent_cli.tools.result import ToolResult
+
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
+
+        def slow(**kw):
+            import time as _t
+
+            _t.sleep(0.02 * (kw.get("task", "t0")[-1] == "1"))
+            return ToolResult(True, output="done")
+
+        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", slow)
+        _run_parallel(
+            [{"task": f"t{i}"} for i in range(2)],
+            capabilities=ModelCapabilities(
+                context_window=32768,
+                max_output_tokens=4096,
+                supports_thinking=False,
+                thinking_budget=0,
+            ),
+        )
+        ends = [d for e, d in r._event_buffer if e == "scope_end"]
+        starts = [d for e, d in r._event_buffer if e == "scope_start"]
+        assert len({s["ts"] for s in starts}) == 1
+        assert len({e["ts"] for e in ends}) == 2  # per-worker completion stands
