@@ -12,6 +12,50 @@
 
 ## [Unreleased]
 
+## [7.27.1] - 2026-07-26
+
+### Fixed
+
+- **산문 속 괄호가 op JSON 을 강탈해 도구 호출이 유실되던 문제** (json_fc). 실제 제보
+  2건: 코드 리뷰 턴의 산문이 코드를 인용하면 — `` `board[sr + dr * k][sc + dc * k]` ``,
+  `` `{ passive: false }` `` — 파서가 **본문 첫 `[`/`{`** 를 op 시작으로 못박고, 그
+  덩어리가 파싱에 실패하면 **뒤를 보지 않고 포기**했다. 끝에 완전한 op 배열이 있는데도
+  `parse_stage 0` 이 되어 사용자에게 "must end with a valid JSON array" 에러 + 턴 낭비.
+  - 더 나쁜 변종: 산문 조각이 **유효한** JSON 이면(`[1]` 각주, `- [ ]` 체크박스,
+    `{"a": 1}` 예시) 그걸 op 으로 채택해 진짜 `complete` op 이 유실되고, thought 도 그
+    괄호에서 잘렸다 — 잘린 산문 조각이 `prose_completion` 으로 최종답변이 될 수 있었다.
+  - 측정된 트리거: 배열 인덱스 · 마크다운 링크 · 슬라이스 · 각주 `[1]` · **마크다운
+    체크박스**(`plan` 스킬 산출물 형식) · unquoted 중괄호 · 코드펜스 안 중괄호.
+  - 수리: 캐노니컬 앵커를 `_op_anchor` 가 고른다 — 후보 span 을 열거해 **op 서명
+    계층**(1 = `action` 보유, 2 = action 흘린 bare dict, 0 = 탈락)으로 걸러 최선 계층의
+    첫 span. PHASE4 §3.1 이 요구한 `any("action")` 가드가 턴 파서에만 있고 **span
+    선택에는 빠져 있던 미구현분**을 채운 것. thought 는 그 span 앞 전체가 되어 잘림도
+    해소.
+  - ★**방향이 아니라 계층이 해법**이다: "뒤에서부터 읽기"는 앞쪽 산문은 고치지만
+    배열-뒤-산문 · 배열 재개 병합(`[{op1}]\n[{op2}]`) · 산문 사이 배열 보수적 처리 세
+    계약을 동시에 깨뜨린다(실측 후 기각, 테스트로 고정).
+  - 미닫힘 opener 를 만나면 열거를 중단한다 — 그러지 않으면 배열의 첫 원소가 완결
+    1-op 으로 위장해 뒤 op 을 삼켰다(수리 코퍼스가 잡은 회귀).
+  - 프롬프트 무변경(파서 관용만) → 모델 행동·resume·wire 계약 불변.
+
+### Added
+
+- **resume 재생 e2e 테스트** (`tests/browser/test_resume_replay.py`). 서버가 재생
+  이벤트를 버퍼에 쌓는지는 유닛이 고정했지만, **접속 snapshot 이 실제 DOM 카드가
+  되는가**는 어느 층도 보지 않고 있었다 — "resume 하면 카드가 하나도 안 뜬다"는 제보를
+  받았을 때 회귀 여부를 판정할 근거가 없었다(조사 결과 회귀 아님: 세션 프로세스가
+  idle-timeout 으로 죽어 upstream 이 없던 케이스). 재생 카드 수·원본 ts 표시·scope
+  재생이 타임라인 카드를 재생성하지 않는다는 계약 3건을 고정하고, 재생 경로를 끊는
+  뮤테이션 3종으로 무는지 확인했다.
+
+### Notes
+
+- xml_fc 의 같은 계열(산문이 `<function=…>` 를 언급하거나 코드펜스 안 wire 예시가 실제
+  호출을 이기는 현상)은 **이번 커밋에서 미수정** — lenient/strict 2경로와 lookahead
+  앵커(v5.22.1)가 얽혀 회귀 위험이 커서 분리했다. 현상은
+  `tests/test_prose_json_collision.py::TestXmlFcSameClassIsPending` 에 `xfail(strict)`
+  로 고정(괄호류가 xml_fc 엔 무해하다는 사실도 같이 고정).
+
 ## [7.27.0] - 2026-07-26
 
 ### Added
@@ -1504,7 +1548,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.27.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.27.1...HEAD
+[7.27.1]: https://github.com/dujeonglee/agent-cli/compare/v7.27.0...v7.27.1
 [7.27.0]: https://github.com/dujeonglee/agent-cli/compare/v7.26.3...v7.27.0
 [4.18.1]: https://github.com/dujeonglee/agent-cli/compare/v4.18.0...v4.18.1
 [4.18.0]: https://github.com/dujeonglee/agent-cli/compare/v4.17.11...v4.18.0

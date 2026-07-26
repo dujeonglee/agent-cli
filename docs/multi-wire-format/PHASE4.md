@@ -34,10 +34,20 @@ auth 와 session 을 같이 본다 — 서로 독립이라 한 턴에.
 
 ## 3. 파서 (json_fc.py — md_array 승계 + 재배선)
 
-1. **캐노니컬 (stage 1/2)**: 첫 `[`/`{` 앞 산문 = thought(sanitize),
-   그 뒤를 `_extract_op_json`(승계 수리 기계 그대로 — 미닫힘 `]`·
-   anon-unwrap·다중배열 병합·escape·quote 수리 전부). `any("action")`
-   가드로 산문 속 `[1,2,3]` 오인 차단.
+1. **캐노니컬 (stage 1/2)**: `_op_anchor` 가 고른 op span 앞 산문 =
+   thought(sanitize), 그 뒤를 `_extract_op_json`(승계 수리 기계 그대로 —
+   미닫힘 `]`·anon-unwrap·다중배열 병합·escape·quote 수리 전부).
+   `any("action")` 가드로 산문 속 `[1,2,3]` 오인 차단.
+   > **v7.27.1 수리**: 이 가드가 턴 파서에만 구현돼 있었고 **span 선택**에는
+   > 없었다 — 앵커가 "본문 첫 `[`/`{`" 였으므로 산문이 코드를 인용하면
+   > (`board[i][j]`·`- [ ]`·`{ passive: false }`·`[문서](url)`) 그 괄호를 op 으로
+   > 집고 뒤의 진짜 배열을 못 봤다(stage 0, 또는 산문 조각을 op 으로 채택해
+   > `complete` 유실 + thought 잘림). 이제 `_op_anchor` 가 **op 서명 계층**으로
+   > 후보를 걸러(1=`action` 보유, 2=action 흘린 bare dict, 0=탈락) 최선 계층의
+   > **첫** span 을 앵커로 쓴다. ★방향(뒤에서부터 읽기)이 아니라 계층이 해법 —
+   > 뒤에서 읽으면 "배열 뒤 산문"·"배열 재개 병합"·"산문 사이 배열 보수적
+   > 처리" 세 계약이 동시에 깨진다(실측 후 기각). 파손 JSON(자격 후보 0)은
+   > 첫 `[{`/`{"action"` 앵커로 수리 경로 진입 — 산문 괄호 오염 없이.
 2. **legacy 관용 (stage 2)**: 구 md_array 헤더 emission — 전환기 모델
    습관 + foreign 누출 실측 shape(PHASE2 §8, 0-op 의 17%). 성공해도
    stage 2(drift) 로 계수, prior 는 캐노니컬로 재렌더(B→C 자기 교정).
