@@ -622,3 +622,78 @@ class TestScopeNestingRender:
         page.locator("#team-view .tv-scope-run").first.click()
         assert _wait(lambda: nested_card.is_visible()), "ancestor chain not expanded"
         assert _wait(lambda: "tv-nav-hl" in (nested_card.get_attribute("class") or ""))
+
+
+class TestSplitPaneWidthClamp:
+    """저장된 패널 폭이 타임라인을 지워버리지 못하게 (v7.27.2 회귀 수리).
+
+    v7.26.0 이 드래그 폭을 localStorage 에 저장하면서, **복원 경로에만 클램프가
+    없었다**(드래그는 `rect.width - 360` 으로 클램프). 넓은 창에서 저장한 폭을
+    좁은 창에서 복원하면 타임라인이 ~30px 로 짜부라져 **카드가 폭 0 으로
+    렌더**됐다 — 카드는 DOM 에 다 있는데 보이지 않는다. localStorage 라서 서버·
+    세션을 몇 번 재시작해도 안 고쳐졌고, 실제로 "resume 하면 카드가 하나도 안
+    보인다"로 제보됐다(원인 오진 1회: 저장값 없는 새 브라우저로만 확인해서
+    '회귀 아님' 으로 결론냈다가 라이브 재현으로 뒤집힘).
+    """
+
+    @staticmethod
+    def _seed_and_measure(stack, browser, *, viewport, saved):
+        ctx = browser.new_context(viewport=viewport)
+        page = ctx.new_page()
+        page.goto(stack.url)
+        page.evaluate(f"() => localStorage.setItem('agentcli_team_w', '{saved}')")
+        # 팀 활동이 있어야 패널이 드러난다 (평범한 단일-에이전트 대화엔 미표시).
+        stack.renderer.begin_scope(task_id="sk", kind="skill", label="orchestrate")
+        stack.renderer.observation("done", turn=1, tool_name="read_file", success=True)
+        page.reload()
+        page.wait_for_selector("#team-view:not([hidden])", timeout=8000)
+        page.wait_for_selector("#messages .card", timeout=8000)
+        out = page.evaluate(
+            """() => {
+                const m = document.getElementById('messages');
+                const tv = document.getElementById('team-view');
+                const card = m.querySelector(':scope > .card');
+                const w = e => Math.round(e.getBoundingClientRect().width);
+                return {msg: w(m), pane: w(tv), card: card ? w(card) : 0,
+                        stored: localStorage.getItem('agentcli_team_w')};
+            }"""
+        )
+        ctx.close()
+        return out
+
+    def test_oversized_stored_width_cannot_squeeze_the_timeline(self, stack, browser):
+        stack.emit_ready()
+        for viewport in ({"width": 1400, "height": 900}, {"width": 1000, "height": 800}):
+            got = self._seed_and_measure(stack, browser, viewport=viewport, saved=3000)
+            assert got["msg"] >= 300, (viewport, got)  # 타임라인 최소폭 확보
+            assert got["card"] >= 200, (viewport, got)  # 카드가 실제로 읽히는 폭
+            assert got["pane"] <= viewport["width"] - 300, (viewport, got)
+
+    def test_small_stored_width_is_floored(self, stack, browser):
+        stack.emit_ready()
+        got = self._seed_and_measure(
+            stack, browser, viewport={"width": 1200, "height": 800}, saved=10
+        )
+        assert got["pane"] >= 260, got  # 스윔레인도 사용 가능한 최소폭 유지
+
+    def test_shrinking_the_window_reclamps(self, stack, browser):
+        """창을 좁혀도 타임라인이 사라지지 않아야 한다 (resize 재클램프)."""
+        stack.emit_ready()
+        ctx = browser.new_context(viewport={"width": 1600, "height": 900})
+        page = ctx.new_page()
+        page.goto(stack.url)
+        page.evaluate("() => localStorage.setItem('agentcli_team_w', '1100')")
+        stack.renderer.begin_scope(task_id="sk2", kind="skill", label="orchestrate")
+        stack.renderer.observation("done", turn=1, tool_name="read_file", success=True)
+        page.reload()
+        page.wait_for_selector("#messages .card", timeout=8000)
+        page.set_viewport_size({"width": 900, "height": 800})
+        assert _wait(
+            lambda: page.evaluate(
+                "() => Math.round(document.getElementById('messages').getBoundingClientRect().width)"
+            )
+            >= 300
+        ), page.evaluate(
+            "() => Math.round(document.getElementById('messages').getBoundingClientRect().width)"
+        )
+        ctx.close()
