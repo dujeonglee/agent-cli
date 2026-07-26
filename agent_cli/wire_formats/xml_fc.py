@@ -63,6 +63,76 @@ _PARAM_CLOSED = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# ── 후보 검증 (v7.28.1) — json_fc 의 op-서명 계층과 동형 ─────────
+#
+# 산문이 구조 토큰을 **언급**하거나(코드 리뷰가 wire format 얘기를 하면 나온다)
+# 코드펜스에 wire **예시**를 담으면, 옛 파서는 그 위치를 op 로 채택했다:
+# 언급 → 유령 op(`{'tool_call': ''}`)가 실호출 앞에 끼고, 펜스 예시 → 예시가
+# 실호출을 이겨 그대로 실행됐다. json_fc 와 같은 해법 — 후보를 **검증**해서
+# 자격 있는 것만 op 가 된다. 검증 규칙 2개:
+#
+#   ① 세그먼트 자격: `<function=X>` open 은 다음 구조 토큰 전에 `<parameter=`
+#      또는 클로저(`</function>`/`</tool_call>`)가 따라와야 호출이다. 산문
+#      언급은 뒤에 산문만 온다. 단 세그먼트가 **EOF 까지 닿으면** 자격 유지 —
+#      파람 직전에 잘린 트렁케이션을 버리면 A5 도구-정밀 진단이 사라진다
+#      (언급-at-EOF 도 자격을 얻지만 그건 오늘 동작과 동일한 A5 경로).
+#   ② 펜스 인용: balanced ``` 쌍 안의 후보는 인용문이다 — 단 **자격 있는
+#      비인용 후보가 있을 때만** 제외한다. 전부 펜스 안이면 모델이 실호출을
+#      펜스로 감싼 드리프트이므로 그대로 수용(기존 관용 유지). 홀수 ``` 는
+#      쌍을 못 이뤄 아무것도 가리지 않는다 — 파라미터 값 속 고아 펜스가
+#      뒤쪽 실호출을 가리는 사고 방지.
+_FENCE_TICKS = re.compile(r"```")
+
+
+def _fence_spans(text: str) -> list[tuple[int, int]]:
+    """Balanced ``` pair spans. An unpaired trailing fence masks nothing."""
+    ticks = [m.start() for m in _FENCE_TICKS.finditer(text)]
+    return [(ticks[i], ticks[i + 1] + 3) for i in range(0, len(ticks) - 1, 2)]
+
+
+def _call_opens(text: str) -> list[re.Match]:
+    """``<function=`` opens that qualify as real calls (rules ① + ② above).
+
+    Segment bounds for rule ① use the next RAW structural token — a mention's
+    segment must not swallow the real call's parameters, or the mention would
+    qualify through them."""
+    fences = _fence_spans(text)
+
+    def fenced(pos: int) -> bool:
+        return any(a <= pos < b for a, b in fences)
+
+    qualified: list[tuple[re.Match, bool]] = []
+    for m in _FUNC_OPEN.finditer(text):
+        nxt = _FIRST_STRUCT.search(text, m.end())
+        seg = text[m.end() : nxt.start()] if nxt else text[m.end() :]
+        ok = (
+            nxt is None  # reaches EOF — truncation tolerance
+            or _PARAM_OPEN.search(seg) is not None
+            or _FUNC_CLOSE.search(seg) is not None
+            or _TOOL_CALL_CLOSE.search(seg) is not None
+        )
+        if ok:
+            qualified.append((m, fenced(m.start())))
+    unquoted = [m for m, f in qualified if not f]
+    return unquoted or [m for m, _f in qualified]
+
+
+def _call_anchor(text: str) -> int | None:
+    """Where the first REAL call starts, or None. Walks left over a
+    whitespace-adjacent ``<tool_call>`` wrapper so the wrapper stays in the
+    body — the drift counters compare wrapper/function counts there, and a
+    wrapper stranded in the thought would misread a canonical emission as
+    drift."""
+    opens = _call_opens(text)
+    if not opens:
+        return None
+    anchor = opens[0].start()
+    for tc in _TOOL_CALL_OPEN.finditer(text, 0, anchor):
+        if not text[tc.end() : anchor].strip():
+            return tc.start()
+    return anchor
+
+
 # thought 산문에 흘린 구조 센티널 라인 (sanitize — prior 재주입 방지).
 _SENTINEL_LINE = re.compile(
     r"^\s*</?(?:tool_call|function(?:=[\w.\-]*)?|parameter(?:=[\w.\-]*)?)>\s*$",
@@ -285,8 +355,13 @@ class XmlFcFormat(WireFormat):
         # 유사 텍스트를 담아도 구조 파서가 오인하지 않게 먼저 벗긴다.
         text, thinking = self.strip_thinking(llm_text)
 
-        first = _FIRST_STRUCT.search(text)
-        if first is None:
+        # 앵커 = 첫 **자격 있는** 호출(_call_anchor) — 옛 코드는 첫 구조 토큰
+        # 위치였고, 산문 언급·펜스 예시가 그 자리를 훔쳤다. 자격 후보가 없으면
+        # 종전 경로 그대로 (첫 구조 토큰에서 0-op → lenient/thought 분기 — 태그
+        # 변종 구제와 degenerate 처리를 보존).
+        anchor = _call_anchor(text)
+        first = _FIRST_STRUCT.search(text) if anchor is None else None
+        if anchor is None and first is None:
             # 캐노니컬 구조 토큰 부재 — tool-name 태그 변종 lenient 구제 시도.
             lenient = self._parse_lenient(text)
             if lenient is not None:
@@ -299,8 +374,9 @@ class XmlFcFormat(WireFormat):
                 )
             return ParsedTurn(raw=text, parse_stage=0, thinking=thinking)
 
-        thought = self.sanitize_thought(text[: first.start()]) or None
-        body = text[first.start() :]
+        start = anchor if anchor is not None else first.start()
+        thought = self.sanitize_thought(text[:start]) or None
+        body = text[start:]
         ops, drifted, truncated_any = self._extract_ops(body)
 
         if not ops:
@@ -361,12 +437,20 @@ class XmlFcFormat(WireFormat):
         도 drift.
         """
         func_opens = list(_FUNC_OPEN.finditer(body))
+        # Op CREATION is limited to qualified calls (mentions / fenced examples
+        # inside the body are skipped), but SEGMENTATION stays on the raw list:
+        # a skipped open still terminates the previous call's segment, so a
+        # quoted example between two calls cannot bleed its parameters into the
+        # call before it.
+        qualified_starts = {m.start() for m in _call_opens(body)}
         ops: list[Op] = []
         truncated_any = False
         for i, fm in enumerate(func_opens):
             seg_end = (
                 func_opens[i + 1].start() if i + 1 < len(func_opens) else len(body)
             )
+            if fm.start() not in qualified_starts:
+                continue
             segment = body[fm.end() : seg_end]
             params, trunc = _extract_params(segment)
             hybrid = False

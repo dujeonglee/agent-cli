@@ -12,6 +12,35 @@
 
 ## [Unreleased]
 
+## [7.28.1] - 2026-07-27
+
+### Fixed
+
+- **xml_fc: 산문의 구조 토큰 언급·코드펜스 예시가 op 를 오염시키던 문제**
+  (v7.27.1 json_fc 수리의 같은 계열 — 당시 xfail(strict) 로 고정해 뒀던 두 케이스).
+  산문이 `<function=read_file>` 를 **언급**하면 유령 op(`{'tool_call': ''}`)가 실호출
+  앞에 끼어 A5 에러 턴을 낭비했고, 코드펜스 안 wire **예시**는 실호출을 이기고 그대로
+  실행됐다(예시의 `shell` 이 실제 `read_file` 대신). 이 저장소에서 wire format 코드를
+  리뷰할 때 정확히 나오는 산문 모양이다.
+  - 수리 = json_fc 의 op-서명 앵커와 동형인 **호출-후보 검증**: `<function=X>` open 은
+    세그먼트에 `<parameter=` 또는 클로저가 있거나 **EOF 에 닿을 때만**(트렁케이션 관용
+    — 버리면 A5 도구-정밀 진단이 사라진다) 호출 자격을 얻는다. balanced ``` 펜스 안
+    후보는 자격 있는 비인용 후보가 **있을 때만** 인용으로 제외 — 전부 펜스 안이면
+    모델이 실호출을 펜스로 감싼 드리프트이므로 기존 관용 유지. 고아 ``` 는 아무것도
+    가리지 않는다(파라미터 값 속 홀수 펜스가 뒤쪽 실호출을 가리는 사고 방지).
+  - 세그먼트 경계는 raw open 그대로 — 걸러진 언급/예시도 앞 호출의 세그먼트를 닫아,
+    두 실호출 사이의 예시 파라미터가 앞 호출로 새지 않는다.
+  - 괄호류(`board[i][j]`·`{ passive: false }`)는 원래부터 무해(구조 토큰이 특이) —
+    그 사실도 계약으로 고정.
+
+### Notes
+
+- `<tool_call>` 펜스 A/B bakeoff 인프라 추가 (scripts/bakeoff — 패키지 미출하):
+  `wire_fenced.py`(json_fc 서브클래스, 펜스만 변수로 격리한 실험 변형) +
+  phase2 에 **multi**(op ≥2 턴 비율 — xml_fc-compact A/B 를 기각시킨 배칭 신호) 컬럼 +
+  배칭 유도 태스크 `read_three_files`(기존 태스크는 전부 순차 의존이라 이 신호를 잴
+  셀이 없었다).
+
 ## [7.28.0] - 2026-07-26
 
 ### Fixed
@@ -1591,7 +1620,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.28.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.28.1...HEAD
+[7.28.1]: https://github.com/dujeonglee/agent-cli/compare/v7.28.0...v7.28.1
 [7.28.0]: https://github.com/dujeonglee/agent-cli/compare/v7.27.2...v7.28.0
 [7.27.2]: https://github.com/dujeonglee/agent-cli/compare/v7.27.1...v7.27.2
 [7.27.1]: https://github.com/dujeonglee/agent-cli/compare/v7.27.0...v7.27.1
