@@ -1504,7 +1504,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v4.18.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.27.0...HEAD
+[7.27.0]: https://github.com/dujeonglee/agent-cli/compare/v7.26.3...v7.27.0
 [4.18.1]: https://github.com/dujeonglee/agent-cli/compare/v4.18.0...v4.18.1
 [4.18.0]: https://github.com/dujeonglee/agent-cli/compare/v4.17.11...v4.18.0
 [4.17.11]: https://github.com/dujeonglee/agent-cli/compare/v4.17.10...v4.17.11
