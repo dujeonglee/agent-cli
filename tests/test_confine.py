@@ -292,3 +292,91 @@ class TestConfineWaitsForLateViewer:
         t.join(timeout=3.0)
         assert results and results[0] is not None
         assert "denied" in results[0]
+
+
+class TestOutsideSpans:
+    """``_outside_spans`` — char ranges of the offending path literals inside a
+    shell command, for the confine confirm's highlight (same contract as the
+    dangerous-keyword guard)."""
+
+    def test_absolute_path_span(self):
+        assert _confine._outside_spans("cat /tmp/a.c", ["/tmp/a.c"]) == [(4, 12)]
+
+    def test_trailing_boundary_avoids_substring(self):
+        # "/tmp/a" must NOT match inside "/tmp/a.c" (followed by ".").
+        cmd = "rm /tmp/a && cat /tmp/a.c"
+        assert _confine._outside_spans(cmd, ["/tmp/a"]) == [(3, 9)]
+
+    def test_flag_attached_path(self):
+        cmd = "gcc -I/usr/inc x.c"
+        i = cmd.index("/usr/inc")
+        assert _confine._outside_spans(cmd, ["/usr/inc"]) == [(i, i + len("/usr/inc"))]
+
+    def test_duplicate_literal_spans_merged(self):
+        # Same literal extracted twice → deduped/merged, not doubled.
+        assert _confine._outside_spans("/tmp/a /tmp/a", ["/tmp/a", "/tmp/a"]) == [
+            (0, 6),
+            (7, 13),
+        ]
+
+    def test_empty_command(self):
+        assert _confine._outside_spans("", ["/x"]) == []
+
+
+class TestConfineHighlight:
+    """The shell confine confirm passes the raw command + the offending path
+    spans so the dialog highlights them; write/edit_file (no command) stay
+    prompt-only."""
+
+    def _spy(self, monkeypatch, decision="y"):
+        captured = {}
+
+        class Spy:
+            def can_prompt(self):
+                return True
+
+            def confirm(
+                self, prompt, options, *, default_key, command=None, danger_spans=None
+            ):
+                captured["prompt"] = prompt
+                captured["command"] = command
+                captured["danger_spans"] = danger_spans
+                return (decision, "")
+
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: Spy())
+        return captured
+
+    def test_shell_command_highlights_outside_path(self, confined, monkeypatch):
+        _, outside = confined
+        captured = self._spy(monkeypatch)
+        p = str(outside / "a.c")
+        cmd = f"cat > {p}"
+        assert _confine.guard([p], "shell command", command=cmd) is None
+        assert captured["command"] == cmd
+        i = cmd.index(p)
+        assert captured["danger_spans"] == [(i, i + len(p))]
+
+    def test_write_file_prompt_only_no_command(self, confined, monkeypatch):
+        _, outside = confined
+        captured = self._spy(monkeypatch)
+        assert _confine.guard([str(outside / "x")], "write_file") is None
+        assert captured["command"] is None
+        assert captured["danger_spans"] is None
+
+    def test_tool_shell_passes_command_to_guard(self, confined, monkeypatch):
+        # shell wires the raw command through so the confine confirm can
+        # highlight the offending path. Deny to avoid running the command.
+        from agent_cli.tools import shell as shell_mod
+
+        seen = {}
+
+        def fake_guard(paths, action, *, command=None):
+            seen["command"] = command
+            return "denied for test"
+
+        monkeypatch.setattr(_confine, "guard", fake_guard)
+        _, outside = confined
+        p = str(outside / "z.txt")
+        res = shell_mod.tool_shell({"command": f"echo hi > {p}"})
+        assert res.success is False
+        assert seen["command"] == f"echo hi > {p}"

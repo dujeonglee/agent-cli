@@ -115,7 +115,40 @@ def extract_shell_paths(cmd: str) -> list[str]:
     return found
 
 
-def guard(paths, action: str) -> str | None:
+# A path-continuation char: if a path literal is FOLLOWED by one of these it is
+# NOT the whole token (``/tmp/x`` inside ``/tmp/x.c``), so a highlight span needs
+# a trailing boundary. No LEADING boundary is required — a flag-attached path
+# (``-I/usr/inc``) glues the path to a letter and we still want the path part lit.
+_PATH_BOUND = r"[^\s'\"|&;()<>`]"
+
+
+def _outside_spans(command: str, literals: list[str]) -> list[tuple[int, int]]:
+    """Character ranges in ``command`` of the literal path tokens that resolved
+    OUTSIDE the workspace — the spans the confine confirm highlights (same
+    ``command``/``danger_spans`` contract the dangerous-keyword guard uses).
+    Trailing-boundary matched so a short path can't match inside a longer one;
+    overlapping ranges are merged. Best-effort, mirroring the guard's tolerance —
+    empty when nothing lines up (the confirm then shows the command unhighlighted
+    rather than marking the wrong span)."""
+    if not command:
+        return []
+    spans: list[tuple[int, int]] = []
+    for lit in literals:
+        if not lit:
+            continue
+        for m in re.finditer(re.escape(lit) + r"(?!" + _PATH_BOUND + r")", command):
+            spans.append((m.start(), m.end()))
+    spans.sort()
+    merged: list[tuple[int, int]] = []
+    for s, e in spans:
+        if merged and s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def guard(paths, action: str, *, command: str | None = None) -> str | None:
     """Gate ``paths`` for tool ``action`` (e.g. ``"write_file"``). Returns
     ``None`` when the gate is disabled, or every path is inside the workspace /
     already allowlisted — the zero-overhead common case (no renderer import, no
@@ -124,11 +157,17 @@ def guard(paths, action: str) -> str | None:
 
     ``a=always`` adds each outside path's directory subtree to the session
     allowlist so later ops there don't re-prompt (mirrors the dangerous-command
-    guard's ``a``, keyed on resolved paths instead of a keyword)."""
+    guard's ``a``, keyed on resolved paths instead of a keyword).
+
+    ``command`` (shell only): the raw command line. When given, the offending
+    out-of-workspace path tokens are highlighted within it in the confirm dialog
+    — the same treatment the dangerous-keyword guard gives ``rm``. Omit it (write
+    /edit_file) for a prompt-only dialog."""
     if not enabled():
         return None
     root = workspace_root()
     outside: list[Path] = []
+    lit_of: dict[str, str] = {}  # resolved-str → literal token (for highlighting)
     for path in paths:
         if not path:
             continue
@@ -137,6 +176,7 @@ def guard(paths, action: str) -> str | None:
             continue
         if resolved not in outside:
             outside.append(resolved)
+            lit_of.setdefault(str(resolved), path)
     if not outside:
         return None
 
@@ -182,7 +222,17 @@ def guard(paths, action: str) -> str | None:
                 aliases=("always", "allow"),
             ),
         ]
-        decision, comment = renderer.confirm(prompt, options, default_key="n")
+        # Highlight the offending path tokens inside the command (shell only).
+        danger_spans = (
+            _outside_spans(
+                command, [lit_of[str(p)] for p in outside if str(p) in lit_of]
+            )
+            if command
+            else None
+        )
+        decision, comment = renderer.confirm(
+            prompt, options, default_key="n", command=command, danger_spans=danger_spans
+        )
         if decision == "n":
             err = f"User denied {action} outside workspace: {joined}"
             if comment:

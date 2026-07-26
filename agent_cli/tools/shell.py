@@ -200,8 +200,11 @@ def tool_shell(args: dict) -> ToolResult:
     # paths inside $(...) / python -c / variables — documented in _confine.
     from agent_cli.tools import _confine
 
+    # Pass the raw command so the confirm can highlight the offending
+    # out-of-workspace path tokens inside it (action stays generic — the command
+    # itself is now shown, not duplicated in the prompt text).
     denial = _confine.guard(
-        _confine.extract_shell_paths(cmd), f"shell command `{cmd[:60]}`"
+        _confine.extract_shell_paths(cmd), "shell command", command=cmd
     )
     if denial:
         return ToolResult(False, error=denial)
