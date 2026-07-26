@@ -194,17 +194,15 @@ class TestValueContentUnaffected:
         assert [o.action for o in turn.ops] == ["complete"]
 
 
-class TestXmlFcSameClassIsPending:
-    """xml_fc 의 같은 계열 결함 — **의도적으로 미수정**, 실패를 문서로 고정한다.
+class TestXmlFcSameClass:
+    """xml_fc 의 같은 계열 — v7.28.1 수리 (json_fc 의 op-서명 검증과 동형).
 
-    괄호류는 xml_fc 에 무해하다(구조 토큰이 ``<tool_call>``/``<function=`` 라
-    산문과 충돌하지 않음 — 아래 첫 테스트가 그 사실을 고정). 하지만 산문이 구조
-    토큰을 **언급**하거나 코드펜스에 wire 예시를 담으면 흔들린다. 이 저장소에서
-    wire format 코드를 리뷰할 때 정확히 나오는 모양이다.
-
-    json_fc 와 같은 커밋에 묶지 않는 이유: xml_fc 에는 lenient/strict 2경로와
-    lookahead 앵커(v5.22.1 키-이름 closer 수용)가 얽혀 있어 함께 만지면 회귀
-    위험이 크다. 여기서는 **현상을 xfail 로 명시**해 두고 별도 패치에서 푼다.
+    괄호류는 원래 무해(구조 토큰이 특이). 산문 **언급**과 코드펜스 **예시**가
+    문제였다: 언급은 유령 op(`{'tool_call': ''}`)를 실호출 앞에 끼워 넣고, 펜스
+    예시는 실호출을 이겨 그대로 실행됐다. 수리=후보 검증(`_call_opens`: 세그먼트에
+    `<parameter=`/클로저가 있거나 EOF 도달) + 펜스-인용 인지 앵커(`_call_anchor`,
+    전부 펜스 안이면 실호출 드리프트로 수용). v7.27.1 에서 xfail(strict) 로
+    고정해 뒀던 두 케이스가 본 계약이 됐다.
     """
 
     XWF = get("xml_fc")
@@ -220,20 +218,27 @@ class TestXmlFcSameClassIsPending:
         assert [o.action for o in turn.ops] == ["read_file"]
         assert turn.ops[0].action_input["path"] == "a.py"
 
-    @pytest.mark.xfail(
-        reason="산문이 <function=…> 를 언급하면 파라미터가 유실된다 (별도 패치 예정)",
-        strict=True,
-    )
     def test_prose_mentioning_a_wire_token_keeps_params(self):
         turn = self.XWF.parse_turn(
             "xml_fc 는 `<function=read_file>` 형태로 받습니다.\n" + self.BLOCK
         )
-        assert turn.ops[0].action_input.get("path") == "a.py"
+        # 유령 op 없이 실호출 하나만, 파라미터 온전.
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("read_file", {"path": "a.py"})
+        ]
+        assert turn.parse_stage == 1
+        assert "<function=read_file>" in (turn.thought or "")  # 언급은 thought 로
 
-    @pytest.mark.xfail(
-        reason="코드펜스 안 wire 예시가 실제 호출을 이긴다 (별도 패치 예정)",
-        strict=True,
-    )
+    def test_unquoted_mention_also_skipped(self):
+        # 백틱 없는 언급 — 세그먼트 자격(파람/클로저 없음)으로 걸러진다.
+        turn = self.XWF.parse_turn(
+            "xml_fc 는 <function=read_file> 형태로 받습니다.\n" + self.BLOCK
+        )
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("read_file", {"path": "a.py"})
+        ]
+        assert turn.parse_stage == 1
+
     def test_fenced_example_does_not_win_over_the_real_call(self):
         raw = (
             "```\n<tool_call>\n<function=shell>\n"
@@ -242,3 +247,72 @@ class TestXmlFcSameClassIsPending:
         )
         turn = self.XWF.parse_turn(raw)
         assert [o.action for o in turn.ops] == ["read_file"]
+        assert turn.ops[0].action_input == {"path": "a.py"}
+
+    def test_fully_fenced_real_call_still_accepted(self):
+        """모델이 실호출을 통째로 펜스에 싼 드리프트 — 자격 후보가 전부 펜스
+        안이면 인용이 아니라 실호출이다 (기존 관용 유지)."""
+        turn = self.XWF.parse_turn("읽겠습니다.\n```\n" + self.BLOCK + "\n```")
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("read_file", {"path": "a.py"})
+        ]
+
+    def test_example_between_two_calls_no_param_bleed(self):
+        """두 실호출 사이의 펜스 예시: 예시는 op 가 안 되지만 세그먼트 경계는
+        유지 — 예시의 파라미터가 앞 호출로 새면 안 된다."""
+        raw = (
+            self.BLOCK
+            + "\n예시: ```\n<function=shell>\n<parameter=command>rm -rf /</parameter>\n</function>\n```\n"
+            + self.BLOCK.replace("a.py", "b.py")
+        )
+        turn = self.XWF.parse_turn(raw)
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("read_file", {"path": "a.py"}),
+            ("read_file", {"path": "b.py"}),
+        ]
+
+    def test_bare_open_truncation_keeps_the_tool_precise_op(self):
+        """파람 직전에 잘린 트렁케이션(`<function=X>` + EOF): op {} 로 보존해야
+        A5 가 도구-정밀 진단을 낸다 — 버리면 generic 경로로 후퇴한다. 자격
+        규칙의 'EOF 도달 = 유지' 가지가 이걸 담당한다."""
+        turn = self.XWF.parse_turn("쓰겠습니다.\n<tool_call>\n<function=write_file>")
+        assert [(o.action, o.action_input) for o in turn.ops] == [("write_file", {})]
+
+    def test_inner_fenced_function_inside_wrapper_still_parses(self):
+        """래퍼는 밖, `<function=…>` 부분만 펜스 안에 싼 변종 — 자격 후보가 전부
+        펜스 안이라도 버리면 안 되는 실호출이다(전부-펜스 관용의 존재 이유:
+        인용 판정은 비인용 후보가 **있을 때만** 유효한 상대 신호다)."""
+        raw = (
+            "<tool_call>\n```\n<function=read_file>\n"
+            "<parameter=path>a.py</parameter>\n</function>\n```\n</tool_call>"
+        )
+        turn = self.XWF.parse_turn(raw)
+        assert [(o.action, o.action_input) for o in turn.ops] == [
+            ("read_file", {"path": "a.py"})
+        ]
+
+    def test_orphan_fence_in_value_does_not_mask_later_calls(self):
+        """파라미터 값 속 고아 ``` 하나가 뒤쪽 실호출을 가리면 안 된다 —
+        balanced 쌍만 마스킹하는 이유. (고아를 EOF 까지 마스킹하면 값에 홀수
+        펜스를 쓴 write_file 뒤의 모든 호출이 인용으로 오인돼 유실된다.)"""
+        first = (
+            "<tool_call>\n<function=write_file>\n"
+            "<parameter=path>doc.md</parameter>\n"
+            "<parameter=content>여는 펜스만 있는 문서\n```python</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        turn = self.XWF.parse_turn(first + "\n" + self.BLOCK)
+        acts = [(o.action, o.action_input.get("path")) for o in turn.ops]
+        assert acts == [("write_file", "doc.md"), ("read_file", "a.py")]
+
+    def test_truncated_call_and_zero_param_still_qualify(self):
+        # EOF 도달 세그먼트(트렁케이션)와 클로저-보유 제로파람 — 자격 유지.
+        t1 = self.XWF.parse_turn(
+            "<tool_call>\n<function=write_file>\n<parameter=path>a.py</parameter>\n<parameter=content>x = 1"
+        )
+        assert t1.ops[0].action == "write_file"
+        assert t1.ops[0].action_input["path"] == "a.py"
+        t2 = self.XWF.parse_turn(
+            "<tool_call>\n<function=complete>\n</function>\n</tool_call>"
+        )
+        assert [o.action for o in t2.ops] == ["complete"]
