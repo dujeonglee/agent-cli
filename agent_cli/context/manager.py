@@ -46,8 +46,21 @@ from agent_cli.context.render import (
     _to_natural_language,
     _to_summary_text,
 )
-from agent_cli.render import render_compaction_progress
+from agent_cli.render import get_renderer, render_compaction_progress
 from agent_cli.wire_formats import get as _get_wire_format
+
+
+def _current_scope_id() -> str:
+    """The calling thread's innermost renderer scope ("" = main timeline).
+
+    Best effort by design: a history write must never fail because of a
+    presentation surface. CLI renderers return "" (they encode nesting as depth
+    indentation and need no association), so this is a no-op there."""
+    try:
+        return get_renderer().current_scope() or ""
+    except Exception:
+        return ""
+
 
 # ── Defaults / constants ─────────────────────────────────
 DEFAULT_TOKEN_BUDGET = 100_000
@@ -791,6 +804,17 @@ class ContextManager:
         record["kind"] = kind
         record["turn"] = self._current_turn
         record["ts"] = _now_iso()
+        # Which scope (skill subloop / worker) produced this record, "" = main.
+        # Resume needs it: without the association, replayed turns all land on
+        # the main timeline and a resumed session shows NO skill/agent cards at
+        # all — the swimlane then advertises click-navigation to cards that do
+        # not exist. Read from the renderer because the record is written ON the
+        # scope's own thread (a parallel worker included), so the thread's
+        # innermost scope IS this record's owner. Omitted when empty to keep
+        # main-timeline records unchanged.
+        scope = _current_scope_id()
+        if scope:
+            record["task_id"] = scope
         record["tools"] = tools
         # Files this record's tool(s) operate on — reuses the tool-aware
         # ``extract_file_paths`` (handles flat/ops shapes) so queries can find

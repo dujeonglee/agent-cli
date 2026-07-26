@@ -12,6 +12,28 @@
 
 ## [Unreleased]
 
+## [7.28.0] - 2026-07-26
+
+### Fixed
+
+- **resume 후 skill/agent 카드가 하나도 없고 스윔레인 막대 클릭이 무동작이던 문제.**
+  라이브 실측(오목 세션): flat 카드 86 / **scope 카드 0** / 막대 23개 / 클릭 시 scrollTop
+  불변. v7.21.0 이 재생 scope 를 "빈 껍데기 방지"로 **막대만** 복구하도록 결정한 결과였고,
+  스윔레인이 존재하지 않는 카드로의 네비게이션을 광고하는 상태였다.
+  - **ⓐ 턴↔scope 연결**: history 레코드에 `task_id` additive 추가 —
+    `_enrich_record` 가 기록 시점 **그 스레드의** `renderer.current_scope()` 로 스탬프
+    (병렬 워커도 각자 자기 scope). main 타임라인 레코드는 키를 생략해 기존 모양 불변.
+  - **resume 을 시각 순서 단일 스트림으로** (`replay_session`): history 턴과 scopes
+    사이드카를 ts 로 인터리브 → scope 카드가 자기 턴보다 먼저 열리고 턴이 그 안에 쌓인다.
+    두 스트림을 연달아 재생하던 순서가 근본 원인이었다.
+  - **ⓒ 대상 없는 막대 클릭에 안내**: 구 세션(필드 부재)은 카드에 내용이 없으므로 카드
+    안에 사유를 적고(`⊘ 이 실행의 턴 기록이 이 세션 히스토리에 없습니다`), 카드 자체가
+    없는 막대는 클릭 시 `.tv-nav-miss` 토스트로 알린다 — 조용한 무동작 금지.
+  - 하위호환: `task_id` 없는 세션은 막대 + (사유 표시된) 카드까지 복구되어 **클릭 네비가
+    동작**한다. 서브에이전트 턴은 자기 컨텍스트에 있어 원래부터 main 히스토리에 없으므로
+    같은 사유 표시를 받는다.
+
+
 ## [7.27.2] - 2026-07-26
 
 ### Fixed
@@ -1569,7 +1591,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.27.2...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.28.0...HEAD
+[7.28.0]: https://github.com/dujeonglee/agent-cli/compare/v7.27.2...v7.28.0
 [7.27.2]: https://github.com/dujeonglee/agent-cli/compare/v7.27.1...v7.27.2
 [7.27.1]: https://github.com/dujeonglee/agent-cli/compare/v7.27.0...v7.27.1
 [7.27.0]: https://github.com/dujeonglee/agent-cli/compare/v7.26.3...v7.27.0

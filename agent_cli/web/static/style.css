@@ -1453,6 +1453,16 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
    arrowhead (an adjacent-sibling selector used to highlight the NEXT arrow). */
 .tv-msg-g:hover .tv-msg { opacity: 1; stroke-width: 2.2; }
 
+/* "이 막대에 대응하는 카드가 없음" 안내 — 클릭이 조용히 아무것도 안 하면
+   고장난 버튼으로 읽힌다(구 세션은 막대만 복구되므로 대상이 없다). */
+.tv-nav-miss {
+  position: fixed; z-index: 60; max-width: 330px; pointer-events: none;
+  font-size: 12px; line-height: 1.45; padding: 7px 10px; border-radius: 7px;
+  background: var(--warn-soft-bg); color: var(--warn-soft-fg);
+  border: 1px solid var(--warn-soft-border); box-shadow: 0 4px 14px var(--shadow);
+}
+.tv-nav-miss[hidden] { display: none; }
+
 /* Custom fast tooltip (replaces the slow native <title>). */
 .tv-tip {
   position: fixed; z-index: 60; pointer-events: none;
