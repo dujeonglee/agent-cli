@@ -155,6 +155,45 @@ class TestTeamSwimlane:
         bar.first.click()
         assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
 
+    def test_click_bar_scrolls_into_view_then_flashes(self, stack, page):
+        """With a tall timeline, clicking a bar for an OFF-SCREEN card scrolls it
+        into view FIRST, then flashes it — so the highlight lands where the user
+        is looking (not off-screen mid-scroll)."""
+        page.set_viewport_size({"width": 1100, "height": 480})
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.agent_roster(
+            [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
+        )
+        # Many teammate work cards → a scrollable timeline; target the FIRST.
+        for i in range(14):
+            r.begin_agent_work(key="w1", seq=i, profile="code-writer", message=f"t{i}")
+            r.end_agent_work(key="w1", seq=i, success=True, duration_s=0.01)
+        page.wait_for_selector("#split-handle:not([hidden])", timeout=8000)
+        assert _wait(
+            lambda: (
+                page.locator('#messages .card-task-group[data-task-id="w1#0"]').count()
+                == 1
+            )
+        )
+        in_view = (
+            "() => { const m=document.getElementById('messages');"
+            " const c=m.querySelector('.card-task-group[data-task-id=\"w1#0\"]');"
+            " if(!c) return false; const mr=m.getBoundingClientRect(),"
+            " cr=c.getBoundingClientRect();"
+            " return cr.top >= mr.top-2 && cr.bottom <= mr.bottom+2; }"
+        )
+        # Scroll the timeline to the bottom so w1#0 is OFF the top.
+        page.evaluate(
+            "() => { const m=document.getElementById('messages'); m.scrollTop=m.scrollHeight; }"
+        )
+        assert not page.evaluate(in_view)
+        page.locator('#team-view .tv-span[data-task-id="w1#0"]').first.click()
+        assert _wait(lambda: page.evaluate(in_view))  # scrolled into view
+        card = page.locator('#messages .card-task-group[data-task-id="w1#0"]')
+        assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
+
 
 class TestResumeScopeReplay:
     """On resume, ``replay_scopes`` re-emits scope events tagged ``replay:true``

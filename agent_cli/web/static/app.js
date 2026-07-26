@@ -1546,7 +1546,11 @@
       }
     };
 
-    // Click a swimlane bar → scroll the timeline to its card and flash it.
+    // Click a swimlane bar → scroll the timeline to its card FIRST, then flash
+    // it once the scroll settles. Flashing before/during the scroll means an
+    // off-screen card lights up where the user isn't looking; waiting for
+    // ``scrollend`` (with a timeout fallback for no-scroll / unsupported) makes
+    // the highlight land after the card is actually in view.
     teamHost.addEventListener("click", (e) => {
       const tid =
         e.target && e.target.getAttribute && e.target.getAttribute("data-task-id");
@@ -1557,10 +1561,20 @@
         '.card-task-group[data-task-id="' + sel + '"]',
       );
       if (!card) return;
-      card.classList.remove("tv-nav-hl");
-      void card.offsetWidth; // restart the flash
-      card.classList.add("tv-nav-hl");
       card.scrollIntoView({ block: "center", behavior: "smooth" });
+      let fired = false;
+      const flash = () => {
+        if (fired) return;
+        fired = true;
+        $messages.removeEventListener("scrollend", flash);
+        card.classList.remove("tv-nav-hl");
+        void card.offsetWidth; // restart the animation
+        card.classList.add("tv-nav-hl");
+      };
+      // ``scrollend`` fires when the smooth scroll stops; the timeout covers
+      // browsers without it and the "already in view → no scroll" case.
+      $messages.addEventListener("scrollend", flash);
+      setTimeout(flash, 450);
     });
   }
   _setupTeamView();
