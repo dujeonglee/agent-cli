@@ -1548,10 +1548,40 @@
     if (!teamHost || !toggle || !btn || !window.TeamView) return;
     TeamView.mount(teamHost);
 
-    // Restore a previously dragged pane width (session-persistent).
+    // Pane width: restored from localStorage, changed by dragging the divider.
+    //
+    // ONE clamp for every path (restore / drag / window resize). The drag always
+    // clamped, but RESTORE used the stored number as-is — so a width stored on a
+    // wide window, or the same window later made narrower, squeezed the timeline
+    // to ~30px and its cards rendered at ZERO width. The cards were all there;
+    // they were invisible. And because the value lives in localStorage, no amount
+    // of restarting the server or the session could clear it (reported as
+    // "resume 하면 카드가 하나도 안 보인다" after restarting both CLI and board).
     const WKEY = "agentcli_team_w";
+    const PANE_MIN = 260; // swimlane stays usable
+    const TIMELINE_MIN = 360; // …but never at the timeline's expense
+    function clampPaneW(w) {
+      const total = split
+        ? split.getBoundingClientRect().width
+        : window.innerWidth;
+      const max = Math.max(PANE_MIN, total - TIMELINE_MIN);
+      return Math.max(PANE_MIN, Math.min(max, w));
+    }
+    function applyPaneW(w, persist) {
+      const clamped = clampPaneW(w);
+      teamHost.style.flexBasis = clamped + "px";
+      if (persist) localStorage.setItem(WKEY, String(clamped));
+      return clamped;
+    }
     const savedW = parseInt(localStorage.getItem(WKEY) || "", 10);
-    if (savedW > 0) teamHost.style.flexBasis = savedW + "px";
+    if (savedW > 0) applyPaneW(savedW, false);
+    // Shrinking the window must not squeeze the timeline away either — re-clamp
+    // against the new size (only when a width was actually set; otherwise the
+    // CSS default flexes on its own).
+    window.addEventListener("resize", function () {
+      const cur = parseInt(teamHost.style.flexBasis, 10);
+      if (cur > 0) applyPaneW(cur, false);
+    });
 
     // aria-pressed="true" = pane shown; setActive toggles teamHost.hidden. The
     // drag handle shows/hides with the pane.
@@ -1577,11 +1607,7 @@
       });
       handle.addEventListener("pointermove", (e) => {
         if (!dragging) return;
-        const rect = split.getBoundingClientRect();
-        let w = e.clientX - rect.left;
-        const max = Math.max(260, rect.width - 360);
-        w = Math.max(260, Math.min(max, w));
-        teamHost.style.flexBasis = w + "px";
+        applyPaneW(e.clientX - split.getBoundingClientRect().left, false);
         // The host's ResizeObserver (mount) reschedules a render on width change.
       });
       function endDrag(e) {
@@ -1591,7 +1617,9 @@
           handle.releasePointerCapture(e.pointerId);
         } catch (_) {}
         handle.classList.remove("dragging");
-        localStorage.setItem(WKEY, String(parseInt(teamHost.style.flexBasis, 10) || 400));
+        // Persist the CLAMPED width so a stored value can never exceed what the
+        // current layout allows.
+        applyPaneW(parseInt(teamHost.style.flexBasis, 10) || 400, true);
       }
       handle.addEventListener("pointerup", endDrag);
       handle.addEventListener("pointercancel", endDrag);

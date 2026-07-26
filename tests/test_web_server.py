@@ -490,6 +490,19 @@ class TestStaticUI:
         assert expand_at < scroll_at, "펼치기가 스크롤보다 먼저여야 함"
         assert ".reverse()" in nav  # 바깥→안 순서로 펼침
 
+    def test_pane_width_restore_is_clamped(self, server_and_client):
+        """저장 폭 복원이 드래그와 **같은 클램프**를 통과해야 한다 (v7.27.2).
+        복원만 클램프 없이 flexBasis 를 세우면 넓은 창에서 저장한 값이 좁은
+        창에서 타임라인을 지운다 — 카드가 폭 0 으로 렌더(동작 계약은
+        tests/browser 의 TestSplitPaneWidthClamp)."""
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        setup = js.split("function _setupTeamView()", 1)[1].split("\n  function ", 1)[0]
+        assert "clampPaneW" in setup and "applyPaneW(savedW" in setup
+        # 클램프 없이 직접 세우는 옛 배선이 남아 있으면 안 된다.
+        assert 'teamHost.style.flexBasis = savedW + "px"' not in setup
+        assert "TIMELINE_MIN" in setup  # 타임라인 최소폭이 클램프에 반영
+
     def test_app_js_is_served(self, server_and_client):
         _, _, client = server_and_client
         resp = client.get("/static/app.js")

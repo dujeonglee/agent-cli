@@ -12,6 +12,27 @@
 
 ## [Unreleased]
 
+## [7.27.2] - 2026-07-26
+
+### Fixed
+
+- **저장된 스윔레인 패널 폭이 타임라인을 지워 "카드가 하나도 안 보이던" 회귀**
+  (v7.26.0 유입). 드래그 경로는 `rect.width - 360` 으로 클램프했지만 **복원 경로는
+  저장값을 그대로 `flexBasis` 에 세웠다** — 넓은 창에서 저장한 폭(또는 이후 창을
+  좁힌 경우)이 타임라인을 ~30px 로 만들고 **카드가 폭 0 으로 렌더**됐다. 카드는 DOM
+  에 전부 있었고 보이지 않았을 뿐이다. 값이 `localStorage` 에 있어 **CLI·board 를
+  재시작해도 낫지 않았다**(사용자 제보: "resume 시 카드 재현이 아무것도 안 된다",
+  재시작 2회 후에도 동일).
+  - 복원·드래그·**창 리사이즈** 세 경로가 하나의 `clampPaneW`(패널 ≥260px, 타임라인
+    ≥360px)를 공유하고, 저장도 클램프된 값으로 한다 → 저장값이 현재 레이아웃을
+    초과할 수 없다.
+  - 실측(라이브 세션, 저장값 1300): 수리 전 창 1200px → 타임라인 32px·카드 폭 0 /
+    수리 후 타임라인 354px·카드 322px (창 900px 까지 유지).
+  - ★진단 오진 1회: 저장값이 없는 새 브라우저 컨텍스트로만 확인해 "회귀 아님"으로
+    결론냈다가, 사용자가 라이브 URL 로 재현해줘 뒤집혔다. 클라이언트 상태(localStorage)
+    가 원인인 결함은 **사용자 브라우저 상태를 재현**해야 보인다.
+
+
 ## [7.27.1] - 2026-07-26
 
 ### Fixed
@@ -1548,7 +1569,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.27.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.27.2...HEAD
+[7.27.2]: https://github.com/dujeonglee/agent-cli/compare/v7.27.1...v7.27.2
 [7.27.1]: https://github.com/dujeonglee/agent-cli/compare/v7.27.0...v7.27.1
 [7.27.0]: https://github.com/dujeonglee/agent-cli/compare/v7.26.3...v7.27.0
 [4.18.1]: https://github.com/dujeonglee/agent-cli/compare/v4.18.0...v4.18.1
