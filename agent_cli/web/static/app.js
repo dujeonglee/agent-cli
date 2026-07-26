@@ -1561,28 +1561,20 @@
         '.card-task-group[data-task-id="' + sel + '"]',
       );
       if (!card) return;
-      // Stop the timeline from auto-following to the bottom: otherwise a live
-      // event arriving mid-scroll calls scrollToBottom() and yanks us back down,
-      // cancelling the smooth scroll-up — the "have to click 2-3 times" bug.
-      // (Scrolling back to the bottom re-enables it via the scroll handler.)
+      // Turn OFF auto-follow so a live event's scrollToBottom() can't pull us
+      // back down after the jump. Then jump INSTANTLY (not smooth): during an
+      // active run the timeline is constantly appending cards + calling
+      // scrollToBottom, and both cancel an in-flight smooth scroll — that was
+      // the "sometimes doesn't scroll up, click 2-3 times" bug. An instant jump
+      // has no animation window to interrupt, so it lands every time. ``block:
+      // "start"`` puts the card's header at the top (a tall/expanded card
+      // center-aligned would hide the header); ``scroll-margin-top`` adds a gap.
       autoScrollEnabled = false;
-      // Align the card's TOP (its header) to the viewport, not its center — a
-      // center-aligned tall/expanded card pushes the header off-screen above, so
-      // you land in the middle of it. ``scroll-margin-top`` leaves a small gap.
-      card.scrollIntoView({ block: "start", behavior: "smooth" });
-      let fired = false;
-      const flash = () => {
-        if (fired) return;
-        fired = true;
-        $messages.removeEventListener("scrollend", flash);
-        card.classList.remove("tv-nav-hl");
-        void card.offsetWidth; // restart the animation
-        card.classList.add("tv-nav-hl");
-      };
-      // ``scrollend`` fires when the smooth scroll stops; the timeout covers
-      // browsers without it and the "already in view → no scroll" case.
-      $messages.addEventListener("scrollend", flash);
-      setTimeout(flash, 450);
+      card.scrollIntoView({ block: "start" });
+      // Highlight now that the card is in view (the jump already happened).
+      card.classList.remove("tv-nav-hl");
+      void card.offsetWidth; // restart the animation
+      card.classList.add("tv-nav-hl");
     });
   }
   _setupTeamView();

@@ -155,50 +155,57 @@ class TestTeamSwimlane:
         bar.first.click()
         assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
 
-    def test_click_bar_scrolls_into_view_then_flashes(self, stack, page):
-        """With a tall timeline, clicking a bar for an OFF-SCREEN card scrolls it
-        into view FIRST, then flashes it — so the highlight lands where the user
-        is looking (not off-screen mid-scroll)."""
-        page.set_viewport_size({"width": 1100, "height": 480})
+    def test_click_bar_jumps_instantly_and_survives_live_events(self, stack, page):
+        """From the bottom of a tall timeline, clicking a bar must jump to the
+        card INSTANTLY (synchronously) — a smooth scroll gets cancelled by the
+        constant card-appends + scrollToBottom() of an active run, which is the
+        'sometimes doesn't scroll up, click 2-3 times' bug. Then a burst of live
+        events must not yank it back down (auto-follow turned off)."""
+        page.set_viewport_size({"width": 1100, "height": 460})
         page.goto(stack.url)
         stack.emit_ready()
         r = stack.renderer
         r.agent_roster(
             [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
         )
-        # Many teammate work cards → a scrollable timeline; target the FIRST.
-        for i in range(14):
+        for i in range(20):
             r.begin_agent_work(key="w1", seq=i, profile="code-writer", message=f"t{i}")
             r.end_agent_work(key="w1", seq=i, success=True, duration_s=0.01)
         page.wait_for_selector("#split-handle:not([hidden])", timeout=8000)
+        target = "w1#3"  # near the top → far off-screen once scrolled to the bottom
         assert _wait(
             lambda: (
-                page.locator('#messages .card-task-group[data-task-id="w1#0"]').count()
+                page.locator(
+                    f'#messages .card-task-group[data-task-id="{target}"]'
+                ).count()
                 == 1
             )
         )
         in_view = (
             "() => { const m=document.getElementById('messages');"
-            " const c=m.querySelector('.card-task-group[data-task-id=\"w1#0\"]');"
+            f" const c=m.querySelector('.card-task-group[data-task-id=\"{target}\"]');"
             " if(!c) return false; const mr=m.getBoundingClientRect(),"
             " cr=c.getBoundingClientRect();"
-            " return cr.top >= mr.top-2 && cr.bottom <= mr.bottom+2; }"
+            " return cr.top >= mr.top-2 && cr.top <= mr.bottom; }"
         )
-        # Scroll the timeline to the bottom so w1#0 is OFF the top.
+        moved_up = (
+            "() => { const m=document.getElementById('messages');"
+            " return m.scrollTop < m.scrollHeight - m.clientHeight - 5; }"
+        )
         page.evaluate(
             "() => { const m=document.getElementById('messages'); m.scrollTop=m.scrollHeight; }"
         )
-        assert not page.evaluate(in_view)
-        page.locator('#team-view .tv-span[data-task-id="w1#0"]').first.click()
-        # A BURST of live events arrives right after the click, spanning the
-        # smooth-scroll window — each would call scrollToBottom(). Navigation
-        # must turn auto-follow OFF synchronously so none of them yank the
-        # timeline back to the bottom mid-scroll (the "click 2-3 times" bug).
-        for _ in range(6):
+        assert not page.evaluate(in_view)  # target is off the top
+        page.locator(f'#team-view .tv-span[data-task-id="{target}"]').first.click()
+        # INSTANT: scrollTop has already moved up synchronously (a smooth scroll
+        # would still be at the bottom here, then get cancelled by the appends).
+        assert page.evaluate(moved_up)
+        # A burst of live events (append cards + scrollToBottom) must not yank.
+        for _ in range(10):
             r.final("live turn", turn=1)
-            time.sleep(0.03)
-        assert _wait(lambda: page.evaluate(in_view))  # landed on the card, not bottom
-        card = page.locator('#messages .card-task-group[data-task-id="w1#0"]')
+            time.sleep(0.02)
+        assert _wait(lambda: page.evaluate(in_view))
+        card = page.locator(f'#messages .card-task-group[data-task-id="{target}"]')
         assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
 
     def test_click_navigates_to_top_of_expanded_card(self, stack, page):
