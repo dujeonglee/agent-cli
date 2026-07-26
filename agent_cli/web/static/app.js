@@ -1496,11 +1496,13 @@
   es.addEventListener("scope_start", function (e) {
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("scope_start", d);
-    // Resume replay (``replay_scopes``): the swimlane wants the bar, but the
-    // timeline's collapsible card must NOT be rebuilt — the scope's inner turns
-    // replay flat (ungrouped) via replay_from_history, so a re-created card
-    // would be an empty shell.
-    if (d.replay) return;
+    // NOTE: a resume-replayed scope (``d.replay``) builds its card too. It used
+    // to return here — the reasoning being that the scope's turns replayed flat,
+    // so the card would be an empty shell. Since v7.28.0 the resume replay is
+    // ONE time-ordered stream (``replay_session``) and each turn carries the
+    // scope it belongs to, so the card opens BEFORE its turns arrive and they
+    // land inside it. Skipping it now would be the bug: no card at all, and a
+    // swimlane bar offering navigation to something that does not exist.
     ensureTaskGroup(
       d.task_id,
       d.index || 0,
@@ -1525,8 +1527,26 @@
   es.addEventListener("scope_end", function (e) {
     const d = JSON.parse(e.data);
     if (window.TeamView) TeamView.ingest("scope_end", d);
-    if (d.replay) return; // replayed scope: swimlane only (see scope_start)
     noteScopeEnd(d.task_id);
+    // A replayed scope whose turns are not in this session's history closes
+    // EMPTY (an old session recorded before turns carried their scope, or a
+    // sub-agent whose turns live in its own context). Say why, rather than
+    // leaving a card that looks like it lost its content.
+    if (d.replay) {
+      const g = taskGroups[d.task_id];
+      if (g && !g.body.querySelector(".card")) {
+        const note = el("div", ["card", "card-sys", "task-empty-note"]);
+        note.appendChild(el("span", ["sys-icon"], "⊘"));
+        note.appendChild(
+          el(
+            "span",
+            ["sys-text"],
+            "이 실행의 턴 기록이 이 세션 히스토리에 없습니다 — 서브에이전트 컨텍스트이거나 resume 이전 기록입니다.",
+          ),
+        );
+        g.body.appendChild(note);
+      }
+    }
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
 
@@ -1539,6 +1559,25 @@
   // timeline to the matching collapsible card (shared task_id). Named function
   // (not a nested IIFE) so the markdown test harness's "first })(); = main
   // closer" extraction stays valid.
+  /** Transient "no card for this bar" notice at the cursor (auto-hides). */
+  let navMissEl = null;
+  let navMissTimer = 0;
+  function showNavMiss(x, y) {
+    if (!navMissEl) {
+      navMissEl = el("div", ["tv-nav-miss"]);
+      document.body.appendChild(navMissEl);
+    }
+    navMissEl.textContent =
+      "이 실행의 카드가 없습니다 — resume 이전 기록(스윔레인 막대만 복구)";
+    navMissEl.style.left = Math.max(4, Math.min(x + 12, window.innerWidth - 340)) + "px";
+    navMissEl.style.top = Math.max(4, y + 14) + "px";
+    navMissEl.hidden = false;
+    clearTimeout(navMissTimer);
+    navMissTimer = setTimeout(function () {
+      if (navMissEl) navMissEl.hidden = true;
+    }, 2600);
+  }
+
   function _setupTeamView() {
     const teamHost = document.getElementById("team-view");
     const toggle = document.getElementById("view-toggle");
@@ -1653,7 +1692,15 @@
       const card = $messages.querySelector(
         '.card-task-group[data-task-id="' + sel + '"]',
       );
-      if (!card) return;
+      if (!card) {
+        // ⓒ No card to jump to — say so instead of doing nothing. Happens for a
+        // session recorded before turns carried their scope (pre-v7.28): the
+        // bars come back from the sidecar, but there is no card to open. A
+        // silent no-op reads as a broken button (reported as "클릭해도 스크롤이
+        // 안 된다").
+        showNavMiss(e.clientX, e.clientY);
+        return;
+      }
       // A nested card lives inside its parent's (collapsed by default) body, so
       // expand the whole ancestor chain OUTERMOST-first before measuring the
       // scroll — expanding after the jump would move the target away from it.

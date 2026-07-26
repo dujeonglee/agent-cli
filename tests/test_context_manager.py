@@ -902,3 +902,83 @@ class TestObsCompleteNudge:
         b = self._last_content(ctx)  # second call must not double-append
         assert a == b
         assert a.count(self.NUDGE) == 1
+
+
+class TestHistoryRecordCarriesScope:
+    """history.jsonl 레코드가 자기 scope(task_id)를 실어야 한다 (v7.28.0).
+
+    이게 없으면 resume 재생이 어느 턴이 어느 skill/agent 실행 소속인지 알 수 없어
+    모든 턴이 main 타임라인으로 떨어지고, resumed 세션에 scope 카드가 **하나도**
+    안 생긴다(스윔레인은 막대를 그리니 존재하지 않는 카드로의 네비를 광고). 기록은
+    scope 의 **자기 스레드**에서 일어나므로 렌더러의 현재 스코프가 곧 소유자다.
+    """
+
+    @staticmethod
+    def _records(session_dir):
+        import json
+
+        path = session_dir / "history.jsonl"
+        return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+
+    def test_scope_id_is_stamped_and_omitted_at_main(self, tmp_path, monkeypatch):
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.context.manager.get_renderer", lambda: r)
+        ctx = ContextManager(tmp_path, max_context_tokens=10000)
+
+        ctx.add({"role": "user", "content": "main turn"})
+        r.begin_scope(task_id="sk1", kind="skill", label="orchestrate")
+        ctx.add({"role": "user", "content": "inside skill"})
+        r.end_scope(task_id="sk1", kind="skill")
+        ctx.add({"role": "user", "content": "back at main"})
+
+        recs = self._records(tmp_path)
+        assert [x.get("task_id") for x in recs] == [None, "sk1", None]
+        # main 레코드는 키 자체가 없어야 한다 (기존 레코드 모양 불변).
+        assert "task_id" not in recs[0] and "task_id" not in recs[2]
+
+    def test_nested_scope_stamps_the_innermost(self, tmp_path, monkeypatch):
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.context.manager.get_renderer", lambda: r)
+        ctx = ContextManager(tmp_path, max_context_tokens=10000)
+        r.begin_scope(task_id="outer", kind="skill", label="a")
+        r.begin_scope(task_id="inner", kind="skill", label="b")
+        ctx.add({"role": "user", "content": "deep"})
+        assert self._records(tmp_path)[-1]["task_id"] == "inner"
+
+    def test_per_thread_isolation(self, tmp_path, monkeypatch):
+        """병렬 워커의 기록이 서로의 scope 를 훔치지 않아야 한다."""
+        import threading
+
+        from agent_cli.render.web import WebRenderer
+
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.context.manager.get_renderer", lambda: r)
+        ctx = ContextManager(tmp_path, max_context_tokens=10000)
+        r.begin_scope(task_id="main-skill", kind="skill", label="a")
+
+        def worker():
+            r.begin_scope(task_id="w1", kind="run", label="t", parent="main-skill")
+            ctx.add({"role": "user", "content": "worker turn"})
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        ctx.add({"role": "user", "content": "caller turn"})
+        got = [x.get("task_id") for x in self._records(tmp_path)]
+        assert got == ["w1", "main-skill"]
+
+    def test_write_survives_a_broken_renderer(self, tmp_path, monkeypatch):
+        """표시 표면 때문에 히스토리 기록이 실패하면 안 된다 (best effort)."""
+
+        class Boom:
+            def current_scope(self):
+                raise RuntimeError("renderer exploded")
+
+        monkeypatch.setattr("agent_cli.context.manager.get_renderer", lambda: Boom())
+        ctx = ContextManager(tmp_path, max_context_tokens=10000)
+        ctx.add({"role": "user", "content": "still written"})
+        assert self._records(tmp_path)[-1]["content"] == "still written"

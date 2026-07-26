@@ -252,15 +252,20 @@ class TestTeamSwimlane:
 
 
 class TestResumeScopeReplay:
-    """On resume, ``replay_scopes`` re-emits scope events tagged ``replay:true``
-    so the swimlane bars come back. The frontend must draw the bar but NOT
-    rebuild the timeline's collapsible card (inner turns replay flat → an
-    empty shell)."""
+    """On resume, the scope sidecar's events come back tagged ``replay:true``
+    and restore BOTH the swimlane bar and the timeline card.
 
-    def test_replay_scope_draws_bar_without_timeline_card(self, stack, page):
+    v7.21~7.27 drew only the bar ("inner turns replay flat → an empty shell").
+    That left a resumed session with zero skill/agent cards while the swimlane
+    still offered click-navigation to them. Since v7.28.0 resume is one
+    time-ordered stream (``replay_session``) and turns carry their scope, so the
+    card is the right thing to build — and when a scope's turns genuinely are not
+    in this history (old session / sub-agent context) the card says so."""
+
+    def test_replay_scope_draws_bar_and_card(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
-        # As replay_scopes would emit on resume: replay-tagged skill scope.
+        # As replay_session would emit on resume: replay-tagged skill scope.
         r = stack.renderer
         r._emit(
             "scope_start",
@@ -275,8 +280,17 @@ class TestResumeScopeReplay:
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
         # Swimlane bar restored…
         assert _wait(lambda: page.locator(".tv-scope-skill").count() >= 1)
-        # …but no collapsible timeline card for the replayed scope.
-        assert page.locator('.card-task-group[data-task-id="sk-r"]').count() == 0
+        # …and the collapsible card too, so the bar has somewhere to navigate.
+        assert _wait(
+            lambda: page.locator('.card-task-group[data-task-id="sk-r"]').count() == 1
+        )
+        # No turns were replayed into it → the card explains why it is empty.
+        assert (
+            page.locator(
+                '.card-task-group[data-task-id="sk-r"] .task-empty-note'
+            ).count()
+            == 1
+        )
 
     def test_live_scope_still_builds_timeline_card(self, stack, page):
         """Contrast: a normal (non-replay) scope DOES build the timeline card —
@@ -663,7 +677,10 @@ class TestSplitPaneWidthClamp:
 
     def test_oversized_stored_width_cannot_squeeze_the_timeline(self, stack, browser):
         stack.emit_ready()
-        for viewport in ({"width": 1400, "height": 900}, {"width": 1000, "height": 800}):
+        for viewport in (
+            {"width": 1400, "height": 900},
+            {"width": 1000, "height": 800},
+        ):
             got = self._seed_and_measure(stack, browser, viewport=viewport, saved=3000)
             assert got["msg"] >= 300, (viewport, got)  # 타임라인 최소폭 확보
             assert got["card"] >= 200, (viewport, got)  # 카드가 실제로 읽히는 폭
@@ -689,10 +706,12 @@ class TestSplitPaneWidthClamp:
         page.wait_for_selector("#messages .card", timeout=8000)
         page.set_viewport_size({"width": 900, "height": 800})
         assert _wait(
-            lambda: page.evaluate(
-                "() => Math.round(document.getElementById('messages').getBoundingClientRect().width)"
+            lambda: (
+                page.evaluate(
+                    "() => Math.round(document.getElementById('messages').getBoundingClientRect().width)"
+                )
+                >= 300
             )
-            >= 300
         ), page.evaluate(
             "() => Math.round(document.getElementById('messages').getBoundingClientRect().width)"
         )

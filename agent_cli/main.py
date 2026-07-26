@@ -1924,12 +1924,13 @@ def web(
     # and re-emits the same event sequence the live loop would have
     # produced — see :meth:`WebRenderer.replay_from_history`.
     if is_resume:
-        renderer.replay_from_history(ctx)
-        # Restore the team-swimlane activity bars (skill bands / delegate
-        # one-shots / teammate work spans) from the scopes.jsonl sidecar —
-        # scope events have no counterpart in ctx's message history, so
-        # ``replay_from_history`` alone leaves the swimlane empty.
-        renderer.replay_scopes()
+        # ONE interleaved replay: history turns + the scopes.jsonl sidecar in
+        # timestamp order. Scope events have no counterpart in ctx's message
+        # history (hence the sidecar), and their ORDER relative to the turns is
+        # what rebuilds the nesting — a scope's card must be open before its own
+        # turns arrive, or they fall back to the main timeline and the resumed
+        # session shows no skill/agent cards at all.
+        renderer.replay_session(ctx)
 
     # Populate the Prompt Inspector's system prompt BEFORE the first message
     # (the loop only captures on an LLM call). With ctx already restored, the

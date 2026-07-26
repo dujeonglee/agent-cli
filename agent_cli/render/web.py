@@ -76,6 +76,23 @@ class _JsonReady(dict):
 # tests agree on the sentinel.
 _MAIN_SCOPE = ""
 
+
+def _iso_to_epoch(ts) -> float | None:
+    """History ``ts`` (ISO string) → epoch seconds, to compare against the scope
+    sidecar's epoch stamps. ``None`` when unparseable (legacy pre-ts records),
+    which the caller reads as "no time bound" so nothing is held back."""
+    if ts is None:
+        return None
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(str(ts)).timestamp()
+    except ValueError:
+        return None
+
+
 # Sticky slots whose change flips a field of ``status.json``: ``worker_state``
 # → busy, ``input_required`` → awaiting_input. A set_sticky/clear_sticky on
 # either republishes the status sidecar (viewers republish on register/unregister).
@@ -243,6 +260,10 @@ class WebRenderer(Renderer):
         # stamps fresh wall-clock. Set/cleared around the single-threaded seed
         # loop (runs before the worker thread or any SSE client exists).
         self._replay_ts: float | str | None = None
+        # Scope a replayed record belongs to — attached by ``_emit`` exactly like
+        # ``_replay_ts``, because replay runs on the MAIN thread (so the usual
+        # per-thread routing cannot know the original scope).
+        self._replay_task_id: str | None = None
 
     # ─── Event distribution ─────────────────────────
 
@@ -266,7 +287,7 @@ class WebRenderer(Renderer):
         deliberately bare (e.g. ``input_resolved``).
         """
         tid = threading.get_ident()
-        task_id = self._thread_to_task.get(tid)
+        task_id = self._thread_to_task.get(tid) or self._replay_task_id
         if task_id is not None and "task_id" not in data:
             data = {**data, "task_id": task_id}
         # Server-stamp emit time once, at the single fan-out point, so every
@@ -796,7 +817,7 @@ class WebRenderer(Renderer):
                     conn.queue.put(_CLOSE_SENTINEL)
             self._connections.clear()
 
-    def replay_from_history(self, ctx) -> None:
+    def replay_from_history(self, ctx, scope_events=None) -> None:
         """Re-emit persistent events from ``ctx`` so reconnecting
         clients see prior turns.
 
@@ -812,13 +833,38 @@ class WebRenderer(Renderer):
 
         Called once at server startup when ``--resume <id>`` was passed,
         BEFORE the worker thread starts or any SSE client connects.
+
+        ``scope_events`` — optional ``(ts, event, data)`` list from
+        :meth:`_scope_replay_events`, flushed **in time order with the turns**
+        so each scope's card is open when its own turns arrive (see
+        :meth:`replay_session`). Omit it to replay turns only.
         """
+        pending = list(scope_events or [])
+        pending_i = 0
+
+        def _flush_scopes_until(ts_iso: str | None) -> None:
+            """Emit scope events that happened at or before this record."""
+            nonlocal pending_i
+            limit = _iso_to_epoch(ts_iso)
+            while pending_i < len(pending) and (
+                limit is None or pending[pending_i][0] <= limit
+            ):
+                self._emit_scope_replay(pending[pending_i])
+                pending_i += 1
+
         for msg in ctx.get_raw_messages():
             # Resumed cards show the step's original time (from the enriched
             # history record), not the resume moment. ``_restore_cache`` loads
             # full records, so ``ts`` survives in the cache; legacy pre-ts
             # sessions yield None → ``_emit`` falls back to wall-clock.
-            self._replay_ts = msg.get("ts")
+            record_ts = msg.get("ts")
+            if pending and record_ts:
+                _flush_scopes_until(record_ts)
+            self._replay_ts = record_ts
+            # Route this turn into its scope's card (written by
+            # ``ContextManager._enrich_record``; absent on pre-v7.28 sessions,
+            # which then replay flat as before).
+            self._replay_task_id = msg.get("task_id") or None
             role = msg.get("role")
             if role == "user":
                 # ``tool`` key presence — not truthiness — signals an
@@ -880,6 +926,12 @@ class WebRenderer(Renderer):
                     content = msg.get("content", "")
                     if content:
                         self.final(content, turn=0)
+        # Any scope that outlived the last replayed turn (or a session with no
+        # turns at all) still needs its bar + closing card.
+        self._replay_task_id = None
+        while pending_i < len(pending):
+            self._emit_scope_replay(pending[pending_i])
+            pending_i += 1
         # Back to live: subsequent events get a fresh wall-clock stamp.
         self._replay_ts = None
 
@@ -899,23 +951,15 @@ class WebRenderer(Renderer):
         except OSError:
             pass
 
-    def replay_scopes(self) -> None:
-        """Re-emit ``scope_start``/``scope_end`` from the ``scopes.jsonl``
-        sidecar so a resumed session restores the team-swimlane activity bars
-        (skill bands, delegate one-shots, teammate work spans) — they have no
-        other on-disk source, so ``replay_from_history`` alone leaves the
-        swimlane empty.
+    def _scope_replay_events(self) -> list[tuple[float, str, dict[str, Any]]]:
+        """The sidecar's scope lifecycle as ``(ts, event, data)``, ts-sorted.
 
-        Each replayed event is tagged ``replay:true``: the frontend feeds it to
-        the swimlane but SKIPS rebuilding the timeline's collapsible card, whose
-        inner turns replay flat (ungrouped) — a re-created card would be an empty
-        shell. A scope whose process died before ``end_scope`` (a start with no
-        matching end) gets a synthesized ``scope_end`` at the last logged time so
-        a bar from a dead run doesn't render as perpetually running. No-op when
-        the sidecar is absent (pre-feature or fresh session) → resume unchanged.
-        """
+        Includes a synthesized ``scope_end`` for any scope whose process died
+        before it closed (start with no matching end) so a dead run's bar does
+        not render as perpetually running. Empty when the sidecar is absent
+        (pre-feature or fresh session) → resume unchanged."""
         if self._scope_log_path is None or not self._scope_log_path.exists():
-            return
+            return []
         records: list[dict[str, Any]] = []
         try:
             with open(self._scope_log_path, encoding="utf-8") as f:
@@ -928,9 +972,10 @@ class WebRenderer(Renderer):
                     except ValueError:
                         continue  # skip a torn/partial line, keep the rest
         except OSError:
-            return
+            return []
         if not records:
-            return
+            return []
+        out: list[tuple[float, str, dict[str, Any]]] = []
         ended = {r.get("task_id") for r in records if r.get("event") == "scope_end"}
         open_starts: dict[str, dict[str, Any]] = {}
         for rec in records:
@@ -939,28 +984,62 @@ class WebRenderer(Renderer):
                 continue
             data = {k: v for k, v in rec.items() if k != "event"}
             data["replay"] = True
-            self._replay_ts = data.get("ts")
-            self._emit(event, data, persistent=True)
+            out.append((float(data.get("ts") or 0.0), event, data))
             if event == "scope_start":
                 open_starts[rec.get("task_id")] = rec
-        # Close any scope that never got an end (crash mid-scope).
-        last_ts = records[-1].get("ts")
+        last_ts = float(records[-1].get("ts") or 0.0)
         for task_id, start in open_starts.items():
             if task_id in ended:
                 continue
-            self._replay_ts = last_ts
-            self._emit(
-                "scope_end",
-                {
-                    "task_id": task_id,
-                    "kind": start.get("kind", "run"),
-                    "success": True,
-                    "duration_s": 0.0,
-                    "replay": True,
-                },
-                persistent=True,
+            out.append(
+                (
+                    last_ts,
+                    "scope_end",
+                    {
+                        "task_id": task_id,
+                        "kind": start.get("kind", "run"),
+                        "success": True,
+                        "duration_s": 0.0,
+                        "replay": True,
+                    },
+                )
             )
+        out.sort(key=lambda x: x[0])
+        return out
+
+    def _emit_scope_replay(self, item: tuple[float, str, dict[str, Any]]) -> None:
+        _ts, event, data = item
+        self._replay_ts = data.get("ts")
+        self._emit(event, data, persistent=True)
+
+    def replay_scopes(self) -> None:
+        """Re-emit the sidecar's ``scope_start``/``scope_end`` on their own —
+        the swimlane bars without the interleaved history turns.
+
+        :meth:`replay_session` is what the resume path uses (it interleaves both
+        streams by time so each scope's card exists before its turns arrive).
+        This entry point stays for callers that only want the bars."""
+        for item in self._scope_replay_events():
+            self._emit_scope_replay(item)
         self._replay_ts = None
+
+    def replay_session(self, ctx) -> None:
+        """Full resume replay: history turns AND scope lifecycle, **interleaved
+        by timestamp**, so the frontend rebuilds the same nesting the live run
+        had — each scope's collapsible card opens, its own turns land inside it,
+        then it closes.
+
+        Order is the whole point. Replaying the two streams back-to-back (the
+        pre-v7.28 behaviour) left every scope card either absent or empty: turns
+        arrived before any card existed, so they all fell back to the main
+        timeline, and a resumed session showed NO skill/agent cards while the
+        swimlane still offered click-navigation to them.
+
+        Turn→scope association comes from the history record's ``task_id``
+        (written by ``ContextManager._enrich_record``). Sessions recorded before
+        that field exists replay flat — the bars still come back, and the
+        frontend tells the user when a bar has no card to jump to."""
+        self.replay_from_history(ctx, scope_events=self._scope_replay_events())
 
     def _replay_assistant_op(self, action: str, action_input) -> None:
         """Emit one assistant op as a replay card — ``final`` for a terminal
