@@ -48,9 +48,9 @@ class TestTeamSwimlane:
         stack.emit_ready()
         _drive_team(stack)
 
-        # The Timeline/Team toggle appears once team activity arrives.
+        # The swimlane pane + collapse toggle appear once team activity arrives
+        # (side-by-side with the timeline — no view switch needed).
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         page.wait_for_selector("#team-view .tv-svg", timeout=8000)
 
         # Lanes: main + orch + w1 → at least 3 lane chips, and w1/orch labelled.
@@ -65,7 +65,7 @@ class TestTeamSwimlane:
         # The reply is a message connector between lanes.
         assert _wait(lambda: page.locator(".tv-msg").count() >= 1)
 
-    def test_timeline_and_team_are_mutually_exclusive(self, stack, page):
+    def test_side_by_side_and_collapse_toggle(self, stack, page):
         page.goto(stack.url)
         stack.emit_ready()
         _drive_team(stack)
@@ -73,15 +73,14 @@ class TestTeamSwimlane:
 
         messages = page.locator("#messages")
         team = page.locator("#team-view")
-        # Default: Timeline shown, Team hidden.
-        assert messages.is_visible()
-        assert not team.is_visible()
-        # Switch to Team → swimlane shown, timeline hidden.
-        page.click('.vt-tab[data-view="team"]')
-        assert _wait(lambda: team.is_visible() and not messages.is_visible())
-        # Back to Timeline.
-        page.click('.vt-tab[data-view="timeline"]')
-        assert _wait(lambda: messages.is_visible() and not team.is_visible())
+        # Both visible at once — the swimlane sits BESIDE the timeline.
+        assert _wait(lambda: team.is_visible() and messages.is_visible())
+        # ◧ Team collapses the pane; the timeline stays visible.
+        page.click("#vt-team-toggle")
+        assert _wait(lambda: not team.is_visible() and messages.is_visible())
+        # Toggling again re-shows the pane.
+        page.click("#vt-team-toggle")
+        assert _wait(lambda: team.is_visible() and messages.is_visible())
 
     def test_reconnect_replay_no_flash_empty_or_duplicate(self, stack, page):
         """Reconnect replays the persistent buffer (roster sticky + scope_* +
@@ -92,7 +91,6 @@ class TestTeamSwimlane:
         stack.emit_ready()
         _drive_team(stack)
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         page.wait_for_selector(".tv-scope-skill", timeout=8000)
         n_skill = page.locator(".tv-scope-skill").count()
 
@@ -114,11 +112,25 @@ class TestTeamSwimlane:
         stack.emit_ready()
         _drive_team(stack)
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         page.wait_for_selector(".tv-scope-skill", timeout=8000)
         page.locator(".tv-scope-skill").first.hover()
         page.wait_for_selector(".tv-tip:not([hidden])", timeout=3000)
         assert "orchestrate" in page.locator(".tv-tip").inner_text()
+
+    def test_click_bar_navigates_timeline(self, stack, page):
+        """The swimlane is a navigator: clicking a work bar flashes the matching
+        timeline card (shared task_id). The w1 work bar carries data-task-id
+        "w1#0", and the timeline has a .card-task-group with the same id."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        _drive_team(stack)
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        bar = page.locator('#team-view .tv-span[data-task-id="w1#0"]')
+        assert _wait(lambda: bar.count() >= 1)
+        card = page.locator('#messages .card-task-group[data-task-id="w1#0"]')
+        assert _wait(lambda: card.count() == 1)
+        bar.first.click()
+        assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
 
 
 class TestResumeScopeReplay:
@@ -143,7 +155,6 @@ class TestResumeScopeReplay:
             persistent=True,
         )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         # Swimlane bar restored…
         assert _wait(lambda: page.locator(".tv-scope-skill").count() >= 1)
         # …but no collapsible timeline card for the replayed scope.
@@ -172,7 +183,6 @@ class TestVerticalLayout:
         stack.emit_ready()
         _drive_team(stack)
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         # Column chips live in the sticky header (.tv-head), not the plot.
         page.wait_for_selector("#team-view .tv-head .tv-chip", timeout=8000)
         assert _wait(lambda: page.locator("#team-view .tv-head .tv-chip").count() >= 3)
@@ -202,7 +212,6 @@ class TestVerticalLayout:
             key="w1", direction="out", author="w1", to="main", text="done", seq=1
         )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         assert _wait(lambda: page.locator("#team-view .tv-msg").count() == 2)
 
     def test_many_events_scroll_vertically(self, stack, page):
@@ -222,7 +231,6 @@ class TestVerticalLayout:
                 key="w1", direction="out", author="w1", to="main", text=f"m{i}", seq=i
             )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         page.wait_for_selector("#team-view .tv-msg", timeout=8000)
         assert _wait(
             lambda: page.evaluate(
@@ -281,7 +289,6 @@ class TestVerticalLayout:
             persistent=True,
         )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         page.wait_for_selector("#team-view .tv-tick", timeout=8000)
         ys = page.evaluate(
             "() => Array.from(document.querySelectorAll('#team-view .tv-tick'))"
@@ -312,7 +319,6 @@ class TestVerticalLayout:
             key="w1", direction="out", author="w1", to="main", text="hi", seq=1
         )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         assert _wait(lambda: page.locator("#team-view .tv-busy").count() == 1)  # w1
         assert _wait(lambda: page.locator("#team-view .tv-idle").count() == 1)  # w2
         # Status lives ONLY at the tail now — the header chip no longer draws a
@@ -336,7 +342,6 @@ class TestVerticalLayout:
             persistent=True,
         )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
         tip = page.locator("#team-view .tv-scope-skill").first.get_attribute("data-tip")
         assert "30s" in tip
@@ -369,5 +374,4 @@ class TestVerticalLayout:
             key="w1", direction="out", author="w1", to="agent:orch", text="done", seq=1
         )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
-        page.click('.vt-tab[data-view="team"]')
         assert _wait(lambda: page.locator("#team-view .tv-msg").count() == 2)

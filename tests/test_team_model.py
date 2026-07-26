@@ -126,6 +126,7 @@ class TestSpans:
         spans = m["agents"]["w1"]["spans"]
         assert len(spans) == 1
         assert spans[0]["t0"] == 3.0 and spans[0]["t1"] == 9.0
+        assert spans[0]["task_id"] == "w1#0"  # kept for click→timeline-card link
         assert m["oneshots"] == []  # NOT a main one-shot
 
     def test_open_agent_work_closed_at_trace_end(self):

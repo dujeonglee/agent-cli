@@ -375,6 +375,8 @@
           h = Math.max(rowY(item.t1) - y0, 3);
         var r = svg("rect", { class: cls, x: cx - BARW / 2, y: y0, width: BARW, height: h, rx: BARW / 2 }, s);
         r.setAttribute("data-tip", prefix + " " + item.label + " · " + fmtDur(item.t1 - item.t0));
+        // Link to the timeline card (app.js scrolls on click).
+        if (item.task_id) r.setAttribute("data-task-id", item.task_id);
       }
       m.mainSpans.forEach(function (sp) {
         var cx = colX(0);
@@ -403,6 +405,7 @@
           var r = svg("rect", { class: "tv-span", x: cx - BARW / 2, y: y0, width: BARW, height: h, rx: BARW / 2 }, s);
           r.style.fill = hv;
           r.setAttribute("data-tip", ag.label + ": " + (sp.title || "working") + " · " + fmtDur(sp.t1 - sp.t0));
+          if (sp.task_id) r.setAttribute("data-task-id", sp.task_id);
         });
       });
 

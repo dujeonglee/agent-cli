@@ -1465,16 +1465,31 @@
     closeTaskGroup(d.task_id, !!d.success, d.duration_s, d.error || "");
   });
 
-  // ── Team swimlane: mount + Timeline/Team toggle ──
-  // The toggle bar is hidden until there's team activity (agents spawned or a
-  // scope opened), so a plain single-agent chat never sees it. Named function
+  // ── Team swimlane: side-by-side with the timeline ──
+  // The swimlane is a compact overview + navigator on the LEFT, the timeline the
+  // detail on the RIGHT (see #content-split). Both stay visible; the ◧ Team
+  // button just collapses the pane so the timeline can reclaim the width. The
+  // pane + button are hidden until team activity arrives, so a plain
+  // single-agent chat never sees them. Clicking a swimlane bar scrolls the
+  // timeline to the matching collapsible card (shared task_id). Named function
   // (not a nested IIFE) so the markdown test harness's "first })(); = main
   // closer" extraction stays valid.
   function _setupTeamView() {
     const teamHost = document.getElementById("team-view");
     const toggle = document.getElementById("view-toggle");
-    if (!teamHost || !toggle || !window.TeamView) return;
+    const btn = document.getElementById("vt-team-toggle");
+    if (!teamHost || !toggle || !btn || !window.TeamView) return;
     TeamView.mount(teamHost);
+
+    // aria-pressed="true" = pane shown; setActive toggles teamHost.hidden.
+    function setCollapsed(collapsed) {
+      btn.setAttribute("aria-pressed", collapsed ? "false" : "true");
+      TeamView.setActive(!collapsed);
+    }
+    btn.addEventListener("click", () =>
+      setCollapsed(btn.getAttribute("aria-pressed") === "true"),
+    );
+
     let revealed = false;
     const origIngest = TeamView.ingest.bind(TeamView);
     TeamView.ingest = function (type, data) {
@@ -1485,18 +1500,26 @@
       if (isTeam && !revealed) {
         revealed = true;
         toggle.hidden = false;
+        setCollapsed(false); // reveal the pane beside the timeline
       }
     };
-    const tabs = toggle.querySelectorAll(".vt-tab");
-    function select(view) {
-      tabs.forEach((t) =>
-        t.setAttribute("aria-selected", t.dataset.view === view ? "true" : "false"),
+
+    // Click a swimlane bar → scroll the timeline to its card and flash it.
+    teamHost.addEventListener("click", (e) => {
+      const tid =
+        e.target && e.target.getAttribute && e.target.getAttribute("data-task-id");
+      if (!tid) return;
+      const sel =
+        window.CSS && CSS.escape ? CSS.escape(tid) : tid.replace(/"/g, '\\"');
+      const card = $messages.querySelector(
+        '.card-task-group[data-task-id="' + sel + '"]',
       );
-      const team = view === "team";
-      $messages.hidden = team;
-      TeamView.setActive(team);
-    }
-    tabs.forEach((t) => t.addEventListener("click", () => select(t.dataset.view)));
+      if (!card) return;
+      card.classList.remove("tv-nav-hl");
+      void card.offsetWidth; // restart the flash
+      card.classList.add("tv-nav-hl");
+      card.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
   }
   _setupTeamView();
 

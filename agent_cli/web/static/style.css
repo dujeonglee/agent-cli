@@ -1340,10 +1340,9 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 
 /* ── Team swimlane (Phase 3) — role hue tokens live in the top :root block;
    everything here is var()-based so it recolors with the theme. */
-/* main#messages sets display:flex, which out-specifies the UA [hidden] rule —
-   restore hide-on-hidden so the Team toggle can swap the two surfaces. */
 #messages[hidden] { display: none; }
-/* Timeline / Team toggle bar */
+/* Team-pane collapse toggle (◧ Team) — a single button, shown once there's
+   team activity; pressed = pane visible. */
 .view-toggle {
   display: flex; align-items: center; gap: 6px; padding: 8px 16px 0;
 }
@@ -1354,13 +1353,32 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   transition: color .14s, background .14s;
 }
 .vt-tab:hover { color: var(--text); }
-.vt-tab[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
+.vt-tab[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
 .vt-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Team view container — the vertical scroll surface (time flows DOWN). The
-   agent-column header (.tv-head) pins at the top while the plot scrolls. */
-#team-view { flex: 1; overflow: auto; padding: 0 12px 20px; min-height: 0; }
+/* Side-by-side: swimlane (overview, LEFT) + timeline (detail, RIGHT). */
+#content-split { display: flex; flex: 1; min-height: 0; }
+#content-split > main#messages { flex: 1; }
+/* Team view container — the vertical scroll surface (time flows DOWN), now a
+   fixed-width left pane. The agent-column header (.tv-head) pins at the top. */
+#team-view {
+  flex: 0 0 340px; overflow: auto; padding: 0 12px 20px; min-height: 0;
+  border-right: 1px solid var(--border);
+}
 #team-view[hidden] { display: none; }
+/* Narrow screens: stack the swimlane above the timeline instead of beside. */
+@media (max-width: 780px) {
+  #content-split { flex-direction: column; }
+  #team-view { flex: 0 0 210px; border-right: 0; border-bottom: 1px solid var(--border); }
+}
+/* A timeline card the user navigated to from the swimlane. */
+#messages > .card.tv-nav-hl, #messages .card-task-group.tv-nav-hl {
+  animation: tv-nav-flash 1.2s ease;
+}
+@keyframes tv-nav-flash {
+  0%, 100% { box-shadow: none; }
+  12% { box-shadow: 0 0 0 2px var(--accent); }
+}
 .tv-head {
   display: block; width: 100%; height: auto;
   position: sticky; top: 0; z-index: 2;

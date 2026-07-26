@@ -90,7 +90,9 @@
       if (o.kind === "skill") skillBands.push(o);
       else if (o.kind === "work") {
         var ag = agents.get(o.key);
-        if (ag) ag.spans.push({ t0: o.t0, t1: o.t1, title: o.label });
+        // Keep task_id so the view can link the bar to its timeline card
+        // (``.card-task-group[data-task-id]``) for click-to-navigate.
+        if (ag) ag.spans.push({ t0: o.t0, t1: o.t1, title: o.label, task_id: o.task_id });
       } else oneshots.push(o);
     }
     var mainBusyFrom = null;

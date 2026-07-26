@@ -77,14 +77,19 @@
     <button id="nb-set" type="button" class="btn-primary">Set</button>
     <button id="nb-skip" type="button" class="btn-icon" title="Keep default">✕</button>
   </div>
-  <div class="view-toggle" id="view-toggle" role="tablist" aria-label="View" hidden>
+  <div class="view-toggle" id="view-toggle" aria-label="View" hidden>
     <div class="vt-seg">
-      <button class="vt-tab" role="tab" data-view="timeline" aria-selected="true">Timeline</button>
-      <button class="vt-tab" role="tab" data-view="team" aria-selected="false">Team</button>
+      <button class="vt-tab" id="vt-team-toggle" type="button" aria-pressed="true"
+              title="Show/hide the Team overview pane">◧ Team</button>
     </div>
   </div>
-  <main id="messages"></main>
-  <div id="team-view" hidden></div>
+  <!-- Timeline (main) + Team swimlane sit side by side: the swimlane is a
+       compact overview + navigator on the LEFT, the timeline the detail on the
+       RIGHT. Clicking a swimlane bar scrolls the timeline to its card. -->
+  <div id="content-split">
+    <div id="team-view" hidden></div>
+    <main id="messages"></main>
+  </div>
 
   <!-- Export selection action bar (shown only in export mode) -->
   <div id="export-bar" hidden>
