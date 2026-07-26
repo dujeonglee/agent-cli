@@ -69,6 +69,10 @@ MODELS = [
     if m.strip()
 ]
 
+# A/B 실험 변형 등록 — import 자체가 registry 에 넣는다 (bakeoff 전용,
+# 패키지 미출하). BAKEOFF_PLUGINS 에 json_fc_fenced 를 넣으면 선택된다.
+import wire_fenced  # noqa: F401,E402
+
 PLUGINS = [
     p.strip()
     for p in os.environ.get("BAKEOFF_PLUGINS", "json_fc,xml_fc").split(",")
@@ -155,6 +159,19 @@ TASKS: list[Task] = [
         query=(
             "Read app.py at line 1-50, then summarise what you find. "
             "If you see no obvious issue, complete the task."
+        ),
+        active_tools=("read_file", "shell"),
+    ),
+    # ★배칭 유도 태스크 (2026-07-27, 펜스 A/B 와 함께 추가): 서로 독립인 읽기
+    # 3건 — 프롬프트의 "batch independent work" 지시를 따르면 턴 1에 op 3개가
+    # 한 배열로 온다. 기존 태스크는 전부 순차 의존이라 multi 지표가 항상 0 —
+    # compact A/B 를 기각시킨 바로 그 신호를 잴 셀이 없었다.
+    Task(
+        id="read_three_files",
+        query=(
+            "Read src/auth.py, src/session.py and src/routes/login.py — they "
+            "are independent, so fetch them however is most efficient — then "
+            "complete with one sentence on how auth flows between them."
         ),
         active_tools=("read_file", "shell"),
     ),
@@ -266,6 +283,8 @@ class RunResult:
     recovery_messages: int
     thought_present_count: int
     assistant_turns: int
+    multi_op_turns: int  # assistant turns emitting ≥2 ops (batching signal)
+    total_ops: int
     output: str
     elapsed_seconds: float
     error: str | None = None
@@ -312,12 +331,17 @@ def _count_signals_from_turns_jsonl(path: Path) -> dict[str, int]:
     }
 
 
-def _count_thought_signals(history_jsonl: Path) -> tuple[int, int]:
-    """Count assistant turns and how many had a non-empty thought."""
+def _count_thought_signals(history_jsonl: Path) -> tuple[int, int, int, int]:
+    """(assistant_turns, with_thought, multi_op_turns, total_ops).
+
+    multi_op_turns = 한 턴에 op ≥2 (배칭 신호) — xml_fc-compact A/B 를 기각시킨
+    바로 그 지표. 프롬프트 shape 변경은 파스가 멀쩡해도 배칭을 죽일 수 있다."""
     if not history_jsonl.is_file():
-        return 0, 0
+        return 0, 0, 0, 0
     assistant = 0
     with_thought = 0
+    multi_op = 0
+    total_ops = 0
     for line in history_jsonl.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -331,7 +355,12 @@ def _count_thought_signals(history_jsonl: Path) -> tuple[int, int]:
         thought = obj.get("thought") or ""
         if isinstance(thought, str) and thought.strip():
             with_thought += 1
-    return assistant, with_thought
+        ops = obj.get("ops")
+        if isinstance(ops, list):
+            total_ops += len(ops)
+            if len(ops) >= 2:
+                multi_op += 1
+    return assistant, with_thought, multi_op, total_ops
 
 
 def call_once(
@@ -386,7 +415,9 @@ def call_once(
         turns_path = ctx_dir / "turns.jsonl"
         history_path = ctx_dir / "history.jsonl"
         signals = _count_signals_from_turns_jsonl(turns_path)
-        assistant_turns, with_thought = _count_thought_signals(history_path)
+        assistant_turns, with_thought, multi_op, total_ops = _count_thought_signals(
+            history_path
+        )
 
         # ★ no_action 원문 보존 (임시 세션 dir 이 사라지기 전) — action-less
         #   턴의 산문이 "최종답변인데 complete 누락"인지 "중간서술"인지 눈으로
@@ -416,6 +447,8 @@ def call_once(
             recovery_messages=signals["recovery_messages"],
             thought_present_count=with_thought,
             assistant_turns=assistant_turns,
+            multi_op_turns=multi_op,
+            total_ops=total_ops,
             output=output,
             elapsed_seconds=elapsed,
             error=error,
@@ -465,6 +498,14 @@ class CellResult:
             return 0.0
         total_with = sum(r.thought_present_count for r in self.runs)
         return total_with / total_assistant
+
+    @property
+    def multi_op_rate(self) -> float:
+        """assistant 턴 중 op ≥2 비율 — 배칭 신호 (compact A/B 기각 지표)."""
+        total_assistant = sum(r.assistant_turns for r in self.runs)
+        if total_assistant == 0:
+            return 0.0
+        return sum(r.multi_op_turns for r in self.runs) / total_assistant
 
     @property
     def mean_elapsed(self) -> float:
@@ -534,6 +575,7 @@ def format_markdown_report(
         "**iters** = mean turn count (lower = more efficient); "
         "**pf/run** = mean ``parse_stage==0`` events per run; "
         "**rec/run** = mean recovery interventions per run; "
+        "**multi** = fraction of assistant turns emitting ≥2 ops (batching); "
         "**thought** = fraction of assistant turns with non-empty thought / reasoning."
     )
     lines.append("")
@@ -543,18 +585,18 @@ def format_markdown_report(
         lines.append("")
         lines.append(
             "| task | plugin | completed | iters | pf/run | rec/run | thought |"
-            " mean_s |"
+            " multi | mean_s |"
         )
         lines.append(
             "|------|--------|----------:|------:|-------:|--------:|--------:|"
-            "-------:|"
+            "------:|-------:|"
         )
         for task in TASKS:
             for plugin_name in PLUGINS:
                 cell = cells.get((model, plugin_name, task.id))
                 if cell is None or not cell.runs:
                     lines.append(
-                        f"| {task.id} | {plugin_name} | — | — | — | — | — | — |"
+                        f"| {task.id} | {plugin_name} | — | — | — | — | — | — | — |"
                     )
                     continue
                 row = (
@@ -564,6 +606,7 @@ def format_markdown_report(
                     f"{cell.parse_failures_per_run:5.2f} | "
                     f"{cell.recovery_per_run:5.2f} | "
                     f"{format_pct(cell.thought_present_rate)} | "
+                    f"{format_pct(cell.multi_op_rate)} | "
                     f"{cell.mean_elapsed:5.1f} |"
                 )
                 lines.append(row)
@@ -571,27 +614,29 @@ def format_markdown_report(
 
     lines.append("## Per-plugin summary (averaged across models and tasks)")
     lines.append("")
-    lines.append("| plugin | completed | iters | pf/run | rec/run | thought |")
-    lines.append("|--------|----------:|------:|-------:|--------:|--------:|")
+    lines.append("| plugin | completed | iters | pf/run | rec/run | thought | multi |")
+    lines.append("|--------|----------:|------:|-------:|--------:|--------:|------:|")
     for plugin_name in PLUGINS:
         all_cells = [
             cell for (m, p, _), cell in cells.items() if p == plugin_name and cell.runs
         ]
         if not all_cells:
-            lines.append(f"| {plugin_name} | — | — | — | — | — |")
+            lines.append(f"| {plugin_name} | — | — | — | — | — | — |")
             continue
         completed = statistics.mean(c.completed_rate for c in all_cells)
         iters = statistics.mean(c.mean_iterations for c in all_cells)
         pf = statistics.mean(c.parse_failures_per_run for c in all_cells)
         rec = statistics.mean(c.recovery_per_run for c in all_cells)
         thought = statistics.mean(c.thought_present_rate for c in all_cells)
+        multi = statistics.mean(c.multi_op_rate for c in all_cells)
         lines.append(
             f"| {plugin_name} | "
             f"{format_pct(completed)} | "
             f"{iters:5.1f} | "
             f"{pf:5.2f} | "
             f"{rec:5.2f} | "
-            f"{format_pct(thought)} |"
+            f"{format_pct(thought)} | "
+            f"{format_pct(multi)} |"
         )
     lines.append("")
     return "\n".join(lines)
