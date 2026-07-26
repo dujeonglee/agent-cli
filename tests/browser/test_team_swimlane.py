@@ -315,6 +315,9 @@ class TestVerticalLayout:
         page.click('.vt-tab[data-view="team"]')
         assert _wait(lambda: page.locator("#team-view .tv-busy").count() == 1)  # w1
         assert _wait(lambda: page.locator("#team-view .tv-idle").count() == 1)  # w2
+        # Status lives ONLY at the tail now — the header chip no longer draws a
+        # duplicate state glyph.
+        assert page.locator("#team-view .tv-head .tv-state").count() == 0
 
     def test_hover_bar_shows_real_duration(self, stack, page):
         """The bar length is ordinal, so hover reports the REAL elapsed time."""

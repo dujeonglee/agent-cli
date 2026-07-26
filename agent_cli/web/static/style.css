@@ -1376,7 +1376,6 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 .tv-chip-bg { fill: var(--surface-2); stroke: var(--border); }
 .tv-lane-nm { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; font-weight: 600; fill: var(--text); }
 .tv-lane-role { font-family: var(--mono, ui-monospace, monospace); font-size: 9px; fill: var(--muted); }
-.tv-state { font-family: var(--mono, ui-monospace, monospace); font-size: 10px; font-weight: 700; }
 /* work span = agent's own work (hue set inline). scope spans block the caller: */
 .tv-scope-skill { fill: var(--accent); opacity: .55; }
 .tv-scope-run { fill: var(--h-reviewer); opacity: .8; }

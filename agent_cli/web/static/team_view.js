@@ -336,11 +336,8 @@
         nm.textContent = label;
         var rl = svg("text", { class: "tv-lane-role", x: x0 + 30, y: 34 }, g);
         rl.textContent = role;
-        var st = ag ? ag.state : "";
-        var glyph = st === "busy" ? "⣾" : st === "waiting_ask" ? "?" : "·";
-        var sx = svg("text", { class: "tv-state", x: x0 + cw - 10, y: 27 }, g);
-        sx.textContent = glyph;
-        sx.style.fill = st === "busy" ? "var(--cyan)" : "var(--muted)";
+        // (No status glyph in the header — the per-column tail spinner/check at
+        // the bottom of each lane is the single status indicator now.)
       });
 
       // ── plot ──
