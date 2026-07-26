@@ -406,6 +406,8 @@ class TestOneshots:
         assert o["t0"] == 0.5 and o["t1"] == 1.4
 
     def test_unfinished_run_closes_at_end(self):
+        # An unfinished scope closes at tMax — the last ACTIVITY event (a later
+        # message here; a roster ts would not count, see the domain test).
         events = [
             {
                 "type": "scope_start",
@@ -414,10 +416,17 @@ class TestOneshots:
                 "kind": "run",
                 "agent": "x",
             },
-            {"type": "agent_roster", "ts": 5.0, "roster": [{"key": "w1"}]},
+            {
+                "type": "agent_msg",
+                "ts": 5.0,
+                "direction": "out",
+                "author": "w1",
+                "to": "main",
+                "seq": 1,
+            },
         ]
         m = run_model(events)
-        assert m["oneshots"][0]["t1"] == 5.0  # tMax
+        assert m["oneshots"][0]["t1"] == 5.0  # tMax (last activity)
 
 
 class TestDomainAndMisc:
@@ -449,6 +458,35 @@ class TestDomainAndMisc:
         m = run_model([ROSTER])
         assert m["lanes"] == ["main", "orch", "w1"]
         assert m["agents"]["w1"]["spans"] == []
+
+    def test_roster_ts_does_not_extend_time_domain(self):
+        # A roster is a state snapshot stamped with wall-clock-now; it must NOT
+        # bump the time domain (which would drag an open scope out to "now" and
+        # spawn a phantom far-future row in the event-ordinal view). The domain
+        # is defined by activity (messages/scopes) only. Mutation guard: bump on
+        # roster and t1 jumps to 9999.
+        m = run_model(
+            [
+                {
+                    "type": "agent_msg",
+                    "ts": 10.0,
+                    "direction": "out",
+                    "author": "orch",
+                    "to": "main",
+                    "seq": 1,
+                },
+                {
+                    "type": "agent_msg",
+                    "ts": 20.0,
+                    "direction": "out",
+                    "author": "w1",
+                    "to": "main",
+                    "seq": 2,
+                },
+                {"type": "agent_roster", "ts": 9999.0, "roster": [{"key": "w1"}]},
+            ]
+        )
+        assert m["t1"] == 20.0  # roster's 9999 ts ignored for the domain
 
     def test_hue_fallback_for_unknown_profile(self):
         assert node_eval("TM.hueFor('code-writer')") == "--h-writer"

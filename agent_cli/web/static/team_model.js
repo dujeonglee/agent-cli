@@ -134,7 +134,12 @@
       var e = events[i];
       if (!e || !e.type) continue;
       var ts = toEpoch(e.ts);
-      bump(ts);
+      // A roster is a STATE snapshot, not an activity time-point, and it is
+      // stamped with wall-clock-now on every emit. Bumping the time domain with
+      // it would drag the axis (and any open scope, which closes at tMax) out to
+      // "now" — reintroducing the moving-now behavior the event-ordinal view
+      // drops. Only real activity (messages, scopes, turns) defines the domain.
+      if (e.type !== "agent_roster") bump(ts);
 
       if (e.type === "agent_roster") {
         var roster = e.roster || (e.data && e.data.roster) || [];

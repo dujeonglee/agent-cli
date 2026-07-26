@@ -205,32 +205,138 @@ class TestVerticalLayout:
         page.click('.vt-tab[data-view="team"]')
         assert _wait(lambda: page.locator("#team-view .tv-msg").count() == 2)
 
-    def test_long_run_scrolls_vertically(self, stack, page):
-        """A run longer than the 1h cap stops compressing and grows downward —
-        the container becomes vertically scrollable."""
+    def test_many_events_scroll_vertically(self, stack, page):
+        """The axis is EVENT-ordinal: each event is a fixed-height row, so a run
+        with many events grows past the viewport and scrolls (regardless of how
+        much wall-clock time it spanned)."""
+        page.set_viewport_size({"width": 900, "height": 460})
         page.goto(stack.url)
         stack.emit_ready()
         r = stack.renderer
-        # A 2-hour skill scope (explicit ts) — span 7200s > CAP 3600s.
-        r._emit(
-            "scope_start",
-            {"task_id": "long", "kind": "skill", "label": "big", "ts": 1000.0},
-            persistent=True,
+        r.agent_roster(
+            [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
         )
-        r._emit(
-            "scope_end",
-            {"task_id": "long", "kind": "skill", "success": True, "ts": 1000.0 + 7200},
-            persistent=True,
-        )
+        # 30 message events → 30 rows → taller than the viewport.
+        for i in range(30):
+            r.agent_message(
+                key="w1", direction="out", author="w1", to="main", text=f"m{i}", seq=i
+            )
         page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
         page.click('.vt-tab[data-view="team"]')
-        page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
+        page.wait_for_selector("#team-view .tv-msg", timeout=8000)
         assert _wait(
             lambda: page.evaluate(
                 "() => { const h = document.getElementById('team-view');"
                 " return h.scrollHeight > h.clientHeight + 20; }"
             )
         )
+
+    def test_event_rows_are_uniformly_spaced(self, stack, page):
+        """Event-ordinal axis: three events at 0s, 1s, 1000s (wildly uneven real
+        gaps) land on evenly-spaced rows — consecutive row labels are the SAME
+        pixel distance apart. Mutation guard against a proportional-time axis."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.agent_roster(
+            [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
+        )
+        r._emit(
+            "agent_msg",
+            {
+                "key": "w1",
+                "direction": "out",
+                "author": "w1",
+                "to": "main",
+                "text": "a",
+                "seq": 1,
+                "ts": 1000.0,
+            },
+            persistent=True,
+        )
+        r._emit(
+            "agent_msg",
+            {
+                "key": "w1",
+                "direction": "out",
+                "author": "w1",
+                "to": "main",
+                "text": "b",
+                "seq": 2,
+                "ts": 1001.0,
+            },
+            persistent=True,
+        )
+        r._emit(
+            "agent_msg",
+            {
+                "key": "w1",
+                "direction": "out",
+                "author": "w1",
+                "to": "main",
+                "text": "c",
+                "seq": 3,
+                "ts": 2000.0,
+            },
+            persistent=True,
+        )
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        page.wait_for_selector("#team-view .tv-tick", timeout=8000)
+        ys = page.evaluate(
+            "() => Array.from(document.querySelectorAll('#team-view .tv-tick'))"
+            ".map(e => parseFloat(e.getAttribute('y'))).sort((a,b)=>a-b)"
+        )
+        assert len(ys) >= 3
+        d1 = round(ys[1] - ys[0], 1)
+        d2 = round(ys[2] - ys[1], 1)
+        assert d1 == d2  # uniform spacing despite 1s vs 999s real gaps
+
+    def test_busy_agent_shows_spinner_idle_shows_check(self, stack, page):
+        """Tail status: a working agent gets a spinner, a resting one a check."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.agent_roster(
+            [
+                {"key": "w1", "profile": "code-writer", "name": "w1", "state": "busy"},
+                {
+                    "key": "w2",
+                    "profile": "code-reviewer",
+                    "name": "w2",
+                    "state": "idle",
+                },
+            ]
+        )
+        r.agent_message(
+            key="w1", direction="out", author="w1", to="main", text="hi", seq=1
+        )
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        assert _wait(lambda: page.locator("#team-view .tv-busy").count() == 1)  # w1
+        assert _wait(lambda: page.locator("#team-view .tv-idle").count() == 1)  # w2
+
+    def test_hover_bar_shows_real_duration(self, stack, page):
+        """The bar length is ordinal, so hover reports the REAL elapsed time."""
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        # skill scope from 1000s..1030s → 30s real duration
+        r._emit(
+            "scope_start",
+            {"task_id": "sk", "kind": "skill", "label": "plan", "ts": 1000.0},
+            persistent=True,
+        )
+        r._emit(
+            "scope_end",
+            {"task_id": "sk", "kind": "skill", "success": True, "ts": 1030.0},
+            persistent=True,
+        )
+        page.wait_for_selector("#view-toggle:not([hidden])", timeout=8000)
+        page.click('.vt-tab[data-view="team"]')
+        page.wait_for_selector("#team-view .tv-scope-skill", timeout=8000)
+        tip = page.locator("#team-view .tv-scope-skill").first.get_attribute("data-tip")
+        assert "30s" in tip
 
     def test_peer_reply_arrow_draws_despite_agent_prefix(self, stack, page):
         """orchestrator<->worker round-trip: the worker's reply is addressed

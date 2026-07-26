@@ -38,6 +38,19 @@
       s = sec % 60;
     return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
   }
+  // Human duration for hover ("45s", "3m 12s", "1h 04m") — the REAL elapsed
+  // time, shown on hover because the axis is event-ordinal (uniform spacing),
+  // not proportional to wall-clock.
+  function fmtDur(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return sec + "s";
+    var m = Math.floor(sec / 60),
+      s = sec % 60;
+    if (m < 60) return m + "m " + (s < 10 ? "0" : "") + s + "s";
+    var h = Math.floor(m / 60);
+    m = m % 60;
+    return h + "h " + (m < 10 ? "0" : "") + m + "m";
+  }
 
   function svg(tag, attrs, parent) {
     var n = document.createElementNS(SVGNS, tag);
@@ -60,13 +73,13 @@
   //   CAP     compression cap: fit up to CAP seconds into the visible height,
   //           then freeze px/sec and let content grow → vertical scroll.
   var HEAD_H = 54,
-    GUT_L = 50,
-    PAD_T = 12,
-    PAD_B = 20,
+    GUT_L = 56,
+    PAD_T = 16,
+    PAD_B = 28,
     PAD_R = 14,
     COL_MIN = 96,
     BARW = 10,
-    CAP = 3600;
+    ROW_H = 34; // fixed vertical gap between consecutive events (ordinal axis)
 
   var TeamView = {
     _events: [],
@@ -74,7 +87,6 @@
     _svg: null,
     _active: false,
     _raf: 0,
-    _poll: 0,
     _seen: null,
 
     /** Feed one SSE event into the model buffer. */
@@ -187,33 +199,13 @@
     },
 
     setActive: function (on) {
-      // Event-driven (ingest → rAF) PLUS a 5s tick while the Team view is open,
-      // so in-progress bars grow to "now" and the time axis advances between
-      // events. Load is negligible — a model rebuild + SVG redraw at 0.2 Hz,
-      // and only while the view is visible.
+      // Purely event-driven (ingest → rAF): the axis is event-ordinal, not a
+      // moving wall-clock, so there is nothing to advance between events — no
+      // periodic tick. The "still working" spinner animates via SMIL/CSS, not a
+      // re-render. Load: a rebuild + redraw only when an event actually arrives.
       this._active = on;
       if (this._host) this._host.hidden = !on;
-      if (on) {
-        this.render();
-        this._startPoll();
-      } else {
-        this._stopPoll();
-      }
-    },
-
-    _startPoll: function () {
-      var self = this;
-      if (self._poll) return;
-      self._poll = setInterval(function () {
-        self.render();
-      }, 5000);
-    },
-
-    _stopPoll: function () {
-      if (this._poll) {
-        clearInterval(this._poll);
-        this._poll = 0;
-      }
+      if (on) this.render();
     },
 
     _schedule: function () {
@@ -228,7 +220,10 @@
     render: function () {
       if (!this._svg || !this._head || !this._host || !global.TeamModel) return;
       var host = this._host;
-      var m = global.TeamModel.build(this._events, Date.now() / 1000);
+      // No ``now``: the axis is event-ordinal, so open scopes close at the last
+      // real event (tMax) rather than sprouting a moving "now" row. An ongoing
+      // agent is shown by its tail spinner, not by a growing bar.
+      var m = global.TeamModel.build(this._events);
       var agOf = function (k) {
         return m.agents.get ? m.agents.get(k) : m.agents[k];
       };
@@ -256,21 +251,64 @@
         laneIndex[k] = i;
       });
 
-      // ── vertical: time flows down. Fit up to CAP seconds into the visible
-      // height; beyond CAP freeze px/sec and let content grow → scroll (stick
-      // to now at the bottom). Short runs zoom to fill the height. ──
-      var T0 = m.t0,
-        T1 = Math.max(m.t1, m.t0 + 1);
-      var span = T1 - T0;
-      var availH = Math.max(200, host.clientHeight - HEAD_H - 8);
-      var pxPerSec = availH / Math.min(span, CAP);
-      var Y = function (t) {
-        return PAD_T + (t - T0) * pxPerSec;
+      // ── vertical: EVENT-ORDINAL axis. Positioning by wall-clock squished
+      // bursty exchanges into a smear; instead every event time point gets its
+      // OWN row at a FIXED gap, so request→work→reply reads evenly no matter how
+      // long each step actually took (the real duration is on hover). Rows = the
+      // sorted-unique timestamps of every message + scope/work/main boundary, so
+      // every rendered y-anchor is itself one of these points. ──
+      var T0 = m.t0;
+      var pts = [];
+      var addPt = function (t) {
+        if (typeof t === "number" && isFinite(t)) pts.push(t);
       };
-      var contentH = PAD_T + span * pxPerSec + PAD_B;
-      var inDom = function (a, b) {
-        return b >= T0 && a <= T1;
+      m.messages.forEach(function (mm) {
+        addPt(mm.t);
+      });
+      m.skillBands.forEach(function (b) {
+        addPt(b.t0);
+        addPt(b.t1);
+      });
+      m.oneshots.forEach(function (o) {
+        addPt(o.t0);
+        addPt(o.t1);
+      });
+      m.mainSpans.forEach(function (sp) {
+        addPt(sp.t0);
+        addPt(sp.t1);
+      });
+      lanes.forEach(function (k) {
+        var ag = agOf(k);
+        if (ag && ag.spans)
+          ag.spans.forEach(function (sp) {
+            addPt(sp.t0);
+            addPt(sp.t1);
+          });
+      });
+      pts.sort(function (a, b) {
+        return a - b;
+      });
+      var rows = [];
+      for (var pi = 0; pi < pts.length; pi++) {
+        if (pi === 0 || pts[pi] !== pts[pi - 1]) rows.push(pts[pi]);
+      }
+      if (!rows.length) rows.push(T0);
+      var rowOf = {};
+      for (var ri = 0; ri < rows.length; ri++) rowOf[rows[ri]] = ri;
+      var rowY = function (t) {
+        var idx = rowOf[t];
+        if (idx == null) {
+          // Not an exact event point — snap to the nearest earlier row.
+          idx = 0;
+          for (var j = 0; j < rows.length; j++) {
+            if (rows[j] <= t) idx = j;
+            else break;
+          }
+        }
+        return PAD_T + idx * ROW_H;
       };
+      var lastRowY = PAD_T + (rows.length - 1) * ROW_H;
+      var contentH = lastRowY + PAD_B;
 
       // ── sticky header: one column chip per lane ──
       var hd = this._head;
@@ -312,54 +350,42 @@
       s.setAttribute("width", W);
       s.setAttribute("height", contentH);
 
-      // column guide lines (vertical)
+      // column guide lines (vertical) — from the top down to the tail glyph
       lanes.forEach(function (k, i) {
         var cx = colX(i);
-        svg("line", { class: "tv-base", x1: cx, y1: PAD_T, x2: cx, y2: contentH - PAD_B }, s);
+        svg("line", { class: "tv-base", x1: cx, y1: PAD_T, x2: cx, y2: lastRowY + 6 }, s);
       });
 
-      // time axis: horizontal grid lines + left-gutter MM:SS labels.
-      // adaptive step snapped to a "nice" value so labels stay legible whether
-      // the run is 10s or hours (~1 tick per 64px).
-      var targetTicks = Math.max(4, Math.round((contentH - PAD_T - PAD_B) / 64));
-      var raw = span / targetTicks;
-      var mags = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
-      var step = mags[mags.length - 1];
-      for (var mi = 0; mi < mags.length; mi++) {
-        if (mags[mi] >= raw) {
-          step = mags[mi];
-          break;
-        }
-      }
-      for (var tk = Math.ceil(T0 / step) * step; tk <= T1 + 0.01; tk += step) {
-        var y = Y(tk);
+      // one faint gridline + left-gutter label PER EVENT ROW. The label is the
+      // REAL relative time of that event (fixed row spacing, real timestamp) so
+      // uneven pacing is still legible; the spacing itself is uniform.
+      rows.forEach(function (t, i) {
+        var y = PAD_T + i * ROW_H;
         svg("line", { class: "tv-axis", x1: GUT_L - 4, y1: y, x2: W - PAD_R, y2: y }, s);
         var tx = svg("text", { class: "tv-tick", x: 6, y: y + 3 }, s);
-        tx.textContent = fmtClock(tk - m.t0);
-      }
+        tx.textContent = fmtClock(t - m.t0);
+      });
 
       // A skill or one-shot run BLOCKS its caller for its whole duration, so it
       // renders as a distinctly-colored span INSIDE the caller's column (not a
-      // separate track). main's own turns get the neutral main hue.
+      // separate track). main's own turns get the neutral main hue. Hover shows
+      // the REAL elapsed time (the bar length is ordinal, not proportional).
       function scopeSpan(item, cls, prefix) {
-        if (!inDom(item.t0, item.t1)) return;
         var ci = laneIndex[item.caller];
         if (ci == null) ci = 0;
         var cx = colX(ci);
-        var y0 = Y(item.t0),
-          h = Math.max(Y(item.t1) - y0, 3);
+        var y0 = rowY(item.t0),
+          h = Math.max(rowY(item.t1) - y0, 3);
         var r = svg("rect", { class: cls, x: cx - BARW / 2, y: y0, width: BARW, height: h, rx: BARW / 2 }, s);
-        // Label shows on HOVER (custom fast tooltip) — no always-drawn text.
-        r.setAttribute("data-tip", prefix + " " + item.label);
+        r.setAttribute("data-tip", prefix + " " + item.label + " · " + fmtDur(item.t1 - item.t0));
       }
       m.mainSpans.forEach(function (sp) {
-        if (!inDom(sp.t0, sp.t1)) return;
         var cx = colX(0);
-        var y0 = Y(sp.t0),
-          h = Math.max(Y(sp.t1) - y0, 3);
+        var y0 = rowY(sp.t0),
+          h = Math.max(rowY(sp.t1) - y0, 3);
         var r = svg("rect", { class: "tv-span", x: cx - BARW / 2, y: y0, width: BARW, height: h, rx: BARW / 2 }, s);
         r.style.fill = "var(--h-main)";
-        r.setAttribute("data-tip", "main: turn");
+        r.setAttribute("data-tip", "main: turn · " + fmtDur(sp.t1 - sp.t0));
       });
       m.skillBands.forEach(function (b) {
         scopeSpan(b, "tv-scope-skill", "🪄");
@@ -375,26 +401,24 @@
         var cx = colX(laneIndex[k]);
         var hv = hueVar(ag.profile);
         ag.spans.forEach(function (sp) {
-          if (!inDom(sp.t0, sp.t1)) return;
-          var y0 = Y(sp.t0),
-            h = Math.max(Y(sp.t1) - y0, 3);
+          var y0 = rowY(sp.t0),
+            h = Math.max(rowY(sp.t1) - y0, 3);
           var r = svg("rect", { class: "tv-span", x: cx - BARW / 2, y: y0, width: BARW, height: h, rx: BARW / 2 }, s);
           r.style.fill = hv;
-          r.setAttribute("data-tip", ag.label + ": " + (sp.title || "working"));
+          r.setAttribute("data-tip", ag.label + ": " + (sp.title || "working") + " · " + fmtDur(sp.t1 - sp.t0));
         });
       });
 
-      // messages: a horizontal arrow between two columns at the message's y(time)
-      // — request (main/peer → agent) and reply (agent → requester) both draw,
-      // reading like a sequence diagram.
+      // messages: a horizontal arrow between two columns at the message's ROW —
+      // request (main/peer → agent) and reply (agent → requester) both draw,
+      // reading like a sequence diagram. Hover shows the real event time.
       m.messages.forEach(function (msg) {
-        if (msg.t < T0 || msg.t > T1) return;
         var fi = laneIndex[msg.from],
           ti = laneIndex[msg.to];
         if (fi == null || ti == null) return;
         var xf = colX(fi),
           xt = colX(ti),
-          y = Y(msg.t);
+          y = rowY(msg.t);
         var fromProfile = msg.from === "main" ? "" : (agOf(msg.from) || {}).profile;
         var hv = msg.from === "main" ? "var(--h-main)" : hueVar(fromProfile);
         var dir = xt > xf ? 1 : -1;
@@ -414,7 +438,30 @@
         ah.style.fill = hv;
         svg("circle", { cx: x0, cy: y, r: 1.8 }, g).style.fill = hv;
         var hit = svg("path", { class: "tv-msg-hit", d: d, fill: "none" }, g);
-        hit.setAttribute("data-tip", msg.from + " → " + msg.to + " · " + msg.type + (msg.text ? ": " + msg.text : ""));
+        hit.setAttribute("data-tip", msg.from + " → " + msg.to + " · " + msg.type + " @ " + fmtClock(msg.t - m.t0) + (msg.text ? " · " + msg.text : ""));
+      });
+
+      // tail status per AGENT column: a spinner while working, a green check
+      // while idle. Driven by roster state (event-updated), and the spinner
+      // animates via SMIL so no periodic re-render is needed.
+      lanes.forEach(function (k, i) {
+        if (k === "main") return;
+        var ag = agOf(k);
+        var st = ag ? ag.state : "";
+        var cx = colX(i);
+        var ty = lastRowY + 20;
+        if (st === "busy") {
+          var tg = svg("g", { transform: "translate(" + cx + "," + ty + ")" }, s);
+          var spin = svg("g", {}, tg);
+          svg("circle", { r: 6, fill: "none", "stroke-width": 2, "stroke-dasharray": "22 14", class: "tv-busy" }, spin);
+          svg("animateTransform", { attributeName: "transform", type: "rotate", from: "0 0 0", to: "360 0 0", dur: "0.9s", repeatCount: "indefinite" }, spin);
+          tg.setAttribute("data-tip", (ag ? ag.label : k) + ": working…");
+        } else {
+          var cls = st === "waiting_ask" ? "tv-wait" : "tv-idle";
+          var chk = svg("text", { x: cx, y: ty + 5, "text-anchor": "middle", class: cls }, s);
+          chk.textContent = st === "waiting_ask" ? "?" : "✓";
+          chk.setAttribute("data-tip", (ag ? ag.label : k) + (st === "waiting_ask" ? ": waiting for input" : ": idle"));
+        }
       });
 
       // Stick to "now" (bottom) unless the user scrolled up to read history.

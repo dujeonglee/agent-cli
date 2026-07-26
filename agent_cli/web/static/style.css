@@ -1380,6 +1380,10 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 /* work span = agent's own work (hue set inline). scope spans block the caller: */
 .tv-scope-skill { fill: var(--accent); opacity: .55; }
 .tv-scope-run { fill: var(--h-reviewer); opacity: .8; }
+/* tail status glyphs: spinner while an agent works, green check while idle. */
+.tv-busy { stroke: var(--cyan); }
+.tv-idle { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; font-weight: 700; fill: var(--ok); }
+.tv-wait { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; font-weight: 700; fill: var(--warn); }
 .tv-msg { stroke-width: 1.5; opacity: .6; transition: opacity .12s; }
 .tv-msg-ah { transition: opacity .12s; }
 .tv-msg-hit { stroke: transparent; stroke-width: 11; cursor: pointer; }
