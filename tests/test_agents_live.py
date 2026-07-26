@@ -433,6 +433,71 @@ class TestRegistryLifecycle:
         assert "empty" in reg.request(key, "   ")
         reg.shutdown_all()
 
+    def test_request_stamped_before_enqueue(self, tmp_path, renderer, monkeypatch):
+        """The request arrow's timestamp must be captured BEFORE the item is
+        enqueued. The worker runs on its own thread and can dequeue + emit
+        ``begin_agent_work`` (scope_start) the instant the item lands — so a
+        post-enqueue timestamp would render the request AFTER the work it
+        triggered (team-view ordering bug). Monotonic clock + a put-time probe:
+        the inbound message's ts must be <= the clock value at enqueue."""
+        import agent_cli.subagent.agents_live as al
+
+        block = threading.Event()
+        reg = make_registry(tmp_path, runner=make_runner(block=block))
+        key, _ = reg.spawn()
+        tm = reg.get(key)
+
+        clock = [1000.0]
+
+        def tick():
+            clock[0] += 1.0
+            return clock[0]
+
+        put_at = []
+
+        class ProbeQueue:
+            # SimpleQueue.put is read-only, so wrap the queue and record the
+            # clock value at the moment of enqueue (without advancing it).
+            def __init__(self, inner):
+                self._inner = inner
+
+            def put(self, item, *a, **k):
+                put_at.append(clock[0])
+                return self._inner.put(item, *a, **k)
+
+            def __getattr__(self, n):
+                return getattr(self._inner, n)
+
+        monkeypatch.setattr(al.time, "time", tick)
+        tm.inbox = ProbeQueue(tm.inbox)
+        reg.request(key, "hello", author="main")
+        block.set()
+
+        ins = [
+            kw
+            for n, kw in renderer.calls
+            if n == "agent_message" and kw.get("direction") == "in"
+        ]
+        assert ins, "request should emit an inbound message"
+        assert put_at, "request should enqueue"
+        assert ins[0]["ts"] <= put_at[0]  # stamped at-or-before the enqueue
+        reg.shutdown_all()
+
+    def test_log_outbound_honors_passed_ts(self, tmp_path, renderer):
+        """Peer sends log the request arrow AFTER ``request()`` returns, so the
+        caller passes the pre-send time — ``_log_outbound`` must use it verbatim
+        (not re-stamp now) so the arrow precedes the triggered work."""
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        reg._log_outbound(key, "hi", to="w2", ts=1234.5)
+        outs = [
+            kw
+            for n, kw in renderer.calls
+            if n == "agent_message" and kw.get("direction") == "out"
+        ]
+        assert outs and outs[0]["ts"] == 1234.5
+        reg.shutdown_all()
+
     def test_busy_state_while_processing(self, tmp_path, renderer):
         gate = threading.Event()
         reg = make_registry(tmp_path, runner=make_runner(block=gate))

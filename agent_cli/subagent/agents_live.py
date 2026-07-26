@@ -578,6 +578,13 @@ class AgentRegistry:
             return f"agent '{key}' is dead{reason} — spawn a new one"
         if not message.strip():
             return "empty message"
+        # Stamp the request's time BEFORE enqueuing. The worker runs on its own
+        # thread and can dequeue + emit ``begin_agent_work`` (scope_start) the
+        # instant the item lands in the inbox — i.e. before this method reaches a
+        # post-``put`` ``time.time()``. Capturing here guarantees the request's
+        # timestamp precedes any work it triggers, so the team view shows the
+        # request ABOVE (before) the work bar, not after it.
+        send_ts = time.time()
         tm.queued += 1
         tm.inbox.put(
             {
@@ -596,7 +603,7 @@ class AgentRegistry:
             "author": author,
             "text": message,
             "seq": tm.queued,
-            "ts": time.time(),
+            "ts": send_ts,
         }
         get_renderer().agent_message(**payload)
         self._log_conversation(tm, payload)
@@ -666,10 +673,17 @@ class AgentRegistry:
         # (재접속/resume 소실). 발신자 창에 out 방향으로 남긴다.
         self._log_outbound(from_key, text, to="main")
 
-    def _log_outbound(self, from_key: str, text: str, *, to: str) -> None:
+    def _log_outbound(
+        self, from_key: str, text: str, *, to: str, ts: float | None = None
+    ) -> None:
         """발신 에이전트 창에 out 메시지 기록 — 라이브 표면(agent_message)
         + 대화 로그(conversation.jsonl, resume 재생 소스) 동시. 각 창은 그
-        에이전트 관점의 완결 대화: 수신측 in 은 request() 가 담당."""
+        에이전트 관점의 완결 대화: 수신측 in 은 request() 가 담당.
+
+        ``ts`` 를 넘기면 그 시각으로 스탬프한다 — peer send 는 이 화살표를
+        ``request()`` **뒤에** 기록하므로, 여기서 ``time.time()`` 을 다시 찍으면
+        수신 워커가 이미 시작한 작업(scope_start)보다 늦어 팀 뷰에서 요청이
+        작업 아래로 밀린다. 호출자가 send 직전 시각을 잡아 넘긴다."""
         tm = self._agents.get(from_key)
         if tm is None:
             return
@@ -683,7 +697,7 @@ class AgentRegistry:
             "seq": tm.handled,
             "success": True,
             "to": to,
-            "ts": time.time(),
+            "ts": ts if ts is not None else time.time(),
         }
         try:
             get_renderer().agent_message(**payload)
@@ -712,10 +726,14 @@ class AgentRegistry:
                     tm.key, text, profile=tm.profile_name, name=tm.instance_name
                 )
                 return "delivered to main — it will see your message at its next turn."
+            # Capture the send time BEFORE request() enqueues — the target's
+            # worker can start (scope_start) the instant it's queued, so a later
+            # timestamp on this arrow would render the request AFTER the work.
+            send_ts = time.time()
             err = self.request(to, text, author=f"agent:{tm.key}", expects_reply=True)
             if err:
                 return err
-            self._log_outbound(tm.key, text, to=to)  # 발신자 창 out (v7.11.1)
+            self._log_outbound(tm.key, text, to=to, ts=send_ts)  # 발신자 창 out
             return (
                 f"delivered to {to} — its reply arrives to you as a new message. "
                 f"Keep working or complete; you'll be woken when it comes."
