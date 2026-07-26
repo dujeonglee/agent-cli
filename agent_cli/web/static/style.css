@@ -1387,6 +1387,8 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
 #messages > .card.tv-nav-hl, #messages .card-task-group.tv-nav-hl {
   animation: tv-nav-flash 1.2s ease;
 }
+/* Leave a small gap above a card scrolled to via swimlane click (block:start). */
+#messages .card-task-group { scroll-margin-top: 10px; }
 @keyframes tv-nav-flash {
   0%, 100% { box-shadow: none; }
   12% { box-shadow: 0 0 0 2px var(--accent); }

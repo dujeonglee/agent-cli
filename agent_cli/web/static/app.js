@@ -1561,7 +1561,15 @@
         '.card-task-group[data-task-id="' + sel + '"]',
       );
       if (!card) return;
-      card.scrollIntoView({ block: "center", behavior: "smooth" });
+      // Stop the timeline from auto-following to the bottom: otherwise a live
+      // event arriving mid-scroll calls scrollToBottom() and yanks us back down,
+      // cancelling the smooth scroll-up — the "have to click 2-3 times" bug.
+      // (Scrolling back to the bottom re-enables it via the scroll handler.)
+      autoScrollEnabled = false;
+      // Align the card's TOP (its header) to the viewport, not its center — a
+      // center-aligned tall/expanded card pushes the header off-screen above, so
+      // you land in the middle of it. ``scroll-margin-top`` leaves a small gap.
+      card.scrollIntoView({ block: "start", behavior: "smooth" });
       let fired = false;
       const flash = () => {
         if (fired) return;

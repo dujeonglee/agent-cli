@@ -190,9 +190,58 @@ class TestTeamSwimlane:
         )
         assert not page.evaluate(in_view)
         page.locator('#team-view .tv-span[data-task-id="w1#0"]').first.click()
-        assert _wait(lambda: page.evaluate(in_view))  # scrolled into view
+        # A BURST of live events arrives right after the click, spanning the
+        # smooth-scroll window — each would call scrollToBottom(). Navigation
+        # must turn auto-follow OFF synchronously so none of them yank the
+        # timeline back to the bottom mid-scroll (the "click 2-3 times" bug).
+        for _ in range(6):
+            r.final("live turn", turn=1)
+            time.sleep(0.03)
+        assert _wait(lambda: page.evaluate(in_view))  # landed on the card, not bottom
         card = page.locator('#messages .card-task-group[data-task-id="w1#0"]')
         assert _wait(lambda: "tv-nav-hl" in (card.first.get_attribute("class") or ""))
+
+    def test_click_navigates_to_top_of_expanded_card(self, stack, page):
+        """A tall EXPANDED card must land with its header at the top (block:start)
+        — center-aligning it would push the header off-screen above, so the user
+        'lands in the middle' and can't tell which card it is."""
+        page.set_viewport_size({"width": 1100, "height": 480})
+        page.goto(stack.url)
+        stack.emit_ready()
+        r = stack.renderer
+        r.agent_roster(
+            [{"key": "w1", "profile": "code-writer", "name": "w1", "state": "idle"}]
+        )
+        for i in range(8):
+            r.begin_agent_work(key="w1", seq=i, profile="code-writer", message=f"t{i}")
+            r.end_agent_work(key="w1", seq=i, success=True, duration_s=0.01)
+        page.wait_for_selector("#split-handle:not([hidden])", timeout=8000)
+        assert _wait(
+            lambda: (
+                page.locator('#messages .card-task-group[data-task-id="w1#5"]').count()
+                == 1
+            )
+        )
+        # Make w1#5's card tall + expanded (a big body), then park it off-screen.
+        page.evaluate(
+            "() => { const c=document.querySelector("
+            "'#messages .card-task-group[data-task-id=\"w1#5\"]');"
+            " const b=c.querySelector('.task-body'); if(b){ b.hidden=false;"
+            " const d=document.createElement('div'); d.style.height='800px';"
+            " b.appendChild(d); } const m=document.getElementById('messages');"
+            " m.scrollTop=m.scrollHeight; }"
+        )
+        page.locator('#team-view .tv-span[data-task-id="w1#5"]').first.click()
+        # The card's HEADER (top) must sit at/near the top of the viewport — not
+        # scrolled past it (which a center-align of an 800px card would do).
+        header_at_top = (
+            "() => { const m=document.getElementById('messages');"
+            " const c=m.querySelector('.card-task-group[data-task-id=\"w1#5\"]');"
+            " if(!c) return false; const mr=m.getBoundingClientRect(),"
+            " cr=c.getBoundingClientRect();"
+            " return cr.top >= mr.top - 2 && cr.top <= mr.top + 60; }"
+        )
+        assert _wait(lambda: page.evaluate(header_at_top))
 
 
 class TestResumeScopeReplay:
