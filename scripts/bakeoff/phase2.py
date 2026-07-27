@@ -69,6 +69,23 @@ MODELS = [
     if m.strip()
 ]
 
+# ── 터미널 환경 위생 (2026-07-27 실사고) ──────────────────────
+# 측정 하니스는 터미널 렌더링에 의존하면 안 된다. 실사고: 세션 셸이
+# COLUMNS=0 + FORCE_COLOR=3 을 물려줬고, rich 가 is_terminal=True(스피너
+# Live 활성)+width 0 조합에서 코드펜스 든 thought 를 렌더하다 100% CPU 로
+# 영구 스핀 — 320런 A/B 가 61번째 런에서 14분+ 멈췄다(서버는 유휴).
+# 격리 렌더로는 같은 텍스트가 0.02s 에 끝나 Live 활성 상태와의 조합으로
+# 추정(정확한 최소 트리거는 미확정 — rich 내부). 하니스는 항상 무색·
+# 정상폭·비터미널로 돈다. import 시각이어야 한다 — agent_cli.render 의
+# 모듈-전역 Console 이 첫 import 에서 env 를 굳힌다 (tests/conftest.py 의
+# FORCE_COLOR 스크럽과 같은 계열 교훈).
+for _var in ("FORCE_COLOR", "CLICOLOR_FORCE"):
+    os.environ.pop(_var, None)
+if os.environ.get("COLUMNS", "").strip() in ("", "0"):
+    os.environ["COLUMNS"] = "200"
+os.environ.setdefault("NO_COLOR", "1")
+os.environ["TERM"] = "dumb"
+
 # A/B 실험 변형 등록 — import 자체가 registry 에 넣는다 (bakeoff 전용,
 # 패키지 미출하). BAKEOFF_PLUGINS 에 json_fc_fenced 를 넣으면 선택된다.
 import wire_fenced  # noqa: F401,E402
