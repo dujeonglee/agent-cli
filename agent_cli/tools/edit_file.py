@@ -8,6 +8,7 @@ from typing import ClassVar
 
 from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
+from agent_cli.tools.effect import EffectIntent, EffectKind
 from agent_cli.tools.read_file import (
     _parse_ref,
     _verify_ref,
@@ -375,6 +376,17 @@ class EditFileTool(Tool):
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")
         return [p] if isinstance(p, str) and p else []
+
+    def effect_intent(self, action_input: dict) -> EffectIntent:
+        """대상 경로 1개에 대한 쓰기(A3).
+
+        ``op="delete"`` 도 ``FILE_DELETE`` 가 아니라 ``FILE_WRITE`` 다 —
+        지우는 것은 파일 안의 **줄**이지 경로가 아니라서, 포크가
+        ``FILE_DELETE`` 를 배타로 둔 이유(경로 소멸에 따른 ENOENT 레이스,
+        ``sandboxLock.ts:20-22``)가 성립하지 않는다.
+        """
+        p = self.strip_prefix(action_input).get("path")
+        return EffectIntent(EffectKind.FILE_WRITE, p if isinstance(p, str) else "")
 
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")

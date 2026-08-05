@@ -28,6 +28,9 @@ out.txt
 OptimizationToDo.md
 OptimizationSummary.md
 
+# 로컬 개발 venv (리포 루트) — `pip install -e ".[dev,web]"` 대상
+.venv/
+
 # SWE-bench harness (bench/) — venv, repo cache, run outputs are local
 bench/.venv/
 bench/.cache/

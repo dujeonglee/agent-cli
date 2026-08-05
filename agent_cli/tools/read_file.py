@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from agent_cli.tools.base import Tool, on_disk_oversized_nudge
+from agent_cli.tools.effect import EffectIntent, EffectKind
 from agent_cli.tools.result import ToolResult
 
 # Hashline constants: 16-char alphabet for CRC32-to-2-char hash encoding
@@ -339,6 +340,11 @@ class ReadFileTool(Tool):
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")
         return [p] if isinstance(p, str) and p else []
+
+    def effect_intent(self, action_input: dict) -> EffectIntent:
+        """읽기 전용 — 같은 경로끼리만 직렬(A3). ``stat`` 모드도 읽기다."""
+        p = self.strip_prefix(action_input).get("path")
+        return EffectIntent(EffectKind.FILE_READ, p if isinstance(p, str) else "")
 
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")

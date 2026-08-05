@@ -203,6 +203,15 @@ class ContextManager:
         # it at each turn boundary; 0 covers the run-starting query.
         self._current_turn: int = 0
 
+        # A6 (다중 사용자 병렬 턴 M1): 응답↔질문 1:1 귀속.
+        # ``_msg_seq`` 는 사용자 질의 id 발급용 세션-단조 카운터,
+        # ``_reply_to`` 는 "지금 처리 중인 질의"의 id. 직렬 모드에서는 항상
+        # 직전 사용자 메시지라 귀속이 암묵적이지만, 턴이 복수가 되는 순간
+        # 그 암묵성이 소실되므로 지금 데이터로 남겨둔다.
+        # (근거: docs/research/10-agent-cli-gap-analysis.md §1 A6.)
+        self._msg_seq: int = 0
+        self._reply_to: str | None = None
+
         # Compaction state. ``_summary`` empty until first compaction
         # completes. ``_dynamic_start_index`` tracks how many history
         # entries have been compacted away — resume reads ``history
@@ -795,15 +804,32 @@ class ContextManager:
 
         Additive — round-trip fields (role/thought/ops/content/tool/success)
         are preserved verbatim (resume/compaction read them unchanged); we ADD
-        ``kind``/``turn``/``ts``/``tools``/``text`` (and pass ``author``
-        through) so queries no longer guess via the "Observation:" / "[nick]:"
-        prefix conventions. The cache / LLM path is untouched (this is the file
-        write only)."""
+        ``kind``/``turn``/``ts``/``tools``/``text``/``id``/``reply_to`` (and
+        pass ``author`` through) so queries no longer guess via the
+        "Observation:" / "[nick]:" prefix conventions. The cache / LLM path is
+        untouched (this is the file write only — ``record`` is a copy)."""
         kind, tools, text = _classify_record(message)
         record = dict(message)
         record["kind"] = kind
         record["turn"] = self._current_turn
         record["ts"] = _now_iso()
+        # A6: 사용자 질의에는 세션 유일 id 를 발급하고, 그 질의를 처리하며
+        # 생긴 후속 레코드(assistant 행동·관찰)에는 ``reply_to`` 로 유발
+        # 질의를 가리키게 한다. 포크의 ``Message.replyToId``(AGENT_REPLY →
+        # 유발 HUMAN) 를 본류의 레코드 단위로 옮긴 것 — 본류는 한 응답이
+        # 여러 레코드로 흩어지므로 "그 질의를 처리하는 동안 생긴 레코드
+        # 전부"가 귀속 단위가 된다.
+        #
+        # 여기가 유일한 발급 지점인 이유: ``_enrich_record`` 는 ``add`` →
+        # ``_append_to_history`` 만이 부르는 디스크 기록 seam 이라 레코드
+        # 하나당 정확히 한 번 실행된다. id 는 history 레코드에만 존재하고
+        # 캐시/LLM 경로에는 절대 들어가지 않는다(위 ``dict(message)`` 복사).
+        if kind == "query":
+            self._msg_seq += 1
+            self._reply_to = f"u{self._msg_seq}"
+            record["id"] = self._reply_to
+        elif self._reply_to is not None:
+            record["reply_to"] = self._reply_to
         # Which scope (skill subloop / worker) produced this record, "" = main.
         # Resume needs it: without the association, replayed turns all land on
         # the main timeline and a resumed session shows NO skill/agent cards at
@@ -864,6 +890,7 @@ class ContextManager:
         """
         self._nl_cache = None  # cache rebuilt from disk → re-render on next get
         messages = store.load_records(self._history_path)
+        self._restore_reply_attribution(messages)
 
         use_offset = self._dynamic_start_index > 0 and self._dynamic_start_index <= len(
             messages
@@ -899,6 +926,32 @@ class ContextManager:
         # fold 재적용 (v4.51.0): live 가 접은 뷰를 레코드-기반 재판정으로
         # 동일 재현 — history 는 전부 남아 있으므로 여기서 다시 접는다.
         self.fold_resolved_interventions()
+
+    def _restore_reply_attribution(self, records: list[dict]) -> None:
+        """A6: resume 시 질의 id 카운터와 "처리 중인 질의"를 이어받는다.
+
+        **잘린 캐시가 아니라 전체 history** 를 훑는다 — 캐시 슬라이스만 보면
+        압축·예산으로 떨어져 나간 앞부분의 id 를 못 봐서 카운터가 되감기고,
+        재개 세션이 이미 쓰인 ``u3`` 를 다시 발급해 귀속이 뒤섞인다.
+
+        구 세션(이 필드 도입 전 기록)은 id 가 하나도 없어 카운터가 0 에서
+        시작한다 — 새로 붙는 질의만 ``u1`` 부터 받고 기존 레코드는 무귀속인
+        채 남는다(additive 필드의 정상적인 부재이지 손상이 아니다).
+        """
+        seq = 0
+        last_query_id: str | None = None
+        for rec in records:
+            rid = rec.get("id")
+            if not isinstance(rid, str) or not rid.startswith("u"):
+                continue
+            try:
+                n = int(rid[1:])
+            except ValueError:
+                continue  # 알 수 없는 id 표기 — 카운터에 반영하지 않는다
+            seq = max(seq, n)
+            last_query_id = rid
+        self._msg_seq = seq
+        self._reply_to = last_query_id
 
     # ── Fork support ─────────────────────────────────
 

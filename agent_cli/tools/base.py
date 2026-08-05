@@ -31,6 +31,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_cli.tools.effect import EffectIntent, EffectKind
 from agent_cli.tools.result import ToolResult
 
 
@@ -370,6 +371,33 @@ class Tool(ABC):
         should use :meth:`strip_prefix` so they read standard keys.
         """
         return []
+
+    def effect_intent(self, action_input: dict) -> EffectIntent:
+        """이 호출이 일으키는 부수효과의 선언 — A3 계층 락의 전제.
+
+        Default: :attr:`EffectKind.UNKNOWN` (=배타). 자기 부수효과를
+        **증명할 수 있는** 도구만 override 해 좁힌다. 기본값이 배타인 것은
+        안전측 설계다 — 미분류 도구가 실수로 병렬 진입해 파일을 동시에
+        만지는 것보다, 줄을 서서 느린 편이 항상 낫다.
+
+        :meth:`touched_paths` 와 같은 소유권 규율(도구가 자기 ``action_input``
+        shape 를 안다)을 따르며, override 는 :meth:`strip_prefix` 로 표준 키를
+        읽는다. 분류 어휘와 호환성 행렬은 :mod:`agent_cli.tools.effect` 참조.
+
+        UNKNOWN 으로 남는 도구들의 근거(전부 "워크스페이스 경로로 좁힐 수
+        없음"): ``code_index`` 는 공유 인덱스 DB 를 갱신하고(이미 자체
+        ``_BUILD_LOCK`` 보유) path 없는 모드가 있다, ``memory`` 는 세션
+        memory.jsonl 을, ``read_context`` 는 세션 history 를 대상으로 한다
+        (워크스페이스 파일이 아니라 M4 경로 락의 대상이 아님), ``fetch`` 는
+        네트워크, ``agent`` 는 중첩 도구라 효과가 미지, 가상 도구
+        (complete/ask/message/run_skill)는 파일을 만지지 않는다.
+
+        NOTE (M4 착수 시 재검토): 가상 도구가 배타 락을 잡으면 ``ask`` 가
+        사람 응답을 기다리는 동안 다른 턴의 부수효과가 전부 막힌다. 락이
+        실재하게 되는 M4 에서 "락 불필요" 판정을 실측과 함께 도입할 것 —
+        지금 추측으로 종류를 늘리지 않는다.
+        """
+        return EffectIntent(EffectKind.UNKNOWN)
 
     def summary_arg(self, action_input: dict) -> str:
         """Short label for this action in the compaction transcript /

@@ -15,6 +15,7 @@ from agent_cli.tools.base import (
     default_oversized_nudge,
     on_disk_oversized_nudge,
 )
+from agent_cli.tools.effect import EffectIntent, EffectKind
 from agent_cli.tools.result import ToolResult
 
 # Commands that destroy or move files irreversibly. Detection works on
@@ -272,6 +273,18 @@ class ShellTool(Tool):
 
     def wrap_single_op(self, flat: dict) -> dict:
         return flat
+
+    def effect_intent(self, action_input: dict) -> EffectIntent:
+        """항상 배타(A3) — 셸은 **어떤 파일을 만질지 알 수 없다**.
+
+        파이프·변수전개·서브셸·하위 프로세스 때문에 명령 문자열에서 경로
+        집합을 신뢰성 있게 뽑을 수 없다(포크 ``sandboxLock.ts:11-13``).
+        경로를 추측해 좁히는 순간 그 추측이 틀린 명령 하나가 동시 쓰기를
+        만들므로, 종류만 선언하고 경로는 싣지 않는다. 패키지 설치(``pip
+        install`` 등)도 이 경로를 지나가며 이미 배타라 별도 ``PACKAGE``
+        분류가 필요 없다.
+        """
+        return EffectIntent(EffectKind.SHELL)
 
     def summary_arg(self, action_input: dict) -> str:
         return (self.strip_prefix(action_input).get("command") or "")[:60]

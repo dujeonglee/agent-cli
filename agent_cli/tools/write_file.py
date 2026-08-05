@@ -8,6 +8,7 @@ from typing import ClassVar
 
 from agent_cli.tools._change_echo import render_change_echo
 from agent_cli.tools.base import Tool
+from agent_cli.tools.effect import EffectIntent, EffectKind
 from agent_cli.tools.read_file import format_hashlines
 from agent_cli.tools.result import ToolResult
 
@@ -159,6 +160,11 @@ class WriteFileTool(Tool):
     def touched_paths(self, action_input: dict) -> list[str]:
         p = self.strip_prefix(action_input).get("path")
         return [p] if isinstance(p, str) and p else []
+
+    def effect_intent(self, action_input: dict) -> EffectIntent:
+        """대상 경로 1개에 대한 쓰기 — 다른 경로 쓰기와는 병렬 가능(A3)."""
+        p = self.strip_prefix(action_input).get("path")
+        return EffectIntent(EffectKind.FILE_WRITE, p if isinstance(p, str) else "")
 
     def summary_arg(self, action_input: dict) -> str:
         return self.strip_prefix(action_input).get("path", "")
