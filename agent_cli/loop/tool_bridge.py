@@ -11,8 +11,9 @@ from agent_cli.context.token_estimator import estimate_tokens
 # history via ``ContextManager.force_fit``; the bound stops a runaway
 # loop when the cache cannot shrink enough or the server keeps rejecting.
 from agent_cli.loop.state import LoopConfig, LoopState
-from agent_cli.tools import TOOLS, RunContext, _execute_tool
+from agent_cli.tools import TOOLS, RunContext, _execute_tool, effect_lock
 from agent_cli.tools.base import default_oversized_nudge
+from agent_cli.tools.effect import EffectIntent, EffectKind
 from agent_cli.tools.result import ToolResult
 from agent_cli.verbose import debug_log as _debug_log
 
@@ -328,8 +329,24 @@ class ToolBridge:
         already validated tool_name + action_input. The leaf primitive
         ``_execute_tool`` trusts that contract and would raise KeyError
         on a missing name.
+
+        M4: 실행을 **부수효과 계층 락** 아래 둔다 — 도구가 선언한
+        :meth:`Tool.effect_intent` 로 충돌 단위를 판정하고, 충돌하는 효과만
+        직렬화한다(다른 경로끼리는 그대로 병렬). 스코프 ``off``(기본)이면
+        무동작이라 기존 경로는 그대로다. 여기가 잎(leaf) 지점인 것이 중요하다 —
+        복합 도구(``agent``)는 ``_invoke_agent`` 로 갈라져 이 경로를 타지 않고,
+        그 안의 중첩 루프가 자기 잎 호출에서 락을 잡는다(부모가 배타 락을 쥔 채
+        자식이 요구하면 교착이므로).
         """
-        return _execute_tool(tool_name, tool_input, ctx=self._run_ctx())
+        tool = TOOLS.get(tool_name)
+        args = tool_input if isinstance(tool_input, dict) else {}
+        intent = (
+            tool.effect_intent(args)
+            if tool is not None
+            else EffectIntent(EffectKind.UNKNOWN)
+        )
+        with effect_lock.hold(intent):
+            return _execute_tool(tool_name, tool_input, ctx=self._run_ctx())
 
     # ── 4. PostToolUse hooks ───────────────────────────────────────
     def _run_post_hooks(

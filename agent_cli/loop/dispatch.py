@@ -510,7 +510,18 @@ class TurnDispatcher:
 
         path = batch_ops[0].action_input.get("path")
         edits = [op.action_input for op in batch_ops]
-        result = apply_edits_batch(path, edits)
+        # M4: 이 경로는 ``_invoke_regular`` 을 거치지 않으므로(순수 배치 함수를
+        # 직접 부른다) 효과 락을 여기서 따로 잡는다 — 빠뜨리면 같은 파일에 대한
+        # 배치 편집만 보호 밖으로 새어나간다. 효과는 단건 edit 과 동일한
+        # FILE_WRITE(path) 다.
+        from agent_cli.tools import effect_lock
+        from agent_cli.tools.effect import EffectIntent, EffectKind
+
+        intent = EffectIntent(
+            EffectKind.FILE_WRITE, path if isinstance(path, str) else ""
+        )
+        with effect_lock.hold(intent):
+            result = apply_edits_batch(path, edits)
         observation = self.tools._tool_observation(
             "edit_file", result, batch_ops[0].action_input
         )

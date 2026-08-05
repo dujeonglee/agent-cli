@@ -24,6 +24,7 @@ from agent_cli.providers import (
     get_capabilities,
 )
 from agent_cli.render import C, console, get_renderer
+from agent_cli.tools import effect_lock
 from agent_cli.wire_formats import (
     get as _get_wire_format,
 )
@@ -1806,6 +1807,15 @@ def web(
         help="Cap on simultaneously in-flight user turns when "
         "--concurrency-contract=parallel. Excess messages queue FIFO.",
     ),
+    lock_scope: str | None = typer.Option(
+        None,
+        "--lock-scope",
+        help="Side-effect serialisation. 'conflict' locks only colliding "
+        "effects (same file, or any shell/delete) and lets different files "
+        "run in parallel; 'workspace' serialises every effect; 'off' does not "
+        "lock. Default: 'conflict' with --concurrency-contract=parallel, "
+        "'off' otherwise (today's behaviour).",
+    ),
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -1828,6 +1838,17 @@ def web(
     if concurrency_contract == "parallel" and max_concurrent_turns < 1:
         console.print(f"[{C['error']}]--max-concurrent-turns must be >= 1[/]")
         raise typer.Exit(2)
+    # M4: 부수효과 락. 미지정이면 계약에 따라 결정 — 병렬을 켠 사람은 동시
+    # 파일 쓰기 보호를 원하는 것이고(conflict), 직렬은 오늘 동작 그대로여야
+    # 한다(off). 명시 지정은 항상 이긴다(ablation 실험이 두 축을 독립 조작).
+    effective_lock_scope = lock_scope or (
+        "conflict" if concurrency_contract == "parallel" else "off"
+    )
+    try:
+        effect_lock.set_scope(effective_lock_scope)
+    except ValueError as exc:
+        console.print(f"[{C['error']}]{exc}[/]")
+        raise typer.Exit(2) from exc
 
     # Lazy imports — optional ``web`` extra. Surface a friendlier error
     # when the dependency is missing rather than a raw ImportError out
