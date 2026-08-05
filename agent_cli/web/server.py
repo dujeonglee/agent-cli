@@ -6,6 +6,8 @@ Endpoints:
   - ``POST /api/input``  — submit chat message / ask answer / confirm reply
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
+  - ``GET  /api/turns``  — list in-flight user turns (parallel contract)
+  - ``POST /api/turn/{id}/interrupt`` — stop ONE turn, leave siblings alone
 
 Auth: every authenticated endpoint requires the ``token`` query param to
 match ``WebServer.token``. The token is generated at startup (or
@@ -167,6 +169,10 @@ class WebServer:
         # teammate P4: 대화 창의 인간 개입(input/kill) 대상 — worker 부트가
         # AgentRegistry 를 꽂는다. None(테스트/기동 전)이면 엔드포인트 503.
         self.agent_registry = None
+        # A4(v7.29.0): 병렬 턴 레지스트리 — parallel 계약일 때만 worker 부트가
+        # 꽂는다. None(직렬/기동 전)이면 턴 엔드포인트가 409 로 "직렬 세션에는
+        # 개별 턴이 없다"고 알린다(조용한 빈 목록 대신 명시적 설명).
+        self.turn_registry = None
         # ``secrets.token_urlsafe`` gives a URL-safe random token —
         # ``--token`` override sticks if provided.
         self.token = token or secrets.token_urlsafe(32)
@@ -1189,6 +1195,56 @@ def create_app(server: WebServer) -> FastAPI:
         server._require_token(token)
         stopped = server.trigger_stop()
         return JSONResponse({"stopped": stopped})
+
+    @app.get("/api/turns")
+    async def list_turns(token: str = Query(...)):
+        """A4: 현재 inflight 인 사용자 턴 목록 (병렬 계약 전용).
+
+        클라이언트가 ``/api/turn/{id}/interrupt`` 를 부르려면 id 를 알아야 한다.
+        직렬 세션은 "개별 턴"이라는 개념 자체가 없으므로 빈 목록 대신 409 로
+        구분해 알린다 — 빈 목록은 "지금 아무것도 안 돈다"와 구별되지 않는다.
+        """
+        server._require_token(token)
+        reg = server.turn_registry
+        if reg is None:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "reason": "serial session — no per-turn identity "
+                    "(start with --concurrency-contract parallel)",
+                },
+                status_code=409,
+            )
+        return JSONResponse(
+            {"ok": True, "turns": reg.snapshot(), "pending": reg.pending_count()}
+        )
+
+    @app.post("/api/turn/{turn_id}/interrupt")
+    async def interrupt_turn(
+        turn_id: str, token: str = Query(...), conn_id: str = Query("")
+    ):
+        """A4: 지정 턴 **하나만** 중단 — 다른 동시 턴은 불간섭.
+
+        세션 전역 ``/api/stop`` 은 그대로 남는다(둘은 다른 도구다: 하나는 "내
+        요청 취소", 하나는 "전부 멈춰"). ``conn_id`` 를 주면 **소유자만** 취소할
+        수 있다 — 큐 대기 메시지 취소(``InputQueue.cancel``)와 같은 소유권
+        규율이라, 다중 사용자 세션에서 남의 작업을 끊지 못한다. 생략하면 검사
+        없이 취소(운영자/스크립트 경로).
+
+        알 수 없거나 이미 끝난 id 는 ``interrupted: false`` — 멱등하다.
+        """
+        server._require_token(token)
+        reg = server.turn_registry
+        if reg is None:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "reason": "serial session — use /api/stop",
+                },
+                status_code=409,
+            )
+        ok = reg.interrupt(turn_id, conn_id=conn_id or None)
+        return JSONResponse({"ok": True, "interrupted": ok})
 
     return app
 

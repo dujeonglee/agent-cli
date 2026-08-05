@@ -260,3 +260,106 @@ class TestShutdown:
         reg.submit("late")
         assert reg.wait_idle(timeout=1)
         assert seen == []
+
+
+class TestPerUserFairness:
+    """A5: 한 사용자가 cap 을 독점하지 못한다 (포크 pumpConcurrent 규칙).
+
+    ``conn_id`` 가 공정성 단위다 — 닉네임은 중복·사칭이 자유롭지만 연결
+    식별자는 서버가 발급하며, 대기 메시지 취소 소유권(``InputQueue.cancel``)이
+    이미 같은 단위를 쓴다.
+    """
+
+    def test_one_user_gets_only_one_active_turn(self):
+        block = threading.Event()
+        rec = _Recorder(block)
+        reg = TurnRegistry(rec, max_concurrent=4)
+        for i in range(4):
+            reg.submit(f"m{i}", conn_id="alice")
+        time.sleep(0.2)
+        # cap 은 4 지만 alice 는 1개만 — 나머지 3개는 대기.
+        assert reg.active_count() == 1
+        assert reg.pending_count() == 3
+        block.set()
+        assert reg.wait_idle(timeout=10)
+        assert len(rec.seen) == 4  # 결국 전부 처리된다
+
+    def test_other_users_get_slots_while_one_user_waits(self):
+        """기아 방지의 본체 — alice 가 큐를 채워도 bob 이 즉시 슬롯을 얻는다."""
+        block = threading.Event()
+        rec = _Recorder(block)
+        reg = TurnRegistry(rec, max_concurrent=3)
+        for i in range(5):
+            reg.submit(f"alice{i}", conn_id="alice")
+        reg.submit("bob0", conn_id="bob")
+        reg.submit("carol0", conn_id="carol")
+
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        running = {t.text for t in rec.seen}
+        assert "bob0" in running, "뒤에 온 bob 이 alice 의 큐에 막혔다"
+        assert "carol0" in running, "뒤에 온 carol 이 막혔다"
+        # alice 는 정확히 1건만 활성.
+        assert sum(1 for t in rec.seen if t.text.startswith("alice")) == 1
+        block.set()
+        assert reg.wait_idle(timeout=15)
+
+    def test_next_turn_of_same_user_starts_after_the_first_finishes(self):
+        rec = _Recorder()
+        reg = TurnRegistry(rec, max_concurrent=4)
+        for i in range(3):
+            reg.submit(f"m{i}", conn_id="alice")
+        assert reg.wait_idle(timeout=10)
+        # 순서는 보존된다 — 스킵은 "건너뛰기"지 "재정렬"이 아니다.
+        assert [t.text for t in rec.seen] == ["m0", "m1", "m2"]
+
+    def test_blank_conn_id_is_exempt(self):
+        """CLI·MailWaker wake 처럼 사람에게 귀속되지 않는 턴은 서로 안 막는다.
+
+        빈 값끼리 매칭시키면 그것들이 서로를 차단해 병렬이 통째로 무너진다.
+        """
+        block = threading.Event()
+        rec = _Recorder(block)
+        reg = TurnRegistry(rec, max_concurrent=3)
+        for i in range(3):
+            reg.submit(f"m{i}")  # conn_id 없음
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert reg.active_count() == 3
+        block.set()
+        assert reg.wait_idle(timeout=10)
+
+    def test_gate_releases_on_failure_too(self):
+        """실패한 턴이 사용자를 영구 차단하면 그 사람은 다시 말을 못 한다."""
+        seen = []
+
+        def runner(turn):
+            seen.append(turn.text)
+            raise RuntimeError("boom")
+
+        reg = TurnRegistry(runner, max_concurrent=4)
+        for i in range(3):
+            reg.submit(f"m{i}", conn_id="alice")
+        assert reg.wait_idle(timeout=10)
+        assert seen == ["m0", "m1", "m2"]
+
+    def test_interrupted_turn_releases_the_gate(self):
+        """취소된 턴이 사용자를 막아두면 그 사람은 다시 말을 못 한다."""
+
+        def runner(turn):
+            turn.stop_event.wait(timeout=3)
+
+        reg = TurnRegistry(runner, max_concurrent=2)
+        reg.submit("first", conn_id="alice")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        reg.submit("second", conn_id="alice")
+        assert reg.pending_count() == 1  # 게이트에 막힘
+
+        assert reg.interrupt(reg.active_ids()[0]) is True
+        assert reg.wait_idle(timeout=10)
+        assert reg.pending_count() == 0  # 취소 후 다음 턴이 진행됐다

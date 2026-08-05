@@ -2150,6 +2150,9 @@ def web(
             )
             # 세션 전역 /api/stop → 활성 턴 전부 중단 (단일 슬롯으로는 표현 불가).
             server.set_stop_all(_turn_registry.interrupt_all)
+            # A4: /api/turns · /api/turn/{id}/interrupt 대상. 직렬 세션에서는
+            # None 인 채로 남아 그 엔드포인트들이 409 로 구분해 응답한다.
+            server.turn_registry = _turn_registry
 
         while True:
             # Tell the frontend we're waiting for the next user

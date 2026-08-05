@@ -150,19 +150,51 @@ class TurnRegistry:
         if started:
             self._notify()
 
-    def _pump_locked(self) -> bool:
-        """cap 여유만큼 대기열 머리를 디스패치 (락 보유 중 호출).
+    def _has_active_user(self, conn_id: str) -> bool:
+        """``conn_id`` 의 활성 턴이 하나라도 있는가 (락 보유 중 호출).
 
-        포크 ``pumpConcurrent`` 의 FIFO 부분. 반환값은 "무언가 시작했는가" —
-        호출자가 락 밖에서 ``on_change`` 를 부를지 판단한다.
+        빈 conn_id 는 **게이트 면제**이며 서로를 막지 않는다 — 포크
+        ``hasActiveUser``(``pi.ts:212-218``)의 ``userId == null`` 규칙 그대로.
+        CLI·MailWaker wake 아이템처럼 사람에게 귀속되지 않는 턴이 여기 해당하고,
+        빈 값끼리 매칭시키면 그것들이 서로를 막아 병렬이 통째로 무너진다.
+
+        ``activeTurns`` 스캔이 per-user 활성의 **단일 진실원천**이다 — 별도
+        카운터 맵을 두면 취소·실패 경로에서 어긋나 영구 차단이 생긴다.
+        """
+        if not conn_id:
+            return False
+        return any(t.conn_id == conn_id for t in self._active.values())
+
+    def _next_eligible_locked(self) -> int:
+        """디스패치할 다음 대기 항목의 인덱스, 없으면 -1 (락 보유 중 호출).
+
+        **FIFO 스캔 + 활성 사용자 스킵** — 큐를 머리→꼬리로 보며 "conn_id 가
+        비었거나 그 conn_id 의 활성 턴이 없는" 첫 항목을 고른다. 한 사용자가 큐에
+        N건을 쌓아도 per-user=1 이라 1건만 활성이 되고, 나머지는 스킵되어 **다른
+        사용자가 슬롯을 얻는다**(기아 방지). 포크 ``pumpConcurrent``
+        (``pi.ts:226-237``)의 규칙 그대로다.
+
+        효과 락의 엄격 FIFO(추월 금지)와 방향이 반대인 것은 의도다: 저기서는
+        **같은** 자원을 두고 다투므로 추월이 기아를 만들지만, 여기서는 **다른**
+        사용자에게 기회를 주는 것이 공정성이다.
+        """
+        for i, cand in enumerate(self._pending):
+            if not self._has_active_user(cand.conn_id):
+                return i
+        return -1
+
+    def _pump_locked(self) -> bool:
+        """cap 여유만큼 적격 대기 항목을 디스패치 (락 보유 중 호출).
+
+        포크 ``pumpConcurrent``. 반환값은 "무언가 시작했는가" — 호출자가 락 밖에서
+        ``on_change`` 를 부를지 판단한다.
         """
         started = False
-        while (
-            not self._shutdown
-            and self._pending
-            and len(self._active) < self._max_concurrent
-        ):
-            turn = self._pending.pop(0)
+        while not self._shutdown and len(self._active) < self._max_concurrent:
+            idx = self._next_eligible_locked()
+            if idx < 0:
+                break  # 적격 후보 없음 — 완료 시 재펌프된다
+            turn = self._pending.pop(idx)
             self._turn_seq += 1
             turn.id = f"t{self._turn_seq}"  # 규칙 1: 디스패치 시점 발급
             self._active[turn.id] = turn

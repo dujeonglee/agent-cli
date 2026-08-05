@@ -2791,3 +2791,104 @@ class TestMaxAgentsEndpoint:
         _, _, client = server_and_client
         d = client.post("/api/max-agents?token=testtoken", json={"value": 5}).json()
         assert d["ok"] is False
+
+
+class TestPerTurnInterrupt:
+    """A4: 지정 턴만 중단 (v7.29.0). 세션 전역 ``/api/stop`` 과 공존한다 —
+    둘은 다른 도구다("내 요청 취소" vs "전부 멈춰")."""
+
+    def _parallel_server(self):
+        import threading
+
+        from agent_cli.loop.turns import TurnRegistry
+
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="testtoken")
+        gate = threading.Event()
+
+        def runner(turn):
+            turn.stop_event.wait(timeout=5)
+            gate.set()
+
+        reg = TurnRegistry(runner, max_concurrent=3)
+        server.turn_registry = reg
+        return server, TestClient(create_app(server)), reg, gate
+
+    def test_serial_session_says_so_instead_of_empty(self, server_and_client):
+        """빈 목록은 '지금 아무것도 안 돈다'와 구별되지 않는다 — 409 로 구분."""
+        _server, _renderer, client = server_and_client
+        r = client.get("/api/turns?token=testtoken")
+        assert r.status_code == 409
+        assert r.json()["ok"] is False
+        r2 = client.post("/api/turn/t1/interrupt?token=testtoken")
+        assert r2.status_code == 409
+
+    def test_lists_inflight_turns(self):
+        import time
+
+        server, client, reg, gate = self._parallel_server()
+        reg.submit("a", author="alice", conn_id="c-alice")
+        reg.submit("b", author="bob", conn_id="c-bob")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        body = client.get("/api/turns?token=testtoken").json()
+        assert body["ok"] is True
+        assert {t["author"] for t in body["turns"]} == {"alice", "bob"}
+        assert all(t["id"].startswith("t") for t in body["turns"])
+        reg.interrupt_all()
+        reg.wait_idle(timeout=5)
+
+    def test_interrupts_only_the_named_turn(self):
+        import time
+
+        server, client, reg, gate = self._parallel_server()
+        reg.submit("a", author="alice", conn_id="c-alice")
+        reg.submit("b", author="bob", conn_id="c-bob")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        turns = client.get("/api/turns?token=testtoken").json()["turns"]
+        victim = next(t for t in turns if t["author"] == "alice")
+        survivor = next(t for t in turns if t["author"] == "bob")
+
+        r = client.post(f"/api/turn/{victim['id']}/interrupt?token=testtoken")
+        assert r.json() == {"ok": True, "interrupted": True}
+
+        time.sleep(0.2)
+        still = {
+            t["id"] for t in client.get("/api/turns?token=testtoken").json()["turns"]
+        }
+        assert survivor["id"] in still, "형제 턴이 함께 죽었다"
+
+        reg.interrupt_all()
+        reg.wait_idle(timeout=5)
+
+    def test_owner_only_cancel(self):
+        import time
+
+        server, client, reg, gate = self._parallel_server()
+        reg.submit("a", author="alice", conn_id="c-alice")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        tid = reg.active_ids()[0]
+
+        r = client.post(f"/api/turn/{tid}/interrupt?token=testtoken&conn_id=c-stranger")
+        assert r.json()["interrupted"] is False, "남의 턴을 끊을 수 있었다"
+
+        r2 = client.post(f"/api/turn/{tid}/interrupt?token=testtoken&conn_id=c-alice")
+        assert r2.json()["interrupted"] is True
+        reg.wait_idle(timeout=5)
+
+    def test_unknown_turn_is_idempotent(self):
+        server, client, reg, gate = self._parallel_server()
+        r = client.post("/api/turn/t999/interrupt?token=testtoken")
+        assert r.json() == {"ok": True, "interrupted": False}
+
+    def test_requires_token(self):
+        server, client, reg, gate = self._parallel_server()
+        assert client.get("/api/turns?token=wrong").status_code == 401
+        assert client.post("/api/turn/t1/interrupt?token=wrong").status_code == 401
