@@ -30,6 +30,7 @@ off the manager reverts to the historical plain-FIFO behaviour.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -212,6 +213,33 @@ class ContextManager:
         self._msg_seq: int = 0
         self._reply_to: str | None = None
 
+        # ── 동시 턴 안전 (다중 사용자 병렬 턴 A1의 전제) ────────────
+        # 하나의 재진입 락이 캐시·토큰·압축 상태 전체를 지킨다. 락이 하나뿐이라
+        # 획득 순서 문제가 없고, RLock 이라 공개 메서드가 서로를 불러도(예:
+        # ``ensure_within``→``_compact``→``_evict_fifo``) 자기 재진입으로 통과한다.
+        #
+        # **락은 어디서도 마이크로초 이상 잡히지 않는다** — 압축의 LLM 요약 콜은
+        # 의도적으로 락 밖에서 돈다(``_compact`` 주석). 이게 설계의 핵심이다:
+        # ``/api/debug/prompt`` 는 async 라우트가 이벤트 루프에서 ``get_messages``
+        # 를 동기 호출하므로(web/server.py), 압축이 락을 수 초 쥐면 인스펙터 요청
+        # 하나가 uvicorn 이벤트 루프를 통째로 멈춰 모든 뷰어의 SSE 가 끊긴다.
+        #
+        # 락 순서(단방향, 순환 없음): ctx → renderer → fsio append.
+        #   - ctx.add → fsio.append_line(스트라이프 락). fsio 는 ctx 를 모른다.
+        #   - _compact → render_compaction_progress → renderer 내부 락.
+        #     역방향(renderer 락 보유 중 ctx 호출)은 렌더러가 의도적으로 피한다 —
+        #     ``scope_dynamic_sections``/``_finalize_prompt_scope`` 는 ctx 를 만지기
+        #     전에 자기 락을 먼저 푼다(render/web.py). 이 규율이 깨지면 데드락이므로
+        #     렌더러 쪽 변경 시 반드시 확인할 것.
+        self._lock = threading.RLock()
+        # 압축 동시 진입 게이트 — 없으면 N개 턴이 각자 압축을 시작해 같은 요약을
+        # N번 결제하고 하나만 커밋된다 (:meth:`_compact` 참조).
+        self._compacting: bool = False
+        # 벌크 변형(압축 재할당·FIFO pop·fold·resume 복원) 카운터. 낙관적 압축이
+        # "요약하는 동안 캐시가 통째로 갈렸는가"를 판정하는 근거. 단순 append 는
+        # 올리지 않는다 — 그건 꼬리에 붙으므로 압축 커밋이 흡수할 수 있다.
+        self._bulk_gen: int = 0
+
         # Compaction state. ``_summary`` empty until first compaction
         # completes. ``_dynamic_start_index`` tracks how many history
         # entries have been compacted away — resume reads ``history
@@ -252,6 +280,20 @@ class ContextManager:
         (NFR-CC-6). May be ``None`` (headless / no session)."""
         self._recorder = recorder
 
+    def _mark_bulk_mutation(self) -> None:
+        """벌크 변형 표식 — 렌더 미러 무효화 + 세대 증가 (락 보유 중 호출).
+
+        "캐시가 통째로 갈렸다"는 사실의 단일 출처. 종전엔 5곳이 각자
+        ``_nl_cache = None`` 만 찍었는데, 낙관적 압축(:meth:`_compact`)이
+        "요약하는 동안 캐시가 갈렸는가"를 판정할 근거가 추가로 필요해져 둘을
+        한 메서드로 묶었다 — 한쪽만 갱신하는 실수를 구조적으로 막는다.
+
+        단순 append(:meth:`add`)는 **여기를 거치지 않는다**: 꼬리에 붙는 변형은
+        압축 커밋이 그대로 흡수할 수 있어 세대를 올릴 이유가 없다.
+        """
+        self._nl_cache = None
+        self._bulk_gen += 1
+
     def add(self, message: dict) -> dict:
         """Add a message to cache and persist to history.jsonl.
 
@@ -266,7 +308,17 @@ class ContextManager:
         Pure storage: oversized tool outputs are already nudge-capped at the
         loop's result→observation seam, so no message reaching here can blow
         past the window and break compaction.
+
+        스레드 안전: 캐시·렌더 미러·토큰·디스크 append 를 한 임계영역으로 묶는다.
+        레코드 **여러 건**을 끼어듦 없이 붙여야 하면(assistant + 그 관찰들)
+        :meth:`commit_atomic` 을 쓴다 — 이 메서드를 N번 부르면 그 사이에 다른
+        턴의 레코드가 낄 수 있다.
         """
+        with self._lock:
+            return self._add_locked(message)
+
+    def _add_locked(self, message: dict) -> dict:
+        """:meth:`add` 의 본문 (락 보유 중 호출). ``commit_atomic`` 과 공유."""
         msg_tokens = _estimate_message_tokens(message)
         self._cache.append(message)
         # Incremental render: keep the natural-language mirror in step so
@@ -282,9 +334,39 @@ class ContextManager:
         # stored (live card == ctx == resume).
         return message
 
+    def commit_atomic(self, messages: list[dict]) -> list[dict]:
+        """레코드 묶음을 **끼어듦 없이** 한 번에 커밋 (동시 턴 안전).
+
+        한 스텝의 원자 단위 — ``[assistant]`` 또는 ``[assistant(도구 호출),
+        관찰, 관찰, ...]`` — 를 하나의 임계영역에서 캐시·렌더 미러·history.jsonl
+        에 붙인다. :meth:`add` 를 N번 부르는 것과 저장 결과는 같지만, 그 사이에
+        다른 턴의 레코드가 낄 수 없다는 점이 다르다.
+
+        **왜 필요한가**: 포크(Coagora)가 실측으로 확인한 짝 정합 불변식이다 —
+        assistant 의 도구 호출과 그에 대응하는 결과 레코드가 갈라지면 그 사이에
+        낀 다른 턴의 레코드 때문에 대화가 깨진다(``piWorker.mjs:380-381``:
+        "쪼개면 동시 턴이 끼어 OpenAI 400"). 본류는 히스토리를 자연어로
+        재렌더링해 먹이므로 400 이 아니라 **조용한 문맥 오염**으로 나타난다 —
+        어느 관찰이 어느 행동의 결과인지가 뒤섞인다.
+
+        직렬 모드에서는 경쟁자가 없어 ``add`` 반복과 완전히 동일하다(동작 무변).
+        빈 리스트는 no-op. 저장된 메시지 리스트를 그대로 돌려준다 — 호출자가
+        저장된 것과 똑같이 렌더할 수 있도록(``add`` 와 같은 규율).
+        """
+        if not messages:
+            return []
+        with self._lock:
+            return [self._add_locked(m) for m in messages]
+
     def set_turn(self, turn: int) -> None:
         """Set the current LLM turn index. The loop calls this at each turn
-        boundary so subsequent history records carry the right ``turn``."""
+        boundary so subsequent history records carry the right ``turn``.
+
+        락 불필요 — 단일 int 대입이라 GIL 하에서 원자적이다. (A1 착수 시 재검토:
+        턴이 복수가 되면 "현재 턴" 하나를 공유하는 것 자체가 성립하지 않으므로,
+        락이 아니라 turnId 별 스탬프로 바뀌어야 한다. 락을 걸어도 그 문제는
+        해결되지 않으므로 여기서는 걸지 않는다.)
+        """
         self._current_turn = turn
 
     def reconcile_actual_tokens(
@@ -308,7 +390,8 @@ class ContextManager:
         """
         if actual_total_tokens <= 0:
             return
-        self._cache_tokens = max(actual_total_tokens - system_tokens, 0)
+        with self._lock:
+            self._cache_tokens = max(actual_total_tokens - system_tokens, 0)
 
     def get_messages(self) -> list[dict]:
         """Return cached messages converted to natural language for LLM.
@@ -317,7 +400,18 @@ class ContextManager:
         messages get prepended right after the system prompt: the
         recursive summary and the accumulated file list. Wire-format
         plugins handle them as plain text (no format-specific shape).
+
+        **이것이 턴의 스냅샷이다** (동시 턴 안전). 반환값은 매번 새로 만든
+        리스트라, 받은 뒤 다른 턴이 append 하거나 압축이 캐시를 갈아엎어도
+        호출자가 쥔 리스트는 변하지 않는다 — 별도 ``snapshot()`` 메서드를 두지
+        않은 이유다(순수한 별칭이 될 뿐이다). 락은 캐시·요약·파일목록·렌더
+        미러를 **일관된 한 시점**으로 읽기 위한 것이며, 렌더 미러를 갱신하는
+        쓰기도 겸하므로 읽기 전용이 아니다.
         """
+        with self._lock:
+            return self._get_messages_locked()
+
+    def _get_messages_locked(self) -> list[dict]:
         result: list[dict] = []
         cache = self._cache
 
@@ -376,10 +470,15 @@ class ContextManager:
 
     def get_raw_messages(self) -> list[dict]:
         """Return cached messages as raw JSON dicts (no conversion)."""
-        return list(self._cache)
+        with self._lock:
+            return list(self._cache)
 
     def get_estimated_tokens(self) -> int:
-        """Current estimated token count of the cache."""
+        """Current estimated token count of the cache.
+
+        락 불필요 — 단일 int 읽기라 GIL 하에서 원자적이다(찢어진 값이 나올 수
+        없다). 다른 필드와 묶어 일관되게 읽어야 하는 호출자는 없다.
+        """
         return self._cache_tokens
 
     @property
@@ -426,13 +525,18 @@ class ContextManager:
         keeping ``_cache_tokens`` anchored to the server's real count,
         this fires on time even for CJK-heavy content the chars/4
         estimate would under-count.
+
+        락 규율: ``_compact`` 은 **락 밖에서** 부른다(자기 락을 스스로 관리하며
+        LLM 요약 구간은 락을 놓는다). 여기서 전 구간을 감싸면 그 구간이 통째로
+        임계영역이 되어 동시 턴과 웹 이벤트 루프가 수 초 멈춘다.
         """
         if self._cache_tokens <= target_tokens:
             return
 
         # Compaction disabled (CLI flag or env): skip directly to FIFO.
         if not self._compaction_enabled or self._compactor_callback is None:
-            self._evict_fifo(target_tokens)
+            with self._lock:
+                self._evict_fifo(target_tokens)
             return
 
         try:
@@ -442,8 +546,9 @@ class ContextManager:
 
         # Belt-and-braces: idempotent — no-op when ``_compact()`` already
         # brought the cache below the target.
-        if self._cache_tokens > target_tokens:
-            self._evict_fifo(target_tokens)
+        with self._lock:
+            if self._cache_tokens > target_tokens:
+                self._evict_fifo(target_tokens)
 
     def compact_now(self) -> tuple[int, int]:
         """Manual compaction — the ``/compact`` command. Run one
@@ -461,6 +566,8 @@ class ContextManager:
         before = self._cache_tokens
         if not self._compaction_enabled or self._compactor_callback is None:
             return before, before
+        # ``_compact`` 은 락 밖에서 — 자기 락을 스스로 관리한다(LLM 요약 구간은
+        # 락을 놓는다). 다른 스레드가 이미 압축 중이면 no-op 으로 돌아온다.
         try:
             self._compact()
         except CompactionError as e:
@@ -470,22 +577,57 @@ class ContextManager:
     def _compact(self) -> None:
         """Execute one compaction pass — split, summarise, extract paths,
         rebuild cache, persist. Raises ``CompactionError`` on summariser
-        failure (callback exception or empty/non-string return)."""
-        anchor, evict_set, retained = self._split_for_compaction()
-        if not evict_set:
-            return
+        failure (callback exception or empty/non-string return).
 
-        old_tokens = self._cache_tokens
-        render_compaction_progress(
-            phase="start",
-            old_tokens=old_tokens,
-            evicted_count=len(evict_set),
-        )
+        **낙관적 3단계 (동시 턴 안전).** 압축은 LLM 요약 콜을 품은
+        read-modify-write 라, 순진하게 락으로 감싸면 임계영역이 수 초가 된다 —
+        동시 턴 전부와, ``get_messages`` 를 이벤트 루프에서 동기 호출하는
+        ``/api/debug/prompt`` 까지 멈춘다(모든 뷰어의 SSE 정지). 그래서:
+
+          1. **락**: 분할 + 요약 입력 조립 + 세대/길이 기록 (순수 인메모리).
+          2. **락 밖**: LLM 요약 (수 초). 이 동안 다른 턴은 자유롭게 append 한다.
+          3. **락**: 세대 재검증 후 원자 커밋.
+
+        3단계의 핵심은 **꼬리 흡수**다 — evict 대상은 캐시의 *앞부분*이고 동시
+        턴의 append 는 *뒤*에 붙으므로, 2단계 중 도착한 레코드는 버릴 이유가 없다.
+        ``_cache[n_before:]`` 로 회수해 retained 뒤에 그대로 이어붙인다.
+        (history.jsonl 상으로도 evict 구간이 앞, 신규분이 뒤라
+        ``_dynamic_start_index += len(evict_set)`` 가 그대로 유효하다.)
+
+        캐시가 **통째로** 갈린 경우(다른 압축·FIFO·fold·resume)는 흡수로 복구할
+        수 없으므로 ``_bulk_gen`` 불일치로 판정해 이번 결과를 버린다 — 다음
+        ``ensure_within`` 이 재시도한다. 조용히 틀린 커밋보다 낭비된 콜이 낫다.
+
+        ``_compacting`` 게이트는 동시 진입을 1개로 제한한다. 없으면 N개 턴이
+        각자 ensure_within 에서 압축을 시작해 **같은 요약을 N번 결제**하고
+        하나만 커밋된다.
+
+        직렬 모드에서는 경쟁자가 없어 세대가 변할 수 없고 꼬리도 항상 비어 있다
+        — 결과가 종전과 완전히 동일하다.
+        """
+        with self._lock:
+            if self._compacting:
+                return  # 다른 스레드가 이미 압축 중 — 중복 요약 결제 방지
+            anchor, evict_set, retained = self._split_for_compaction()
+            if not evict_set:
+                return
+            self._compacting = True
+            gen = self._bulk_gen
+            n_before = len(self._cache)
+            old_tokens = self._cache_tokens
+            prior_summary = self._summary
 
         t0 = time.monotonic()
         failure_signal: str | None = None
         fallback_used = False
+        # ``_compacting=True`` 직후부터 try 로 감싼다 — 그 사이에서 예외가 나면
+        # 플래그가 True 로 고착돼 이 세션의 압축이 영구 정지한다.
         try:
+            render_compaction_progress(
+                phase="start",
+                old_tokens=old_tokens,
+                evicted_count=len(evict_set),
+            )
             # Recursive single-call summarisation: when a prior summary
             # exists, fold it into the input so the LLM produces ONE
             # consolidated summary in a single round-trip rather than
@@ -505,10 +647,10 @@ class ContextManager:
             # turn to mimic. The callback still receives chat-ready
             # ``{role, content}`` only.
             transcript = "\n".join(_to_summary_text(m) for m in evict_set)
-            if self._summary:
+            if prior_summary:
                 content = (
                     "## Running summary of earlier conversation\n\n"
-                    f"{self._summary}\n\n"
+                    f"{prior_summary}\n\n"
                     "Below is a transcript of NEW messages to fold into the "
                     "running summary. Produce one updated summary under the "
                     "same section headings.\n\n"
@@ -518,39 +660,50 @@ class ContextManager:
                 content = "Transcript to summarise:\n\n" + transcript
             summarize_input = [{"role": "user", "content": content}]
 
+            # ── 2단계: 락 밖. 여기가 수 초 걸리는 구간이다. ──
             new_summary = self._summarize_messages(summarize_input)
             new_paths = extract_file_paths(evict_set)
 
-            # Cap and store.
-            self._summary = new_summary[:_SUMMARY_CHAR_CAP]
-            self._file_list = self._merge_file_lists(self._file_list, new_paths)
-            self._cache = anchor + retained
-            self._nl_cache = None  # bulk rebuild → re-render on next get
-            self._cache_tokens = _sum_message_tokens(self._cache)
-            self._compaction_count += 1
-            self._last_compacted_at = _now_iso()
-            # The evicted slice came from the cache; reflect it in the
-            # history offset so resume skips the summarised tail.
-            self._dynamic_start_index += len(evict_set)
-            self._save_compaction_json()
+            # ── 3단계: 재검증 후 원자 커밋. ──
+            with self._lock:
+                if self._bulk_gen != gen:
+                    # 요약하는 동안 캐시가 통째로 갈렸다 → 흡수 불가, 폐기.
+                    failure_signal = "stale_generation"
+                else:
+                    # 꼬리 흡수: 2단계 중 다른 턴이 붙인 레코드는 그대로 보존.
+                    appended = self._cache[n_before:]
+                    self._summary = new_summary[:_SUMMARY_CHAR_CAP]
+                    self._file_list = self._merge_file_lists(self._file_list, new_paths)
+                    self._cache = anchor + retained + appended
+                    self._mark_bulk_mutation()  # 캐시 재할당 → 렌더 미러 재빌드
+                    self._cache_tokens = _sum_message_tokens(self._cache)
+                    self._compaction_count += 1
+                    self._last_compacted_at = _now_iso()
+                    # The evicted slice came from the cache; reflect it in the
+                    # history offset so resume skips the summarised tail.
+                    self._dynamic_start_index += len(evict_set)
+                    self._save_compaction_json()
         except CompactionError:
             failure_signal = "summary_failed"
             raise
         finally:
             duration_ms = (time.monotonic() - t0) * 1000.0
+            with self._lock:
+                self._compacting = False
+                tokens_after = self._cache_tokens
             # Determine ``fallback_used`` AFTER the try-block. If we
             # raised, the caller (ensure_within) will run FIFO so
             # mark fallback now. If we succeeded but the cache is
             # still over threshold, ensure_within's belt-and-braces
             # will also run FIFO — same flag.
             threshold = int(self.max_context_tokens * _COMPACTION_THRESHOLD_RATIO)
-            if failure_signal is not None or self._cache_tokens > threshold:
+            if failure_signal is not None or tokens_after > threshold:
                 fallback_used = True
 
             if self._recorder is not None:
                 self._recorder.record_compaction(
                     tokens_before=old_tokens,
-                    tokens_after=self._cache_tokens,
+                    tokens_after=tokens_after,
                     evicted_count=len(evict_set),
                     fallback_used=fallback_used,
                     failure_signal=failure_signal,
@@ -560,7 +713,7 @@ class ContextManager:
         render_compaction_progress(
             phase="done",
             old_tokens=old_tokens,
-            new_tokens=self._cache_tokens,
+            new_tokens=tokens_after,
         )
 
     def _split_for_compaction(
@@ -651,7 +804,7 @@ class ContextManager:
         target = target_tokens if target_tokens is not None else self.max_context_tokens
         while self._cache_tokens > target and len(self._cache) > 1:
             removed = self._cache.pop(0)
-            self._nl_cache = None  # front pop → rendered mirror stale
+            self._mark_bulk_mutation()  # front pop → 렌더 미러 stale
             self._cache_tokens -= _estimate_message_tokens(removed)
             # The popped message came from the cache, which mirrors
             # history.jsonl — reflect the drop in the offset so
@@ -701,11 +854,13 @@ class ContextManager:
             True if the cache shrank (a retry is worthwhile), False if
             only the anchor remains (caller should give up).
         """
-        if len(self._cache) <= 1:
-            return False
-        before_len = len(self._cache)
+        with self._lock:
+            if len(self._cache) <= 1:
+                return False
+            before_len = len(self._cache)
 
         # 1) Compact first — summarise the oldest slice if possible.
+        #    락 밖에서: ``_compact`` 이 자기 락을 관리하며 LLM 요약 구간은 놓는다.
         if self._compaction_enabled and self._compactor_callback is not None:
             try:
                 self._compact()
@@ -713,31 +868,32 @@ class ContextManager:
                 render_compaction_progress(phase="warning", reason=str(e))
 
         # 2) FIFO-evict the remainder if compaction didn't shrink enough.
-        if len(self._cache) > 1:
-            if actual_tokens and target_tokens and actual_tokens > target_tokens:
-                # Ratio-based: shed so the (estimate-invariant) fraction
-                # target/actual of the prompt remains.
-                keep_ratio = target_tokens / actual_tokens
-                floor = max(int(self._cache_tokens * keep_ratio), 1)
-            else:
-                # No server count: trim ~25% and let the retry converge.
-                floor = max(int(self._cache_tokens * 0.75), 1)
-            self._evict_fifo(floor)
+        with self._lock:
+            if len(self._cache) > 1:
+                if actual_tokens and target_tokens and actual_tokens > target_tokens:
+                    # Ratio-based: shed so the (estimate-invariant) fraction
+                    # target/actual of the prompt remains.
+                    keep_ratio = target_tokens / actual_tokens
+                    floor = max(int(self._cache_tokens * keep_ratio), 1)
+                else:
+                    # No server count: trim ~25% and let the retry converge.
+                    floor = max(int(self._cache_tokens * 0.75), 1)
+                self._evict_fifo(floor)
 
-            # Guarantee forward progress: ratio eviction can be a no-op
-            # when the local estimate already sits below ``floor`` (the
-            # estimate under-counted), yet the server rejected the
-            # prompt. Pop one oldest message so the retry makes headway.
-            if len(self._cache) >= before_len and len(self._cache) > 1:
-                removed = self._cache.pop(0)
-                self._nl_cache = None  # front pop → rendered mirror stale
-                self._cache_tokens = max(
-                    self._cache_tokens - _estimate_message_tokens(removed), 0
-                )
-                self._dynamic_start_index += 1
-                self._save_compaction_json()
+                # Guarantee forward progress: ratio eviction can be a no-op
+                # when the local estimate already sits below ``floor`` (the
+                # estimate under-counted), yet the server rejected the
+                # prompt. Pop one oldest message so the retry makes headway.
+                if len(self._cache) >= before_len and len(self._cache) > 1:
+                    removed = self._cache.pop(0)
+                    self._mark_bulk_mutation()  # front pop → 렌더 미러 stale
+                    self._cache_tokens = max(
+                        self._cache_tokens - _estimate_message_tokens(removed), 0
+                    )
+                    self._dynamic_start_index += 1
+                    self._save_compaction_json()
 
-        return len(self._cache) < before_len
+            return len(self._cache) < before_len
 
     # ── Persistence ──────────────────────────────────
 
@@ -760,6 +916,11 @@ class ContextManager:
           컨텍스트에는 항상 최신 개입 1개만.
         반환: 접은 레코드 수.
         """
+        with self._lock:
+            return self._fold_locked(assume_tail_resolved)
+
+    def _fold_locked(self, assume_tail_resolved: bool) -> int:
+        """:meth:`fold_resolved_interventions` 본문 (락 보유 중 호출)."""
         from agent_cli.context.records import (
             fold_resolved_intervention_indices,
             is_format_intervention,
@@ -788,7 +949,7 @@ class ContextManager:
             self._cache_tokens = max(
                 self._cache_tokens - _estimate_message_tokens(removed), 0
             )
-        self._nl_cache = None  # 벌크 변형 → 렌더 미러 재빌드
+        self._mark_bulk_mutation()
         return len(idxs)
 
     def _append_to_history(self, message: dict) -> None:
@@ -888,44 +1049,51 @@ class ContextManager:
         invalid for the current history), fall back to the legacy
         reverse-load-until-budget strategy.
         """
-        self._nl_cache = None  # cache rebuilt from disk → re-render on next get
-        messages = store.load_records(self._history_path)
-        self._restore_reply_attribution(messages)
+        # 벌크 변형은 예외 없이 락 아래에서 — 생성자 경로라 실제 경쟁자는
+        # 없지만 규율을 단일하게 유지한다(RLock 이라 fold 재진입도 안전).
+        with self._lock:
+            self._mark_bulk_mutation()  # 디스크에서 재구성 → 렌더 미러 재빌드
+            messages = store.load_records(self._history_path)
+            self._restore_reply_attribution(messages)
 
-        use_offset = self._dynamic_start_index > 0 and self._dynamic_start_index <= len(
-            messages
-        )
-        if use_offset:
-            forward = messages[self._dynamic_start_index :]
-            self._cache = forward
-            self._cache_tokens = _sum_message_tokens(forward)
-            # If even the forward slice exceeds budget (budget shrank
-            # since the previous run), trim oldest until it fits.
-            while self._cache_tokens > self.max_context_tokens and len(self._cache) > 1:
-                removed = self._cache.pop(0)
-                self._cache_tokens -= _estimate_message_tokens(removed)
-                self._dynamic_start_index += 1
-            self.fold_resolved_interventions()  # v4.51.0 — 위와 동일 재적용
-            return
+            use_offset = (
+                self._dynamic_start_index > 0
+                and self._dynamic_start_index <= len(messages)
+            )
+            if use_offset:
+                forward = messages[self._dynamic_start_index :]
+                self._cache = forward
+                self._cache_tokens = _sum_message_tokens(forward)
+                # If even the forward slice exceeds budget (budget shrank
+                # since the previous run), trim oldest until it fits.
+                while (
+                    self._cache_tokens > self.max_context_tokens
+                    and len(self._cache) > 1
+                ):
+                    removed = self._cache.pop(0)
+                    self._cache_tokens -= _estimate_message_tokens(removed)
+                    self._dynamic_start_index += 1
+                self.fold_resolved_interventions()  # v4.51.0 — 위와 동일 재적용
+                return
 
-        # Legacy path: invalid or absent offset → reverse-load.
-        total = _sum_message_tokens(messages)
-        start_idx = 0
-        if total > self.max_context_tokens:
-            running = total
-            for i, msg in enumerate(messages):
-                if running <= self.max_context_tokens:
-                    start_idx = i
-                    break
-                running -= _estimate_message_tokens(msg)
-            else:
-                start_idx = len(messages) - 1
+            # Legacy path: invalid or absent offset → reverse-load.
+            total = _sum_message_tokens(messages)
+            start_idx = 0
+            if total > self.max_context_tokens:
+                running = total
+                for i, msg in enumerate(messages):
+                    if running <= self.max_context_tokens:
+                        start_idx = i
+                        break
+                    running -= _estimate_message_tokens(msg)
+                else:
+                    start_idx = len(messages) - 1
 
-        self._cache = messages[start_idx:]
-        self._cache_tokens = _sum_message_tokens(self._cache)
-        # fold 재적용 (v4.51.0): live 가 접은 뷰를 레코드-기반 재판정으로
-        # 동일 재현 — history 는 전부 남아 있으므로 여기서 다시 접는다.
-        self.fold_resolved_interventions()
+            self._cache = messages[start_idx:]
+            self._cache_tokens = _sum_message_tokens(self._cache)
+            # fold 재적용 (v4.51.0): live 가 접은 뷰를 레코드-기반 재판정으로
+            # 동일 재현 — history 는 전부 남아 있으므로 여기서 다시 접는다.
+            self.fold_resolved_interventions()
 
     def _restore_reply_attribution(self, records: list[dict]) -> None:
         """A6: resume 시 질의 id 카운터와 "처리 중인 질의"를 이어받는다.
