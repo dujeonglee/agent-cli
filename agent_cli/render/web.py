@@ -176,6 +176,13 @@ class WebRenderer(Renderer):
         # Worker busy/idle mirror (set by worker_busy/worker_idle) — a plain
         # queryable bool for the idle-reaper, independent of the sticky payload.
         self._worker_busy = False
+        # A1(v7.29.0): 병렬 모드의 **동시 inflight 턴 수** (포크 activeTurnCount
+        # 대응). 직렬 모드는 영원히 0 이라 ``worker_is_busy`` 가 종전과 동치다.
+        # 불리언 하나로는 "N개 중 2개가 도는 중"을 표현할 수 없어 별도 카운트 —
+        # 이 값이 0 이 아니면 idle-reaper 가 세션을 거두면 안 된다.
+        self._active_turns = 0
+        # cap 에 막혀 대기 중인 턴 수 (idle-reaper 가 함께 본다).
+        self._pending_turns = 0
         # Set when DIRECTIVE.md is edited via the Prompt Inspector; the loop
         # consumes it each LLM call to rebuild its system prompt.
         self._directives_dirty = False
@@ -1318,8 +1325,42 @@ class WebRenderer(Renderer):
     def worker_is_busy(self) -> bool:
         """Whether the chat worker is mid-message (LLM turn / tool / prompt
         wait). Read by the idle-reaper so a running agent with no viewers is
-        never reaped mid-task."""
-        return self._worker_busy
+        never reaped mid-task.
+
+        A1: 병렬 모드에서는 디스패처가 큐에서 블록 중이어도(``_worker_busy``
+        False) 턴 스레드가 돌고 있을 수 있으므로 활성 턴 수를 함께 본다.
+        직렬 모드는 ``_active_turns`` 가 0 이라 종전과 완전히 동치.
+        """
+        return self._worker_busy or (self._active_turns + self._pending_turns) > 0
+
+    def set_active_turns(self, n: int, pending: int = 0) -> None:
+        """병렬 모드의 턴 수를 갱신하고 프런트에 브로드캐스트한다.
+
+        ``TurnRegistry.on_change`` 가 호출한다. 직렬 모드에서는 아무도 부르지
+        않으므로 sticky 페이로드도 종전 그대로다(``busy`` 키만).
+
+        ``pending`` (cap 에 막혀 대기 중)을 따로 받는 이유: 표시용 "지금 몇 개가
+        도는가"와 idle-reaper 용 "일이 남았는가"는 다른 질문이다. 대기분을 활성에
+        섞으면 표시가 거짓이 되고, 빼먹으면 **마지막 턴이 시작되기 전에 세션이
+        reap** 된다. 그래서 값은 둘 다 보관하고 소비자별로 다르게 쓴다.
+        """
+        self._active_turns = max(0, int(n))
+        self._pending_turns = max(0, int(pending))
+        # sticky ``busy`` 는 **프런트 Send 버튼 게이팅**이라 ``_worker_busy`` 그대로
+        # 둔다 — 병렬 모드의 요점이 "돌고 있어도 더 보낼 수 있다"이므로 활성 턴을
+        # 여기 섞으면 입력이 막혀 기능 자체가 무의미해진다. 반면 파이썬 쪽
+        # :meth:`worker_is_busy`(idle-reaper 용)는 활성 턴을 포함해야 한다 — 두
+        # 소비자의 질문이 다르다("입력 막을까?" vs "일이 남았나?").
+        self.set_sticky(
+            "worker_state",
+            "worker_state",
+            {
+                "busy": self._worker_busy,
+                "active_turns": self._active_turns,
+                "pending_turns": self._pending_turns,
+            },
+        )
+        self._publish_status()
 
     def is_awaiting_input(self) -> bool:
         """Whether an ``ask``/``confirm`` prompt is currently pending a user
@@ -1468,7 +1509,8 @@ class WebRenderer(Renderer):
         if self._status_dir is None:
             return
         with self._lock:
-            busy = self._worker_busy
+            busy = self._worker_busy or (self._active_turns + self._pending_turns) > 0
+            active_turns = self._active_turns
             awaiting = "input_required" in self._sticky
             viewers = sum(1 for c in self._connections if not c.closed.is_set())
             slot = self._sticky.get("agent_roster")
@@ -1482,6 +1524,7 @@ class WebRenderer(Renderer):
                 awaiting_input=awaiting,
                 viewers=viewers,
                 agents=self._agents_summary_from(roster),
+                active_turns=active_turns,
             )
         except OSError:
             pass  # best-effort: a status write must never break the session

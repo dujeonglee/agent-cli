@@ -873,7 +873,8 @@ class TestLoopWiring:
         added = []
         fake_ctx = SimpleNamespace(add=lambda rec: added.append(rec) or rec)
         fake_self = SimpleNamespace(
-            _config=SimpleNamespace(agent_registry=reg),
+            # origin_turn="" = 직렬 모드 → drain_replies(None) = 전량 회수.
+            _config=SimpleNamespace(agent_registry=reg, origin_turn=""),
             messages=[],
             ctx=fake_ctx,
             turn=3,
@@ -3199,3 +3200,73 @@ class TestRunMode:
         assert "[Task 2]" in c and "A-done" in c and "B-done" in c
         # 두 서브루프가 실제로 각각 돌았다 (main 2 + sub 2 = 4 콜)
         assert provider.call.call_count == 4
+
+
+# ── A1: 회신 배달 턴 귀속 (v7.29.0) ──────────────
+
+
+class TestReplyTurnAttribution:
+    """병렬 턴에서 회신이 **요청한 턴**으로 돌아가는가.
+
+    전량 회수를 그대로 두면 먼저 턴 경계에 도달한 아무 턴이 남의 회신까지
+    가져가, 실제 요청자는 답을 못 보고 A6 의 ``reply_to`` 는 그것을 "다른
+    사용자의 질문에 대한 응답"으로 기록한다 — 귀속 데이터가 거짓이 된다.
+    """
+
+    def test_serial_mode_drains_everything(self, tmp_path):
+        """turn_id=None (기본) = 종전 동작 — 전량 회수."""
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        reg.request(key, "job")
+        assert wait_until(reg.has_pending_replies)
+        assert len(reg.drain_replies()) == 1
+        assert not reg.has_pending_replies()
+
+    def test_turn_scoped_drain_takes_only_its_own(self, tmp_path):
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn()
+        k2, _ = reg.spawn()
+        reg.request(k1, "job-a", origin_turn="t1")
+        reg.request(k2, "job-b", origin_turn="t2")
+        assert wait_until(lambda: len(reg._pending) == 2)
+
+        got = reg.drain_replies("t1")
+        assert [r["origin_turn"] for r in got] == ["t1"]
+        # 남의 것은 큐에 남아 있어야 한다 — 탈취 금지.
+        assert [r["origin_turn"] for r in reg._pending] == ["t2"]
+
+        got2 = reg.drain_replies("t2")
+        assert [r["origin_turn"] for r in got2] == ["t2"]
+        assert not reg.has_pending_replies()
+
+    def test_unowned_replies_go_to_whoever_asks_first(self, tmp_path):
+        """세션 수준 이벤트(사망 통지 등)는 어느 턴에도 속하지 않는다."""
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        reg.request(key, "job")  # origin_turn 없음
+        assert wait_until(reg.has_pending_replies)
+        got = reg.drain_replies("t7")
+        assert len(got) == 1
+        assert got[0]["origin_turn"] == ""
+
+    def test_origin_turn_round_trips_to_the_reply(self, tmp_path):
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        reg.request(key, "job", origin_turn="t42")
+        assert wait_until(reg.has_pending_replies)
+        assert reg.drain_replies()[0]["origin_turn"] == "t42"
+
+    def test_tool_agent_passes_origin_turn(self, tmp_path):
+        """``agent`` 도구 → registry.request 로 turn 이 실린다."""
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg = make_registry(tmp_path)
+        key, _ = reg.spawn()
+        res = tool_agent(
+            {"mode": "request", "key": key, "message": "job"},
+            registry=reg,
+            origin_turn="t9",
+        )
+        assert res.success, res.error
+        assert wait_until(reg.has_pending_replies)
+        assert reg.drain_replies()[0]["origin_turn"] == "t9"

@@ -157,3 +157,68 @@ class TestResume:
         resumed = ContextManager(session_dir, resume=True)
         resumed.add({"role": "user", "content": "new"})
         assert _records(resumed)[-1]["id"] == "u1"
+
+
+class TestParallelAttribution:
+    """A1: 동시 턴에서 귀속이 섞이지 않는가.
+
+    실측으로 발견한 회귀의 가드다 — 세션 전역 ``_reply_to`` 하나만 쓰던 최초
+    구현은 동시 3턴에서 **세 응답이 전부 마지막 질의를 가리켰다**. A6 가
+    존재하는 이유(병렬화 시 1:1 귀속 보존) 자체가 무너지는 버그였다.
+    턴 하나 = 스레드 하나이므로 귀속은 스레드별이어야 한다.
+    """
+
+    def test_concurrent_turns_keep_their_own_attribution(self, session_dir):
+        import threading
+
+        ctx = ContextManager(session_dir, max_context_tokens=1_000_000)
+        n = 6
+        start = threading.Barrier(n)
+        mid = threading.Barrier(n)
+
+        def turn(i):
+            start.wait(timeout=5)
+            ctx.add({"role": "user", "content": f"[u{i}]: q{i}", "author": f"u{i}"})
+            # 전원이 질의를 넣은 뒤에 응답을 넣는다 — 전역 필드 하나면
+            # 여기서 모두 마지막 질의를 가리키게 된다(원래 버그의 재현 조건).
+            mid.wait(timeout=5)
+            ctx.add({"role": "assistant", "content": f"answer-{i}"})
+
+        ts = [threading.Thread(target=turn, args=(i,)) for i in range(n)]
+        [t.start() for t in ts]
+        [t.join(timeout=10) for t in ts]
+
+        recs = _records(ctx)
+        queries = {r["id"]: r["author"] for r in recs if r.get("kind") == "query"}
+        assert len(queries) == n
+
+        answers = [r for r in recs if r.get("kind") == "raw"]
+        assert len(answers) == n
+        # 각 응답의 reply_to 는 **자기 스레드의 질의**를 가리켜야 한다:
+        # answer-i 의 작성자는 u{i} 였다.
+        for a in answers:
+            i = a["content"].removeprefix("answer-")
+            assert queries[a["reply_to"]] == f"u{i}", (
+                f"answer-{i} 가 {queries[a['reply_to']]} 의 질의에 귀속됨 — 귀속 혼선"
+            )
+        # 그리고 모두 서로 다른 질의를 가리킨다(한 곳으로 몰리지 않았다).
+        assert len({a["reply_to"] for a in answers}) == n
+
+    def test_thread_without_its_own_query_falls_back_to_latest(self, session_dir):
+        """질의를 스스로 넣지 않은 스레드(백그라운드 배달 등)는 전역 폴백."""
+        import threading
+
+        ctx = ContextManager(session_dir, max_context_tokens=1_000_000)
+        ctx.add({"role": "user", "content": "q"})
+
+        seen = []
+
+        def bg():
+            ctx.add({"role": "assistant", "content": "from-other-thread"})
+            seen.append(True)
+
+        t = threading.Thread(target=bg)
+        t.start()
+        t.join(timeout=5)
+        assert seen
+        assert _records(ctx)[-1]["reply_to"] == "u1"

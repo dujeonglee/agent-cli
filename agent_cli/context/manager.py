@@ -211,7 +211,16 @@ class ContextManager:
         # 그 암묵성이 소실되므로 지금 데이터로 남겨둔다.
         # (근거: docs/research/10-agent-cli-gap-analysis.md §1 A6.)
         self._msg_seq: int = 0
+        # 세션 전역 폴백 — "가장 최근 질의". 질의를 스스로 추가하지 않은
+        # 스레드(백그라운드 배달 등)의 레코드가 쓴다.
         self._reply_to: str | None = None
+        # **턴별 귀속 (A1)**: 병렬 모드에서는 턴 하나가 스레드 하나이므로,
+        # "지금 처리 중인 질의"는 세션이 아니라 **스레드**의 성질이다.
+        # 전역 필드만 쓰면 나중에 시작한 턴이 그 값을 덮어써, 먼저 돌던 턴의
+        # 응답까지 남의 질문에 귀속된다(실측으로 확인: 동시 3턴에서 세 응답이
+        # 전부 마지막 질의 u3 를 가리켰다). 직렬 모드에서는 스레드가 하나뿐이라
+        # thread-local 과 전역이 항상 같은 값 = 동작 무변.
+        self._tls = threading.local()
 
         # ── 동시 턴 안전 (다중 사용자 병렬 턴 A1의 전제) ────────────
         # 하나의 재진입 락이 캐시·토큰·압축 상태 전체를 지킨다. 락이 하나뿐이라
@@ -985,12 +994,22 @@ class ContextManager:
         # ``_append_to_history`` 만이 부르는 디스크 기록 seam 이라 레코드
         # 하나당 정확히 한 번 실행된다. id 는 history 레코드에만 존재하고
         # 캐시/LLM 경로에는 절대 들어가지 않는다(위 ``dict(message)`` 복사).
+        #
+        # 귀속은 **스레드별**이다 (A1): 병렬 모드에서 턴 하나 = 스레드 하나이므로
+        # "지금 처리 중인 질의"는 세션이 아니라 스레드의 성질이다. 전역만 쓰면
+        # 나중에 시작한 턴이 값을 덮어써 먼저 돌던 턴의 응답까지 남의 질문에
+        # 귀속된다. 스레드가 자기 질의를 추가한 적 없으면(백그라운드 배달 등)
+        # 전역 폴백을 쓴다 — 직렬 모드에서는 둘이 항상 같아 동작 무변.
         if kind == "query":
             self._msg_seq += 1
-            self._reply_to = f"u{self._msg_seq}"
-            record["id"] = self._reply_to
-        elif self._reply_to is not None:
-            record["reply_to"] = self._reply_to
+            new_id = f"u{self._msg_seq}"
+            self._reply_to = new_id
+            self._tls.reply_to = new_id
+            record["id"] = new_id
+        else:
+            owner = getattr(self._tls, "reply_to", None) or self._reply_to
+            if owner is not None:
+                record["reply_to"] = owner
         # Which scope (skill subloop / worker) produced this record, "" = main.
         # Resume needs it: without the association, replayed turns all land on
         # the main timeline and a resumed session shows NO skill/agent cards at

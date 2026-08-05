@@ -92,13 +92,18 @@ def write_status_file(
     awaiting_input: bool,
     viewers: int,
     agents: dict | None = None,
+    active_turns: int = 0,
 ) -> Path:
     """Atomically (over)write the live status sidecar. Returns the path.
 
     ``agents`` (v7.10.0, additive): 상주 에이전트 요약
     ``{"alive", "working", "list": [{key, profile, name, state}, ...]}`` —
     board 가 행에 🤖 칩과 "에이전트 작업 중" 상태를 그리는 소스. ``None``
-    이면 필드 생략(에이전트 미사용/구버전 소비자와 동일 shape 유지)."""
+    이면 필드 생략(에이전트 미사용/구버전 소비자와 동일 shape 유지).
+
+    ``active_turns`` (v7.29.0, additive): 동시 inflight 사용자 턴 수 —
+    병렬 모드(A1)에서만 0 이 아니다. **0 이면 필드를 생략**해 직렬 세션의
+    status.json 바이트가 종전과 동일하게 유지된다(보드 파서 무영향)."""
     info = {
         "busy": bool(busy),
         "awaiting_input": bool(awaiting_input),
@@ -106,6 +111,8 @@ def write_status_file(
     }
     if agents is not None:
         info["agents"] = agents
+    if active_turns:
+        info["active_turns"] = int(active_turns)
     path = status_file_path(session_dir)
     # fsio.atomic_write_json 이 같은 의미론(유니크 tmp + replace + 부모
     # 소실 가드)을 소유 — 자체 mkstemp 구현을 수렴 (v4.27.1 레이스 교훈은

@@ -17,6 +17,7 @@ from agent_cli.config import get_provider_defaults
 from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
 from agent_cli.loop import run_loop
+from agent_cli.loop.turns import DEFAULT_MAX_CONCURRENT_TURNS
 from agent_cli.providers import (
     UnsupportedModelError,
     create_provider,
@@ -1791,6 +1792,20 @@ def web(
         "/<prefix>/* to this instance and strips the prefix (e.g. /s/doom). "
         "The UI's relative URLs resolve under it. Default '' = root.",
     ),
+    concurrency_contract: str = typer.Option(
+        "serial",
+        "--concurrency-contract",
+        help="How concurrent user messages are handled. 'serial' (default) "
+        "processes one message at a time — today's behaviour, unchanged. "
+        "'parallel' runs up to --max-concurrent-turns user turns at once "
+        "(inference in parallel; side effects still serialised). EXPERIMENTAL.",
+    ),
+    max_concurrent_turns: int = typer.Option(
+        DEFAULT_MAX_CONCURRENT_TURNS,
+        "--max-concurrent-turns",
+        help="Cap on simultaneously in-flight user turns when "
+        "--concurrency-contract=parallel. Excess messages queue FIFO.",
+    ),
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -1801,6 +1816,19 @@ def web(
     Phase A scope: server + WebRenderer only. The frontend HTML/JS UI
     arrives in Phase B; for now use ``curl`` to drive the API.
     """
+    # A1: 알 수 없는 계약 이름은 **조용히 직렬로 떨어뜨리지 않는다** — 오타
+    # 하나로 "병렬로 돌고 있다"고 착각한 채 측정하면 실험 결과가 통째로
+    # 무효가 된다 (wire-format 의 silent-switch 금지와 같은 규율, G1).
+    if concurrency_contract not in ("serial", "parallel"):
+        console.print(
+            f"[{C['error']}]unknown --concurrency-contract "
+            f"'{concurrency_contract}' (expected: serial | parallel)[/]"
+        )
+        raise typer.Exit(2)
+    if concurrency_contract == "parallel" and max_concurrent_turns < 1:
+        console.print(f"[{C['error']}]--max-concurrent-turns must be >= 1[/]")
+        raise typer.Exit(2)
+
     # Lazy imports — optional ``web`` extra. Surface a friendlier error
     # when the dependency is missing rather than a raw ImportError out
     # of the network stack.
@@ -2015,6 +2043,93 @@ def web(
         revived = agent_registry.restore(parent_ctx=ctx)
         auto = agent_registry.auto_spawn(parent_ctx=ctx)
         _announce_agent_boot(renderer, revived, auto)
+
+        # ── A1: 병렬 턴 디스패처 (opt-in, 기본 off) ──────────────────
+        # 포크(Coagora)의 "이중 경로 완전 분리" 전략을 복제한다 — 아래 직렬
+        # 본문은 **한 줄도 건드리지 않고**, parallel 일 때만 그 앞에서 갈라진다.
+        # 배선 kwargs 가 일부 중복되지만, 공통 함수로 접으면 delicate 한 직렬
+        # 경로(클로저 캡처·stop_event 수명)를 함께 흔들게 되므로 의도적으로
+        # 중복을 택했다. 직렬 모드에서는 registry 가 **생성조차 되지 않는다**.
+        _turn_registry = None
+        if concurrency_contract == "parallel":
+            from agent_cli.loop.turns import TurnRegistry
+
+            def _run_parallel_turn(turn) -> None:
+                """턴 1건을 완료까지 실행 (전용 스레드). ctx·registry 는 공유."""
+
+                def _route(text: str) -> bool:
+                    if handle_slash_command(text, renderer, ctx=ctx):
+                        return True
+                    return try_dispatch_agent_or_skill(
+                        text,
+                        web_output,
+                        agent_registry=_registry,
+                        llm_provider=llm_provider,
+                        capabilities=capabilities,
+                        resolved_model=resolved_model,
+                        provider=provider,
+                        resolved_url=resolved_url,
+                        resolved_key=resolved_key,
+                        max_turns=max_turns,
+                        verbose=verbose,
+                        max_depth=max_depth,
+                        agent_timeout=agent_timeout,
+                        ctx=ctx,
+                        session=session,
+                        graceful_interrupt=True,
+                        stop_event=turn.stop_event,
+                    )
+
+                label = turn.author or "?"
+                renderer.push_user_message(f"[{label}]: {turn.text}")
+                try:
+                    if _route(turn.text):
+                        return
+                    run_loop(
+                        query=turn.text,
+                        query_author=turn.author,
+                        # **큐를 읽지 않는다**: 병렬 모드에서 큐의 주인은
+                        # 디스패처다. 턴이 직접 꺼내면 다음 사용자의 메시지를
+                        # 자기 턴 안으로 삼켜 새 턴이 열리지 않는다.
+                        dequeue_user_message=None,
+                        route_message=_route,
+                        provider=llm_provider,
+                        capabilities=capabilities,
+                        model=resolved_model,
+                        provider_name=provider,
+                        base_url=resolved_url,
+                        api_key=resolved_key,
+                        max_turns=max_turns,
+                        verbose=verbose,
+                        ctx=ctx,
+                        max_depth=max_depth,
+                        agent_timeout=agent_timeout,
+                        session=session,
+                        graceful_interrupt=True,
+                        stop_event=turn.stop_event,
+                        record_turns=record_turns,
+                        wire_format=wire_format_plugin,
+                        mcp_manager=mcp_manager,
+                        agent_registry=agent_registry,
+                        origin_turn=turn.id,  # 회신 귀속 (A6↔A1 정합)
+                    )
+                except Exception as exc:
+                    renderer.error(f"Turn {turn.id} error: {exc}", 0)
+                finally:
+                    # 이 턴의 마지막 경계 이후 도착한 회신 봉합 (직렬과 동형).
+                    _waker.on_run_end()
+
+            _turn_registry = TurnRegistry(
+                _run_parallel_turn,
+                max_concurrent=max_concurrent_turns,
+                on_change=lambda: renderer.set_active_turns(
+                    _turn_registry.active_count() if _turn_registry else 0,
+                    _turn_registry.pending_count() if _turn_registry else 0,
+                ),
+            )
+            # 세션 전역 /api/stop → 활성 턴 전부 중단 (단일 슬롯으로는 표현 불가).
+            server.set_stop_all(_turn_registry.interrupt_all)
+
         while True:
             # Tell the frontend we're waiting for the next user
             # message. Goes through ``_latest_worker_state`` so a
@@ -2032,6 +2147,11 @@ def web(
                 # No worker_busy flip here: SHUTDOWN isn't a user
                 # message, and the connections are being torn down
                 # anyway.
+                if _turn_registry is not None:
+                    # 병렬: 활성 턴에 중단 신호를 보내고 스레드를 수거한 뒤
+                    # 빠져나간다 — daemon 스레드째 죽이면 진행 중 턴의
+                    # history append 가 반쯤 쓰인 채 남을 수 있다.
+                    _turn_registry.shutdown()
                 break
             message = item["text"]
             nickname = item["nickname"]
@@ -2040,6 +2160,16 @@ def web(
                 continue  # 이미 다른 run 이 배달 완료 — 빈 run 을 열지 않는다
             if _wake_verdict == "run":
                 nickname = "🤝 agent"
+            if _turn_registry is not None:
+                # 병렬: 큐에서 꺼낸 즉시 턴으로 제출하고 **바로 다음 메시지를
+                # 받으러 돌아간다**. cap 여유가 있으면 같은 tick 에 디스패치되고,
+                # 초과분은 FIFO 로 대기한다(포크 pumpConcurrent 규칙).
+                # worker_busy 를 켜지 않는 이유: 그 플래그는 프런트 Send 게이팅이라
+                # 켜면 "돌고 있어도 더 보낼 수 있다"는 병렬의 요점이 사라진다.
+                _turn_registry.submit(
+                    message, author=nickname, conn_id=item.get("conn_id", "")
+                )
+                continue
             # Real user message — flip to busy until the next dequeue
             # (after handle_slash_command / try_dispatch_agent_or_skill /
             # run_loop finish). Anything that follows — including a

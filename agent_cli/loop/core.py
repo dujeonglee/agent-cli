@@ -90,6 +90,7 @@ class AgentLoop:
         ask_handler=None,
         message_handler=None,
         peer_agents_section: str = "",
+        origin_turn: str = "",
     ):
         # Wire format plugin. Centralizes the parser, recovery wording,
         # prompt section, and lifecycle hooks so adding a new format means
@@ -189,6 +190,7 @@ class AgentLoop:
             ask_handler=ask_handler,
             message_handler=message_handler,
             peer_agents_section=peer_agents_section,
+            origin_turn=origin_turn,
         )
         self._state = LoopState(
             query=query,
@@ -645,7 +647,10 @@ class AgentLoop:
         registry = self._config.agent_registry
         if registry is None:
             return
-        replies = registry.drain_replies()
+        # A1: 병렬 모드(origin_turn 비어있지 않음)에서는 **자기 턴 몫 + 무주**만
+        # 가져간다 — 전량 회수는 남의 회신을 탈취해 A6 귀속을 거짓으로 만든다.
+        # 직렬 모드는 None 을 넘겨 종전의 전량 회수 그대로.
+        replies = registry.drain_replies(self._config.origin_turn or None)
         if not replies:
             return
         from agent_cli.subagent.agents_live import build_reply_record

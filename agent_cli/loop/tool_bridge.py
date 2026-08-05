@@ -277,6 +277,7 @@ class ToolBridge:
         return tool_agent(
             args,
             registry=self.cfg.agent_registry,
+            origin_turn=self.cfg.origin_turn,
             parent_ctx=self.ctx,
             runtime={
                 "provider": self.provider,

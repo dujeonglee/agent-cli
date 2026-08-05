@@ -185,6 +185,8 @@ class WebServer:
         # request handler thread.
         self._stop_lock = threading.Lock()
         self._stop_handle: threading.Event | None = None
+        # A1: 병렬 모드 전역 정지 훅 (set_stop_all). None = 직렬 경로.
+        self._stop_all = None
         # Workspace root for the download feature = the dir the server (and
         # agent) runs in. Resolved once at startup; downloads are confined to
         # this subtree (path-traversal guarded in ``_safe_workspace_path``).
@@ -209,6 +211,20 @@ class WebServer:
         with self._stop_lock:
             self._stop_handle = event
 
+    def set_stop_all(self, fn=None) -> None:
+        """A1(v7.29.0): 병렬 모드의 세션 전역 정지 훅.
+
+        단일 슬롯인 :meth:`set_stop_handle` 은 동시 턴 N개를 표현할 수 없다.
+        병렬 디스패처가 부팅 시 ``TurnRegistry.interrupt_all`` 을 여기 걸면
+        ``/api/stop`` 이 활성 턴 **전부**를 중단시킨다. 직렬 모드에서는 아무도
+        부르지 않아 ``None`` 이고, ``trigger_stop`` 은 종전 경로 그대로 간다.
+
+        (지정 턴만 중단하는 ``/api/turn/{id}/interrupt`` 는 M5 소관 — 레지스트리
+        쪽 ``interrupt(turn_id)`` 는 이미 있고 엔드포인트만 남았다.)
+        """
+        with self._stop_lock:
+            self._stop_all = fn
+
     def trigger_stop(self) -> bool:
         """Signal the in-flight turn to stop at the next turn boundary.
 
@@ -217,7 +233,10 @@ class WebServer:
         was actually stopped.
         """
         with self._stop_lock:
+            stop_all = getattr(self, "_stop_all", None)
             handle = self._stop_handle
+        if stop_all is not None:  # 병렬 모드 — 활성 턴 전부
+            return stop_all() > 0
         if handle is not None:
             handle.set()
             return True

@@ -562,6 +562,7 @@ class AgentRegistry:
         author: str = "main",
         hop: int = 0,
         expects_reply: bool = True,
+        origin_turn: str = "",
     ) -> str:
         """request 큐잉 — 성공 시 빈 문자열, 실패 시 에러 메시지.
 
@@ -593,6 +594,9 @@ class AgentRegistry:
                 "author": author,
                 "hop": hop,
                 "expects_reply": expects_reply,
+                # A1: 이 요청을 유발한 사용자 턴(병렬 모드에서만 비어있지 않다).
+                # 워커가 회신에 되싣는다 — 회신이 요청한 턴으로 돌아가는 근거.
+                "origin_turn": origin_turn,
             }
         )
         from agent_cli.render import get_renderer
@@ -741,11 +745,36 @@ class AgentRegistry:
 
         return handler
 
-    def drain_replies(self) -> list[dict]:
-        """미배달 회신 전량 회수 (턴 경계 배달 — D2). 도착 순서 유지."""
+    def drain_replies(self, turn_id: str | None = None) -> list[dict]:
+        """미배달 회신 회수 (턴 경계 배달 — D2). 도착 순서 유지.
+
+        ``turn_id=None`` (직렬 모드 / 기본): **전량** 회수 — 종전과 동일하다.
+        턴이 하나뿐이라 귀속을 따질 대상이 없다.
+
+        ``turn_id`` 지정 (병렬 모드, A1): 그 턴이 유발한 회신
+        (``origin_turn`` 일치) **+ 무주 회신**(``origin_turn`` 없음)만 가져가고
+        남의 것은 큐에 남긴다.
+
+        왜 필요한가: 이 메서드는 파괴적 전량 회수라, 병렬 턴에서는 먼저 턴
+        경계에 도달한 아무 턴이 **남이 요청한 회신까지 전부 가져간다**. 그러면
+        (a) 실제 요청자는 답을 영영 못 보고, (b) 엉뚱한 턴의 컨텍스트에 답이
+        들어가며, (c) history 의 ``reply_to`` 가 그것을 "다른 사용자의 질문에
+        대한 응답"으로 기록해 **귀속 데이터가 거짓말을 한다**. A6 로 남긴 귀속을
+        A1 이 스스로 깨뜨리지 않게 하는 것이 이 분기의 목적이다.
+
+        무주 회신(에이전트 사망 통지 등 세션 수준 이벤트)은 어느 턴에도 속하지
+        않으므로 먼저 도달한 턴이 가져간다 — 직렬 모드의 오늘 동작 그대로다.
+        """
         with self._cv:
-            out = list(self._pending)
-            self._pending.clear()
+            if turn_id is None:
+                out = list(self._pending)
+                self._pending.clear()
+            else:
+                out, rest = [], []
+                for r in self._pending:
+                    origin = r.get("origin_turn") or ""
+                    (out if origin in ("", turn_id) else rest).append(r)
+                self._pending = rest
         if out:
             self._save_state()  # 배달 완료 → 디스크 미러도 소비
         return out
@@ -1221,6 +1250,8 @@ class AgentRegistry:
                             "output": output,
                             "duration_s": duration,
                             "reply_path": reply_path,
+                            # A1: 요청을 낸 턴 (없으면 "" = 무주 회신).
+                            "origin_turn": item.get("origin_turn", ""),
                         }
                     )
                 else:
@@ -1416,6 +1447,7 @@ def tool_agent(
     registry: AgentRegistry | None,
     parent_ctx=None,
     runtime: dict | None = None,
+    origin_turn: str = "",
 ) -> ToolResult:
     """teammate 도구 mode 디스패치. delegate 처럼 루프가 인터셉트해
     provider/ctx 배선(runtime)을 주입한다."""
@@ -1495,7 +1527,9 @@ def tool_agent(
         key = args.get("key", "")
         tm = registry.get(key)
         was_waiting = tm is not None and tm.state == "waiting_ask"
-        err = registry.request(key, args.get("message", ""))
+        # A1: 이 요청을 낸 턴을 회신에 실어, 회신이 **요청한 턴으로** 돌아오게
+        # 한다. 직렬 모드는 origin_turn="" 이라 종전과 동일(무주 회신).
+        err = registry.request(key, args.get("message", ""), origin_turn=origin_turn)
         if err:
             return ToolResult(False, error=f"request rejected: {err}")
         if was_waiting:
