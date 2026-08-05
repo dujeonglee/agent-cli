@@ -10,8 +10,14 @@ build/
 
 # Testing
 .pytest_cache/
+.hypothesis/
 htmlcov/
 .coverage
+.coverage.*
+coverage.xml
+
+# Linter/formatter cache
+.ruff_cache/
 
 # IDE
 .vscode/
@@ -24,6 +30,9 @@ htmlcov/
 .agent-cli/*
 !.agent-cli/skills/
 .claude/
+
+# oh-my-claudecode 런타임 상태 (state/plans/research/logs/notepad)
+.omc/
 out.txt
 OptimizationToDo.md
 OptimizationSummary.md
