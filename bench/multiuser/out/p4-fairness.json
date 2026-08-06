@@ -1,0 +1,26 @@
+{
+  "users_short": 4,
+  "cap": 3,
+  "flood": 5,
+  "reps": 5,
+  "arms": {
+    "gate_on": {
+      "per_user_gate": true,
+      "jain_all_users": 0.2362,
+      "short_wait_p50": 75.6,
+      "short_wait_p95": 148.3,
+      "flood_wait_p50": 3331.5,
+      "flood_wait_max": 6683.9,
+      "per_user_concurrency_violations": 0
+    },
+    "gate_off": {
+      "per_user_gate": false,
+      "jain_all_users": 0.8529,
+      "short_wait_p50": 1806.9,
+      "short_wait_p95": 3219.0,
+      "flood_wait_p50": 10.6,
+      "flood_wait_max": 1705.6,
+      "per_user_concurrency_violations": 20
+    }
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "results": [
+    {
+      "lock_scope": "off",
+      "writers": 2,
+      "k_per_writer": 80,
+      "size_kib": 4096,
+      "elapsed_s": 20.6,
+      "snapshots": 161,
+      "snapshots_classified": 110,
+      "counts": {
+        "intact": 101,
+        "mixed": 9,
+        "broken": 0,
+        "partial": 9,
+        "empty": 42
+      },
+      "violations": 9,
+      "violationRate": 0.0818,
+      "finalClass": "intact"
+    },
+    {
+      "lock_scope": "workspace",
+      "writers": 2,
+      "k_per_writer": 80,
+      "size_kib": 4096,
+      "elapsed_s": 24.9,
+      "snapshots": 291,
+      "snapshots_classified": 181,
+      "counts": {
+        "intact": 181,
+        "mixed": 0,
+        "broken": 0,
+        "partial": 3,
+        "empty": 107
+      },
+      "violations": 0,
+      "violationRate": 0.0,
+      "finalClass": "intact"
+    },
+    {
+      "lock_scope": "conflict",
+      "writers": 2,
+      "k_per_writer": 80,
+      "size_kib": 4096,
+      "elapsed_s": 24.39,
+      "snapshots": 265,
+      "snapshots_classified": 180,
+      "counts": {
+        "intact": 180,
+        "mixed": 0,
+        "broken": 0,
+        "partial": 8,
+        "empty": 77
+      },
+      "violations": 0,
+      "violationRate": 0.0,
+      "finalClass": "intact"
+    }
+  ],
+  "verdict": {
+    "off": "VIOLATED",
+    "workspace": "CLEAN",
+    "conflict": "CLEAN"
+  }
+}

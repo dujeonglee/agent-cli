@@ -1,0 +1,20 @@
+{
+  "users": 4,
+  "rounds": 25,
+  "turns": 100,
+  "structural": {
+    "query_ids_unique": true,
+    "mint_chain_checked": 100,
+    "mint_chain_errors": 0,
+    "finals": 100,
+    "reply_to_duplicates": 0,
+    "reply_to_unmatched": 0,
+    "queries_without_final": 0
+  },
+  "content_match_known_limitation": {
+    "checked": 100,
+    "answered_other_users_question": 38,
+    "rate": 0.38,
+    "note": "결정적 목이 '항상 최신 질문에 답함' — 최악 케이스 상한"
+  }
+}
