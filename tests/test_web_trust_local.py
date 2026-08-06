@@ -87,3 +87,36 @@ class TestTrustLocalEndToEnd:
         async with _client(_app(True), "10.0.0.5") as c:
             r = await c.get("/api/debug/prompt/scopes?token=secret")
             assert r.status_code == 200
+
+
+class TestTrustLocalWithSpectating:
+    """``--trust-local`` means "the gateway in front of this loopback-bound
+    instance already authenticated the user", so a trusted request must get the
+    FULL token — never be demoted to the read-only one."""
+
+    def _spectator_app(self, trust):
+        return create_app(
+            WebServer(
+                WebRenderer(), token="secret", view_token="watch", trust_local=trust
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_loopback_may_mutate(self):
+        async with _client(self._spectator_app(True), "127.0.0.1") as c:
+            r = await c.post("/api/stop")  # NO token — a mutation endpoint
+            assert r.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_loopback_view_token_is_upgraded_not_forbidden(self):
+        # The middleware REPLACES any client-supplied token with the full one,
+        # so a trusted gateway forwarding a spectator URL is not locked out.
+        async with _client(self._spectator_app(True), "127.0.0.1") as c:
+            assert (await c.post("/api/stop?token=watch")).status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_remote_view_token_is_still_forbidden(self):
+        async with _client(self._spectator_app(True), "10.0.0.5") as c:
+            r = await c.post("/api/stop?token=watch")
+            assert r.status_code == 403  # authenticated, not permitted
+            assert (await c.get("/api/stream?token=nope")).status_code == 401

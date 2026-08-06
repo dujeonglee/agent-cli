@@ -25,6 +25,7 @@ import json
 import logging
 import threading
 import time
+import types
 from typing import ClassVar
 from unittest.mock import patch
 
@@ -746,8 +747,8 @@ class TestAuth:
         _, renderer, client = server_and_client
         assert client.get("/api/health").json()["viewers"] == 0
         # a live (not-closed) subscriber counts; a closed one does not
-        live = types.SimpleNamespace(closed=threading.Event())
-        gone = types.SimpleNamespace(closed=threading.Event())
+        live = types.SimpleNamespace(closed=threading.Event(), readonly=False)
+        gone = types.SimpleNamespace(closed=threading.Event(), readonly=False)
         gone.closed.set()
         renderer._connections.extend([live, gone])
         assert client.get("/api/health").json()["viewers"] == 1
@@ -3107,3 +3108,308 @@ class TestRejectContract:
             assert rejects[0]["conn_id"] == "c9"
         finally:
             turn_metrics.disable()
+
+
+# ── Spectator (read-only token) mode ─────────────────────────────────
+
+# The route table the spectator split rests on, mirroring the one in
+# ``agent_cli.web.server``'s module docstring. ``full`` = only the
+# full-permission token; ``read`` = either token (spectator-visible);
+# ``public`` = no credential. Each entry carries whatever a request needs to
+# REACH the auth check (required query params, a body for handlers that
+# declare one) — FastAPI validates those before the handler runs, and a 422
+# would prove nothing about authorisation.
+#
+# ``test_every_route_is_classified`` walks the live app and fails if a route is
+# missing here, so a newly added endpoint cannot default open.
+_FULL = "full"
+_READ = "read"
+_PUBLIC = "public"
+
+_ROUTE_TABLE = [
+    # (method, path, access, query, json_body)
+    ("GET", "/", _PUBLIC, {}, None),
+    ("GET", "/static", _PUBLIC, {}, None),
+    ("GET", "/api/health", _PUBLIC, {}, None),
+    ("GET", "/api/stream", _READ, {}, None),
+    ("GET", "/api/turns", _READ, {}, None),
+    ("GET", "/api/debug/prompt", _FULL, {}, None),
+    ("GET", "/api/debug/prompt/scopes", _FULL, {}, None),
+    ("DELETE", "/api/debug/prompt", _FULL, {"task_id": "t1"}, None),
+    ("GET", "/api/directives", _FULL, {}, None),
+    ("POST", "/api/directives", _FULL, {}, {}),
+    ("POST", "/api/directives/generate", _FULL, {}, {}),
+    ("GET", "/api/compaction", _FULL, {}, None),
+    ("POST", "/api/compaction", _FULL, {}, {}),
+    ("GET", "/api/max-agents", _FULL, {}, None),
+    ("POST", "/api/max-agents", _FULL, {}, {}),
+    ("GET", "/api/export/jira/targets", _FULL, {}, None),
+    ("POST", "/api/export/html", _FULL, {}, {}),
+    ("POST", "/api/export/jira", _FULL, {}, {}),
+    ("GET", "/api/workspace/tree", _FULL, {}, None),
+    ("POST", "/api/workspace/download", _FULL, {}, {}),
+    ("POST", "/api/workspace/upload", _FULL, {"name": "a.txt"}, None),
+    ("POST", "/api/workspace/delete", _FULL, {}, {}),
+    ("POST", "/api/input", _FULL, {}, {}),
+    ("POST", "/api/abort", _FULL, {}, None),
+    ("POST", "/api/stop", _FULL, {}, None),
+    ("POST", "/api/queue/cancel", _FULL, {}, {}),
+    ("POST", "/api/nickname", _FULL, {}, {}),
+    ("POST", "/api/turn/t1/interrupt", _FULL, {}, None),
+    ("POST", "/api/agent/w1/input", _FULL, {}, {}),
+    ("POST", "/api/agent/w1/resume", _FULL, {}, None),
+    ("POST", "/api/agent/w1/kill", _FULL, {}, None),
+]
+
+_GATED_ROUTES = [r for r in _ROUTE_TABLE if r[2] != _PUBLIC]
+_FULL_ROUTES = [r for r in _ROUTE_TABLE if r[2] == _FULL]
+
+
+def _call(client, method, path, query, body, token):
+    url = (
+        path + "?" + "&".join(f"{k}={v}" for k, v in {**query, "token": token}.items())
+    )
+    if method == "POST":
+        return client.post(url, json=body) if body is not None else client.post(url)
+    if method == "DELETE":
+        return client.delete(url)
+    return client.get(url)
+
+
+@pytest.fixture
+def spectator_client():
+    """Server with spectating ENABLED — full token ``testtoken``, read-only
+    token ``viewtoken``."""
+    renderer = WebRenderer()
+    server = WebServer(renderer, token="testtoken", view_token="viewtoken")
+    return server, renderer, TestClient(create_app(server))
+
+
+class TestSpectatorRouteTable:
+    """The read/full split, enforced route by route."""
+
+    def test_every_route_is_classified(self, spectator_client):
+        server, _, _ = spectator_client
+        app = create_app(server)
+        listed = {(m, r[1]) for r in _ROUTE_TABLE for m in [r[0]]}
+        # Path templates as registered, with the table's concrete ids mapped
+        # back so the comparison is about coverage, not formatting.
+        concrete_to_template = {
+            "/api/turn/t1/interrupt": "/api/turn/{turn_id}/interrupt",
+            "/api/agent/w1/input": "/api/agent/{key}/input",
+            "/api/agent/w1/resume": "/api/agent/{key}/resume",
+            "/api/agent/w1/kill": "/api/agent/{key}/kill",
+        }
+        listed = {(m, concrete_to_template.get(p, p)) for m, p in listed}
+        registered = set()
+        for route in app.routes:
+            path = getattr(route, "path", None)
+            if (
+                path is None
+                or path.startswith("/openapi")
+                or path
+                in (
+                    "/docs",
+                    "/redoc",
+                    "/docs/oauth2-redirect",
+                )
+            ):
+                continue
+            for method in getattr(route, "methods", None) or {"GET"}:
+                if method in ("HEAD", "OPTIONS"):
+                    continue
+                registered.add((method, path))
+        missing = registered - listed
+        assert not missing, f"unclassified route(s) — pick a side: {sorted(missing)}"
+
+    @pytest.mark.parametrize(
+        "method,path,access,query,body",
+        _FULL_ROUTES,
+        ids=[f"{r[0]} {r[1]}" for r in _FULL_ROUTES],
+    )
+    def test_view_token_is_forbidden_on_full_routes(
+        self, spectator_client, method, path, access, query, body
+    ):
+        # 403, not 401: the credential is real, it just isn't allowed here.
+        _, _, client = spectator_client
+        r = _call(client, method, path, query, body, "viewtoken")
+        assert r.status_code == 403, r.text
+        assert "read-only" in r.json()["detail"]
+
+    @pytest.mark.parametrize(
+        "method,path,access,query,body",
+        _GATED_ROUTES,
+        ids=[f"{r[0]} {r[1]}" for r in _GATED_ROUTES],
+    )
+    def test_unknown_token_is_unauthorised_everywhere(
+        self, spectator_client, method, path, access, query, body
+    ):
+        _, _, client = spectator_client
+        r = _call(client, method, path, query, body, "nonsense")
+        assert r.status_code == 401, r.text
+
+    def test_public_routes_need_no_token(self, spectator_client):
+        _, _, client = spectator_client
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/").status_code == 200
+
+    def test_turns_is_readable_by_a_spectator(self, spectator_client):
+        # 409 = "serial session, no per-turn identity" — the authorisation
+        # gate passed, which is what this asserts.
+        server, _, client = spectator_client
+        assert client.get("/api/turns?token=viewtoken").status_code == 409
+        server.turn_registry = types.SimpleNamespace(
+            snapshot=list, pending_count=lambda: 0
+        )
+        assert client.get("/api/turns?token=viewtoken").status_code == 200
+
+
+class TestSpectatorStream:
+    """``/api/stream`` is the one endpoint spectating exists for."""
+
+    def _capture_conn(self, server, monkeypatch) -> dict:
+        seen: dict = {}
+
+        async def fake_stream(conn, *, cursor=None):
+            seen["readonly"] = conn.readonly
+            return
+            yield  # pragma: no cover — makes this an async generator
+
+        monkeypatch.setattr(server, "stream_events", fake_stream)
+        return seen
+
+    def test_view_token_subscribes_and_is_flagged_readonly(
+        self, spectator_client, monkeypatch
+    ):
+        server, _, client = spectator_client
+        seen = self._capture_conn(server, monkeypatch)
+        assert client.get("/api/stream?token=viewtoken").status_code == 200
+        assert seen["readonly"] is True
+
+    def test_full_token_connection_is_not_readonly(self, spectator_client, monkeypatch):
+        server, _, client = spectator_client
+        seen = self._capture_conn(server, monkeypatch)
+        assert client.get("/api/stream?token=testtoken").status_code == 200
+        assert seen["readonly"] is False
+
+    def test_spectator_receives_the_same_events(self, spectator_client):
+        # Watching is the whole feature: the restriction is at the mutation
+        # endpoints, never a thinner stream.
+        _, renderer, _ = spectator_client
+        renderer.push_user_message("visible to everyone")
+        watcher = WebConnection(id="w", readonly=True)
+        snap = renderer.register_connection(watcher)
+        assert [d["content"] for e, d in snap if e == "user_message"] == [
+            "visible to everyone"
+        ]
+        ident = next(d for e, d in snap if e == "identity")
+        assert ident["readonly"] is True
+
+
+class TestSpectatingOffByDefault:
+    """No ``view_token`` → no read-only credential exists, and every path
+    behaves as it did before the feature."""
+
+    def test_no_view_token_configured(self, server_and_client):
+        server, _, _ = server_and_client
+        assert server.view_token is None
+
+    def test_any_non_matching_token_is_401_not_403(self, server_and_client):
+        # Without the feature there is nothing a 403 could mean.
+        _, _, client = server_and_client
+        for path in ("/api/stream", "/api/input", "/api/stop", "/api/turns"):
+            r = (
+                client.get(path + "?token=viewtoken")
+                if path in ("/api/stream", "/api/turns")
+                else client.post(path + "?token=viewtoken", json={})
+            )
+            assert r.status_code == 401, path
+
+    def test_connections_are_not_readonly(self, server_and_client):
+        _, renderer, _ = server_and_client
+        snap = renderer.register_connection(WebConnection(id="c1"))
+        assert next(d for e, d in snap if e == "identity")["readonly"] is False
+
+    def test_empty_string_view_token_is_treated_as_off(self):
+        # Guards the falsy-normalisation: "" must not become a credential that
+        # a missing query param could accidentally match.
+        server = WebServer(WebRenderer(), token="t", view_token="")
+        assert server.view_token is None
+
+
+class TestSpectatorCounts:
+    """``viewers`` stays the total (someone watching is someone watching);
+    ``spectators`` breaks out who cannot act."""
+
+    def test_roster_separates_spectators(self, spectator_client):
+        _, renderer, _ = spectator_client
+        renderer.register_connection(WebConnection(id="a"))
+        renderer.register_connection(WebConnection(id="w", readonly=True))
+        payload = renderer._viewers_payload_locked()
+        assert payload["count"] == 2
+        assert payload["spectators"] == 1
+        assert {v["id"]: v["readonly"] for v in payload["viewers"]} == {
+            "a": False,
+            "w": True,
+        }
+
+    def test_health_reports_spectators(self, spectator_client):
+        _, renderer, client = spectator_client
+        assert client.get("/api/health").json()["spectators"] == 0
+        renderer.register_connection(WebConnection(id="w", readonly=True))
+        body = client.get("/api/health").json()
+        assert body["viewers"] == 1 and body["spectators"] == 1
+
+    def test_spectator_count_ignores_closed_connections(self, spectator_client):
+        _, renderer, _ = spectator_client
+        gone = WebConnection(id="w", readonly=True)
+        renderer.register_connection(gone)
+        gone.closed.set()
+        assert renderer.spectator_count() == 0
+
+
+# ``--trust-local`` + spectating (a trusted gateway must not be demoted to a
+# spectator) is end-to-end in ``tests/test_web_trust_local.py`` — it needs a
+# loopback peer address, which TestClient cannot present.
+
+
+class TestSpectatorFrontendWiring:
+    """Static wiring guards for the spectator UI. The BEHAVIOUR contract lives
+    in ``tests/browser/test_spectator_mode.py`` (real Chromium); these assert
+    the wiring exists at all, so a refactor that drops it fails the default
+    suite rather than waiting for the opt-in browser run."""
+
+    def test_identity_readonly_drives_spectator_mode(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        # The flag arrives on ``identity`` — the first event of the snapshot —
+        # so the UI never renders an input box it would have to take away.
+        assert "if (d.readonly) applySpectatorMode();" in js
+
+    def test_spectator_mode_removes_the_write_surfaces(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        fn = _js_fn_body(js, "applySpectatorMode")
+        assert "window.AGENTCLI_READONLY = true" in fn
+        assert 'getElementById("input-area")' in fn and "hidden = true" in fn
+        assert 'getElementById("spectator-note")' in fn
+        # Full-token drawers: their fetches would 403 and leave an empty panel.
+        for btn in ("inspector-btn", "export-btn", "files-btn", "rename-btn"):
+            assert btn in fn, btn
+        assert "tm-inputrow" in fn  # agent drawer readable, not writable
+
+    def test_spectator_note_exists_in_the_shell(self, server_and_client):
+        _, _, client = server_and_client
+        html = client.get("/").text
+        assert 'id="spectator-note"' in html
+        assert "read-only" in html
+
+    def test_roster_marks_spectators(self, server_and_client):
+        _, _, client = server_and_client
+        js = client.get("/static/app.js").text
+        assert "v.readonly" in js  # 👁 prefix per read-only viewer
+
+    def test_nickname_prompt_skipped_for_spectators(self, server_and_client):
+        _, _, client = server_and_client
+        fn = _js_fn_body(client.get("/static/app.js").text, "maybeNamePrompt")
+        assert "window.AGENTCLI_READONLY" in fn

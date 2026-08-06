@@ -1812,10 +1812,35 @@
   // Every connection is equal (all may send input / queue). conn_id is needed
   // only to mark "(you)" in the roster and to own queued messages.
   es.addEventListener("identity", function (e) {
-    myConnId = JSON.parse(e.data).conn_id;
+    const d = JSON.parse(e.data);
+    myConnId = d.conn_id;
     // 상주 에이전트 대화 창 IIFE(별도 클로저)가 닉네임 attribution 에 쓰도록 노출.
     window.AGENTCLI_CONN_ID = myConnId;
+    if (d.readonly) applySpectatorMode();
   });
+
+  /** Spectator (read-only token): the stream is identical, but every mutation
+   * endpoint would answer 403. Rather than offer controls that fail on click,
+   * take them away and say why. Surfaces fed by full-token endpoints
+   * (Inspector / Export / Files) are hidden for the same reason — their
+   * fetches would 403 and leave an empty drawer with no explanation.
+   * ``AGENTCLI_READONLY`` lets the separate agent-drawer IIFE do the same. */
+  function applySpectatorMode() {
+    if (window.AGENTCLI_READONLY) return; // idempotent (reconnect re-sends identity)
+    window.AGENTCLI_READONLY = true;
+    const note = document.getElementById("spectator-note");
+    if (note) note.hidden = false;
+    const area = document.getElementById("input-area");
+    if (area) area.hidden = true;
+    ["inspector-btn", "export-btn", "files-btn", "rename-btn"].forEach(
+      function (id) {
+        const b = document.getElementById(id);
+        if (b) b.hidden = true;
+      }
+    );
+    const tmRow = document.getElementById("tm-inputrow");
+    if (tmRow) tmRow.hidden = true; // agent drawer stays readable, not writable
+  }
 
   const $viewers = document.getElementById("viewers");
   const $renameBtn = document.getElementById("rename-btn");
@@ -1823,17 +1848,21 @@
     if (!$viewers) return;
     const d = JSON.parse(e.data);
     const labels = (d.viewers || []).map(function (v) {
-      return v.id === myConnId ? v.name + " (you)" : v.name;
+      // 👁 marks a spectator: "4 viewers" must not read as "4 people who can
+      // answer the pending question".
+      const name = v.readonly ? "👁 " + v.name : v.name;
+      return v.id === myConnId ? name + " (you)" : name;
     });
     $viewers.textContent =
       "👁 " + d.count + (labels.length ? " · " + labels.join(", ") : "");
     $viewers.title = labels.join(", ");
     // ✎ rename: visible once we know who we are and we're in the roster.
+    // Never for a spectator — POST /api/nickname is a mutation (403).
     const me = (d.viewers || []).find(function (v) {
       return v.id === myConnId;
     });
     if (me) myNickname = me.name; // latest name for rename prefill
-    if ($renameBtn) $renameBtn.hidden = !me;
+    if ($renameBtn) $renameBtn.hidden = !me || !!window.AGENTCLI_READONLY;
     maybeNamePrompt(d.viewers || []);
   });
 
@@ -1869,6 +1898,9 @@
 
   function maybeNamePrompt(viewers) {
     if (namePrompted || !myConnId || !$nameBar) return;
+    // A spectator cannot POST /api/nickname (403), so don't ask for a name —
+    // they keep the auto-assigned one in the roster.
+    if (window.AGENTCLI_READONLY) return;
     namePrompted = true;
     const saved = (localStorage.getItem(NICK_KEY) || "").trim();
     if (saved) {

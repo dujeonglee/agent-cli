@@ -15,10 +15,65 @@ match ``WebServer.token``. The token is generated at startup (or
 provided by ``--token``) and printed to stdout so the operator can share
 the URL with the LAN.
 
-Multi-viewer, all equal: every authenticated SSE connection RECEIVES the
+Spectators (opt-in, off by default): ``WebServer.view_token`` — set by
+``--spectators`` / ``--view-token`` — is a SECOND credential that grants the
+event stream and nothing else. Holding it, a mutation returns **403** (the
+request authenticated; it is not permitted) rather than 401 (which would send
+a spectator hunting for a better token and would mask a real typo). With
+``view_token is None`` no such credential exists and every path below behaves
+exactly as it did before.
+
+Route table — the full classification the spectator split rests on. "public"
+needs no credential, "read" takes either token, "full" takes only the
+full-permission one:
+
+    public  GET    /                          static shell (contains no secret)
+    public  GET    /static/*                  app JS/CSS
+    public  GET    /api/health                liveness probe
+    read    GET    /api/stream                the transcript stream = spectating
+    read    GET    /api/turns                 annotates the stream (no prompt text)
+    full    GET    /api/debug/prompt          exposes the raw system prompt
+    full    GET    /api/debug/prompt/scopes   ditto (scope list)
+    full    DELETE /api/debug/prompt          mutation
+    full    GET    /api/directives            exposes DIRECTIVE.md
+    full    POST   /api/directives            mutation
+    full    POST   /api/directives/generate   mutation-shaped (spends LLM calls)
+    full    GET    /api/compaction            session setting
+    full    POST   /api/compaction            mutation
+    full    GET    /api/max-agents            session setting
+    full    POST   /api/max-agents            mutation
+    full    GET    /api/export/jira/targets   exposes configured Jira instances
+    full    POST   /api/export/html           renders on the operator's behalf
+    full    POST   /api/export/jira           posts outward with credentials
+    full    GET    /api/workspace/tree        exposes the filesystem
+    full    POST   /api/workspace/download    exfiltrates workspace bytes
+    full    POST   /api/workspace/upload      mutation (writes files)
+    full    POST   /api/workspace/delete      mutation (destructive)
+    full    POST   /api/input                 mutation (drives the agent)
+    full    POST   /api/abort                 mutation
+    full    POST   /api/stop                  mutation
+    full    POST   /api/queue/cancel          mutation
+    full    POST   /api/nickname              mutation (rewrites the shared roster)
+    full    POST   /api/turn/{id}/interrupt   mutation
+    full    POST   /api/agent/{key}/input     mutation
+    full    POST   /api/agent/{key}/resume    mutation
+    full    POST   /api/agent/{key}/kill      mutation (destructive)
+
+The rule behind the read/full line: a spectator gets the transcript stream and
+nothing more. That is why READ-ONLY endpoints still sit on the full side when
+they reveal something the stream does not — prompt text, DIRECTIVE.md,
+workspace contents, configured Jira instances — or when they are a settings
+surface. ``tests/test_web_server.py`` parameterises this table so a new route
+that forgets to pick a side fails the suite rather than defaulting open.
+
+``--trust-local`` keeps its meaning: a trusted loopback request is injected
+with the FULL token, so a local gateway is never demoted to a spectator.
+
+Multi-viewer, all equal: every full-permission SSE connection RECEIVES the
 stream AND may send input (no controller/observer split). Each connection
 learns its ``conn_id`` from the ``identity`` event for the viewer-roster
-"(you)" mark and queued-message ownership.
+"(you)" mark and queued-message ownership; the same event carries
+``readonly`` so a spectator's UI can present itself as watch-only.
 """
 
 from __future__ import annotations
@@ -149,6 +204,7 @@ class WebServer:
         trust_local: bool = False,
         base_path: str = "",
         runtime: dict | None = None,
+        view_token: str | None = None,
     ) -> None:
         self.renderer = renderer
         # ✨ directive 생성이 쓰는 LLM 배선 (provider 객체·model·capabilities·
@@ -178,6 +234,14 @@ class WebServer:
         # ``secrets.token_urlsafe`` gives a URL-safe random token —
         # ``--token`` override sticks if provided.
         self.token = token or secrets.token_urlsafe(32)
+        # Read-only ("spectator") token. ``None`` = spectating is OFF, which is
+        # the default: no second credential exists, so every authenticated
+        # request is full-permission exactly as before. When set, a holder may
+        # subscribe to the event stream and nothing else — see
+        # ``_require_token`` / ``_require_read_token`` for the split, and the
+        # route table in the module docstring for which side each endpoint is
+        # on.
+        self.view_token = view_token or None
         # Pending user-message queue. Every connection may enqueue; the
         # worker pops one (blocking) to START a run, and the running loop
         # pops more at turn boundaries (non-blocking) to INJECT mid-run.
@@ -312,14 +376,51 @@ class WebServer:
 
     # ─── Auth helper ──────────────────────────────────────────
 
-    def _require_token(self, token: str | None) -> None:
-        """Constant-time compare against the configured token.
+    def _token_role(self, token: str | None) -> str | None:
+        """``"full"`` | ``"view"`` | ``None`` (unrecognised) for ``token``.
 
-        Constant-time avoids timing-side-channel leaks on the LAN —
-        cheap and standard for shared-secret schemes.
+        Constant-time compares avoid timing-side-channel leaks on the LAN —
+        cheap and standard for shared-secret schemes. The view token is only
+        consulted when spectating is enabled, so with the default
+        (``view_token is None``) this is the original single-token check.
         """
-        if token is None or not secrets.compare_digest(token, self.token):
+        if token is None:
+            return None
+        if secrets.compare_digest(token, self.token):
+            return "full"
+        if self.view_token is not None and secrets.compare_digest(
+            token, self.view_token
+        ):
+            return "view"
+        return None
+
+    def _require_token(self, token: str | None) -> None:
+        """Gate for everything a spectator may NOT reach: all mutations, and
+        the reads that expose more than the transcript (prompt inspector,
+        directives, workspace contents, export targets, settings).
+
+        A view token here is 401's opposite case — it authenticated fine, it
+        just isn't allowed — so it gets **403**. Collapsing the two would tell
+        a spectator their token is wrong and send them hunting for a better
+        one, and would hide a real typo behind the same message.
+        """
+        role = self._token_role(token)
+        if role == "full":
+            return
+        if role == "view":
+            raise HTTPException(
+                status_code=403, detail="read-only token — spectators may not do this"
+            )
+        raise HTTPException(status_code=401, detail="invalid or missing token")
+
+    def _require_read_token(self, token: str | None) -> str:
+        """Gate for the spectator-visible surface: the event stream and the
+        in-flight turn list that annotates it. Accepts either token and returns
+        which one was used, so the caller can mark the connection read-only."""
+        role = self._token_role(token)
+        if role is None:
             raise HTTPException(status_code=401, detail="invalid or missing token")
+        return role
 
     def is_trusted_client(self, host: str | None) -> bool:
         """Whether a request from ``host`` may skip token auth — only when
@@ -542,11 +643,15 @@ def create_app(server: WebServer) -> FastAPI:
         board that spawns instances) can show "working" vs "needs your answer"
         vs "idle" without subscribing to the SSE stream. ``viewers`` is the live
         browser-subscriber count, so the controller can tell 'someone is
-        watching' from 'nobody here' before disrupting the session."""
+        watching' from 'nobody here' before disrupting the session.
+        ``spectators`` is how many of those hold the read-only token and so
+        cannot answer a pending prompt — always 0 unless spectating is on, so a
+        room of spectators is not mistaken for a room that can respond."""
         return {
             "status": "ok",
             "busy": server.renderer.worker_is_busy(),
             "awaiting_input": server.renderer.is_awaiting_input(),
+            "spectators": server.renderer.spectator_count(),
             "viewers": server.renderer.viewer_count(),
             # v7.10.0: 상주 에이전트 요약 (없으면 None) — status.json 과
             # 같은 소스(renderer.agents_summary), board 폴백 경로 파리티.
@@ -1077,10 +1182,15 @@ def create_app(server: WebServer) -> FastAPI:
         last SSE id back in ``Last-Event-ID`` automatically, and only the
         events past it are replayed. ``?after=<id>`` is the same cursor for
         non-browser clients, which cannot set that header on a GET.
+
+        Accepts the read-only token too — spectating IS this endpoint. A
+        spectator's connection is flagged ``readonly`` so the roster can label
+        it and the client can put itself in watch-only mode; the stream it
+        receives is identical.
         """
-        server._require_token(token)
+        role = server._require_read_token(token)
         cursor = request.headers.get("last-event-id") or after or None
-        conn = WebConnection(id=secrets.token_hex(8))
+        conn = WebConnection(id=secrets.token_hex(8), readonly=role == "view")
         return EventSourceResponse(server.stream_events(conn, cursor=cursor))
 
     @app.post("/api/agent/{key}/input")
@@ -1256,8 +1366,12 @@ def create_app(server: WebServer) -> FastAPI:
         클라이언트가 ``/api/turn/{id}/interrupt`` 를 부르려면 id 를 알아야 한다.
         직렬 세션은 "개별 턴"이라는 개념 자체가 없으므로 빈 목록 대신 409 로
         구분해 알린다 — 빈 목록은 "지금 아무것도 안 돈다"와 구별되지 않는다.
+
+        관전자도 읽을 수 있다: 이 목록은 스트림에 이미 보이는 것(지금 누구
+        턴이 도는가)의 주석일 뿐 프롬프트 원문이 아니다. 실제 중단은 아래
+        ``interrupt`` 가 전권 토큰을 요구한다.
         """
-        server._require_token(token)
+        server._require_read_token(token)
         reg = server.turn_registry
         if reg is None:
             return JSONResponse(

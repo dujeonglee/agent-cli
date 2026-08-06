@@ -553,6 +553,17 @@ footer {
   padding: 10px 16px;
 }
 
+/* Spectator (read-only token): replaces the composer, so it carries the
+   explanation the missing input box would otherwise leave unsaid. */
+#spectator-note {
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--warn-soft-bg);
+  color: var(--warn-soft-fg);
+  border-radius: 4px;
+}
+#spectator-note[hidden] { display: none; }
+
 #input-mode-badge {
   display: none;
   font-size: 11px;

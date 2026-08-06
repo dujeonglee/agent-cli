@@ -445,7 +445,7 @@ class TestConnectionLifecycle:
 
         # First entry is this connection's identity (it learns conn_id before
         # anything else); the rest is the usual buffer replay.
-        assert snapshot[0] == ("identity", {"conn_id": "c1"})
+        assert snapshot[0] == ("identity", {"conn_id": "c1", "readonly": False})
         kinds = [event for event, _ in snapshot if event not in ("identity", "viewers")]
         assert kinds == ["assistant_turn", "observation"]
 
@@ -484,11 +484,11 @@ class TestConnectionLifecycle:
         r = WebRenderer()
         a = WebConnection(id="a")
         snap_a = r.register_connection(a)
-        assert snap_a[0] == ("identity", {"conn_id": "a"})
+        assert snap_a[0] == ("identity", {"conn_id": "a", "readonly": False})
 
         b = WebConnection(id="b")
         snap_b = r.register_connection(b)
-        assert snap_b[0] == ("identity", {"conn_id": "b"})
+        assert snap_b[0] == ("identity", {"conn_id": "b", "readonly": False})
         assert not a.closed.is_set()
         # A subsequent emit fans out to BOTH (every connection is equal).
         r.final("broadcast", turn=1)

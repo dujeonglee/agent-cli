@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
+import secrets
 import subprocess
 import threading
 import time
@@ -1766,6 +1767,20 @@ def web(
         "--token",
         help="Auth token. Random 32-byte URL-safe string when omitted.",
     ),
+    spectators: bool = typer.Option(
+        False,
+        "--spectators",
+        help="Also print a read-only URL. Whoever opens it watches the session "
+        "live but cannot send input, stop a turn, or change settings. Off by "
+        "default: without it no read-only credential exists at all.",
+    ),
+    view_token: str | None = typer.Option(
+        None,
+        "--view-token",
+        help="Use this exact read-only token instead of a generated one "
+        "(implies --spectators). For orchestrators that need a stable "
+        "spectator URL across restarts.",
+    ),
     no_browser: bool = typer.Option(
         False, "--no-browser", help="Do not open the browser automatically"
     ),
@@ -1969,12 +1984,29 @@ def web(
     set_renderer(renderer)
     # Pass the live ctx so the Prompt Inspector can show the dynamic context
     # (conversation + observations), not just the static system prompt.
+    # Spectating is opt-in. ``--view-token`` implies it (asking for a specific
+    # read-only token can only mean you want one); ``--spectators`` alone
+    # generates one. Neither → None → the server has no read-only credential
+    # and every endpoint behaves as it always has.
+    resolved_view_token = view_token or (
+        secrets.token_urlsafe(32) if spectators else None
+    )
+    if resolved_view_token is not None and resolved_view_token == token:
+        # One string for both roles resolves as "full" (that check runs first),
+        # so the watch link would quietly hand out full control. Fail loudly —
+        # a spectator URL that is not read-only is worse than none at all.
+        console.print(
+            f"[{C['error']}]--view-token must differ from --token — identical "
+            f"tokens would grant full control through the read-only link[/]"
+        )
+        raise typer.Exit(2)
     server = WebServer(
         renderer,
         token=token,
         ctx=ctx,
         trust_local=trust_local,
         base_path=base_path,
+        view_token=resolved_view_token,
         # ✨ directive 생성의 LLM 배선 — 산문 직접 호출(5.7.0).
         # provider 는 콜마다 무상태라 요청 스레드에서 안전; 세션/렌더러는
         # 비공유 (메인 타임라인 무접촉 유지).
@@ -2364,6 +2396,14 @@ def web(
     console.print(f"\n[bright_cyan]agent-cli web[/]  ({provider} · {resolved_model})")
     console.print(f"  UI:      [yellow]{ui_url}[/]")
     console.print(f"  Token:   [yellow]{server.token}[/]")
+    if server.view_token:
+        # Printed as a separate URL, not just a token: the whole point is that
+        # the operator hands THIS link out instead of the one above, and a bare
+        # token invites pasting it into the wrong field.
+        watch_url = f"http://{display_host}:{resolved_port}/?token={server.view_token}"
+        console.print(
+            f"  Watch:   [yellow]{watch_url}[/]  [{C['muted']}](read-only)[/]"
+        )
     console.print(f"  Session: [{C['muted']}]{session.session_id}[/]\n")
 
     # Instance file: tell an external orchestrator where this session's web is

@@ -23,6 +23,14 @@ Multi-viewer, all equal: every authenticated connection is kept in
 The worker thread is unaware of clients — it just emits, the renderer fans
 out to all.
 
+Spectators are the one asymmetry, and it is deliberately NOT here: a
+connection flagged ``readonly`` (the holder used the session's read-only
+token) receives the identical stream, because watching is the entire feature.
+The restriction lives at the mutation endpoints in ``web/server.py``. All this
+layer does is carry the flag — into ``identity`` so the client can present
+itself as watch-only, and into the ``viewers`` roster so "3 watching" is not
+misread as "3 who can answer".
+
 Buffer / replay: ``_event_buffer`` holds the most recent persistent events
 since session start (or since session resume on ``--resume <id>``), bounded
 at ``_EVENT_BUFFER_MAX`` so a long-lived session cannot grow memory (and
@@ -156,11 +164,21 @@ _NICKNAMES = [
 
 @dataclass
 class WebConnection:
-    """One active SSE subscriber. Server creates one per HTTP connection."""
+    """One active SSE subscriber. Server creates one per HTTP connection.
+
+    ``readonly`` marks a SPECTATOR — a connection authenticated with the
+    session's read-only token. It receives the identical event stream (that is
+    the whole point of spectating); the restriction lives at the mutation
+    endpoints, not here. The flag is carried so the roster can label who is
+    watching versus who can act, and so the client can render itself
+    accordingly. False for every connection when spectating is off, which is
+    the default.
+    """
 
     id: str
     queue: SimpleQueue = field(default_factory=SimpleQueue)
     closed: threading.Event = field(default_factory=threading.Event)
+    readonly: bool = False
 
 
 class WebRenderer(Renderer):
@@ -511,7 +529,12 @@ class WebRenderer(Renderer):
                 else:
                     snapshot.append(entry)
             # ``identity`` first: the client needs its conn_id before anything.
-            snapshot.insert(0, ("identity", {"conn_id": conn.id}))
+            # ``readonly`` rides along so a spectator's UI can put itself in
+            # watch-only mode from its very first event, instead of offering an
+            # input box that the server would refuse.
+            snapshot.insert(
+                0, ("identity", {"conn_id": conn.id, "readonly": bool(conn.readonly)})
+            )
             if reset:
                 # Right behind identity, ahead of every replayed event: the
                 # client wipes its transcript, then rebuilds it from what
@@ -539,14 +562,29 @@ class WebRenderer(Renderer):
         self._nicknames[conn_id] = name
 
     def _viewers_payload_locked(self) -> dict:
-        """`{count, viewers:[{id, name}]}` for the open connections. The
-        client matches its own ``conn_id`` to mark "(you)"."""
+        """`{count, spectators, viewers:[{id, name, readonly}]}` for the open
+        connections. The client matches its own ``conn_id`` to mark "(you)".
+
+        ``count`` stays the TOTAL of open connections, spectators included —
+        it answers "is anyone watching", which is what the idle reaper and the
+        board gate on, and a spectator watching is still someone watching.
+        ``spectators`` breaks out how many of those cannot act, so "3 viewers"
+        is not mistaken for "3 people who can answer the pending question".
+        """
         vs = [
-            {"id": c.id, "name": self._nicknames.get(c.id, "?")}
+            {
+                "id": c.id,
+                "name": self._nicknames.get(c.id, "?"),
+                "readonly": bool(c.readonly),
+            }
             for c in self._connections
             if not c.closed.is_set()
         ]
-        return {"count": len(vs), "viewers": vs}
+        return {
+            "count": len(vs),
+            "spectators": sum(1 for v in vs if v["readonly"]),
+            "viewers": vs,
+        }
 
     def _broadcast_viewers_locked(self) -> None:
         """Push the current viewer roster to every remaining client's queue.
@@ -1586,6 +1624,16 @@ class WebRenderer(Renderer):
         'nobody here' before disrupting the session."""
         with self._lock:
             return sum(1 for c in self._connections if not c.closed.is_set())
+
+    def spectator_count(self) -> int:
+        """How many of the live subscribers are read-only (spectators). Broken
+        out of :meth:`viewer_count` so a controller can distinguish 'someone is
+        watching' from 'someone can answer' — a room of spectators cannot
+        resolve a pending ask."""
+        with self._lock:
+            return sum(
+                1 for c in self._connections if not c.closed.is_set() and c.readonly
+            )
 
     @staticmethod
     def _agents_summary_from(roster: list | None) -> dict | None:

@@ -48,7 +48,7 @@ class WebStack:
     — 시나리오마다 필요한 대기 상대가 다르므로 픽스처는 전송층만 소유.
     """
 
-    def __init__(self):
+    def __init__(self, view_token: str | None = None):
         import uvicorn
 
         from agent_cli.render.web import WebRenderer
@@ -56,7 +56,10 @@ class WebStack:
 
         self.renderer = WebRenderer(workspace=os.getcwd())
         self.token = "browser-test"
-        self.server = WebServer(self.renderer, token=self.token)
+        # 관전 모드는 opt-in — 안 주면 view_token=None 이라 기존 시나리오는
+        # 전권 단일 토큰 그대로다.
+        self.view_token = view_token
+        self.server = WebServer(self.renderer, token=self.token, view_token=view_token)
         app = create_app(self.server)
         # 포트 0 = OS 임시 할당 — 병렬/반복 실행 충돌 없음.
         self._config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
@@ -79,6 +82,13 @@ class WebStack:
         port = sock.getsockname()[1]
         self.url = f"http://127.0.0.1:{port}/?token={self.token}"
         self.base = f"http://127.0.0.1:{port}"
+        # 관전 URL — 같은 페이지, 읽기 전용 토큰. 운영자가 실제로 나눠 주는
+        # 링크가 이 형태라 테스트도 같은 경로로 연다.
+        self.watch_url = (
+            f"http://127.0.0.1:{port}/?token={self.view_token}"
+            if self.view_token
+            else ""
+        )
         return self.url
 
     def stop(self):
@@ -156,6 +166,16 @@ class WebStack:
 @pytest.fixture
 def stack():
     s = WebStack()
+    s.start()
+    yield s
+    s.stop()
+
+
+@pytest.fixture
+def spectator_stack():
+    """Stack with spectating enabled — ``stack.watch_url`` is the read-only
+    link an operator would hand out."""
+    s = WebStack(view_token="browser-watch")
     s.start()
     yield s
     s.stop()
