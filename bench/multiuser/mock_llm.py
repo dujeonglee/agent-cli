@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """결정적 목 LLM — OpenAI 호환 /chat/completions SSE 서버 (bench 전용).
 
-포크(Coagora) ``backend/bench/mockLlm.mjs`` 의 본류 대응물이다. 지연 지시자
-문법(``[[bench k=v ...]]``)은 포크와 동일하게 유지해 두 구현의 실험 스크립트가
-같은 시나리오 언어를 쓰지만, **도구 호출의 표현이 다르다**: 포크는 OpenAI
-네이티브 ``tool_calls`` 델타를 흘리는 반면, 본류 에이전트는 도구를 **content
-본문의 json_fc op 배열**로 파싱하므로 여기서는 content 로 op 를 흘린다.
+지연 지시자 문법(``[[bench k=v ...]]``)은 초기 탐색 단계의 하네스에서 그대로
+가져와 실험 스크립트가 같은 시나리오 언어를 쓰게 한다. **도구 호출의 표현은
+이 시스템에 맞춘다**: 이 에이전트는 도구를 **content 본문의 json_fc op 배열**
+로 파싱하므로(제공자 네이티브 함수 호출에 의존하지 않는다) 여기서도 content
+로 op 를 흘린다.
 (``agent_cli/wire_formats/json_fc.py`` — ``[{"action": ..., 파라미터}]``.)
 
 난수·시계 의존 분기 없음 — 같은 대화 상태 + 같은 지시자는 항상 같은 응답을
-만든다(포크 mockLlm.mjs:22 와 같은 결정성 계약). 진행 상태는 서버가 아니라
+만든다(결정성 계약). 진행 상태는 서버가 아니라
 **대화 자체**에서 읽는다: 마지막 ``[[bench]]`` user 메시지 이후의 관찰(user
 role, "Observation" 프리픽스) 개수가 곧 완료한 도구 스텝 수다.
 
-지시자 파라미터 (기본값은 포크와 동일):
+지시자 파라미터:
   ttft=100   첫 토큰까지 지연 ms
   tok=5      토큰 간 간격 ms
   n=12       방출 토큰 수
@@ -79,7 +79,7 @@ def tool_steps_done(messages: list[dict]) -> int:
 
     본류 json_fc 대화에서 도구 결과는 "Observation" 으로 시작하는 user
     메시지로 돌아온다. 이 개수가 곧 이번 지시자에서 완료한 도구 스텝 수 —
-    서버 상태 없이 대화만으로 진행도를 판정한다(mockLlm.mjs:73-80 동형).
+    서버 상태 없이 대화만으로 진행도를 판정한다.
     """
     last_bench = -1
     for i, m in enumerate(messages):

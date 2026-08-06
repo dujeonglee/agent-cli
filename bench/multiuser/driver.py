@@ -1,10 +1,10 @@
 """다중 사용자 벤치 공용 드라이버 — 서버 기동·입력 주입·turns.jsonl 파싱·통계.
 
-포크(Coagora) ``backend/bench/e2-hol.mjs`` 의 드라이버 골격(mjs:109-212 프로세스
-관리, 438-474 통계)을 본류에 맞게 옮긴 것. 측정은 포크(SSE 이벤트 타임라인)와
-달리 **서버 내부 계측(turns.jsonl, M2)** 을 읽는다 — 한 프로세스의 단조 시계
-(mono_ms)라 클라이언트/서버 시계 차 보정이 필요 없고, 거부 계약의 재시도
-대기까지 서버 관점에서 일관되게 잡힌다(reject 이벤트가 첫 시도 시각).
+프로세스 관리·통계의 골격은 초기 탐색 단계에서 쓰던 하네스에서 가져왔고,
+**측정 방식은 다르다**: SSE 이벤트 타임라인 대신 **서버 내부 계측(turns.jsonl,
+M2)** 을 읽는다. 한 프로세스의 단조 시계(mono_ms)라 클라이언트/서버 시계 차
+보정이 필요 없고, 거부 계약의 재시도 대기까지 서버 관점에서 일관되게
+잡힌다(reject 이벤트가 첫 시도 시각).
 
 의존성 없음(stdlib) — 리포 규약 "새 의존성 최소화".
 """
@@ -211,7 +211,7 @@ class AgentServer:
         """거부 계약용: 409 면 interval 간격으로 수용까지 재시도.
 
         재시도 횟수 반환. 서버 관점의 대기는 reject 이벤트로 잡히므로
-        여기서는 수용만 보장한다 (포크 C-REJECT 클라이언트 규약).
+        여기서는 수용만 보장한다 (거부 계약의 클라이언트 규약).
         """
         deadline = time.monotonic() + timeout
         retries = 0
@@ -385,7 +385,7 @@ def ttft_ms(chain: dict) -> float | None:
     return chain["first_token"] - min(t0_candidates)
 
 
-# ── 통계 (포크 e2-hol.mjs:438-474 대응) ─────────────
+# ── 통계 ──────────────────────────────────────────
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -402,7 +402,7 @@ def median(values: list[float]) -> float:
 
 
 def slope(points: list[tuple[float, float]]) -> float:
-    """단순 선형회귀 기울기 — TTFT ~ L (포크의 핵심 지표)."""
+    """단순 선형회귀 기울기 — TTFT ~ L (P1 의 핵심 지표)."""
     n = len(points)
     if n < 2:
         return float("nan")

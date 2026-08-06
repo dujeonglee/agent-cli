@@ -1,19 +1,18 @@
 # bench/multiuser — 다중 사용자 동시성 계약 벤치 하네스
 
 "병렬 추론 + 직렬 부수효과" 계약(`--concurrency-contract` / `--lock-scope`)의
-성능·무결성·공정성을 **결정적으로** 측정한다. 포크(Coagora)
-`backend/bench/`(mockLlm.mjs, e2-hol.mjs, e1-ablation.mjs)의 본류 재현이며,
-같은 실험을 두 독립 구현(TS 이벤트루프 서버 / Python 스레드 CLI)에서 돌려
-계약의 **구현 독립성**을 검증하는 것(N2)이 목적의 하나다.
+성능·무결성·공정성을 **결정적으로** 측정한다. 시나리오 언어와 드라이버
+골격은 초기 탐색 단계의 하네스에서 가져왔고, 측정 방식과 도구 호출 표현은
+이 시스템에 맞춰 새로 만들었다(아래 "측정 방법론").
 
 ## 구성
 
 | 파일 | 역할 |
 |---|---|
-| `mock_llm.py` | 결정적 목 LLM — OpenAI 호환 `/chat/completions` SSE. 지연은 프롬프트 안 `[[bench ttft= tok= n= work= fwrite= fpath= marker= lines= id=]]` 지시자로 제어(포크 mockLlm.mjs 와 동일 문법). 포크와 달리 도구 호출을 **json_fc content op** 로 흘린다(본류 wire 형식). 압축 요약 콜은 지시자보다 먼저 감지해 짧게 응답(`MOCK_LLM_SUM_MS`). `MOCK_LLM_CTX` 로 광고 컨텍스트 창 제어(N1 압축 유발) |
+| `mock_llm.py` | 결정적 목 LLM — OpenAI 호환 `/chat/completions` SSE. 지연은 프롬프트 안 `[[bench ttft= tok= n= work= fwrite= fpath= marker= lines= id=]]` 지시자로 제어. 도구 호출은 **json_fc content op** 로 흘린다(이 시스템의 wire 형식). 압축 요약 콜은 지시자보다 먼저 감지해 짧게 응답(`MOCK_LLM_SUM_MS`). `MOCK_LLM_CTX` 로 광고 컨텍스트 창 제어(N1 압축 유발) |
 | `driver.py` | 공용 드라이버 — 서버/목 기동(HOME 격리·워크스페이스 격리), 입력 주입, `turns.jsonl`(M2 계측) 파싱, 턴 사슬 해석(`turn_chain`/`ttft_ms`), 통계(p50/p95/기울기) |
-| `e2_hol.py` | **P1/N2**: HOL 지연 — 3계약 × L{2,6,15,30}s × reps. 핵심 지표 = B TTFT ~ L 회귀 기울기 (포크: 직렬 1.000 / 거부 1.010 / 병렬 0.000) |
-| `e1_ablation.py` | **P3/N2**: 효과 락 ablation — lock{off,workspace,conflict} × 동일 파일 동시 쓰기. 위반 = 두 마커 공존(mixed). 본류의 손상 메커니즘은 truncate/write 인터리브(포크는 스트림 인터리브 — One Contract, Two Runtimes) |
+| `e2_hol.py` | **P1/N2**: HOL 지연 — 3계약 × L{2,6,15,30}s × reps. 핵심 지표 = B TTFT ~ L 회귀 기울기 (실측 §6.1) |
+| `e1_ablation.py` | **P3/N2**: 효과 락 ablation — lock{off,workspace,conflict} × 동일 파일 동시 쓰기. 위반 = 두 마커 공존(mixed). 손상 메커니즘은 truncate/write 인터리브 |
 | `n1_compaction.py` | **N1**: 동시 턴 하의 낙관적 압축 — 압축 무락 구간 안에서 타 턴 이벤트 지속(가용성), stale 재시도 수, 질의 유실 0 + 귀속 정합(정확성) |
 | `n3_attribution.py` | **N3**: 병렬 귀속 정확도 — 마커 왕복 검사로 오귀속률 측정(가설: 0) |
 | `p4_fairness.py` | **P4**: per-user 공정성 — 게이트 on/off 두 팔(`--no-per-user-gate` ablation), 단기 사용자 대기 절대값 대조 |
@@ -23,7 +22,7 @@
 | `n4_replay.py` | **N4**: 늦은 합류자 증분 재생 정합성(v0.8 1단계 검증) — 안 끊긴 구독(control)과 `Last-Event-ID` 로 반복 재접속하는 구독(cutter)을 동시에 돌려 **seq 열 + 페이로드 원문**을 대조. 살릴 수 없는 커서의 `replay_reset` 폴백도 강제 |
 | `p6_real_llm.py` | **P6**: 실 LLM(온프렘, `AGENT_CLI_*` env) — HOL 순위 보존 스팟체크 + 같은 3-메시지 워크로드의 직렬 vs 병렬 토큰 계정(`llm_call` usage 이벤트) |
 | `p7_lifecycle.py` | **P7**: 장기 세션 — 3 사용자 204턴, 페이즈 사이 서버 종료→`--resume` 재개 ×3. 보존 100%·id 전역 유일·압축 유계 지속 |
-| `out/` | 커밋되는 원시 데이터 + 요약 (재현 가능성 규약 — 포크와 동일) |
+| `out/` | 커밋되는 원시 데이터 + 요약 (재현 가능성 규약) |
 
 ## 실행
 

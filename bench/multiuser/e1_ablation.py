@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""P3/N2 — 효과 락 ablation: 동시 파일 쓰기 무결성 (포크 e1-ablation.mjs 재현).
+"""P3 — 효과 락 ablation: 동시 파일 쓰기 무결성.
 
-측정 층은 포크와 동일하다(e1-ablation.mjs:8-11): **에이전트/LLM 스택을
+측정 층 선택: **에이전트/LLM 스택을
 통과시키지 않고** 실제 도구(write_file)와 락 프리미티브(effect_lock)를 직접
 구동한다. E1 은 모델 행동이 아니라 I/O 경합을 재는 실험이므로 결정적 구동이
 옳다 — 특히 본류의 공유 트랜스크립트에서는 목 LLM 을 끼우면 동시 턴들이
 "최신 지시자"로 붕괴해(모델이 최신 질문에 답하는 알려진 한계의 재현) 서로
 다른 내용의 경합 자체가 성립하지 않는다. 실측으로 확인한 함정이다.
 
-워크로드 W1(포크와 동일): writer 2개가 같은 파일에 K회 전체 쓰기를 동시에
+워크로드 W1: writer 2개가 같은 파일에 K회 전체 쓰기를 동시에
 수행. 페이로드 = ``#HEADER writer seq`` + 본문(결정적 패턴, ~SIZE_KIB) +
 ``#FOOTER sha256(본문)``. 스냅샷 분류:
 
@@ -18,8 +18,9 @@
   partial — 쓰기 진행 중 잘림. 락 ON 에서도 정상이라 위반으로 세지 않는다
             (open("w") 는 truncate 후 기록 — 중간 상태는 계약 위반이 아니다)
 
-본류의 물리 손상 메커니즘은 truncate+write 인터리브(One Contract, Two
-Runtimes — 포크는 스트림 쓰기 인터리브)다. writer 별 본문 크기를 다르게 해
+이 시스템의 물리 손상 메커니즘은 truncate+write 인터리브다(쓰기를 청크로
+스트리밍하는 실행기라면 인터리브 창이 더 넓다 — 손상 강도는 플랫폼 속성이고
+불변인 것은 방향과 0 이다). writer 별 본문 크기를 다르게 해
 (w0=SIZE_KIB, w1=SIZE_KIB/2) 겹쳐쓰기 잔여(tail remnant)가 마커로 드러나게
 한다.
 
@@ -95,7 +96,7 @@ def run_arm(scope: str, k: int, size_kib: int, writers: int) -> dict:
                 counts[classify(text) if text else "empty"] += 1
             except OSError:
                 pass
-            time.sleep(0.002)  # 포크 POLL_MS=2 와 동일
+            time.sleep(0.002)  # 2 ms 폴링
 
     def writer(idx: int):
         wid = f"w{idx}"
