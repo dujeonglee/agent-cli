@@ -224,12 +224,22 @@ def render_pop_depth() -> None:
 
 
 def render_begin_scope(
-    task_id: str, kind: str = "run", label: str = "", agent: str = "", index: int = 0
+    task_id: str,
+    kind: str = "run",
+    label: str = "",
+    agent: str = "",
+    index: int = 0,
+    ctx_dir: str | None = None,
 ) -> None:
     """Enter a nested scope (skill/run) — single path for skill subloops and
     delegate/one-shot workers. See ``Renderer.begin_scope``."""
     _renderer.begin_scope(
-        task_id=task_id, kind=kind, label=label, agent=agent, index=index
+        task_id=task_id,
+        kind=kind,
+        label=label,
+        agent=agent,
+        index=index,
+        ctx_dir=ctx_dir,
     )
 
 

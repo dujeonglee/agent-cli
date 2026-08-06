@@ -2535,3 +2535,475 @@ class TestScopeNesting:
         r = WebRenderer()
         r.begin_scope(task_id="sk", kind="skill", label="o")
         assert self._starts(r)[-1]["ts"] > 0  # emit-time stamp, as before
+
+
+class TestResumeInnerTurnReplay:
+    """resume 시 서브에이전트 **내부 턴**이 자기 카드 안으로 재생된다 (v7.29.0).
+
+    서브에이전트(스킬/인라인 run/상주 요청)는 자기 ``ctx_dir`` 의
+    ``history.jsonl`` 에 턴을 기록하고 main history 에는 최종 관찰만 남는다 —
+    v7.28.0 은 카드 골격까지만 복구했고 내부 턴은 "기록이 없다" 노트로
+    남았다(실측: 실세션 재생에서 scope 라우팅된 턴 0). 이제 scope_start 가
+    ``ctx_dir`` 를 실어 오면 그 디렉토리의 히스토리를 카드 안으로 재생한다.
+    """
+
+    @staticmethod
+    def _iso(epoch):
+        import datetime as dt
+
+        return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).isoformat()
+
+    def _write_sidecar(self, session, entries):
+        lines = [json.dumps(e, ensure_ascii=False) for e in entries]
+        (session / "scopes.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _write_history(self, path, records):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+            encoding="utf-8",
+        )
+
+    class _Ctx:
+        def __init__(self, msgs):
+            self._m = msgs
+
+        def get_raw_messages(self):
+            return self._m
+
+    def _skill_session(self, tmp_path, *, ctx_dir="skill_plan_abc123_x", with_dir=True):
+        """main(user→run_skill→관찰) + skill 스코프(내부 턴 2) 세션 골격."""
+        self._write_sidecar(
+            tmp_path,
+            [
+                {
+                    "event": "scope_start",
+                    "task_id": "sk1",
+                    "kind": "skill",
+                    "label": "skill:plan",
+                    "parent": "",
+                    "depth": 0,
+                    "ts": 100.0,
+                    **({"ctx_dir": ctx_dir} if ctx_dir else {}),
+                },
+                {
+                    "event": "scope_end",
+                    "task_id": "sk1",
+                    "kind": "skill",
+                    "success": True,
+                    "duration_s": 60.0,
+                    "ts": 160.0,
+                },
+            ],
+        )
+        if with_dir and ctx_dir:
+            self._write_history(
+                tmp_path / ctx_dir / "history.jsonl",
+                [
+                    # 내부 task 프롬프트 — 라이브에 카드가 없으니 재생도 스킵 대상
+                    {
+                        "role": "user",
+                        "content": "plan the feature",
+                        "kind": "query",
+                        "ts": self._iso(101.0),
+                    },
+                    {
+                        "role": "assistant",
+                        "thought": "생각",
+                        "ops": [
+                            {"action": "read_file", "action_input": {"path": "a.py"}}
+                        ],
+                        "ts": self._iso(110.0),
+                        "task_id": "skill-plan-DIFFERENT",
+                    },
+                    {
+                        "role": "user",
+                        "content": "Observation: ok",
+                        "tool": "read_file",
+                        "success": True,
+                        "ts": self._iso(120.0),
+                    },
+                ],
+            )
+        main = [
+            {"role": "user", "content": "계획 짜줘", "ts": self._iso(90.0)},
+            {
+                "role": "user",
+                "content": "Observation: SKILL: plan\n결과",
+                "tool": "",
+                "success": True,
+                "ts": self._iso(161.0),
+            },
+        ]
+        return self._Ctx(main)
+
+    def test_inner_turns_replay_into_the_card(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(self._skill_session(tmp_path))
+        seq = [(e, dict(d).get("task_id")) for e, d in r._event_buffer]
+        # 카드 열림 → 내부 턴들(카드 라우팅) → 카드 닫힘 순서
+        i_start = seq.index(("scope_start", "sk1"))
+        i_end = seq.index(("scope_end", "sk1"))
+        inner = seq[i_start + 1 : i_end]
+        assert ("assistant_turn", "sk1") in inner
+        assert ("observation", "sk1") in inner
+
+    def test_record_stamp_is_overridden_by_card_id(self, tmp_path):
+        """서브 기록의 자체 task_id 는 인스펙터 프롬프트-스코프 id 라 카드
+        id 와 다르다 — 카드 라우팅은 사이드카의 id 로 강제해야 한다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(self._skill_session(tmp_path))
+        turns = [d for e, d in r._event_buffer if e == "assistant_turn"]
+        assert all(dict(d).get("task_id") == "sk1" for d in turns)
+
+    def test_inner_plain_user_records_are_skipped(self, tmp_path):
+        """서브 히스토리의 plain user(내부 task 프롬프트)는 라이브에 카드가
+        없으므로 재생도 안 한다 — main 의 user 카드는 그대로."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(self._skill_session(tmp_path))
+        users = [dict(d) for e, d in r._event_buffer if e == "user_message"]
+        assert len(users) == 1  # main 의 "계획 짜줘" 뿐
+
+    def test_inner_records_keep_original_ts(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(self._skill_session(tmp_path))
+        turn = next(dict(d) for e, d in r._event_buffer if e == "assistant_turn")
+        assert turn["ts"] == self._iso(110.0)
+
+    def test_missing_dir_leaves_card_empty_without_crash(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(self._skill_session(tmp_path, with_dir=False))
+        names = [e for e, _ in r._event_buffer]
+        assert "scope_start" in names and "scope_end" in names
+        assert "assistant_turn" not in names  # 내부 턴 없음, 크래시도 없음
+
+    def test_old_sidecar_without_ctx_dir_unchanged(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(self._skill_session(tmp_path, ctx_dir=""))
+        names = [e for e, _ in r._event_buffer]
+        assert "assistant_turn" not in names  # 종전 동작 그대로 (카드+노트)
+
+    def test_traversal_in_ctx_dir_is_refused(self, tmp_path):
+        """사이드카는 우리 소유지만, 오염된 라인이 세션 밖을 걷게 두지 않는다."""
+        # session(tmp_path/"s") 의 형제 — ctx_dir="../outside" 가 정확히 닿는
+        # 위치여야 가드를 실제로 시험한다 (첫 버전은 엉뚱한 곳에 만들어 가드
+        # 없이도 통과했다 — 뮤테이션이 잡음).
+        outside = tmp_path / "outside"
+        self._write_history(
+            outside / "history.jsonl",
+            [
+                {
+                    "role": "assistant",
+                    "thought": "x",
+                    "ops": [{"action": "shell", "action_input": {"command": "id"}}],
+                    "ts": self._iso(110.0),
+                }
+            ],
+        )
+        session = tmp_path / "s"
+        session.mkdir()
+        self._write_sidecar(
+            session,
+            [
+                {
+                    "event": "scope_start",
+                    "task_id": "sk1",
+                    "kind": "skill",
+                    "label": "x",
+                    "parent": "",
+                    "depth": 0,
+                    "ts": 100.0,
+                    "ctx_dir": "../outside",
+                },
+                {
+                    "event": "scope_end",
+                    "task_id": "sk1",
+                    "kind": "skill",
+                    "success": True,
+                    "duration_s": 1.0,
+                    "ts": 160.0,
+                },
+            ],
+        )
+        r = WebRenderer(session_dir=str(session))
+        r.replay_session(self._Ctx([]))
+        assert "assistant_turn" not in [e for e, _ in r._event_buffer]
+
+    def test_agent_history_is_sliced_per_request_scope(self, tmp_path):
+        """상주 에이전트의 history 는 요청들을 관통하는 한 파일 — 각 요청
+        카드(key#seq)는 자기 [start,end] ts 구간의 턴만 가져간다."""
+        self._write_history(
+            tmp_path / "agents" / "agt-x" / "history.jsonl",
+            [
+                {
+                    "role": "assistant",
+                    "thought": "1차",
+                    "ops": [{"action": "read_file", "action_input": {"path": "a"}}],
+                    "ts": self._iso(110.0),
+                },
+                {
+                    "role": "user",
+                    "content": "Observation: A",
+                    "tool": "read_file",
+                    "success": True,
+                    "ts": self._iso(115.0),
+                },
+                {
+                    "role": "assistant",
+                    "thought": "2차",
+                    "ops": [{"action": "shell", "action_input": {"command": "ls"}}],
+                    "ts": self._iso(210.0),
+                },
+                {
+                    "role": "user",
+                    "content": "Observation: B",
+                    "tool": "shell",
+                    "success": True,
+                    "ts": self._iso(215.0),
+                },
+            ],
+        )
+        self._write_sidecar(
+            tmp_path,
+            [
+                {
+                    "event": "scope_start",
+                    "task_id": "agt-x#1",
+                    "kind": "run",
+                    "label": "req1",
+                    "parent": "",
+                    "depth": 0,
+                    "ts": 100.0,
+                    "ctx_dir": "agents/agt-x",
+                },
+                {
+                    "event": "scope_end",
+                    "task_id": "agt-x#1",
+                    "kind": "run",
+                    "success": True,
+                    "duration_s": 20.0,
+                    "ts": 120.0,
+                },
+                {
+                    "event": "scope_start",
+                    "task_id": "agt-x#2",
+                    "kind": "run",
+                    "label": "req2",
+                    "parent": "",
+                    "depth": 0,
+                    "ts": 200.0,
+                    "ctx_dir": "agents/agt-x",
+                },
+                {
+                    "event": "scope_end",
+                    "task_id": "agt-x#2",
+                    "kind": "run",
+                    "success": True,
+                    "duration_s": 20.0,
+                    "ts": 220.0,
+                },
+            ],
+        )
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.replay_session(self._Ctx([]))
+        by_scope = {}
+        for e, d in r._event_buffer:
+            if e in ("assistant_turn", "observation"):
+                by_scope.setdefault(dict(d).get("task_id"), []).append(e)
+        assert by_scope == {
+            "agt-x#1": ["assistant_turn", "observation"],
+            "agt-x#2": ["assistant_turn", "observation"],
+        }
+
+    def test_scope_start_payload_carries_ctx_dir(self):
+        r = WebRenderer()
+        r.begin_scope(task_id="t", kind="run", label="x", ctx_dir="run_task_ab_1")
+        start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+        assert start["ctx_dir"] == "run_task_ab_1"
+
+    def test_agent_work_scope_carries_home_dir(self):
+        r = WebRenderer()
+        r.begin_agent_work(key="agt-z", seq=3, profile="code-writer", message="do")
+        start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+        assert start["ctx_dir"] == "agents/agt-z"
+
+
+class TestCtxDirWiring:
+    """사이드카의 ``ctx_dir`` == 서브에이전트가 **실제로 쓰는** 디렉토리.
+
+    이 등식이 resume 내부-턴 재생의 전부다: 이름이 scope 열기 **후**에
+    만들어지면(종전) 사이드카가 모르는 이름이 되고, 두 경로가 각자 이름을
+    만들면 어긋난다. 그래서 이름을 scope 여는 쪽이 먼저 만들어 양쪽에
+    전달한다 — 여기서는 실컴포넌트로 그 일치를 고정한다.
+    """
+
+    def test_skill_scope_dir_matches_execute_skill_arg(self, monkeypatch):
+        from agent_cli.loop import skill_invoke
+        from agent_cli.render import set_renderer
+
+        r = WebRenderer()
+        set_renderer(r)
+        try:
+            captured = {}
+
+            class FakeSkill:
+                disable_model_invocation = False
+
+            def fake_execute(**kw):
+                captured["session_subdir"] = kw.get("session_subdir")
+                from agent_cli.tools.result import ToolResult
+
+                return ToolResult(True, output="done")
+
+            monkeypatch.setattr(
+                "agent_cli.skills.load_skills", lambda: {"plan": FakeSkill()}
+            )
+            monkeypatch.setattr("agent_cli.skills.executor.execute_skill", fake_execute)
+            from agent_cli.providers.capabilities import ModelCapabilities
+
+            caps = ModelCapabilities(
+                context_window=32768,
+                max_output_tokens=4096,
+                supports_thinking=False,
+                thinking_budget=0,
+            )
+            skill_invoke._handle_run_skill(
+                {"name": "plan", "arguments": ""},
+                provider_name="openai",
+                base_url="",
+                api_key="",
+                capabilities=caps,
+                model="m",
+                ctx=None,
+                session=None,
+            )
+            start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+            assert captured["session_subdir"], "execute_skill 에 dir 미전달"
+            assert start.get("ctx_dir") == captured["session_subdir"]
+            assert start["ctx_dir"].startswith("skill_plan_")
+        finally:
+            from io import StringIO
+
+            from rich.console import Console
+
+            from agent_cli.render.minimal import MinimalRenderer
+
+            set_renderer(MinimalRenderer(Console(file=StringIO())))
+
+    def test_executor_honours_the_prenamed_subdir(self, tmp_path, monkeypatch):
+        """execute_skill 이 받은 이름 그대로 디렉토리를 만든다 — 전달만 되고
+        무시되면 등식이 조용히 깨진다."""
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.providers.capabilities import ModelCapabilities
+        from agent_cli.skills.executor import execute_skill
+        from agent_cli.skills.models import Skill
+
+        class R:
+            success = True
+            output = "ok"
+
+        monkeypatch.setattr("agent_cli.skills.executor.run_loop", lambda **kw: R())
+        ctx = ContextManager(tmp_path, max_context_tokens=10000)
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_thinking=False,
+            thinking_budget=0,
+        )
+        execute_skill(
+            skill=Skill(name="plan", description="", prompt_template="do it"),
+            arguments="",
+            provider=object(),
+            capabilities=caps,
+            model="m",
+            ctx=ctx,
+            session_subdir="skill_plan_PINNED_1",
+        )
+        # history.jsonl 은 첫 메시지에서 lazy 생성이라(스텁 루프는 무기록)
+        # 디렉토리 자체 + 결과 산출물로 이름 준수를 확인한다.
+        assert (tmp_path / "skill_plan_PINNED_1").is_dir()
+        assert (tmp_path / "skill_plan_PINNED_1" / "result.md").exists()
+
+    @staticmethod
+    def _caps():
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        return ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_thinking=False,
+            thinking_budget=0,
+        )
+
+    def test_run_single_honours_the_prenamed_dir(self, tmp_path, monkeypatch):
+        """_run_single 이 받은 이름 그대로 디렉토리를 만든다 — 전달돼도
+        내부에서 재생성하면 사이드카와 어긋난다 (뮤테이션이 잡은 갭)."""
+        from agent_cli.subagent.oneshot import _run_single
+
+        class LR:
+            success = True
+            output = "ok"
+
+        monkeypatch.setattr(
+            "agent_cli.subagent.runner.run_subagent_message",
+            lambda *a, **kw: (LR(), 0.1),
+        )
+        from agent_cli.context.manager import ContextManager
+
+        parent = ContextManager(tmp_path, max_context_tokens=10000)
+        _run_single(
+            task="do",
+            parent_ctx=parent,
+            provider=object(),
+            capabilities=self._caps(),
+            run_dir_name="run_task_PINNED_9",
+        )
+        assert (tmp_path / "run_task_PINNED_9").is_dir()
+        assert (tmp_path / "run_task_PINNED_9" / "result.md").exists()
+
+    def test_single_run_scope_dir_matches_run_single_arg(self, monkeypatch):
+        from agent_cli.subagent.oneshot import tool_delegate
+        from agent_cli.tools.result import ToolResult
+
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
+        captured = {}
+
+        def fake_run_single(**kw):
+            captured["run_dir_name"] = kw.get("run_dir_name")
+            return ToolResult(True, output="done")
+
+        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", fake_run_single)
+        tool_delegate(
+            args={"tasks": [{"task": "t", "agent": "explorer"}]},
+            capabilities=self._caps(),
+        )
+        start = next(dict(d) for e, d in r._event_buffer if e == "scope_start")
+        assert captured["run_dir_name"]
+        assert start.get("ctx_dir") == captured["run_dir_name"]
+        assert start["ctx_dir"].startswith("run_explorer_")
+
+    def test_parallel_run_scope_dirs_match_each_worker(self, monkeypatch):
+        from agent_cli.subagent.oneshot import _run_parallel
+        from agent_cli.tools.result import ToolResult
+
+        r = WebRenderer()
+        monkeypatch.setattr("agent_cli.render.get_renderer", lambda: r)
+        captured = []
+
+        def fake_run_single(**kw):
+            captured.append(kw.get("run_dir_name"))
+            return ToolResult(True, output="done")
+
+        monkeypatch.setattr("agent_cli.subagent.oneshot._run_single", fake_run_single)
+        _run_parallel(
+            [{"task": "a", "agent": "w0"}, {"task": "b", "agent": "w1"}],
+            capabilities=self._caps(),
+        )
+        starts = {
+            dict(d)["ctx_dir"]
+            for e, d in r._event_buffer
+            if e == "scope_start" and dict(d).get("ctx_dir")
+        }
+        assert starts == set(captured)
+        assert len(starts) == 2  # 워커별 고유 dir

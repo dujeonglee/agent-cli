@@ -12,6 +12,30 @@
 
 ## [Unreleased]
 
+## [7.29.0] - 2026-08-06
+
+### Fixed
+
+- **resume 후 스킬/에이전트 카드가 비어 있던 문제 — 서브에이전트 내부 턴 복구.**
+  자기 ctx 를 가진 서브에이전트 세 부류(스킬 `skill_*/`, 인라인 run `run_*/`, 상주
+  요청 `agents/<key>/`)는 턴을 자기 디렉토리의 `history.jsonl` 에 기록하고 main
+  history 에는 최종 관찰만 남는다 — v7.28.0 은 카드 골격까지만 복구했고 내부 턴은
+  "기록이 없습니다" 노트로 남았다(실측: 실세션 재생에서 scope 라우팅된 턴 0/65).
+  - `scope_start` 에 `ctx_dir`(세션 상대 경로) additive 추가. 디렉토리 이름을
+    **scope 여는 쪽이 먼저 만들어** 실행부와 사이드카 양쪽에 전달한다
+    (`execute_skill(session_subdir=)` / `_run_single(run_dir_name=)`, 공용
+    `generate_subdir_name`) — "사이드카의 이름 = 실제 디렉토리" 등식이 계약이고
+    뮤테이션으로 고정했다.
+  - resume 재생이 scope 카드를 연 직후 그 디렉토리의 히스토리를 **카드 안으로**
+    재생한다: 카드 id 강제(서브 기록의 자체 task_id 는 인스펙터 프롬프트-스코프
+    id 라 카드와 다름), 내부 task 프롬프트(plain user)는 라이브와 동형으로 스킵,
+    상주 에이전트는 한 파일이므로 각 요청 카드가 자기 [start, end] 구간만 가져감,
+    ctx_dir 의 세션 밖 경로 탈출 거부.
+  - 하위호환: 구 세션(필드 없음)·디렉토리 삭제분은 종전 그대로(카드 + 사유 노트,
+    실세션 재생으로 동일 출력 확인). 이것으로 v7.28.0 의 "서브에이전트 컨텍스트라
+    기록이 없다" 케이스가 신규 세션에서 소멸한다.
+
+
 ## [7.28.1] - 2026-07-27
 
 ### Fixed
@@ -1620,7 +1644,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.28.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.29.0...HEAD
+[7.29.0]: https://github.com/dujeonglee/agent-cli/compare/v7.28.1...v7.29.0
 [7.28.1]: https://github.com/dujeonglee/agent-cli/compare/v7.28.0...v7.28.1
 [7.28.0]: https://github.com/dujeonglee/agent-cli/compare/v7.27.2...v7.28.0
 [7.27.2]: https://github.com/dujeonglee/agent-cli/compare/v7.27.1...v7.27.2

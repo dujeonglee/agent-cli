@@ -107,7 +107,13 @@ def _handle_run_skill(
     import uuid as _uuid
 
     _scope_id = f"skill-{name}-{_uuid.uuid4().hex[:8]}"
-    render_begin_scope(_scope_id, "skill", f"skill:{name}")
+    # Name the skill's ctx dir HERE (not in execute_skill) so the scope event
+    # can carry it — the resume replay reads that dir to put the skill's inner
+    # turns back inside its card.
+    from agent_cli.subagent.report import generate_subdir_name
+
+    _skill_dir = generate_subdir_name("skill", name)
+    render_begin_scope(_scope_id, "skill", f"skill:{name}", ctx_dir=_skill_dir)
     render_push_depth()
     t0 = time.monotonic()
 
@@ -134,6 +140,7 @@ def _handle_run_skill(
             parent_depth=parent_depth,
             compaction_enabled=compaction_enabled,
             agent_registry=agent_registry,
+            session_subdir=_skill_dir,
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")

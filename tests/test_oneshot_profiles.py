@@ -598,6 +598,7 @@ class TestToolDelegatePassesAgent:
                 index=0,
                 parent=None,
                 ts=None,
+                ctx_dir=None,
             ):
                 captured_ids.append(task_id)
 

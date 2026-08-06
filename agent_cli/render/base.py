@@ -232,6 +232,7 @@ class Renderer(ABC):
         index: int = 0,
         parent: str | None = None,
         ts: float | None = None,
+        ctx_dir: str | None = None,
     ) -> None:
         """Enter a nested execution scope — the single path for BOTH a skill
         subloop (``kind="skill"``) and a delegate / one-shot worker
@@ -247,6 +248,14 @@ class Renderer(ABC):
         that inference is impossible — a parallel worker calls this from its
         OWN thread, whose stack is empty, so the spawning code captures the
         parent (``current_scope()``) and hands it over.
+
+        ``ctx_dir`` — the scope's OWN context directory, relative to the
+        session dir (``skill_…``, ``run_…``, ``agents/<key>``). Sub-agents keep
+        their turns in their own ``history.jsonl`` there — main's history holds
+        only the final observation — so without this link a resumed session can
+        rebuild the scope's card but not the turns inside it. Callers that name
+        the directory AFTER opening the scope must name it first and pass it to
+        both sides.
 
         ``ts`` — the scope's canonical start time (epoch seconds). Leave it
         ``None`` to have the emit point stamp "now". A parallel BATCH passes one
