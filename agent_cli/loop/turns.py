@@ -33,6 +33,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from agent_cli import turn_metrics
+
 #: 한 세션의 동시 inflight 턴 상한 기본값. 포크 ``config.maxConcurrentTurns``
 #: 대응. 4 는 포크가 쓴 값이며, 본류에서 다시 실측할 대상이다(P4).
 DEFAULT_MAX_CONCURRENT_TURNS = 4
@@ -51,6 +53,10 @@ class Turn:
     #: 이 턴만 중단시키는 플래그. 세션 전역 ``/api/stop`` 과 별개로,
     #: ``AgentLoop`` 가 턴 경계·스트리밍 도중 양쪽에서 관측한다.
     stop_event: threading.Event = field(default_factory=threading.Event)
+    #: 입력 큐(InputQueue) 항목 id — 계측(M2)이 enqueue 이벤트(큐 id 만
+    #: 있음)와 dispatch 이벤트(턴 id 발급 후)를 잇는 상관 키. 계측 off 나
+    #: 큐를 거치지 않은 제출은 "".
+    queue_id: str = ""
 
 
 class TurnRegistry:
@@ -133,7 +139,12 @@ class TurnRegistry:
     # ── 디스패치 ────────────────────────────────────────
 
     def submit(
-        self, text: str, *, author: str | None = None, conn_id: str = ""
+        self,
+        text: str,
+        *,
+        author: str | None = None,
+        conn_id: str = "",
+        queue_id: str = "",
     ) -> None:
         """턴 하나를 제출한다. cap 에 여유가 있으면 **같은 호출 안에서** 즉시
         디스패치되고, 아니면 FIFO 로 대기한다.
@@ -144,7 +155,15 @@ class TurnRegistry:
         with self._lock:
             if self._shutdown:
                 return
-            self._pending.append(Turn(id="", text=text, author=author, conn_id=conn_id))
+            self._pending.append(
+                Turn(
+                    id="",
+                    text=text,
+                    author=author,
+                    conn_id=conn_id,
+                    queue_id=queue_id,
+                )
+            )
             self._idle.clear()
             started = self._pump_locked()
         if started:
@@ -216,11 +235,28 @@ class TurnRegistry:
         죽이면 안 된다(레거시 ``_worker_loop`` 이 turn 예외를 렌더러 에러로
         흡수하는 것과 같은 규율). 실제 보고는 ``runner`` 안에서 한다.
         """
+        # M2 계측: dispatch 는 여기(워커 스레드 진입)서 찍는다 — turnId 발급
+        # 직후이고 runner 시작 직전이라 "추론이 시작될 수 있게 된 시각"이다.
+        # _pump_locked 안에서 찍지 않는 이유는 락 아래서 콜백 금지 규율.
+        turn_metrics.emit(
+            "turn",
+            phase="dispatch",
+            turn_id=turn.id,
+            queue_id=turn.queue_id or None,
+            author=turn.author,
+            conn_id=turn.conn_id or None,
+        )
         try:
             self._runner(turn)
         except BaseException:
             pass
         finally:
+            turn_metrics.emit(
+                "turn",
+                phase="complete",
+                turn_id=turn.id,
+                interrupted=turn.stop_event.is_set() or None,
+            )
             with self._lock:
                 self._active.pop(turn.id, None)
                 self._threads.pop(turn.id, None)
@@ -255,7 +291,8 @@ class TurnRegistry:
             if conn_id is not None and turn.conn_id != conn_id:
                 return False
             turn.stop_event.set()
-            return True
+        turn_metrics.emit("turn", phase="interrupt", turn_id=turn_id)
+        return True
 
     def interrupt_all(self) -> int:
         """모든 활성 턴 중단 — 세션 전역 ``/api/stop`` 의 병렬판."""

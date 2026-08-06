@@ -38,6 +38,7 @@ from pathlib import Path
 
 # C5: 관심사 분리 — record 계약은 records, LLM 표현은 render, 디스크
 # I/O primitive 는 store 소유. manager 는 캐시 + 압축 정책만.
+from agent_cli import turn_metrics
 from agent_cli.context import store
 from agent_cli.context._file_extract import extract_file_paths
 from agent_cli.context.records import _classify_record
@@ -629,6 +630,17 @@ class ContextManager:
         t0 = time.monotonic()
         failure_signal: str | None = None
         fallback_used = False
+        # M2 계측(N1): 낙관적 압축의 무락 구간 진입. active_turns 는 "요약이
+        # 도는 동안 몇 개 턴이 병주했는가" — 낙관적 설계의 가용성 주장을
+        # 검증하는 축이다. 락 밖에서 찍는다(계측이 임계영역을 늘리면 안 된다).
+        turn_metrics.emit(
+            "compact",
+            phase="begin",
+            generation=gen,
+            tokens_before=old_tokens,
+            evicted=len(evict_set),
+            active_turns=turn_metrics.active_turns(),
+        )
         # ``_compacting=True`` 직후부터 try 로 감싼다 — 그 사이에서 예외가 나면
         # 플래그가 True 로 고착돼 이 세션의 압축이 영구 정지한다.
         try:
@@ -718,6 +730,24 @@ class ContextManager:
                     failure_signal=failure_signal,
                     duration_ms=duration_ms,
                 )
+            # M2 계측(N1): 결과 3분류 — commit(성공) / stale(세대 불일치로
+            # 폐기·재시도 예정) / failed(요약 실패). stale 계수가 낙관적
+            # 압축의 재시도 비용이고, begin↔이 행의 mono_ms 차가 무락
+            # 구간의 길이다.
+            turn_metrics.emit(
+                "compact",
+                phase=(
+                    "stale"
+                    if failure_signal == "stale_generation"
+                    else "failed"
+                    if failure_signal is not None
+                    else "commit"
+                ),
+                generation=gen,
+                tokens_after=tokens_after,
+                duration_ms=duration_ms,
+                active_turns=turn_metrics.active_turns(),
+            )
 
         render_compaction_progress(
             phase="done",
@@ -1006,6 +1036,17 @@ class ContextManager:
             self._reply_to = new_id
             self._tls.reply_to = new_id
             record["id"] = new_id
+            # M2 계측(N3): 질의 id ↔ 스레드 연결 고리. 병렬 모드의 스레드
+            # 이름(agent-turn-t{n})이 곧 턴 귀속이라, 이 한 줄로
+            # turns.jsonl 의 dispatch(turn_id) ↔ history.jsonl 의
+            # reply_to(u{n}) 사슬이 닫힌다 — 오귀속 검증이 파일 조인만으로
+            # 가능해진다.
+            turn_metrics.emit(
+                "turn",
+                phase="query_added",
+                msg_id=new_id,
+                thread=threading.current_thread().name,
+            )
         else:
             owner = getattr(self._tls, "reply_to", None) or self._reply_to
             if owner is not None:

@@ -2826,7 +2826,7 @@ class TestPerTurnInterrupt:
     def test_lists_inflight_turns(self):
         import time
 
-        server, client, reg, gate = self._parallel_server()
+        _server, client, reg, _gate = self._parallel_server()
         reg.submit("a", author="alice", conn_id="c-alice")
         reg.submit("b", author="bob", conn_id="c-bob")
         deadline = time.monotonic() + 5
@@ -2843,7 +2843,7 @@ class TestPerTurnInterrupt:
     def test_interrupts_only_the_named_turn(self):
         import time
 
-        server, client, reg, gate = self._parallel_server()
+        _server, client, reg, _gate = self._parallel_server()
         reg.submit("a", author="alice", conn_id="c-alice")
         reg.submit("b", author="bob", conn_id="c-bob")
         deadline = time.monotonic() + 5
@@ -2869,7 +2869,7 @@ class TestPerTurnInterrupt:
     def test_owner_only_cancel(self):
         import time
 
-        server, client, reg, gate = self._parallel_server()
+        _server, client, reg, _gate = self._parallel_server()
         reg.submit("a", author="alice", conn_id="c-alice")
         deadline = time.monotonic() + 5
         while reg.active_count() < 1 and time.monotonic() < deadline:
@@ -2884,11 +2884,70 @@ class TestPerTurnInterrupt:
         reg.wait_idle(timeout=5)
 
     def test_unknown_turn_is_idempotent(self):
-        server, client, reg, gate = self._parallel_server()
+        _server, client, _reg, _gate = self._parallel_server()
         r = client.post("/api/turn/t999/interrupt?token=testtoken")
         assert r.json() == {"ok": True, "interrupted": False}
 
     def test_requires_token(self):
-        server, client, reg, gate = self._parallel_server()
+        _server, client, _reg, _gate = self._parallel_server()
         assert client.get("/api/turns?token=wrong").status_code == 401
         assert client.post("/api/turn/t1/interrupt?token=wrong").status_code == 401
+
+
+# ── M2: 거부 계약 (--concurrency-contract reject) ──
+
+
+class TestRejectContract:
+    """busy 중 chat 입력 409 — P1 벤치의 '거부+재시도' 대조군 게이트."""
+
+    def test_busy_chat_rejected_409_and_not_queued(self, server_and_client):
+        server, renderer, client = server_and_client
+        server.reject_when_busy = True
+        renderer.worker_busy()
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": "hello"},
+        )
+        assert resp.status_code == 409
+        assert server.queue_snapshot() == []  # 큐에도 남지 않는다
+
+    def test_idle_chat_accepted(self, server_and_client):
+        server, _renderer, client = server_and_client
+        server.reject_when_busy = True
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": "hello"},
+        )
+        assert resp.status_code == 200
+        assert len(server.queue_snapshot()) == 1
+
+    def test_default_serial_still_queues_while_busy(self, server_and_client):
+        """기본(직렬/병렬) 경로 보존 — reject 미설정이면 busy 여도 큐잉."""
+        server, renderer, client = server_and_client
+        renderer.worker_busy()
+        resp = client.post(
+            "/api/input?token=testtoken",
+            json={"kind": "chat", "content": "hello"},
+        )
+        assert resp.status_code == 200
+        assert len(server.queue_snapshot()) == 1
+
+    def test_reject_event_recorded(self, server_and_client, tmp_path):
+        from agent_cli import turn_metrics
+
+        server, renderer, client = server_and_client
+        server.reject_when_busy = True
+        renderer.worker_busy()
+        turn_metrics.enable(tmp_path)
+        try:
+            client.post(
+                "/api/input?token=testtoken",
+                json={"kind": "chat", "content": "hello", "conn_id": "c9"},
+            )
+            lines = (tmp_path / "turns.jsonl").read_text(encoding="utf-8")
+            events = [json.loads(ln) for ln in lines.splitlines() if ln.strip()]
+            rejects = [e for e in events if e["event"] == "reject"]
+            assert len(rejects) == 1
+            assert rejects[0]["conn_id"] == "c9"
+        finally:
+            turn_metrics.disable()

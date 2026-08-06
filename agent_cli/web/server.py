@@ -40,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
+from agent_cli import turn_metrics
 from agent_cli.input_queue import InputQueue
 from agent_cli.render.web import WebConnection, WebRenderer
 
@@ -193,6 +194,10 @@ class WebServer:
         self._stop_handle: threading.Event | None = None
         # A1: 병렬 모드 전역 정지 훅 (set_stop_all). None = 직렬 경로.
         self._stop_all = None
+        # M2: 거부 계약(--concurrency-contract reject) — True 면 워커가 busy
+        # 인 동안 chat 입력을 큐에 넣지 않고 409 로 거부한다(포크 C-REJECT,
+        # OpenTag 의 "스레드당 1 run" 계약 재현). 재시도는 클라이언트 몫.
+        self.reject_when_busy = False
         # Workspace root for the download feature = the dir the server (and
         # agent) runs in. Resolved once at startup; downloads are confined to
         # this subtree (path-traversal guarded in ``_safe_workspace_path``).
@@ -252,7 +257,17 @@ class WebServer:
         """Add a user message to the pending queue (any connection may).
         Returns the queued item ``{id, conn_id, nickname, text}``."""
         nickname = self.renderer.nickname_for(conn_id)
-        return self._queue.enqueue(conn_id, text, nickname=nickname)
+        item = self._queue.enqueue(conn_id, text, nickname=nickname)
+        # M2 계측: 큐 진입 시각 — TTFT 의 분모(t0). queue_id 가 이후
+        # dispatch 이벤트(직렬: 워커, 병렬: TurnRegistry)와 이어 준다.
+        turn_metrics.emit(
+            "turn",
+            phase="enqueue",
+            queue_id=item.get("id"),
+            author=nickname,
+            conn_id=conn_id or None,
+        )
+        return item
 
     def dequeue_blocking(self):
         """Worker-idle: block until a message is queued (or shutdown).
@@ -1115,6 +1130,14 @@ def create_app(server: WebServer) -> FastAPI:
             if not isinstance(content, str):
                 raise HTTPException(
                     status_code=400, detail="chat content must be a string"
+                )
+            if server.reject_when_busy and server.renderer.worker_is_busy():
+                # M2 거부 계약: busy 중 chat 은 큐잉 대신 409 — 클라이언트가
+                # 재시도한다. P1 의 "거부+재시도" 대조군이 이 경로를 잰다.
+                turn_metrics.emit("reject", conn_id=body.get("conn_id") or None)
+                raise HTTPException(
+                    status_code=409,
+                    detail="agent busy — reject contract active, retry later",
                 )
             # Enqueue (no immediate echo): the message shows in the live queue
             # display until it's dequeued — by the worker to START a run, or by

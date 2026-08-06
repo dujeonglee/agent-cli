@@ -13,6 +13,7 @@ from pathlib import Path
 
 import typer
 
+from agent_cli import turn_metrics
 from agent_cli.config import get_provider_defaults
 from agent_cli.constants import AGENT_DEFAULT_TIMEOUT, SHELL_COMMAND_TIMEOUT
 from agent_cli.context.manager import ContextManager
@@ -1798,6 +1799,9 @@ def web(
         "--concurrency-contract",
         help="How concurrent user messages are handled. 'serial' (default) "
         "processes one message at a time — today's behaviour, unchanged. "
+        "'reject' also runs one at a time but returns 409 for chat input "
+        "while a turn is running instead of queueing (client retries — "
+        "benchmark control arm). "
         "'parallel' runs up to --max-concurrent-turns user turns at once "
         "(inference in parallel; side effects still serialised). EXPERIMENTAL.",
     ),
@@ -1816,6 +1820,14 @@ def web(
         "lock. Default: 'conflict' with --concurrency-contract=parallel, "
         "'off' otherwise (today's behaviour).",
     ),
+    turn_metrics_enabled: bool = typer.Option(
+        False,
+        "--turn-metrics/--no-turn-metrics",
+        help="Append concurrency events (turn enqueue/dispatch/first-token/"
+        "complete, lock wait/acquire/release, compaction begin/commit, "
+        "rejects) to {session_dir}/turns.jsonl for benchmarking. Structural "
+        "metadata only — no prompt/response text. Default off.",
+    ),
 ) -> None:
     """Start an LAN web UI for the agent loop.
 
@@ -1829,10 +1841,10 @@ def web(
     # A1: 알 수 없는 계약 이름은 **조용히 직렬로 떨어뜨리지 않는다** — 오타
     # 하나로 "병렬로 돌고 있다"고 착각한 채 측정하면 실험 결과가 통째로
     # 무효가 된다 (wire-format 의 silent-switch 금지와 같은 규율, G1).
-    if concurrency_contract not in ("serial", "parallel"):
+    if concurrency_contract not in ("serial", "reject", "parallel"):
         console.print(
             f"[{C['error']}]unknown --concurrency-contract "
-            f"'{concurrency_contract}' (expected: serial | parallel)[/]"
+            f"'{concurrency_contract}' (expected: serial | reject | parallel)[/]"
         )
         raise typer.Exit(2)
     if concurrency_contract == "parallel" and max_concurrent_turns < 1:
@@ -1936,6 +1948,10 @@ def web(
     save_meta(session)
     ctx = _build_context(session, boot, resume=is_resume)
 
+    # M2 계측: opt-in — 세션 디렉토리가 확정된 지금이 켤 수 있는 첫 시점.
+    if turn_metrics_enabled:
+        turn_metrics.enable(ctx.session_dir)
+
     # 3. Renderer + server + worker thread.
     renderer = WebRenderer(
         workspace=session.workspace,
@@ -1959,6 +1975,8 @@ def web(
             "capabilities": capabilities,
         },
     )
+    # M2 거부 계약: busy 중 chat 입력을 409 로 거부 (벤치 대조군, 포크 C-REJECT).
+    server.reject_when_busy = concurrency_contract == "reject"
 
     # Prime the session-info ``ready`` so a client opening the page
     # before the first chat turn already sees the top-bar populated.
@@ -2153,6 +2171,9 @@ def web(
             # A4: /api/turns · /api/turn/{id}/interrupt 대상. 직렬 세션에서는
             # None 인 채로 남아 그 엔드포인트들이 409 로 구분해 응답한다.
             server.turn_registry = _turn_registry
+            # M2 계측(N1): 압축 이벤트가 "압축 중 활성 턴 수"를 실어 나르도록
+            # 레지스트리를 프로바이더로 등록 (계측 off 면 emit 자체가 no-op).
+            turn_metrics.set_active_turns_provider(_turn_registry.active_count)
 
         while True:
             # Tell the frontend we're waiting for the next user
@@ -2191,9 +2212,21 @@ def web(
                 # worker_busy 를 켜지 않는 이유: 그 플래그는 프런트 Send 게이팅이라
                 # 켜면 "돌고 있어도 더 보낼 수 있다"는 병렬의 요점이 사라진다.
                 _turn_registry.submit(
-                    message, author=nickname, conn_id=item.get("conn_id", "")
+                    message,
+                    author=nickname,
+                    conn_id=item.get("conn_id", ""),
+                    queue_id=item.get("id", ""),
                 )
                 continue
+            # M2 계측: 직렬 계약의 dispatch — 워커가 이 메시지의 처리를 시작한
+            # 시각. 병렬의 대응 지점은 TurnRegistry._run_turn (turnId 발급 후).
+            turn_metrics.emit(
+                "turn",
+                phase="dispatch",
+                queue_id=item.get("id"),
+                author=nickname,
+                conn_id=item.get("conn_id") or None,
+            )
             # Real user message — flip to busy until the next dequeue
             # (after handle_slash_command / try_dispatch_agent_or_skill /
             # run_loop finish). Anything that follows — including a
@@ -2280,6 +2313,7 @@ def web(
                     # spinning to handle the next message.
                     renderer.error(f"Worker error: {exc}", 0)
             finally:
+                turn_metrics.emit("turn", phase="complete", queue_id=item.get("id"))
                 server.set_stop_handle(None)
                 # 레이스 봉합 (P4 D3): run 마지막 턴 경계 이후 도착분.
                 _waker.on_run_end()

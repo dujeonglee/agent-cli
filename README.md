@@ -297,9 +297,10 @@ agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토�
 | `--idle-timeout` | N초 동안 **접속자 0 + 진행 중 작업 없음**이면 스스로 종료 (0 = 끄기). 온디맨드로 인스턴스를 띄우는 오케스트레이터용 — 다음 접속에 `--resume` 으로 재기동. **워커가 작업 중(LLM 턴·도구·질문 대기)이면 안 죽음**(긴 작업 끊김 방지). | `0` (끄기) |
 | `--trust-local` | **loopback(127.0.0.1/::1) 요청은 토큰 인증 생략.** 앞단에 인증을 직접 하는 신뢰된 로컬 게이트웨이/프록시를 둘 때 — 게이트웨이가 토큰을 매 요청 주입할 필요 없음. **localhost 바인드(`--host 127.0.0.1`)일 때만 안전.** 비-loopback 요청과 끈 상태에선 토큰 그대로 요구. | `false` |
 | `--base-path` | **리버스 프록시가 `/<prefix>/*` 를 이 인스턴스로 라우팅(+prefix strip)할 때의 URL 경로 prefix** (예 `/s/doom`). UI 의 모든 URL 은 상대경로이고 serve 되는 index.html 에 `<base href="<prefix>/">` 가 주입돼 prefix 하위로 resolve 됩니다. 기본 `''` = 루트(`<base href="/">`, 기존과 동일). | `''` (루트) |
-| `--concurrency-contract` | **동시 입력 처리 계약 (실험).** `serial`(기본) = 오늘과 동일하게 한 번에 한 메시지씩 처리. `parallel` = 여러 사용자의 턴을 **동시에 추론**(최대 `--max-concurrent-turns` 개, 초과분은 FIFO 대기). 알 수 없는 값은 조용히 직렬로 떨어뜨리지 않고 **에러로 종료**합니다(오타로 인한 잘못된 측정 방지). | `serial` |
+| `--concurrency-contract` | **동시 입력 처리 계약 (실험).** `serial`(기본) = 오늘과 동일하게 한 번에 한 메시지씩 처리. `reject` = 직렬처럼 한 번에 하나지만 **턴 진행 중 chat 입력을 큐잉 대신 409 로 거부**(클라이언트 재시도 — 벤치마크 대조군). `parallel` = 여러 사용자의 턴을 **동시에 추론**(최대 `--max-concurrent-turns` 개, 초과분은 FIFO 대기). 알 수 없는 값은 조용히 직렬로 떨어뜨리지 않고 **에러로 종료**합니다(오타로 인한 잘못된 측정 방지). | `serial` |
 | `--max-concurrent-turns` | `parallel` 일 때 동시 inflight 턴 상한. | `4` |
 | `--lock-scope` | **부수효과 직렬화 범위.** `conflict` = 충돌하는 효과만 직렬(같은 파일, 또는 셸/삭제) — **다른 파일은 그대로 병렬**. `workspace` = 모든 효과를 직렬(가장 안전하지만 병렬 이점 대부분 상실). `off` = 잠그지 않음. 미지정 시 `parallel` 이면 `conflict`, 아니면 `off`(오늘 동작). | 계약에 따름 |
+| `--turn-metrics` | **동시성 계측 (M2, opt-in).** 턴 생명주기(enqueue/dispatch/first_token/complete/interrupt)·효과 락 대기(enqueue/acquire/release)·압축(begin/commit/stale)·거부(reject) 이벤트를 `{session_dir}/turns.jsonl` 에 추가 기록 — TTFT·락 대기·공정성 벤치마크의 데이터 소스. 구조 메타데이터만 기록하며 프롬프트/응답 본문은 포함하지 않습니다. | `--no-turn-metrics` |
 
 > 브라우저 자동 오픈은 **로컬 bind 일 때만** 일어납니다 — 기본 `0.0.0.0`(과 `127.0.0.1`/`localhost`/`::`/`::1`)처럼 *이 머신에서 localhost 로 접속 가능한* 경우. `--host <원격IP>` 처럼 특정 IP 에 바인드하면(원격 서버) 자동 오픈을 생략하고 접속 URL 만 출력합니다(서버에서 브라우저를 띄워봐야 소용없으므로). `--no-browser` 는 로컬에서도 끄고 싶을 때.
 

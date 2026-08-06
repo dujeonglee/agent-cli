@@ -252,3 +252,60 @@ class TestSerialModeUnaffected:
         recs = _history(ctx)
         assert recs, "히스토리가 비었다"
         assert all("origin_turn" not in r for r in recs)
+
+
+class TestTurnMetricsE2E:
+    """M2 계측 × 실 run_loop — TTFT 사슬(dispatch→first_token→complete)이
+    병렬 턴마다 정확히 한 번씩, 올바른 turn_id 로 남는지."""
+
+    def test_first_token_once_per_turn_with_chain_order(self, tmp_path, caps):
+        from agent_cli import turn_metrics
+
+        class _StreamingProvider(_SlowProvider):
+            """첫 청크를 스트리밍하는 변형 — first_token 발화 경로를 지난다."""
+
+            def call(self, messages=None, on_chunk=None, **kwargs):
+                if on_chunk is not None:
+                    on_chunk("chunk")
+                return super().call(messages=messages, **kwargs)
+
+        metrics_dir = tmp_path / "metrics"
+        metrics_dir.mkdir()
+        turn_metrics.enable(metrics_dir)
+        try:
+            provider = _StreamingProvider()
+            ctx = ContextManager(tmp_path / "sess", max_context_tokens=1_000_000)
+            seen, lock = [], threading.Lock()
+            reg = TurnRegistry(
+                _runner_factory(ctx, provider, caps, seen, lock), max_concurrent=3
+            )
+            for i in range(3):
+                reg.submit(f"question {i}", author=f"user{i}", queue_id=f"q{i}")
+            assert reg.wait_idle(timeout=15)
+            reg.shutdown()
+
+            with open(metrics_dir / "turns.jsonl", encoding="utf-8") as f:
+                events = [json.loads(line) for line in f if line.strip()]
+
+            first_tokens = [e for e in events if e.get("phase") == "first_token"]
+            assert len(first_tokens) == 3, (
+                f"first_token {len(first_tokens)}건 — 턴당 1건이어야 한다"
+            )
+            assert {e["turn_id"] for e in first_tokens} == {"t1", "t2", "t3"}
+
+            # 턴별 사슬 순서: dispatch < first_token < complete (mono_ms)
+            for tid in ("t1", "t2", "t3"):
+                chain = {
+                    e["phase"]: e["mono_ms"] for e in events if e.get("turn_id") == tid
+                }
+                assert set(chain) >= {"dispatch", "first_token", "complete"}
+                assert chain["dispatch"] <= chain["first_token"] <= chain["complete"]
+
+            # 귀속 사슬(N3): query_added 가 턴 스레드 이름으로 남아
+            # dispatch(turn_id) ↔ msg_id(u{n}) 조인이 성립한다.
+            q_added = [e for e in events if e.get("phase") == "query_added"]
+            assert len(q_added) == 3
+            threads = {e["thread"] for e in q_added}
+            assert threads == {"agent-turn-t1", "agent-turn-t2", "agent-turn-t3"}
+        finally:
+            turn_metrics.disable()

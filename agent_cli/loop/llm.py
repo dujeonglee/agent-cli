@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent_cli import turn_metrics
 from agent_cli.context.overflow import is_context_overflow, parse_overflow_amounts
 from agent_cli.context.token_estimator import estimate_tokens
 from agent_cli.loop.prompt import SystemPromptSvc, build_inspector_sections
@@ -59,6 +60,10 @@ class LLMCaller:
         # Reactive context-overflow recovery (flow 2) 카운터 — 현재 턴에서
         # 축소-재시도한 횟수. _MAX_OVERFLOW_RETRIES 로 유계.
         self.overflow_retries = 0
+        # M2 계측: 이 run_loop 의 **첫** LLM 스트림 첫 청크에서 한 번만
+        # first_token 을 찍기 위한 래치. LLMCaller 는 run_loop 당 1개라
+        # 인스턴스 필드로 충분하다.
+        self._first_token_emitted = False
 
     def _interrupt_check(self) -> bool:
         """Zero-arg predicate the provider polls per chunk to break a
@@ -104,6 +109,17 @@ class LLMCaller:
             if spinner_active:
                 render_spinner_stop()
                 spinner_active = False
+                # M2 계측: 턴의 TTFT 분자 — run_loop 전체에서 첫 스트림
+                # 청크 1회만. depth>0(서브에이전트 중첩 루프)은 제외한다:
+                # 부모 턴의 first_token 이 이미 찍혔고, 중첩 루프의 청크를
+                # 찍으면 한 턴에 first_token 이 중복된다.
+                if not self._first_token_emitted and self.cfg.depth == 0:
+                    self._first_token_emitted = True
+                    turn_metrics.emit(
+                        "turn",
+                        phase="first_token",
+                        turn_id=self.cfg.origin_turn or None,
+                    )
             render_stream_chunk(text)
 
         if self.cfg.skill_name:

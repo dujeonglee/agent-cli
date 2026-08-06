@@ -47,10 +47,12 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from agent_cli import turn_metrics
 from agent_cli.tools.effect import EffectIntent, EffectKind
 
 #: 락 스코프 — CLI ``--lock-scope`` 가 고른다.
@@ -165,6 +167,20 @@ def hold(intent: EffectIntent, *, key: str | None = None) -> Iterator[bool]:
         )
 
     lock_key = key or _default_key()
+    # M2 계측: 대기 시작→획득→해제. thread 이름이 곧 턴 귀속이다 —
+    # TurnRegistry 가 워커 스레드를 ``agent-turn-t{n}`` 으로 명명하므로
+    # 별도 배선 없이 락 이벤트가 턴에 귀속된다(직렬 모드는 MainThread 류).
+    # 포크가 설계만 하고 미구현한 BENCH_TRACE(EXPERIMENTS.md H0.3)의 실현.
+    _thread = threading.current_thread().name
+    turn_metrics.emit(
+        "lock",
+        phase="enqueue",
+        kind=intent.kind.value,
+        path=waiter.path or None,
+        exclusive=waiter.exclusive,
+        thread=_thread,
+    )
+    _t0 = time.monotonic()
     with _states_lock:
         st = _states.setdefault(lock_key, _LockState())
         st.queue.append(waiter)
@@ -173,6 +189,16 @@ def hold(intent: EffectIntent, *, key: str | None = None) -> Iterator[bool]:
         w.gate.set()
 
     waiter.gate.wait()
+    _t1 = time.monotonic()
+    turn_metrics.emit(
+        "lock",
+        phase="acquire",
+        kind=intent.kind.value,
+        path=waiter.path or None,
+        exclusive=waiter.exclusive,
+        thread=_thread,
+        wait_ms=(_t1 - _t0) * 1000.0,
+    )
     try:
         yield True
     finally:
@@ -183,6 +209,15 @@ def hold(intent: EffectIntent, *, key: str | None = None) -> Iterator[bool]:
             admitted = _pump_locked(lock_key)
         for w in admitted:
             w.gate.set()
+        turn_metrics.emit(
+            "lock",
+            phase="release",
+            kind=intent.kind.value,
+            path=waiter.path or None,
+            exclusive=waiter.exclusive,
+            thread=_thread,
+            held_ms=(time.monotonic() - _t1) * 1000.0,
+        )
 
 
 def _default_key() -> str:
