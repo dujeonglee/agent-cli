@@ -556,9 +556,26 @@ class ContextManager:
 
         # Belt-and-braces: idempotent — no-op when ``_compact()`` already
         # brought the cache below the target.
+        #
+        # 동시 턴 관용(v7.30.0, N1 실측이 찾은 커밋 기아의 수리): 다른
+        # 스레드가 압축 중(``_compacting``)일 때 여기서 FIFO 를 돌리면
+        # ``_mark_bulk_mutation`` 이 세대를 올려 그 압축의 커밋을 **매번**
+        # 무효화한다 — 지속 과부하에서 커밋 0/28, 요약 전부 낭비 + 원문은
+        # 요약 없이 FIFO 로 증발(실측). ``target`` 은 진짜 한계에
+        # ``compaction_ratio``(기본 0.8)를 곱한 예방선이므로, 압축이 비행
+        # 중인 동안은 그 마진(1/ratio)까지의 초과를 관용하고 커밋을
+        # 기다린다. 진짜 한계를 넘으면 종전대로 FIFO(오버플로 방지가 우선
+        # — flow-2 반응 복구가 최후 보루). 직렬 경로 무변: 같은 스레드가
+        # ``_compact`` 를 마친 뒤라 ``_compacting`` 은 항상 False 다.
         with self._lock:
-            if self._cache_tokens > target_tokens:
-                self._evict_fifo(target_tokens)
+            if self._cache_tokens <= target_tokens:
+                return
+            if self._compacting:
+                ratio = self.compaction_ratio if self.compaction_ratio > 0 else 0.8
+                hard_limit = int(target_tokens / max(ratio, 0.5))
+                if self._cache_tokens <= hard_limit:
+                    return  # 마진 내 — 비행 중인 압축 커밋에 양보
+            self._evict_fifo(target_tokens)
 
     def compact_now(self) -> tuple[int, int]:
         """Manual compaction — the ``/compact`` command. Run one

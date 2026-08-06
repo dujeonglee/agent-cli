@@ -273,3 +273,85 @@ class TestCompactionBarrier:
         assert ctx.summary == "SUMMARY TEXT"
         assert ctx.compaction_count == 1
         assert ctx.get_estimated_tokens() <= ctx.get_estimated_tokens()
+
+
+class TestConcurrentCompactionCommitStarvation:
+    """N1 실측이 찾은 커밋 기아의 수리 계약 (v7.30.0).
+
+    압축이 비행 중일 때 동시 호출자의 belt-and-braces FIFO 가 세대를 올리면
+    낙관 커밋이 매번 stale 로 죽는다(실측 28/28). 수리: 비행 중에는
+    ``target/compaction_ratio``(진짜 한계)까지의 초과를 관용하고 커밋에
+    양보한다. 진짜 한계 초과는 종전대로 FIFO(오버플로 방지 우선).
+    """
+
+    def _fill(self, ctx, n=12):
+        for i in range(n):
+            ctx.add({"role": "user", "content": f"filler-{i} " + "x" * 400})
+
+    def test_concurrent_caller_yields_within_margin(self, ctx):
+        """마진 내 초과 + 압축 비행 중 → FIFO 안 함 → 커밋이 산다."""
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_summariser(_messages):
+            entered.set()
+            release.wait(timeout=5)
+            return "SUMMARY"
+
+        ctx.set_compactor(slow_summariser)
+        self._fill(ctx)
+        target = 50  # 진짜 한계 = 50/0.8 = 62.5 — 캐시는 그보다 크게 유지
+
+        compactor = threading.Thread(
+            target=lambda: ctx.ensure_within(target), daemon=True
+        )
+        compactor.start()
+        assert entered.wait(timeout=5)
+
+        # 동시 호출자: 마진 판정을 위해 target 을 "캐시가 마진 안에 들도록"
+        # 잡는다 — hard = target/0.8 ≥ 현재 캐시.
+        margin_target = int(ctx.get_estimated_tokens() * 0.9)
+        gen_before = ctx._bulk_gen
+        ctx.ensure_within(margin_target)
+        assert ctx._bulk_gen == gen_before, (
+            "압축 비행 중 마진 내 초과가 FIFO 를 발동시켰다 — 커밋 기아 재발"
+        )
+
+        release.set()
+        compactor.join(timeout=5)
+        assert ctx.compaction_count == 1, "낙관 커밋이 stale 로 죽었다"
+        assert ctx.summary == "SUMMARY"
+
+    def test_concurrent_caller_still_evicts_beyond_hard_limit(self, ctx):
+        """진짜 한계(target/ratio) 초과는 압축 중이어도 FIFO — 오버플로 방지."""
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_summariser(_messages):
+            entered.set()
+            release.wait(timeout=5)
+            return "SUMMARY"
+
+        ctx.set_compactor(slow_summariser)
+        self._fill(ctx, n=20)
+
+        compactor = threading.Thread(target=lambda: ctx.ensure_within(60), daemon=True)
+        compactor.start()
+        assert entered.wait(timeout=5)
+
+        # 아주 작은 target — hard 한계(=target/0.8)보다 캐시가 훨씬 크다.
+        tokens_before = ctx.get_estimated_tokens()
+        ctx.ensure_within(10)
+        assert ctx.get_estimated_tokens() < tokens_before, (
+            "진짜 한계 초과인데도 FIFO 가 양보했다 — 오버플로 방어 구멍"
+        )
+        release.set()
+        compactor.join(timeout=5)
+
+    def test_serial_path_unchanged(self, ctx):
+        """직렬: 같은 스레드가 압축을 마친 뒤라 관용 분기를 타지 않는다."""
+        ctx.set_compactor(lambda _m: "S")
+        self._fill(ctx)
+        ctx.ensure_within(50)
+        assert ctx.compaction_count == 1
+        assert ctx.get_estimated_tokens() <= 50 or ctx.summary == "S"
