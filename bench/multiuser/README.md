@@ -18,6 +18,7 @@
 | `n3_attribution.py` | **N3**: 병렬 귀속 정확도 — 마커 왕복 검사로 오귀속률 측정(가설: 0) |
 | `p4_fairness.py` | **P4**: per-user 공정성 — 게이트 on/off 두 팔(`--no-per-user-gate` ablation), 단기 사용자 대기 절대값 대조 |
 | `p2_grid.py` | **P2**: 붕괴 경계 — 쓰기 횟수·충돌·락 스코프 그리드(+ 셸 팔은 out/p2-shell-arms.json). 붕괴는 배타 효과의 **시간 비중** 함수 |
+| `p2_scope_real.py` | **P2-SCOPE-REAL**: 실 LLM 이 도는 진짜 턴의 **효과 시간 비중 실측**(§6.4 교차 검증) — 두 사용자가 동시에 파일을 만들고, `turns.jsonl` 의 락 보유/대기를 스레드명(`agent-turn-{id}`)으로 턴에 귀속. 우회 실험이 세운 법칙 위에서 실제 시스템의 작동점을 찍는다 |
 | `p2_scope.py` | **P2-SCOPE**: 왜 락 경계를 워크스페이스→충돌 단위로 좁혔는가(§4.4 근거) — 효과 시간 비중 {50,75,90}% × 경로{서로소, 동일} × 스코프{workspace, conflict, off(참조)}. E1 과 같은 층(LLM 우회, 도구+락 직접 구동). 쓰기 1회 실지속시간을 **실행 시점에 캘리브레이션**해 비중 축을 만든다 |
 | `n4_replay.py` | **N4**: 늦은 합류자 증분 재생 정합성(v0.8 1단계 검증) — 안 끊긴 구독(control)과 `Last-Event-ID` 로 반복 재접속하는 구독(cutter)을 동시에 돌려 **seq 열 + 페이로드 원문**을 대조. 살릴 수 없는 커서의 `replay_reset` 폴백도 강제 |
 | `p6_real_llm.py` | **P6**: 실 LLM(온프렘, `AGENT_CLI_*` env) — HOL 순위 보존 스팟체크 + 같은 3-메시지 워크로드의 직렬 vs 병렬 토큰 계정(`llm_call` usage 이벤트) |
@@ -42,6 +43,9 @@
 .venv/bin/python bench/multiuser/p2_scope.py --reps 5 --rounds 40
 .venv/bin/python bench/multiuser/n4_replay.py --users 3 --rounds 30 --cuts 10
 
+# 실 LLM 작동점 (위 우회 실험과 쌍 — AGENT_CLI_* env 필요, 회당 약 5분)
+.venv/bin/python bench/multiuser/p2_scope_real.py --reps 3
+
 # L 하나만 추가할 때는 --append (전체 그리드 재실행 없이 합쳐 저장,
 # 요약은 언제나 합쳐진 원시 파일에서 재도출)
 .venv/bin/python bench/multiuser/e2_hol.py --levels 30000 --reps 20 --append
@@ -50,6 +54,38 @@
 의존성 없음(stdlib) — 리포의 `.venv` 와 `agent-cli` 설치만 전제한다.
 각 조건은 새 임시 워크스페이스 + `HOME` 격리로 돌므로 사용자 설정
 (`~/.agent-cli`)을 읽지도 쓰지도 않는다.
+
+## 왜 어떤 실험은 LLM 층을 우회하고 어떤 실험은 실 모델을 쓰는가
+
+목 LLM 은 **진행도를 대화에서 읽는다** — 마지막 `[[bench …]]` 지시자 이후의
+관찰 수가 완료한 도구 스텝 수다. 컨텍스트가 **공유**되는 다중 사용자 세션에서는
+동시 턴들의 관찰이 그 하나의 계수기에 섞이고, 지시자 해소도 "가장 최신 것"으로
+붕괴한다. 가정이 아니라 실측이다 (`MOCK_LLM_LOG=1` 로 재현):
+
+```
+#1  picked=aaa   tail: 'task A [[bench … fpath=a.txt marker=AAA id=aaa]]'
+#2  picked=bbb   tail: 'task B [[bench … fpath=b.txt marker=BBB id=bbb]]'
+#3  picked=bbb   tail: 'Observation: File saved: a.txt …'   ← A 의 연속 호출인데 B 지시자
+#7  picked=bbb   tail: 'You were asked to: --- task B …'    ← 루프 복구 발동
+```
+
+**첫 호출은 각자 자기 지시자를 고르지만 연속 호출부터 붕괴**하고, 그 결과 한 턴이
+남의 경로에 쓰다가 루프 감지에 걸린다. 프롬프트 안에 턴을 식별할 신호가 없어
+(`You were asked to:` 는 판별 신호가 아니라 붕괴가 **일으킨** 증상이다) 목을
+고쳐도 해소되지 않는다.
+
+따라서 실험은 무엇을 재느냐에 따라 층을 고른다:
+
+| 재는 것 | 층 | 이유 |
+|---|---|---|
+| 동시 턴이 **서로 다른** 스크립트를 따라야 하는 것 (동시 쓰기 경합, 락 스코프) | LLM 우회 (`e1_ablation.py`, `p2_scope.py`) | 목이 원리적으로 못 함. 게다가 이 실험들은 모델 행동이 아니라 I/O 경합을 잰다 |
+| 동시 턴이 **같은** 워크로드를 돌아도 되는 것 (HOL, 공정성, 압축, 귀속, 수명주기) | 목 LLM | 결정적이고 키가 불필요하며 재현 가능 |
+| **실제 시스템의 작동점** (실 워크로드의 효과 시간 비중) | 실 LLM (`p2_scope_real.py`, `p6_real_llm.py`) | 실 모델은 자기 턴의 요청을 읽고 답하므로 위 제약이 없다 |
+
+`p2_scope.py`(우회)와 `p2_scope_real.py`(실 모델)는 **같은 질문을 두 방법으로**
+묻는 쌍이다: 전자는 효과 비중 전 구간에서 붕괴 법칙을 세우고, 후자는 실제
+시스템이 그 곡선 위 어디에 앉는지 잰다. 한쪽만으로는 "법칙은 있으나 작동점을
+모름" 또는 "작동점은 아나 왜 그런지 모름" 이 된다.
 
 ## 측정 방법론
 
