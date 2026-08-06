@@ -78,11 +78,16 @@ class TurnRegistry:
         *,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT_TURNS,
         on_change: Callable[[], None] | None = None,
+        per_user_gate: bool = True,
     ):
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be >= 1")
         self._runner = runner
         self._max_concurrent = max_concurrent
+        #: per-user 1활성턴 게이트 (M5/A5). False 는 **실험 전용**(P4 ablation
+        #: 대조군 — 순수 FIFO+cap): 한 사용자의 연속 제출이 cap 을 독식해
+        #: 다른 사용자가 그 백로그 뒤에 줄을 서는 동작을 재현한다.
+        self._per_user_gate = per_user_gate
         #: 활성 턴 수가 바뀔 때마다 호출 — 상태 브로드캐스트(SSE/status.json)를
         #: 얹는 자리. **락 밖에서** 부른다(renderer 락과의 중첩 회피 —
         #: ``InputQueue.on_change`` 와 같은 규율).
@@ -197,6 +202,8 @@ class TurnRegistry:
         **같은** 자원을 두고 다투므로 추월이 기아를 만들지만, 여기서는 **다른**
         사용자에게 기회를 주는 것이 공정성이다.
         """
+        if not self._per_user_gate:
+            return 0 if self._pending else -1  # ablation: 순수 FIFO+cap
         for i, cand in enumerate(self._pending):
             if not self._has_active_user(cand.conn_id):
                 return i

@@ -363,3 +363,60 @@ class TestPerUserFairness:
         assert reg.interrupt(reg.active_ids()[0]) is True
         assert reg.wait_idle(timeout=10)
         assert reg.pending_count() == 0  # 취소 후 다음 턴이 진행됐다
+
+
+class TestPerUserGateAblation:
+    """P4 ablation 스위치 — per_user_gate=False 는 순수 FIFO+cap."""
+
+    def test_gate_off_same_user_runs_concurrently(self):
+        import threading
+
+        from agent_cli.loop.turns import TurnRegistry
+
+        started, release = [], threading.Event()
+        lock = threading.Lock()
+
+        def runner(turn):
+            with lock:
+                started.append(turn.id)
+            release.wait(timeout=5)
+
+        reg = TurnRegistry(runner, max_concurrent=2, per_user_gate=False)
+        reg.submit("a1", conn_id="alice")
+        reg.submit("a2", conn_id="alice")
+        deadline = threading.Event()
+        for _ in range(200):
+            if reg.active_count() == 2:
+                break
+            deadline.wait(0.01)
+        assert reg.active_count() == 2, (
+            "게이트 off 인데 같은 사용자 2턴이 병주하지 않는다"
+        )
+        release.set()
+        assert reg.wait_idle(timeout=5)
+        reg.shutdown()
+
+    def test_gate_on_default_blocks_same_user(self):
+        import threading
+
+        from agent_cli.loop.turns import TurnRegistry
+
+        release = threading.Event()
+
+        def runner(turn):
+            release.wait(timeout=5)
+
+        reg = TurnRegistry(runner, max_concurrent=2)  # 기본값 = 게이트 on
+        reg.submit("a1", conn_id="alice")
+        reg.submit("a2", conn_id="alice")
+        deadline = threading.Event()
+        for _ in range(50):
+            if reg.active_count() >= 1:
+                break
+            deadline.wait(0.01)
+        deadline.wait(0.1)  # 두 번째가 뜰 시간 여유를 주고도
+        assert reg.active_count() == 1, "기본 게이트가 같은 사용자 2턴을 허용했다"
+        assert reg.pending_count() == 1
+        release.set()
+        assert reg.wait_idle(timeout=5)
+        reg.shutdown()

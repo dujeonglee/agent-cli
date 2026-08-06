@@ -299,6 +299,7 @@ agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토�
 | `--base-path` | **리버스 프록시가 `/<prefix>/*` 를 이 인스턴스로 라우팅(+prefix strip)할 때의 URL 경로 prefix** (예 `/s/doom`). UI 의 모든 URL 은 상대경로이고 serve 되는 index.html 에 `<base href="<prefix>/">` 가 주입돼 prefix 하위로 resolve 됩니다. 기본 `''` = 루트(`<base href="/">`, 기존과 동일). | `''` (루트) |
 | `--concurrency-contract` | **동시 입력 처리 계약 (실험).** `serial`(기본) = 오늘과 동일하게 한 번에 한 메시지씩 처리. `reject` = 직렬처럼 한 번에 하나지만 **턴 진행 중 chat 입력을 큐잉 대신 409 로 거부**(클라이언트 재시도 — 벤치마크 대조군). `parallel` = 여러 사용자의 턴을 **동시에 추론**(최대 `--max-concurrent-turns` 개, 초과분은 FIFO 대기). 알 수 없는 값은 조용히 직렬로 떨어뜨리지 않고 **에러로 종료**합니다(오타로 인한 잘못된 측정 방지). | `serial` |
 | `--max-concurrent-turns` | `parallel` 일 때 동시 inflight 턴 상한. | `4` |
+| `--per-user-gate` | `parallel` 일 때 **사용자(연결)당 1활성턴** — 한 사람의 연속 제출은 첫 턴이 끝날 때까지 대기하고 그동안 **다른 사용자가 슬롯을 얻습니다**(독식 방지). `--no-per-user-gate` 는 벤치마크 전용(순수 FIFO+cap — 한 사용자가 cap 을 독식할 수 있음). | 켜짐 |
 | `--lock-scope` | **부수효과 직렬화 범위.** `conflict` = 충돌하는 효과만 직렬(같은 파일, 또는 셸/삭제) — **다른 파일은 그대로 병렬**. `workspace` = 모든 효과를 직렬(가장 안전하지만 병렬 이점 대부분 상실). `off` = 잠그지 않음. 미지정 시 `parallel` 이면 `conflict`, 아니면 `off`(오늘 동작). | 계약에 따름 |
 | `--turn-metrics` | **동시성 계측 (M2, opt-in).** 턴 생명주기(enqueue/dispatch/first_token/complete/interrupt)·효과 락 대기(enqueue/acquire/release)·압축(begin/commit/stale)·거부(reject) 이벤트를 `{session_dir}/turns.jsonl` 에 추가 기록 — TTFT·락 대기·공정성 벤치마크의 데이터 소스. 구조 메타데이터만 기록하며 프롬프트/응답 본문은 포함하지 않습니다. | `--no-turn-metrics` |
 

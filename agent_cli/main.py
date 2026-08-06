@@ -1811,6 +1811,14 @@ def web(
         help="Cap on simultaneously in-flight user turns when "
         "--concurrency-contract=parallel. Excess messages queue FIFO.",
     ),
+    per_user_gate: bool = typer.Option(
+        True,
+        "--per-user-gate/--no-per-user-gate",
+        help="One active turn per user (conn) under "
+        "--concurrency-contract=parallel; a user's extra messages wait while "
+        "OTHER users take free slots (starvation prevention). Disabling is "
+        "for benchmarks only — pure FIFO+cap lets one user monopolise slots.",
+    ),
     lock_scope: str | None = typer.Option(
         None,
         "--lock-scope",
@@ -2161,6 +2169,7 @@ def web(
             _turn_registry = TurnRegistry(
                 _run_parallel_turn,
                 max_concurrent=max_concurrent_turns,
+                per_user_gate=per_user_gate,
                 on_change=lambda: renderer.set_active_turns(
                     _turn_registry.active_count() if _turn_registry else 0,
                     _turn_registry.pending_count() if _turn_registry else 0,
