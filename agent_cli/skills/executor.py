@@ -114,6 +114,7 @@ def execute_skill(
     parent_depth: int = 0,
     compaction_enabled: bool = True,
     agent_registry=_INHERIT,
+    session_subdir: str = "",
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -171,11 +172,18 @@ def execute_skill(
         import os
         import time as _time
 
-        name = skill.name or "skill"
-        hash_part = os.urandom(3).hex()
-        ts = _time.strftime("%Y%m%dT%H%M%S", _time.gmtime())
-        ms = f"{int(_time.time() * 1000) % 1000:03d}"
-        skill_dir_name = f"skill_{name}_{hash_part}_{ts}{ms}"
+        # ``session_subdir`` — pre-named by the scope-opening caller so the
+        # resume sidecar's ``ctx_dir`` and this ctx's actual directory agree
+        # (the card's inner turns replay from it). Self-naming stays as the
+        # fallback for direct callers/tests that never open a scope.
+        if session_subdir:
+            skill_dir_name = session_subdir
+        else:
+            name = skill.name or "skill"
+            hash_part = os.urandom(3).hex()
+            ts = _time.strftime("%Y%m%dT%H%M%S", _time.gmtime())
+            ms = f"{int(_time.time() * 1000) % 1000:03d}"
+            skill_dir_name = f"skill_{name}_{hash_part}_{ts}{ms}"
         skill_session_dir = ctx.session_dir / skill_dir_name
         skill_ctx = ContextManager(
             session_dir=skill_session_dir,

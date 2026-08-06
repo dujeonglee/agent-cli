@@ -300,3 +300,102 @@ class TestResumeRebuildsScopeCards:
         page.locator("#team-view [data-task-id='ghost']").first.click()
         assert _wait(lambda: page.locator(".tv-nav-miss:not([hidden])").count() == 1)
         assert "카드가 없습니다" in page.locator(".tv-nav-miss").inner_text()
+
+
+class TestResumeInnerTurnsInCard:
+    """v7.29.0: resume 후 scope 카드 안에 서브에이전트 **내부 턴**이 실제로
+    그려진다 (ctx_dir 재생). v7.28.0 까지는 카드 골격+사유 노트만 복구됐다."""
+
+    @staticmethod
+    def _iso(epoch):
+        import datetime as dt
+
+        return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).isoformat()
+
+    def test_card_contains_inner_turns_and_no_apology_note(self, stack, page, tmp_path):
+        import json
+
+        # 서브에이전트 자기 히스토리
+        sub = tmp_path / "skill_plan_x1_t"
+        sub.mkdir()
+        (sub / "history.jsonl").write_text(
+            "\n".join(
+                json.dumps(r, ensure_ascii=False)
+                for r in [
+                    {
+                        "role": "user",
+                        "content": "plan it",
+                        "kind": "query",
+                        "ts": self._iso(101.0),
+                    },
+                    {
+                        "role": "assistant",
+                        "thought": "안에서 계획",
+                        "ops": [
+                            {"action": "read_file", "action_input": {"path": "a.py"}}
+                        ],
+                        "ts": self._iso(110.0),
+                    },
+                    {
+                        "role": "user",
+                        "content": "Observation: 내용",
+                        "tool": "read_file",
+                        "success": True,
+                        "ts": self._iso(120.0),
+                    },
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "scopes.jsonl").write_text(
+            json.dumps(
+                {
+                    "event": "scope_start",
+                    "task_id": "sk1",
+                    "kind": "skill",
+                    "label": "skill:plan",
+                    "parent": "",
+                    "depth": 0,
+                    "ts": 100.0,
+                    "ctx_dir": "skill_plan_x1_t",
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "event": "scope_end",
+                    "task_id": "sk1",
+                    "kind": "skill",
+                    "success": True,
+                    "duration_s": 60.0,
+                    "ts": 160.0,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        stack.renderer._scope_log_path = tmp_path / "scopes.jsonl"
+        stack.emit_ready()
+        stack.renderer.replay_session(
+            _Ctx(
+                [
+                    {"role": "user", "content": "계획 짜줘", "ts": self._iso(90.0)},
+                ]
+            )
+        )
+        page.goto(stack.url)
+        page.wait_for_selector('.card-task-group[data-task-id="sk1"]', timeout=8000)
+        inner = page.locator('.card-task-group[data-task-id="sk1"] .task-body .card')
+        assert inner.count() >= 2, inner.count()  # 액션 + 관찰
+        # 내부 턴이 있으니 "기록이 없습니다" 노트는 없어야 한다
+        assert (
+            page.locator(
+                '.card-task-group[data-task-id="sk1"] .task-empty-note'
+            ).count()
+            == 0
+        )
+        # 내부 task 프롬프트(plain user)는 카드 안에 user 버블로 안 나온다
+        assert (
+            page.locator('.card-task-group[data-task-id="sk1"] .card-user').count() == 0
+        )

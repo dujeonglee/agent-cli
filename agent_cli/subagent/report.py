@@ -138,15 +138,23 @@ def _extract_last_actions(messages: list[dict]) -> list[str]:
     return result
 
 
-def _generate_run_dir_name(agent_name: str) -> str:
-    """Generate a unique run directory name: run_{name}_{hash}_{ts}"""
+def generate_subdir_name(prefix: str, name: str) -> str:
+    """Unique session-subdir name: ``{prefix}_{name}_{hash}_{ts}{ms}``.
+
+    Single source for every sub-agent ctx dir (run/skill) — the name is now
+    minted at the SCOPE-opening call site (so the resume sidecar's ``ctx_dir``
+    matches the directory actually written) and passed down, hence shared."""
     import os
 
-    name = agent_name or "task"
     hash_part = os.urandom(3).hex()  # 6-char hex
     ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
     ms = f"{int(time.time() * 1000) % 1000:03d}"
-    return f"run_{name}_{hash_part}_{ts}{ms}"
+    return f"{prefix}_{name}_{hash_part}_{ts}{ms}"
+
+
+def _generate_run_dir_name(agent_name: str) -> str:
+    """Generate a unique run directory name: run_{name}_{hash}_{ts}"""
+    return generate_subdir_name("run", agent_name or "task")
 
 
 def _resolve_session_dir(session, parent_ctx) -> Path:

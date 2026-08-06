@@ -564,6 +564,7 @@ class WebRenderer(Renderer):
         index: int = 0,
         parent: str | None = None,
         ts: float | None = None,
+        ctx_dir: str | None = None,
     ) -> None:
         """Enter a nested scope (``kind`` = "skill" | "run") — the SINGLE path
         for skill subloops AND delegate/one-shot workers. Registers the current
@@ -583,7 +584,12 @@ class WebRenderer(Renderer):
         inside its parent's body. ``parent`` defaults to the enclosing scope on
         this thread's stack; ``depth`` is derived from the parent's own depth,
         so a caller never computes it. ``ts``, when given, becomes the event's
-        timestamp instead of emit-time (one shared value per parallel batch)."""
+        timestamp instead of emit-time (one shared value per parallel batch).
+
+        ``ctx_dir`` — the scope's own context directory relative to the session
+        dir. Logged into the resume sidecar with the rest of the payload; the
+        resume replay uses it to re-emit the scope's INNER turns into its card
+        (they live in that directory's ``history.jsonl``, not in main's)."""
         tid = threading.get_ident()
         with self._lock:
             stack = self._thread_prompt_scopes.setdefault(tid, [])
@@ -616,6 +622,8 @@ class WebRenderer(Renderer):
         }
         if ts is not None:
             payload["ts"] = ts
+        if ctx_dir:
+            payload["ctx_dir"] = ctx_dir
         self._emit("scope_start", payload, persistent=True)
 
     def end_scope(
@@ -686,6 +694,11 @@ class WebRenderer(Renderer):
                 # has one shape, and so the timeline keeps its card at the root.
                 "parent": "",
                 "depth": 0,
+                # The agent's turns accumulate in agents/<key>/history.jsonl —
+                # ONE continuous file across requests, so the resume replay
+                # slices it by this scope's [start, end] timestamps to put each
+                # request's turns into its own card.
+                "ctx_dir": f"agents/{key}",
             },
             persistent=True,
         )
@@ -849,8 +862,21 @@ class WebRenderer(Renderer):
             while pending_i < len(pending) and (
                 limit is None or pending[pending_i][0] <= limit
             ):
-                self._emit_scope_replay(pending[pending_i])
+                _emit_scope(pending[pending_i])
                 pending_i += 1
+
+        # end-ts per scope — the slice bound for a resident agent's continuous
+        # history (see ``_replay_scope_inner``).
+        scope_ends = {d.get("task_id"): t for t, e, d in pending if e == "scope_end"}
+
+        def _emit_scope(item) -> None:
+            self._emit_scope_replay(item)
+            _ts, event, data = item
+            # A scope whose own turns live in its OWN context dir gets them
+            # replayed INTO the just-opened card, so the card comes back full
+            # instead of as an empty shell with an apology note.
+            if event == "scope_start" and data.get("ctx_dir"):
+                self._replay_scope_inner(data, scope_ends.get(data.get("task_id")))
 
         for msg in ctx.get_raw_messages():
             # Resumed cards show the step's original time (from the enriched
@@ -860,80 +886,153 @@ class WebRenderer(Renderer):
             record_ts = msg.get("ts")
             if pending and record_ts:
                 _flush_scopes_until(record_ts)
-            self._replay_ts = record_ts
-            # Route this turn into its scope's card (written by
-            # ``ContextManager._enrich_record``; absent on pre-v7.28 sessions,
-            # which then replay flat as before).
-            self._replay_task_id = msg.get("task_id") or None
-            role = msg.get("role")
-            if role == "user":
-                # ``tool`` key presence — not truthiness — signals an
-                # observation entry. ``_append_observation`` always
-                # writes both ``tool`` and ``success`` (empty string
-                # ``tool`` for format-retry interventions), so plain
-                # user chat turns (no ``tool`` key) route through
-                # ``push_user_message`` and tool results / retries
-                # route through ``observation()``.
-                if "tool" in msg:
-                    content = msg.get("content", "")
-                    if not isinstance(content, str):
-                        content = ""
-                    # ``_append_observation`` prefixes ``obs_msg`` with
-                    # ``"Observation: "`` for the LLM-facing slot. The
-                    # web frontend's observation card already labels
-                    # the entry, so strip the prefix to match what a
-                    # live ``observation()`` call would emit.
-                    prefix = "Observation: "
-                    content = content.removeprefix(prefix)
-                    self.observation(
-                        content,
-                        turn=0,
-                        tool_name=msg.get("tool", ""),
-                        success=msg.get("success", True),
-                    )
-                else:
-                    content = msg.get("content", "")
-                    if content:
-                        self.push_user_message(content)
-            elif role == "assistant":
-                thought = msg.get("thought", "") or ""
-                ops = msg.get("ops")
-                if isinstance(ops, list) and ops:
-                    # Both wire formats store every assistant turn — INCLUDING
-                    # the terminal ``complete`` — in the ``ops`` shape
-                    # (``serialize_terminal_for_history`` / ``serialize_
-                    # assistant_for_history``). Emit the thought once (held),
-                    # then flush one card per op. Without this branch the whole
-                    # assistant side (thought / action / final) is dropped on
-                    # resume — only the singular legacy shape was handled.
-                    self.thought(thought, turn=0)
-                    for op in ops:
-                        if isinstance(op, dict):
-                            self._replay_assistant_op(
-                                op.get("action", "") or "", op.get("action_input", {})
-                            )
-                elif msg.get("action"):
-                    # Legacy singular ``{action, action_input}`` shape — kept for
-                    # old history files / the base (non-multi-op) format.
-                    self.thought(thought, turn=0)
-                    self._replay_assistant_op(
-                        msg.get("action", "") or "", msg.get("action_input", {})
-                    )
-                else:
-                    # Raw content-only assistant turn (e.g. a NO_JSON emission
-                    # stored verbatim) — render as a final card so the resumed
-                    # transcript isn't silently missing it.
-                    content = msg.get("content", "")
-                    if content:
-                        self.final(content, turn=0)
+            self._replay_record(msg)
         # Any scope that outlived the last replayed turn (or a session with no
         # turns at all) still needs its bar + closing card.
         self._replay_task_id = None
         while pending_i < len(pending):
-            self._emit_scope_replay(pending[pending_i])
+            _emit_scope(pending[pending_i])
             pending_i += 1
         # Back to live: subsequent events get a fresh wall-clock stamp.
         self._replay_ts = None
+
+    def _replay_record(
+        self, msg: dict, *, force_task_id: str | None = None, sub: bool = False
+    ) -> None:
+        """Re-emit ONE history record as its persistent event(s).
+
+        ``force_task_id`` routes the record into that scope's card regardless
+        of the record's own stamp — a sub-agent's records are stamped with its
+        PROMPT scope id (the inspector's), which differs from the CARD scope id
+        the sidecar carries, so the stamp cannot be trusted for card routing.
+        ``sub`` marks a sub-agent history: its plain user records are the
+        internal task prompt / injected requests, which the live run never
+        shows as timeline cards — mirroring live means skipping them."""
+        self._replay_ts = msg.get("ts")
+        # Route this turn into its scope's card (written by
+        # ``ContextManager._enrich_record``; absent on pre-v7.28 sessions,
+        # which then replay flat as before).
+        self._replay_task_id = force_task_id or msg.get("task_id") or None
+        role = msg.get("role")
+        if role == "user":
+            # ``tool`` key presence — not truthiness — signals an
+            # observation entry. ``_append_observation`` always
+            # writes both ``tool`` and ``success`` (empty string
+            # ``tool`` for format-retry interventions), so plain
+            # user chat turns (no ``tool`` key) route through
+            # ``push_user_message`` and tool results / retries
+            # route through ``observation()``.
+            if "tool" in msg:
+                content = msg.get("content", "")
+                if not isinstance(content, str):
+                    content = ""
+                # ``_append_observation`` prefixes ``obs_msg`` with
+                # ``"Observation: "`` for the LLM-facing slot. The
+                # web frontend's observation card already labels
+                # the entry, so strip the prefix to match what a
+                # live ``observation()`` call would emit.
+                prefix = "Observation: "
+                content = content.removeprefix(prefix)
+                self.observation(
+                    content,
+                    turn=0,
+                    tool_name=msg.get("tool", ""),
+                    success=msg.get("success", True),
+                )
+            else:
+                # Sub-agent histories: the plain user records are the task
+                # prompt / injected peer requests — live shows no card for
+                # them (the 🤝 window owns that surface), so neither does
+                # the replay.
+                if sub:
+                    return
+                content = msg.get("content", "")
+                if content:
+                    self.push_user_message(content)
+        elif role == "assistant":
+            thought = msg.get("thought", "") or ""
+            ops = msg.get("ops")
+            if isinstance(ops, list) and ops:
+                # Both wire formats store every assistant turn — INCLUDING
+                # the terminal ``complete`` — in the ``ops`` shape
+                # (``serialize_terminal_for_history`` / ``serialize_
+                # assistant_for_history``). Emit the thought once (held),
+                # then flush one card per op. Without this branch the whole
+                # assistant side (thought / action / final) is dropped on
+                # resume — only the singular legacy shape was handled.
+                self.thought(thought, turn=0)
+                for op in ops:
+                    if isinstance(op, dict):
+                        self._replay_assistant_op(
+                            op.get("action", "") or "", op.get("action_input", {})
+                        )
+            elif msg.get("action"):
+                # Legacy singular ``{action, action_input}`` shape — kept for
+                # old history files / the base (non-multi-op) format.
+                self.thought(thought, turn=0)
+                self._replay_assistant_op(
+                    msg.get("action", "") or "", msg.get("action_input", {})
+                )
+            else:
+                # Raw content-only assistant turn (e.g. a NO_JSON emission
+                # stored verbatim) — render as a final card so the resumed
+                # transcript isn't silently missing it.
+                content = msg.get("content", "")
+                if content:
+                    self.final(content, turn=0)
+
+    def _replay_scope_inner(self, data: dict, end_ts: float | None) -> None:
+        """Replay a scope's OWN turns (from its ``ctx_dir`` history) into its
+        just-opened card during resume.
+
+        Sub-agents — a skill subloop, an inline run, a resident agent — keep
+        their turns in ``<session>/<ctx_dir>/history.jsonl``; main's history
+        holds only the final observation. Best effort: an absent/после-deleted
+        directory leaves the card empty and the frontend's note explains why.
+
+        A resident agent's file is ONE continuous history across requests, so
+        its records are sliced to this scope's ``[start, end]`` window (the
+        sidecar's timestamps); skill/run directories belong to exactly one
+        scope and replay whole."""
+        if self._scope_log_path is None:
+            return
+        ctx_dir = str(data.get("ctx_dir") or "")
+        session_dir = self._scope_log_path.parent
+        target = (session_dir / ctx_dir).resolve()
+        # The sidecar is ours, but never let a corrupt line walk outside the
+        # session directory.
+        if not str(target).startswith(str(session_dir.resolve())):
+            return
+        history = target / "history.jsonl"
+        if not history.exists():
+            return
+        start_ts = data.get("ts")
+        slice_window = ctx_dir.startswith("agents/")
+        try:
+            lines = history.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        task_id = data.get("task_id")
+        for raw in lines:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                continue
+            if slice_window:
+                rec_ts = _iso_to_epoch(msg.get("ts"))
+                if rec_ts is None:
+                    continue  # unsliceable record — safer out than misfiled
+                if start_ts is not None and rec_ts < float(start_ts) - 0.001:
+                    continue
+                if end_ts is not None and rec_ts > float(end_ts) + 0.001:
+                    continue
+            self._replay_record(msg, force_task_id=task_id, sub=True)
+        # Restore the scope's original stamp so the following scope_end (same
+        # pending stream) carries its own ts, not the last inner record's.
+        self._replay_task_id = None
 
     def _log_scope(self, event: str, data: dict[str, Any]) -> None:
         """Append one scope event as a JSON line to the resume sidecar. Best

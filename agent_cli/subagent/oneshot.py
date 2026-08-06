@@ -60,6 +60,7 @@ def _run_single(
     stop_event=None,
     hooks_config: dict | None = None,
     compaction_enabled: bool = True,
+    run_dir_name: str = "",
 ) -> ToolResult:
     """Execute a single delegate task.
 
@@ -133,7 +134,11 @@ def _run_single(
 
     # Resolve parent session dir and create delegate subdir
     parent_session_dir = _resolve_session_dir(session, parent_ctx)
-    run_dir_name = _generate_run_dir_name(agent_name or "task")
+    # Pre-named by the scope-opening caller (so the resume sidecar's ctx_dir
+    # matches this ctx's actual directory); self-naming stays for direct
+    # callers that never open a scope.
+    if not run_dir_name:
+        run_dir_name = _generate_run_dir_name(agent_name or "task")
     run_dir = parent_session_dir / run_dir_name
 
     # Context + run_loop — 공용 러너 (subagent/runner.py). wire_format
@@ -264,6 +269,10 @@ def _run_parallel(
         task_id = f"delegate-{index}-{uuid.uuid4().hex}"
         agent = spec.get("agent", "")
         task_text = spec.get("task", "")
+        # Dir named HERE so the scope event carries it — resume replays the
+        # card's inner turns from that directory (main history only has the
+        # final observation).
+        run_dir_name = _generate_run_dir_name(agent or "task")
         renderer.begin_scope(
             task_id=task_id,
             kind="run",
@@ -272,6 +281,7 @@ def _run_parallel(
             index=index,
             parent=parent_scope,
             ts=batch_ts,
+            ctx_dir=run_dir_name,
         )
         t0 = time.monotonic()
         result_for_marker = None
@@ -300,6 +310,7 @@ def _run_parallel(
                 stop_event=stop_event,
                 hooks_config=hooks_config,
                 compaction_enabled=compaction_enabled,
+                run_dir_name=run_dir_name,
             )
             result_for_marker = results[index]
         finally:
@@ -421,12 +432,14 @@ def tool_delegate(
         # recycled thread idents would collide across delegate calls and
         # suppress the frontend card. See ``worker`` above.
         task_id = f"delegate-single-{uuid.uuid4().hex}"
+        run_dir_name = _generate_run_dir_name(agent_name or "task")
         renderer.begin_scope(
             task_id=task_id,
             kind="run",
             label=label,
             agent=agent_name,
             index=0,
+            ctx_dir=run_dir_name,
         )
         render_push_depth()
         t0 = time.monotonic()
@@ -439,6 +452,7 @@ def tool_delegate(
                 agent_name=agent_name,
                 instructions=spec.get("instructions", ""),
                 stop_event=stop_event,
+                run_dir_name=run_dir_name,
                 **common_kwargs,
             )
             return result

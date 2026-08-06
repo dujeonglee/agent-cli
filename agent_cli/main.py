@@ -735,7 +735,12 @@ def _dispatch_skill(
     # group_start instead of a routed scope). execute_skill runs synchronously
     # in this thread, so the routing covers its subloop.
     _scope_id = f"skill-{cmd_name}-{_uuid.uuid4().hex[:8]}"
-    render_begin_scope(_scope_id, "skill", f"skill:{cmd_name}")
+    # Dir named at scope-open so the sidecar's ctx_dir matches the ctx the
+    # skill actually writes — resume replays the card's inner turns from it.
+    from agent_cli.subagent.report import generate_subdir_name as _gen_subdir
+
+    _skill_dir = _gen_subdir("skill", cmd_name)
+    render_begin_scope(_scope_id, "skill", f"skill:{cmd_name}", ctx_dir=_skill_dir)
     render_push_depth()
     _t0 = _time.monotonic()
     skill_result = None
@@ -764,6 +769,7 @@ def _dispatch_skill(
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             parent_hooks_config=_parent_hooks,
+            session_subdir=_skill_dir,
         )
     finally:
         render_pop_depth()
