@@ -1,0 +1,50 @@
+{
+  "users": 3,
+  "rounds": 30,
+  "turns": 90,
+  "cut_slice_events": 16,
+  "control_connects": 1,
+  "cutter_connects": 12,
+  "cuts_observed": 11,
+  "stream_equality": {
+    "control_events": 180,
+    "cutter_events": 180,
+    "identical_including_payloads": true,
+    "missing": 0,
+    "extra": 0,
+    "duplicates": 0,
+    "order_inversions": 0,
+    "payload_mismatch": 0
+  },
+  "marker_coverage": {
+    "submitted": 90,
+    "control_seen": 90,
+    "cutter_seen": 90,
+    "cutter_missing": []
+  },
+  "unservable_cursor_fallback": [
+    {
+      "cursor": "deadbeef:1",
+      "reset_signalled": true,
+      "reset_position": 1,
+      "first_events": [
+        "identity",
+        "replay_reset",
+        "ready"
+      ],
+      "replayed_seq_events": 180
+    },
+    {
+      "cursor": "3cf7663e:999999999",
+      "reset_signalled": true,
+      "reset_position": 1,
+      "first_events": [
+        "identity",
+        "replay_reset",
+        "ready"
+      ],
+      "replayed_seq_events": 180
+    }
+  ],
+  "resets_during_normal_reconnects": 0
+}

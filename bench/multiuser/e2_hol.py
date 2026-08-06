@@ -37,7 +37,10 @@ from driver import (
 )
 
 CONTRACTS = ("serial", "reject", "parallel")
-LEVELS_MS = (2000, 6000, 15000)
+#: L 그리드. 30 s 는 v0.8 에서 추가됐다 — 2~15 s 만으로도 기울기는 명확하지만,
+#: "긴 작업"의 상한을 한 자릿수 초에 두면 직렬 계약의 비용이 실제 운용
+#: (빌드·테스트·대규모 편집)보다 작게 읽힌다.
+LEVELS_MS = (2000, 6000, 15000, 30000)
 B_DELAY_S = 0.5  # A 제출 후 B 제출까지 (포크와 동일)
 A_TOK_MS = 25  # A 스트리밍 토큰 간격 — n = L/25 개로 L ms 를 채운다
 B_DIRECTIVE = "[[bench ttft=200 tok=5 n=8 id=b]]"
@@ -84,6 +87,14 @@ def main() -> None:
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     ap.add_argument("--levels", type=int, nargs="*", default=list(LEVELS_MS))
+    ap.add_argument(
+        "--append",
+        action="store_true",
+        help="이미 커밋된 e2-hol.jsonl 에 이번 셀을 **합쳐서** 저장하고, 요약은 "
+        "합집합 전체에서 재도출한다. 새 L 하나를 추가하려고 30분짜리 전체 "
+        "그리드를 다시 돌리지 않기 위한 것 — 요약이 언제나 원시 파일에서 "
+        "재도출된다는 규약은 그대로다.",
+    )
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -107,12 +118,25 @@ def main() -> None:
         mock.stop()
 
     raw_path = args.out / "e2-hol.jsonl"
+    if args.append and raw_path.is_file():
+        # 같은 (계약, L, rep) 는 이번 실행 것이 이긴다 — 재실행이 곧 갱신.
+        prior = [
+            json.loads(x)
+            for x in raw_path.read_text(encoding="utf-8").splitlines()
+            if x.strip()
+        ]
+        merged = {(r["condition"], r["L"], r["rep"]): r for r in prior}
+        merged.update({(r["condition"], r["L"], r["rep"]): r for r in rows})
+        rows = [merged[k] for k in sorted(merged, key=lambda k: (k[0], k[1], k[2]))]
     raw_path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
-    summary = {"levels": args.levels, "reps": args.reps, "summary": [], "slope": {}}
+    # 요약의 L 목록은 인자가 아니라 **원시 데이터에 실제로 있는 L** 이다 —
+    # --append 로 한 셀만 돌렸을 때 요약이 그 셀만 담으면 안 된다.
+    levels = sorted({r["L"] for r in rows})
+    summary = {"levels": levels, "reps": args.reps, "summary": [], "slope": {}}
     for contract in CONTRACTS:
         pts = []
-        for level in args.levels:
+        for level in levels:
             vals = [
                 r["bTtftMs"]
                 for r in rows
