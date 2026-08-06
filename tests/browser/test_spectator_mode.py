@@ -51,6 +51,16 @@ class TestSpectatorPage:
         for sel in ("#inspector-btn", "#export-btn", "#files-btn", "#rename-btn"):
             assert page.locator(sel).is_hidden(), sel
 
+    def test_agent_composer_is_removed(self, page, spectator_stack):
+        # ★이 층에서만 잡히는 부류: `hidden` 속성만으로는 저자 CSS 의
+        # `display:flex` 를 못 이겨 입력 줄이 화면에 남는다(#input-area 가
+        # 실제로 그랬다 — `[hidden]` 가드 부재). agent 드로어 입력 줄도 같은
+        # 모양이라 함께 고정한다.
+        spectator_stack.emit_ready()
+        _open(page, spectator_stack.watch_url)
+        page.wait_for_selector("#spectator-note", state="visible", timeout=5_000)
+        assert page.locator("#tm-inputrow").is_hidden()
+
     def test_roster_marks_the_spectator(self, page, spectator_stack):
         spectator_stack.emit_ready()
         _open(page, spectator_stack.watch_url)

@@ -3398,6 +3398,19 @@ class TestSpectatorFrontendWiring:
             assert btn in fn, btn
         assert "tm-inputrow" in fn  # agent drawer readable, not writable
 
+    def test_hidden_toggled_containers_have_a_display_guard(self, server_and_client):
+        """★회귀 가드: `el.hidden = true` 만으로는 저자 CSS 의 `display:flex`
+        를 못 이긴다(UA 의 `[hidden]{display:none}` 보다 저자 규칙이 세다).
+        실제로 `#input-area` 가 그래서 관전자 화면에 입력창이 그대로 남았고,
+        실브라우저 층이 잡았다(`tests/browser/test_spectator_mode.py`).
+        `display` 를 지정하면서 `hidden` 으로 접는 컨테이너는 전부 `[hidden]`
+        규칙을 함께 가져야 한다."""
+        _, _, client = server_and_client
+        css = client.get("/static/style.css").text
+        for sel in ("#input-area", "#tm-inputrow", "#name-bar"):
+            assert f"{sel} {{ display:" in css or f"{sel} {{\n" in css, sel
+            assert f"{sel}[hidden] {{ display: none; }}" in css, sel
+
     def test_spectator_note_exists_in_the_shell(self, server_and_client):
         _, _, client = server_and_client
         html = client.get("/").text

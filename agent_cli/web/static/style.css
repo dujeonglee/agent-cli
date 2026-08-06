@@ -603,6 +603,11 @@ footer {
 }
 
 #input-area { display: flex; gap: 8px; align-items: stretch; }
+/* An author ``display`` beats the UA stylesheet's ``[hidden] {display:none}``,
+   so the attribute alone would leave the composer on screen — which is how a
+   spectator kept an input box whose Send could only 403. Same guard as
+   ``#name-bar``. */
+#input-area[hidden] { display: none; }
 #input {
   flex: 1;
   resize: vertical;
@@ -1367,6 +1372,7 @@ body.export-mode #messages > .card-failed { padding-left: 0; }
   border: 1px dashed var(--accent-soft-border); }
 .tm-empty { color: var(--muted); font-size: 12px; padding: 12px 4px; }
 #tm-inputrow { display: flex; gap: 8px; align-items: flex-end; }
+#tm-inputrow[hidden] { display: none; }  /* see #input-area[hidden] */
 #tm-input {
   flex: 1; resize: none; border: 1px solid var(--border); border-radius: 8px;
   background: transparent; color: inherit; font: inherit; font-size: 13px;
