@@ -439,3 +439,96 @@ class TestLoopIntegration:
         routed.clear()
         bridge._dispatch_tool_with_hooks("shell", {"command": "true"})
         assert routed == ["regular:shell"]
+
+
+class TestEditBatchPath:
+    """M4: 같은-파일 연속 ``edit_file`` 은 ``_invoke_regular`` 를 **거치지 않고**
+    순수 ``apply_edits_batch`` 를 직접 부른다(``dispatch._dispatch_edit_batch``).
+    그래서 락을 그 자리에서 따로 잡아야 하며, 빠뜨리면 **배치 편집만** 보호
+    밖으로 샌다 — 단건 편집 테스트로는 절대 드러나지 않는 구멍이다."""
+
+    def _dispatcher(self):
+        from agent_cli.loop.dispatch import TurnDispatcher
+        from agent_cli.loop.state import LoopConfig, LoopState
+        from agent_cli.loop.tool_bridge import ToolBridge
+
+        cfg, state = LoopConfig(), LoopState(query="q")
+        return TurnDispatcher(
+            cfg, state, None, ToolBridge(cfg, state, None, None), None
+        )
+
+    def _ops(self, path, pairs):
+        from agent_cli.wire_formats.base import Op
+
+        return [
+            Op(
+                action="edit_file",
+                action_input={
+                    "path": path,
+                    "op": "replace",
+                    "ref": ref,
+                    "content": content,
+                },
+            )
+            for ref, content in pairs
+        ]
+
+    def test_batch_acquires_a_write_lock_on_the_target(self, tmp_path, monkeypatch):
+        seen = []
+        real_hold = effect_lock.hold
+
+        def spy(intent, **kw):
+            seen.append(intent)
+            return real_hold(intent, **kw)
+
+        monkeypatch.setattr(effect_lock, "hold", spy)
+        effect_lock.set_scope("conflict")
+
+        target = tmp_path / "batch.txt"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+        results: list[dict] = []
+        self._dispatcher()._dispatch_edit_batch(
+            "",
+            0,
+            self._ops(str(target), [("1", "A"), ("2", "B")]),
+            {},
+            accumulate=results,
+        )
+        assert seen, "배치 편집이 효과 락을 거치지 않았다 — 배선 누락"
+        assert seen[0].kind is EffectKind.FILE_WRITE
+        assert seen[0].path == str(target)
+
+    def test_batch_lock_key_matches_a_single_edit_on_the_same_file(self, tmp_path):
+        """배치와 단건이 같은 키로 모여야 서로를 막는다 — 키가 갈리면
+        '단건 편집 + 배치 편집'이 나란히 진입해 보호가 통째로 샌다."""
+        target = tmp_path / "same.txt"
+        from agent_cli.tools.edit_file import EditFileTool
+
+        single = EditFileTool().effect_intent({"path": str(target)})
+        batch = EffectIntent(EffectKind.FILE_WRITE, str(target))
+        assert effect_lock.normalize_lock_path(
+            single.path
+        ) == effect_lock.normalize_lock_path(batch.path)
+
+    def test_concurrent_batches_on_one_file_are_serialised(self, tmp_path):
+        """실제 유실 재현: 락 없이 두 배치가 같은 파일을 동시에 고치면
+        나중 쓰기가 앞의 것을 덮는다."""
+        effect_lock.set_scope("conflict")
+        target = tmp_path / "race.txt"
+        target.write_text("\n".join(f"line{i}" for i in range(1, 5)) + "\n", "utf-8")
+
+        tracker = _Tracker()
+        intent = EffectIntent(EffectKind.FILE_WRITE, str(target))
+
+        def worker(label):
+            with effect_lock.hold(intent):
+                tracker.enter(label)
+                time.sleep(0.05)
+                tracker.exit()
+
+        threads = [threading.Thread(target=worker, args=(f"w{i}",)) for i in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        assert tracker.peak == 1, f"같은 파일 배치가 동시에 진입했다: {tracker.peak}"

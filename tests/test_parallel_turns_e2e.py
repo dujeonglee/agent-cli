@@ -309,3 +309,132 @@ class TestTurnMetricsE2E:
             assert threads == {"agent-turn-t1", "agent-turn-t2", "agent-turn-t3"}
         finally:
             turn_metrics.disable()
+
+
+class _ToolThenComplete:
+    """첫 콜은 도구 op, 그다음부터 complete.
+
+    턴 식별을 **스레드 이름**으로 하는 이유: 트랜스크립트는 의도적으로 공유되므로
+    (``test_known_limitation_shared_transcript_tail``) 마지막 user 메시지로는 어느
+    턴의 콜인지 알 수 없다. ``TurnRegistry`` 가 워커를 ``agent-turn-t{n}`` 으로
+    명명하므로 그것이 병렬에서 신뢰할 수 있는 유일한 턴 키다.
+    """
+
+    def __init__(self, path_for):
+        self.path_for = path_for
+        self._started: set[str] = set()
+        self._lock = threading.Lock()
+
+    def call(self, messages=None, **kwargs):
+        name = threading.current_thread().name
+        with self._lock:
+            first = name not in self._started
+            self._started.add(name)
+        if first:
+            # json_fc 의 op 은 **평평하다** — ``_complete`` 와 같은 모양.
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "action": "write_file",
+                        "path": self.path_for(name),
+                        "content": f"written by {name}\n",
+                    }
+                )
+            )
+        return LLMResponse(content=_complete(f"done:{name}"))
+
+
+class TestEffectLockUnderRealParallelTurns:
+    """M4 × A1 — "병렬 추론 + 직렬 부수효과"를 **실제 run_loop 경로로** 확인.
+
+    단위 테스트(``test_effect_lock.py``)는 ``hold`` 를 직접 부르고, E2E 의 다른
+    테스트들은 도구를 전혀 쓰지 않는다. 그 사이에 구멍이 있다: 락이 옳고 병렬이
+    옳아도 **``run_loop`` → ``ToolBridge`` 배선이 끊기면** 논문의 중심 주장이
+    조용히 거짓이 된다. 여기서 그 배선을 잰다.
+
+    측정은 도구 실행 자체의 동시 진입 최대치(peak)로 한다 — 락이 감싸는 구간이
+    바로 그것이라 "정말 직렬화됐는가"의 직접 증거다.
+    """
+
+    def _run(self, tmp_path, caps, monkeypatch, *, scope, same_file, n=3):
+        from agent_cli.loop import tool_bridge
+        from agent_cli.tools import effect_lock
+
+        effect_lock.reset()
+        effect_lock.set_scope(scope)
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+
+        peak = {"v": 0}
+        live = {"v": 0}
+        m = threading.Lock()
+        real = tool_bridge._execute_tool
+
+        def spy(name, tool_input, ctx=None):
+            with m:
+                live["v"] += 1
+                peak["v"] = max(peak["v"], live["v"])
+            try:
+                threading.Event().wait(0.05)  # 겹칠 기회를 넉넉히 준다
+                return real(name, tool_input, ctx=ctx)
+            finally:
+                with m:
+                    live["v"] -= 1
+
+        monkeypatch.setattr(tool_bridge, "_execute_tool", spy)
+
+        def path_for(thread_name):
+            return "shared.txt" if same_file else f"{thread_name}.txt"
+
+        provider = _ToolThenComplete(path_for)
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=1_000_000)
+        seen, lock = [], threading.Lock()
+        reg = TurnRegistry(
+            _runner_factory(ctx, provider, caps, seen, lock), max_concurrent=n
+        )
+        for i in range(n):
+            reg.submit(f"task {i}", author=f"user{i}", conn_id=f"c{i}")
+        assert reg.wait_idle(timeout=30), "턴이 시간 내에 끝나지 않았다 (교착?)"
+        effect_lock.reset()
+        return peak["v"], len(seen), workspace
+
+    def test_same_file_writes_are_serialised(self, tmp_path, caps, monkeypatch):
+        """같은 경로 → 동시 진입 0. 이것이 P3 의 '유실 0' 주장의 기계적 근거다."""
+        peak, done, _ws = self._run(
+            tmp_path, caps, monkeypatch, scope="conflict", same_file=True
+        )
+        assert done == 3, "일부 턴이 완료되지 않았다"
+        assert peak == 1, f"같은 파일에 동시 진입 {peak}건 — 직렬화 실패"
+
+    def test_different_files_still_run_in_parallel(self, tmp_path, caps, monkeypatch):
+        """서로 다른 경로 → 겹친다. 여기가 이득의 원천이고, 이게 1 이면 계층
+        락이 단순 mutex 로 퇴화한 것이다(포크 v1 이 1.07× 로 붕괴한 지점)."""
+        peak, done, ws = self._run(
+            tmp_path, caps, monkeypatch, scope="conflict", same_file=False
+        )
+        assert done == 3
+        assert peak > 1, f"서로 다른 파일인데 직렬화됐다 (peak={peak})"
+        assert len(list(ws.glob("*.txt"))) == 3, "쓰기가 실제로 일어나지 않았다"
+
+    def test_workspace_scope_serialises_even_disjoint_files(
+        self, tmp_path, caps, monkeypatch
+    ):
+        """ablation 대조군(포크 v1 재현) — 스코프 전환이 E2E 에서 실제로
+        동작을 바꾸는지. 안 바뀌면 실험의 두 팔이 같은 것을 재고 있다."""
+        peak, done, _ws = self._run(
+            tmp_path, caps, monkeypatch, scope="workspace", same_file=False
+        )
+        assert done == 3
+        assert peak == 1, f"workspace 스코프인데 겹쳤다 (peak={peak})"
+
+    def test_off_scope_lets_same_file_writes_overlap(self, tmp_path, caps, monkeypatch):
+        """음성 대조 — 락을 끄면 같은 파일도 겹친다. 이게 겹치지 않으면 위
+        테스트들이 락이 아니라 다른 무언가(예: 우연한 직렬 실행)를 재고 있다는
+        뜻이라, 통과해도 아무것도 증명하지 못한다."""
+        peak, done, _ws = self._run(
+            tmp_path, caps, monkeypatch, scope="off", same_file=True
+        )
+        assert done == 3
+        assert peak > 1, f"락 없이도 직렬이었다 — 위 테스트들이 무의미 (peak={peak})"

@@ -90,6 +90,36 @@ class TestStatusFile:
         write_status_file(nested, busy=False, awaiting_input=False, viewers=0)
         assert (nested / "status.json").exists()
 
+    def test_active_turns_is_omitted_at_zero(self, tmp_path):
+        """v7.29.0 additive: 직렬 세션의 status.json 바이트가 종전과 같아야
+        구버전 보드 파서가 영향을 받지 않는다."""
+        write_status_file(tmp_path, busy=False, awaiting_input=False, viewers=0)
+        assert read_status_file(tmp_path) == {
+            "busy": False,
+            "awaiting_input": False,
+            "viewers": 0,
+        }
+        write_status_file(
+            tmp_path, busy=False, awaiting_input=False, viewers=0, active_turns=0
+        )
+        assert "active_turns" not in read_status_file(tmp_path)
+
+    def test_active_turns_is_written_when_nonzero(self, tmp_path):
+        write_status_file(
+            tmp_path, busy=True, awaiting_input=False, viewers=1, active_turns=3
+        )
+        assert read_status_file(tmp_path)["active_turns"] == 3
+
+    def test_active_turns_does_not_survive_a_later_zero_write(self, tmp_path):
+        """마지막 턴이 끝난 뒤 필드가 남으면 보드가 계속 '실행 중'으로 읽는다."""
+        write_status_file(
+            tmp_path, busy=True, awaiting_input=False, viewers=1, active_turns=2
+        )
+        write_status_file(
+            tmp_path, busy=False, awaiting_input=False, viewers=1, active_turns=0
+        )
+        assert "active_turns" not in read_status_file(tmp_path)
+
     def test_overwrite_replaces(self, tmp_path):
         write_status_file(tmp_path, busy=True, awaiting_input=True, viewers=1)
         write_status_file(tmp_path, busy=False, awaiting_input=False, viewers=0)

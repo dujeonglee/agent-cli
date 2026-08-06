@@ -114,6 +114,7 @@ def execute_skill(
     parent_depth: int = 0,
     compaction_enabled: bool = True,
     agent_registry=_INHERIT,
+    origin_turn: str = "",
 ):
     """Execute a skill by substituting arguments and calling run_loop.
 
@@ -219,6 +220,13 @@ def execute_skill(
             # sub-agent (no registry) stays run-only. Workers it spawns register
             # on the main registry and outlive the skill (main takes them over).
             agent_registry=agent_registry,
+            # A1: 스킬 서브루프는 위에서 본 대로 main registry 를 **상속**하므로
+            # 서브에이전트 루프와 달리 ``_deliver_agent_mail`` 이 조기 반환하지
+            # 않는다. 턴 id 를 함께 물려주지 않으면 그 회수가
+            # ``drain_replies(None)`` = 전량 회수가 되어 **형제 턴의 회신까지
+            # 가져간다** — A1 이 A6 귀속을 스스로 깨뜨리는 경로다. 직렬 모드는
+            # ""(무주)라 종전 동작 그대로.
+            origin_turn=origin_turn,
             agent_timeout=agent_timeout,
             active_tools=effective_tools,
             ctx=skill_ctx or ctx,

@@ -503,6 +503,7 @@ def try_dispatch_agent_or_skill(
     graceful_interrupt: bool = True,
     stop_event=None,
     agent_registry=None,
+    origin_turn: str = "",
 ) -> bool:
     """Detect and run ``@<name> <task>`` / ``/<skill> <args>`` invocations.
 
@@ -592,6 +593,7 @@ def try_dispatch_agent_or_skill(
             session=session,
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
+            origin_turn=origin_turn,
         )
         if result is _SKILL_NOT_FOUND:
             output.skill_not_found(cmd_name)
@@ -700,6 +702,7 @@ def _dispatch_skill(
     session=None,
     graceful_interrupt: bool = False,
     stop_event=None,
+    origin_turn: str = "",
 ):
     """Dispatch a /skill-name command. Returns _SKILL_NOT_FOUND if not a skill."""
     from agent_cli.skills import execute_skill, load_skills
@@ -768,6 +771,10 @@ def _dispatch_skill(
             graceful_interrupt=graceful_interrupt,
             stop_event=stop_event,
             parent_hooks_config=_parent_hooks,
+            # A1: 이 스킬 서브루프는 main registry 를 상속하므로(execute_skill
+            # 의 _INHERIT) 턴 경계마다 회신을 회수한다. 턴 id 를 넘기지 않으면
+            # 전량 회수가 되어 형제 턴의 회신을 탈취한다. 직렬은 "" — 무변.
+            origin_turn=origin_turn,
         )
     finally:
         render_pop_depth()
@@ -2158,6 +2165,7 @@ def web(
                         session=session,
                         graceful_interrupt=True,
                         stop_event=turn.stop_event,
+                        origin_turn=turn.id,  # A1: 회신 회수를 이 턴 몫으로
                     )
 
                 label = turn.author or "?"

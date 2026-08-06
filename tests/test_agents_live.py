@@ -3270,3 +3270,77 @@ class TestReplyTurnAttribution:
         assert res.success, res.error
         assert wait_until(reg.has_pending_replies)
         assert reg.drain_replies()[0]["origin_turn"] == "t9"
+
+
+class TestReplyAttributionThroughSkillSubloop:
+    """A1 회신 귀속의 **누출 경로**: ``run_skill`` 서브루프.
+
+    서브에이전트 루프는 ``agent_registry=None`` 이라 ``_deliver_agent_mail``
+    이 조기 반환하지만, **스킬 서브루프는 main registry 를 상속한다**(스킬은
+    main 의 워크플로우라는 설계). 그래서 스킬 루프도 턴 경계마다 회신을
+    회수하는데, ``origin_turn`` 을 물려받지 못하면 ``drain_replies(None)`` =
+    **전량 회수**가 되어 형제 턴의 회신까지 가져간다 — A1 이 A6 귀속을 스스로
+    깨뜨리는, 정확히 그 상황이다.
+    """
+
+    def test_every_link_of_the_skill_chain_carries_origin_turn(self):
+        """스킬 루프가 registry 를 물려받는 **두 경로 모두** 턴 id 를 나른다.
+
+        ① 루프 내부 op:  dispatch → ``_handle_run_skill`` → ``execute_skill``
+        ② 사용자 슬래시: ``try_dispatch_agent_or_skill`` → ``_dispatch_skill``
+                          → ``execute_skill``
+        한 고리라도 빠지면 그 경로만 전량 회수로 되돌아간다 — 다른 경로 테스트가
+        통과해도 드러나지 않으므로 사슬 전체를 고정한다.
+        """
+        import inspect
+
+        import agent_cli.main as m
+        from agent_cli.loop.skill_invoke import _handle_run_skill
+        from agent_cli.skills.executor import execute_skill
+
+        for fn in (
+            execute_skill,
+            _handle_run_skill,
+            m._dispatch_skill,
+            m.try_dispatch_agent_or_skill,
+        ):
+            assert "origin_turn" in inspect.signature(fn).parameters, (
+                f"{fn.__name__} 이 origin_turn 을 받지 않는다 — 그 경로의 "
+                "스킬 루프가 drain_replies(None) 로 형제 턴의 회신을 탈취한다"
+            )
+
+    def test_serial_callers_still_default_to_draining_everything(self, tmp_path):
+        """직렬 경로는 origin_turn="" → 전량 회수 (동작 무변)."""
+        import inspect
+
+        from agent_cli.skills.executor import execute_skill
+
+        assert inspect.signature(execute_skill).parameters["origin_turn"].default == ""
+
+    def test_drain_is_scoped_in_a_skill_subloop(self, tmp_path):
+        """행동 확인: 턴 t1 안의 스킬 루프는 t2 의 회신을 건드리지 않는다."""
+        from types import SimpleNamespace
+
+        from agent_cli.loop.core import AgentLoop
+
+        reg = make_registry(tmp_path)
+        k1, _ = reg.spawn()
+        k2, _ = reg.spawn()
+        reg.request(k1, "job-a", origin_turn="t1")
+        reg.request(k2, "job-b", origin_turn="t2")
+        assert wait_until(lambda: len(reg._pending) == 2)
+
+        added = []
+        fake_ctx = SimpleNamespace(add=lambda rec: added.append(rec) or rec)
+        # 턴 t1 을 처리 중인 스킬 서브루프 (registry 상속, origin_turn 전파됨).
+        fake_self = SimpleNamespace(
+            _config=SimpleNamespace(agent_registry=reg, origin_turn="t1"),
+            messages=[],
+            ctx=fake_ctx,
+            turn=3,
+            _oversized_cap=10_000,
+        )
+        AgentLoop._deliver_agent_mail(fake_self)
+        assert [r["origin_turn"] for r in reg._pending] == ["t2"], (
+            "스킬 서브루프가 형제 턴의 회신을 탈취했다"
+        )

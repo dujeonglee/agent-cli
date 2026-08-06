@@ -94,6 +94,11 @@ class TurnRegistry:
         self.on_change = on_change
 
         self._lock = threading.Lock()
+        #: ``on_change`` 배달 직렬화 전용 락 (:meth:`_notify` 참조). ``_lock``
+        #: 과 분리한 이유: 콜백은 락 밖에서 불러야 하는데(renderer 락 중첩
+        #: 회피), 그러면 배달 **순서**가 보장되지 않아 낡은 값이 최종값으로
+        #: 남을 수 있다. 배달만 따로 줄 세운다.
+        self._notify_lock = threading.Lock()
         self._active: dict[str, Turn] = {}
         self._pending: list[Turn] = []
         self._threads: dict[str, threading.Thread] = {}
@@ -275,13 +280,31 @@ class TurnRegistry:
                 self._notify()
 
     def _notify(self) -> None:
+        """``on_change`` 를 **한 번에 하나씩** 배달한다.
+
+        직렬화가 필요한 이유 (낡은 값 고착): 콜백은 인자가 없고 구독자가
+        :meth:`active_count` 로 **현재 값을 스스로 읽는다**. 두 턴이 동시에
+        끝나면 A 가 값을 읽은 뒤 선점되고, 그 사이 B 가 읽고 쓰기까지 마친
+        다음 A 가 자기 낡은 값을 덮어쓸 수 있다 — 레지스트리는 비었는데
+        표시는 "1개 실행 중"으로 굳는다. 그 상태에서
+        ``WebRenderer.worker_is_busy`` 가 영원히 True 라 idle self-reap
+        (``--idle-timeout``)이 끝내 발동하지 않고 status.json 도 계속
+        거짓말을 한다.
+
+        이 락 아래서 콜백이 값을 **다시 읽기** 때문에 마지막 배달이 항상
+        최신 상태를 본다 — 읽기와 쓰기가 같은 뮤텍스로 순서지어지므로.
+        ``_lock`` 이 아니라 전용 락인 것은 규율 유지 때문이다: 콜백은
+        여전히 ``_lock`` 밖에서 돌아 renderer 락과 중첩되지 않는다
+        (획득 순서 ``_notify_lock`` → renderer ``_lock``, 역방향 없음).
+        """
         cb = self.on_change
         if cb is None:
             return
-        try:
-            cb()
-        except Exception:
-            pass  # 상태 표시 실패가 턴 진행을 막지 않는다
+        with self._notify_lock:
+            try:
+                cb()
+            except Exception:
+                pass  # 상태 표시 실패가 턴 진행을 막지 않는다
 
     # ── 제어 ────────────────────────────────────────────
 

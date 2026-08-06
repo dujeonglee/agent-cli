@@ -122,6 +122,85 @@ class TestStatusPublishing:
         assert read_status_file(tmp_path)["busy"] is True  # unchanged by token_usage
 
 
+class TestActiveTurns:
+    """A1(v7.29.0): 병렬 모드의 동시 inflight 턴 수. ``TurnRegistry.on_change``
+    가 :meth:`WebRenderer.set_active_turns` 로 밀어 넣는 값이며, 소비자가 셋이고
+    **각자 다른 질문**에 답한다:
+
+      - sticky ``worker_state.busy`` = 프런트 Send 게이팅 → 병렬에서는 켜면 안
+        된다("돌고 있어도 더 보낼 수 있다"가 기능의 요점).
+      - :meth:`worker_is_busy` = idle self-reap 판정 → 활성/대기 턴을 **포함해야**
+        한다. 아니면 뷰어 없는 세션이 턴 중간에 거둬진다.
+      - ``status.json`` = 보드 표시 → 0 이면 필드 생략(직렬 세션 바이트 보존).
+    """
+
+    def test_serial_session_never_reports_turns(self, tmp_path):
+        """직렬 경로는 이 메서드를 부르지 않는다 — status.json 이 종전 그대로."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.worker_busy()
+        assert "active_turns" not in read_status_file(tmp_path)
+
+    def test_active_turns_published_and_omitted_at_zero(self, tmp_path):
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.set_active_turns(2, 1)
+        assert read_status_file(tmp_path)["active_turns"] == 2
+        r.set_active_turns(0, 0)
+        assert "active_turns" not in read_status_file(tmp_path)
+
+    def test_status_busy_covers_active_and_pending(self, tmp_path):
+        """대기분을 빼먹으면 **마지막 턴이 시작되기 전에** 세션이 reap 된다."""
+        r = WebRenderer(session_dir=str(tmp_path))
+        r.set_active_turns(0, 2)  # cap 에 막혀 아직 아무것도 안 돎
+        assert read_status_file(tmp_path)["busy"] is True
+        r.set_active_turns(0, 0)
+        assert read_status_file(tmp_path)["busy"] is False
+
+    def test_worker_is_busy_counts_turns(self):
+        r = WebRenderer()
+        assert r.worker_is_busy() is False
+        r.set_active_turns(1, 0)
+        assert r.worker_is_busy() is True
+        r.set_active_turns(0, 3)  # 대기만 남아도 일은 남았다
+        assert r.worker_is_busy() is True
+        r.set_active_turns(0, 0)
+        assert r.worker_is_busy() is False
+
+    def test_worker_busy_flag_is_independent_of_turns(self):
+        """직렬 busy 플래그와 병렬 턴 수는 서로를 지우지 않는다."""
+        r = WebRenderer()
+        r.worker_busy()
+        r.set_active_turns(0, 0)
+        assert r.worker_is_busy() is True  # 직렬 busy 가 살아 있다
+        r.worker_idle()
+        assert r.worker_is_busy() is False
+
+    def test_send_gating_stays_open_while_turns_run(self):
+        """sticky ``busy`` 는 False 여야 한다 — 켜면 프런트 Send 가 잠겨
+        '돌고 있어도 더 보낼 수 있다'는 병렬의 요점이 사라진다."""
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.set_active_turns(3, 2)
+        event, data = _qget(conn)
+        assert event == "worker_state"
+        assert data["busy"] is False
+        assert data["active_turns"] == 3
+        assert data["pending_turns"] == 2
+
+    def test_late_viewer_replays_the_turn_counts(self):
+        """sticky 슬롯이라 새로고침한 클라이언트도 즉시 현재 수를 본다."""
+        r = WebRenderer()
+        r.set_active_turns(2, 0)
+        snapshot = r.register_connection(WebConnection(id="late"))
+        state = [d for e, d in snapshot if e == "worker_state"]
+        assert state and state[-1]["active_turns"] == 2
+
+    def test_negative_counts_are_clamped(self):
+        r = WebRenderer()
+        r.set_active_turns(-5, -2)
+        assert r.worker_is_busy() is False
+
+
 # ── Event distribution ─────────────────────────────
 
 

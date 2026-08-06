@@ -43,6 +43,7 @@ def _handle_run_skill(
     max_depth: int = 2,
     compaction_enabled: bool = True,
     agent_registry=None,
+    origin_turn: str = "",
 ):
     """Handle run_skill at loop level with full ctx access."""
     # Inline import: circular dependency — executor.py imports run_loop from this module
@@ -134,6 +135,7 @@ def _handle_run_skill(
             parent_depth=parent_depth,
             compaction_enabled=compaction_enabled,
             agent_registry=agent_registry,
+            origin_turn=origin_turn,  # A1: 회신 회수를 이 턴 몫으로 좁힌다
         )
     except Exception as e:
         _debug_log(f"run_skill({name}) exception: {e}")

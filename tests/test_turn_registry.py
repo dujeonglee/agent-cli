@@ -236,6 +236,97 @@ class TestBusyAndIdle:
         assert seen == ["m"]
 
 
+class TestStatusNotificationOrdering:
+    """``on_change`` 는 인자가 없고 구독자가 :meth:`active_count` 로 현재
+    값을 **스스로 읽는다** (``main.py`` 의 배선이 그렇다). 따라서 배달이
+    겹치면 "읽기→(선점)→쓰기" 사이에 남이 끼어들어 **낡은 값이 최종값으로
+    굳는다** — 레지스트리는 비었는데 표시는 "실행 중"이고,
+    ``WebRenderer.worker_is_busy`` 가 영원히 True 라 idle self-reap
+    (``--idle-timeout``)이 발동하지 않는다.
+    """
+
+    def test_deliveries_never_overlap(self):
+        """겹치지 않는 것이 '읽고 쓰기'가 안전한 근거다."""
+        overlap = []
+        inside = threading.Lock()
+
+        def on_change():
+            if not inside.acquire(blocking=False):
+                overlap.append(1)
+                return
+            try:
+                time.sleep(0.01)  # 겹칠 기회를 준다
+            finally:
+                inside.release()
+
+        gate = threading.Event()
+        reg = TurnRegistry(
+            lambda t: gate.wait(timeout=5), max_concurrent=4, on_change=on_change
+        )
+        for i in range(4):
+            reg.submit(f"m{i}")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 4 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        gate.set()  # 넷을 동시에 완료시켜 배달을 몰아친다
+        assert reg.wait_idle(timeout=5)
+        time.sleep(0.2)  # 마지막 배달까지 흘려보낸다
+        assert overlap == [], "on_change 배달이 겹쳤다"
+
+    def test_last_delivered_count_is_the_settled_one(self):
+        """빈 레지스트리 위에서 마지막 배달은 반드시 0 이어야 한다."""
+        box: dict = {}
+        delivered: list[int] = []
+
+        def on_change():
+            n = box["reg"].active_count()
+            time.sleep(0.005)  # 읽기→쓰기 사이 선점 창을 넓힌다
+            delivered.append(n)
+
+        gate = threading.Event()
+        reg = TurnRegistry(
+            lambda t: gate.wait(timeout=5), max_concurrent=4, on_change=on_change
+        )
+        box["reg"] = reg
+        for i in range(4):
+            reg.submit(f"m{i}")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 4 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        gate.set()
+        assert reg.wait_idle(timeout=5)
+        time.sleep(0.3)
+        assert delivered, "on_change 가 한 번도 안 불렸다"
+        assert delivered[-1] == 0, f"낡은 카운트가 최종값으로 굳었다: {delivered}"
+
+    def test_renderer_returns_to_idle_so_the_reaper_can_fire(self):
+        """실제 소비자(WebRenderer)로 본 같은 계약 — 이게 깨지면 뷰어가 없는
+        세션이 ``--idle-timeout`` 으로 영원히 거둬지지 않는다."""
+        from agent_cli.render.web import WebRenderer
+
+        renderer = WebRenderer()
+        box: dict = {}
+        reg = TurnRegistry(
+            lambda t: box["gate"].wait(timeout=5),
+            max_concurrent=4,
+            on_change=lambda: renderer.set_active_turns(
+                box["reg"].active_count(), box["reg"].pending_count()
+            ),
+        )
+        box["reg"] = reg
+        box["gate"] = threading.Event()
+        for i in range(4):
+            reg.submit(f"m{i}")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 4 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert renderer.worker_is_busy() is True
+        box["gate"].set()
+        assert reg.wait_idle(timeout=5)
+        time.sleep(0.3)
+        assert renderer.worker_is_busy() is False, "빈 세션이 busy 로 굳었다"
+
+
 class TestShutdown:
     def test_shutdown_stops_and_drains(self):
         block = threading.Event()

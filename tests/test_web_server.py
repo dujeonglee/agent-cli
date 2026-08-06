@@ -1245,6 +1245,64 @@ class TestStopEndpoint:
         assert ev.is_set()
 
 
+class TestStopAllParallel:
+    """A1: 병렬 모드에서 ``/api/stop`` 은 활성 턴 **전부**를 중단시킨다.
+
+    단일 슬롯인 ``set_stop_handle`` 로는 동시 턴 N개를 표현할 수 없어
+    ``set_stop_all`` 훅이 따로 있다. 직렬 세션에서는 아무도 걸지 않으므로
+    ``trigger_stop`` 이 종전 경로 그대로 간다."""
+
+    def test_stop_all_hook_interrupts_every_turn(self, server_and_client):
+        import time
+
+        from agent_cli.loop.turns import TurnRegistry
+
+        server, _renderer, client = server_and_client
+        reg = TurnRegistry(lambda t: t.stop_event.wait(timeout=5), max_concurrent=3)
+        server.set_stop_all(reg.interrupt_all)
+        reg.submit("a", conn_id="c1")
+        reg.submit("b", conn_id="c2")
+        deadline = time.monotonic() + 5
+        while reg.active_count() < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        resp = client.post("/api/stop?token=testtoken")
+        assert resp.status_code == 200
+        assert resp.json()["stopped"] is True
+        assert reg.wait_idle(timeout=5), "일부 턴이 살아남았다"
+
+    def test_stop_all_reports_false_when_nothing_is_running(self, server_and_client):
+        """멱등 — 도는 턴이 없으면 '멈춘 것 없음'."""
+        from agent_cli.loop.turns import TurnRegistry
+
+        server, _renderer, client = server_and_client
+        reg = TurnRegistry(lambda t: None)
+        server.set_stop_all(reg.interrupt_all)
+        assert client.post("/api/stop?token=testtoken").json()["stopped"] is False
+
+    def test_stop_all_wins_over_the_serial_handle(self, server_and_client):
+        """병렬 세션에는 단일 슬롯이 배선되지 않지만, 남아 있더라도 전역
+        정지가 우선이어야 한다 — 한 턴만 멈추고 나머지가 계속 도는 것이
+        '전부 멈춰'의 답일 수는 없다."""
+        server, _renderer, _client = server_and_client
+        ev = threading.Event()
+        server.set_stop_handle(ev)
+        calls = []
+        server.set_stop_all(lambda: (calls.append(1), 2)[1])
+        assert server.trigger_stop() is True
+        assert calls == [1]
+        assert not ev.is_set()  # 단일 슬롯 경로를 타지 않았다
+
+    def test_clearing_the_hook_restores_the_serial_path(self, server_and_client):
+        server, _renderer, _client = server_and_client
+        server.set_stop_all(lambda: 0)
+        server.set_stop_all(None)
+        ev = threading.Event()
+        server.set_stop_handle(ev)
+        assert server.trigger_stop() is True
+        assert ev.is_set()
+
+
 # ── pick_port (8080-preferred, OS-fallback) ───────
 
 
@@ -3335,6 +3393,30 @@ class TestSpectatingOffByDefault:
         # a missing query param could accidentally match.
         server = WebServer(WebRenderer(), token="t", view_token="")
         assert server.view_token is None
+
+    def test_identical_tokens_resolve_as_full_control(self):
+        """이것이 CLI 가 ``--view-token == --token`` 을 exit 2 로 막는 이유다.
+
+        ``_token_role`` 은 full 을 **먼저** 검사하므로 같은 문자열을 두 역할에
+        주면 관전 링크가 조용히 전권을 나눠준다 — 읽기 전용이 아닌 관전 URL 은
+        아예 없는 것보다 나쁘다. 서버 계층에서 이 우선순위를 바꾸는 '수정'은
+        trust-local 주입(항상 전권 토큰)을 깨뜨리므로, 방어는 CLI 게이트가
+        맡는다. 이 테스트는 그 분업이 유지되는지를 고정한다.
+        """
+        server = WebServer(WebRenderer(), token="same", view_token="same")
+        assert server._token_role("same") == "full"
+        # 전권으로 해석되므로 mutation 이 통과한다 = 관전 링크가 전권 링크다.
+        server._require_token("same")  # raises nothing
+
+    def test_distinct_tokens_keep_the_read_only_split(self):
+        server = WebServer(WebRenderer(), token="full-t", view_token="view-t")
+        assert server._token_role("full-t") == "full"
+        assert server._token_role("view-t") == "view"
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            server._require_token("view-t")
+        assert exc.value.status_code == 403
 
 
 class TestSpectatorCounts:
