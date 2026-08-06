@@ -1833,8 +1833,9 @@ def web(
         "--turn-metrics/--no-turn-metrics",
         help="Append concurrency events (turn enqueue/dispatch/first-token/"
         "complete, lock wait/acquire/release, compaction begin/commit, "
-        "rejects) to {session_dir}/turns.jsonl for benchmarking. Structural "
-        "metadata only — no prompt/response text. Default off.",
+        "rejects, per-call token usage) to {session_dir}/turns.jsonl for "
+        "benchmarking. Structural metadata only — no prompt/response text. "
+        "Default off.",
     ),
 ) -> None:
     """Start an LAN web UI for the agent loop.

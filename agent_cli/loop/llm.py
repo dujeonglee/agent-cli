@@ -182,6 +182,18 @@ class LLMCaller:
                 self.ctx.reconcile_actual_tokens(
                     response.usage.total_input_tokens, system_tokens=sys_tokens
                 )
+            # M2 계측(P6): 콜 1건의 토큰 사용량 — N-병렬의 실효 토큰 비용을
+            # 실측하는 유일한 소스다(usage 는 어디에도 영속되지 않으므로).
+            # depth 를 실어 서브에이전트 콜을 분석에서 구분한다.
+            if response.usage:
+                turn_metrics.emit(
+                    "llm_call",
+                    turn_id=self.cfg.origin_turn or None,
+                    depth=self.cfg.depth or None,
+                    input_tokens=response.usage.total_input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    cache_read_tokens=response.usage.cache_read_input_tokens or None,
+                )
             # A successful call means we're no longer in overflow for this
             # turn — reset the counter so a later turn gets a fresh budget
             # of shrink-and-retry attempts.

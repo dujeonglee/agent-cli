@@ -301,7 +301,7 @@ agent-cli 인스턴스 하나를 단일 세션으로 LAN에 노출. 자동 토�
 | `--max-concurrent-turns` | `parallel` 일 때 동시 inflight 턴 상한. | `4` |
 | `--per-user-gate` | `parallel` 일 때 **사용자(연결)당 1활성턴** — 한 사람의 연속 제출은 첫 턴이 끝날 때까지 대기하고 그동안 **다른 사용자가 슬롯을 얻습니다**(독식 방지). `--no-per-user-gate` 는 벤치마크 전용(순수 FIFO+cap — 한 사용자가 cap 을 독식할 수 있음). | 켜짐 |
 | `--lock-scope` | **부수효과 직렬화 범위.** `conflict` = 충돌하는 효과만 직렬(같은 파일, 또는 셸/삭제) — **다른 파일은 그대로 병렬**. `workspace` = 모든 효과를 직렬(가장 안전하지만 병렬 이점 대부분 상실). `off` = 잠그지 않음. 미지정 시 `parallel` 이면 `conflict`, 아니면 `off`(오늘 동작). | 계약에 따름 |
-| `--turn-metrics` | **동시성 계측 (M2, opt-in).** 턴 생명주기(enqueue/dispatch/first_token/complete/interrupt)·효과 락 대기(enqueue/acquire/release)·압축(begin/commit/stale)·거부(reject) 이벤트를 `{session_dir}/turns.jsonl` 에 추가 기록 — TTFT·락 대기·공정성 벤치마크의 데이터 소스. 구조 메타데이터만 기록하며 프롬프트/응답 본문은 포함하지 않습니다. | `--no-turn-metrics` |
+| `--turn-metrics` | **동시성 계측 (M2, opt-in).** 턴 생명주기(enqueue/dispatch/first_token/complete/interrupt)·효과 락 대기(enqueue/acquire/release)·압축(begin/commit/stale)·거부(reject)·**콜별 토큰 사용량(llm_call — 입력/출력/캐시 토큰)** 이벤트를 `{session_dir}/turns.jsonl` 에 추가 기록 — TTFT·락 대기·공정성·토큰 비용 벤치마크의 데이터 소스. 구조 메타데이터만 기록하며 프롬프트/응답 본문은 포함하지 않습니다. | `--no-turn-metrics` |
 
 > 브라우저 자동 오픈은 **로컬 bind 일 때만** 일어납니다 — 기본 `0.0.0.0`(과 `127.0.0.1`/`localhost`/`::`/`::1`)처럼 *이 머신에서 localhost 로 접속 가능한* 경우. `--host <원격IP>` 처럼 특정 IP 에 바인드하면(원격 서버) 자동 오픈을 생략하고 접속 URL 만 출력합니다(서버에서 브라우저를 띄워봐야 소용없으므로). `--no-browser` 는 로컬에서도 끄고 싶을 때.
 

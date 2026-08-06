@@ -291,3 +291,76 @@ class TestContextEvents:
         assert commits[0]["duration_ms"] >= 0
         # begin 과 commit 의 세대가 같은 압축 패스를 가리킨다
         assert commits[0]["generation"] == begins[0]["generation"]
+
+
+class TestLlmCallUsageEvent:
+    """P6: llm_call usage 이벤트 — 실측 토큰 비용의 데이터 소스."""
+
+    def test_llm_call_event_recorded_with_usage(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse, TokenUsage
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        turn_metrics.enable(tmp_path)
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_thinking=False,
+            thinking_budget=0,
+        )
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(
+            content='[{"action": "complete", "result": "ok"}]',
+            usage=TokenUsage(input_tokens=1234, output_tokens=56),
+        )
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=1_000_000)
+        run_loop(
+            query="hello",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            ctx=ctx,
+            record_turns=False,
+            origin_turn="t9",
+        )
+        events = _read_events(tmp_path)
+        calls = [e for e in events if e["event"] == "llm_call"]
+        assert len(calls) == 1
+        assert calls[0]["turn_id"] == "t9"
+        assert calls[0]["input_tokens"] == 1234
+        assert calls[0]["output_tokens"] == 56
+        assert "cache_read_tokens" not in calls[0]  # 0 → 생략
+        assert "depth" not in calls[0]  # depth 0 → 생략
+
+    def test_no_usage_no_event(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from agent_cli.context.manager import ContextManager
+        from agent_cli.loop import run_loop
+        from agent_cli.providers.base import LLMResponse
+        from agent_cli.providers.capabilities import ModelCapabilities
+
+        turn_metrics.enable(tmp_path)
+        caps = ModelCapabilities(
+            context_window=32768,
+            max_output_tokens=4096,
+            supports_thinking=False,
+            thinking_budget=0,
+        )
+        provider = MagicMock()
+        provider.call.return_value = LLMResponse(
+            content='[{"action": "complete", "result": "ok"}]'
+        )
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=1_000_000)
+        run_loop(
+            query="hello",
+            provider=provider,
+            capabilities=caps,
+            model="test-model",
+            ctx=ctx,
+            record_turns=False,
+        )
+        assert [e for e in _read_events(tmp_path) if e["event"] == "llm_call"] == []
