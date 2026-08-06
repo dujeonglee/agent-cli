@@ -1,0 +1,52 @@
+{
+  "users": 3,
+  "phases": 4,
+  "rounds_per_phase": 17,
+  "turns_sent": 204,
+  "resumes": 3,
+  "queries_recorded": 204,
+  "queries_lost": 0,
+  "query_ids_unique_across_resumes": true,
+  "phase_reports": [
+    {
+      "phase": 1,
+      "sent_cumulative": 51,
+      "queries_recorded": 51,
+      "query_ids_unique": true,
+      "compact_committed_cumulative": 1,
+      "compact_stale_cumulative": 0,
+      "compact_failed_cumulative": 0,
+      "max_tokens_after": 2610
+    },
+    {
+      "phase": 2,
+      "sent_cumulative": 102,
+      "queries_recorded": 102,
+      "query_ids_unique": true,
+      "compact_committed_cumulative": 4,
+      "compact_stale_cumulative": 0,
+      "compact_failed_cumulative": 0,
+      "max_tokens_after": 2610
+    },
+    {
+      "phase": 3,
+      "sent_cumulative": 153,
+      "queries_recorded": 153,
+      "query_ids_unique": true,
+      "compact_committed_cumulative": 6,
+      "compact_stale_cumulative": 1,
+      "compact_failed_cumulative": 0,
+      "max_tokens_after": 2610
+    },
+    {
+      "phase": 4,
+      "sent_cumulative": 204,
+      "queries_recorded": 204,
+      "query_ids_unique": true,
+      "compact_committed_cumulative": 10,
+      "compact_stale_cumulative": 2,
+      "compact_failed_cumulative": 0,
+      "max_tokens_after": 2610
+    }
+  ]
+}

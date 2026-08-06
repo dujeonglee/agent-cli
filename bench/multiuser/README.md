@@ -16,7 +16,10 @@
 | `e1_ablation.py` | **P3/N2**: 효과 락 ablation — lock{off,workspace,conflict} × 동일 파일 동시 쓰기. 위반 = 두 마커 공존(mixed). 본류의 손상 메커니즘은 truncate/write 인터리브(포크는 스트림 인터리브 — One Contract, Two Runtimes) |
 | `n1_compaction.py` | **N1**: 동시 턴 하의 낙관적 압축 — 압축 무락 구간 안에서 타 턴 이벤트 지속(가용성), stale 재시도 수, 질의 유실 0 + 귀속 정합(정확성) |
 | `n3_attribution.py` | **N3**: 병렬 귀속 정확도 — 마커 왕복 검사로 오귀속률 측정(가설: 0) |
-| `p4_fairness.py` | **P4**: per-user 공정성 — 플러더 1 + 단기 N, Jain index / 대기 분포 / per-user 동시 활성 위반 0 |
+| `p4_fairness.py` | **P4**: per-user 공정성 — 게이트 on/off 두 팔(`--no-per-user-gate` ablation), 단기 사용자 대기 절대값 대조 |
+| `p2_grid.py` | **P2**: 붕괴 경계 — 쓰기 횟수·충돌·락 스코프 그리드(+ 셸 팔은 out/p2-shell-arms.json). 붕괴는 배타 효과의 **시간 비중** 함수 |
+| `p6_real_llm.py` | **P6**: 실 LLM(온프렘, `AGENT_CLI_*` env) — HOL 순위 보존 스팟체크 + 같은 3-메시지 워크로드의 직렬 vs 병렬 토큰 계정(`llm_call` usage 이벤트) |
+| `p7_lifecycle.py` | **P7**: 장기 세션 — 3 사용자 204턴, 페이즈 사이 서버 종료→`--resume` 재개 ×3. 보존 100%·id 전역 유일·압축 유계 지속 |
 | `out/` | 커밋되는 원시 데이터 + 요약 (재현 가능성 규약 — 포크와 동일) |
 
 ## 실행

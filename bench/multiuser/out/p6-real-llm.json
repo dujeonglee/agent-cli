@@ -1,0 +1,85 @@
+{
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "hol_spot": [
+    {
+      "contract": "serial",
+      "n": 5,
+      "bTtft_p50": 27803.7,
+      "bTtft_all": [
+        27787.7,
+        27792.4,
+        27896.6,
+        27803.7,
+        27967.3
+      ]
+    },
+    {
+      "contract": "parallel",
+      "n": 5,
+      "bTtft_p50": 7044.5,
+      "bTtft_all": [
+        7001.0,
+        7044.5,
+        6945.9,
+        8361.8,
+        8574.0
+      ]
+    }
+  ],
+  "token_cost": [
+    {
+      "contract": "serial",
+      "n": 3,
+      "input_tokens_p50": 15563.0,
+      "output_tokens_p50": 166.0,
+      "llm_calls_p50": 2.0,
+      "reps": [
+        {
+          "rep": 1,
+          "llm_calls": 2,
+          "input_tokens": 15547,
+          "output_tokens": 142
+        },
+        {
+          "rep": 2,
+          "llm_calls": 2,
+          "input_tokens": 15618,
+          "output_tokens": 209
+        },
+        {
+          "rep": 3,
+          "llm_calls": 2,
+          "input_tokens": 15563,
+          "output_tokens": 166
+        }
+      ]
+    },
+    {
+      "contract": "parallel",
+      "n": 3,
+      "input_tokens_p50": 23188.0,
+      "output_tokens_p50": 281.0,
+      "llm_calls_p50": 3.0,
+      "reps": [
+        {
+          "rep": 1,
+          "llm_calls": 3,
+          "input_tokens": 23188,
+          "output_tokens": 285
+        },
+        {
+          "rep": 2,
+          "llm_calls": 3,
+          "input_tokens": 23188,
+          "output_tokens": 281
+        },
+        {
+          "rep": 3,
+          "llm_calls": 3,
+          "input_tokens": 23185,
+          "output_tokens": 281
+        }
+      ]
+    }
+  ]
+}

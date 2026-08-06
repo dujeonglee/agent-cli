@@ -1,5 +1,10 @@
 # 유스케이스·성능 실험 계획 (논문 초안 07 대응)
 
+> **진행 상태 (2026-08-06 갱신): P1–P7 본류 실행 완료, P8 이월.**
+> 실행 자산은 `agent-cli/bench/multiuser/`(러너)와 `bench/multiuser/out/`(원시 데이터), 결과는 논문 v0.3(`09-full-paper-draft.md` §6.3, §6.5–6.10) 반영.
+> - P1(=e2_hol) 기울기 1.02/1.008/0.000 · P2 붕괴=배타 효과 시간 비중(셸 90% → 1.10) · P3(=e1_ablation) off 8.2%→락 0% · P4 게이트 on/off 76ms vs 1807ms · P5 는 M5 단위테스트+per-turn 인터럽트 스모크로 갈음(통계 200회 확장은 잔여) · P6 실 LLM 순위 보존+토큰 계정 · P7 204턴×재개 3회 보존 100%·압축 유계.
+> - **P8 이월 (계획 원문의 "논문 2 이월 판단" 확정)**: 본 실험 환경에 docker 미가용이라 SWE-bench 공식 평가(해결률)가 불가하고, 계획서 스스로 "인간 요인 개입 시 파일럿 스터디"로 격하됨을 경고했다. 스크립트화 2-역할 시뮬레이션은 해결률 없이 조작 지표만 남아 논문 1 기여가 되지 못한다 — 사용자 연구(논문 2, S1–S3)와 함께 수행한다.
+
 > 작성일: 2026-08-05. 목적: `07-new-paper-draft.md`의 §6(Evaluation)·§7(Discussion)을 뒷받침할 유스케이스 정의와 실험 설계.
 > 기존 자산: `Aidit-Code/backend/bench/`(mockLlm, e2-hol, e1-ablation, render-cdf, 원자료 19파일), `LOCK_SCOPE` 롤백 스위치, STUB_MODE, agent-cli SWE-bench 하네스.
 

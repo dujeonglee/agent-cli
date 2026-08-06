@@ -100,16 +100,29 @@ class AgentServer:
     def __init__(
         self,
         workspace: Path,
-        mock_port: int,
+        mock_port: int | None,
         *,
         contract: str = "serial",
         lock_scope: str | None = None,
         max_turns: int = 4,
         extra: list[str] | None = None,
+        resume: str | None = None,
+        real_llm: dict | None = None,
     ):
+        """``mock_port`` 대신 ``real_llm={"model","base_url","api_key"}`` 를
+        주면 실 LLM 을 향한다(P6). ``resume`` 은 같은 워크스페이스의 기존
+        세션 id 로 재기동한다(P7 suspend→resume)."""
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.port = free_port()
+        if real_llm is not None:
+            model = real_llm["model"]
+            base_url = real_llm["base_url"]
+            api_key = real_llm["api_key"]
+        else:
+            model = "bench-mock"
+            base_url = f"http://127.0.0.1:{mock_port}/v1"
+            api_key = "bench"
         args = [
             str(AGENT_BIN),
             "web",
@@ -121,11 +134,11 @@ class AgentServer:
             TOKEN,
             "--no-browser",
             "-m",
-            "bench-mock",
+            model,
             "--base-url",
-            f"http://127.0.0.1:{mock_port}/v1",
+            base_url,
             "--api-key",
-            "bench",
+            api_key,
             "--concurrency-contract",
             contract,
             "--max-concurrent-turns",
@@ -134,18 +147,20 @@ class AgentServer:
         ]
         if lock_scope is not None:
             args += ["--lock-scope", lock_scope]
+        if resume is not None:
+            args += ["--resume", resume]
         args += extra or []
         # env 로 provider 설정을 공급한다 — 이 프로젝트의 운용 환경은 홈
         # config.json 없이 AGENT_CLI_* env 로 돌므로, 지우기만 하면 설정
         # 부재로 셋업 위저드가 떠서 부팅이 멈춘다. 플래그(-m/--base-url)가
-        # env 보다 우선하므로 값 자체는 어차피 목 LLM 으로 고정된다.
+        # env 보다 우선하므로 값 자체는 어차피 위 provider 로 고정된다.
         env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_CLI_")}
         env.update(
             {
                 "AGENT_CLI_PROVIDER": "openai",
-                "AGENT_CLI_BASE_URL": f"http://127.0.0.1:{mock_port}/v1",
-                "AGENT_CLI_API_KEY": "bench",
-                "AGENT_CLI_MODEL": "bench-mock",
+                "AGENT_CLI_BASE_URL": base_url,
+                "AGENT_CLI_API_KEY": api_key,
+                "AGENT_CLI_MODEL": model,
                 # HOME 격리: 벤치가 사용자 ~/.agent-cli(models.json 능력치
                 # 자동 저장 등)를 읽지도 쓰지도 않게 한다 — 재현성 + 무오염.
                 "HOME": str(self.workspace),
@@ -225,6 +240,46 @@ class AgentServer:
     def wait_completes(self, count: int, *, timeout: float = 300.0) -> list[dict]:
         """``phase=complete`` 이벤트가 count 개 쌓일 때까지 대기 후 전체 반환."""
         return self.wait_completes_since(0, count, timeout=timeout)
+
+    def wait_quiescent(
+        self,
+        *,
+        min_completes: int = 1,
+        settle_s: float = 5.0,
+        timeout: float = 600.0,
+    ) -> list[dict]:
+        """워커가 놀고 이벤트가 더 안 자랄 때까지 대기 후 전체 이벤트 반환.
+
+        complete 계수 대기가 안 통하는 경우용 — 직렬 계약은 mid-run 주입으로
+        뒤 메시지가 앞 런에 흡수돼 worker 수준 complete 가 메시지 수보다
+        적을 수 있다. 판정: health busy=false AND 이벤트 수가 settle_s 동안
+        불변 AND complete ≥ min_completes."""
+        deadline = time.monotonic() + timeout
+        stable_since = None
+        last_n = -1
+        while time.monotonic() < deadline:
+            try:
+                _, body = _http(f"{self.base}/api/health?token={TOKEN}", timeout=5.0)
+                busy = json.loads(body).get("busy", True)
+            except (urllib.error.URLError, OSError, json.JSONDecodeError):
+                busy = True
+            evs = self.events()
+            n = len(evs)
+            completes = sum(
+                1
+                for e in evs
+                if e.get("event") == "turn" and e.get("phase") == "complete"
+            )
+            if not busy and n == last_n and completes >= min_completes:
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                elif time.monotonic() - stable_since >= settle_s:
+                    return evs
+            else:
+                stable_since = None
+            last_n = n
+            time.sleep(1.0)
+        raise RuntimeError("timed out waiting for quiescence")
 
     def wait_completes_since(
         self, offset: int, count: int, *, timeout: float = 300.0
