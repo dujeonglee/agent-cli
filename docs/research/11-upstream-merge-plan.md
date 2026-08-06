@@ -1,5 +1,9 @@
 # Coagora → agent-cli 본류 병합 계획 (Upstream Merge Plan)
 
+> **진행 상태 (2026-08-06 갱신): M1–M5 + M2 전부 본류 커밋 완료.**
+> `e1d5e011`(M1) → `91da8d3f`(fsio append 직렬화) → `a453a03c`(ctx 원자 커밋+낙관적 압축) → `c61552f7`(M3/A1 병렬 턴 코어) → `64d86d7e`(M4 효과 락) → `cee1381c`(M5 공정 큐+턴 인터럽트) → `2c725a85`(M2 계측+거부 게이트).
+> 아래 §5 의 "M3 2–3주 임계 경로" 추정은 이행 전 계획이며 실제로는 완료됨 — **P1–P5 전부 본류에서 실행 가능한 상태**다. 남은 것: M0 문서화(REQUIREMENTS.md), 벤치 하네스(`bench/multiuser/`), M6(선택). §2 M3-(ii) 의 "동시 턴 중 압축 금지" 게이트는 실제 구현에서 **낙관적 3단계 압축**(무락 요약 + 세대 재검증 커밋)으로 대체·개선되었다 (`a453a03c`, `agent_cli/context/manager.py:_compact`).
+
 > 작성일: 2026-08-05. 전제: **agent-cli = 본류(mainline, Python)**, **Coagora(구 Aidit-Code) = 포크(TypeScript/Node)**.
 > Coagora는 본류에서 갈라져 나와 "다중 사용자 병렬 턴" 기능군을 먼저 개발·실측 검증한 실험 분기다. 본 문서는 그 기능군을 본류로 **역병합(merge back)** 하는 절차를 정의한다.
 > 격차 사실관계는 [`10-agent-cli-gap-analysis.md`](10-agent-cli-gap-analysis.md) §1–2, 실험 요구는 [`08-usecase-performance-experiment-plan.md`](08-usecase-performance-experiment-plan.md) 참조.
