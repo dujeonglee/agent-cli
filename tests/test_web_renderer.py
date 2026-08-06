@@ -2535,3 +2535,199 @@ class TestScopeNesting:
         r = WebRenderer()
         r.begin_scope(task_id="sk", kind="skill", label="o")
         assert self._starts(r)[-1]["ts"] > 0  # emit-time stamp, as before
+
+
+# ── seq cursor + incremental reconnect replay ────────────────────────
+
+
+class TestSeqCursor:
+    """Every persistent event is stamped with a monotonic ``seq`` at the
+    buffer-load point, and ``register_connection(after=…)`` replays only what
+    a reconnecting client missed. Transient events are unstamped — a client's
+    cursor must stay pinned to the last event replay can actually reproduce."""
+
+    def test_persistent_events_are_stamped_gapless(self):
+        r = WebRenderer()
+        for i in range(4):
+            r.push_user_message(f"m{i}")
+        assert [d.seq for _, d in r._event_buffer] == [1, 2, 3, 4]
+        assert r.last_seq == 4
+
+    def test_transient_events_carry_no_seq(self):
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.stream_chunk("tok")
+        event, data = _qget(conn)
+        assert event == "stream_chunk"
+        assert getattr(data, "seq", None) is None
+        assert r.last_seq == 0  # transient does not advance the cursor
+
+    def test_live_delivery_carries_the_same_seq_as_the_buffer(self):
+        # The buffered entry and the fan-out payload are ONE object, so a
+        # viewer that stayed connected and a viewer replaying later agree on
+        # the cursor of a given event.
+        r = WebRenderer()
+        conn = WebConnection(id="c1")
+        r.register_connection(conn)
+        r.push_user_message("hello")
+        _, live = _qget(conn)
+        buffered = r._event_buffer[-1][1]
+        assert live.seq == buffered.seq == 1
+
+    def test_incremental_replay_returns_only_newer_events(self):
+        r = WebRenderer()
+        for i in range(5):
+            r.push_user_message(f"m{i}")
+        snap = r.register_connection(WebConnection(id="c1"), after=2)
+        replayed = [d for e, d in snap if e == "user_message"]
+        assert [d["content"] for d in replayed] == ["m2", "m3", "m4"]
+        assert [d.seq for d in replayed] == [3, 4, 5]
+        assert "replay_reset" not in [e for e, _ in snap]
+        assert "transcript_truncated" not in [e for e, _ in snap]
+
+    def test_incremental_replay_keeps_identity_and_sticky(self):
+        # Latest-value state is replayed on BOTH paths: while disconnected the
+        # client may have missed the newest worker_state / queue / ready.
+        r = WebRenderer()
+        r.push_user_message("m0")
+        r.worker_busy()
+        r.queue_state([{"id": "1", "nickname": "n", "conn_id": "x", "text": "t"}])
+        snap = r.register_connection(WebConnection(id="c1"), after=1)
+        events = [e for e, _ in snap]
+        assert events[0] == "identity"
+        assert "worker_state" in events and "queue" in events and "viewers" in events
+
+    def test_boundary_cursor_replays_the_whole_buffer(self):
+        r = WebRenderer()
+        for i in range(3):
+            r.push_user_message(f"m{i}")
+        snap = r.register_connection(WebConnection(id="c1"), after=0)
+        assert [d["content"] for e, d in snap if e == "user_message"] == [
+            "m0",
+            "m1",
+            "m2",
+        ]
+        assert "replay_reset" not in [e for e, _ in snap]
+
+    def test_attribution_survives_incremental_replay(self):
+        # A replayed event must keep the fields the frontend routes on —
+        # otherwise a resumed transcript loses which turn a card belongs to.
+        r = WebRenderer()
+        r.push_user_message("m0")
+        r.begin_scope(task_id="t7", kind="run", label="code-analyst")
+        try:
+            r.final("from the sub-agent", turn=3)
+        finally:
+            r.end_scope(task_id="t7", kind="run")
+        snap = r.register_connection(WebConnection(id="c1"), after=2)
+        card = next(d for e, d in snap if e == "assistant_turn")
+        assert card["task_id"] == "t7"
+        assert card["turn"] == 3
+
+    def test_no_cursor_replays_everything_without_reset(self):
+        r = WebRenderer()
+        r.push_user_message("m0")
+        snap = r.register_connection(WebConnection(id="c1"))
+        assert "replay_reset" not in [e for e, _ in snap]
+        assert [d["content"] for e, d in snap if e == "user_message"] == ["m0"]
+
+    def test_trimmed_cursor_falls_back_to_full_snapshot(self, monkeypatch):
+        import agent_cli.render.web as web_mod
+
+        monkeypatch.setattr(web_mod, "_EVENT_BUFFER_MAX", 3)
+        r = WebRenderer()
+        for i in range(6):
+            r.push_user_message(f"m{i}")  # seq 1..6, only 4..6 survive
+        snap = r.register_connection(WebConnection(id="c1"), after=1)
+        events = [e for e, _ in snap]
+        assert events[0] == "identity"
+        assert events[1] == "replay_reset"  # ahead of every replayed event
+        assert "transcript_truncated" in events
+        assert [d["content"] for e, d in snap if e == "user_message"] == [
+            "m3",
+            "m4",
+            "m5",
+        ]
+
+    def test_cursor_ahead_of_us_falls_back(self):
+        # A cursor we never issued (client from a previous process whose epoch
+        # somehow parsed, or a fabricated header) must not silently replay
+        # nothing — that would leave the client staring at a stale transcript.
+        r = WebRenderer()
+        r.push_user_message("m0")
+        snap = r.register_connection(WebConnection(id="c1"), after=99)
+        assert "replay_reset" in [e for e, _ in snap]
+        assert [d["content"] for e, d in snap if e == "user_message"] == ["m0"]
+
+    def test_foreign_cursor_falls_back_on_an_empty_buffer(self):
+        # Restart-into-empty-session: nothing to replay, but the client still
+        # has the OLD session on screen and must be told to drop it.
+        r = WebRenderer()
+        snap = r.register_connection(WebConnection(id="c1"), after=-1)
+        assert "replay_reset" in [e for e, _ in snap]
+
+    def test_two_connections_observe_the_same_order(self):
+        # Concurrent emitters (the parallel contract's per-turn threads) must
+        # not be able to hand out seq in one order and buffer in another.
+        r = WebRenderer()
+        a, b = WebConnection(id="a"), WebConnection(id="b")
+        r.register_connection(a)
+        r.register_connection(b)
+
+        def emit(tag):
+            for i in range(25):
+                r.push_user_message(f"{tag}{i}")
+
+        threads = [threading.Thread(target=emit, args=(t,)) for t in ("x", "y")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        def drain(conn):
+            out = []
+            while True:
+                try:
+                    event, data = conn.queue.get(timeout=0.2)
+                except Exception:
+                    return out
+                if event == "user_message":
+                    out.append((data.seq, data["content"]))
+
+        seen_a, seen_b = drain(a), drain(b)
+        assert len(seen_a) == 50
+        assert seen_a == seen_b  # same (seq, event) sequence for both viewers
+        assert [s for s, _ in seen_a] == sorted(s for s, _ in seen_a)
+        assert [s for s, _ in seen_a] == [d.seq for _, d in r._event_buffer]
+
+
+class TestParseCursor:
+    """Wire cursor → replay position. The epoch guard is what makes a restart
+    (or ``--resume``) force a clean reload instead of splicing a new session's
+    events onto the old transcript."""
+
+    def test_none_and_blank_mean_no_cursor(self):
+        r = WebRenderer()
+        assert r.parse_cursor(None) is None
+        assert r.parse_cursor("") is None
+        assert r.parse_cursor("   ") is None
+
+    def test_epoch_qualified_cursor(self):
+        r = WebRenderer()
+        assert r.parse_cursor(f"{r.stream_epoch}:12") == 12
+
+    def test_bare_cursor_is_read_as_this_epoch(self):
+        r = WebRenderer()
+        assert r.parse_cursor("7") == 7
+
+    def test_foreign_epoch_is_refused(self):
+        r = WebRenderer()
+        other = WebRenderer()
+        assert r.stream_epoch != other.stream_epoch
+        assert r.parse_cursor(f"{other.stream_epoch}:12") == -1
+
+    def test_garbage_is_refused(self):
+        r = WebRenderer()
+        assert r.parse_cursor("not-a-number") == -1
+        assert r.parse_cursor(f"{r.stream_epoch}:-3") == -1

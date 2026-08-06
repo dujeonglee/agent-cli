@@ -1467,6 +1467,24 @@
     scrollToBottom();
   });
 
+  // Reconnect replay is incremental by default: the browser hands its last
+  // SSE id back as ``Last-Event-ID`` and the server sends only what came
+  // after it, so the transcript continues in place. ``replay_reset`` means
+  // the server could NOT honour that cursor — the session restarted (fresh
+  // seq space) or the replay buffer has already moved past it — and a full
+  // replay follows. Wipe the timeline so that replay rebuilds it instead of
+  // doubling it. TeamView keeps its own state and dedups, so it is left alone.
+  es.addEventListener("replay_reset", function () {
+    $messages.innerHTML = "";
+    streamingCard = null;
+    streamingText = "";
+    [taskGroups, scopeParent, compactionLines].forEach(function (m) {
+      Object.keys(m).forEach(function (k) {
+        delete m[k];
+      });
+    });
+  });
+
   es.addEventListener("stream_chunk", function (e) {
     const d = JSON.parse(e.data);
     if (d.task_id && taskGroups[d.task_id]) {

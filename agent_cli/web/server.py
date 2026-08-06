@@ -2,7 +2,8 @@
 
 Endpoints:
   - ``GET  /api/health`` — liveness probe (no auth)
-  - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query)
+  - ``GET  /api/stream`` — SSE event stream (auth via ``token`` query;
+    ``Last-Event-ID`` / ``?after=`` resumes a dropped connection)
   - ``POST /api/input``  — submit chat message / ask answer / confirm reply
   - ``POST /api/abort``  — interrupt the current ``prompt_user`` / ``confirm``
   - ``POST /api/stop``   — stop the in-flight chat/skill/agent turn
@@ -328,28 +329,53 @@ class WebServer:
 
     # ─── Stream lifecycle ────────────────────────────────────
 
-    async def stream_events(self, conn: WebConnection):
+    def _sse_item(self, event: str, data) -> dict:
+        """One SSE frame for ``(event, data)``.
+
+        ``_emit`` payloads carry a pre-serialized ``json_str`` (dumped once at
+        the fan-out point); per-connection synthetics (identity / sticky /
+        viewers) are plain dicts — dump those here (a handful per connect, vs.
+        the whole buffer per reconnect before).
+
+        Persistent payloads also carry a replay cursor, which goes out as the
+        SSE ``id:`` field: a browser ``EventSource`` remembers the last one and
+        sends it back as ``Last-Event-ID`` on reconnect, which is what lets
+        ``stream_events`` resume instead of replaying from the top. Transient
+        events get no ``id``, so the client's cursor stays pinned to the last
+        event that is actually replayable.
+        """
+        payload = getattr(data, "json_str", None)
+        if payload is None:
+            payload = json.dumps(data, ensure_ascii=False)
+        item = {"event": event, "data": payload}
+        seq = getattr(data, "seq", None)
+        if seq is not None:
+            item["id"] = f"{self.renderer.stream_epoch}:{seq}"
+        return item
+
+    async def stream_events(self, conn: WebConnection, *, cursor: str | None = None):
         """Async generator feeding the SSE response.
 
         Yields the persistent buffer snapshot first (replay) then loops
         on the connection's queue for live events. Heartbeat comments
         keep proxies from closing the connection during idle periods.
 
+        ``cursor`` is the client's last received SSE id (``Last-Event-ID``
+        header, or the ``?after=`` fallback). With one, the opening replay is
+        limited to what the client missed; without one — or with one we can no
+        longer serve — it is the full buffer, and the renderer prefixes a
+        ``replay_reset`` so the client discards its stale transcript first.
+
         The ``__close__`` sentinel — pushed by
         ``WebRenderer.unregister_connection`` when the renderer side
         drops this connection — ends the loop promptly without waiting
         for the keep-alive timer.
         """
-        snapshot = self.renderer.register_connection(conn)
+        snapshot = self.renderer.register_connection(
+            conn, after=self.renderer.parse_cursor(cursor)
+        )
         for event, data in snapshot:
-            # ``_emit`` payloads carry a pre-serialized ``json_str`` (dumped
-            # once at the fan-out point); per-connection synthetics (identity /
-            # sticky / viewers) are plain dicts — dump those here (a handful
-            # per connect, vs. the whole buffer per reconnect before).
-            payload = getattr(data, "json_str", None)
-            if payload is None:
-                payload = json.dumps(data, ensure_ascii=False)
-            yield {"event": event, "data": payload}
+            yield self._sse_item(event, data)
 
         loop = asyncio.get_event_loop()
         try:
@@ -370,10 +396,7 @@ class WebServer:
                     # Sentinel from unregister — leave the loop without
                     # serialising to the client.
                     break
-                payload = getattr(data, "json_str", None)
-                if payload is None:
-                    payload = json.dumps(data, ensure_ascii=False)
-                yield {"event": event, "data": payload}
+                yield self._sse_item(event, data)
         finally:
             self.renderer.unregister_connection(conn)
 
@@ -1047,11 +1070,18 @@ def create_app(server: WebServer) -> FastAPI:
         )
 
     @app.get("/api/stream")
-    async def stream(token: str = Query(...)):
-        """SSE event stream. Token-authenticated; multi-viewer (all equal)."""
+    async def stream(request: Request, token: str = Query(...), after: str = Query("")):
+        """SSE event stream. Token-authenticated; multi-viewer (all equal).
+
+        A reconnecting client resumes where it left off: the browser sends its
+        last SSE id back in ``Last-Event-ID`` automatically, and only the
+        events past it are replayed. ``?after=<id>`` is the same cursor for
+        non-browser clients, which cannot set that header on a GET.
+        """
         server._require_token(token)
+        cursor = request.headers.get("last-event-id") or after or None
         conn = WebConnection(id=secrets.token_hex(8))
-        return EventSourceResponse(server.stream_events(conn))
+        return EventSourceResponse(server.stream_events(conn, cursor=cursor))
 
     @app.post("/api/agent/{key}/input")
     async def agent_input(key: str, request: Request, token: str = Query(...)):

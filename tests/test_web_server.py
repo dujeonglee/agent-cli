@@ -1442,6 +1442,162 @@ class TestStreamGenerator:
             await gen.aclose()
 
 
+@pytest.mark.asyncio
+class TestStreamCursor:
+    """Late-joiner replay is incremental: persistent events go out with an SSE
+    ``id:``, and a client that hands the last one back gets only what it
+    missed. ``replay_reset`` marks the fallback so a stale transcript is
+    dropped rather than doubled."""
+
+    async def _drain_snapshot(self, gen, limit: int = 40) -> list[dict]:
+        """Everything the generator yields before it would block on the live
+        queue — i.e. the opening replay."""
+        out: list[dict] = []
+        for _ in range(limit):
+            try:
+                out.append(await asyncio.wait_for(gen.__anext__(), timeout=0.25))
+            except (TimeoutError, asyncio.TimeoutError):
+                break
+        return out
+
+    async def test_persistent_event_carries_an_sse_id(self):
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="t")
+        renderer.push_user_message("hello")
+        gen = server.stream_events(WebConnection(id="c1"))
+        try:
+            snap = await self._drain_snapshot(gen)
+        finally:
+            await gen.aclose()
+        msg = next(e for e in snap if e["event"] == "user_message")
+        assert msg["id"] == f"{renderer.stream_epoch}:1"
+        # Synthetics (identity / viewers / sticky) are not replay positions.
+        assert "id" not in next(e for e in snap if e["event"] == "identity")
+
+    async def test_transient_event_gets_no_id(self):
+        # The cursor must stay pinned to the last REPLAYABLE event — stamping
+        # a stream_chunk would make the client ask to resume from an event the
+        # buffer cannot reproduce.
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="t")
+        conn = WebConnection(id="c1")
+        gen = server.stream_events(conn)
+        try:
+            # The first pull registers the connection; emit only then, so the
+            # chunk is waiting in the queue and no pull has to time out (a
+            # cancelled ``__anext__`` would kill the generator).
+            ident = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+            assert ident["event"] == "identity"
+            renderer.stream_chunk("tok")
+            while True:
+                ev = await asyncio.wait_for(gen.__anext__(), timeout=2.0)
+                if ev["event"] == "stream_chunk":
+                    break
+            assert "id" not in ev
+        finally:
+            await gen.aclose()
+
+    async def test_reconnect_replays_only_the_tail(self):
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="t")
+        renderer.push_user_message("before-1")
+        renderer.push_user_message("before-2")
+
+        first = WebConnection(id="c1")
+        gen = server.stream_events(first)
+        try:
+            snap = await self._drain_snapshot(gen)
+        finally:
+            await gen.aclose()
+        renderer.unregister_connection(first)  # the client's link drops
+        cursor = [e for e in snap if e["event"] == "user_message"][-1]["id"]
+
+        renderer.push_user_message("while-away")  # missed by the client
+
+        gen2 = server.stream_events(WebConnection(id="c2"), cursor=cursor)
+        try:
+            snap2 = await self._drain_snapshot(gen2)
+        finally:
+            await gen2.aclose()
+        events = [e["event"] for e in snap2]
+        assert "replay_reset" not in events
+        assert [
+            json.loads(e["data"])["content"]
+            for e in snap2
+            if e["event"] == "user_message"
+        ] == ["while-away"]
+
+    async def test_unservable_cursor_resets_then_replays_everything(self):
+        # A cursor minted by a PREVIOUS process (different stream epoch) — the
+        # ``--resume`` case. Seq is a transport coordinate, not session state,
+        # so the client is told to start over.
+        renderer = WebRenderer()
+        server = WebServer(renderer, token="t")
+        renderer.push_user_message("m0")
+        renderer.push_user_message("m1")
+
+        gen = server.stream_events(WebConnection(id="c1"), cursor="deadbeef:1")
+        try:
+            snap = await self._drain_snapshot(gen)
+        finally:
+            await gen.aclose()
+        events = [e["event"] for e in snap]
+        assert events[0] == "identity"
+        assert events[1] == "replay_reset"
+        assert [
+            json.loads(e["data"])["content"]
+            for e in snap
+            if e["event"] == "user_message"
+        ] == ["m0", "m1"]
+
+
+class TestStreamCursorWiring:
+    """``GET /api/stream`` reads the cursor from ``Last-Event-ID`` (what a
+    browser ``EventSource`` sends by itself) and falls back to ``?after=``
+    for clients that cannot set a header on a GET."""
+
+    def _capture(self, server, monkeypatch) -> dict:
+        seen: dict = {}
+
+        async def fake_stream(conn, *, cursor=None):
+            seen["cursor"] = cursor
+            return
+            yield  # pragma: no cover — makes this an async generator
+
+        monkeypatch.setattr(server, "stream_events", fake_stream)
+        return seen
+
+    def test_header_is_used(self, server_and_client, monkeypatch):
+        server, _, client = server_and_client
+        seen = self._capture(server, monkeypatch)
+        client.get("/api/stream?token=testtoken", headers={"Last-Event-ID": "ep:5"})
+        assert seen["cursor"] == "ep:5"
+
+    def test_query_fallback(self, server_and_client, monkeypatch):
+        server, _, client = server_and_client
+        seen = self._capture(server, monkeypatch)
+        client.get("/api/stream?token=testtoken&after=9")
+        assert seen["cursor"] == "9"
+
+    def test_header_wins_over_query(self, server_and_client, monkeypatch):
+        server, _, client = server_and_client
+        seen = self._capture(server, monkeypatch)
+        client.get(
+            "/api/stream?token=testtoken&after=9", headers={"Last-Event-ID": "ep:5"}
+        )
+        assert seen["cursor"] == "ep:5"
+
+    def test_first_connect_has_no_cursor(self, server_and_client, monkeypatch):
+        server, _, client = server_and_client
+        seen = self._capture(server, monkeypatch)
+        client.get("/api/stream?token=testtoken")
+        assert seen["cursor"] is None
+
+    def test_still_token_gated(self, server_and_client):
+        _, _, client = server_and_client
+        assert client.get("/api/stream?token=wrong").status_code == 401
+
+
 # Imports needed by the async tests — defined here so other test
 # classes don't pay the import cost when running selectively.
 import asyncio

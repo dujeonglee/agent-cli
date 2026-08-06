@@ -32,12 +32,26 @@ when older events have been dropped (the full record stays in the session's
 ``history.jsonl``) — then forwards live events from its dedicated queue.
 Transient events (``stream_chunk``, ``status``, ``spinner``) are not
 replayed — they are runtime UX, not state.
+
+Sequence numbers / incremental replay: every persistent event is stamped, at
+the single buffer-load point, with a monotonically increasing ``seq`` (see
+``_emit``). The stamp lives on the payload object (``_JsonReady.seq``), not
+inside the JSON body, so the one-shot serialization cache stays valid. The
+server puts ``"<stream_epoch>:<seq>"`` in the SSE ``id:`` field; a browser
+``EventSource`` echoes the last one back as ``Last-Event-ID`` when it
+reconnects, and :meth:`WebRenderer.register_connection` then replays only
+``seq > last`` instead of the whole buffer. ``stream_epoch`` is per renderer
+instance: a restarted / ``--resume``-d process issues seq from 1 again, so a
+cursor minted by the previous process is rejected and the client is told to
+start over with a ``replay_reset`` + full snapshot. Reconnect continuity is a
+transport property; session persistence stays with ``history.jsonl``.
 """
 
 from __future__ import annotations
 
 import json
 import random
+import secrets
 import threading
 import time
 from collections import deque
@@ -56,6 +70,13 @@ from agent_cli.render.base import ConfirmOption, Renderer
 # survives on disk (history.jsonl → --resume replays from there).
 _EVENT_BUFFER_MAX = 5000
 
+# ``register_connection(after=…)`` sentinel for "the client presented a cursor
+# we cannot honour" — unparseable, or minted by a different ``stream_epoch``
+# (previous process). Distinct from ``None`` ("no cursor at all"): a foreign
+# cursor means the client already has *something* on screen, so it must be told
+# to reset before the full snapshot; a first connect must not be.
+_CURSOR_FOREIGN = -1
+
 
 class _JsonReady(dict):
     """A fan-out payload dict carrying its own serialized form.
@@ -65,9 +86,17 @@ class _JsonReady(dict):
     cached string instead of re-``json.dumps``-ing the same dict per viewer
     per event — and buffer replay on reconnect reuses it too. Still a real
     dict, so tests and in-process consumers read fields normally.
+
+    ``seq`` is the replay cursor, set only on PERSISTENT events (the ones the
+    buffer can replay). It rides on the object rather than inside the dict so
+    the cached ``json_str`` stays valid — stamping the body would force a
+    second ``json.dumps`` under the emit lock. Transient events carry no
+    ``seq``; the attribute is simply unset (read it with ``getattr(d, "seq",
+    None)``), which is also what keeps a client's ``Last-Event-ID`` pinned to
+    the last *replayable* event.
     """
 
-    __slots__ = ("json_str",)
+    __slots__ = ("json_str", "seq")
 
 
 # Prompt Inspector scope key for the main loop's system prompt. Delegate
@@ -172,6 +201,16 @@ class WebRenderer(Renderer):
         self._event_buffer: deque[tuple[str, dict[str, Any]]] = deque(
             maxlen=_EVENT_BUFFER_MAX
         )
+        # Replay cursor issued at the buffer-load point (see ``_emit``) — one
+        # counter under ``_lock``, so every connection observes the same
+        # (seq, event) order. Gaps are possible (``clear_agent_conversation``
+        # drops entries); incremental replay only needs monotonicity.
+        self._seq = 0
+        # Identifies THIS renderer's seq space. A restarted or resumed process
+        # starts counting from 1 again, so a cursor carrying a different epoch
+        # is refused and the client gets a full snapshot (see the module
+        # docstring).
+        self._stream_epoch = secrets.token_hex(4)
         self._connections: list[WebConnection] = []
         # Worker busy/idle mirror (set by worker_busy/worker_idle) — a plain
         # queryable bool for the idle-reaper, independent of the sticky payload.
@@ -328,6 +367,13 @@ class WebRenderer(Renderer):
         ready.json_str = json.dumps(ready, ensure_ascii=False)
         with self._lock:
             if persistent:
+                # Stamp the cursor HERE, where the event enters the buffer —
+                # not at fan-out. Two turns emitting concurrently would
+                # otherwise be able to hand out seq in one order and append in
+                # another, and a reconnecting client would replay a sequence
+                # no live viewer ever saw.
+                self._seq += 1
+                ready.seq = self._seq
                 self._event_buffer.append((event, ready))
                 self._persistent_count += 1
             for conn in self._connections:
@@ -366,7 +412,48 @@ class WebRenderer(Renderer):
         if name in _STATUS_STICKY_KEYS:  # awaiting cleared → refresh file
             self._publish_status()
 
-    def register_connection(self, conn: WebConnection) -> list[tuple[str, dict]]:
+    @property
+    def stream_epoch(self) -> str:
+        """Token identifying this renderer's ``seq`` space (see the module
+        docstring). Part of the SSE ``id:`` the server puts on the wire."""
+        return self._stream_epoch
+
+    @property
+    def last_seq(self) -> int:
+        """Highest ``seq`` issued so far (0 before the first persistent
+        event)."""
+        with self._lock:
+            return self._seq
+
+    def parse_cursor(self, raw: str | None) -> int | None:
+        """Wire cursor (``"<epoch>:<seq>"``, or a bare ``"<seq>"``) → the seq to
+        resume after.
+
+        ``None`` when the client presented no cursor (first connect → full
+        snapshot, no reset notice). ``_CURSOR_FOREIGN`` when a cursor WAS
+        presented but cannot be honoured — a different ``stream_epoch``
+        (previous process) or garbage — so the caller still emits the reset
+        signal before replaying everything. The bare form is accepted for
+        hand-driven ``?after=`` use and is read as "this epoch".
+        """
+        if raw is None:
+            return None
+        text = raw.strip()
+        if not text:
+            return None
+        if ":" in text:
+            epoch, _, text = text.rpartition(":")
+            if epoch != self._stream_epoch:
+                return _CURSOR_FOREIGN
+        try:
+            value = int(text)
+        except ValueError:
+            return _CURSOR_FOREIGN
+        return value if value >= 0 else _CURSOR_FOREIGN
+
+    def register_connection(
+        self, conn: WebConnection, *, after: int | None = None
+    ) -> list[tuple[str, dict]]:
         """Add ``conn`` as a subscriber. Every connection is equal — all may
         send input and queue messages (no controller/observer split).
 
@@ -375,17 +462,44 @@ class WebRenderer(Renderer):
         roster "(you)" mark and queued-message ownership), then the usual
         replay. Caller yields the snapshot, then loops on ``conn.queue`` for
         live events.
+
+        ``after`` (from :meth:`parse_cursor`) turns the replay INCREMENTAL:
+        only buffered events with ``seq > after`` are returned, which is what
+        a reconnecting browser needs so its transcript is continued rather
+        than duplicated. The cursor is honoured only when everything past it
+        is still buffered; when it is too old (trimmed), foreign, or ahead of
+        what we ever issued, the snapshot falls back to the full buffer and is
+        prefixed with ``replay_reset`` so the client clears what it has before
+        taking the replay. Sticky slots, ``identity`` and ``viewers`` are
+        replayed on BOTH paths — they are latest-value state, and a client
+        that was disconnected may have missed the latest value.
         """
         with self._lock:
             self._connections.append(conn)
 
-            snapshot = list(self._event_buffer)
-            # Bounded buffer: when older events have been dropped, tell the
-            # joining client HOW MANY are missing (rendered as a small notice
-            # card) — the windowed replay must not read as the full story.
-            omitted = self._persistent_count - len(snapshot)
-            if omitted > 0:
-                snapshot.insert(0, ("transcript_truncated", {"omitted": omitted}))
+            buffered = list(self._event_buffer)
+            first_seq = getattr(buffered[0][1], "seq", None) if buffered else None
+            # Servable incrementally only if the cursor is one we issued AND
+            # nothing past it has been trimmed out of the buffer. ``after ==
+            # first_seq - 1`` is the boundary case: replay the whole buffer,
+            # which is exactly the missing tail.
+            incremental = (
+                after is not None
+                and after >= 0
+                and after <= self._seq
+                and (first_seq is None or after >= first_seq - 1)
+            )
+            reset = after is not None and not incremental
+            if incremental:
+                snapshot = [(e, d) for e, d in buffered if getattr(d, "seq", 0) > after]
+            else:
+                snapshot = buffered
+                # Bounded buffer: when older events have been dropped, tell the
+                # joining client HOW MANY are missing (rendered as a small notice
+                # card) — the windowed replay must not read as the full story.
+                omitted = self._persistent_count - len(snapshot)
+                if omitted > 0:
+                    snapshot.insert(0, ("transcript_truncated", {"omitted": omitted}))
             # Replay sticky state into the new connection's snapshot so a
             # late/refreshed/second-browser client sees the last value of each.
             # ``prepend`` slots (ready → top-bar) go ahead of the buffer;
@@ -398,6 +512,11 @@ class WebRenderer(Renderer):
                     snapshot.append(entry)
             # ``identity`` first: the client needs its conn_id before anything.
             snapshot.insert(0, ("identity", {"conn_id": conn.id}))
+            if reset:
+                # Right behind identity, ahead of every replayed event: the
+                # client wipes its transcript, then rebuilds it from what
+                # follows.
+                snapshot.insert(1, ("replay_reset", {"reason": "cursor unavailable"}))
             self._assign_nickname_locked(conn.id)
             # Live viewers: the JOINING conn learns the roster via its snapshot
             # (no extra queue event — keeps single-conn queue assertions
