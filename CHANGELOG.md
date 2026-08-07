@@ -12,6 +12,24 @@
 
 ## [Unreleased]
 
+## [8.1.0] - 2026-08-07
+
+### Changed
+
+- **agent 도구 가이드에 spawn 스케일링 논리 추가** (사용자 제안). 큰 작업을 N 명의
+  전문 에이전트로 나누면 팀의 작업 기억이 창 N 개로 확장된다 — 각 에이전트는 자기
+  전체 컨텍스트 창을 가지므로, 탐색 부스러기(파일 내용·검색 결과·막다른 길)는
+  에이전트 창에 쌓이고 main 은 증류된 회신만 받아 자기 창이 깨끗하게 유지된다.
+  한 영역을 판 에이전트는 후속 질문에 원본 디테일로 답한다(압축된 히스토리 재유도보다
+  정확).
+  - **장려는 조건·규율과 한 몸**: "언제 안 쓰는지"(사소한 단건 조회는 run 이나 직접이
+    더 쌈)와 orchestrate 와 동일한 규율(에이전트당 ONE area, disjoint 스코프)을 같은
+    문단에 명시 — agent 사용은 가장 약한 준수 영역이라 무조건 장려는 과발동을 만든다.
+  - 서브루프 축소 설명(SUBLOOP_DESCRIPTION — spawn 불가)에는 미유출(계약 테스트).
+  - 게이트: 표적 bakeoff(agent_then_complete 무회귀) + 라이브 E2E 샘플링(큰 작업에서
+    spawn 채택 / 사소 조회에서 과발동 없음).
+
+
 ## [8.0.0] - 2026-08-07
 
 ### Changed (BREAKING)
@@ -1685,7 +1703,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.0.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.1.0...HEAD
+[8.1.0]: https://github.com/dujeonglee/agent-cli/compare/v8.0.0...v8.1.0
 [8.0.0]: https://github.com/dujeonglee/agent-cli/compare/v7.29.1...v8.0.0
 [7.29.1]: https://github.com/dujeonglee/agent-cli/compare/v7.29.0...v7.29.1
 [7.29.0]: https://github.com/dujeonglee/agent-cli/compare/v7.28.1...v7.29.0
