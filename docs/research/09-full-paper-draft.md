@@ -1,6 +1,6 @@
 # Coagora: Multiplayer Coding Agents via Concurrency Contracts for Synchronous Multi-User Sharing of a Single LLM Agent Session
 
-> Full paper draft v1.0-wip (2026-08-07). Round-1 review response Phases 0–3 (`14-review-response-plan.md`) and round-2 Phases A–B (`16-review-response-plan-2.md`) are applied. The change history for v0.3 through v1.0-wip is in `09-CHANGELOG.md`. Remaining before submission: round-2 Phases C–E (live realistic-pair base rate; venue decision and first-use study; abstract finalization), `[TODO: S1]` (field-log workload mix), and venue-format normalization.
+> Full paper draft v1.0-wip (2026-08-08). Round-1 review response Phases 0–3 (`14-review-response-plan.md`) and round-2 Phases A–C plus the mock-versus-live audit (`16-review-response-plan-2.md`, `17-mock-vs-live-audit.md`) are applied: every live measurement has been repeated on the repaired step seam, the realistic-workload base rate is measured, and the four experiments whose mock could misrepresent them now carry live arms. The change history for v0.3 through v1.0-wip is in `09-CHANGELOG.md`. Remaining before submission: the first-use study of §7 (protocol in `18-first-use-study-protocol.md`, awaiting participants), reference completion for five entries whose authors we have not verified, and venue-format normalization with anonymization.
 > Status notes for authors appear as `[NOTE: …]` and `[TODO: …]` and must be removed before submission.
 > Numbers marked ✔ are backed by committed raw data in `bench/multiuser/out/`.
 
@@ -411,7 +411,7 @@ We then extended the axis we had previously only speculated about. Earlier draft
 
 The concurrency machinery is covered by the repository's test suite: 3,591 tests, of which 3,556 pass and 35 are skipped as environment-gated, with no failures in the run reported here (the property-based code-index flake noted in earlier drafts did not trigger). Coverage includes the turn registry and per-user gating, the turn-scoping section and its double gate, effect-lock scope and the compatibility matrix, context snapshot and atomic commit (including the step seam's pair atomicity under concurrent appends, §5, and the context-sequence staleness instrumentation, §6.7), sequence numbering and incremental replay, the read-only token's endpoint-by-endpoint authorization table (parameterized over every registered route, so a new endpoint that fails to declare a side fails the suite rather than defaulting open), and suspend/resume. A separate opt-in suite of 53 tests drives a real headless browser against a real server for behaviors unit tests cannot reach, such as whether an element hidden by an attribute is actually hidden once author stylesheets apply; it caught a real defect in the read-only client during this work that source-level assertions had passed.
 
-**Threats to validity.** Mock-LLM timings exclude provider-side variance, mitigated by the live-model spot checks of §6.10 and by reporting the deterministic and live pair where both exist. The measurements come from one host and one filesystem; §6.2 states explicitly which of its numbers are platform properties and which are contract guarantees, and §6.1 states the one place where a session boundary is crossed. The token premium of §6.10 is the call-count ratio and is measured history-invariant (1.49× against 1.47×, §6.10); its absolute cost still grows with history, and the ratio approaches N× only as serial batching fails. Our workloads are synthetic pending a field-log mix distribution [TODO: S1]. Finally, this is a systems evaluation: it establishes that the contract is implementable and what it costs, not that teams using it collaborate better, which is the user study §7 sets up.
+**Threats to validity.** Mock-LLM timings exclude provider-side variance, mitigated by the live-model spot checks of §6.10 and by reporting the deterministic and live pair where both exist. The measurements come from one host and one filesystem; §6.2 states explicitly which of its numbers are platform properties and which are contract guarantees, and §6.1 states the one place where a session boundary is crossed. The token premium of §6.10 is the call-count ratio and is measured history-invariant (1.49× against 1.47×, §6.10); its absolute cost still grows with history, and the ratio approaches N× only as serial batching fails. Our workloads are synthetic; deriving a workload mix from field logs of real shared sessions is future work, and no such logs exist to draw on today (§2.3). Finally, this is a systems evaluation: it establishes that the contract is implementable and what it costs, not that teams using it collaborate better. The first-use study that would make first contact with that question is designed and ready to run (protocol in the artifact); it is not yet run, and we do not claim its result in advance.
 
 ---
 
@@ -421,7 +421,7 @@ The contract removes delegation's structural limits. It would be dishonest to st
 
 ### 7.1 Asymmetric grounding
 
-Clark and Brennan's account of grounding [36] assumed the parties accumulate common ground *together*. A persistent shared agent session breaks the symmetry: user A and the agent build thirty minutes of working context (decisions taken, approaches abandoned, files touched) and user B attaches cold. B can replay the transcript, and §6.5 shows the replay is exact, but replay is access, not understanding; the session's common ground is now an artifact with an owner gradient. Our sequence-ordered, turn-attributed transcript is the raw material for catch-up interfaces (summaries, decision digests, per-file "what happened here" views), but which of these closes the gap, and whether closing it is even always desirable, is an open empirical question (planned study S2: staged mid-session joins under three catch-up treatments, measuring comprehension, time-to-first-productive-intervention, and re-litigation of settled decisions).
+Clark and Brennan's account of grounding [36] assumed the parties accumulate common ground *together*. A persistent shared agent session breaks the symmetry: user A and the agent build thirty minutes of working context (decisions taken, approaches abandoned, files touched) and user B attaches cold. B can replay the transcript, and §6.5 shows the replay is exact, but replay is access, not understanding; the session's common ground is now an artifact with an owner gradient. Our sequence-ordered, turn-attributed transcript is the raw material for catch-up interfaces (summaries, decision digests, per-file "what happened here" views), but which of these closes the gap, and whether closing it is even always desirable, is an open empirical question (planned study S2: staged mid-session joins under three catch-up treatments, measuring comprehension, time-to-first-productive-intervention, and re-litigation of settled decisions; the first-use protocol in the artifact is the smaller study that precedes it).
 
 ### 7.2 Multi-party control arbitration
 
@@ -476,7 +476,7 @@ What we did not solve, we named. A shared session mints asymmetric grounding, de
 
 ## References
 
-[NOTE: normalize to venue format. Every entry has been checked against its source; the one open item is [26]'s venue, flagged inline.]
+[NOTE: normalize to venue format. Every entry has been checked against its source. Two open items remain and neither should be closed by guesswork: [26]'s venue, flagged inline, and the author lists of [1], [5], [21], [22] and [24], which we have cited by title because we have not verified their authors against the sources. Complete them before submission.]
 
 1. *From developer pairs to AI copilots.* arXiv:2506.04785, 2025.
 2. V. Chen, A. Talwalkar, J. Brennan, G. Neubig. *Code with me or for me? How increasing AI automation transforms developer workflows.* arXiv:2507.08149, 2025.
@@ -537,17 +537,18 @@ The system, its deterministic benchmark harness, and every raw measurement file 
 | `p2_scope.py` | §6.4 conflict-scope recovery (effect share × paths × scope) | mock only |
 | `p2_scope_real.py` | §6.4 real operating point (live model, effect share measured from lock instrumentation) | on-premise model endpoint |
 | `n4_replay.py` | §6.5 incremental replay for late joiners | mock only |
-| `n1_compaction.py` | §6.6 compaction under concurrent turns | mock only |
+| `n1_compaction.py` | §6.6 compaction under concurrent turns (`--real` adds the live-summarizer arm) | mock; `--real` needs the endpoint |
 | `n3_attribution.py` | §6.7 structural attribution at scale | mock only |
 | `n3b_scoping.py` | §6.7 turn-scoping ablation (off / ignore / honor × 5) | mock only |
-| `n3c_scoping_real.py` | §6.7 turn-scoping against the live model, judged by per-turn file attribution | on-premise model endpoint |
-| `n5_staleness.py` | §6.7 snapshot staleness (parallel vs serial control) | mock only |
+| `n3c_scoping_real.py` | §6.7 turn-scoping against the live model, judged by per-turn file attribution; `--workload confusable\|realistic` selects the instruction pair | on-premise model endpoint |
+| `n5_staleness.py` | §6.7 snapshot staleness (parallel vs serial control; `--real` for the live arm) | mock; `--real` needs the endpoint |
 | `p4b_mixed_fairness.py` | §6.8 mixed-workload effect-layer wait (lock driven directly) | none (no server) |
 | `stats_recompute.py` | §6 Fisher tests and bootstrap CIs from committed raw files | none (no server) |
+| `compare_prepost.py` | §5 pre-fix against post-fix live results, side by side | none (no server) |
 | `p6b_provider_concurrency.py` | §6.10 what the endpoint's own concurrency bounds | on-premise model endpoint |
 | `p2_shell_real.py` | §6.4 shell-dominated operating point | on-premise model endpoint |
-| `p4_fairness.py` | §6.8 per-user fairness ablation | mock only |
-| `p7_lifecycle.py` | §6.9 204 turns across 3 suspend/resume cycles | mock only |
+| `p4_fairness.py` | §6.8 per-user fairness ablation (`--real` for the live arm) | mock; `--real` needs the endpoint |
+| `p7_lifecycle.py` | §6.9 204 turns across 3 suspend/resume cycles (`--real` for the reduced live confirmation) | mock; `--real` needs the endpoint |
 | `p6_real_llm.py` | §6.10 live-model ranking and token accounting | on-premise model endpoint |
 
-Only §6.4's live arm and §6.10 require credentials (an OpenAI-compatible endpoint supplied through environment variables); everything else runs offline. Each condition executes in a fresh temporary workspace with an isolated `HOME`, so a benchmark run cannot read or modify the operator's configuration. `e2_hol.py` supports `--append`, which merges a newly measured task length into the committed raw file and re-derives the summary from the union; `out/e2-drift-control.json` records the control measurement for the session boundary discussed in §6. [NOTE: replace with anonymized artifact links for double-blind review.]
+Scripts that need credentials (an OpenAI-compatible endpoint supplied through environment variables) are the live arms of §6.4, §6.7 and §6.10, plus the `--real` arms of `n1_compaction`, `n5_staleness`, `p4_fairness` and `p7_lifecycle`; every script runs offline in its default mock configuration, and the four `--real` scripts default to the mock. Each condition executes in a fresh temporary workspace with an isolated `HOME`, so a benchmark run cannot read or modify the operator's configuration. `e2_hol.py` supports `--append`, which merges a newly measured task length into the committed raw file and re-derives the summary from the union; `out/e2-drift-control.json` records the control measurement for the session boundary discussed in §6. [NOTE: replace with anonymized artifact links for double-blind review.]
