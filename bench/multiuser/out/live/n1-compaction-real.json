@@ -1,21 +1,57 @@
 {
   "users": 3,
-  "rounds": 6,
+  "rounds": 8,
   "model": "Qwen3.6-27B-MLX-8bit",
   "ctx_advertised": null,
-  "context_budget_tokens": 3000,
+  "context_window_advertised": 12288,
   "summary_delay_ms": "real summarizer call",
-  "turns_sent": 18,
-  "queries_recorded": 18,
+  "turns_sent": 24,
+  "queries_recorded": 24,
   "queries_lost": 0,
   "compactions": {
-    "begun": 0,
-    "committed": 0,
-    "stale_retries": 0,
+    "begun": 5,
+    "committed": 2,
+    "stale_retries": 3,
     "failed": 0
   },
-  "availability_windows": [],
-  "concurrent_compactions": 0,
-  "attribution_checked": 18,
-  "attribution_mismatches": 11
+  "availability_windows": [
+    {
+      "generation": 0,
+      "duration_ms": 121013.5,
+      "active_turns_at_begin": 3,
+      "turn_events_inside": 16,
+      "first_tokens_inside": 4
+    },
+    {
+      "generation": 16,
+      "duration_ms": 79024.3,
+      "active_turns_at_begin": 3,
+      "turn_events_inside": 8,
+      "first_tokens_inside": 2
+    },
+    {
+      "generation": 18,
+      "duration_ms": 122968.8,
+      "active_turns_at_begin": 3,
+      "turn_events_inside": 12,
+      "first_tokens_inside": 3
+    },
+    {
+      "generation": 24,
+      "duration_ms": 114321.1,
+      "active_turns_at_begin": 3,
+      "turn_events_inside": 9,
+      "first_tokens_inside": 2
+    },
+    {
+      "generation": 32,
+      "duration_ms": 56302.2,
+      "active_turns_at_begin": 1,
+      "turn_events_inside": 0,
+      "first_tokens_inside": 0
+    }
+  ],
+  "concurrent_compactions": 5,
+  "attribution_checked": 24,
+  "attribution_mismatches": 10
 }

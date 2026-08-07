@@ -1,0 +1,26 @@
+{
+  "shellCallsPerTurn": 3,
+  "cells": [
+    {
+      "shellSleepMs": 1000,
+      "shellCallsPerTurn": 3,
+      "n": 3,
+      "effectShareP50": 0.02109,
+      "predictedCeiling": 2.0,
+      "effectiveParallelismP50": 1.94,
+      "lockWaitP50Ms": 0.0,
+      "spanP50Ms": 49820.7
+    },
+    {
+      "shellSleepMs": 5000,
+      "shellCallsPerTurn": 3,
+      "n": 3,
+      "effectShareP50": 0.08547,
+      "predictedCeiling": 2.0,
+      "effectiveParallelismP50": 1.821,
+      "lockWaitP50Ms": 4909.9,
+      "spanP50Ms": 58298.8
+    }
+  ],
+  "note": "The file-write operating point of \u00a76.4 is 1e-5. This asks where a shell-dominated workload sits instead, because shell is exclusive under the compatibility matrix and is what build/test actually use. predictedCeiling applies the \u00a76.3 law 2/max(1,2s) to the measured share, so the gap between it and effectiveParallelismP50 is what the lock costs beyond the law."
+}
