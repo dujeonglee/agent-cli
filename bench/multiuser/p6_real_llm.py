@@ -35,6 +35,13 @@ LONG_TASK = (
     "Do not use any tools. When finished call complete with result 'counted'."
 )
 SHORT_TASK = "Reply with just the word pong. Then call complete with result 'pong'."
+#: 이력 길이 축(``--warmups``)에서 세션을 불리는 선행 턴. 비용 워크로드와
+#: 주제가 겹치지 않게 두어, 늘어난 입력 토큰이 캐시 적중이 아니라 이력
+#: 자체에서 온 것이 되게 한다.
+WARMUP_TASK = (
+    "In two sentences, describe cache replacement policy number {i}. "
+    "Then call complete."
+)
 COST_TASKS = [
     "In one sentence, explain what a mutex is. Then call complete.",
     "In one sentence, explain what a semaphore is. Then call complete.",
@@ -84,12 +91,23 @@ def hol_arm(llm: dict, contract: str, reps: int) -> dict:
     }
 
 
-def cost_arm(llm: dict, contract: str, reps: int) -> dict:
+def cost_arm(llm: dict, contract: str, reps: int, warmup: int = 0) -> dict:
+    """``warmup`` 은 비용 워크로드 **앞에** 태우는 선행 턴 수.
+
+    한계 (1) 은 토큰 프리미엄이 "이력이 길어지면 커진다"고 자인만 했다.
+    이 축이 그 자인을 측정으로 바꾼다: 같은 3-질문 워크로드를 빈 세션과
+    이미 길어진 세션에서 각각 재고 프리미엄이 어떻게 움직이는지 본다.
+    측정 창(``before``)은 반드시 워밍업 **뒤에** 잡는다 — 아니면 선행 턴의
+    콜이 비용에 섞인다.
+    """
     totals = []
     for rep in range(1, reps + 1):
         ws = Path(tempfile.mkdtemp(prefix=f"p6cost-{contract}-{rep}-"))
         server = AgentServer(ws, None, contract=contract, max_turns=3, real_llm=llm)
         try:
+            for i in range(warmup):
+                assert server.chat(WARMUP_TASK.format(i=i + 1), "warm") == 200
+                server.wait_quiescent(min_completes=1, timeout=900)
             before = len(server.events())
             for u, task in enumerate(COST_TASKS):
                 assert server.chat(task, f"user{u}") == 200
@@ -106,9 +124,15 @@ def cost_arm(llm: dict, contract: str, reps: int) -> dict:
             totals.append(
                 {
                     "rep": rep,
+                    "warmup": warmup,
                     "llm_calls": len(calls),
                     "input_tokens": sum(e.get("input_tokens", 0) for e in calls),
                     "output_tokens": sum(e.get("output_tokens", 0) for e in calls),
+                    # 이력이 실제로 얼마나 자랐는지의 대리 지표 — 워크로드
+                    # 첫 콜의 입력 토큰은 곧 그 시점의 프롬프트 크기다.
+                    "first_call_input_tokens": calls[0].get("input_tokens", 0)
+                    if calls
+                    else 0,
                 }
             )
             print(json.dumps({"arm": contract, **totals[-1]}), flush=True)
@@ -117,10 +141,12 @@ def cost_arm(llm: dict, contract: str, reps: int) -> dict:
             shutil.rmtree(ws, ignore_errors=True)
     return {
         "contract": contract,
+        "warmup": warmup,
         "n": len(totals),
         "input_tokens_p50": median([t["input_tokens"] for t in totals]),
         "output_tokens_p50": median([t["output_tokens"] for t in totals]),
         "llm_calls_p50": median([t["llm_calls"] for t in totals]),
+        "first_call_input_p50": median([t["first_call_input_tokens"] for t in totals]),
         "reps": totals,
     }
 
@@ -129,6 +155,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--reps", type=int, default=5, help="HOL 스팟 반복")
     ap.add_argument("--cost-reps", type=int, default=3, help="토큰 비용 반복")
+    ap.add_argument(
+        "--warmups",
+        type=int,
+        nargs="*",
+        default=[0],
+        help="비용 워크로드 앞에 태울 선행 턴 수의 목록 — 이력 길이 축 "
+        "(예: --warmups 0 6). 각 값마다 직렬/병렬 두 팔을 잰다.",
+    )
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -140,7 +174,11 @@ def main() -> None:
     else:
         # --reps 0: HOL 팔 생략 — 기존 결과 재사용 (부분 재실행용).
         hol = json.loads(out_path.read_text(encoding="utf-8"))["hol_spot"]
-    cost = [cost_arm(llm, c, args.cost_reps) for c in ("serial", "parallel")]
+    cost = [
+        cost_arm(llm, c, args.cost_reps, warmup=w)
+        for w in args.warmups
+        for c in ("serial", "parallel")
+    ]
     result = {"model": llm["model"], "hol_spot": hol, "token_cost": cost}
     print(json.dumps(result, indent=2, ensure_ascii=False))
     (args.out / "p6-real-llm.json").write_text(

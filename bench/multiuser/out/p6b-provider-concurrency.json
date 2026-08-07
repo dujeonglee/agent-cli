@@ -1,0 +1,40 @@
+{
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "maxTokensPerRequest": 120,
+  "reps": 3,
+  "cells": [
+    {
+      "n": 1,
+      "wallP50Ms": 8150.9,
+      "perRequestP50Ms": 8150.4,
+      "wallRatioToN1": 1.0,
+      "throughputPerS": 14.7,
+      "failures": 0
+    },
+    {
+      "n": 2,
+      "wallP50Ms": 13667.5,
+      "perRequestP50Ms": 13626.4,
+      "wallRatioToN1": 1.677,
+      "throughputPerS": 17.6,
+      "failures": 0
+    },
+    {
+      "n": 4,
+      "wallP50Ms": 15486.8,
+      "perRequestP50Ms": 15384.7,
+      "wallRatioToN1": 1.9,
+      "throughputPerS": 31.0,
+      "failures": 0
+    },
+    {
+      "n": 8,
+      "wallP50Ms": 21813.9,
+      "perRequestP50Ms": 21491.7,
+      "wallRatioToN1": 2.676,
+      "throughputPerS": 44.1,
+      "failures": 0
+    }
+  ],
+  "note": "wallRatioToN1 near 1 means the endpoint decodes the batch concurrently; near N means it serialises. This bounds how much of the session contract's parallelism a user can actually feel, and it is a property of the serving stack, not of the contract."
+}

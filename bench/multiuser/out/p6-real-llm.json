@@ -3,81 +3,277 @@
   "hol_spot": [
     {
       "contract": "serial",
-      "n": 5,
-      "bTtft_p50": 27803.7,
+      "n": 12,
+      "bTtft_p50": 38204.1,
       "bTtft_all": [
-        27787.7,
-        27792.4,
-        27896.6,
-        27803.7,
-        27967.3
+        38440.5,
+        38288.7,
+        38266.4,
+        38330.6,
+        38257.1,
+        38182.4,
+        38225.7,
+        38103.5,
+        37994.8,
+        38049.4,
+        37948.7,
+        37824.3
       ]
     },
     {
       "contract": "parallel",
-      "n": 5,
-      "bTtft_p50": 7044.5,
+      "n": 12,
+      "bTtft_p50": 10777.8,
       "bTtft_all": [
-        7001.0,
-        7044.5,
-        6945.9,
-        8361.8,
-        8574.0
+        10640.2,
+        10710.2,
+        10798.1,
+        10855.5,
+        10803.3,
+        10726.1,
+        10874.7,
+        10702.3,
+        10554.4,
+        10822.1,
+        10777.4,
+        10778.3
       ]
     }
   ],
   "token_cost": [
     {
       "contract": "serial",
-      "n": 3,
-      "input_tokens_p50": 15563.0,
-      "output_tokens_p50": 166.0,
+      "warmup": 0,
+      "n": 6,
+      "input_tokens_p50": 15613.0,
+      "output_tokens_p50": 207.5,
       "llm_calls_p50": 2.0,
+      "first_call_input_p50": 7728.0,
       "reps": [
         {
           "rep": 1,
+          "warmup": 0,
           "llm_calls": 2,
-          "input_tokens": 15547,
-          "output_tokens": 142
+          "input_tokens": 15615,
+          "output_tokens": 210,
+          "first_call_input_tokens": 7728
         },
         {
           "rep": 2,
+          "warmup": 0,
           "llm_calls": 2,
-          "input_tokens": 15618,
-          "output_tokens": 209
+          "input_tokens": 15611,
+          "output_tokens": 206,
+          "first_call_input_tokens": 7728
         },
         {
           "rep": 3,
+          "warmup": 0,
           "llm_calls": 2,
-          "input_tokens": 15563,
-          "output_tokens": 166
+          "input_tokens": 15609,
+          "output_tokens": 204,
+          "first_call_input_tokens": 7728
+        },
+        {
+          "rep": 4,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15611,
+          "output_tokens": 204,
+          "first_call_input_tokens": 7729
+        },
+        {
+          "rep": 5,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15616,
+          "output_tokens": 209,
+          "first_call_input_tokens": 7729
+        },
+        {
+          "rep": 6,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15615,
+          "output_tokens": 210,
+          "first_call_input_tokens": 7728
         }
       ]
     },
     {
       "contract": "parallel",
-      "n": 3,
-      "input_tokens_p50": 23188.0,
-      "output_tokens_p50": 281.0,
+      "warmup": 0,
+      "n": 6,
+      "input_tokens_p50": 23199.5,
+      "output_tokens_p50": 233.0,
       "llm_calls_p50": 3.0,
+      "first_call_input_p50": 7740.5,
       "reps": [
         {
           "rep": 1,
+          "warmup": 0,
           "llm_calls": 3,
           "input_tokens": 23188,
-          "output_tokens": 285
+          "output_tokens": 221,
+          "first_call_input_tokens": 7729
         },
         {
           "rep": 2,
+          "warmup": 0,
           "llm_calls": 3,
-          "input_tokens": 23188,
-          "output_tokens": 281
+          "input_tokens": 23185,
+          "output_tokens": 268,
+          "first_call_input_tokens": 7751
         },
         {
           "rep": 3,
+          "warmup": 0,
           "llm_calls": 3,
-          "input_tokens": 23185,
-          "output_tokens": 281
+          "input_tokens": 23210,
+          "output_tokens": 324,
+          "first_call_input_tokens": 7752
+        },
+        {
+          "rep": 4,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23191,
+          "output_tokens": 227,
+          "first_call_input_tokens": 7730
+        },
+        {
+          "rep": 5,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23208,
+          "output_tokens": 219,
+          "first_call_input_tokens": 7751
+        },
+        {
+          "rep": 6,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23211,
+          "output_tokens": 239,
+          "first_call_input_tokens": 7707
+        }
+      ]
+    },
+    {
+      "contract": "serial",
+      "warmup": 5,
+      "n": 6,
+      "input_tokens_p50": 17402.5,
+      "output_tokens_p50": 160.0,
+      "llm_calls_p50": 2.0,
+      "first_call_input_p50": 8654.0,
+      "reps": [
+        {
+          "rep": 1,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 17603,
+          "output_tokens": 98,
+          "first_call_input_tokens": 8764
+        },
+        {
+          "rep": 2,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 18419,
+          "output_tokens": 163,
+          "first_call_input_tokens": 9153
+        },
+        {
+          "rep": 3,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 18407,
+          "output_tokens": 180,
+          "first_call_input_tokens": 9145
+        },
+        {
+          "rep": 4,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 17202,
+          "output_tokens": 167,
+          "first_call_input_tokens": 8544
+        },
+        {
+          "rep": 5,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 17100,
+          "output_tokens": 157,
+          "first_call_input_tokens": 8496
+        },
+        {
+          "rep": 6,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 17176,
+          "output_tokens": 157,
+          "first_call_input_tokens": 8534
+        }
+      ]
+    },
+    {
+      "contract": "parallel",
+      "warmup": 5,
+      "n": 6,
+      "input_tokens_p50": 25519.0,
+      "output_tokens_p50": 276.0,
+      "llm_calls_p50": 3.0,
+      "first_call_input_p50": 8517.5,
+      "reps": [
+        {
+          "rep": 1,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25483,
+          "output_tokens": 287,
+          "first_call_input_tokens": 8472
+        },
+        {
+          "rep": 2,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25537,
+          "output_tokens": 281,
+          "first_call_input_tokens": 8512
+        },
+        {
+          "rep": 3,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25366,
+          "output_tokens": 234,
+          "first_call_input_tokens": 8433
+        },
+        {
+          "rep": 4,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25591,
+          "output_tokens": 271,
+          "first_call_input_tokens": 8530
+        },
+        {
+          "rep": 5,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25858,
+          "output_tokens": 329,
+          "first_call_input_tokens": 8604
+        },
+        {
+          "rep": 6,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25501,
+          "output_tokens": 251,
+          "first_call_input_tokens": 8523
         }
       ]
     }
