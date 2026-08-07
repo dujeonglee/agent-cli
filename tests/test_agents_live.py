@@ -749,7 +749,7 @@ class TestToolTeammate:
     def test_request_then_delivery_flow(self, tmp_path, renderer):
         reg = make_registry(tmp_path)
         key, _ = reg.spawn()
-        r = tool_agent({"mode": "request", "key": key, "message": "go"}, registry=reg)
+        r = tool_agent({"mode": "request", "key": key, "task": "go"}, registry=reg)
         assert r.success and "queued" in r.output
         assert "DELIVERED" not in r.output  # 안내는 도구 설명이 담당
         # ★U-A("wait 유도 문구 소멸") 의도적 뒤집기 (2026-07-18 사용자
@@ -807,8 +807,8 @@ class TestAgentToolValidate:
     def test_mode_conditional_required(self):
         t = self._tool()
         assert "requires" in t.validate({"mode": "request", "key": "agt-1"})
-        assert "requires" in t.validate({"mode": "request", "message": "x"})
-        assert t.validate({"mode": "request", "key": "agt-1", "message": "x"}) is None
+        assert "requires" in t.validate({"mode": "request", "task": "x"})
+        assert t.validate({"mode": "request", "key": "agt-1", "task": "x"}) is None
         assert "requires" in t.validate({"mode": "resume"})
         assert "requires" in t.validate({"mode": "kill", "key": "  "})
 
@@ -1044,7 +1044,7 @@ class TestAskRouting:
         assert kinds == ["question"]
         # main 이 답변 — 도구 힌트가 "답변으로 소비" 를 알린다
         r = tool_agent(
-            {"mode": "request", "key": key, "message": "main branch"}, registry=reg
+            {"mode": "request", "key": key, "task": "main branch"}, registry=reg
         )
         assert r.success and "answer to its pending question" in r.output
         # teammate 재개 → 최종 회신에 답이 반영
@@ -2091,9 +2091,7 @@ class TestPeerMessaging:
         reg.request(key, "first")  # worker 가 집어 busy 로 블록
         wait_until(lambda: reg.get(key).state == "busy")
         reg.request(key, "second")  # inbox 1 적체
-        res = tool_agent(
-            {"mode": "request", "key": key, "message": "third"}, registry=reg
-        )
+        res = tool_agent({"mode": "request", "key": key, "task": "third"}, registry=reg)
         gate.set()
         out = res.output
         assert "queued requests" in out  # 적체 수 명시
@@ -3201,13 +3199,15 @@ class TestRunMode:
         assert provider.call.call_count == 4
 
 
-class TestSpawnResumeMessageAlias:
-    """spawn/resume 의 지시 필드 별칭 (v7.29.1).
+class TestAgentTaskFieldUnification:
+    """agent 도구 지시 필드 통일 (v8.0.0): 모든 모드가 ``task`` 하나를 쓴다.
 
-    mode:"request" 는 ``message``, spawn/resume 는 ``task`` 였다 — 모델이
-    request 습관대로 resume 에 ``message`` 를 보내면 **조용히 버려져서**
-    "에이전트가 지시를 씹었다"로 관측됐다(라이브 재현: resume+message →
-    ACK 정상·회신 영원히 없음 / resume+task → 회신 도착). 별칭으로 수용한다.
+    역사: request 만 ``message`` 를 써서 모델이 spawn/resume 에 그 습관을
+    이어가면 조용히 유실됐다("씹힘" — 라이브 재현). v7.29.1 은 별칭으로
+    수용했으나 이중 어휘를 영구화하므로 철회하고, 사용자 결정대로 **한 필드
+    + 시끄러운 교정**으로 통일: ``message`` 는 검증에서 필드-정밀 에러로
+    거부돼 A5 가 되먹이고 모델이 다음 턴에 자가 교정한다(도구-입력 의미론은
+    엄격, wire 문법만 관용 — A5 계보).
     """
 
     @staticmethod
@@ -3222,55 +3222,89 @@ class TestSpawnResumeMessageAlias:
             return ""
 
         monkeypatch.setattr(reg, "request", fake_request)
-        # spawn 이 실제 worker 를 띄우지 않게 — 계약은 큐잉 여부다.
         monkeypatch.setattr(reg, "spawn", lambda **kw: ("agt-test0001", ""))
         monkeypatch.setattr(reg, "resume_teammate", lambda key, parent_ctx=None: "")
         return reg, sent
 
-    def test_resume_message_is_queued_as_task(self, tmp_path, monkeypatch):
+    def test_message_field_is_rejected_with_precise_correction(self):
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["agent"]
+        for mode in ("request", "resume", "spawn"):
+            err = tool.validate({"mode": mode, "key": "agt-x", "message": "지시"})
+            assert err is not None, mode
+            assert "'task'" in err, err  # 교정 방향이 필드-정밀해야 자가 교정된다
+
+    def test_request_requires_task_not_message(self):
+        from agent_cli.tools.registry import TOOLS
+
+        tool = TOOLS["agent"]
+        assert tool.validate({"mode": "request", "key": "agt-x"}) is not None
+        assert (
+            tool.validate({"mode": "request", "key": "agt-x", "task": "해줘"}) is None
+        )
+
+    def test_request_branch_reads_task(self, tmp_path, monkeypatch):
         from agent_cli.subagent.agents_live import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+
+        class _TM:  # request 분기가 참조하는 최소 표면 (state·inbox)
+            state = "idle"
+
+            class inbox:
+                @staticmethod
+                def qsize():
+                    return 0
+
+        monkeypatch.setattr(reg, "get", lambda key: _TM())
         res = tool_agent(
-            {"mode": "resume", "key": "agt-x", "message": "이어서 해줘"},
-            registry=reg,
+            {"mode": "request", "key": "agt-x", "task": "이걸 해줘"}, registry=reg
         )
         assert res.success
-        assert sent == [("agt-x", "이어서 해줘")]
-        assert "task queued" in res.output  # ACK 도 큐잉을 알린다
+        assert sent == [("agt-x", "이걸 해줘")]
 
-    def test_resume_task_still_works(self, tmp_path, monkeypatch):
-        from agent_cli.subagent.agents_live import tool_agent
-
-        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
-        tool_agent({"mode": "resume", "key": "agt-x", "task": "계속"}, registry=reg)
-        assert sent == [("agt-x", "계속")]
-
-    def test_resume_task_wins_over_message_when_both(self, tmp_path, monkeypatch):
-        from agent_cli.subagent.agents_live import tool_agent
-
-        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
-        tool_agent(
-            {"mode": "resume", "key": "agt-x", "task": "A", "message": "B"},
-            registry=reg,
-        )
-        assert sent == [("agt-x", "A")]  # 정식 필드 우선
-
-    def test_spawn_message_is_queued_as_task(self, tmp_path, monkeypatch):
+    def test_resume_task_queues(self, tmp_path, monkeypatch):
         from agent_cli.subagent.agents_live import tool_agent
 
         reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
         res = tool_agent(
-            {"mode": "spawn", "profile": "", "message": "첫 작업"}, registry=reg
+            {"mode": "resume", "key": "agt-x", "task": "이어서"}, registry=reg
+        )
+        assert res.success
+        assert sent == [("agt-x", "이어서")]
+        assert "task queued" in res.output
+
+    def test_resume_message_is_not_silently_queued(self, tmp_path, monkeypatch):
+        """별칭 철회의 핵심: tool_agent 층까지 message 가 내려와도(검증 우회
+        경로) 조용한 큐잉은 없다 — 유실이 아니라 무큐잉+ACK 무언급이며, 정상
+        경로에서는 validate 가 먼저 막는다."""
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        res = tool_agent(
+            {"mode": "resume", "key": "agt-x", "message": "버려질 지시"},
+            registry=reg,
+        )
+        assert res.success  # resume 자체는 성공
+        assert sent == []
+        assert "task queued" not in res.output
+
+    def test_spawn_task_queues(self, tmp_path, monkeypatch):
+        from agent_cli.subagent.agents_live import tool_agent
+
+        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        res = tool_agent(
+            {"mode": "spawn", "profile": "", "task": "첫 작업"}, registry=reg
         )
         assert res.success
         assert sent and sent[0][1] == "첫 작업"
 
-    def test_resume_without_any_instruction_queues_nothing(self, tmp_path, monkeypatch):
+    def test_ack_texts_teach_task_vocabulary(self, tmp_path, monkeypatch):
+        """ACK/안내문구가 계속 message 를 가르치면 통일이 자멸한다."""
         from agent_cli.subagent.agents_live import tool_agent
 
-        reg, sent = self._registry_with_request_capture(tmp_path, monkeypatch)
-        res = tool_agent({"mode": "resume", "key": "agt-x"}, registry=reg)
-        assert res.success
-        assert sent == []
-        assert "task queued" not in res.output
+        reg, _sent = self._registry_with_request_capture(tmp_path, monkeypatch)
+        res = tool_agent({"mode": "spawn", "profile": ""}, registry=reg)
+        assert '"task"' in res.output
+        assert '"message"' not in res.output
