@@ -91,6 +91,7 @@ class AgentLoop:
         message_handler=None,
         peer_agents_section: str = "",
         origin_turn: str = "",
+        turn_scoping: bool = False,
     ):
         # Wire format plugin. Centralizes the parser, recovery wording,
         # prompt section, and lifecycle hooks so adding a new format means
@@ -191,6 +192,7 @@ class AgentLoop:
             message_handler=message_handler,
             peer_agents_section=peer_agents_section,
             origin_turn=origin_turn,
+            turn_scoping=turn_scoping,
         )
         self._state = LoopState(
             query=query,
@@ -551,6 +553,15 @@ class AgentLoop:
     def _setup(self) -> None:
         """Initialize system prompt and messages."""
         _set_debug_verbose(self.verbose)
+
+        # 턴 스코핑은 프롬프트를 짓기 **전에** 등록한다 — rebuild 가 섹션을
+        # 처음부터 다시 만들면서 이 섹션을 덧붙인다. ``origin_turn`` 이 있을
+        # 때만, 즉 병렬 계약에서만 건다: 직렬 모드에는 헷갈릴 동시 요청이
+        # 애초에 없고, 실행 중 주입된 질문은 오히려 수행 대상이다.
+        if self._config.turn_scoping and self._config.origin_turn:
+            self._prompt.set_turn_scope(
+                self._config.origin_turn, self.query_author, self.query
+            )
 
         # Build system prompt with session_dir for Context Recovery Guide.
         # Built as named sections — the joined string is what the LLM gets

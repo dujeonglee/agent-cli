@@ -44,19 +44,46 @@ _LOG = bool(os.environ.get("MOCK_LLM_LOG"))
 _CTX = int(os.environ.get("MOCK_LLM_CTX", "131072"))
 #: 압축 요약 콜의 지연(ms) — 낙관적 압축의 "무락 구간" 길이를 실험이 제어.
 _SUM_MS = int(os.environ.get("MOCK_LLM_SUM_MS", "80"))
+#: 1 이면 목이 시스템 프롬프트의 턴 스코핑 섹션을 **따른다** (n3b 실험).
+#: 기본 0 = 시스템 프롬프트를 읽지 않는 모델 = 스코핑의 최악 케이스.
+_HONOR_SCOPE = bool(os.environ.get("MOCK_LLM_HONOR_SCOPE"))
 _DIRECTIVE = re.compile(r"\[\[bench([^\]]*)\]\]")
 _KV = re.compile(r"(\w+)=([^\s\]]+)")
+
+
+def _scope_directive(messages: list[dict]) -> str:
+    """턴 스코핑 섹션(system)이 인용한 **이 턴 자신의** 요청에서 지시자를 찾는다.
+
+    ``MOCK_LLM_HONOR_SCOPE`` 일 때만 쓰인다. 기본 목은 시스템 프롬프트를
+    아예 읽지 않으므로 스코핑이 켜져도 동작이 변하지 않는다 — 그것이
+    "지시를 무시하는 모델"이라는 최악 케이스이고 N3 의 38% 가 그 값이다.
+    이 헬퍼는 반대쪽 끝, 즉 **지시를 따르는 모델**을 모사해서 메커니즘이
+    원리상 충분한지(배선이 턴별로 옳게 도달하는지)를 재게 한다. 어느 쪽도
+    실모델의 순응률에 대한 증거가 아니다 — 그건 라이브 팔의 몫이다.
+    """
+    for m in messages:
+        if m.get("role") == "system":
+            c = str(m.get("content", ""))
+            if "You are serving turn" in c:
+                # 스코프 섹션은 요청 원문을 ``> `` 인용으로 담는다.
+                for line in c.splitlines():
+                    if line.startswith("> ") and _DIRECTIVE.search(line):
+                        return line
+    return ""
 
 
 def parse_directive(messages: list[dict]) -> dict:
     """마지막 user 메시지의 ``[[bench ...]]`` 를 파싱. 없으면 기본값."""
     text = ""
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            c = m.get("content", "")
-            if isinstance(c, str) and _DIRECTIVE.search(c):
-                text = c
-                break
+    if _HONOR_SCOPE:
+        text = _scope_directive(messages)
+    if not text:
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                c = m.get("content", "")
+                if isinstance(c, str) and _DIRECTIVE.search(c):
+                    text = c
+                    break
     params: dict = dict(DEFAULTS)
     params["fpath"] = ""
     params["marker"] = ""

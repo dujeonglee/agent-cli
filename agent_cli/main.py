@@ -1841,6 +1841,17 @@ def web(
         "OTHER users take free slots (starvation prevention). Disabling is "
         "for benchmarks only — pure FIFO+cap lets one user monopolise slots.",
     ),
+    turn_scoping: bool = typer.Option(
+        False,
+        "--turn-scoping/--no-turn-scoping",
+        help="Pin each turn's own request in its system prompt under "
+        "--concurrency-contract=parallel, telling the model that other "
+        "users' concurrent messages in the shared transcript are context "
+        "rather than instructions. Mitigates a turn answering somebody "
+        "else's question; does not affect who the reply is recorded "
+        "against, which is structural and already exact. EXPERIMENTAL, off "
+        "by default.",
+    ),
     lock_scope: str | None = typer.Option(
         None,
         "--lock-scope",
@@ -2200,6 +2211,7 @@ def web(
                         mcp_manager=mcp_manager,
                         agent_registry=agent_registry,
                         origin_turn=turn.id,  # 회신 귀속 (A6↔A1 정합)
+                        turn_scoping=turn_scoping,
                     )
                 except Exception as exc:
                     renderer.error(f"Turn {turn.id} error: {exc}", 0)

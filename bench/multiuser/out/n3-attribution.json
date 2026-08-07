@@ -13,8 +13,8 @@
   },
   "content_match_known_limitation": {
     "checked": 100,
-    "answered_other_users_question": 38,
-    "rate": 0.38,
+    "answered_other_users_question": 4,
+    "rate": 0.04,
     "note": "결정적 목이 '항상 최신 질문에 답함' — 최악 케이스 상한"
   }
 }
