@@ -2608,11 +2608,12 @@ class TestAppendObservationHelpers:
         """
         from agent_cli.loop import _append_observation
 
-        captured: list[dict] = []
+        captured_calls: list[list[dict]] = []
 
         class _FakeCtx:
-            def add(self, entry):
-                captured.append(entry)
+            def commit_atomic(self, entries):
+                captured_calls.append(list(entries))
+                return list(entries)
 
         class _FakePlugin:
             def serialize_assistant_for_history(self, raw_text):
@@ -2631,7 +2632,11 @@ class TestAppendObservationHelpers:
             tool_name="write_file",
             success=True,
         )
-        # captured[0] is assistant record from plugin; captured[1] is observation.
+        # The pair must arrive as ONE atomic block (§4.3): assistant record
+        # from the plugin + its observation, with no separate add() calls a
+        # concurrent turn could interleave between.
+        assert len(captured_calls) == 1
+        captured = captured_calls[0]
         assert captured[0] == {
             "role": "assistant",
             "marker": "from_plugin",
@@ -2692,8 +2697,9 @@ class TestAppendObservationHelpers:
         captured: list[dict] = []
 
         class _FakeCtx:
-            def add(self, entry):
-                captured.append(entry)
+            def commit_atomic(self, entries):
+                captured.extend(entries)
+                return list(entries)
 
         class _FakePlugin:
             def serialize_assistant_for_history(self, raw):
@@ -2729,8 +2735,9 @@ class TestAppendObservationHelpers:
         captured: list[dict] = []
 
         class _FakeCtx:
-            def add(self, entry):
-                captured.append(entry)
+            def commit_atomic(self, entries):
+                captured.extend(entries)
+                return list(entries)
 
         class _FakePlugin:
             def serialize_assistant_for_history(self, raw):
@@ -2761,8 +2768,9 @@ class TestAppendObservationHelpers:
         captured: list[dict] = []
 
         class _FakeCtx:
-            def add(self, entry):
-                captured.append(entry)
+            def commit_atomic(self, entries):
+                captured.extend(entries)
+                return list(entries)
 
         class _FakePlugin:
             def serialize_assistant_for_history(self, raw):

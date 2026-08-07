@@ -1291,8 +1291,8 @@ def _append_observation(
     the raw. The correction stays traceable via the TurnRecorder
     (``parse_stage=3`` + ``action_inferred``).
 
-    For history.jsonl (via ctx.add), the same record is stored, so the
-    on-disk history retains structured form.
+    For history.jsonl (via ctx.commit_atomic), the same record is stored, so
+    the on-disk history retains structured form.
 
     The observation entry stores ``tool`` (the tool that ran, or an
     empty string for format-retry interventions) and ``success`` (so
@@ -1312,7 +1312,6 @@ def _append_observation(
     messages.append({"role": "user", "content": obs_msg})
     stored_content = obs_msg
     if ctx:
-        ctx.add(history_record)
         obs_entry = {
             "role": "user",
             "tool": tool_name,
@@ -1326,9 +1325,14 @@ def _append_observation(
         # 라 구 세션 레코드(필드 없음)는 fold 대상 아님 = 안전 기본.
         if recovery_kind:
             obs_entry["recovery"] = recovery_kind
-        stored = ctx.add(obs_entry)
-        # ctx.add returns the stored (possibly spilled) message; tolerate a
-        # ctx stub that returns None (some tests) by keeping obs_msg.
+        # 원자 블록 커밋 (§4.3 불변식): assistant 레코드와 그 관찰 사이에
+        # 동시 턴의 레코드가 끼면 안 된다. ``add`` 2회로 저장하면 그 사이가
+        # 임계영역 밖이라 병렬 계약에서 끼어듦이 실제로 가능하다 —
+        # ``commit_atomic`` 이 정확히 이 seam 을 위해 존재한다.
+        committed = ctx.commit_atomic([history_record, obs_entry])
+        stored = committed[-1] if committed else None
+        # commit_atomic returns the stored (possibly spilled) messages;
+        # tolerate a ctx stub that returns None (some tests) by keeping obs_msg.
         if isinstance(stored, dict):
             stored_content = stored.get("content", obs_msg)
 

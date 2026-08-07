@@ -364,3 +364,72 @@ class TestLlmCallUsageEvent:
             record_turns=False,
         )
         assert [e for e in _read_events(tmp_path) if e["event"] == "llm_call"] == []
+
+
+class TestCtxSeqEvents:
+    """N5: 컨텍스트 스냅샷/커밋 seq 이벤트 — 스냅샷 staleness 의 데이터 소스.
+
+    staleness(스텝) = (커밋 seq − 1) − (스냅샷 seq): 이 턴의 프롬프트가
+    찍힌 뒤 커밋 전에 컨텍스트에 들어간 변형(남의 블록·메시지) 수.
+    """
+
+    def test_ctx_seq_snapshot_append_commit(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        turn_metrics.enable(tmp_path)
+        ctx = ContextManager(tmp_path / "session", max_context_tokens=5000)
+        ctx.get_messages()
+        ctx.add({"role": "user", "content": "hi"})
+        ctx.commit_atomic(
+            [
+                {"role": "assistant", "content": "a"},
+                {"role": "user", "tool": "shell", "success": True, "content": "o"},
+            ]
+        )
+        ctx.get_messages()
+        evs = [e for e in _read_events(tmp_path) if e.get("event") == "ctx"]
+        assert [(e["phase"], e["seq"]) for e in evs] == [
+            ("snapshot", 0),
+            ("append", 1),
+            ("commit", 2),
+            ("snapshot", 2),
+        ]
+        commit = next(e for e in evs if e["phase"] == "commit")
+        assert commit["records"] == 2
+        assert commit["thread"] == threading.current_thread().name
+
+    def test_ctx_staleness_arithmetic_across_threads(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        turn_metrics.enable(tmp_path)
+        ctx = ContextManager(tmp_path / "session", max_context_tokens=5000)
+        ctx.get_messages()  # 내 스냅샷: seq 0
+        t = threading.Thread(
+            target=lambda: ctx.add({"role": "user", "content": "other"}),
+            name="other-turn",
+        )
+        t.start()
+        t.join()  # 남의 변형: seq 1
+        ctx.commit_atomic([{"role": "assistant", "content": "mine"}])  # 내 커밋: seq 2
+        evs = [e for e in _read_events(tmp_path) if e.get("event") == "ctx"]
+        me = threading.current_thread().name
+        snap = [e for e in evs if e["phase"] == "snapshot" and e["thread"] == me][-1]
+        commit = next(e for e in evs if e["phase"] == "commit" and e["thread"] == me)
+        assert commit["seq"] - 1 - snap["seq"] == 1
+        assert next(e for e in evs if e["phase"] == "append")["thread"] == "other-turn"
+
+    def test_ctx_events_absent_when_disabled(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        ctx = ContextManager(tmp_path / "session", max_context_tokens=5000)
+        ctx.get_messages()
+        ctx.commit_atomic([{"role": "assistant", "content": "a"}])
+        assert _read_events(tmp_path) == []
+
+    def test_ctx_empty_commit_emits_nothing(self, tmp_path):
+        from agent_cli.context.manager import ContextManager
+
+        turn_metrics.enable(tmp_path)
+        ctx = ContextManager(tmp_path / "session", max_context_tokens=5000)
+        ctx.commit_atomic([])
+        assert [e for e in _read_events(tmp_path) if e.get("event") == "ctx"] == []

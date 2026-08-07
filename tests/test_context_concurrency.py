@@ -355,3 +355,73 @@ class TestConcurrentCompactionCommitStarvation:
         ctx.ensure_within(50)
         assert ctx.compaction_count == 1
         assert ctx.get_estimated_tokens() <= 50 or ctx.summary == "S"
+
+
+class TestAppendObservationBlockAtomicity:
+    """§4.3 불변식 회귀 — 스텝 저장 seam(``_append_observation``)이 assistant
+    레코드와 그 관찰을 **원자 블록**으로 커밋한다.
+
+    v7.29.0 이 ``commit_atomic`` 을 도입했지만 프로덕션 seam 은 ``add`` 2회로
+    남아 있었다(N5 계측 작업 중 발견). 그 형태에서는 병렬 계약의 다른 턴
+    레코드가 쌍 사이에 실제로 낄 수 있다 — 이 테스트는 구 코드에서 높은
+    확률로 실패하고, 원자 커밋 배선에서는 결정적으로 통과한다.
+    """
+
+    def test_pair_never_split_by_concurrent_adds(self, tmp_path):
+        from agent_cli.loop import _append_observation
+
+        class _Plugin:
+            def serialize_assistant_for_history(self, raw_text):
+                return {"role": "assistant", "content": raw_text}
+
+            def render_assistant_from_history(self, record):
+                return {"role": "assistant", "content": record["content"]}
+
+        ctx = ContextManager(tmp_path / "sess", max_context_tokens=10_000_000)
+        writers, rounds = 4, 20
+        barrier = threading.Barrier(writers + 1)
+        stop = threading.Event()
+
+        def stepper(i):
+            barrier.wait()
+            for r in range(rounds):
+                _append_observation(
+                    [],
+                    ctx,
+                    _Plugin(),
+                    f"a-{i}-{r}",
+                    f"o-{i}-{r}",
+                    tool_name="shell",
+                    success=True,
+                    render=False,
+                )
+
+        def adder():
+            barrier.wait()
+            k = 0
+            while not stop.is_set():
+                ctx.add({"role": "user", "content": f"noise {k}"})
+                k += 1
+                time.sleep(0)  # 양보 — 끼어들 기회 극대화
+
+        ts = [threading.Thread(target=stepper, args=(i,)) for i in range(writers)]
+        noise = threading.Thread(target=adder)
+        for t in ts:
+            t.start()
+        noise.start()
+        for t in ts:
+            t.join()
+        stop.set()
+        noise.join()
+
+        recs = _records(ctx)
+        pairs = 0
+        for idx, r in enumerate(recs):
+            if r["role"] == "assistant" and r["content"].startswith("a-"):
+                tag = r["content"][2:]
+                assert recs[idx + 1]["content"] == f"o-{tag}", (
+                    f"assistant a-{tag} 바로 뒤가 그 관찰이 아니라 "
+                    f"{recs[idx + 1]['content']!r} 다 — 블록이 쪼개졌다"
+                )
+                pairs += 1
+        assert pairs == writers * rounds

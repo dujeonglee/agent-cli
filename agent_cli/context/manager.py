@@ -212,6 +212,14 @@ class ContextManager:
         # 그 암묵성이 소실되므로 지금 데이터로 남겨둔다.
         # (근거: docs/research/10-agent-cli-gap-analysis.md §1 A6.)
         self._msg_seq: int = 0
+        # N5 (스냅샷 staleness 계측): 컨텍스트 변형 카운터 — ``add`` /
+        # ``commit_atomic`` 호출당 1 증가 (레코드 수와 무관: 원자 블록이
+        # 변형의 단위다). ``get_messages`` 가 스냅샷 시점 값을,
+        # 변형이 커밋 시점 값을 turns.jsonl ``ctx`` 이벤트로 내보내면
+        # "이 턴의 프롬프트가 놓친 남의 커밋 수" = (커밋 seq − 1) −
+        # (스냅샷 seq) 가 파일 조인만으로 나온다. 압축/축출은 이 카운터가
+        # 아니라 자체 ``compact`` 이벤트(세대 번호)로 추적된다.
+        self._commit_seq: int = 0
         # 세션 전역 폴백 — "가장 최근 질의". 질의를 스스로 추가하지 않은
         # 스레드(백그라운드 배달 등)의 레코드가 쓴다.
         self._reply_to: str | None = None
@@ -325,7 +333,18 @@ class ContextManager:
         턴의 레코드가 낄 수 있다.
         """
         with self._lock:
-            return self._add_locked(message)
+            stored = self._add_locked(message)
+            self._commit_seq += 1
+            seq = self._commit_seq
+        # 락 밖에서 emit — 계측 I/O 를 임계영역에 넣지 않는다. 파일상 순서가
+        # 뒤바뀔 수 있으나 분석은 seq 값을 좌표로 쓰므로 무해하다.
+        turn_metrics.emit(
+            "ctx",
+            phase="append",
+            seq=seq,
+            thread=threading.current_thread().name,
+        )
+        return stored
 
     def _add_locked(self, message: dict) -> dict:
         """:meth:`add` 의 본문 (락 보유 중 호출). ``commit_atomic`` 과 공유."""
@@ -366,7 +385,17 @@ class ContextManager:
         if not messages:
             return []
         with self._lock:
-            return [self._add_locked(m) for m in messages]
+            stored = [self._add_locked(m) for m in messages]
+            self._commit_seq += 1
+            seq = self._commit_seq
+        turn_metrics.emit(
+            "ctx",
+            phase="commit",
+            seq=seq,
+            records=len(stored),
+            thread=threading.current_thread().name,
+        )
+        return stored
 
     def set_turn(self, turn: int) -> None:
         """Set the current LLM turn index. The loop calls this at each turn
@@ -419,7 +448,15 @@ class ContextManager:
         쓰기도 겸하므로 읽기 전용이 아니다.
         """
         with self._lock:
-            return self._get_messages_locked()
+            result = self._get_messages_locked()
+            seq = self._commit_seq
+        turn_metrics.emit(
+            "ctx",
+            phase="snapshot",
+            seq=seq,
+            thread=threading.current_thread().name,
+        )
+        return result
 
     def _get_messages_locked(self) -> list[dict]:
         result: list[dict] = []
