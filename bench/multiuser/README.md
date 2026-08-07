@@ -22,6 +22,16 @@
 | `n4_replay.py` | **N4**: 늦은 합류자 증분 재생 정합성(v0.8 1단계 검증) — 안 끊긴 구독(control)과 `Last-Event-ID` 로 반복 재접속하는 구독(cutter)을 동시에 돌려 **seq 열 + 페이로드 원문**을 대조. 살릴 수 없는 커서의 `replay_reset` 폴백도 강제 |
 | `p6_real_llm.py` | **P6**: 실 LLM(온프렘, `AGENT_CLI_*` env) — HOL 순위 보존 스팟체크 + 같은 3-메시지 워크로드의 직렬 vs 병렬 토큰 계정(`llm_call` usage 이벤트) |
 | `p7_lifecycle.py` | **P7**: 장기 세션 — 3 사용자 204턴, 페이즈 사이 서버 종료→`--resume` 재개 ×3. 보존 100%·id 전역 유일·압축 유계 지속 |
+| `e2b_injection.py` | **E2b**: 경계 밀도 축 — L 고정, 스텝 수 k∈{1,2,4,8}. 직렬의 비용이 작업 길이가 아니라 경계 간격을 따름 (§6.1) |
+| `e2c_retry.py` | **E2c**: 거부 벌점 대 재시도 간격 {250,1000}ms — 벌점이 간격 하나 안에 머무는지 (§6.1) |
+| `e2d_nscale.py` | **E2d**: 사용자 수 축 N∈{2,4,8} — 병렬 행 평탄함의 스케일 (§6.1) |
+| `n3b_scoping.py` | **N3b**: 턴 스코핑 목 절제 — off/ignore(음성 대조)/honor 3팔 (§6.7) |
+| `n3c_scoping_real.py` | **N3c**: 턴 스코핑 라이브 — reply_to×files 턴별 귀속 판정 (§6.7) |
+| `n5_staleness.py` | **N5**: 스냅샷 staleness — ctx seq 이벤트로 스텝별 (커밋−1)−(스냅샷) 산술, 병렬 대 직렬 대조군 (§6.7) |
+| `p4b_mixed_fairness.py` | **P4b**: 혼합 워크로드 효과층 대기 — 셸 위주 A 옆 파일 위주 B 의 락 대기 분포, 락 직접 구동 (§6.8) |
+| `p2_shell_real.py` | **F2**: 셸 지배 작동점 — 라이브 2-user, 효과 비중·락 대기 (§6.4) |
+| `p6b_provider_concurrency.py` | **Q3**: 엔드포인트 자체 동시성 상한 — 세션 우회 N 동시 생성 (§6.10) |
+| `stats_recompute.py` | 커밋된 raw 재계산 — Fisher 정확검정·부트스트랩 CI (§6 Setup 정책) |
 | `out/` | 커밋되는 원시 데이터 + 요약 (재현 가능성 규약) |
 
 ## 실행

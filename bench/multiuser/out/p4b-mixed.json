@@ -1,0 +1,190 @@
+{
+  "config": {
+    "shell_rounds": 3,
+    "a_think_s": 1.0,
+    "b_think_s": 0.2,
+    "lock_scope": "conflict"
+  },
+  "cells": [
+    {
+      "shell_s": 1.0,
+      "arm": "mixed",
+      "reps": 5,
+      "rows": [
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.09,
+          "b_wait_p95_ms": 994.66,
+          "b_wait_max_ms": 997.45,
+          "b_hold_p50_ms": 0.557
+        },
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.08,
+          "b_wait_p95_ms": 996.09,
+          "b_wait_max_ms": 996.85,
+          "b_hold_p50_ms": 0.533
+        },
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.08,
+          "b_wait_p95_ms": 996.07,
+          "b_wait_max_ms": 998.06,
+          "b_hold_p50_ms": 0.519
+        },
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.14,
+          "b_wait_p95_ms": 995.86,
+          "b_wait_max_ms": 996.06,
+          "b_hold_p50_ms": 0.623
+        },
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.15,
+          "b_wait_p95_ms": 986.94,
+          "b_wait_max_ms": 993.44,
+          "b_hold_p50_ms": 0.686
+        }
+      ],
+      "b_wait_p50_ms_median": 0.09,
+      "b_wait_p95_ms_median": 995.86,
+      "b_wait_max_ms_max": 998.06
+    },
+    {
+      "shell_s": 1.0,
+      "arm": "baseline",
+      "reps": 5,
+      "rows": [
+        {
+          "b_requests": 30,
+          "b_wait_p50_ms": 0.12,
+          "b_wait_p95_ms": 0.19,
+          "b_wait_max_ms": 0.25,
+          "b_hold_p50_ms": 0.588
+        },
+        {
+          "b_requests": 30,
+          "b_wait_p50_ms": 0.14,
+          "b_wait_p95_ms": 0.18,
+          "b_wait_max_ms": 0.2,
+          "b_hold_p50_ms": 0.694
+        },
+        {
+          "b_requests": 30,
+          "b_wait_p50_ms": 0.15,
+          "b_wait_p95_ms": 0.2,
+          "b_wait_max_ms": 0.22,
+          "b_hold_p50_ms": 0.673
+        },
+        {
+          "b_requests": 30,
+          "b_wait_p50_ms": 0.13,
+          "b_wait_p95_ms": 0.16,
+          "b_wait_max_ms": 0.16,
+          "b_hold_p50_ms": 0.624
+        },
+        {
+          "b_requests": 30,
+          "b_wait_p50_ms": 0.1,
+          "b_wait_p95_ms": 0.17,
+          "b_wait_max_ms": 0.29,
+          "b_hold_p50_ms": 0.611
+        }
+      ],
+      "b_wait_p50_ms_median": 0.13,
+      "b_wait_p95_ms_median": 0.18,
+      "b_wait_max_ms_max": 0.29
+    },
+    {
+      "shell_s": 5.0,
+      "arm": "mixed",
+      "reps": 5,
+      "rows": [
+        {
+          "b_requests": 16,
+          "b_wait_p50_ms": 0.12,
+          "b_wait_p95_ms": 4991.81,
+          "b_wait_max_ms": 5000.29,
+          "b_hold_p50_ms": 0.648
+        },
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.15,
+          "b_wait_p95_ms": 4995.11,
+          "b_wait_max_ms": 5000.97,
+          "b_hold_p50_ms": 0.663
+        },
+        {
+          "b_requests": 16,
+          "b_wait_p50_ms": 0.15,
+          "b_wait_p95_ms": 4990.82,
+          "b_wait_max_ms": 4991.96,
+          "b_hold_p50_ms": 0.74
+        },
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.16,
+          "b_wait_p95_ms": 4983.61,
+          "b_wait_max_ms": 4996.33,
+          "b_hold_p50_ms": 0.626
+        },
+        {
+          "b_requests": 15,
+          "b_wait_p50_ms": 0.13,
+          "b_wait_p95_ms": 4994.75,
+          "b_wait_max_ms": 4996.92,
+          "b_hold_p50_ms": 0.662
+        }
+      ],
+      "b_wait_p50_ms_median": 0.15,
+      "b_wait_p95_ms_median": 4991.81,
+      "b_wait_max_ms_max": 5000.97
+    },
+    {
+      "shell_s": 5.0,
+      "arm": "baseline",
+      "reps": 5,
+      "rows": [
+        {
+          "b_requests": 89,
+          "b_wait_p50_ms": 0.1,
+          "b_wait_p95_ms": 0.2,
+          "b_wait_max_ms": 0.29,
+          "b_hold_p50_ms": 0.642
+        },
+        {
+          "b_requests": 89,
+          "b_wait_p50_ms": 0.12,
+          "b_wait_p95_ms": 0.16,
+          "b_wait_max_ms": 0.23,
+          "b_hold_p50_ms": 0.635
+        },
+        {
+          "b_requests": 89,
+          "b_wait_p50_ms": 0.13,
+          "b_wait_p95_ms": 0.19,
+          "b_wait_max_ms": 0.38,
+          "b_hold_p50_ms": 0.621
+        },
+        {
+          "b_requests": 89,
+          "b_wait_p50_ms": 0.15,
+          "b_wait_p95_ms": 0.2,
+          "b_wait_max_ms": 0.28,
+          "b_hold_p50_ms": 0.668
+        },
+        {
+          "b_requests": 89,
+          "b_wait_p50_ms": 0.14,
+          "b_wait_p95_ms": 0.19,
+          "b_wait_max_ms": 0.25,
+          "b_hold_p50_ms": 0.637
+        }
+      ],
+      "b_wait_p50_ms_median": 0.13,
+      "b_wait_p95_ms_median": 0.19,
+      "b_wait_max_ms_max": 0.38
+    }
+  ]
+}

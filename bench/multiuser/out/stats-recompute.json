@@ -1,0 +1,80 @@
+{
+  "scoping_6_7": {
+    "tally": {
+      "off": {
+        "turns": 40,
+        "wrote_others": 26,
+        "own_complete": 34,
+        "runs": 20,
+        "both": 14
+      },
+      "on": {
+        "turns": 40,
+        "wrote_others": 0,
+        "own_complete": 40,
+        "runs": 20,
+        "both": 20
+      }
+    },
+    "tests": [
+      {
+        "contrast": "wrote another user's files (turns)",
+        "off": "26/40",
+        "on": "0/40",
+        "fisher_p_two_sided": 6.037498152742319e-11
+      },
+      {
+        "contrast": "completed own task (turns)",
+        "off": "34/40",
+        "on": "40/40",
+        "fisher_p_two_sided": 0.025546605293440737
+      },
+      {
+        "contrast": "both tasks correct (runs)",
+        "off": "14/20",
+        "on": "20/20",
+        "fisher_p_two_sided": 0.020196020196020195
+      }
+    ]
+  },
+  "integrity_6_2": {
+    "cells": {
+      "off": {
+        "classified": 110,
+        "violations": 9
+      },
+      "workspace": {
+        "classified": 181,
+        "violations": 0
+      },
+      "conflict": {
+        "classified": 180,
+        "violations": 0
+      }
+    },
+    "fisher_p_two_sided": 1.5951459802524068e-06,
+    "note": "off violations vs both locked scopes pooled"
+  },
+  "ranking_6_10_ttft_ms": {
+    "serial": {
+      "n": 12,
+      "median": 38204.05,
+      "ci95": [
+        38022.100000000006,
+        38277.55
+      ],
+      "resamples": 10000,
+      "seed": 20260807
+    },
+    "parallel": {
+      "n": 12,
+      "median": 10777.849999999999,
+      "ci95": [
+        10706.25,
+        10812.7
+      ],
+      "resamples": 10000,
+      "seed": 20260807
+    }
+  }
+}

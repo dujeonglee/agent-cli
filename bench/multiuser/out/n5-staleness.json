@@ -1,0 +1,98 @@
+{
+  "config": {
+    "users": 4,
+    "rounds": 25
+  },
+  "parallel": {
+    "reps": 5,
+    "stale_share_min": 0.98,
+    "stale_share_median": 1.0,
+    "stale_share_max": 1.0,
+    "stale_depth_max": 5,
+    "peak_concurrency_min": 4
+  },
+  "serial_control": {
+    "reps": 2,
+    "stale_steps_total": 0,
+    "steps_total": 200
+  },
+  "reps": [
+    {
+      "arm": "parallel",
+      "turn_threads": 100,
+      "steps": 100,
+      "stale_steps": 100,
+      "stale_share": 1.0,
+      "stale_depth_p50": 4.0,
+      "stale_depth_max": 5,
+      "peak_concurrency": 4,
+      "rep": 0
+    },
+    {
+      "arm": "parallel",
+      "turn_threads": 100,
+      "steps": 100,
+      "stale_steps": 100,
+      "stale_share": 1.0,
+      "stale_depth_p50": 4.0,
+      "stale_depth_max": 5,
+      "peak_concurrency": 4,
+      "rep": 1
+    },
+    {
+      "arm": "parallel",
+      "turn_threads": 100,
+      "steps": 100,
+      "stale_steps": 100,
+      "stale_share": 1.0,
+      "stale_depth_p50": 3.0,
+      "stale_depth_max": 5,
+      "peak_concurrency": 4,
+      "rep": 2
+    },
+    {
+      "arm": "parallel",
+      "turn_threads": 100,
+      "steps": 100,
+      "stale_steps": 100,
+      "stale_share": 1.0,
+      "stale_depth_p50": 4.0,
+      "stale_depth_max": 5,
+      "peak_concurrency": 4,
+      "rep": 3
+    },
+    {
+      "arm": "parallel",
+      "turn_threads": 100,
+      "steps": 100,
+      "stale_steps": 98,
+      "stale_share": 0.98,
+      "stale_depth_p50": 3.0,
+      "stale_depth_max": 5,
+      "peak_concurrency": 4,
+      "rep": 4
+    },
+    {
+      "arm": "serial",
+      "turn_threads": 1,
+      "steps": 100,
+      "stale_steps": 0,
+      "stale_share": 0.0,
+      "stale_depth_p50": 0,
+      "stale_depth_max": 0,
+      "peak_concurrency": 1,
+      "rep": 0
+    },
+    {
+      "arm": "serial",
+      "turn_threads": 1,
+      "steps": 100,
+      "stale_steps": 0,
+      "stale_share": 0.0,
+      "stale_depth_p50": 0,
+      "stale_depth_max": 0,
+      "peak_concurrency": 1,
+      "rep": 1
+    }
+  ]
+}
