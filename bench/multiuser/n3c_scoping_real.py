@@ -12,9 +12,21 @@
 
 구성은 §6.4 의 실모델 팔과 같되 **짧게** 만들었다. 거기서는 턴 하나가 4분
 가까이 걸려 12 회가 한계였고, 8% 근처의 기저율을 그 표본으로는 두 팔 사이에서
-구분할 수 없다. 그래서 쓰기 횟수와 줄 수를 줄여 반복을 벌었다. 두 사용자의
-지시는 태그와 파일 이름만 다른 **혼선 최악 조건** 그대로 둔다 — 완화책을
-시험하는 자리에서 조건을 쉽게 만들면 아무것도 증명하지 못한다.
+구분할 수 없다. 그래서 쓰기 횟수와 줄 수를 줄여 반복을 벌었다.
+
+**워크로드 축 (`--workload`)** — 리뷰 R2-W3 대응:
+
+  confusable  두 지시가 태그와 파일 이름만 다르다. 혼선 **최악 조건**이며,
+              완화책을 시험하는 자리에서 조건을 쉽게 만들면 아무것도
+              증명하지 못하므로 완화 실험(off/on)의 기본값이다.
+  realistic   두 지시가 실제로 다른 일이다 — 다른 주제(파서 토큰 정의 대
+              사용자 문서), 다른 파일 이름, 다른 줄 내용, 다른 완료 태그.
+              "정상적으로 구분되는 작업에서는 혼선이 얼마나 나는가"라는
+              배치 관점의 질문에 답한다.
+
+  두 워크로드는 **작업량의 모양을 공유한다**(파일 2개 × 8줄). 그래야 스팬과
+  표본이 비교 가능하기 때문이며, 따라서 이 축이 바꾸는 것은 작업의 크기가
+  아니라 **지시가 서로 헷갈릴 만한가**뿐이다. 그것이 재려는 변수다.
 
 지표:
   cross_task   한 턴이 상대의 파일을 썼는가 (완화 대상)
@@ -23,6 +35,8 @@
 
 사용: AGENT_CLI_BASE_URL/API_KEY/MODEL 설정 후
   .venv/bin/python bench/multiuser/n3c_scoping_real.py [--reps 12]
+  .venv/bin/python bench/multiuser/n3c_scoping_real.py --workload realistic \
+      --arms off --reps 20
 """
 
 from __future__ import annotations
@@ -35,6 +49,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from driver import AgentServer, turn_chain
@@ -42,6 +57,21 @@ from driver import AgentServer, turn_chain
 #: §6.4 는 4회×40줄이라 턴당 ~4분이었다. 반복을 벌기 위해 줄인다.
 WRITES_PER_TURN = 2
 LINES = 8
+
+
+@dataclass(frozen=True)
+class Task:
+    """한 사용자에게 줄 지시 하나 + 객관적 채점표.
+
+    ``files`` 는 그 지시가 만들라고 한 파일들의 basename 이다. 채점(자기 일
+    완수 / 남의 파일 침범)은 이 집합의 포함 관계로만 이뤄지므로 모델도 사람도
+    판정에 개입하지 않는다. ``files[0]`` 은 질의 본문에 반드시 등장하므로
+    귀속(:func:`_attribute`)이 질의 → 과제를 되찾는 표식으로도 쓴다.
+    """
+
+    key: str
+    prompt: str
+    files: tuple[str, ...]
 
 
 def task_for(tag: str, target: str) -> str:
@@ -56,6 +86,53 @@ def task_for(tag: str, target: str) -> str:
     )
 
 
+def _confusable(tag: str, stem: str) -> Task:
+    return Task(
+        key=stem,
+        prompt=task_for(tag, stem),
+        files=tuple(f"{stem}{i}.txt" for i in range(1, WRITES_PER_TURN + 1)),
+    )
+
+
+def _realistic(key: str, subject: str, files: tuple[str, str], lines: tuple[str, str]):
+    """실제로 다른 일 하나. 주제·파일명·줄 내용·완료 태그가 모두 다르다."""
+    return Task(
+        key=key,
+        prompt=(
+            f"You are working on {subject}. Use the write_file tool twice: "
+            f"create {files[0]} with exactly {LINES} lines where every line is "
+            f"'{lines[0]}' with N replaced by the line number, and create "
+            f"{files[1]} with exactly {LINES} lines where every line is "
+            f"'{lines[1]}' with N replaced by the line number. "
+            "Do not read any file. Do not use the shell. "
+            f"When both files are written, call complete with result '{key} done'."
+        ),
+        files=files,
+    )
+
+
+#: 워크로드 = 동시에 던질 지시 두 개. 첫째가 사용자 A, 둘째가 B.
+WORKLOADS: dict[str, tuple[Task, Task]] = {
+    # 태그와 파일 이름만 다르다 — 혼선 최악 조건 (§6.7 완화 실험의 기본값).
+    "confusable": (_confusable("AAA", "alpha"), _confusable("BBB", "beta")),
+    # 서로 다른 모듈에 서로 다른 동사 — 정상적으로 구분되는 작업 (R2-W3).
+    "realistic": (
+        _realistic(
+            "parser",
+            "the tokenizer of a small expression parser",
+            ("parser_tokens.txt", "parser_rules.txt"),
+            ("TOKEN_N", "rule N: expr"),
+        ),
+        _realistic(
+            "readme",
+            "the user-facing documentation of a command line tool",
+            ("readme_intro.txt", "readme_usage.txt"),
+            ("intro paragraph N", "usage step N"),
+        ),
+    ),
+}
+
+
 def real_llm_from_env() -> dict:
     try:
         return {
@@ -67,8 +144,8 @@ def real_llm_from_env() -> dict:
         sys.exit(f"missing env {e} — set AGENT_CLI_BASE_URL/API_KEY/MODEL")
 
 
-def _want(stem: str) -> set[str]:
-    return {f"{stem}{i}.txt" for i in range(1, WRITES_PER_TURN + 1)}
+def _want(task: Task) -> set[str]:
+    return set(task.files)
 
 
 def _read_history(session_dir: Path) -> list[dict]:
@@ -85,21 +162,21 @@ def _read_history(session_dir: Path) -> list[dict]:
     return out
 
 
-def _attribute(records: list[dict]) -> list[dict]:
+def _attribute(records: list[dict], tasks: tuple[Task, Task]) -> list[dict]:
     """질의별로 (그 질의를 처리하던 턴이) 실제로 쓴 파일 집합.
 
-    `reply_to` 는 "이 레코드가 어느 요청을 처리하는 동안 생겼는가"이고
+    `reply_to` 는 "이 레코드가 어느 유저 요청을 처리하는 동안 생겼는가"이고
     `files` 는 그 레코드가 만진 경로다(둘 다 `_enrich_record` 가 붙인다).
-    질의 본문에서 목표 stem 을 읽어 오는 이유는 지시문이 그 이름을 담고
-    있어서다 — 별도 매핑을 들고 다닐 필요가 없다.
+    질의 본문에서 과제의 첫 파일명을 읽어 오는 이유는 지시문이 그 이름을
+    담고 있어서다 — 별도 매핑을 들고 다닐 필요가 없다.
     """
     targets: dict[str, str] = {}
     for r in records:
         if r.get("kind") == "query" and r.get("id"):
             text = str(r.get("text", ""))
-            for stem in ("alpha", "beta"):
-                if f"{stem}1.txt" in text:
-                    targets[r["id"]] = stem
+            for task in tasks:
+                if task.files[0] in text:
+                    targets[r["id"]] = task.key
                     break
     files: dict[str, set[str]] = {q: set() for q in targets}
     for r in records:
@@ -113,7 +190,9 @@ def _attribute(records: list[dict]) -> list[dict]:
     ]
 
 
-def run_rep(llm: dict, scoping: bool, rep: int) -> dict | None:
+def run_rep(
+    llm: dict, scoping: bool, rep: int, tasks: tuple[Task, Task]
+) -> dict | None:
     ws = Path(tempfile.mkdtemp(prefix=f"n3c-{'on' if scoping else 'off'}-{rep}-"))
     server = AgentServer(
         ws,
@@ -129,13 +208,13 @@ def run_rep(llm: dict, scoping: bool, rep: int) -> dict | None:
         results: dict[str, int] = {}
         gate = threading.Barrier(2)
 
-        def submit(conn: str, tag: str, target: str) -> None:
+        def submit(conn: str, task: Task) -> None:
             gate.wait()
-            results[conn] = server.chat(task_for(tag, target), conn)
+            results[conn] = server.chat(task.prompt, conn)
 
         threads = [
-            threading.Thread(target=submit, args=(a_conn, "AAA", "alpha")),
-            threading.Thread(target=submit, args=(b_conn, "BBB", "beta")),
+            threading.Thread(target=submit, args=(a_conn, tasks[0])),
+            threading.Thread(target=submit, args=(b_conn, tasks[1])),
         ]
         for t in threads:
             t.start()
@@ -154,15 +233,15 @@ def run_rep(llm: dict, scoping: bool, rep: int) -> dict | None:
         # 하다. history.jsonl 의 레코드는 `reply_to`(어느 요청을 처리 중이던
         # 턴인가)와 `files`(그 레코드가 만진 경로)를 함께 들고 있으므로,
         # 둘을 조인하면 "이 턴이 실제로 어느 파일을 썼는가"가 나온다.
-        turns = _attribute(_read_history(server.session_dir))
+        turns = _attribute(_read_history(server.session_dir), tasks)
         if len(turns) != 2:
             return None  # 두 질의가 다 기록되지 않았다면 판정 불가
+        by_key = {t.key: t for t in tasks}
         per_turn = []
         for t in turns:
-            own, other = (
-                _want(t["target"]),
-                _want("beta" if t["target"] == "alpha" else "alpha"),
-            )
+            own_task = by_key[t["target"]]
+            other_task = next(x for x in tasks if x.key != t["target"])
+            own, other = _want(own_task), _want(other_task)
             per_turn.append(
                 {
                     "target": t["target"],
@@ -193,6 +272,8 @@ def summarize(rows: list[dict]) -> list[dict]:
     for arm in ("off", "on"):
         sub = [r for r in rows if r["scoping"] == arm]
         n = len(sub)
+        if not n:
+            continue  # --arms off 로 한 팔만 돌린 경우
         cross = sum(1 for r in sub if r["crossTask"])
         both = sum(1 for r in sub if r["bothComplete"])
         turns = [t for r in sub for t in r["turns"]]
@@ -222,13 +303,29 @@ def main() -> None:
     ap.add_argument("--reps", type=int, default=12)
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     ap.add_argument(
+        "--workload",
+        choices=sorted(WORKLOADS),
+        default="confusable",
+        help="confusable=혼선 최악(기본) / realistic=정상적으로 구분되는 작업",
+    )
+    ap.add_argument(
+        "--arms",
+        choices=("both", "off", "on"),
+        default="both",
+        help="both=완화 절제(기본) / off=기저율만 (엔드포인트 시간 절약)",
+    )
+    ap.add_argument(
         "--rederive",
         action="store_true",
         help="실행 없이 커밋된 원시 JSONL 에서 요약만 재도출 (리포 규약).",
     )
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    raw_path = args.out / "n3c-scoping-real.jsonl"
+    tasks = WORKLOADS[args.workload]
+    stem = (
+        "n3c-scoping-real" if args.workload == "confusable" else f"n3c-{args.workload}"
+    )
+    raw_path = args.out / f"{stem}.jsonl"
 
     if args.rederive:
         rows = [
@@ -242,9 +339,10 @@ def main() -> None:
         t0 = time.time()
         # 팔을 rep 단위로 번갈아 돈다 — 한 팔을 몰아서 돌리면 그 사이의
         # 서버 부하 변화가 통째로 팔 사이 차이로 오인된다.
+        arms = {"both": (False, True), "off": (False,), "on": (True,)}[args.arms]
         for rep in range(1, args.reps + 1):
-            for scoping in (False, True):
-                row = run_rep(llm, scoping, rep)
+            for scoping in arms:
+                row = run_rep(llm, scoping, rep, tasks)
                 if row is None:
                     continue
                 rows.append(row)
@@ -254,20 +352,34 @@ def main() -> None:
         )
         print(f"# elapsed {round(time.time() - t0, 1)}s", flush=True)
 
+    workload_note = {
+        "confusable": (
+            "The two instructions differ only in a tag and a filename, which "
+            "is close to the worst case for confusion and is kept that way "
+            "deliberately."
+        ),
+        "realistic": (
+            "The two instructions are genuinely different work (different "
+            "subject, filenames, line content and completion tag), so this "
+            "arm measures the base rate a deployment would actually see. "
+            "Only the shape of the work is shared (two files of eight lines) "
+            "so that spans and sample sizes stay comparable."
+        ),
+    }[args.workload]
     summary = {
+        "workload": args.workload,
+        "tasks": {t.key: list(t.files) for t in tasks},
         "writesPerTurn": WRITES_PER_TURN,
         "lines": LINES,
         "arms": summarize(rows),
         "note": (
             "crossTask = one turn carried out the other user's task (wrote "
             "their files instead of its own), judged from filenames alone. "
-            "The two instructions differ only in a tag and a filename, which "
-            "is close to the worst case for confusion and is kept that way "
-            "deliberately. bothComplete guards the other direction: scoping "
+            f"{workload_note} bothComplete guards the other direction: scoping "
             "must not make the model so cautious that it stops doing its job."
         ),
     }
-    (args.out / "n3c-scoping-real.json").write_text(
+    (args.out / f"{stem}.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
     print(json.dumps(summary, indent=2))

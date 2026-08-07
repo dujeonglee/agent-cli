@@ -26,7 +26,7 @@
 | `e2c_retry.py` | **E2c**: 거부 벌점 대 재시도 간격 {250,1000}ms — 벌점이 간격 하나 안에 머무는지 (§6.1) |
 | `e2d_nscale.py` | **E2d**: 사용자 수 축 N∈{2,4,8} — 병렬 행 평탄함의 스케일 (§6.1) |
 | `n3b_scoping.py` | **N3b**: 턴 스코핑 목 절제 — off/ignore(음성 대조)/honor 3팔 (§6.7) |
-| `n3c_scoping_real.py` | **N3c**: 턴 스코핑 라이브 — reply_to×files 턴별 귀속 판정 (§6.7) |
+| `n3c_scoping_real.py` | **N3c**: 턴 스코핑 라이브 — reply_to×files 턴별 귀속 판정 (§6.7). `--workload confusable`(기본, 혼선 최악=완화 실험) / `realistic`(정상적으로 구분되는 작업=배치 기저율), `--arms off\|on\|both` |
 | `n5_staleness.py` | **N5**: 스냅샷 staleness — ctx seq 이벤트로 스텝별 (커밋−1)−(스냅샷) 산술, 병렬 대 직렬 대조군 (§6.7) |
 | `p4b_mixed_fairness.py` | **P4b**: 혼합 워크로드 효과층 대기 — 셸 위주 A 옆 파일 위주 B 의 락 대기 분포, 락 직접 구동 (§6.8) |
 | `p2_shell_real.py` | **F2**: 셸 지배 작동점 — 라이브 2-user, 효과 비중·락 대기 (§6.4) |
