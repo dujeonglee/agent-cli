@@ -1470,7 +1470,11 @@ def tool_agent(
                     f"with NO memory of them. If you meant to CONTINUE one, "
                     f'kill this and use {{"mode":"resume","key":"..."}} instead.'
                 )
-        task = args.get("task", "")
+        # ``message`` accepted as an alias: mode:"request" uses ``message``, so
+        # models habitually send it here too — and a silently dropped initial
+        # task looks exactly like "the agent ignored me" (live-reproduced:
+        # resume+message → ACK ok, no reply ever).
+        task = args.get("task") or args.get("message") or ""
         if task:
             err = registry.request(key, task)
             if err:
@@ -1542,7 +1546,8 @@ def tool_agent(
                 f"(its context was preserved across death)."
             )
         ]
-        task = args.get("task", "")
+        # ``message`` alias — same trap as spawn (see above).
+        task = args.get("task") or args.get("message") or ""
         if task:
             qerr = registry.request(key, task)
             if qerr:

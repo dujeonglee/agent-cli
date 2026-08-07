@@ -12,6 +12,22 @@
 
 ## [Unreleased]
 
+## [7.29.1] - 2026-08-07
+
+### Fixed
+
+- **`agent` resume/spawn 에 동봉한 지시가 조용히 버려지던 문제** (사용자 제보 "agent 가
+  씹는다" — 라이브 재현으로 확정). 지시 필드가 모드별로 달랐다: `request` 는
+  `message`(필수), spawn/resume 는 `task`(옵션). 모델이 request 습관대로 resume 에
+  `message` 를 보내면 검증(key 만 필수)도 통과하고 ACK 도 성공이라 **에러 없이
+  유실**됐다 — 부활은 되는데 지시는 전달 안 되는, 정확히 "씹힌" 관측.
+  - spawn/resume 가 `message` 를 `task` 의 별칭으로 수용한다(둘 다 오면 정식 필드
+    `task` 우선). request 쪽은 손대지 않음 — `message` 누락은 이미 검증 에러로
+    시끄럽게 실패하므로 함정이 아니다.
+  - 검증: 라이브(로컬 omlx 27B) — 수정 전 resume+message 는 45s 무회신, 수정 후
+    동일 입력에 회신 도착. 큐잉 계약 유닛 5종 + 뮤테이션 2/2.
+
+
 ## [7.29.0] - 2026-08-06
 
 ### Fixed
@@ -1644,7 +1660,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.29.0...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.29.1...HEAD
+[7.29.1]: https://github.com/dujeonglee/agent-cli/compare/v7.29.0...v7.29.1
 [7.29.0]: https://github.com/dujeonglee/agent-cli/compare/v7.28.1...v7.29.0
 [7.28.1]: https://github.com/dujeonglee/agent-cli/compare/v7.28.0...v7.28.1
 [7.28.0]: https://github.com/dujeonglee/agent-cli/compare/v7.27.2...v7.28.0
