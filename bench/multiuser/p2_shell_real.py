@@ -81,7 +81,7 @@ def lock_totals(events: list[dict], offset: int) -> dict[str, dict]:
     return per
 
 
-def run_rep(llm: dict, sleep_ms: int, rep: int) -> dict | None:
+def run_rep(llm: dict, sleep_ms: int, rep: int, timeout: float = 1200) -> dict | None:
     ws = Path(tempfile.mkdtemp(prefix=f"p2sh-{sleep_ms}-{rep}-"))
     # 셸은 어느 스코프에서도 배타이므로 스코프 축은 의미가 없다 —
     # 출하 기본값(conflict)으로 고정한다.
@@ -108,7 +108,7 @@ def run_rep(llm: dict, sleep_ms: int, rep: int) -> dict | None:
             t.join()
         if set(results.values()) != {200}:
             return None
-        events = server.wait_completes_since(before, 2, timeout=1200)
+        events = server.wait_completes_since(before, 2, timeout=timeout)
         ca, cb = turn_chain(events, a_conn), turn_chain(events, b_conn)
         if None in (ca["dispatch"], ca["complete"], cb["dispatch"], cb["complete"]):
             return None
@@ -149,6 +149,12 @@ def main() -> None:
     ap.add_argument("--reps", type=int, default=4)
     ap.add_argument("--sleep-ms", type=int, nargs="*", default=[1000, 5000])
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=1200,
+        help="턴 완료 대기 상한(초). 엔드포인트가 붐비면 늘린다 — 기본값에서 실제로 타임아웃이 났다.",
+    )
     ap.add_argument("--rederive", action="store_true")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -165,7 +171,7 @@ def main() -> None:
         rows = []
         for sleep_ms in args.sleep_ms:
             for rep in range(1, args.reps + 1):
-                row = run_rep(llm, sleep_ms, rep)
+                row = run_rep(llm, sleep_ms, rep, args.timeout)
                 if row is None:
                     continue
                 rows.append(row)

@@ -1,0 +1,31 @@
+{
+  "writesPerTurn": 2,
+  "lines": 8,
+  "arms": [
+    {
+      "scoping": "off",
+      "reps": 20,
+      "turns": 40,
+      "crossTask": 19,
+      "crossTaskRate": 0.95,
+      "turnsWroteOthers": 25,
+      "turnsOwnComplete": 36,
+      "bothComplete": 16,
+      "bothCompleteRate": 0.8,
+      "medianSpanMs": 92491.8
+    },
+    {
+      "scoping": "on",
+      "reps": 20,
+      "turns": 40,
+      "crossTask": 0,
+      "crossTaskRate": 0.0,
+      "turnsWroteOthers": 0,
+      "turnsOwnComplete": 40,
+      "bothComplete": 20,
+      "bothCompleteRate": 1.0,
+      "medianSpanMs": 80939.3
+    }
+  ],
+  "note": "crossTask = one turn carried out the other user's task (wrote their files instead of its own), judged from filenames alone. The two instructions differ only in a tag and a filename, which is close to the worst case for confusion and is kept that way deliberately. bothComplete guards the other direction: scoping must not make the model so cautious that it stops doing its job."
+}

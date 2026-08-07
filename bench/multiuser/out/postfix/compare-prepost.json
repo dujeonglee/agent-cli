@@ -1,0 +1,256 @@
+{
+  "note": "pre = committed pre-fix run (out/), post = same settings re-run on the repaired step seam (out/postfix/). The fix could only change history record ORDER under the parallel contract, so structural counts must match while timing and content rates redraw.",
+  "rows": [
+    {
+      "metric": "n3c[off].turnsWroteOthers",
+      "pre": 26,
+      "post": 25,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "n3c[off].turnsOwnComplete",
+      "pre": 34,
+      "post": 36,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "n3c[off].bothComplete",
+      "pre": 14,
+      "post": 16,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "n3c[off].turns",
+      "pre": 40,
+      "post": 40,
+      "expect_same": true,
+      "verdict": "SAME"
+    },
+    {
+      "metric": "n3c[off].medianSpanMs",
+      "pre": 78980.7,
+      "post": 92491.8,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "n3c[on].turnsWroteOthers",
+      "pre": 0,
+      "post": 0,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "n3c[on].turnsOwnComplete",
+      "pre": 40,
+      "post": 40,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "n3c[on].bothComplete",
+      "pre": 20,
+      "post": 20,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "n3c[on].turns",
+      "pre": 40,
+      "post": 40,
+      "expect_same": true,
+      "verdict": "SAME"
+    },
+    {
+      "metric": "n3c[on].medianSpanMs",
+      "pre": 62763.5,
+      "post": 80939.3,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope.runs_used",
+      "pre": 12,
+      "post": 12,
+      "expect_same": true,
+      "verdict": "SAME"
+    },
+    {
+      "metric": "p2scope[disjoint/workspace].effect_share_measured_p50",
+      "pre": 1e-05,
+      "post": 1e-05,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[disjoint/workspace].lock_wait_p50_ms",
+      "pre": 0.1,
+      "post": 0.1,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[disjoint/workspace].effective_parallelism_p50",
+      "pre": 1.864,
+      "post": null,
+      "expect_same": false,
+      "verdict": "—"
+    },
+    {
+      "metric": "p2scope[disjoint/conflict].effect_share_measured_p50",
+      "pre": 1e-05,
+      "post": 1e-05,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[disjoint/conflict].lock_wait_p50_ms",
+      "pre": 0.1,
+      "post": 0.1,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[disjoint/conflict].effective_parallelism_p50",
+      "pre": 1.854,
+      "post": null,
+      "expect_same": false,
+      "verdict": "—"
+    },
+    {
+      "metric": "p2scope[same/workspace].effect_share_measured_p50",
+      "pre": 1e-05,
+      "post": 1e-05,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[same/workspace].lock_wait_p50_ms",
+      "pre": 0.1,
+      "post": 0.1,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[same/workspace].effective_parallelism_p50",
+      "pre": 1.873,
+      "post": 1.902,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[same/conflict].effect_share_measured_p50",
+      "pre": 1e-05,
+      "post": 1e-05,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[same/conflict].lock_wait_p50_ms",
+      "pre": 0.1,
+      "post": 0.1,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p2scope[same/conflict].effective_parallelism_p50",
+      "pre": 1.89,
+      "post": 1.925,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p6.hol[serial].p50_ms",
+      "pre": 38204.1,
+      "post": 43568.1,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p6.hol[parallel].p50_ms",
+      "pre": 10777.8,
+      "post": 12289.1,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p6.cost[serial/warmup0].calls_p50",
+      "pre": 2.0,
+      "post": 2.0,
+      "expect_same": true,
+      "verdict": "SAME"
+    },
+    {
+      "metric": "p6.cost[serial/warmup0].input_p50",
+      "pre": 15613.0,
+      "post": 15612.0,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p6.cost[parallel/warmup0].calls_p50",
+      "pre": 3.0,
+      "post": 3.0,
+      "expect_same": true,
+      "verdict": "SAME"
+    },
+    {
+      "metric": "p6.cost[parallel/warmup0].input_p50",
+      "pre": 23199.5,
+      "post": 23197.5,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p6.cost[serial/warmup5].calls_p50",
+      "pre": 2.0,
+      "post": 2.0,
+      "expect_same": true,
+      "verdict": "SAME"
+    },
+    {
+      "metric": "p6.cost[serial/warmup5].input_p50",
+      "pre": 17402.5,
+      "post": 17765.0,
+      "expect_same": false,
+      "verdict": "(varies)"
+    },
+    {
+      "metric": "p6.cost[parallel/warmup5].calls_p50",
+      "pre": 3.0,
+      "post": 3.0,
+      "expect_same": true,
+      "verdict": "SAME"
+    },
+    {
+      "metric": "p6.cost[parallel/warmup5].input_p50",
+      "pre": 25519.0,
+      "post": 25802.5,
+      "expect_same": false,
+      "verdict": "(varies)"
+    }
+  ],
+  "realistic_base_rate": {
+    "workload": "realistic",
+    "tasks": {
+      "parser": [
+        "parser_tokens.txt",
+        "parser_rules.txt"
+      ],
+      "readme": [
+        "readme_intro.txt",
+        "readme_usage.txt"
+      ]
+    },
+    "reps": 20,
+    "turns": 40,
+    "turnsWroteOthers": 31,
+    "turnsOwnComplete": 36,
+    "crossTask_runs": 20,
+    "bothComplete": 16,
+    "medianSpanMs": 71490.4
+  }
+}

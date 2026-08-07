@@ -1,0 +1,281 @@
+{
+  "model": "Qwen3.6-27B-MLX-8bit",
+  "hol_spot": [
+    {
+      "contract": "serial",
+      "n": 12,
+      "bTtft_p50": 43568.1,
+      "bTtft_all": [
+        43333.4,
+        42887.0,
+        43111.5,
+        43545.3,
+        43715.8,
+        43205.0,
+        43632.6,
+        43559.1,
+        43581.0,
+        43922.3,
+        44275.2,
+        43577.1
+      ]
+    },
+    {
+      "contract": "parallel",
+      "n": 12,
+      "bTtft_p50": 12289.1,
+      "bTtft_all": [
+        12292.6,
+        12412.7,
+        12513.9,
+        12166.8,
+        12375.1,
+        12483.4,
+        12395.9,
+        12285.6,
+        12184.6,
+        12188.8,
+        11921.7,
+        12014.8
+      ]
+    }
+  ],
+  "token_cost": [
+    {
+      "contract": "serial",
+      "warmup": 0,
+      "n": 6,
+      "input_tokens_p50": 15612.0,
+      "output_tokens_p50": 207.0,
+      "llm_calls_p50": 2.0,
+      "first_call_input_p50": 7728.5,
+      "reps": [
+        {
+          "rep": 1,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15617,
+          "output_tokens": 210,
+          "first_call_input_tokens": 7729
+        },
+        {
+          "rep": 2,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15611,
+          "output_tokens": 204,
+          "first_call_input_tokens": 7729
+        },
+        {
+          "rep": 3,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15547,
+          "output_tokens": 136,
+          "first_call_input_tokens": 7729
+        },
+        {
+          "rep": 4,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15613,
+          "output_tokens": 210,
+          "first_call_input_tokens": 7727
+        },
+        {
+          "rep": 5,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15609,
+          "output_tokens": 204,
+          "first_call_input_tokens": 7728
+        },
+        {
+          "rep": 6,
+          "warmup": 0,
+          "llm_calls": 2,
+          "input_tokens": 15619,
+          "output_tokens": 218,
+          "first_call_input_tokens": 7728
+        }
+      ]
+    },
+    {
+      "contract": "parallel",
+      "warmup": 0,
+      "n": 6,
+      "input_tokens_p50": 23197.5,
+      "output_tokens_p50": 292.5,
+      "llm_calls_p50": 3.0,
+      "first_call_input_p50": 7718.5,
+      "reps": [
+        {
+          "rep": 1,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23207,
+          "output_tokens": 252,
+          "first_call_input_tokens": 7728
+        },
+        {
+          "rep": 2,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23233,
+          "output_tokens": 315,
+          "first_call_input_tokens": 7752
+        },
+        {
+          "rep": 3,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23201,
+          "output_tokens": 387,
+          "first_call_input_tokens": 7749
+        },
+        {
+          "rep": 4,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23194,
+          "output_tokens": 286,
+          "first_call_input_tokens": 7709
+        },
+        {
+          "rep": 5,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23188,
+          "output_tokens": 299,
+          "first_call_input_tokens": 7707
+        },
+        {
+          "rep": 6,
+          "warmup": 0,
+          "llm_calls": 3,
+          "input_tokens": 23182,
+          "output_tokens": 286,
+          "first_call_input_tokens": 7705
+        }
+      ]
+    },
+    {
+      "contract": "serial",
+      "warmup": 5,
+      "n": 6,
+      "input_tokens_p50": 17765.0,
+      "output_tokens_p50": 174.0,
+      "llm_calls_p50": 2.0,
+      "first_call_input_p50": 8828.0,
+      "reps": [
+        {
+          "rep": 1,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 17353,
+          "output_tokens": 188,
+          "first_call_input_tokens": 8622
+        },
+        {
+          "rep": 2,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 17269,
+          "output_tokens": 183,
+          "first_call_input_tokens": 8571
+        },
+        {
+          "rep": 3,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 18177,
+          "output_tokens": 172,
+          "first_call_input_tokens": 9034
+        },
+        {
+          "rep": 4,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 17139,
+          "output_tokens": 165,
+          "first_call_input_tokens": 8513
+        },
+        {
+          "rep": 5,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 18423,
+          "output_tokens": 172,
+          "first_call_input_tokens": 9153
+        },
+        {
+          "rep": 6,
+          "warmup": 5,
+          "llm_calls": 2,
+          "input_tokens": 18643,
+          "output_tokens": 176,
+          "first_call_input_tokens": 9263
+        }
+      ]
+    },
+    {
+      "contract": "parallel",
+      "warmup": 5,
+      "n": 6,
+      "input_tokens_p50": 25802.5,
+      "output_tokens_p50": 269.0,
+      "llm_calls_p50": 3.0,
+      "first_call_input_p50": 8600.5,
+      "reps": [
+        {
+          "rep": 1,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25594,
+          "output_tokens": 279,
+          "first_call_input_tokens": 8516
+        },
+        {
+          "rep": 2,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 26011,
+          "output_tokens": 263,
+          "first_call_input_tokens": 8670
+        },
+        {
+          "rep": 3,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 26380,
+          "output_tokens": 159,
+          "first_call_input_tokens": 8793
+        },
+        {
+          "rep": 4,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25593,
+          "output_tokens": 263,
+          "first_call_input_tokens": 8531
+        },
+        {
+          "rep": 5,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 25516,
+          "output_tokens": 286,
+          "first_call_input_tokens": 8490
+        },
+        {
+          "rep": 6,
+          "warmup": 5,
+          "llm_calls": 3,
+          "input_tokens": 27540,
+          "output_tokens": 275,
+          "first_call_input_tokens": 9150
+        }
+      ]
+    }
+  ]
+}
