@@ -3308,3 +3308,35 @@ class TestAgentTaskFieldUnification:
         res = tool_agent({"mode": "spawn", "profile": ""}, registry=reg)
         assert '"task"' in res.output
         assert '"message"' not in res.output
+
+
+class TestSpawnScalingGuidance:
+    """spawn 장려 문구 계약 (v8.1.0, 사용자 제안 — 컨텍스트 창 스케일링 논리).
+
+    핵심 계약 2개: ①장려는 반드시 **조건·규율과 한 몸**이어야 한다(agent 사용은
+    가장 약한 준수 영역 — 무조건 장려는 과발동을 만든다) ②spawn 이 불가능한
+    서브루프 설명(SUBLOOP_DESCRIPTION)에는 이 문구가 새지 않아야 한다.
+    """
+
+    def test_description_carries_the_scaling_rationale(self):
+        from agent_cli.tools.registry import TOOLS
+
+        d = TOOLS["agent"].description
+        assert "OWN full context window" in d  # 창 스케일링 논리
+        assert "distilled" in d  # 증류 인터페이스 (내 창은 깨끗하게)
+        assert "ONE area" in d and "disjoint" in d  # orchestrate 와 같은 규율
+
+    def test_encouragement_is_conditional_not_blanket(self):
+        from agent_cli.tools.registry import TOOLS
+
+        d = TOOLS["agent"].description
+        # "언제 안 쓰는지"가 같이 있어야 한다 — 과발동 가드.
+        assert "small one-off" in d
+        assert "cheaper" in d
+
+    def test_subloop_description_has_no_spawn_encouragement(self):
+        from agent_cli.tools.agent_tool import AgentTool
+
+        sub = AgentTool.SUBLOOP_DESCRIPTION
+        assert "spawn" not in sub.lower()
+        assert "context window" not in sub  # 스케일링 문구 미유출

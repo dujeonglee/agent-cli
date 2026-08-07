@@ -39,7 +39,17 @@ class AgentTool(Tool):
         'its context between requests: send follow-ups with mode:"request" '
         "any time and its replies are delivered to you automatically as "
         "observations (no polling). Use run for independent one-shot tasks; "
-        "use spawn/request for iterative collaboration on evolving work."
+        "use spawn/request for iterative work. Spawning scales the team's "
+        "working memory: each agent has its OWN full context window, so "
+        "splitting a large job across N specialists gives N windows of "
+        "combined context while yours stays clean — agents absorb the raw "
+        "exploration (file contents, search results, dead ends) and send "
+        "back distilled answers. An agent that has studied one area answers "
+        "follow-ups from full detail, more precisely than re-deriving from "
+        "your compacted history. Prefer spawn when work is large, "
+        "multi-part, or will need follow-ups; give each agent ONE area "
+        "(disjoint files/subsystems). For a small one-off lookup, run — or "
+        "doing it yourself — is cheaper than coordinating an agent."
     )
     parameters: ClassVar[dict] = {
         "type": "object",
