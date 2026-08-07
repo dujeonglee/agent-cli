@@ -213,12 +213,12 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
             tail = (
                 "(STALE — the session was resumed; the agent is NO LONGER "
                 "waiting for this answer. Re-send the original request with "
-                f'{{"mode":"request","key":"{key}","message":"..."}} if still needed.)'
+                f'{{"mode":"request","key":"{key}","task":"..."}} if still needed.)'
             )
         else:
             tail = (
                 "(The agent is BLOCKED until answered. Answer via agent op: "
-                f'{{"mode":"request","key":"{key}","message":"<your answer>"}}.)'
+                f'{{"mode":"request","key":"{key}","task":"<your answer>"}}.)'
             )
         content = f"── agent {label} QUESTION ──\n{question}\n{tail}"
         return {
@@ -236,7 +236,7 @@ def build_reply_record(reply: dict, *, cap: int = 0, registry=None) -> dict:
         content = (
             f"── agent {label} message ──\n{msg}\n"
             f"(This agent messaged you directly. Reply if useful with "
-            f'{{"mode":"request","key":"{key}","message":"..."}} — otherwise '
+            f'{{"mode":"request","key":"{key}","task":"..."}} — otherwise '
             f"just continue.)"
         )
         return {
@@ -1470,11 +1470,7 @@ def tool_agent(
                     f"with NO memory of them. If you meant to CONTINUE one, "
                     f'kill this and use {{"mode":"resume","key":"..."}} instead.'
                 )
-        # ``message`` accepted as an alias: mode:"request" uses ``message``, so
-        # models habitually send it here too — and a silently dropped initial
-        # task looks exactly like "the agent ignored me" (live-reproduced:
-        # resume+message → ACK ok, no reply ever).
-        task = args.get("task") or args.get("message") or ""
+        task = args.get("task", "")
         if task:
             err = registry.request(key, task)
             if err:
@@ -1491,7 +1487,7 @@ def tool_agent(
                 )
         else:
             lines.append(
-                'send work with {"mode":"request","key":"' + key + '","message":"..."}.'
+                'send work with {"mode":"request","key":"' + key + '","task":"..."}.'
             )
         return ToolResult(True, output="\n".join(lines))
 
@@ -1499,7 +1495,7 @@ def tool_agent(
         key = args.get("key", "")
         tm = registry.get(key)
         was_waiting = tm is not None and tm.state == "waiting_ask"
-        err = registry.request(key, args.get("message", ""))
+        err = registry.request(key, args.get("task", ""))
         if err:
             return ToolResult(False, error=f"request rejected: {err}")
         if was_waiting:
@@ -1546,8 +1542,7 @@ def tool_agent(
                 f"(its context was preserved across death)."
             )
         ]
-        # ``message`` alias — same trap as spawn (see above).
-        task = args.get("task") or args.get("message") or ""
+        task = args.get("task", "")
         if task:
             qerr = registry.request(key, task)
             if qerr:

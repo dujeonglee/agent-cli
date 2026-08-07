@@ -12,6 +12,31 @@
 
 ## [Unreleased]
 
+## [8.0.0] - 2026-08-07
+
+### Changed (BREAKING)
+
+- **`agent` 도구 지시 필드를 `task` 하나로 통일** (사용자 결정 — v7.29.1 별칭 방식
+  철회). 종전엔 request 만 `message` 를 써서 모델이 spawn/resume 에 그 습관을 이어가면
+  지시가 조용히 유실됐다("씹힘"). 별칭 수용은 이중 어휘를 영구화하므로 폐기하고 **한
+  필드 + 시끄러운 교정**으로:
+  - 스키마에서 `message` 프로퍼티 제거, `task` 가 전 모드의 지시 필드
+    (run/request=필수, spawn/resume=옵션). `_MODE_REQUIRED` 의 request 도 `task`.
+  - `validate()` 가 `message` 필드 자체를 필드-정밀 에러로 거부 — "field 'message'
+    is not accepted — put the instruction in 'task'". A5 SCHEMA_MISMATCH 경로가
+    되먹여 모델이 다음 턴에 자가 교정한다. **도구-입력 의미론은 엄격, wire 문법만
+    관용**이라는 기존 A5 계보와 정합(별칭은 이 구분을 흐렸다).
+  - ACK/안내문구·시스템 프롬프트 예시 전부 `task` 어휘로 동기(안내가 계속 message 를
+    가르치면 통일이 자멸 — 계약 테스트로 고정).
+  - MAJOR 인 이유: 릴리스 정책의 "도구 입력 스키마 파괴적 변경". 구 세션 resume 은
+    깨지지 않는다 — prior 에 남은 `message` 습관은 첫 사용 시 교정 왕복 한 턴으로
+    자가 치유(의도된 전환 비용, 유예 없는 즉시 엄격은 사용자 결정).
+  - peer `message` **도구**(상주 간 메시징, 필드=`to`/`text`)는 별개 표면으로 무변경.
+  - 검증: 라이브 E2E(로컬 omlx 27B — 실모델이 새 스키마로 spawn→request→회신 수신→
+    완료, 산출 "25") + 유닛 7(거부·필수·분기·ACK 어휘) + 뮤테이션 4/4 + 표적
+    bakeoff(agent_then_complete, 27B/35B).
+
+
 ## [7.29.1] - 2026-08-07
 
 ### Fixed
@@ -1660,7 +1685,8 @@ wire-format·code_index 언어별 self-contained 중복, latent seam 들은 의�
 - 순수 파이썬 패키지(`py3-none-any` wheel), Python 3.10+.
 - on-prem 친화 — 의존성 최소화, locked-down 서버용 `pysqlite3-binary` 폴백(Linux).
 
-[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v7.29.1...HEAD
+[Unreleased]: https://github.com/dujeonglee/agent-cli/compare/v8.0.0...HEAD
+[8.0.0]: https://github.com/dujeonglee/agent-cli/compare/v7.29.1...v8.0.0
 [7.29.1]: https://github.com/dujeonglee/agent-cli/compare/v7.29.0...v7.29.1
 [7.29.0]: https://github.com/dujeonglee/agent-cli/compare/v7.28.1...v7.29.0
 [7.28.1]: https://github.com/dujeonglee/agent-cli/compare/v7.28.0...v7.28.1

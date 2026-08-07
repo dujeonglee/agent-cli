@@ -82,7 +82,8 @@ class AgentTool(Tool):
             "task": {
                 "type": "string",
                 "description": (
-                    "run: the task to execute (required). "
+                    "the instruction for the agent — run: the task to execute "
+                    "(required); request: the message to deliver (required); "
                     "spawn/resume: optional initial request queued right away"
                 ),
             },
@@ -102,10 +103,6 @@ class AgentTool(Tool):
                     "agent key returned by spawn (required for request/"
                     "resume/kill; optional filter for status)"
                 ),
-            },
-            "message": {
-                "type": "string",
-                "description": "request: the message to send",
             },
             "tools": {
                 "type": "array",
@@ -130,7 +127,7 @@ class AgentTool(Tool):
 
     _MODE_REQUIRED: ClassVar[dict] = {
         "run": ("task",),
-        "request": ("key", "message"),
+        "request": ("key", "task"),
         "resume": ("key",),
         "kill": ("key",),
     }
@@ -140,6 +137,16 @@ class AgentTool(Tool):
         valid = ("run", "spawn", "request", "status", "resume", "kill")
         if mode not in valid:
             return f"unknown mode '{mode}' — must be one of {', '.join(valid)}"
+        if "message" in args:
+            # 통일 어휘 (v8.0.0): 지시는 모든 모드에서 ``task`` 하나다. 과거
+            # request 만 ``message`` 를 써서, 모델이 spawn/resume 에도 그 습관을
+            # 이어가면 **조용히 유실**됐다(라이브 재현). 별칭 수용(v7.29.1)은
+            # 이중 어휘를 영구화하므로 철회 — 정밀 에러를 A5 로 되먹여 다음
+            # 턴에 자가 교정시킨다(도구-입력 의미론은 엄격, wire 문법만 관용).
+            return (
+                "field 'message' is not accepted — put the instruction in "
+                "'task' (every agent mode uses 'task')"
+            )
         for field in self._MODE_REQUIRED.get(mode, ()):
             value = args.get(field)
             if not isinstance(value, str) or not value.strip():

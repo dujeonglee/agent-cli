@@ -1109,7 +1109,7 @@ def build_live_agents_section(
         intro = (
             "These agents are ALREADY running and remember all previous "
             "exchanges — send follow-up work with "
-            '`{"mode":"request","key":"<key>","message":"..."}` instead of '
+            '`{"mode":"request","key":"<key>","task":"..."}` instead of '
             "spawning a new one for the same thread of work. Spawn ADDITIONAL "
             "instances of a profile (each with a distinct `name`) only for "
             "parallel INDEPENDENT workstreams — e.g. several code-writers on "
