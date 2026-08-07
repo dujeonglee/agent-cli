@@ -1,0 +1,43 @@
+{
+  "L_ms": 15000,
+  "reps": 10,
+  "cells": [
+    {
+      "k": 1,
+      "boundaryIntervalMs": 15000.0,
+      "n": 10,
+      "inclusionP50": 15103.5,
+      "inclusionP95": 15189.4,
+      "ttftP50": 15413.4,
+      "injectedRate": 0.0
+    },
+    {
+      "k": 2,
+      "boundaryIntervalMs": 7500.0,
+      "n": 10,
+      "inclusionP50": 7296.6,
+      "inclusionP95": 7359.6,
+      "ttftP50": null,
+      "injectedRate": 1.0
+    },
+    {
+      "k": 4,
+      "boundaryIntervalMs": 3750.0,
+      "n": 10,
+      "inclusionP50": 3385.2,
+      "inclusionP95": 3400.9,
+      "ttftP50": null,
+      "injectedRate": 1.0
+    },
+    {
+      "k": 8,
+      "boundaryIntervalMs": 1875.0,
+      "n": 10,
+      "inclusionP50": 1435.7,
+      "inclusionP95": 1458.6,
+      "ttftP50": null,
+      "injectedRate": 1.0
+    }
+  ],
+  "elapsed_s": 822.0
+}

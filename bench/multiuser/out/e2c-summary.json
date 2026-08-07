@@ -1,0 +1,30 @@
+{
+  "L_ms": 15000,
+  "reps": 10,
+  "serial": {
+    "n": 10,
+    "p50": 15480.3,
+    "p95": 15616.8
+  },
+  "reject": [
+    {
+      "n": 9,
+      "p50": 15652.7,
+      "p95": 15818.4,
+      "intervalMs": 250,
+      "penaltyMs": 172.4,
+      "penaltyFracOfInterval": 0.69,
+      "retriesP50": 61.0
+    },
+    {
+      "n": 9,
+      "p50": 16274.1,
+      "p95": 16293.9,
+      "intervalMs": 1000,
+      "penaltyMs": 793.8,
+      "penaltyFracOfInterval": 0.794,
+      "retriesP50": 16.0
+    }
+  ],
+  "elapsed_s": 473.8
+}
