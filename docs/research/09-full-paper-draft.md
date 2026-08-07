@@ -387,6 +387,8 @@ A shared session is only useful if it *persists*, through server restarts and th
 
 Every check held. All 204 of 204 queries were present in the durable history after the final phase, with 0 lost across restarts. Question ids remained globally unique across resumes, because the resume path re-derives the id counter from the *full* history rather than from the compacted cache, so a restarted session never re-mints an id that compaction dropped from the working window but that remains attributed in the record. Each resumed phase processed its 51 new turns normally. Compaction kept the shared context bounded throughout: 10 commits (2 stale, 0 failed) across the run, with the post-compaction cache never exceeding 2,610 tokens. The session's context footprint is governed by the compactor, not by session age.
 
+Durability is a property of the store rather than of the model, so the scripted arm is the right instrument for it at scale; we nevertheless confirmed the resume path once against the live model, at the size a live run affords ✔. Three users drove 27 turns across three phases with two suspend/resume cycles, and every check held there too: 27 of 27 queries in the durable history, 0 lost, ids unique across both resumes, each resumed phase processing its new turns normally. That arm does not exercise compaction, whose live behaviour §6.6 measures separately, because a session this short never approaches the window.
+
 ### 6.10 RQ10: Live-model validation and the real price of parallelism ✔
 
 All numbers above use deterministic mock latencies. We spot-checked the headline and settled the cost question against a live on-premise model (Qwen3.6-27B, MLX 8-bit; twelve repetitions per contract for the ranking check, six for token accounting).

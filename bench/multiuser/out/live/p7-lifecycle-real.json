@@ -1,0 +1,42 @@
+{
+  "users": 3,
+  "phases": 3,
+  "rounds_per_phase": 3,
+  "turns_sent": 27,
+  "resumes": 2,
+  "queries_recorded": 27,
+  "queries_lost": 0,
+  "query_ids_unique_across_resumes": true,
+  "phase_reports": [
+    {
+      "phase": 1,
+      "sent_cumulative": 9,
+      "queries_recorded": 9,
+      "query_ids_unique": true,
+      "compact_committed_cumulative": 0,
+      "compact_stale_cumulative": 0,
+      "compact_failed_cumulative": 0,
+      "max_tokens_after": null
+    },
+    {
+      "phase": 2,
+      "sent_cumulative": 18,
+      "queries_recorded": 18,
+      "query_ids_unique": true,
+      "compact_committed_cumulative": 0,
+      "compact_stale_cumulative": 0,
+      "compact_failed_cumulative": 0,
+      "max_tokens_after": null
+    },
+    {
+      "phase": 3,
+      "sent_cumulative": 27,
+      "queries_recorded": 27,
+      "query_ids_unique": true,
+      "compact_committed_cumulative": 0,
+      "compact_stale_cumulative": 0,
+      "compact_failed_cumulative": 0,
+      "max_tokens_after": null
+    }
+  ]
+}
