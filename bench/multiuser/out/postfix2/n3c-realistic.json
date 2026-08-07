@@ -1,0 +1,30 @@
+{
+  "workload": "realistic",
+  "tasks": {
+    "parser": [
+      "parser_tokens.txt",
+      "parser_rules.txt"
+    ],
+    "readme": [
+      "readme_intro.txt",
+      "readme_usage.txt"
+    ]
+  },
+  "writesPerTurn": 2,
+  "lines": 8,
+  "arms": [
+    {
+      "scoping": "on",
+      "reps": 20,
+      "turns": 40,
+      "crossTask": 0,
+      "crossTaskRate": 0.0,
+      "turnsWroteOthers": 0,
+      "turnsOwnComplete": 40,
+      "bothComplete": 20,
+      "bothCompleteRate": 1.0,
+      "medianSpanMs": 55704.9
+    }
+  ],
+  "note": "crossTask = one turn carried out the other user's task (wrote their files instead of its own), judged from filenames alone. The two instructions are genuinely different work (different subject, filenames, line content and completion tag), so this arm measures the base rate a deployment would actually see. Only the shape of the work is shared (two files of eight lines) so that spans and sample sizes stay comparable. bothComplete guards the other direction: scoping must not make the model so cautious that it stops doing its job."
+}
