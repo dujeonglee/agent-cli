@@ -33,14 +33,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import statistics
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 from driver import AgentServer, MockLlm
+
+
+def real_llm_from_env() -> dict:
+    try:
+        return {
+            "base_url": os.environ["AGENT_CLI_BASE_URL"],
+            "api_key": os.environ["AGENT_CLI_API_KEY"],
+            "model": os.environ["AGENT_CLI_MODEL"],
+        }
+    except KeyError as e:
+        sys.exit(f"missing env {e} — set AGENT_CLI_BASE_URL/API_KEY/MODEL")
+
 
 TURN_THREAD_RE = re.compile(r"agent-turn-t\d+$")
 
@@ -83,27 +97,56 @@ def peak_concurrency(events: list[dict]) -> int:
     return peak
 
 
-def run_rep(arm: str, users: int, rounds: int) -> dict:
-    mock = MockLlm()
+def live_task(marker: str) -> str:
+    """실모델용 워크로드 — 목의 한 줄 질의와 **스텝 수를 맞춘** 실제 작업.
+
+    staleness 는 스텝(스냅샷→커밋) 단위로 세므로 턴이 여러 스텝이어야
+    표본이 나온다. 도구 두 번 + 완료면 목의 `n=6` 스크립트와 같은 자릿수의
+    스텝이 생기고, 파일 이름에 마커가 들어가 턴끼리 겹치지 않는다.
+    """
+    return (
+        f"Use the write_file tool twice: create {marker}_a.txt and "
+        f"{marker}_b.txt, each with exactly 5 lines where every line is "
+        f"'{marker} line N' with N replaced by the line number. "
+        "Do not read any file. Do not use the shell. "
+        f"When both files are written, call complete with result '{marker} done'."
+    )
+
+
+def run_rep(arm: str, users: int, rounds: int, llm: dict | None = None) -> dict:
+    """``llm`` 이 주어지면 실모델, 아니면 목. 지표 계산 경로는 완전히 공유한다."""
+    mock = MockLlm() if llm is None else None
     ws = Path(tempfile.mkdtemp(prefix=f"n5-{arm}-"))
-    server = AgentServer(ws, mock.port, contract=arm, max_turns=users)
+    server = AgentServer(
+        ws,
+        None if mock is None else mock.port,
+        contract=arm,
+        max_turns=users,
+        real_llm=llm,
+    )
     total = users * rounds
+    timeout = 600 if llm is None else 2400
     try:
         for r in range(rounds):
             for u in range(users):
                 marker = f"m{u}-{r}"
-                msg = f"question {marker} [[bench ttft=30 tok=1 n=6 id={marker}]]"
+                msg = (
+                    f"question {marker} [[bench ttft=30 tok=1 n=6 id={marker}]]"
+                    if llm is None
+                    else live_task(marker)
+                )
                 assert server.chat(msg, f"user{u}") == 200
             time.sleep(0.05)
         if arm == "parallel":
-            events = server.wait_completes(total, timeout=600)
+            events = server.wait_completes(total, timeout=timeout)
         else:
             # 직렬은 mid-run 주입이 뒤 메시지를 앞 런에 흡수해 complete 수가
             # 메시지 수보다 적을 수 있다 — 정지 판정으로 대기 (driver 규약).
-            events = server.wait_quiescent(min_completes=1, timeout=900)
+            events = server.wait_quiescent(min_completes=1, timeout=timeout + 300)
     finally:
         server.stop()
-        mock.stop()
+        if mock is not None:
+            mock.stop()
         shutil.rmtree(ws, ignore_errors=True)
 
     pairs = stale_pairs(events, turn_threads_only=(arm == "parallel"))
@@ -111,6 +154,7 @@ def run_rep(arm: str, users: int, rounds: int) -> dict:
     stale = [v for v in flat if v > 0]
     return {
         "arm": arm,
+        "model": "mock" if llm is None else llm["model"],
         "turn_threads": len(pairs),
         "steps": len(flat),
         "stale_steps": len(stale),
@@ -127,14 +171,21 @@ def main() -> None:
     ap.add_argument("--rounds", type=int, default=25)
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--serial-reps", type=int, default=2)
+    ap.add_argument(
+        "--real",
+        action="store_true",
+        help="목 대신 실모델(AGENT_CLI_BASE_URL/API_KEY/MODEL). 목 턴은 ~1초, "
+        "실 턴은 ~60초라 staleness 깊이가 추론 지속시간의 함수임을 확인한다.",
+    )
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    llm = real_llm_from_env() if args.real else None
 
     reps: list[dict] = []
     for arm, n in (("parallel", args.reps), ("serial", args.serial_reps)):
         for rep in range(n):
-            row = run_rep(arm, args.users, args.rounds)
+            row = run_rep(arm, args.users, args.rounds, llm)
             row["rep"] = rep
             reps.append(row)
             print(json.dumps(row, ensure_ascii=False))
@@ -142,7 +193,11 @@ def main() -> None:
     par = [r for r in reps if r["arm"] == "parallel"]
     ser = [r for r in reps if r["arm"] == "serial"]
     summary = {
-        "config": {"users": args.users, "rounds": args.rounds},
+        "config": {
+            "users": args.users,
+            "rounds": args.rounds,
+            "model": "mock" if llm is None else llm["model"],
+        },
         "parallel": {
             "reps": len(par),
             "stale_share_min": min(r["stale_share"] for r in par),
@@ -158,7 +213,9 @@ def main() -> None:
         },
         "reps": reps,
     }
-    out_path = args.out / "n5-staleness.json"
+    out_path = args.out / (
+        "n5-staleness-real.json" if args.real else "n5-staleness.json"
+    )
     out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
     print(f"\nwrote {out_path}")
     print(json.dumps({k: v for k, v in summary.items() if k != "reps"}, indent=2))

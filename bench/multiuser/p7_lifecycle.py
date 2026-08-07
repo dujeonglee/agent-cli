@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -31,6 +33,26 @@ from pathlib import Path
 from driver import AgentServer, MockLlm
 
 USERS = 3
+
+
+def real_llm_from_env() -> dict:
+    try:
+        return {
+            "base_url": os.environ["AGENT_CLI_BASE_URL"],
+            "api_key": os.environ["AGENT_CLI_API_KEY"],
+            "model": os.environ["AGENT_CLI_MODEL"],
+        }
+    except KeyError as e:
+        sys.exit(f"missing env {e} — set AGENT_CLI_BASE_URL/API_KEY/MODEL")
+
+
+def live_task(marker: str) -> str:
+    """실모델용 — 목의 산문 응답 턴과 같은 역할(도구 없이 컨텍스트만 채운다)."""
+    return (
+        f"Task id={marker}: without using any tool, write two sentences about "
+        "why a shared agent session needs durable history. Then call complete "
+        f"with a result that starts with the exact text 'id={marker}'."
+    )
 
 
 def read_history(session_dir: Path) -> list[dict]:
@@ -52,11 +74,22 @@ def main() -> None:
     ap.add_argument("--phases", type=int, default=4)
     ap.add_argument("--rounds", type=int, default=17, help="페이즈당 라운드(×3 사용자)")
     ap.add_argument("--ctx", type=int, default=16384)
+    ap.add_argument(
+        "--real",
+        action="store_true",
+        help="목 대신 실모델 — 실제 세션이 중단·재개를 관통하는지 확인한다 "
+        "(204턴 라이브는 비현실적이라 --phases/--rounds 를 줄여 쓴다).",
+    )
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    llm = real_llm_from_env() if args.real else None
 
-    mock = MockLlm(env={"MOCK_LLM_CTX": str(args.ctx), "MOCK_LLM_SUM_MS": "200"})
+    mock = (
+        MockLlm(env={"MOCK_LLM_CTX": str(args.ctx), "MOCK_LLM_SUM_MS": "200"})
+        if llm is None
+        else None
+    )
     ws = Path(tempfile.mkdtemp(prefix="p7-life-"))
     sent = 0
     session_id: str | None = None
@@ -65,10 +98,11 @@ def main() -> None:
         for phase in range(1, args.phases + 1):
             server = AgentServer(
                 ws,
-                mock.port,
+                None if mock is None else mock.port,
                 contract="parallel",
                 max_turns=USERS,
                 resume=session_id,
+                real_llm=llm,
             )
             try:
                 if session_id is None:
@@ -79,13 +113,17 @@ def main() -> None:
                 for r in range(args.rounds):
                     for u in range(USERS):
                         marker = f"p{phase}-{u}-{r}"
-                        msg = f"talk {marker} [[bench ttft=10 tok=0 n=400 id={marker}]]"
+                        msg = (
+                            f"talk {marker} [[bench ttft=10 tok=0 n=400 id={marker}]]"
+                            if llm is None
+                            else live_task(marker)
+                        )
                         assert server.chat(msg, f"user{u}") == 200
                         sent += 1
                     time.sleep(0.03)
                 # turns.jsonl 은 resume 을 관통해 누적된다 — 전체 파일 기준
                 # complete 수가 지금까지 보낸 총수에 도달할 때까지 대기.
-                server.wait_completes(sent, timeout=600)
+                server.wait_completes(sent, timeout=600 if llm is None else 3600)
 
                 hist = read_history(server.session_dir)
                 q_ids = [r["id"] for r in hist if r.get("kind") == "query"]
@@ -135,11 +173,12 @@ def main() -> None:
             "phase_reports": phases_report,
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        (args.out / "p7-lifecycle.json").write_text(
-            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        (
+            args.out / ("p7-lifecycle-real.json" if args.real else "p7-lifecycle.json")
+        ).write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     finally:
-        mock.stop()
+        if mock is not None:
+            mock.stop()
         shutil.rmtree(ws, ignore_errors=True)
 
 

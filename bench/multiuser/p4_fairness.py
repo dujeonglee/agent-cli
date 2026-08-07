@@ -21,12 +21,25 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 from driver import AgentServer, MockLlm, median, percentile
+
+
+def real_llm_from_env() -> dict:
+    try:
+        return {
+            "base_url": os.environ["AGENT_CLI_BASE_URL"],
+            "api_key": os.environ["AGENT_CLI_API_KEY"],
+            "model": os.environ["AGENT_CLI_MODEL"],
+        }
+    except KeyError as e:
+        sys.exit(f"missing env {e} — set AGENT_CLI_BASE_URL/API_KEY/MODEL")
 
 
 def jain(xs: list[float]) -> float:
@@ -36,29 +49,49 @@ def jain(xs: list[float]) -> float:
     return (s * s) / (len(xs) * s2) if s2 else 1.0
 
 
-def run_arm(args, mock: MockLlm, gate: bool) -> dict:
+def long_task(i: int, llm: dict | None) -> str:
+    """플러더의 긴 턴 — 목은 스크립트, 실모델은 실제로 오래 걸리는 작업."""
+    if llm is None:
+        return f"long {i} [[bench ttft=100 tok=10 n=150 id=f{i}]]"
+    return (
+        f"Use the write_file tool three times: create long{i}_1.txt, "
+        f"long{i}_2.txt and long{i}_3.txt, each with exactly 12 lines where "
+        f"every line is 'long {i} line N' with N replaced by the line number. "
+        "Do not read any file. Do not use the shell. "
+        f"When all three files are written, call complete with result 'long {i} done'."
+    )
+
+
+def short_task(u: int, llm: dict | None) -> str:
+    """단기 사용자의 짧은 턴 — 게이트가 지키려는 대상."""
+    if llm is None:
+        return f"quick {u} [[bench ttft=100 tok=2 n=8 id=s{u}]]"
+    return f"Do not use any tool. Immediately call complete with result 'quick {u}'."
+
+
+def run_arm(args, mock: MockLlm | None, gate: bool, llm: dict | None = None) -> dict:
     per_user_waits: dict[str, list[float]] = {}
     violations = 0
+    timeout = 300 if llm is None else 2400
     for rep in range(1, args.reps + 1):
         ws = Path(tempfile.mkdtemp(prefix=f"p4-{'on' if gate else 'off'}-{rep}-"))
         server = AgentServer(
             ws,
-            mock.port,
+            None if mock is None else mock.port,
             contract="parallel",
             max_turns=args.cap,
             extra=[] if gate else ["--no-per-user-gate"],
+            real_llm=llm,
         )
         try:
             flooder = f"flood-{rep}"
             for i in range(args.flood):
-                msg = f"long {i} [[bench ttft=100 tok=10 n=150 id=f{i}]]"
-                assert server.chat(msg, flooder) == 200
+                assert server.chat(long_task(i, llm), flooder) == 200
             time.sleep(0.15)
             for u in range(args.users):
                 conn = f"short{u}-{rep}"
-                msg = f"quick {u} [[bench ttft=100 tok=2 n=8 id=s{u}]]"
-                assert server.chat(msg, conn) == 200
-            events = server.wait_completes(args.flood + args.users, timeout=300)
+                assert server.chat(short_task(u, llm), conn) == 200
+            events = server.wait_completes(args.flood + args.users, timeout=timeout)
 
             enq = {
                 e["queue_id"]: e
@@ -124,27 +157,37 @@ def main() -> None:
     ap.add_argument("--cap", type=int, default=3)
     ap.add_argument("--flood", type=int, default=5, help="플러더의 연속 적재 수")
     ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument(
+        "--real",
+        action="store_true",
+        help="목 대신 실모델 — 플러더의 턴이 실제로 분 단위일 때 단기 사용자가 "
+        "겪는 절대 대기를 잰다(배포에서 의미 있는 수).",
+    )
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    llm = real_llm_from_env() if args.real else None
 
-    mock = MockLlm()
+    mock = MockLlm() if llm is None else None
     arms = {}
     try:
         for gate in (True, False):
-            arms["gate_on" if gate else "gate_off"] = run_arm(args, mock, gate)
+            arms["gate_on" if gate else "gate_off"] = run_arm(args, mock, gate, llm)
     finally:
-        mock.stop()
+        if mock is not None:
+            mock.stop()
 
     result = {
         "users_short": args.users,
         "cap": args.cap,
         "flood": args.flood,
         "reps": args.reps,
+        "model": "mock" if llm is None else llm["model"],
         "arms": arms,
     }
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    (args.out / "p4-fairness.json").write_text(
+    name = "p4-fairness-real.json" if args.real else "p4-fairness.json"
+    (args.out / name).write_text(
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 

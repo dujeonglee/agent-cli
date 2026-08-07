@@ -22,13 +22,40 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 from driver import AgentServer, MockLlm
+
+
+def real_llm_from_env() -> dict:
+    try:
+        return {
+            "base_url": os.environ["AGENT_CLI_BASE_URL"],
+            "api_key": os.environ["AGENT_CLI_API_KEY"],
+            "model": os.environ["AGENT_CLI_MODEL"],
+        }
+    except KeyError as e:
+        sys.exit(f"missing env {e} — set AGENT_CLI_BASE_URL/API_KEY/MODEL")
+
+
+def live_task(marker: str) -> str:
+    """실모델용 — 컨텍스트를 착실히 채우는 산문 응답 한 턴.
+
+    목 팔의 `n=400` 스크립트와 같은 역할이다. 도구를 쓰지 않게 해 압축과
+    동시 턴의 상호작용만 남긴다(도구 스텝은 §6.4 가 따로 잰다)."""
+    return (
+        f"Task id={marker}: without using any tool, write a short paragraph of "
+        "about six sentences explaining why ordering side effects is easier "
+        "than ordering inference in a shared agent session. Then call complete "
+        f"with a result that starts with the exact text 'id={marker}' followed "
+        "by that paragraph."
+    )
 
 
 def main() -> None:
@@ -37,16 +64,44 @@ def main() -> None:
     ap.add_argument("--rounds", type=int, default=30)
     ap.add_argument("--ctx", type=int, default=16384, help="목이 광고할 컨텍스트 창")
     ap.add_argument("--sum-ms", type=int, default=800, help="요약 콜 지연(무락 구간)")
+    ap.add_argument(
+        "--real",
+        action="store_true",
+        help="목 대신 실모델 — 요약 콜이 진짜로 수 초 걸리는 조건에서 "
+        "무락 요약 구간의 가용성을 확인한다. 압축은 --max-context-tokens 로 강제.",
+    )
+    ap.add_argument(
+        "--budget",
+        type=int,
+        default=3000,
+        help="--real 일 때 압축을 유발할 컨텍스트 토큰 예산",
+    )
     ap.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    llm = real_llm_from_env() if args.real else None
 
-    mock = MockLlm(
-        env={"MOCK_LLM_CTX": str(args.ctx), "MOCK_LLM_SUM_MS": str(args.sum_ms)}
+    mock = (
+        MockLlm(
+            env={"MOCK_LLM_CTX": str(args.ctx), "MOCK_LLM_SUM_MS": str(args.sum_ms)}
+        )
+        if llm is None
+        else None
     )
     ws = Path(tempfile.mkdtemp(prefix="n1-compact-"))
-    server = AgentServer(ws, mock.port, contract="parallel", max_turns=args.users)
+    server = AgentServer(
+        ws,
+        None if mock is None else mock.port,
+        contract="parallel",
+        max_turns=args.users,
+        real_llm=llm,
+        # 실모델의 광고 창은 262K 라 압축이 영영 안 걸린다. 압축 예산을 직접
+        # 조여 목 팔과 같은 압력을 만든다 — 재는 것은 창의 크기가 아니라
+        # "요약이 도는 동안 턴이 계속 흐르는가"이므로 이 대체가 유효하다.
+        extra=["--max-context-tokens", str(args.budget)] if llm else None,
+    )
     total = args.users * args.rounds
+    timeout = 900 if llm is None else 3600
     try:
         for r in range(args.rounds):
             for u in range(args.users):
@@ -54,10 +109,14 @@ def main() -> None:
                 # n=400/tok=1 → 응답 ~400자, 완만한 스트리밍 — 컨텍스트를
                 # 착실히 채우되 적대적 폭주는 아님 (적대 팔은 tok=0 n=600 을
                 # 인자로 별도 실행: out/n1-compaction-adversarial.json).
-                msg = f"talk {marker} [[bench ttft=20 tok=1 n=400 id={marker}]]"
+                msg = (
+                    f"talk {marker} [[bench ttft=20 tok=1 n=400 id={marker}]]"
+                    if llm is None
+                    else live_task(marker)
+                )
                 assert server.chat(msg, f"user{u}") == 200
             time.sleep(0.05)
-        events = server.wait_completes(total, timeout=900)
+        events = server.wait_completes(total, timeout=timeout)
 
         compacts = [e for e in events if e.get("event") == "compact"]
         begins = [e for e in compacts if e["phase"] == "begin"]
@@ -119,8 +178,10 @@ def main() -> None:
         result = {
             "users": args.users,
             "rounds": args.rounds,
-            "ctx_advertised": args.ctx,
-            "summary_delay_ms": args.sum_ms,
+            "model": "mock" if llm is None else llm["model"],
+            "ctx_advertised": args.ctx if llm is None else None,
+            "context_budget_tokens": args.budget if llm else None,
+            "summary_delay_ms": args.sum_ms if llm is None else "real summarizer call",
             "turns_sent": total,
             "queries_recorded": len(queries),
             "queries_lost": total - len(queries),
@@ -138,12 +199,14 @@ def main() -> None:
             "attribution_mismatches": mismatches,
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        (args.out / "n1-compaction.json").write_text(
+        name = "n1-compaction-real.json" if args.real else "n1-compaction.json"
+        (args.out / name).write_text(
             json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
         )
     finally:
         server.stop()
-        mock.stop()
+        if mock is not None:
+            mock.stop()
         shutil.rmtree(ws, ignore_errors=True)
 
 

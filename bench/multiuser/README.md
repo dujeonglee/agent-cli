@@ -32,6 +32,9 @@
 | `p2_shell_real.py` | **F2**: 셸 지배 작동점 — 라이브 2-user, 효과 비중·락 대기 (§6.4) |
 | `p6b_provider_concurrency.py` | **Q3**: 엔드포인트 자체 동시성 상한 — 세션 우회 N 동시 생성 (§6.10) |
 | `stats_recompute.py` | 커밋된 raw 재계산 — Fisher 정확검정·부트스트랩 CI (§6 Setup 정책) |
+| `compare_prepost.py` | 수리 전(`out/`) 대 수리 후(`out/postfix/`) 라이브 결과 대조 (플랜2 H2b) |
+
+**`--real` 플래그** (`n5_staleness`·`n1_compaction`·`p4_fairness`·`p7_lifecycle`): 목이 실상을 왜곡할 수 있는 네 실험(`docs/research/17-mock-vs-live-audit.md` 범주 D)의 실모델 팔. 산출은 `*-real.json` 으로 분리되어 목 결과를 덮지 않는다. 나머지 목 실험은 **목이 곧 계기**(작업 길이·스텝 수·적대 정책이 독립변수)라 실모델로 바꾸면 설계가 무너진다 — 같은 문서의 범주 A.
 | `out/` | 커밋되는 원시 데이터 + 요약 (재현 가능성 규약) |
 
 ## 실행
